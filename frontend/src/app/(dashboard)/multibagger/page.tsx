@@ -4394,6 +4394,22 @@ function _setUsaRowsMemCache(rows: any[]) {
 function _getUsaRowsMemCache(): any[] {
   return _usaRowsMemCache;
 }
+// zzz231 — India parity with USA: in-memory cache of the scored India rows
+// so that Copy ALL BEST -> TV (from India Technicals tab) can still surface
+// the ###Multibaggers section when the localStorage layer (`mb_excel_scored_v2`)
+// gets evicted by the browser under storage pressure. Mirrors USA's zzz108.
+let _indiaRowsMemCache: any[] = [];
+function _setIndiaRowsMemCache(rows: any[]) {
+  _indiaRowsMemCache = Array.isArray(rows) ? rows : [];
+  try {
+    window.dispatchEvent(new CustomEvent('mb-upload:updated', {
+      detail: { market: 'IND', count: _indiaRowsMemCache.length, source: 'mem-cache' },
+    }));
+  } catch {}
+}
+function _getIndiaRowsMemCache(): any[] {
+  return _indiaRowsMemCache;
+}
 function toSlimUsaRows(rows: any[]): any[] {
   return (rows || []).map((r: any) => ({
     symbol: r.symbol,
@@ -5828,7 +5844,9 @@ export default function MultibaggerPage() {
               try { return scoreExcelRow(r as unknown as ExcelRow); } catch { return r; }
             });
             const sorted = rescored.sort((a, b) => b.score - a.score);
-            setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(sorted)));
+            const ranked = applyForcedRanking(sorted);
+            setExcelRowsState((prev) => (prev && prev.length ? prev : ranked));
+            try { _setIndiaRowsMemCache(ranked); } catch {} // zzz231
             return;
           }
         } catch (e) {
@@ -5851,7 +5869,9 @@ export default function MultibaggerPage() {
             try { return scoreExcelRow(r as unknown as ExcelRow); } catch { return r; }
           });
           const sorted = rescored.sort((a, b) => b.score - a.score);
-          setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(sorted)));
+          const rankedServer = applyForcedRanking(sorted);
+          setExcelRowsState((prev) => (prev && prev.length ? prev : rankedServer));
+          try { _setIndiaRowsMemCache(rankedServer); } catch {} // zzz231
           // Write back DOWN to IDB + localStorage so future hydrations are fast
           // and don't require a server round-trip.
           const __mbS = JSON.stringify(sorted);
@@ -5877,6 +5897,7 @@ export default function MultibaggerPage() {
   function setExcelRows(rows: ExcelResult[]) {
     const ranked = applyForcedRanking(rows); // sort already done by caller
     setExcelRowsState(ranked);
+    try { _setIndiaRowsMemCache(ranked); } catch {} // zzz231 — sync mem cache for Copy ALL BEST
     // PATCH 1099 + 1101i — IDB is the source of truth (essentially unlimited
     // storage). Write IDB FIRST; only write META AFTER IDB confirms. With
     // 1101i the mbIdbSet primitive now properly rejects on failure (instead
@@ -8525,6 +8546,15 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         if (mbRows.length === 0) {
           try { mbRows = _getUsaRowsMemCache() || []; } catch {}
         }
+      }
+      // zzz231 — India: same eviction risk (Chrome purges site data under
+      // pressure, wiping mb_excel_scored_v2 while IDB survives). The IDB
+      // hydration path already re-populates the React state and the mem
+      // cache we set alongside it — read that here as a synchronous fallback
+      // so the ###Multibaggers section stays intact even when localStorage
+      // is empty. Matches USA parity per zzz228.
+      if (market === 'IND' && mbRows.length === 0) {
+        try { mbRows = _getIndiaRowsMemCache() || []; } catch {}
       }
       if (mbRows.length > 0) {
         const exMap: Record<string, string> = { NMS: 'NASDAQ', NASDAQGS: 'NASDAQ', ARCA: 'AMEX', BATS: 'AMEX' };
