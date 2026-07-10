@@ -656,11 +656,24 @@ export async function GET(req: Request) {
             const noFinancials = c.sales_yoy_pct == null
                                && c.net_profit_yoy_pct == null
                                && c.eps_yoy_pct == null;
-            const noMargin = (c as any).opm_pct == null
-                          && (c as any).opm_prev_pct == null;
+            // zzz235 — treat opm==0 with sales_curr_cr>=100 as "needs refresh".
+            // The Cloudflare Worker used to emit opm_pct=0 for NBFCs/banks
+            // (Financing Margin % not matched). zzz234 in enrich now fixes
+            // this at the source, but existing cached cards still carry the
+            // stale 0. Without this, refresh_missing=1 sees "0 != null" and
+            // skips them → LTF/INDIANB/MAHABANK never re-enrich, keep 0.0%.
+            const opmCur = (c as any).opm_pct;
+            const opmPrev = (c as any).opm_prev_pct;
+            const salesCur = (c as any).sales_curr_cr;
+            const opmIsStaleZero = (opmCur === 0 || opmPrev === 0) &&
+              salesCur != null && Number.isFinite(Number(salesCur)) && Number(salesCur) >= 100;
+            const noMargin = (opmCur == null && opmPrev == null) || opmIsStaleZero;
             const noPriceAction = c.d1_pct == null && c.gap_pct == null;
-            // Refresh if NO financials OR (has financials but no margin AND no price action)
-            return noFinancials || (noMargin && noPriceAction);
+            // Refresh if NO financials OR margin is missing/stale-zero.
+            // Note: dropped the `noPriceAction` co-requirement for the margin
+            // refresh path — stale-zero OPM is enough evidence a refresh is
+            // needed even when D1/Gap is intact.
+            return noFinancials || noMargin;
           })
           .map((c) => c.ticker);
         if (needTickers.length === 0) {
@@ -688,7 +701,25 @@ export async function GET(req: Request) {
             c.sales_yoy_pct != null ||
             c.net_profit_yoy_pct != null ||
             c.eps_yoy_pct != null;
+          // zzz235 — even when the card has YoY, if OPM is a stale zero (Worker
+          // pre-zzz234 NBFC/bank quirk), merge in fresh margin from the enrich
+          // response so LTF/INDIANB/MAHABANK get a real number without
+          // re-grading the whole card.
+          const _opmCurStale = (c as any).opm_pct === 0 &&
+            (c as any).sales_curr_cr != null && Number((c as any).sales_curr_cr) >= 100;
+          const _opmPrevStale = (c as any).opm_prev_pct === 0 &&
+            (c as any).sales_prev_cr != null && Number((c as any).sales_prev_cr) >= 100;
           if (cardAlreadyHasYoY) {
+            if (_opmCurStale || _opmPrevStale) {
+              const e = enrich[c.ticker];
+              if (e) {
+                const patched: any = { ...c };
+                if (_opmCurStale && e.opm_pct != null && e.opm_pct !== 0) patched.opm_pct = e.opm_pct;
+                if (_opmPrevStale && e.opm_prev_pct != null && e.opm_prev_pct !== 0) patched.opm_prev_pct = e.opm_prev_pct;
+                updatedCards.push(patched);
+                continue;
+              }
+            }
             updatedCards.push(c);
             continue;
           }
