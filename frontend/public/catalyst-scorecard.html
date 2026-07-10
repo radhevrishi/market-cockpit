@@ -6,74 +6,113 @@
 <title>Catalyst Scorecard — 57 India Growth Stocks</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; line-height: 1.6; font-size: 15px; }
-  .container { max-width: 100%; margin: 0 auto; padding: 24px 32px; }
-  @media (min-width: 2200px) { .container { max-width: 2100px; } }
-  .header { margin-bottom: 28px; }
-  h1 { margin: 0 0 10px; font-size: 32px; color: #f1f5f9; font-weight: 800; letter-spacing: -0.3px; }
-  .tagline { color: #cbd5e1; font-size: 16px; margin-bottom: 16px; }
-  .disclaimer { background: #1e293b; padding: 14px 18px; border-radius: 8px; font-size: 14px; color: #cbd5e1; border-left: 4px solid #ef4444; margin-bottom: 18px; line-height: 1.6; }
-  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; font-size: 14px; }
-  .legend-item { padding: 7px 14px; border-radius: 14px; font-weight: 600; cursor: pointer; opacity: 0.5; transition: opacity 0.15s, box-shadow 0.15s; user-select: none; font-size: 14px; }
-  .legend-item:hover { opacity: 0.85; }
-  .legend-item.active { opacity: 1; box-shadow: 0 0 0 2px #e2e8f0; }
-  .lg-all { background: #334155; color: #e2e8f0; }
-  .legend-scope { font-size: 13px; color: #94a3b8; margin-bottom: 6px; }
-  .filter-bar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; align-items: center; padding: 16px 18px; background: #1e293b; border-radius: 10px; }
-  .filter-bar input, .filter-bar select { padding: 11px 14px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; font-size: 15px; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 0; line-height: 1.75; font-size: 17px; -webkit-font-smoothing: antialiased; }
+  .container { max-width: 100%; margin: 0 auto; padding: 32px 40px 60px; }
+  @media (min-width: 1600px) { .container { padding: 40px 60px 80px; } }
+  @media (min-width: 2000px) { .container { max-width: 1900px; padding: 48px 40px 80px; } }
+  .header { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 3px solid #e2e8f0; }
+  h1 { margin: 0 0 12px; font-size: 38px; color: #0f172a; font-weight: 800; letter-spacing: -0.6px; line-height: 1.2; }
+  .tagline { color: #334155; font-size: 18px; margin-bottom: 20px; line-height: 1.55; }
+  .disclaimer { background: #fef9c3; padding: 16px 22px; border-radius: 10px; font-size: 15px; color: #713f12; border-left: 5px solid #f59e0b; margin-bottom: 24px; line-height: 1.6; }
+  .toolbar-actions { display: flex; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
+  .btn { padding: 13px 22px; background: #0f172a; color: #ffffff; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; transition: transform 0.1s, background 0.15s; box-shadow: 0 2px 4px rgba(15,23,42,0.15); }
+  .btn:hover { background: #1e293b; transform: translateY(-1px); }
+  .btn-pdf { background: #dc2626; box-shadow: 0 2px 4px rgba(220,38,38,0.25); }
+  .btn-pdf:hover { background: #b91c1c; }
+  .legend-scope { font-size: 14px; color: #475569; margin-bottom: 10px; font-weight: 700; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; font-size: 14px; }
+  .legend-item { padding: 9px 18px; border-radius: 999px; font-weight: 700; cursor: pointer; opacity: 0.6; transition: opacity 0.15s, transform 0.15s; user-select: none; font-size: 14px; border: 2px solid transparent; }
+  .legend-item:hover { opacity: 0.95; transform: translateY(-1px); }
+  .legend-item.active { opacity: 1; border-color: #0f172a; box-shadow: 0 3px 8px rgba(0,0,0,0.15); }
+  .lg-all { background: #cbd5e1; color: #0f172a; }
+  .filter-bar { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 32px; align-items: center; padding: 18px 22px; background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; box-shadow: 0 2px 6px rgba(15,23,42,0.05); }
+  .filter-bar input, .filter-bar select { padding: 13px 16px; background: #f8fafc; color: #0f172a; border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: 15px; font-weight: 500; }
   .filter-bar input { flex: 1; min-width: 260px; }
-  .count { color: #94a3b8; font-size: 14px; margin-left: auto; font-weight: 600; }
-  .grid { display: grid; grid-template-columns: 1fr; gap: 22px; }
-  @media (min-width: 1180px) { .grid { grid-template-columns: 1fr 1fr; gap: 24px; } }
-  .card { background: #1e293b; border-radius: 14px; padding: 24px; border: 1px solid #334155; display: flex; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
-  .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; padding-bottom: 14px; border-bottom: 1px solid #334155; }
-  .company-name { font-size: 22px; font-weight: 800; color: #f1f5f9; margin: 0 0 4px; letter-spacing: -0.2px; }
-  .sector { font-size: 13px; color: #94a3b8; margin: 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-  .metrics { font-size: 13px; color: #94a3b8; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace; background: #0f172a; padding: 8px 10px; border-radius: 6px; letter-spacing: 0.3px; }
-  .scores { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 16px 0; }
-  .score-box { text-align: center; padding: 12px 8px; border-radius: 10px; background: #0f172a; border: 1px solid #334155; }
-  .score-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; font-weight: 700; }
-  .score-value { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
-  .hero { background: linear-gradient(135deg, #422006, #78350f); border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 8px; margin: 14px 0; font-size: 15px; color: #fef3c7; line-height: 1.65; }
-  .hero-label { font-size: 12px; text-transform: uppercase; color: #fbbf24; font-weight: 800; letter-spacing: 1px; margin-bottom: 8px; }
-  .subs { list-style: none; padding: 0; margin: 12px 0; font-size: 14px; color: #cbd5e1; line-height: 1.65; }
-  .subs li { padding: 8px 0 8px 22px; position: relative; border-bottom: 1px solid #253147; }
-  .subs li:last-child { border-bottom: none; }
-  .subs li:before { content: "▸"; position: absolute; left: 4px; top: 8px; color: #38bdf8; font-weight: 700; }
-  .assessment { margin-top: 14px; padding: 14px 16px; background: #0f172a; border-radius: 10px; font-size: 14px; line-height: 1.6; border: 1px solid #334155; }
-  .assessment-row { margin: 8px 0; }
+  .filter-bar input:focus, .filter-bar select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.18); }
+  .count { color: #475569; font-size: 15px; margin-left: auto; font-weight: 800; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 32px; }
+  @media (min-width: 1180px) { .grid { grid-template-columns: 1fr 1fr; gap: 32px; } }
+  .card { background: #ffffff; border-radius: 18px; padding: 32px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 0 4px 14px rgba(15,23,42,0.06); page-break-inside: avoid; }
+  .card-top { padding-bottom: 22px; border-bottom: 3px solid #f1f5f9; margin-bottom: 22px; }
+  .company-name { font-size: 28px; font-weight: 800; color: #0f172a; margin: 0 0 8px; letter-spacing: -0.5px; line-height: 1.2; }
+  .sector { font-size: 12px; color: #2563eb; margin: 0; font-weight: 800; text-transform: uppercase; letter-spacing: 1.4px; }
+  .metrics { font-size: 14px; color: #334155; margin-top: 14px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace; background: #f1f5f9; padding: 12px 16px; border-radius: 10px; letter-spacing: 0.2px; font-weight: 600; }
+  .scores { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+  .score-box { text-align: center; padding: 18px 10px; border-radius: 14px; background: #f8fafc; border: 2px solid #e2e8f0; }
+  .score-label { font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px; font-weight: 800; }
+  .score-value { font-size: 32px; font-weight: 900; letter-spacing: -0.8px; line-height: 1; }
+  .hero { background: linear-gradient(135deg, #fef3c7, #fde68a); border-left: 6px solid #d97706; padding: 22px 24px; border-radius: 12px; margin-bottom: 24px; font-size: 17px; color: #451a03; line-height: 1.75; font-weight: 500; }
+  .hero-label { font-size: 12px; text-transform: uppercase; color: #92400e; font-weight: 900; letter-spacing: 1.5px; margin-bottom: 12px; }
+  .subs { list-style: none; padding: 0; margin: 0 0 16px; font-size: 16px; color: #1e293b; line-height: 1.75; }
+  .subs li { padding: 16px 0 16px 30px; position: relative; border-bottom: 1px solid #f1f5f9; }
+  .subs li:last-child { border-bottom: none; padding-bottom: 4px; }
+  .subs li:before { content: "▶"; position: absolute; left: 6px; top: 17px; color: #3b82f6; font-weight: 900; font-size: 13px; }
+  .assessment { margin-top: 16px; padding: 22px 24px; background: #f8fafc; border-radius: 14px; font-size: 15.5px; line-height: 1.75; border: 1px solid #e2e8f0; }
+  .assessment-row { margin: 14px 0; }
   .assessment-row:first-child { margin-top: 0; }
-  .assessment-label { color: #fbbf24; font-weight: 800; text-transform: uppercase; font-size: 11px; letter-spacing: 0.8px; display: block; margin-bottom: 3px; }
-  .note { font-size: 14px; color: #cbd5e1; font-style: italic; margin-top: 14px; padding: 12px 14px; background: #0f172a; border-radius: 8px; border-left: 3px solid #64748b; line-height: 1.6; }
-  .compare { margin-top: 16px; padding: 14px 16px; background: #0f172a; border-radius: 10px; font-size: 14px; border: 1px solid #334155; line-height: 1.6; }
-  .compare-row { margin: 10px 0; display: flex; gap: 10px; }
+  .assessment-row:last-child { margin-bottom: 0; }
+  .assessment-label { color: #b45309; font-weight: 900; text-transform: uppercase; font-size: 11px; letter-spacing: 1.4px; display: block; margin-bottom: 8px; }
+  .note { font-size: 15px; color: #334155; font-style: italic; margin-top: 18px; padding: 16px 20px; background: #fef9c3; border-radius: 10px; border-left: 4px solid #f59e0b; line-height: 1.75; }
+  .compare { margin-top: 20px; padding: 22px 24px; background: #eff6ff; border-radius: 14px; font-size: 15.5px; border: 1px solid #bfdbfe; line-height: 1.75; }
+  .compare-row { margin: 14px 0; }
   .compare-row:first-child { margin-top: 0; }
-  .compare-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; min-width: 60px; color: #94a3b8; padding-top: 2px; }
-  .compare-text { color: #e2e8f0; flex: 1; }
-  .verdict-block { margin-top: 16px; padding: 18px 16px; border-radius: 12px; font-size: 15px; font-weight: 600; text-align: center; }
-  .verdict-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 800; margin-bottom: 6px; opacity: 0.9; }
-  .verdict-text { font-size: 22px; font-weight: 900; letter-spacing: 1px; }
-  .verdict-note { font-size: 13px; font-weight: 500; margin-top: 10px; opacity: 0.92; font-style: italic; line-height: 1.55; }
-  .v-accumulate { background: linear-gradient(135deg, #14532d, #16a34a); color: #dcfce7; }
-  .v-dips { background: linear-gradient(135deg, #164e63, #0891b2); color: #cffafe; }
-  .v-hold { background: linear-gradient(135deg, #713f12, #ca8a04); color: #fef3c7; }
-  .v-reduce { background: linear-gradient(135deg, #7c2d12, #ea580c); color: #ffedd5; }
-  .v-avoid { background: linear-gradient(135deg, #7f1d1d, #dc2626); color: #fee2e2; }
-  .v-special { background: linear-gradient(135deg, #374151, #6b7280); color: #f3f4f6; }
-  .s90 { color: #c084fc; }
-  .s85 { color: #10b981; }
-  .s80 { color: #38bdf8; }
-  .s75 { color: #fbbf24; }
-  .s70 { color: #fb923c; }
-  .s60 { color: #f87171; }
-  .s55 { color: #94a3b8; }
-  .lg-s90 { background: linear-gradient(135deg, #581c87, #7c3aed); color: #f3e8ff; }
-  .lg-s85 { background: #059669; color: #d1fae5; }
-  .lg-s80 { background: #0284c7; color: #e0f2fe; }
-  .lg-s75 { background: #d97706; color: #fef3c7; }
-  .lg-s70 { background: #ea580c; color: #ffedd5; }
-  .lg-s60 { background: #b91c1c; color: #fee2e2; }
-  .lg-s55 { background: #4b5563; color: #f3f4f6; }
+  .compare-row:last-child { margin-bottom: 0; }
+  .compare-label { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #1d4ed8; display: block; margin-bottom: 6px; }
+  .compare-text { color: #1e293b; }
+  .verdict-block { margin-top: 22px; padding: 26px 22px; border-radius: 16px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.14); }
+  .verdict-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.6px; font-weight: 900; margin-bottom: 10px; opacity: 0.95; }
+  .verdict-text { font-size: 30px; font-weight: 900; letter-spacing: 1.8px; line-height: 1.1; }
+  .verdict-note { font-size: 14.5px; font-weight: 500; margin-top: 14px; opacity: 0.98; font-style: italic; line-height: 1.6; }
+  .v-accumulate { background: linear-gradient(135deg, #059669, #10b981); color: #ffffff; }
+  .v-dips { background: linear-gradient(135deg, #0891b2, #06b6d4); color: #ffffff; }
+  .v-hold { background: linear-gradient(135deg, #ca8a04, #eab308); color: #ffffff; }
+  .v-reduce { background: linear-gradient(135deg, #ea580c, #f97316); color: #ffffff; }
+  .v-avoid { background: linear-gradient(135deg, #dc2626, #ef4444); color: #ffffff; }
+  .v-special { background: linear-gradient(135deg, #4b5563, #6b7280); color: #ffffff; }
+  .s90 { color: #7c3aed; }
+  .s85 { color: #059669; }
+  .s80 { color: #0284c7; }
+  .s75 { color: #d97706; }
+  .s70 { color: #ea580c; }
+  .s60 { color: #dc2626; }
+  .s55 { color: #64748b; }
+  .lg-s90 { background: linear-gradient(135deg, #ede9fe, #c4b5fd); color: #4c1d95; }
+  .lg-s85 { background: #d1fae5; color: #064e3b; }
+  .lg-s80 { background: #dbeafe; color: #1e3a8a; }
+  .lg-s75 { background: #fef3c7; color: #78350f; }
+  .lg-s70 { background: #ffedd5; color: #7c2d12; }
+  .lg-s60 { background: #fee2e2; color: #7f1d1d; }
+  .lg-s55 { background: #e5e7eb; color: #1f2937; }
+  @media print {
+    @page { size: A4; margin: 12mm 14mm 14mm 14mm; }
+    body { background: #ffffff; font-size: 10.5pt; line-height: 1.55; color: #0f172a; }
+    .container { padding: 0; max-width: 100%; }
+    .toolbar-actions, .filter-bar, .legend, .legend-scope, .disclaimer, .header { display: none !important; }
+    .grid { display: block !important; grid-template-columns: 1fr !important; gap: 0 !important; }
+    .card { break-inside: avoid; page-break-inside: avoid; page-break-after: always; break-after: page; box-shadow: none; border: 1.5px solid #cbd5e1; padding: 16px 18px; margin: 0 0 8px; border-radius: 6px; height: auto; }
+    .card:last-child { page-break-after: auto; }
+    .card-top { padding-bottom: 10px; border-bottom: 2px solid #cbd5e1; margin-bottom: 10px; }
+    .company-name { font-size: 18pt; margin-bottom: 4px; }
+    .sector { font-size: 8pt; letter-spacing: 1px; }
+    .metrics { font-size: 9pt; padding: 8px 10px; margin-top: 8px; }
+    .scores { gap: 8px; margin-bottom: 12px; }
+    .score-box { padding: 10px 6px; border-width: 1.5px; }
+    .score-label { font-size: 7.5pt; letter-spacing: 0.8px; margin-bottom: 3px; }
+    .score-value { font-size: 22pt; }
+    .hero { font-size: 10pt; padding: 10px 12px; margin-bottom: 10px; line-height: 1.55; border-left-width: 4px; }
+    .hero-label { font-size: 7pt; letter-spacing: 1.1px; margin-bottom: 5px; }
+    .subs { font-size: 9.5pt; line-height: 1.5; margin-bottom: 10px; }
+    .subs li { padding: 6px 0 6px 18px; }
+    .subs li:before { top: 6px; left: 3px; font-size: 9pt; }
+    .assessment, .note, .compare { font-size: 9.5pt; padding: 10px 12px; margin-top: 8px; line-height: 1.55; }
+    .assessment-row, .compare-row { margin: 8px 0; }
+    .assessment-label, .compare-label { font-size: 7pt; letter-spacing: 1.1px; margin-bottom: 3px; }
+    .note { border-left-width: 3px; }
+    .verdict-block { box-shadow: none; border: 2px solid #64748b; padding: 12px; margin-top: 10px; border-radius: 8px; }
+    .verdict-label { font-size: 7.5pt; margin-bottom: 4px; }
+    .verdict-text { font-size: 16pt; letter-spacing: 1.2px; }
+    .verdict-note { font-size: 9pt; margin-top: 6px; }
+  }
 </style>
 </head>
 <body>
@@ -82,6 +121,10 @@
     <h1>Catalyst Scorecard — 57 India Growth Stocks</h1>
     <div class="tagline">Growth catalysts + Management quality + Moat quality — three separate lenses</div>
     <div class="disclaimer">Not investment advice. Scores measure catalyst/management/moat quality on the pasted data — NOT valuation, not a buy signal. Own diligence required.</div>
+    <div class="toolbar-actions">
+      <button class="btn btn-pdf" onclick="window.print()">⬇ Download as PDF</button>
+      <button class="btn" onclick="document.documentElement.scrollTo({top:0,behavior:'smooth'})">↑ Back to Top</button>
+    </div>
     <div class="legend-scope">Click a tier to filter <span id="tierScope">(applies to Catalyst score)</span></div>
     <div class="legend">
       <span class="legend-item lg-all active" data-tier="all">All</span>
