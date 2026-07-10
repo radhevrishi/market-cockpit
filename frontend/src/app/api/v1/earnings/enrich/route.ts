@@ -209,10 +209,19 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     };
     const salesCurr = get('Sales', latestIdx) ?? get('Revenue', latestIdx) ?? get('Income', latestIdx) ?? get('Interest', latestIdx) ?? get('Premium', latestIdx);
     const salesPrev = get('Sales', priorIdx) ?? get('Revenue', priorIdx) ?? get('Income', priorIdx) ?? get('Interest', priorIdx) ?? get('Premium', priorIdx);
-    const opCurr = get('Operating Profit', latestIdx);
-    const opPrev = get('Operating Profit', priorIdx);
-    const opmCurr = get('OPM', latestIdx);
-    const opmPrev = get('OPM', priorIdx);
+    // zzz233 — NBFC / bank / insurance sector-shape fallback.
+    // Screener.in labels these sectors' operating profit differently:
+    //   NBFC / Bank       → "Financing Profit" + "Financing Margin %"
+    //   Insurance         → "Underwriting Profit" (rare) + no OPM row
+    // Without the fallback, L&T Finance (LTF), Indian Bank (INDIANB), and
+    // Bank of Maharashtra (MAHABANK) all rendered as OPM 0.0% (+0.0pp) on
+    // Earnings Opportunities cards. The literal string "Operating Profit"
+    // and "OPM" simply never appear in those rows so get(...) returned null,
+    // and the PATCH 1005 op/rev fallback couldn't fill it either.
+    const opCurr = get('Operating Profit', latestIdx) ?? get('Financing Profit', latestIdx);
+    const opPrev = get('Operating Profit', priorIdx) ?? get('Financing Profit', priorIdx);
+    const opmCurr = get('OPM', latestIdx) ?? get('Financing Margin', latestIdx);
+    const opmPrev = get('OPM', priorIdx) ?? get('Financing Margin', priorIdx);
     const patCurr = get('Net Profit', latestIdx) ?? get('Profit', latestIdx);
     const patPrev = get('Net Profit', priorIdx) ?? get('Profit', priorIdx);
     const epsCurr = get('EPS', latestIdx);
