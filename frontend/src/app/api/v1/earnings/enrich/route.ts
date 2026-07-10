@@ -834,28 +834,46 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     if (!Number.isFinite(n) || !Number.isFinite(r) || r <= 0) return null;
     return (n / r) * 100;
   };
-  if (out.opm_pct == null) {
+  // zzz234 — treat opm_pct === 0 (with populated sales) as "unknown, refill".
+  // The Cloudflare Worker (screener-worker, primary source) returns opm_pct=0
+  // for NBFCs/banks because its Screener parser looks for "OPM" which those
+  // sectors don't have (they use "Financing Margin %"). The prior `== null`
+  // check let this 0 slip through unchanged. Symptom: LTF/INDIANB/MAHABANK
+  // Q1 FY27 cards showed OPM 0.0% (+0.0pp) vs 0.0%. Only kicks in when
+  // sales_curr_cr is non-trivial (≥100 Cr) — a company with real 0% OPM
+  // at that scale would be genuinely unusual, and the fallback still returns
+  // null if no source can compute it, so worst case is unchanged behavior.
+  const _opmNeedsRefill = (opm: any, sales: any) =>
+    opm == null ||
+    (opm === 0 && sales != null && Number.isFinite(Number(sales)) && Number(sales) >= 100);
+  if (_opmNeedsRefill(out.opm_pct, out.sales_curr_cr)) {
     // Try worker -> nse -> screener for op_profit + revenue
     const candidates = [
       [worker?.operating_profit_curr_cr ?? worker?.opCurr, worker?.sales_curr_cr ?? worker?.revenue],
       [nse?.op_profit_curr_cr,                              nse?.sales_curr_cr],
       [screener?.op_profit_curr_cr,                         screener?.sales_curr_cr],
     ];
+    let refilled: number | null = null;
     for (const [op, rev] of candidates) {
       const v = _opmFrom(op, rev);
-      if (v != null) { out.opm_pct = v; break; }
+      if (v != null && v !== 0) { refilled = v; break; }
     }
+    if (refilled != null) out.opm_pct = refilled;
+    else if (out.opm_pct === 0) out.opm_pct = null;  // 0 stayed 0 → mark unknown so UI can render "—"
   }
-  if (out.opm_prev_pct == null) {
+  if (_opmNeedsRefill(out.opm_prev_pct, out.sales_prev_cr)) {
     const candidates = [
       [worker?.operating_profit_prev_cr ?? worker?.opPrev, worker?.sales_prev_cr],
       [nse?.op_profit_prev_cr,                              nse?.sales_prev_cr],
       [screener?.op_profit_prev_cr,                         screener?.sales_prev_cr],
     ];
+    let refilled: number | null = null;
     for (const [op, rev] of candidates) {
       const v = _opmFrom(op, rev);
-      if (v != null) { out.opm_prev_pct = v; break; }
+      if (v != null && v !== 0) { refilled = v; break; }
     }
+    if (refilled != null) out.opm_prev_pct = refilled;
+    else if (out.opm_prev_pct === 0) out.opm_prev_pct = null;
   }
   // Sanity clamp — anything outside reasonable margin range is a parser bug
   if (out.opm_pct != null && (out.opm_pct > 100 || out.opm_pct < -50)) {
