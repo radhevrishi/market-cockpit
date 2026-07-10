@@ -6,6 +6,7 @@
 <title>Catalyst Scorecard — 59 India Growth Stocks</title>
 <style>
   * { box-sizing: border-box; }
+  html { scroll-snap-type: y proximity; scroll-padding-top: 8px; scroll-behavior: smooth; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 0; line-height: 1.6; font-size: 19px; -webkit-font-smoothing: antialiased; }
   .container { max-width: 100%; margin: 0 auto; padding: 12px 16px 40px; }
   .header { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #e2e8f0; }
@@ -19,13 +20,10 @@
   .btn-pdf { background: #dc2626; box-shadow: 0 2px 4px rgba(220,38,38,0.25); }
   .btn-pdf:hover { background: #b91c1c; }
   .nav-fixed { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 100; }
-  /* Auto-hide header while viewing companies */
-  body.scrolled .header, body.scrolled .filter-bar { display: none !important; }
-  .show-controls { display: none; position: fixed; top: 8px; right: 8px; z-index: 200; padding: 6px 10px; background: #0f172a; color: #fff; border: none; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
-  .show-controls:hover { background: #1e293b; }
-  body.dark .show-controls { background: #3b82f6; }
-  body.dark .show-controls:hover { background: #2563eb; }
-  body.scrolled .show-controls { display: inline-flex; }
+  /* Compact sticky header — always visible, small footprint so scroll layout stays stable */
+  .header { position: sticky; top: 0; z-index: 50; background: #f1f5f9; padding: 8px 0 6px; margin-bottom: 8px; }
+  body.dark .header { background: #0b1220; }
+  .show-controls { display: none; }
   .nav-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: #0f172a; color: #ffffff; font-size: 16px; font-weight: 800; cursor: pointer; box-shadow: 0 3px 8px rgba(0,0,0,0.22); transition: transform 0.15s, background 0.15s; }
   .nav-btn:hover { background: #1e293b; transform: translateY(-1px) scale(1.05); }
   body.dark .nav-btn { background: #3b82f6; }
@@ -42,8 +40,8 @@
   .filter-bar input { flex: 1; min-width: 200px; }
   .filter-bar input:focus, .filter-bar select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
   .count { color: #475569; font-size: 12px; margin-left: auto; font-weight: 700; }
-  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
-  .grid > .card { scroll-margin-top: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+  .grid > .card { scroll-snap-align: start; scroll-margin-top: 80px; }
   .card { background: #ffffff; border-radius: 10px; padding: 12px 16px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 0 2px 6px rgba(15,23,42,0.05); page-break-inside: avoid; }
   .card-top { padding-bottom: 8px; border-bottom: 1.5px solid #f1f5f9; margin-bottom: 8px; }
   .company-name { font-size: 26px; font-weight: 800; color: #0f172a; margin: 0 0 4px; letter-spacing: -0.3px; line-height: 1.2; }
@@ -181,7 +179,6 @@
 </style>
 </head>
 <body>
-<button class="show-controls" id="showControls" title="Show filters &amp; header">☰ Filters</button>
 <div class="container">
   <div class="header">
     <div class="header-top">
@@ -1310,27 +1307,18 @@ function scrollToCard(dir) {
   const cards = Array.from(document.querySelectorAll('#grid .card'));
   if (!cards.length) return;
   const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  // Snap-tolerance accounts for sticky-header offset (scroll-margin-top: 80)
+  const headerOffset = 90;
   const cur = currentCardIndex(cards);
   const curTop = cardDocTop(cards[cur]);
-  const aligned = Math.abs(scrollTop - curTop) <= 6;
+  const aligned = Math.abs((scrollTop + headerOffset) - curTop) <= 20;
   let nextIdx;
   if (dir > 0) {
     nextIdx = aligned ? Math.min(cards.length - 1, cur + 1) : cur;
   } else {
     nextIdx = aligned ? Math.max(0, cur - 1) : cur;
   }
-  // Pre-collapse the header BEFORE computing the target so layout is stable during
-  // the smooth-scroll animation. Otherwise body.scrolled toggles mid-scroll,
-  // the document shrinks, and the target Y becomes invalid → we land mid-card.
-  if (nextIdx > 0) {
-    document.body.classList.add('scrolled');
-  } else {
-    document.body.classList.remove('scrolled');
-  }
-  // Use requestAnimationFrame to let layout settle after the class toggle
-  requestAnimationFrame(() => {
-    cards[nextIdx].scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+  cards[nextIdx].scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 document.getElementById('prevCo').addEventListener('click', () => scrollToCard(-1));
 document.getElementById('nextCo').addEventListener('click', () => scrollToCard(1));
@@ -1353,19 +1341,7 @@ themeBtn.addEventListener('click', () => {
   try { localStorage.setItem('scorecard-theme', next); } catch(e) {}
 });
 
-// Auto-hide header + filter bar once user scrolls into company data
-let _scrollTicking = false;
-window.addEventListener('scroll', () => {
-  if (_scrollTicking) return;
-  _scrollTicking = true;
-  requestAnimationFrame(() => {
-    document.body.classList.toggle('scrolled', window.scrollY > 40);
-    _scrollTicking = false;
-  });
-}, { passive: true });
-document.getElementById('showControls').addEventListener('click', () => {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-});
+// (auto-hide removed — header is now sticky-compact so scroll layout stays stable)
 
 ['search', 'sort', 'tierScoreDim'].forEach(id => document.getElementById(id).addEventListener('input', render));
 
