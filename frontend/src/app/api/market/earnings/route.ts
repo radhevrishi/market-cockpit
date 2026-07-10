@@ -781,7 +781,40 @@ export async function GET(request: Request) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Helper to check if a ticker has confirmation from ANY source
+    // Helper to check if a ticker has confirmation from ANY source.
+    // zzz232 — date-proximity fix. Previously this was per-ticker only, so a
+    // ticker with a stale April confirmation (e.g. VIKASLIFE's Q2/H1 FY26
+    // restated filing on 21 Apr 2026) would falsely vouch for every future
+    // board-meeting notice in the next 14-day window. Symptom: same ticker
+    // showing as "Good" on both 24 Jun (Q4 FY26) and 09 Jul (Q1 FY27) even
+    // though neither had a matching outcome-of-board-meeting filing near
+    // those dates.
+    //
+    // Now the confirmation date (financialResults filing date, results-filing
+    // date, or outcome-announcement date) must be within ±7 days of the
+    // meeting date to count as confirmation FOR THAT MEETING. Legitimate
+    // confirmations file within 0–3 days of the board meeting so ±7 is
+    // generous. Stale confirmations for old quarters cannot leak forward.
+    const CONFIRM_WINDOW_MS = 7 * 24 * 3600 * 1000;
+    const isConfirmedNear = (ticker: string, meetingDate: Date) => {
+      const t = meetingDate.getTime();
+      const withinWindow = (d: any) => {
+        if (!d) return false;
+        const dt = d instanceof Date ? d : new Date(d);
+        if (isNaN(dt.getTime())) return false;
+        return Math.abs(dt.getTime() - t) <= CONFIRM_WINDOW_MS;
+      };
+      const co = confirmedOutcomes.get(ticker);
+      if (co && withinWindow(co._annDate)) return true;
+      const fr = frResultsByTicker.get(ticker);
+      if (fr && withinWindow(fr._filingDate)) return true;
+      const rf = resultsFilingsByTicker.get(ticker);
+      if (rf && withinWindow(rf._filingDate)) return true;
+      return false;
+    };
+    // Backward-compat: some downstream code (Section C standalone events)
+    // still only cares "has ANY confirmation for this ticker" without a
+    // specific meeting date. Keep the old broad form available for that use.
     const isConfirmed = (ticker: string) =>
       confirmedOutcomes.has(ticker) || frResultsByTicker.has(ticker) || resultsFilingsByTicker.has(ticker);
 
@@ -812,7 +845,8 @@ export async function GET(request: Request) {
       // filing occurred, so we never let it inherit Screener's latest Q4 data.
       // For older meetings (>14 days), still drop entirely.
       const ageDays = Math.floor((today.getTime() - meetingDate.getTime()) / (24 * 3600_000));
-      const confirmed = isConfirmed(ticker);
+      // zzz232 — date-proximity confirmation. See isConfirmedNear() comment.
+      const confirmed = isConfirmedNear(ticker, meetingDate);
       if (isPast && !confirmed && ageDays > 14) continue;
 
       const stockInfo = priceLookup[ticker];
