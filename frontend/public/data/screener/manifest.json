@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-07-09T14:25:32Z",
+  "lastSync": "2026-07-10T07:31:45Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11544,
+      "size": 11995,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 8216,
+      "size": 8218,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 9981,
+      "size": 9982,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,37 +25,37 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 4928,
+      "size": 6246,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 3237,
+      "size": 3633,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 4411,
+      "size": 4870,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 5340,
+      "size": 5741,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 12851,
+      "size": 12080,
       "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 5735,
+      "size": 5333,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 6538,
+      "size": 6540,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 5818,
+      "size": 6678,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 12280,
+      "size": 12684,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23027,
+      "size": 23030,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63310,
+      "size": 63316,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65542,
+      "size": 65547,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 8528,
+      "size": 7715,
       "displayName": "Weekly Volume Pockets"
     }
   ]
