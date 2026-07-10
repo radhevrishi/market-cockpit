@@ -1731,6 +1731,15 @@ export default function EarningsOpportunitiesPage() {
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' });
       let payload: any = null;
       try { payload = await res.json(); } catch {}
+      // zzz236 — chase with refreshMissing=1 so zzz235's stale-OPM refill runs
+      // on cards whose OPM was previously stuck at 0 (Worker pre-zzz234 NBFC/
+      // bank quirk). force=1 alone rebuilds from KV but the hub-cached rows
+      // still carry opm=0; only refreshMissing=1 re-enriches per ticker and
+      // merges the fresh margin. Same date as force call so both operate on
+      // the same KV entry.
+      try {
+        await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`, { cache: 'no-store' });
+      } catch {}
       // Then refetch via React Query so the UI picks up the new data
       await Promise.all([refetchHub(), refetchGraded()]);
       // zzz190: removed the "auto-jump to latest with filings" fallback.
