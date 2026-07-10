@@ -7,9 +7,7 @@
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 0; line-height: 1.75; font-size: 17px; -webkit-font-smoothing: antialiased; }
-  .container { max-width: 100%; margin: 0 auto; padding: 32px 40px 60px; }
-  @media (min-width: 1600px) { .container { padding: 40px 60px 80px; } }
-  @media (min-width: 2000px) { .container { max-width: 1900px; padding: 48px 40px 80px; } }
+  .container { max-width: 100%; margin: 0 auto; padding: 24px 24px 60px; }
   .header { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 3px solid #e2e8f0; }
   h1 { margin: 0 0 12px; font-size: 38px; color: #0f172a; font-weight: 800; letter-spacing: -0.6px; line-height: 1.2; }
   .tagline { color: #334155; font-size: 18px; margin-bottom: 20px; line-height: 1.55; }
@@ -19,6 +17,11 @@
   .btn:hover { background: #1e293b; transform: translateY(-1px); }
   .btn-pdf { background: #dc2626; box-shadow: 0 2px 4px rgba(220,38,38,0.25); }
   .btn-pdf:hover { background: #b91c1c; }
+  .nav-fixed { position: fixed; right: 24px; bottom: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 100; }
+  .nav-btn { width: 56px; height: 56px; border-radius: 50%; border: none; background: #0f172a; color: #ffffff; font-size: 24px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.25); transition: transform 0.15s, background 0.15s; }
+  .nav-btn:hover { background: #1e293b; transform: translateY(-2px) scale(1.05); }
+  body.dark .nav-btn { background: #3b82f6; }
+  body.dark .nav-btn:hover { background: #2563eb; }
   .legend-scope { font-size: 14px; color: #475569; margin-bottom: 10px; font-weight: 700; }
   .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; font-size: 14px; }
   .legend-item { padding: 9px 18px; border-radius: 999px; font-weight: 700; cursor: pointer; opacity: 0.6; transition: opacity 0.15s, transform 0.15s; user-select: none; font-size: 14px; border: 2px solid transparent; }
@@ -30,8 +33,8 @@
   .filter-bar input { flex: 1; min-width: 260px; }
   .filter-bar input:focus, .filter-bar select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.18); }
   .count { color: #475569; font-size: 15px; margin-left: auto; font-weight: 800; }
-  .grid { display: grid; grid-template-columns: 1fr; gap: 32px; }
-  @media (min-width: 1180px) { .grid { grid-template-columns: 1fr 1fr; gap: 32px; } }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 60px; scroll-snap-type: y proximity; }
+  .grid > .card { scroll-snap-align: start; scroll-margin-top: 20px; }
   .card { background: #ffffff; border-radius: 18px; padding: 32px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 0 4px 14px rgba(15,23,42,0.06); page-break-inside: avoid; }
   .card-top { padding-bottom: 22px; border-bottom: 3px solid #f1f5f9; margin-bottom: 22px; }
   .company-name { font-size: 28px; font-weight: 800; color: #0f172a; margin: 0 0 8px; letter-spacing: -0.5px; line-height: 1.2; }
@@ -83,6 +86,56 @@
   .lg-s70 { background: #ffedd5; color: #7c2d12; }
   .lg-s60 { background: #fee2e2; color: #7f1d1d; }
   .lg-s55 { background: #e5e7eb; color: #1f2937; }
+  /* ===== DARK THEME OVERRIDES ===== */
+  body.dark { background: #0b1220; color: #e2e8f0; }
+  body.dark .header { border-bottom-color: #1e293b; }
+  body.dark h1 { color: #f1f5f9; }
+  body.dark .tagline { color: #cbd5e1; }
+  body.dark .disclaimer { background: #422006; color: #fef3c7; border-left-color: #f59e0b; }
+  body.dark .btn { background: #1e293b; color: #f1f5f9; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+  body.dark .btn:hover { background: #334155; }
+  body.dark .btn-pdf { background: #dc2626; }
+  body.dark .btn-pdf:hover { background: #b91c1c; }
+  body.dark .legend-scope { color: #94a3b8; }
+  body.dark .lg-all { background: #334155; color: #e2e8f0; }
+  body.dark .legend-item.active { border-color: #e2e8f0; }
+  body.dark .filter-bar { background: #1e293b; border-color: #334155; box-shadow: none; }
+  body.dark .filter-bar input, body.dark .filter-bar select { background: #0f172a; color: #e2e8f0; border-color: #334155; }
+  body.dark .filter-bar input:focus, body.dark .filter-bar select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+  body.dark .count { color: #cbd5e1; }
+  body.dark .card { background: #1e293b; border-color: #334155; box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+  body.dark .card-top { border-bottom-color: #334155; }
+  body.dark .company-name { color: #f1f5f9; }
+  body.dark .sector { color: #60a5fa; }
+  body.dark .metrics { background: #0f172a; color: #cbd5e1; }
+  body.dark .score-box { background: #0f172a; border-color: #334155; }
+  body.dark .score-label { color: #94a3b8; }
+  body.dark .hero { background: linear-gradient(135deg, #422006, #78350f); color: #fef3c7; border-left-color: #f59e0b; }
+  body.dark .hero-label { color: #fbbf24; }
+  body.dark .subs { color: #e2e8f0; }
+  body.dark .subs li { border-bottom-color: #253147; }
+  body.dark .subs li:before { color: #38bdf8; }
+  body.dark .assessment { background: #0f172a; border-color: #334155; }
+  body.dark .assessment-label { color: #fbbf24; }
+  body.dark .note { background: #422006; border-left-color: #f59e0b; color: #fde68a; }
+  body.dark .compare { background: #172554; border-color: #1e3a8a; }
+  body.dark .compare-label { color: #93c5fd; }
+  body.dark .compare-text { color: #dbeafe; }
+  body.dark .verdict-block { box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+  body.dark .s85 { color: #10b981; }
+  body.dark .s80 { color: #38bdf8; }
+  body.dark .s75 { color: #fbbf24; }
+  body.dark .s70 { color: #fb923c; }
+  body.dark .s60 { color: #f87171; }
+  body.dark .s55 { color: #94a3b8; }
+  body.dark .s90 { color: #c084fc; }
+  body.dark .lg-s90 { background: linear-gradient(135deg, #581c87, #7c3aed); color: #f3e8ff; }
+  body.dark .lg-s85 { background: #065f46; color: #d1fae5; }
+  body.dark .lg-s80 { background: #075985; color: #e0f2fe; }
+  body.dark .lg-s75 { background: #92400e; color: #fef3c7; }
+  body.dark .lg-s70 { background: #9a3412; color: #ffedd5; }
+  body.dark .lg-s60 { background: #991b1b; color: #fee2e2; }
+  body.dark .lg-s55 { background: #374151; color: #f3f4f6; }
   @media print {
     @page { size: A4; margin: 12mm 14mm 14mm 14mm; }
     body { background: #ffffff; font-size: 10.5pt; line-height: 1.55; color: #0f172a; }
@@ -123,7 +176,12 @@
     <div class="disclaimer">Not investment advice. Scores measure catalyst/management/moat quality on the pasted data — NOT valuation, not a buy signal. Own diligence required.</div>
     <div class="toolbar-actions">
       <button class="btn btn-pdf" onclick="window.print()">⬇ Download as PDF</button>
+      <button class="btn" id="themeToggle">🌙 Dark Mode</button>
       <button class="btn" onclick="document.documentElement.scrollTo({top:0,behavior:'smooth'})">↑ Back to Top</button>
+    </div>
+    <div class="nav-fixed">
+      <button class="nav-btn" id="prevCo" title="Previous company (↑)">↑</button>
+      <button class="nav-btn" id="nextCo" title="Next company (↓)">↓</button>
     </div>
     <div class="legend-scope">Click a tier to filter <span id="tierScope">(applies to Catalyst score)</span></div>
     <div class="legend">
@@ -1184,6 +1242,39 @@ function render() {
     </div>
   `).join('');
 }
+
+// Company navigation — jump to next/previous visible card
+function scrollToCard(dir) {
+  const cards = Array.from(document.querySelectorAll('#grid .card'));
+  if (!cards.length) return;
+  const top = window.scrollY + 60;
+  let idx = 0;
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i].offsetTop <= top + 20) idx = i;
+  }
+  const next = Math.max(0, Math.min(cards.length - 1, idx + dir));
+  cards[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+document.getElementById('prevCo').addEventListener('click', () => scrollToCard(-1));
+document.getElementById('nextCo').addEventListener('click', () => scrollToCard(1));
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'j' || e.key === 'ArrowDown' && e.shiftKey) { e.preventDefault(); scrollToCard(1); }
+  if (e.key === 'k' || e.key === 'ArrowUp' && e.shiftKey) { e.preventDefault(); scrollToCard(-1); }
+});
+
+// Theme toggle with persistence
+const themeBtn = document.getElementById('themeToggle');
+function applyTheme(theme) {
+  if (theme === 'dark') { document.body.classList.add('dark'); themeBtn.textContent = '☀ Light Mode'; }
+  else { document.body.classList.remove('dark'); themeBtn.textContent = '🌙 Dark Mode'; }
+}
+try { applyTheme(localStorage.getItem('scorecard-theme') || 'light'); } catch(e) { applyTheme('light'); }
+themeBtn.addEventListener('click', () => {
+  const next = document.body.classList.contains('dark') ? 'light' : 'dark';
+  applyTheme(next);
+  try { localStorage.setItem('scorecard-theme', next); } catch(e) {}
+});
 
 ['search', 'sort', 'tierScoreDim'].forEach(id => document.getElementById(id).addEventListener('input', render));
 
