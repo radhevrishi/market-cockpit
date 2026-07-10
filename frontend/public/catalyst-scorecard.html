@@ -1292,13 +1292,13 @@ function render() {
   `).join('');
 }
 
-// Company navigation — jump to next/previous card, aligned to its top
+// Company navigation — jump to next/previous card, aligned to its title
 function cardDocTop(card) {
   return card.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop);
 }
 function currentCardIndex(cards) {
   const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-  const probe = scrollTop + 12; // tiny buffer for rounding
+  const probe = scrollTop + 24; // small buffer so a card that is just barely off-top still counts
   let idx = 0;
   for (let i = 0; i < cards.length; i++) {
     if (cardDocTop(cards[i]) <= probe) idx = i;
@@ -1309,17 +1309,28 @@ function currentCardIndex(cards) {
 function scrollToCard(dir) {
   const cards = Array.from(document.querySelectorAll('#grid .card'));
   if (!cards.length) return;
-  const cur = currentCardIndex(cards);
   const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const cur = currentCardIndex(cards);
   const curTop = cardDocTop(cards[cur]);
-  // If going down and we're not yet at the current card's top, snap to current card first
+  const aligned = Math.abs(scrollTop - curTop) <= 6;
   let nextIdx;
   if (dir > 0) {
-    nextIdx = Math.abs(scrollTop - curTop) > 4 ? cur : Math.min(cards.length - 1, cur + 1);
+    nextIdx = aligned ? Math.min(cards.length - 1, cur + 1) : cur;
   } else {
-    nextIdx = Math.abs(scrollTop - curTop) > 4 ? cur : Math.max(0, cur - 1);
+    nextIdx = aligned ? Math.max(0, cur - 1) : cur;
   }
-  window.scrollTo({ top: cardDocTop(cards[nextIdx]), behavior: 'smooth' });
+  // Pre-collapse the header BEFORE computing the target so layout is stable during
+  // the smooth-scroll animation. Otherwise body.scrolled toggles mid-scroll,
+  // the document shrinks, and the target Y becomes invalid → we land mid-card.
+  if (nextIdx > 0) {
+    document.body.classList.add('scrolled');
+  } else {
+    document.body.classList.remove('scrolled');
+  }
+  // Use requestAnimationFrame to let layout settle after the class toggle
+  requestAnimationFrame(() => {
+    cards[nextIdx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 document.getElementById('prevCo').addEventListener('click', () => scrollToCard(-1));
 document.getElementById('nextCo').addEventListener('click', () => scrollToCard(1));
