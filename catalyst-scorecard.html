@@ -42,8 +42,8 @@
   .filter-bar input { flex: 1; min-width: 200px; }
   .filter-bar input:focus, .filter-bar select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
   .count { color: #475569; font-size: 12px; margin-left: auto; font-weight: 700; }
-  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; scroll-snap-type: y proximity; }
-  .grid > .card { scroll-snap-align: start; scroll-margin-top: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .grid > .card { scroll-margin-top: 8px; }
   .card { background: #ffffff; border-radius: 10px; padding: 12px 16px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 0 2px 6px rgba(15,23,42,0.05); page-break-inside: avoid; }
   .card-top { padding-bottom: 8px; border-bottom: 1.5px solid #f1f5f9; margin-bottom: 8px; }
   .company-name { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 2px; letter-spacing: -0.3px; line-height: 1.2; }
@@ -1262,24 +1262,41 @@ function render() {
   `).join('');
 }
 
-// Company navigation — jump to next/previous visible card
+// Company navigation — jump to next/previous card, aligned to its top
+function cardDocTop(card) {
+  return card.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop);
+}
+function currentCardIndex(cards) {
+  const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const probe = scrollTop + 12; // tiny buffer for rounding
+  let idx = 0;
+  for (let i = 0; i < cards.length; i++) {
+    if (cardDocTop(cards[i]) <= probe) idx = i;
+    else break;
+  }
+  return idx;
+}
 function scrollToCard(dir) {
   const cards = Array.from(document.querySelectorAll('#grid .card'));
   if (!cards.length) return;
-  const top = window.scrollY + 60;
-  let idx = 0;
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i].offsetTop <= top + 20) idx = i;
+  const cur = currentCardIndex(cards);
+  const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const curTop = cardDocTop(cards[cur]);
+  // If going down and we're not yet at the current card's top, snap to current card first
+  let nextIdx;
+  if (dir > 0) {
+    nextIdx = Math.abs(scrollTop - curTop) > 4 ? cur : Math.min(cards.length - 1, cur + 1);
+  } else {
+    nextIdx = Math.abs(scrollTop - curTop) > 4 ? cur : Math.max(0, cur - 1);
   }
-  const next = Math.max(0, Math.min(cards.length - 1, idx + dir));
-  cards[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  window.scrollTo({ top: cardDocTop(cards[nextIdx]), behavior: 'smooth' });
 }
 document.getElementById('prevCo').addEventListener('click', () => scrollToCard(-1));
 document.getElementById('nextCo').addEventListener('click', () => scrollToCard(1));
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-  if (e.key === 'j' || e.key === 'ArrowDown' && e.shiftKey) { e.preventDefault(); scrollToCard(1); }
-  if (e.key === 'k' || e.key === 'ArrowUp' && e.shiftKey) { e.preventDefault(); scrollToCard(-1); }
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'j') { e.preventDefault(); scrollToCard(1); }
+  else if (e.key === 'k') { e.preventDefault(); scrollToCard(-1); }
 });
 
 // Theme toggle with persistence
