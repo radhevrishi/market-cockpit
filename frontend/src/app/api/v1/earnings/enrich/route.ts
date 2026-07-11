@@ -884,6 +884,46 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     console.log(`[enrich] PATCH 1005: opm_prev_pct out-of-range for ${symbol}: ${out.opm_prev_pct} → null`);
     out.opm_prev_pct = null;
   }
+  // zzz237 — PAT-margin ultimate fallback for NBFC/bank filings where every
+  // OPM source (Worker, NSE, Screener) came up empty. This happens because
+  //   1. The Cloudflare Worker parses Screener HTML looking for "OPM" — for
+  //      NBFCs/banks the row is "Financing Margin %", never matched → 0/null.
+  //   2. Vercel's direct Screener fetch is Cloudflare-blocked most of the time
+  //      (that's the whole reason the Worker exists as a proxy).
+  //   3. NSE's XBRL `re_operatingProfit` field is absent for these sectors.
+  // So neither op_profit nor opm ever reaches the merge, and the card shows
+  // "— screener gap" for LTF / INDIANB / MAHABANK etc. despite having full
+  // sales / PAT / EPS data.
+  //
+  // Fallback logic: if opm_pct is still null but pat_curr_cr and sales_curr_cr
+  // are both populated and positive, compute a Net Profit Margin from PAT/Sales
+  // and use it as an OPM proxy. For NBFCs this is roughly the Financing Margin
+  // scale (both express profit as % of revenue), so the card renders a
+  // reasonable number instead of an em-dash. Same for the prior-year figure.
+  // Only fires when opm is literally null (not 0) so the sanity clamp above
+  // still owns the > 100 / < -50 rejection path.
+  const _patMargin = (pat: any, sales: any): number | null => {
+    if (pat == null || sales == null) return null;
+    const p = Number(pat); const s = Number(sales);
+    if (!Number.isFinite(p) || !Number.isFinite(s) || s <= 0) return null;
+    const v = (p / s) * 100;
+    if (v > 100 || v < -50) return null;  // same sanity band as OPM
+    return Math.round(v * 10) / 10;
+  };
+  if (out.opm_pct == null) {
+    const v = _patMargin(out.pat_curr_cr, out.sales_curr_cr);
+    if (v != null) {
+      out.opm_pct = v;
+      out._opm_source = 'pat-margin-fallback';
+    }
+  }
+  if (out.opm_prev_pct == null) {
+    const v = _patMargin(out.pat_prev_cr, out.sales_prev_cr);
+    if (v != null) {
+      out.opm_prev_pct = v;
+      out._opm_prev_source = 'pat-margin-fallback';
+    }
+  }
 
   // PATCH 0369 — If NSE/Screener fetchers didn't give us a real company
   // name (or returned the ticker as the name), resolve via Screener.in
