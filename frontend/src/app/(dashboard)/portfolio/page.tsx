@@ -1063,6 +1063,346 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
           </div>
         </div>
       </div>
+
+      {/* ── PATCH zzz238 — INSTITUTIONAL ANALYTICS ROW ───────────────────
+        Twelve additional decision-grade views on top of the base six.
+        All derived from data already on PortfolioRow (no new fetches),
+        so they light up instantly on any load. Kept in one flat grid
+        below the base blocks to preserve the existing layout order.
+      */}
+      {(() => {
+        // Preload helpers used across blocks
+        const totalPnlDay = dayPnl;
+        const priced2 = priced;
+        const effectiveN = hhi > 0 ? Math.round(10000 / hhi) : 0;
+        const capBetaMap: Record<string, number> = { large: 0.85, mid: 1.05, small: 1.25, micro: 1.45, other: 1.0 };
+        const wtdBeta = rows.reduce((a, r) => {
+          const w = (r.currentValue || 0) / totalCur;
+          return a + w * (capBetaMap[normCapBucket(r.cap)] ?? 1.0);
+        }, 0);
+        // Cross-sectional 1D vol proxy (std dev of holdings' 1D change%)
+        const chgArr = priced2.map(r => r.changePercent || 0);
+        const meanChg = chgArr.length ? chgArr.reduce((a, b) => a + b, 0) / chgArr.length : 0;
+        const varChg = chgArr.length ? chgArr.reduce((a, b) => a + (b - meanChg) ** 2, 0) / chgArr.length : 0;
+        const stdChg = Math.sqrt(varChg);
+        // Sharpe-like ratio: portfolio wtd return / cross-sectional pnl% stddev
+        const pnlPctArr = priced2.map(r => r.pnlPercent || 0);
+        const meanPnl = pnlPctArr.length ? pnlPctArr.reduce((a, b) => a + b, 0) / pnlPctArr.length : 0;
+        const varPnl = pnlPctArr.length ? pnlPctArr.reduce((a, b) => a + (b - meanPnl) ** 2, 0) / pnlPctArr.length : 0;
+        const stdPnl = Math.sqrt(varPnl);
+        const riskAdjRet = stdPnl > 0 ? wtdRet / stdPnl : null;
+        // Dollar attribution — who moved the needle?
+        const attrSorted = [...priced2].sort((a, b) => (b.pnl || 0) - (a.pnl || 0));
+        const topContribs = attrSorted.slice(0, 5);
+        const worstDrags = [...attrSorted].reverse().slice(0, 5).filter(r => (r.pnl || 0) < 0);
+        const topSumP = topContribs.reduce((a, r) => a + (r.pnl || 0), 0);
+        const dragSumP = worstDrags.reduce((a, r) => a + (r.pnl || 0), 0);
+        // Winner dollars vs loser dollars
+        const winnerPnl = priced2.filter(r => (r.pnl || 0) > 0).reduce((a, r) => a + (r.pnl || 0), 0);
+        const loserPnl = priced2.filter(r => (r.pnl || 0) < 0).reduce((a, r) => a + Math.abs(r.pnl || 0), 0);
+        const winLossRatio = loserPnl > 0 ? winnerPnl / loserPnl : (winnerPnl > 0 ? Infinity : 0);
+        // Style tilt (heuristic from cap + score buckets)
+        let tiltMomentum = 0, tiltQuality = 0, tiltValue = 0, tiltDeep = 0;
+        for (const r of rows) {
+          const w = (r.currentValue || 0) / totalCur;
+          const s = r.score;
+          const c = normCapBucket(r.cap);
+          if (typeof s === 'number' && s >= 75) tiltMomentum += w;
+          else if (typeof s === 'number' && s >= 60) tiltQuality += w;
+          else if (c === 'micro') tiltDeep += w;
+          else tiltValue += w;
+        }
+        const styleTotal = tiltMomentum + tiltQuality + tiltValue + tiltDeep;
+        // Position size distribution (weight buckets)
+        const sizeBuckets: Record<string, number> = { XS: 0, S: 0, M: 0, L: 0, XL: 0 };
+        for (const r of rows) {
+          const w = ((r.currentValue || 0) / totalCur) * 100;
+          if (w < 1) sizeBuckets.XS++;
+          else if (w < 2) sizeBuckets.S++;
+          else if (w < 4) sizeBuckets.M++;
+          else if (w < 6) sizeBuckets.L++;
+          else sizeBuckets.XL++;
+        }
+        // Concentration alerts
+        const heavyPositions = rows.filter(r => ((r.currentValue || 0) / totalCur) * 100 >= 5).length;
+        const heavySectors = sectors.filter(s => s.valPct >= 25).length;
+        const heavySector = sectors[0] && sectors[0].valPct >= 25 ? sectors[0] : null;
+        // Loser concentration — % of value in loss-making positions
+        const loserVal = priced2.filter(r => (r.pnl || 0) < 0).reduce((a, r) => a + (r.currentValue || 0), 0);
+        const loserValPct = totalCur > 0 ? (loserVal / totalCur) * 100 : 0;
+        // Trim / turnaround candidates
+        const trimCands = priced2.filter(r => {
+          const w = ((r.currentValue || 0) / totalCur) * 100;
+          return w >= 4 && (r.pnlPercent || 0) >= 30;
+        }).sort((a, b) => (b.pnl || 0) - (a.pnl || 0)).slice(0, 4);
+        const turnCands = priced2.filter(r => {
+          const w = ((r.currentValue || 0) / totalCur) * 100;
+          return w <= 2 && (r.pnlPercent || 0) <= -5 && (r.pnlPercent || 0) >= -25;
+        }).sort((a, b) => (a.pnlPercent || 0) - (b.pnlPercent || 0)).slice(0, 4);
+        // Sector risk-adjusted return leaders / laggards
+        const sectorRet = sectors.map(s => {
+          const inv = rows.filter(r => (r.sector || 'Unclassified') === s.sector)
+            .reduce((a, r) => a + (r.investedValue || 0), 0);
+          const ret = inv > 0 ? (s.pnl / inv) * 100 : 0;
+          return { sector: s.sector, ret, valPct: s.valPct, count: s.count };
+        }).filter(s => s.sector !== 'Unclassified');
+        const bestSector = [...sectorRet].sort((a, b) => b.ret - a.ret)[0];
+        const worstSector = [...sectorRet].sort((a, b) => a.ret - b.ret)[0];
+        // Diversification score (0-100 composite)
+        const divCount = Math.min(1, rows.length / 30);          // 30+ names = full
+        const divSector = Math.min(1, sectors.filter(s => s.sector !== 'Unclassified').length / 8);
+        const divHHI = Math.max(0, 1 - (hhi - 500) / 2500);       // 500 hhi ≈ ideal, > 3000 = poor
+        const divScore = Math.round((divCount * 0.25 + divSector * 0.25 + divHHI * 0.5) * 100);
+        // Portfolio velocity (day P&L as % of current value)
+        const dayVelocity = totalCur > 0 ? (totalPnlDay / totalCur) * 100 : 0;
+        const StyleBar = ({ label, pct, color }: any) => (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 3 }}>
+              <span style={{ color: 'var(--mc-text-2)', fontWeight: 700 }}>{label}</span>
+              <span style={{ color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>{(pct * 100).toFixed(0)}%</span>
+            </div>
+            <div style={{ height: 6, background: 'var(--mc-bg-2)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(100, pct * 100)}%`, background: color, borderRadius: 4 }} />
+            </div>
+          </div>
+        );
+        const KV = ({ label, value, sub, color }: any) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12.5, marginBottom: 6 }}>
+            <span style={{ color: 'var(--mc-text-3)' }}>{label}</span>
+            <span style={{ textAlign: 'right' }}>
+              <span style={{ color: color || 'var(--mc-text-0)', fontWeight: 800 }}>{value}</span>
+              {sub && <span style={{ color: 'var(--mc-text-4)', fontSize: 10.5, marginLeft: 6 }}>{sub}</span>}
+            </span>
+          </div>
+        );
+        return (
+          <>
+            {/* Row A — Risk / diversification / P&L attribution */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+              {/* Risk profile */}
+              <div style={card}>
+                <div style={h}>Risk profile</div>
+                <KV label="Portfolio beta (cap-derived)" value={wtdBeta.toFixed(2)}
+                    sub={wtdBeta > 1.2 ? 'aggressive' : wtdBeta > 1.0 ? 'above market' : wtdBeta < 0.9 ? 'defensive' : 'market-like'}
+                    color={wtdBeta > 1.3 ? 'var(--mc-warn)' : 'var(--mc-text-0)'} />
+                <KV label="Cross-sectional 1D vol" value={`${stdChg.toFixed(2)}%`}
+                    sub={stdChg > 3 ? 'high dispersion' : stdChg > 1.5 ? 'moderate' : 'tight cluster'} />
+                <KV label="Cross-sectional return vol" value={`${stdPnl.toFixed(1)}%`}
+                    sub="spread of holding returns" />
+                <KV label="Risk-adjusted return" value={riskAdjRet != null ? riskAdjRet.toFixed(2) : '—'}
+                    sub={riskAdjRet != null && riskAdjRet >= 0.5 ? 'strong per unit risk' : riskAdjRet != null && riskAdjRet >= 0 ? 'positive' : 'below 0'}
+                    color={riskAdjRet != null && riskAdjRet >= 0.5 ? 'var(--mc-bullish)' : 'var(--mc-text-0)'} />
+                <KV label="Effective N (1/HHI)" value={String(effectiveN)}
+                    sub={effectiveN >= 25 ? 'well diversified' : effectiveN >= 15 ? 'moderate' : 'concentrated'} />
+              </div>
+              {/* P&L attribution — top contributors */}
+              <div style={card}>
+                <div style={h}>P&amp;L attribution — top contributors</div>
+                {topContribs.length ? topContribs.map(r => {
+                  const share = totalPnl !== 0 ? ((r.pnl || 0) / totalPnl) * 100 : 0;
+                  return (
+                    <div key={r.symbol} style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                        <span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{r.symbol}</span>
+                        <span style={{ color: (r.pnl || 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                          {fmtRs(Math.abs(r.pnl || 0))} <span style={{ color: 'var(--mc-text-4)', fontWeight: 600, fontSize: 10.5 }}>{share.toFixed(0)}% of total</span>
+                        </span>
+                      </div>
+                      <div style={{ height: 5, background: 'var(--mc-bg-2)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${Math.min(100, Math.abs(share))}%`, background: 'var(--mc-bullish)', borderRadius: 3 }} />
+                      </div>
+                    </div>
+                  );
+                }) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>Not enough data yet</div>}
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--mc-bg-2)', fontSize: 11, color: 'var(--mc-text-4)' }}>
+                  Top 5 drove {totalPnl !== 0 ? Math.round((topSumP / totalPnl) * 100) : 0}% of total P&amp;L
+                </div>
+              </div>
+              {/* Loser drag */}
+              <div style={card}>
+                <div style={h}>Loser drag</div>
+                {worstDrags.length ? worstDrags.map(r => {
+                  const share = totalPnl !== 0 ? ((r.pnl || 0) / totalPnl) * 100 : 0;
+                  return (
+                    <div key={r.symbol} style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                        <span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{r.symbol}</span>
+                        <span style={{ color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                          -{fmtRs(Math.abs(r.pnl || 0))} <span style={{ color: 'var(--mc-text-4)', fontWeight: 600, fontSize: 10.5 }}>{pctTxt(r.pnlPercent || 0)}</span>
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }) : <div style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>No losers — clean sheet</div>}
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--mc-bg-2)', fontSize: 11, color: 'var(--mc-text-4)' }}>
+                  Losers hold {loserValPct.toFixed(0)}% of current value · dragging {fmtRs(Math.abs(dragSumP))}
+                </div>
+              </div>
+            </div>
+
+            {/* Row B — Style / concentration alerts / diversification */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+              {/* Style tilt */}
+              <div style={card}>
+                <div style={h}>Style tilt (heuristic)</div>
+                {styleTotal > 0 ? (
+                  <>
+                    <StyleBar label="Momentum (score ≥ 75)" pct={tiltMomentum} color="#F59E0B" />
+                    <StyleBar label="Quality (score 60-74)" pct={tiltQuality} color="#22D3EE" />
+                    <StyleBar label="Value (large/mid, low score)" pct={tiltValue} color="#60A5FA" />
+                    <StyleBar label="Deep-value (micro-cap, unscored)" pct={tiltDeep} color="#94A3B8" />
+                    <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginTop: 6 }}>
+                      Bucketed from cap × Multibagger/quality score. Recompute after CB sync.
+                    </div>
+                  </>
+                ) : <div style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>Style buckets need scored holdings</div>}
+              </div>
+              {/* Concentration alerts */}
+              <div style={card}>
+                <div style={h}>Concentration alerts</div>
+                <KV label="Positions ≥ 5% weight" value={String(heavyPositions)}
+                    sub={heavyPositions >= 3 ? 'watch drift' : 'well-sized'}
+                    color={heavyPositions >= 3 ? 'var(--mc-warn)' : 'var(--mc-bullish)'} />
+                <KV label="Sectors ≥ 25% weight" value={String(heavySectors)}
+                    sub={heavySectors >= 1 ? (heavySector ? `${heavySector.sector} ${heavySector.valPct.toFixed(0)}%` : '') : 'balanced'}
+                    color={heavySectors >= 1 ? 'var(--mc-warn)' : 'var(--mc-bullish)'} />
+                <KV label="Top-1 position" value={largest ? `${largest.sym} ${largest.pct.toFixed(1)}%` : '—'}
+                    sub={largest && largest.pct >= 8 ? 'high single-name risk' : 'moderate'}
+                    color={largest && largest.pct >= 8 ? 'var(--mc-warn)' : 'var(--mc-text-0)'} />
+                <KV label="HHI" value={Math.round(hhi).toLocaleString('en-IN')}
+                    sub={hhi > 2500 ? 'concentrated' : hhi > 1500 ? 'moderate' : 'well spread'} />
+                <KV label="Loser-value drag" value={`${loserValPct.toFixed(0)}%`}
+                    sub={loserValPct > 20 ? 'high' : loserValPct > 10 ? 'moderate' : 'low'}
+                    color={loserValPct > 20 ? 'var(--mc-warn)' : 'var(--mc-text-0)'} />
+              </div>
+              {/* Diversification score */}
+              <div style={card}>
+                <div style={h}>Diversification score</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                  <div style={{ fontSize: 34, fontWeight: 800, color: divScore >= 70 ? 'var(--mc-bullish)' : divScore >= 50 ? 'var(--mc-warn)' : 'var(--mc-bearish)' }}>{divScore}</div>
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>out of 100</div>
+                </div>
+                <div style={{ height: 8, background: 'var(--mc-bg-2)', borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
+                  <div style={{ height: '100%', width: `${divScore}%`, background: divScore >= 70 ? 'var(--mc-bullish)' : divScore >= 50 ? 'var(--mc-warn)' : 'var(--mc-bearish)' }} />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}><span>Names ({rows.length}/30 target)</span><span>{Math.round(divCount * 100)}%</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}><span>Sector spread ({sectors.filter(s => s.sector !== 'Unclassified').length}/8)</span><span>{Math.round(divSector * 100)}%</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>HHI ({Math.round(hhi)})</span><span>{Math.round(divHHI * 100)}%</span></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Row C — Sector leaders / actionable signals / position size */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+              {/* Sector leader / laggard */}
+              <div style={card}>
+                <div style={h}>Sector leader &amp; laggard</div>
+                <KV label="Best sector" value={bestSector ? `${bestSector.sector}` : '—'}
+                    sub={bestSector ? `${pctTxt(bestSector.ret)} · ${bestSector.count} holdings · ${bestSector.valPct.toFixed(0)}% weight` : ''}
+                    color="var(--mc-bullish)" />
+                <KV label="Worst sector" value={worstSector ? `${worstSector.sector}` : '—'}
+                    sub={worstSector ? `${pctTxt(worstSector.ret)} · ${worstSector.count} holdings · ${worstSector.valPct.toFixed(0)}% weight` : ''}
+                    color="var(--mc-bearish)" />
+                <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px dashed var(--mc-bg-2)', fontSize: 11, color: 'var(--mc-text-4)' }}>
+                  Sector return = P&amp;L on invested capital in that sector
+                </div>
+                {sectorRet.length > 2 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Full ranking</div>
+                    {[...sectorRet].sort((a, b) => b.ret - a.ret).map(s => (
+                      <div key={s.sector} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '1px 0' }}>
+                        <span style={{ color: 'var(--mc-text-2)' }}>{s.sector}</span>
+                        <span style={{ color: s.ret >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>{pctTxt(s.ret)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Trim / turnaround candidates */}
+              <div style={card}>
+                <div style={h}>Actionable signals</div>
+                <div style={{ fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>✂ TRIM CANDIDATES</div>
+                {trimCands.length ? trimCands.map(r => (
+                  <div key={r.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
+                    <span style={{ color: 'var(--mc-text-2)' }}>{r.symbol}</span>
+                    <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{pctTxt(r.pnlPercent || 0)} · {(((r.currentValue || 0) / totalCur) * 100).toFixed(1)}%</span>
+                  </div>
+                )) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 6 }}>No trim triggers (need weight ≥4% AND return ≥30%)</div>}
+                <div style={{ fontSize: 10.5, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginTop: 10, marginBottom: 4 }}>↻ TURNAROUND WATCH</div>
+                {turnCands.length ? turnCands.map(r => (
+                  <div key={r.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
+                    <span style={{ color: 'var(--mc-text-2)' }}>{r.symbol}</span>
+                    <span style={{ color: 'var(--mc-bearish)', fontWeight: 700 }}>{pctTxt(r.pnlPercent || 0)} · {(((r.currentValue || 0) / totalCur) * 100).toFixed(1)}%</span>
+                  </div>
+                )) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>No turnaround watch (weight ≤2% AND return between -25% and -5%)</div>}
+              </div>
+              {/* Position size distribution */}
+              <div style={card}>
+                <div style={h}>Position size distribution</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[
+                    { k: 'XL', label: '≥ 6% weight', count: sizeBuckets.XL, color: '#F59E0B' },
+                    { k: 'L',  label: '4–6% weight',  count: sizeBuckets.L,  color: '#FBBF24' },
+                    { k: 'M',  label: '2–4% weight',  count: sizeBuckets.M,  color: '#22D3EE' },
+                    { k: 'S',  label: '1–2% weight',  count: sizeBuckets.S,  color: '#60A5FA' },
+                    { k: 'XS', label: '< 1% weight',  count: sizeBuckets.XS, color: '#64748B' },
+                  ].map(row => {
+                    const pct = rows.length > 0 ? (row.count / rows.length) * 100 : 0;
+                    return (
+                      <div key={row.k}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 3 }}>
+                          <span style={{ color: 'var(--mc-text-2)', fontWeight: 700 }}>{row.k} · {row.label}</span>
+                          <span style={{ color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>{row.count} <span style={{ color: 'var(--mc-text-4)', fontSize: 10.5 }}>({pct.toFixed(0)}%)</span></span>
+                        </div>
+                        <div style={{ height: 5, background: 'var(--mc-bg-2)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: row.color, borderRadius: 3 }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 10.5, color: 'var(--mc-text-4)' }}>
+                  Ideal: bell centered on 2–4% for a 25-30 name book · lots of XS = death by a thousand cuts
+                </div>
+              </div>
+            </div>
+
+            {/* Row D — Velocity / winner-loser dollars */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+              <div style={card}>
+                <div style={h}>Portfolio velocity (today)</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 30, fontWeight: 800, color: dayVelocity >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pctTxt(dayVelocity)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>1-day move on current value</div>
+                </div>
+                <KV label="Day P&L" value={`${totalPnlDay >= 0 ? '+' : ''}${fmtRs(Math.abs(totalPnlDay))}`}
+                    color={totalPnlDay >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'} />
+                <KV label="Move vs benchmark (Nifty)" value="see index header"
+                    sub="beta suggests amplified vs Nifty" />
+                <KV label="Beta-adjusted expected 1D" value={`${(wtdBeta * (dayVelocity / (wtdBeta || 1))).toFixed(2)}%`}
+                    sub="portfolio × beta reference" />
+              </div>
+              <div style={card}>
+                <div style={h}>Winner vs loser dollars</div>
+                <KV label="Winning positions ₹" value={fmtRs(winnerPnl)} color="var(--mc-bullish)" sub={`${winners.length} names`} />
+                <KV label="Losing positions ₹" value={fmtRs(loserPnl)} color="var(--mc-bearish)" sub={`${losers.length} names`} />
+                <KV label="Win/Loss ratio" value={winLossRatio === Infinity ? '∞' : winLossRatio.toFixed(2)}
+                    sub={winLossRatio >= 3 ? 'strong asymmetry' : winLossRatio >= 1.5 ? 'positive' : 'flat'}
+                    color={winLossRatio >= 3 ? 'var(--mc-bullish)' : 'var(--mc-text-0)'} />
+                <KV label="Median winner return" value={(() => {
+                  const arr = priced2.filter(r => (r.pnl || 0) > 0).map(r => r.pnlPercent || 0).sort((a, b) => a - b);
+                  return arr.length ? pctTxt(arr[Math.floor(arr.length / 2)]) : '—';
+                })()} />
+                <KV label="Median loser return" value={(() => {
+                  const arr = priced2.filter(r => (r.pnl || 0) < 0).map(r => r.pnlPercent || 0).sort((a, b) => a - b);
+                  return arr.length ? pctTxt(arr[Math.floor(arr.length / 2)]) : '—';
+                })()} />
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
