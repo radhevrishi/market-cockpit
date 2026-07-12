@@ -646,44 +646,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         {/* Top Bar */}
         <header style={{ backgroundColor: 'var(--mc-bg-1)', borderBottom: '1px solid var(--mc-bg-4)', flexShrink: 0 }}>
 
-          {/* Markets ticker — horizontal scroll on mobile */}
-          <div
-            style={{
-              height: '36px',
-              backgroundColor: '#060E1A',
-              borderBottom: '1px solid var(--mc-bg-4)',
-              display: 'flex',
-              alignItems: 'center',
-              paddingLeft: '12px',
-              paddingRight: '12px',
-              gap: '16px',
-              overflowX: 'auto',
-              whiteSpace: 'nowrap',
-            }}
-            className="scrollbar-hide mobile-scroll"
-          >
-            {(showLoadingSkeleton || isLoading) && (!liveIndices || liveIndices.length === 0) ? (
-              // Show animated skeleton pills while market data loads
-              MARKETS_FALLBACK.map(m => (
-                <div key={m.symbol} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0, padding: '4px 4px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--mc-text-4)' }}>{m.symbol}</span>
-                  <div style={{ width: '42px', height: '12px', backgroundColor: 'var(--mc-bg-4)', borderRadius: '4px', animation: 'shimmer 1.5s infinite' }} />
-                  <div style={{ width: '38px', height: '12px', backgroundColor: 'var(--mc-bg-4)', borderRadius: '4px', animation: 'shimmer 1.5s infinite 0.2s' }} />
-                </div>
-              ))
-            ) : markets.map(m => (
-              <button
-                key={m.symbol}
-                onClick={() => setDrawerTicker({ symbol: m.symbol })}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', transition: 'background-color 0.15s' }}
-                title={`View ${m.symbol} details`}
-              >
-                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--mc-text-2)' }}>{m.symbol}</span>
-                {m.price !== '—' && <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>{m.price}</span>}
-                <span style={{ fontSize: '11px', fontWeight: '700', color: m.change === '—' || m.change === '...' ? 'var(--mc-text-4)' : m.up ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>{m.change}</span>
-              </button>
-            ))}
-          </div>
+          {/* zzz240 — Markets ticker bar (NIFTY 50 / BANK NIFTY / SENSEX /
+              USD-INR) removed per user request. Full-width index widgets on
+              Market Snapshot cover the same ground with more detail. */}
 
           {/* Header row — compact on mobile */}
           <div style={{ height: '48px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

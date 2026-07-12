@@ -2593,12 +2593,41 @@ export default function HomeDashboard() {
             </div>
           </div>
 
+          {/* ═══════════════ zzz239 — FAVOURITES ROW ═══════════════════════
+              User-pinned quick-access shortcuts, sits right below "Good morning".
+              These 11 items ALSO used to appear in the A-Z chip strip below —
+              they've been removed there to avoid duplicates. Edit list by
+              adjusting this block and the corresponding removal below.
+          */}
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 8 }}>⭐ Favourites</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
+              <Link href="/watchlists?tab=conviction"      style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
+              <Link href="/earnings-opportunities"         style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
+              <a
+                href="https://www.ibef.org/news/past-news"
+                target="_blank" rel="noopener noreferrer"
+                style={navChip('#10B981')}
+              >🇮🇳 IBEF</a>
+              <Link href="/movers"                         style={navChip('#10B981')}>📈 Movers</Link>
+              <Link href="/multibagger"                    style={navChip('#10B981')}>🚀 Multibagger</Link>
+              <Link href="/portfolio"                      style={navChip('#22D3EE')}>💼 My Book</Link>
+              <Link href="/news"                           style={navChip('#60A5FA')}>📰 News Feed</Link>
+              <Link href="/fundamentals?scope=portfolio"   style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
+              <Link href="/multibagger?tab=technicals-usa" style={navChip('#22D3EE')}>📈 USA Technicals</Link>
+              <Link href="/valuation-calc"                 style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+              <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
+            </div>
+          </div>
+
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
             {/* zzz166 — Fully alphabetized by label (case-insensitive, ignoring emoji).
                 Adds 📈 India Technicals + 📈 USA Technicals deep-links to
                 /multibagger?tab=technicals-ind|usa. */}
+            {/* zzz239 — heading for the A-Z all-tools chip strip */}
+            <div style={{ width: '100%', fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 4 }}>📚 All tools · A–Z</div>
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</Link>
             <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
@@ -2610,36 +2639,26 @@ export default function HomeDashboard() {
             <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
-            <Link href="/watchlists?tab=conviction" style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
+            {/* zzz239 — 🏆 Conviction Beats moved to Favourites row above */}
             <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
             <Link href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</Link>
             <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
-            <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
+            {/* zzz239 — 📅 Earnings Ops moved to Favourites row above */}
             <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
             <Link href="/earnings-trigger"       style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
             <Link href="/fan-principle"          style={navChip('#06B6D4')}>🪭 Fan Principle</Link>
             <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
             <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
-            <a
-              href="https://www.ibef.org/news/past-news"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={navChip('#10B981')}
-            >🇮🇳 IBEF</a>
-            {/* zzz166 — India Technicals deep-link */}
-            <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
+            {/* zzz239 — 🇮🇳 IBEF and 📈 India Technicals moved to Favourites row above */}
             <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
             <Link href="/in-play"                style={navChip('#22D3EE')}>📰 Live In Play</Link>
             <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
-            <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
-            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
-            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
-            <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
+            {/* zzz239 — 📈 Movers, 🚀 Multibagger, 💼 My Book, 📰 News Feed moved to Favourites row above */}
             <Link href="/news-triage"            style={navChip('#EF4444')}>📰 News Triage</Link>
             <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
-            <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
+            {/* zzz239 — 🔬 Portfolio Fundamentals moved to Favourites row above */}
             <Link href="/portfolio-simulator"     style={navChip('#A78BFA')}>🎲 Portfolio Simulator</Link>
             <Link href="/winning-playbook"      style={navChip('#F59E0B')}>🏆 Winning Playbook</Link>
             <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
@@ -2648,14 +2667,7 @@ export default function HomeDashboard() {
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
             <Link href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</Link>
             <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
-            {/* PATCH 1101aa — External IBEF news link (India Brand Equity Foundation).
-                Opens in new tab; not a Next.js Link because it's a third-party URL. */}
-            <a
-              href="https://www.ibef.org/news/past-news"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={navChip('#10B981')}
-            >🇮🇳 IBEF</a>
+            {/* zzz239 — duplicate IBEF removed (also moved to Favourites row above) */}
             {/* PATCH 1101eee — Screener.in sync via browser bookmarklet.
                 Server-side fetch is blocked by Cloudflare's data-center IP filter.
                 The /screener-sync page guides the user through a one-time
@@ -2791,9 +2803,7 @@ export default function HomeDashboard() {
             <Link href="/system-health"          style={navChip('#10B981')}>🩺 System Health</Link>
             <Link href="/journey"                style={navChip('#22D3EE')}>🚀 The Journey</Link>
             <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
-            {/* zzz166 — USA Technicals deep-link */}
-            <Link href="/multibagger?tab=technicals-usa" style={navChip('#22D3EE')}>📈 USA Technicals</Link>
-            <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+            {/* zzz239 — 📈 USA Technicals and 🧮 Valuation Calc moved to Favourites row above */}
             <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
             <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
             <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
