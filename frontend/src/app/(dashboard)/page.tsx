@@ -2447,8 +2447,8 @@ export default function HomeDashboard() {
         {/* HEADER */}
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: TEXT }}>🌅 {greeting}, Rishi</h1>
-            <div style={{ marginTop: 6, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
+            {/* zzz241 — greeting header removed per user request. Date + status chips remain below. */}
+            <div style={{ marginTop: 0, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
               <span>{now ? now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</span>
               <span>·</span>
               <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST' : '—:—'}</span>
