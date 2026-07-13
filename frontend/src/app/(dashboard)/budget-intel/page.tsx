@@ -461,18 +461,40 @@ function parseGrandTotal(rawText: string): GrandTotal {
 
 function detectBEYear(rawText: string): { yearNew: string; yearPrev: string; yearActuals: string } {
   const text = rawText.replace(/[\r\t]/g, ' ');
-  const beMatches = [...text.matchAll(/Budget\s+Estimates?\s+(\d{4})\s*[-–]\s*(\d{2,4})/gi)];
-  if (beMatches.length >= 1) {
-    const last = beMatches[beMatches.length - 1];
-    const yearNew = `${last[1]}-${last[2].length === 2 ? last[2] : last[2].slice(2)}`;
-    const yStart = parseInt(yearNew.slice(0, 4));
-    return { yearNew, yearPrev: `${yStart - 1}-${String(yStart).slice(2)}`, yearActuals: `${yStart - 2}-${String(yStart - 1).slice(2)}` };
+  // zzz257 — Only match exact 2- or 4-digit suffixes. pdf.js sometimes splits
+  // "2026" as "202" + "6", which formerly matched \d{2,4} and produced garbage
+  // like "2025-2" after slice(2). Reject 3-digit suffixes explicitly.
+  const buildYear = (four: string, suffix: string): { yearNew: string; yStart: number } | null => {
+    if (suffix.length === 2) {
+      const yStart = parseInt(four);
+      if (!Number.isFinite(yStart) || yStart < 1990 || yStart > 2100) return null;
+      // Sanity: suffix should be yStart+1 mod 100
+      const expected = String((yStart + 1) % 100).padStart(2, '0');
+      if (suffix !== expected) return null;
+      return { yearNew: `${four}-${suffix}`, yStart };
+    } else if (suffix.length === 4) {
+      const yStart = parseInt(four);
+      const yEnd = parseInt(suffix);
+      if (!Number.isFinite(yStart) || yStart < 1990 || yStart > 2100) return null;
+      if (yEnd !== yStart + 1) return null;
+      return { yearNew: `${four}-${suffix.slice(2)}`, yStart };
+    }
+    return null;
+  };
+  const yrRe = /Budget\s+Estimates?\s+(\d{4})\s*[-–]\s*(\d{2}|\d{4})(?!\d)/gi;
+  const beMatches = [...text.matchAll(yrRe)];
+  for (let i = beMatches.length - 1; i >= 0; i--) {
+    const b = buildYear(beMatches[i][1], beMatches[i][2]);
+    if (b) return { yearNew: b.yearNew, yearPrev: `${b.yStart - 1}-${String(b.yStart).slice(2)}`, yearActuals: `${b.yStart - 2}-${String(b.yStart - 1).slice(2)}` };
   }
-  const yr = text.match(/BUDGET AT A GLANCE\s+(\d{4})\s*[-–]\s*(\d{2,4})/i) || text.match(/Budget\s+(\d{4})\s*[-–]\s*(\d{2,4})/i);
-  if (yr) {
-    const yearNew = `${yr[1]}-${yr[2].length === 2 ? yr[2] : yr[2].slice(2)}`;
-    const yStart = parseInt(yearNew.slice(0, 4));
-    return { yearNew, yearPrev: `${yStart - 1}-${String(yStart).slice(2)}`, yearActuals: `${yStart - 2}-${String(yStart - 1).slice(2)}` };
+  // Fallback: doc title
+  const titleMatches = [
+    ...text.matchAll(/BUDGET AT A GLANCE\s+(\d{4})\s*[-–]\s*(\d{2}|\d{4})(?!\d)/gi),
+    ...text.matchAll(/Budget\s+(\d{4})\s*[-–]\s*(\d{2}|\d{4})(?!\d)/gi),
+  ];
+  for (const m of titleMatches) {
+    const b = buildYear(m[1], m[2]);
+    if (b) return { yearNew: b.yearNew, yearPrev: `${b.yStart - 1}-${String(b.yStart).slice(2)}`, yearActuals: `${b.yStart - 2}-${String(b.yStart - 1).slice(2)}` };
   }
   return { yearNew: '', yearPrev: '', yearActuals: '' };
 }
@@ -487,10 +509,21 @@ function parseFiscalHeadline(rawText: string): FiscalHeadline {
   };
   const grabFirst = (re: RegExp): number | null => { const mm = text.match(re); return mm ? parseNumber(mm[1]) : null; };
 
+  // zzz257 — Anchor to "total expenditure" so we don't accidentally capture
+  // "GDP ... estimated at ₹3,93,00,393 crore" as total expenditure.
+  // First, try the strongest signal: Grand Total row from the ministry table
+  // (parseGrandTotal handles this separately — used as fallback in display code).
+  // Here, look for phrasing that explicitly mentions "expenditure".
   let totalExpBE: number | null = null;
-  const contextMatches = [...text.matchAll(/(?:BE\s*)?\d{4}\s*-\s*\d{2,4}\s*(?:is\s+)?estimated\s+at\s+₹\s*([\d,\s]{6,20}?)\s*crore/gi)];
-  if (contextMatches.length > 0) totalExpBE = parseNumber(contextMatches[contextMatches.length - 1][1]);
-  if (totalExpBE == null) totalExpBE = grabLast(/total\s+expenditure.{0,200}?₹\s*([\d,\s]{6,20}?)\s*crore/i);
+  const expContextMatches = [...text.matchAll(/(?:total\s+)?expenditure[^0-9]{0,120}?₹\s*([\d,\s]{6,20}?)\s*crore/gi)];
+  if (expContextMatches.length > 0) {
+    // Prefer BE-new (later) mentions
+    totalExpBE = parseNumber(expContextMatches[expContextMatches.length - 1][1]);
+  }
+  // Sanity check — total expenditure for India FY26/27 is in the ₹40–70 L Cr
+  // range (4-7 million Cr). Anything above ₹100 L Cr (10M Cr) is almost
+  // certainly GDP (~₹300+ L Cr) that leaked through. Reject.
+  if (totalExpBE != null && totalExpBE > 10_000_000) totalExpBE = null;
 
   let totalCapExBE = grabFirst(/total\s+capital\s+expenditure.{0,200}?₹\s*([\d,\s]{6,20}?)\s*crore/i);
   if (totalCapExBE == null) {
