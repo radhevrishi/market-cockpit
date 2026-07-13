@@ -486,8 +486,11 @@ function parseFiscalHeadline(rawText: string): FiscalHeadline {
     const mm = text.match(re);
     return mm ? parseNumber(mm[1]) : null;
   };
-  const yr = text.match(/BUDGET AT A GLANCE\s+(\d{4}-\d{4})/) || text.match(/Budget\s+(\d{4}-\d{4})/);
-  const yearNew = yr ? yr[1] : '';
+  // zzz248 — tolerant year regex. pdf.js emits "BUDGET AT A GLANCE 2026 - 2027"
+  // (spaces around the dash) so a strict \d{4}-\d{4} misses it.
+  const yr = text.match(/BUDGET AT A GLANCE\s+(\d{4})\s*[-–]\s*(\d{2,4})/i)
+          || text.match(/Budget\s+(\d{4})\s*[-–]\s*(\d{2,4})/i);
+  const yearNew = yr ? `${yr[1]}-${yr[2].length === 2 ? yr[2] : yr[2].slice(2)}` : '';
   const yearPrev = yearNew ? `${parseInt(yearNew.slice(0, 4)) - 1}-${parseInt(yearNew.slice(5, 9)) - 1}` : '';
   return {
     totalExpBE: grab(/total expenditure[^0-9]{0,80}₹?\s*([\d,]{6,})/i),
@@ -779,6 +782,38 @@ export default function BudgetIntelPage() {
     el.addEventListener('drop', drop);
     return () => { el.removeEventListener('dragover', prevent); el.removeEventListener('drop', drop); };
   }, [handleFiles]);
+
+  // zzz248 — AUTO-SAVE on successful parse. The old flow required clicking
+  // a Save button, which users missed → they kept seeing stale localStorage
+  // data. Now: whenever a parse produces ≥3 ministries (basic sanity check
+  // that it's a real Budget doc) AND that count exceeds what's stored for
+  // the detected fiscal year, we save silently. The result: uploading a
+  // Budget PDF just works. First save is a fresh insert; subsequent uploads
+  // of the same FY overwrite the older parse (so re-uploading after a code
+  // fix immediately replaces the broken snapshot).
+  useEffect(() => {
+    if (!pending) return;
+    if (pending.ministries.length < 3) return;  // sanity gate
+    const fy = pending.headline.yearNew;
+    if (!fy || !/^\d{4}-\d{2,4}$/.test(fy)) return;
+    const existing = loadYearData(fy);
+    // Only overwrite when the new parse contains strictly more ministries
+    // (or no existing data). This avoids clobbering a good save with a
+    // partial paste.
+    if (existing && existing.ministries.length >= pending.ministries.length) return;
+    const data: BudgetYearData = {
+      fiscalYear: fy,
+      uploadedAt: new Date().toISOString(),
+      documents: inMemoryFiles.map(f => ({ name: f.name, size: f.size, textLen: (inMemoryTexts[f.name] || '').length })),
+      rawTexts: inMemoryTexts,
+      ...pending,
+    };
+    saveYearData(data);
+    setSavedYears(loadYearIndex());
+    setActiveYear(fy);
+    setDataVersion(v => v + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
 
   const savePending = () => {
     if (!pending) return;
@@ -1088,6 +1123,35 @@ export default function BudgetIntelPage() {
               <KV label="Total budget" value={fmtCr(pending.headline.totalExpBE ?? pending.grandTotal.beNew)} color="#22D3EE" />
               <KV label="Themes detected" value={pending.themes.length} />
             </div>
+          </div>
+        )}
+
+        {/* zzz248 — DIAGNOSTIC BAR. Prominently shows what the parser extracted
+            from the active year's stored data. If any count is 0, that
+            module is broken and the user knows immediately — no silent
+            "everything blank because parser failed" mystery. */}
+        {activeData && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 12px', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, fontSize: 11 }}>
+            <span style={{ color: DIM, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.4px' }}>Parsed:</span>
+            {[
+              ['Ministries', activeData.ministries.length],
+              ['Total Exp', activeData.headline.totalExpBE || activeData.grandTotal.beNew ? '✓' : 0],
+              ['Deficits', [activeData.deficits.fiscalDeficit, activeData.deficits.revenueDeficit, activeData.deficits.primaryDeficit].filter(x => x != null).length],
+              ['Receipts lines', Object.values(activeData.receipts).filter(v => typeof v === 'number').length],
+              ['Rupee-from slices', activeData.comesFrom.length],
+              ['Rupee-to slices', activeData.goesTo.length],
+              ['Top schemes', activeData.topSchemes.length],
+              ['Themes', activeData.themes.length],
+            ].map(([label, n]) => (
+              <span key={label as string} style={{
+                padding: '3px 8px', borderRadius: 4,
+                background: (typeof n === 'number' && n > 0) || n === '✓' ? 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)',
+                color: (typeof n === 'number' && n > 0) || n === '✓' ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
+                fontWeight: 800,
+              }}>
+                {label}: {n}
+              </span>
+            ))}
           </div>
         )}
 
