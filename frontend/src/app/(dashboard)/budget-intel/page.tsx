@@ -800,42 +800,57 @@ export default function BudgetIntelPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedYears.length]);
 
-  // zzz253 — READ-TIME RE-PARSE. Completely bypass whatever's stored in
-  // computed fields. If the stored ministries array is empty but rawTexts
-  // has content, re-parse on the fly and return the fresh data. No effects,
-  // no timing, no closure issues, no side effects. Every reader (diagnostic
-  // bar, tabs, exec summary) sees the SAME fresh object because they all
-  // consume this single memoized value. If stored data is healthy (>0
-  // ministries), fast-path early — no perf regression.
-  const activeData = useMemo<BudgetYearData | null>(() => {
-    if (!activeYear) return null;
+  // zzz254 — useState + useEffect for activeData. Also exposes a lastReparse
+  // diagnostic banner so we can see EXACTLY what happened.
+  const [activeData, setActiveData] = useState<BudgetYearData | null>(null);
+  const [lastReparse, setLastReparse] = useState<{ status: string; info: string }>({ status: 'init', info: '' });
+
+  useEffect(() => {
+    if (!activeYear) { setActiveData(null); setLastReparse({ status: 'no-year', info: '' }); return; }
     const stored = loadYearData(activeYear);
-    if (!stored) return null;
-    if (Array.isArray(stored.ministries) && stored.ministries.length > 0) return stored;
-    if (!stored.rawTexts || Object.keys(stored.rawTexts).length === 0) return stored;
-    try {
-      const merged = Object.values(stored.rawTexts).join('\n\n');
-      const rawMinistries = parseMinistryTable(merged);
-      if (rawMinistries.length === 0) return stored;
-      const gt = parseGrandTotal(merged);
-      const headline = parseFiscalHeadline(merged);
-      const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
-      return {
-        ...stored,
-        ministries: enriched,
-        grandTotal: gt,
-        headline,
-        receipts: parseReceiptsBreakdown(merged),
-        deficits: parseDeficitBlock(merged),
-        comesFrom: parseRupeeComesFrom(merged),
-        goesTo: parseRupeeGoesTo(merged),
-        topSchemes: parseTopSchemes(merged),
-        themes: extractThemes(merged),
-      };
-    } catch (err) {
-      try { console.error('[budget-intel] read-time re-parse failed', err); } catch {}
-      return stored;
+    if (!stored) { setActiveData(null); setLastReparse({ status: 'no-stored', info: `FY ${activeYear}` }); return; }
+
+    // Healthy stored data — use as-is.
+    if (Array.isArray(stored.ministries) && stored.ministries.length > 0) {
+      setActiveData(stored);
+      setLastReparse({ status: 'healthy', info: `${stored.ministries.length} ministries from storage` });
+      return;
     }
+
+    // Stale — try to re-parse from stored raw text (NO try/catch — let errors surface).
+    if (!stored.rawTexts || Object.keys(stored.rawTexts).length === 0) {
+      setActiveData(stored);
+      setLastReparse({ status: 'stale-no-rawtext', info: 'stored.rawTexts is empty — re-upload PDF' });
+      return;
+    }
+
+    // Deliberately no try/catch — if there's an exception, React's error boundary will show it.
+    const merged = Object.values(stored.rawTexts).join('\n\n');
+    const rawMinistries = parseMinistryTable(merged);
+    if (rawMinistries.length === 0) {
+      setActiveData(stored);
+      setLastReparse({ status: 'parse-returned-zero', info: `Raw text ${merged.length} chars — parseMinistryTable returned 0 rows` });
+      return;
+    }
+    const gt = parseGrandTotal(merged);
+    const headline = parseFiscalHeadline(merged);
+    const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
+    const reparsed: BudgetYearData = {
+      ...stored,
+      ministries: enriched,
+      grandTotal: gt,
+      headline,
+      receipts: parseReceiptsBreakdown(merged),
+      deficits: parseDeficitBlock(merged),
+      comesFrom: parseRupeeComesFrom(merged),
+      goesTo: parseRupeeGoesTo(merged),
+      topSchemes: parseTopSchemes(merged),
+      themes: extractThemes(merged),
+    };
+    // Persist so next visit is instant.
+    try { saveYearData(reparsed); } catch {}
+    setActiveData(reparsed);
+    setLastReparse({ status: 'reparse-success', info: `${enriched.length} ministries · GT ${gt.beNew ?? 'null'} · Exp ${headline.totalExpBE ?? 'null'}` });
   }, [activeYear, savedYears, dataVersion]);
 
   // In-progress parse (before save)
@@ -1238,6 +1253,21 @@ export default function BudgetIntelPage() {
               <KV label="Total budget" value={fmtCr(pending.headline.totalExpBE ?? pending.grandTotal.beNew)} color="#22D3EE" />
               <KV label="Themes detected" value={pending.themes.length} />
             </div>
+          </div>
+        )}
+
+        {/* zzz254 — LOUD RE-PARSE BANNER. Shows exactly what the activeData
+            useEffect did. Impossible to miss. */}
+        {activeYear && (
+          <div style={{
+            padding: '10px 14px', borderRadius: 8, fontSize: 12, fontWeight: 800,
+            background: lastReparse.status === 'reparse-success' || lastReparse.status === 'healthy' ? 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)' : lastReparse.status.startsWith('stale') || lastReparse.status === 'parse-returned-zero' ? 'color-mix(in srgb, var(--mc-bearish) 20%, transparent)' : 'color-mix(in srgb, #F59E0B 20%, transparent)',
+            border: `1px solid ${lastReparse.status === 'reparse-success' || lastReparse.status === 'healthy' ? 'var(--mc-bullish)' : lastReparse.status.startsWith('stale') || lastReparse.status === 'parse-returned-zero' ? 'var(--mc-bearish)' : '#F59E0B'}`,
+            color: 'var(--mc-text-0)',
+          }}>
+            <span style={{ letterSpacing: '0.5px', textTransform: 'uppercase' as const }}>zzz254 status:</span>{' '}
+            <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{lastReparse.status}</span>{' '}
+            <span style={{ color: 'var(--mc-text-2)', fontWeight: 600 }}>{lastReparse.info}</span>
           </div>
         )}
 
