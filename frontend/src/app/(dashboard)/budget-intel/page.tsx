@@ -764,30 +764,37 @@ export default function BudgetIntelPage() {
     if (savedYears.length === 0) return;
     let anyChanged = false;
     for (const y of savedYears) {
-      const d = loadYearData(y);
-      if (!d) continue;
-      if (d.ministries.length > 0) continue;              // healthy — skip
-      if (!d.rawTexts || Object.keys(d.rawTexts).length === 0) continue;  // no source to re-parse
-      const merged = Object.values(d.rawTexts).join('\n\n');
-      const rawMinistries = parseMinistryTable(merged);
-      if (rawMinistries.length === 0) continue;           // parser still can't find anything — leave alone
-      const gt = parseGrandTotal(merged);
-      const headline = parseFiscalHeadline(merged);
-      const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
-      const updated: BudgetYearData = {
-        ...d,
-        ministries: enriched,
-        grandTotal: gt,
-        headline,
-        receipts: parseReceiptsBreakdown(merged),
-        deficits: parseDeficitBlock(merged),
-        comesFrom: parseRupeeComesFrom(merged),
-        goesTo: parseRupeeGoesTo(merged),
-        topSchemes: parseTopSchemes(merged),
-        themes: extractThemes(merged),
-      };
-      saveYearData(updated);
-      anyChanged = true;
+      try {
+        const d = loadYearData(y);
+        if (!d) continue;
+        // Defensive: old saves might have undefined ministries
+        const currentCount = Array.isArray(d.ministries) ? d.ministries.length : 0;
+        if (currentCount > 0) continue;                       // healthy — skip
+        if (!d.rawTexts || Object.keys(d.rawTexts).length === 0) continue;
+        const merged = Object.values(d.rawTexts).join('\n\n');
+        const rawMinistries = parseMinistryTable(merged);
+        if (rawMinistries.length === 0) continue;
+        const gt = parseGrandTotal(merged);
+        const headline = parseFiscalHeadline(merged);
+        const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
+        const updated: BudgetYearData = {
+          ...d,
+          ministries: enriched,
+          grandTotal: gt,
+          headline,
+          receipts: parseReceiptsBreakdown(merged),
+          deficits: parseDeficitBlock(merged),
+          comesFrom: parseRupeeComesFrom(merged),
+          goesTo: parseRupeeGoesTo(merged),
+          topSchemes: parseTopSchemes(merged),
+          themes: extractThemes(merged),
+        };
+        saveYearData(updated);
+        anyChanged = true;
+        try { console.log('[budget-intel] migration re-parsed FY', y, '- ministries:', enriched.length); } catch {}
+      } catch (err: any) {
+        try { console.error('[budget-intel] migration failed for FY', y, err); } catch {}
+      }
     }
     if (anyChanged) setDataVersion(v => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1511,6 +1518,53 @@ export default function BudgetIntelPage() {
                         {testMinistry('IT and Telecom', /IT\s+and\s+Telecom/i)}<br/>
                         {testMinistry('Interest', /\bInterest\b/)}<br/>
                         {testMinistry('Others', /\bOthers\b/)}<br/>
+                      </div>
+
+                      {/* zzz252 — FORCE RE-PARSE button. If the automatic
+                          migration on hydrate is failing silently for any
+                          reason, this button runs the same logic on demand
+                          with visible alerts. */}
+                      <button
+                        onClick={() => {
+                          try {
+                            if (!activeData) { alert('No active data'); return; }
+                            const raw = Object.values(activeData.rawTexts || {}).join('\n\n');
+                            if (!raw.trim()) { alert('❌ No raw text stored (rawTexts empty). You need to re-upload the PDF.'); return; }
+                            const rawMinistries = parseMinistryTable(raw);
+                            if (rawMinistries.length === 0) {
+                              alert(`❌ Parser returned 0 ministries.\nRaw text length: ${raw.length}\nFirst 500 chars: ${raw.slice(0, 500)}`);
+                              return;
+                            }
+                            const gt = parseGrandTotal(raw);
+                            const headline = parseFiscalHeadline(raw);
+                            const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
+                            const updated: BudgetYearData = {
+                              ...activeData,
+                              ministries: enriched,
+                              grandTotal: gt,
+                              headline,
+                              receipts: parseReceiptsBreakdown(raw),
+                              deficits: parseDeficitBlock(raw),
+                              comesFrom: parseRupeeComesFrom(raw),
+                              goesTo: parseRupeeGoesTo(raw),
+                              topSchemes: parseTopSchemes(raw),
+                              themes: extractThemes(raw),
+                            };
+                            saveYearData(updated);
+                            setDataVersion(v => v + 1);
+                            alert(`✓ Re-parse SUCCESS!\nMinistries: ${enriched.length}\nGrand Total BE: ${gt.beNew ?? 'null'}\nHeadline Total Exp: ${headline.totalExpBE ?? 'null'}\nDeficit: ${updated.deficits.fiscalDeficit ?? 'null'}\n\nAll tabs should now populate.`);
+                          } catch (err: any) {
+                            alert(`💥 EXCEPTION: ${err?.message || err}\n\nStack: ${err?.stack || 'no stack'}`);
+                          }
+                        }}
+                        style={{
+                          marginTop: 12, padding: '10px 20px', fontSize: 13, fontWeight: 800,
+                          background: '#F59E0B', color: '#0B1220', border: 'none', borderRadius: 8,
+                          cursor: 'pointer', letterSpacing: '0.4px',
+                        }}
+                      >🔄 FORCE RE-PARSE STORED TEXT NOW</button>
+                      <div style={{ fontSize: 10.5, color: DIM, marginTop: 4 }}>
+                        Click this if analytics tabs are empty. It runs the current parsers against your stored raw text and shows an alert with the result (or the exact exception if it fails).
                       </div>
                     </div>
                   );
