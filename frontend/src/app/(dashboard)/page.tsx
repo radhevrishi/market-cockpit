@@ -2619,6 +2619,7 @@ export default function HomeDashboard() {
               <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
               <Link href="/market-cycles"                  style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
               <Link href="/news-triage"                    style={navChip('#EF4444')}>📰 News Triage</Link>
+              <Link href="/budget-intel"                   style={navChip('#F59E0B')}>📊 Budget Intel</Link>
             </div>
           </div>
 
