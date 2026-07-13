@@ -265,9 +265,18 @@ function deleteYearData(fy: string): void {
 
 // ─── Number / format helpers ───────────────────────────────────────────────
 function parseNumber(s: string): number | null {
+  // zzz255 — THE REAL BUG. The old regex [ -⁯] was a character RANGE
+  // from U+0020 (space) to U+206F (Word Joiner) which INCLUDES digits
+  // 0-9 (U+0030-U+0039). It stripped every digit from the input, so
+  // parseNumber("273772") returned null, which made every ministry row
+  // hit `if (beNew == null) continue` and the parser returned 0 rows.
+  // The debug panel's testMinistry never called parseNumber (it used
+  // the raw regex captures as strings), which is why the debug appeared
+  // to work while the real parser returned empty for weeks.
+  // New impl: strip everything that isn't a digit / decimal / minus.
   if (!s) return null;
-  const cleaned = String(s).replace(/[₹Rs.,  ]/g, '').replace(/[ -⁯]/g, '');
-  if (!cleaned || cleaned === '-' || cleaned === '—') return null;
+  const cleaned = String(s).replace(/[^\d.\-]/g, '');
+  if (!cleaned || cleaned === '-' || cleaned === '.') return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
@@ -431,7 +440,7 @@ function parseMinistryTable(rawText: string): MinistryRow[] {
     // None for all group() calls downstream.
     // Number regex: 4+ digits (smallest ministry = North East ~₹3-6k Cr).
     // The scale gate `beNew < 5000` below still filters sub-scheme noise.
-    const combined = new RegExp('(?:' + m.pattern.source + ')[^\\n]{0,60}?\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})', flags);
+    const combined = new RegExp('(?:' + m.pattern.source + ')[^\\n]{0,30}?\\s([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})', flags);
     const match = text.match(combined);
     if (!match) continue;
     if (rows.some(r => r.ministry === m.label)) continue;
