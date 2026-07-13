@@ -431,7 +431,7 @@ function parseMinistryTable(rawText: string): MinistryRow[] {
     // None for all group() calls downstream.
     // Number regex: 4+ digits (smallest ministry = North East ~₹3-6k Cr).
     // The scale gate `beNew < 5000` below still filters sub-scheme noise.
-    const combined = new RegExp('(?:' + m.pattern.source + ')[^\\n]{0,30}?\\s([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})', flags);
+    const combined = new RegExp('(?:' + m.pattern.source + ')[^\\n]{0,60}?\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})', flags);
     const match = text.match(combined);
     if (!match) continue;
     if (rows.some(r => r.ministry === m.label)) continue;
