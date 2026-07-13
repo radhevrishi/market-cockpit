@@ -800,9 +800,43 @@ export default function BudgetIntelPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedYears.length]);
 
-  // Current active year's data (from LS). dataVersion is bumped on save/delete
-  // so overwriting the same FY refreshes the view.
-  const activeData = useMemo<BudgetYearData | null>(() => activeYear ? loadYearData(activeYear) : null, [activeYear, savedYears, dataVersion]);
+  // zzz253 — READ-TIME RE-PARSE. Completely bypass whatever's stored in
+  // computed fields. If the stored ministries array is empty but rawTexts
+  // has content, re-parse on the fly and return the fresh data. No effects,
+  // no timing, no closure issues, no side effects. Every reader (diagnostic
+  // bar, tabs, exec summary) sees the SAME fresh object because they all
+  // consume this single memoized value. If stored data is healthy (>0
+  // ministries), fast-path early — no perf regression.
+  const activeData = useMemo<BudgetYearData | null>(() => {
+    if (!activeYear) return null;
+    const stored = loadYearData(activeYear);
+    if (!stored) return null;
+    if (Array.isArray(stored.ministries) && stored.ministries.length > 0) return stored;
+    if (!stored.rawTexts || Object.keys(stored.rawTexts).length === 0) return stored;
+    try {
+      const merged = Object.values(stored.rawTexts).join('\n\n');
+      const rawMinistries = parseMinistryTable(merged);
+      if (rawMinistries.length === 0) return stored;
+      const gt = parseGrandTotal(merged);
+      const headline = parseFiscalHeadline(merged);
+      const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
+      return {
+        ...stored,
+        ministries: enriched,
+        grandTotal: gt,
+        headline,
+        receipts: parseReceiptsBreakdown(merged),
+        deficits: parseDeficitBlock(merged),
+        comesFrom: parseRupeeComesFrom(merged),
+        goesTo: parseRupeeGoesTo(merged),
+        topSchemes: parseTopSchemes(merged),
+        themes: extractThemes(merged),
+      };
+    } catch (err) {
+      try { console.error('[budget-intel] read-time re-parse failed', err); } catch {}
+      return stored;
+    }
+  }, [activeYear, savedYears, dataVersion]);
 
   // In-progress parse (before save)
   const mergedText = useMemo(
