@@ -2617,6 +2617,8 @@ export default function HomeDashboard() {
               <Link href="/multibagger?tab=technicals-usa" style={navChip('#22D3EE')}>📈 USA Technicals</Link>
               <Link href="/valuation-calc"                 style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
               <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
+              <Link href="/market-cycles"                  style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
+              <Link href="/news-triage"                    style={navChip('#EF4444')}>📰 News Triage</Link>
             </div>
           </div>
 
@@ -2653,9 +2655,9 @@ export default function HomeDashboard() {
             <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
             <Link href="/in-play"                style={navChip('#22D3EE')}>📰 Live In Play</Link>
-            <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
+            {/* zzz242 — 🎢 Market Cycles moved to Favourites row above */}
             {/* zzz239 — 📈 Movers, 🚀 Multibagger, 💼 My Book, 📰 News Feed moved to Favourites row above */}
-            <Link href="/news-triage"            style={navChip('#EF4444')}>📰 News Triage</Link>
+            {/* zzz242 — 📰 News Triage moved to Favourites row above */}
             <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             {/* zzz239 — 🔬 Portfolio Fundamentals moved to Favourites row above */}
