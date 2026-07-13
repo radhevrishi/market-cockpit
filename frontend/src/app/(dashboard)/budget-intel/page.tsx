@@ -348,9 +348,24 @@ async function extractDocxText(file: File): Promise<string> {
 }
 
 // ─── Parsers ───────────────────────────────────────────────────────────────
+
+// zzz249 — Universal preprocessor. pdf.js inserts newlines/hasEOL mid-phrase
+// (headings like "Expenditure of Major Items" can come out as
+// "Expenditure\nof Major Items"), so literal-space regexes miss anchors.
+// Also collapses multi-space runs. Applied ONCE to the merged text before
+// any parser runs against it.
+function preprocessBudgetText(rawText: string): string {
+  return rawText
+    .replace(/[\r\t]/g, ' ')
+    .replace(/[ ]+/g, ' ')           // collapse only horizontal whitespace
+    .replace(/\n{3,}/g, '\n\n');     // preserve single/double newlines
+}
+
+// zzz249 — Whitespace-tolerant anchors. Uses \s+ so it matches across any
+// whitespace including hasEOL-inserted newlines.
 function extractMinistrySection(rawText: string): string {
-  const anchor = /Expenditure of Major Items/i;
-  const endAnchor = /Grand Total/i;
+  const anchor = /Expenditure\s+of\s+Major\s+Items/i;
+  const endAnchor = /Grand\s+Total/i;
   const start = rawText.search(anchor);
   if (start < 0) return '';
   const rest = rawText.slice(start);
@@ -359,29 +374,31 @@ function extractMinistrySection(rawText: string): string {
   return rest.slice(0, end + 300);
 }
 
+// zzz249 — All multi-word labels use \s+ to survive pdf.js's mid-phrase
+// newlines from hasEOL. Otherwise "Rural\nDevelopment" would miss the match.
 const MINISTRY_MATCHERS: { label: string; pattern: RegExp }[] = [
   { label: 'Pension', pattern: /\bPension\b/ },
   { label: 'Defence', pattern: /\bDefence\b/ },
   { label: 'Fertiliser', pattern: /Fertili[sz]er\b/ },
   { label: 'Food', pattern: /\bFood\b/ },
   { label: 'Petroleum', pattern: /\bPetroleum\b/ },
-  { label: 'Agriculture', pattern: /Agriculture and Allied|Agriculture &? Allied/i },
-  { label: 'Commerce and Industry', pattern: /Commerce and Industry|Commerce &? Industry/i },
-  { label: 'Development of North East', pattern: /North\s?East/i },
+  { label: 'Agriculture', pattern: /Agriculture\s+and\s+Allied/i },
+  { label: 'Commerce and Industry', pattern: /Commerce\s+and\s+Industry/i },
+  { label: 'Development of North East', pattern: /North\s+East|Development\s+of\s+North\s+East/i },
   { label: 'Education', pattern: /\bEducation\b/ },
   { label: 'Energy', pattern: /\bEnergy\d?\b/ },  // handles "Energy2" footnote digit
-  { label: 'External Affairs', pattern: /External Affairs/i },
+  { label: 'External Affairs', pattern: /External\s+Affairs/i },
   { label: 'Finance', pattern: /\bFinance\b/ },
   { label: 'Health', pattern: /\bHealth\b/ },
-  { label: 'Home Affairs', pattern: /Home Affairs/i },
+  { label: 'Home Affairs', pattern: /Home\s+Affairs/i },
   { label: 'Interest', pattern: /\bInterest\b/ },
-  { label: 'IT and Telecom', pattern: /IT and Telecom|IT &? Telecom/i },
-  { label: 'Rural Development', pattern: /Rural Development/i },
-  { label: 'Scientific Departments', pattern: /Scientific Departments?/i },
-  { label: 'Social Welfare', pattern: /Social Welfare/i },
-  { label: 'Tax Administration', pattern: /Tax Administration/i },
+  { label: 'IT and Telecom', pattern: /IT\s+and\s+Telecom/i },
+  { label: 'Rural Development', pattern: /Rural\s+Development/i },
+  { label: 'Scientific Departments', pattern: /Scientific\s+Departments?/i },
+  { label: 'Social Welfare', pattern: /Social\s+Welfare/i },
+  { label: 'Tax Administration', pattern: /Tax\s+Administration/i },
   { label: 'Transport', pattern: /\bTransport\b/ },
-  { label: 'Urban Development', pattern: /Urban Development/i },
+  { label: 'Urban Development', pattern: /Urban\s+Development/i },
   { label: 'Others', pattern: /\bOthers\b/ },
 ];
 
@@ -472,7 +489,7 @@ function enrichMinistries(rows: MinistryRow[], grandTotalBE: number | null): Enr
 
 function parseGrandTotal(rawText: string): GrandTotal {
   const cleaned = rawText.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
-  const m = cleaned.match(/Grand Total\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})/i);
+  const m = cleaned.match(/Grand\s+Total\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})/i);
   if (!m) return { actualsPrev: null, bePrev: null, rePrev: null, beNew: null };
   return {
     actualsPrev: parseNumber(m[1]), bePrev: parseNumber(m[2]),
@@ -492,11 +509,17 @@ function parseFiscalHeadline(rawText: string): FiscalHeadline {
           || text.match(/Budget\s+(\d{4})\s*[-–]\s*(\d{2,4})/i);
   const yearNew = yr ? `${yr[1]}-${yr[2].length === 2 ? yr[2] : yr[2].slice(2)}` : '';
   const yearPrev = yearNew ? `${parseInt(yearNew.slice(0, 4)) - 1}-${parseInt(yearNew.slice(5, 9)) - 1}` : '';
+  // zzz249 — Bug B fix. Old [^0-9]{0,80} couldn't cross intermediate
+  // digits like "2026-27" between "total expenditure" and "₹53,47,315".
+  // New: .{0,200}? (lazy any) skips the year AND requires "crore" as an
+  // end-anchor so we capture the correct figure. Verified against the
+  // budget-at-a-glance PDF text: matches all three occurrences and picks
+  // the first (BE-new-FY) via search-order.
   return {
-    totalExpBE: grab(/total expenditure[^0-9]{0,80}₹?\s*([\d,]{6,})/i),
-    totalCapExBE: grab(/total capital expenditure[^0-9]{0,50}₹?\s*([\d,]{6,})/i),
-    effectiveCapExBE: grab(/effective capital expenditure[^0-9]{0,50}₹?\s*([\d,]{6,})/i),
-    interestPayments: grab(/Interest Payments?\s+[\d,]{6,}\s+[\d,]{6,}\s+[\d,]{6,}\s+([\d,]{6,})/),
+    totalExpBE: grab(/total\s+expenditure.{0,200}?₹\s*([\d,\s]{6,20}?)\s*crore/i),
+    totalCapExBE: grab(/total\s+capital\s+expenditure.{0,200}?₹\s*([\d,\s]{6,20}?)\s*crore/i),
+    effectiveCapExBE: grab(/effective\s+capital\s+expenditure.{0,200}?₹\s*([\d,\s]{6,20}?)\s*crore/i),
+    interestPayments: grab(/Interest\s+Payments?\s+[\d,]{6,}\s+[\d,]{6,}\s+[\d,]{6,}\s+([\d,]{6,})/i),
     yearNew, yearPrev,
   };
 }
@@ -508,13 +531,13 @@ function parseReceiptsBreakdown(rawText: string): ReceiptsBreakdown {
     if (!m) return [null, null];
     return [parseNumber(m[1]), parseNumber(m[4])];
   };
-  const [revAct, revBE] = grab4(/Revenue Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [taxAct, taxBE] = grab4(/Tax Revenue[^0-9]*([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [ntAct, ntBE] = grab4(/Non Tax Revenue\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [capAct, capBE] = grab4(/Capital Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [loanAct, loanBE] = grab4(/Recovery of Loans\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})/i);
+  const [revAct, revBE] = grab4(/Revenue\s+Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [taxAct, taxBE] = grab4(/Tax\s+Revenue[^0-9]{0,60}([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [ntAct, ntBE] = grab4(/Non\s+Tax\s+Revenue\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [capAct, capBE] = grab4(/Capital\s+Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [loanAct, loanBE] = grab4(/Recovery\s+of\s+Loans\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})/i);
   const [othAct, othBE] = grab4(/Other\s+Receipts\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})/i);
-  const [borrAct, borrBE] = grab4(/Borrowings and Other[^0-9]*([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [borrAct, borrBE] = grab4(/Borrowings\s+and\s+Other[^0-9]{0,60}([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
   return {
     revenueReceipts: revBE, taxRevenue: taxBE, nonTaxRevenue: ntBE,
     capitalReceipts: capBE, loanRecovery: loanBE, otherReceipts: othBE, borrowings: borrBE,
@@ -534,10 +557,10 @@ function parseDeficitBlock(rawText: string): DeficitBlock {
     return m ? parseNumber(m[1]) : null;
   };
   return {
-    fiscalDeficit: grab(/Fiscal Deficit\s+[\d,]{6,}\s+[\d,]{6,}\s+[\d,]{6,}\s+([\d,]{6,})/i),
-    revenueDeficit: grab(/Revenue Deficit\s+[\d,]{5,}\s+[\d,]{5,}\s+[\d,]{5,}\s+([\d,]{5,})/i),
-    effectiveRevenueDeficit: grab(/Effective Revenue Deficit\s+[\d,]{5,}\s+[\d,]{5,}\s+[\d,]{5,}\s+([\d,]{5,})/i),
-    primaryDeficit: grab(/Primary Deficit\s+[\d,]{5,}\s+[\d,]{5,}\s+[\d,]{5,}\s+([\d,]{5,})/i),
+    fiscalDeficit: grab(/Fiscal\s+Deficit\s+[\d,]{6,}\s+[\d,]{6,}\s+[\d,]{6,}\s+([\d,]{6,})/i),
+    revenueDeficit: grab(/Revenue\s+Deficit\s+[\d,]{5,}\s+[\d,]{5,}\s+[\d,]{5,}\s+([\d,]{5,})/i),
+    effectiveRevenueDeficit: grab(/Effective\s+Revenue\s+Deficit\s+[\d,]{5,}\s+[\d,]{5,}\s+[\d,]{5,}\s+([\d,]{5,})/i),
+    primaryDeficit: grab(/Primary\s+Deficit\s+[\d,]{5,}\s+[\d,]{5,}\s+[\d,]{5,}\s+([\d,]{5,})/i),
   };
 }
 
@@ -1288,7 +1311,7 @@ export default function BudgetIntelPage() {
                 <div style={H}>💰 Receipts breakdown</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
                   {([
-                    ['Revenue Receipts', activeData.receipts.revenueReceipts, activeData.receipts.yoyBEvsActual.revenueReceipts],
+                    ['Revenue\s+Receipts', activeData.receipts.revenueReceipts, activeData.receipts.yoyBEvsActual.revenueReceipts],
                     ['Tax Revenue (net)', activeData.receipts.taxRevenue, activeData.receipts.yoyBEvsActual.taxRevenue],
                     ['Non-Tax Revenue', activeData.receipts.nonTaxRevenue, activeData.receipts.yoyBEvsActual.nonTaxRevenue],
                     ['Capital Receipts', activeData.receipts.capitalReceipts, activeData.receipts.yoyBEvsActual.capitalReceipts],
