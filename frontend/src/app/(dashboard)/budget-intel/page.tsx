@@ -407,9 +407,14 @@ const MINISTRY_MATCHERS: { label: string; pattern: RegExp }[] = [
 // tokens for the ministry table; the previous "broken number" cases were
 // actually spaces between different table columns, not within a single number.
 function parseMinistryTable(rawText: string): MinistryRow[] {
-  const section = extractMinistrySection(rawText);
-  if (!section) return [];
-  const text = section.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
+  // zzz250 — DEFENSE IN DEPTH. Do NOT require the "Expenditure of Major
+  // Items" anchor. pdf.js may emit that heading with unusual whitespace or
+  // characters that broke matching in previous attempts. Instead, scan the
+  // ENTIRE preprocessed text for each ministry pattern followed by 4 large
+  // numbers. The 4-consecutive-large-numbers signature IS what identifies
+  // the table row; no anchor needed. Duplicate matches are deduped (first
+  // sighting wins, which is the Expenditure table's row).
+  const text = rawText.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
   const rows: MinistryRow[] = [];
   for (const m of MINISTRY_MATCHERS) {
     const flags = m.pattern.flags.includes('i') ? m.pattern.flags : m.pattern.flags + 'i';
@@ -1409,6 +1414,61 @@ export default function BudgetIntelPage() {
                     <pre style={{ fontSize: 10.5, color: DIM, whiteSpace: 'pre-wrap' as const, marginTop: 6, maxHeight: 300, overflowY: 'auto' as const, background: 'var(--mc-bg-2)', padding: 10, borderRadius: 6 }}>{text.slice(0, 3500)}{text.length > 3500 ? '…' : ''}</pre>
                   </details>
                 ))}
+              </div>
+            )}
+
+            {/* zzz250 — DEBUG PANEL. Shows what each parser saw, so any
+                remaining failure is instantly visible without me guessing. */}
+            {Object.keys(activeData.rawTexts).length > 0 && (
+              <div style={CARD}>
+                <div style={H}>🔧 Parser debug (screenshot me this if data is empty)</div>
+                {(() => {
+                  const fullText = Object.values(activeData.rawTexts).join('\n\n');
+                  const anchorIdx = fullText.search(/Expenditure\s+of\s+Major\s+Items/i);
+                  const gtIdx = fullText.search(/Grand\s+Total/i);
+                  const totalExpIdx = fullText.search(/total\s+expenditure/i);
+                  const fdIdx = fullText.search(/Fiscal\s+Deficit/i);
+                  const rrIdx = fullText.search(/Revenue\s+Receipts/i);
+                  // Sample around anchor
+                  const sampleAt = (idx: number, n = 400) => idx < 0 ? '(not found)' : fullText.slice(idx, idx + n).replace(/\s+/g, ' ');
+                  const testMinistry = (label: string, pat: RegExp) => {
+                    const flags = pat.flags.includes('i') ? pat.flags : pat.flags + 'i';
+                    const re = new RegExp('(?:' + pat.source + ')[^\\n]{0,30}?\\s([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})', flags);
+                    const flat = fullText.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
+                    const m = flat.match(re);
+                    return m ? `✓ ${label}: [${m[1]}, ${m[2]}, ${m[3]}, ${m[4]}]` : `✗ ${label}: NO MATCH`;
+                  };
+                  const rows = [
+                    ['Anchor: Expenditure of Major Items', anchorIdx >= 0 ? `found @ ${anchorIdx}` : 'NOT FOUND'],
+                    ['Anchor: Grand Total', gtIdx >= 0 ? `found @ ${gtIdx}` : 'NOT FOUND'],
+                    ['Anchor: total expenditure', totalExpIdx >= 0 ? `found @ ${totalExpIdx}` : 'NOT FOUND'],
+                    ['Anchor: Fiscal Deficit', fdIdx >= 0 ? `found @ ${fdIdx}` : 'NOT FOUND'],
+                    ['Anchor: Revenue Receipts', rrIdx >= 0 ? `found @ ${rrIdx}` : 'NOT FOUND'],
+                  ];
+                  return (
+                    <div style={{ fontSize: 11, color: DIM }}>
+                      {rows.map(([k, v]) => (
+                        <div key={k} style={{ padding: '3px 0', borderTop: '1px dashed var(--mc-bg-3)' }}>
+                          <span style={{ color: TEXT, fontWeight: 700 }}>{k}:</span>{' '}
+                          <span style={{ color: String(v).includes('found') ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>{v}</span>
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 8, fontWeight: 700, color: TEXT }}>Sample around "Expenditure of Major Items" anchor (400 chars):</div>
+                      <pre style={{ fontSize: 10, color: DIM, whiteSpace: 'pre-wrap' as const, marginTop: 4, background: 'var(--mc-bg-2)', padding: 8, borderRadius: 4, maxHeight: 150, overflowY: 'auto' as const }}>{sampleAt(anchorIdx)}</pre>
+                      <div style={{ marginTop: 8, fontWeight: 700, color: TEXT }}>Sample around "total expenditure":</div>
+                      <pre style={{ fontSize: 10, color: DIM, whiteSpace: 'pre-wrap' as const, marginTop: 4, background: 'var(--mc-bg-2)', padding: 8, borderRadius: 4, maxHeight: 150, overflowY: 'auto' as const }}>{sampleAt(totalExpIdx)}</pre>
+                      <div style={{ marginTop: 8, fontWeight: 700, color: TEXT }}>Per-ministry regex tests:</div>
+                      <div style={{ fontSize: 10, fontFamily: 'monospace', background: 'var(--mc-bg-2)', padding: 8, borderRadius: 4, marginTop: 4 }}>
+                        {testMinistry('Pension', /\bPension\b/)}<br/>
+                        {testMinistry('Defence', /\bDefence\b/)}<br/>
+                        {testMinistry('Rural Development', /Rural\s+Development/i)}<br/>
+                        {testMinistry('IT and Telecom', /IT\s+and\s+Telecom/i)}<br/>
+                        {testMinistry('Interest', /\bInterest\b/)}<br/>
+                        {testMinistry('Others', /\bOthers\b/)}<br/>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </>
