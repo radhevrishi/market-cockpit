@@ -369,7 +369,7 @@ const MINISTRY_MATCHERS: { label: string; pattern: RegExp }[] = [
   { label: 'Commerce and Industry', pattern: /Commerce and Industry|Commerce &? Industry/i },
   { label: 'Development of North East', pattern: /North\s?East/i },
   { label: 'Education', pattern: /\bEducation\b/ },
-  { label: 'Energy', pattern: /\bEnergy\b/ },
+  { label: 'Energy', pattern: /\bEnergy\d?\b/ },  // handles "Energy2" footnote digit
   { label: 'External Affairs', pattern: /External Affairs/i },
   { label: 'Finance', pattern: /\bFinance\b/ },
   { label: 'Health', pattern: /\bHealth\b/ },
@@ -385,19 +385,31 @@ const MINISTRY_MATCHERS: { label: string; pattern: RegExp }[] = [
   { label: 'Others', pattern: /\bOthers\b/ },
 ];
 
+// zzz247 rev-b — no aggressive number-joining. That collapsed adjacent
+// column values into one giant number. pdf.js with hasEOL emits clean number
+// tokens for the ministry table; the previous "broken number" cases were
+// actually spaces between different table columns, not within a single number.
 function parseMinistryTable(rawText: string): MinistryRow[] {
   const section = extractMinistrySection(rawText);
   if (!section) return [];
-  // zzz246 — collapse to flat text and match `<label> <4 numbers>` anywhere.
-  // Line-based matching was fragile because pdf.js sometimes emits a whole
-  // page as one line. Flat-text pattern-scan is robust either way.
   const text = section.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
   const rows: MinistryRow[] = [];
   for (const m of MINISTRY_MATCHERS) {
     const flags = m.pattern.flags.includes('i') ? m.pattern.flags : m.pattern.flags + 'i';
-    // Build a fresh RegExp with the label pattern + 4 trailing numbers.
-    // Numbers must be 5+ digits (₹10,000 Cr floor) to skip sub-schemes.
-    const combined = new RegExp(m.pattern.source + '\\s+([\\d,]{5,})\\s+([\\d,]{5,})\\s+([\\d,]{5,})\\s+([\\d,]{5,})', flags);
+    // zzz247 — after the ministry label, allow up to 30 non-digit chars to
+    // absorb footnote digits and trailing scoping text like "Activities1"
+    // that appear in the PDF between the ministry name and its number column.
+    // Then require 4 numbers of 5+ digits each (₹10,000 Cr floor to skip
+    // sub-scheme rows).
+    // CRITICAL: wrap the label pattern in a non-capturing group so that
+    // patterns using alternation ("Agriculture and Allied|Agriculture &? Allied",
+    // "Commerce and Industry|...", "IT and Telecom|...") bind correctly.
+    // Without this, `|` has lower precedence than the trailing regex and the
+    // first alternative would match without capturing the numbers, returning
+    // None for all group() calls downstream.
+    // Number regex: 4+ digits (smallest ministry = North East ~₹3-6k Cr).
+    // The scale gate `beNew < 5000` below still filters sub-scheme noise.
+    const combined = new RegExp('(?:' + m.pattern.source + ')[^\\n]{0,30}?\\s([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})\\s+([\\d,]{4,})', flags);
     const match = text.match(combined);
     if (!match) continue;
     if (rows.some(r => r.ministry === m.label)) continue;
@@ -406,7 +418,10 @@ function parseMinistryTable(rawText: string): MinistryRow[] {
     const bePrev = parseNumber(b);
     const rePrev = parseNumber(c);
     const beNew = parseNumber(d);
-    if (beNew == null || beNew < 5000) continue;
+    // Scale gate — 3000 Cr minimum. Catches small named ministries like
+    // "Development of North East" (~₹6k Cr) while still excluding
+    // sub-scheme rows that would otherwise pass label matching.
+    if (beNew == null || beNew < 3000) continue;
     rows.push({
       ministry: m.label, actualsPrev, bePrev, rePrev, beNew,
       yoyVsRE: pct(beNew, rePrev), yoyVsActual: pct(beNew, actualsPrev),
@@ -456,7 +471,8 @@ function enrichMinistries(rows: MinistryRow[], grandTotalBE: number | null): Enr
 }
 
 function parseGrandTotal(rawText: string): GrandTotal {
-  const m = rawText.replace(/[\r\t]/g, ' ').match(/Grand Total\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})/i);
+  const cleaned = rawText.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
+  const m = cleaned.match(/Grand Total\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})/i);
   if (!m) return { actualsPrev: null, bePrev: null, rePrev: null, beNew: null };
   return {
     actualsPrev: parseNumber(m[1]), bePrev: parseNumber(m[2]),
@@ -684,6 +700,9 @@ export default function BudgetIntelPage() {
   const [tab, setTab] = useState<'exec' | 'info' | 'analytics' | 'ministry'>('exec');
   const [savedYears, setSavedYears] = useState<string[]>([]);
   const [activeYear, setActiveYear] = useState<string>('');
+  // zzz247 — bump on every save/delete so activeData useMemo re-reads
+  // localStorage even when the year name is unchanged.
+  const [dataVersion, setDataVersion] = useState<number>(0);
   const [inMemoryTexts, setInMemoryTexts] = useState<Record<string, string>>({});
   const [inMemoryFiles, setInMemoryFiles] = useState<File[]>([]);
   const [selectedMinistry, setSelectedMinistry] = useState<string | null>(null);
@@ -697,8 +716,9 @@ export default function BudgetIntelPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Current active year's data (from LS)
-  const activeData = useMemo<BudgetYearData | null>(() => activeYear ? loadYearData(activeYear) : null, [activeYear, savedYears]);
+  // Current active year's data (from LS). dataVersion is bumped on save/delete
+  // so overwriting the same FY refreshes the view.
+  const activeData = useMemo<BudgetYearData | null>(() => activeYear ? loadYearData(activeYear) : null, [activeYear, savedYears, dataVersion]);
 
   // In-progress parse (before save)
   const mergedText = useMemo(
@@ -774,6 +794,7 @@ export default function BudgetIntelPage() {
     saveYearData(data);
     setSavedYears(loadYearIndex());
     setActiveYear(fy);
+    setDataVersion(v => v + 1);
     setInMemoryFiles([]); setInMemoryTexts({}); setPastedText('');
     setTab('exec');
   };
@@ -785,6 +806,7 @@ export default function BudgetIntelPage() {
     const remaining = loadYearIndex();
     setSavedYears(remaining);
     setActiveYear(remaining[remaining.length - 1] || '');
+    setDataVersion(v => v + 1);
   };
 
   const exportCSV = () => {
