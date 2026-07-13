@@ -314,8 +314,17 @@ async function extractPdfText(file: File): Promise<string> {
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    const strings = content.items.map((it: any) => it.str);
-    chunks.push(`\n\n=== PAGE ${p} ===\n` + strings.join(' '));
+    // zzz246 — preserve line structure via hasEOL. Previously we joined all
+    // items with ' ' which collapsed the whole page into one line, so the
+    // per-line ministry-row regex could never match (no end-of-line to
+    // anchor on). pdfjs sets hasEOL on the last item of each visual line.
+    let pageText = '';
+    for (const it of content.items as any[]) {
+      pageText += it.str || '';
+      if (it.hasEOL) pageText += '\n';
+      else pageText += ' ';
+    }
+    chunks.push(`\n\n=== PAGE ${p} ===\n` + pageText);
   }
   return chunks.join('\n');
 }
@@ -379,27 +388,27 @@ const MINISTRY_MATCHERS: { label: string; pattern: RegExp }[] = [
 function parseMinistryTable(rawText: string): MinistryRow[] {
   const section = extractMinistrySection(rawText);
   if (!section) return [];
-  const text = section.replace(/[\r\t]/g, ' ').replace(/ /g, ' ');
-  const lines = text.split(/\n+/);
+  // zzz246 — collapse to flat text and match `<label> <4 numbers>` anywhere.
+  // Line-based matching was fragile because pdf.js sometimes emits a whole
+  // page as one line. Flat-text pattern-scan is robust either way.
+  const text = section.replace(/[\r\t\n]/g, ' ').replace(/\s+/g, ' ');
   const rows: MinistryRow[] = [];
-  for (const line of lines) {
-    if (/Grand Total|कुल\s?जोड़/.test(line)) continue;
-    const numMatch = line.match(/([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s*$/);
-    if (!numMatch) continue;
-    let matched: { label: string } | null = null;
-    for (const m of MINISTRY_MATCHERS) {
-      if (m.pattern.test(line)) { matched = { label: m.label }; break; }
-    }
-    if (!matched) continue;
-    if (rows.some(r => r.ministry === matched!.label)) continue;
-    const [_, a, b, c, d] = numMatch;
+  for (const m of MINISTRY_MATCHERS) {
+    const flags = m.pattern.flags.includes('i') ? m.pattern.flags : m.pattern.flags + 'i';
+    // Build a fresh RegExp with the label pattern + 4 trailing numbers.
+    // Numbers must be 5+ digits (₹10,000 Cr floor) to skip sub-schemes.
+    const combined = new RegExp(m.pattern.source + '\\s+([\\d,]{5,})\\s+([\\d,]{5,})\\s+([\\d,]{5,})\\s+([\\d,]{5,})', flags);
+    const match = text.match(combined);
+    if (!match) continue;
+    if (rows.some(r => r.ministry === m.label)) continue;
+    const [_, a, b, c, d] = match;
     const actualsPrev = parseNumber(a);
     const bePrev = parseNumber(b);
     const rePrev = parseNumber(c);
     const beNew = parseNumber(d);
     if (beNew == null || beNew < 5000) continue;
     rows.push({
-      ministry: matched.label, actualsPrev, bePrev, rePrev, beNew,
+      ministry: m.label, actualsPrev, bePrev, rePrev, beNew,
       yoyVsRE: pct(beNew, rePrev), yoyVsActual: pct(beNew, actualsPrev),
     });
   }
