@@ -747,6 +747,52 @@ export default function BudgetIntelPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // zzz251 — MIGRATION RE-PARSE. If a stored year has computed fields empty
+  // (parser was broken when the save was made) BUT still has the raw text
+  // stored, re-run the CURRENT parsers against that raw text and overwrite
+  // the stale computed portion. One-time fix on every load; only touches
+  // years whose ministries.length === 0 so healthy saves are untouched.
+  //
+  // This is the root cause of the "parser works but analytics blank" bug:
+  // the diagnostic bar reads activeData.ministries.length (stored), while
+  // the debug panel runs regexes against activeData.rawTexts (also stored).
+  // Debug proves parser is correct; the empty-ministries save was left over
+  // from an older broken parser build. Auto-save only overwrites on fresh
+  // upload, so this migration is what unblocks users who already saved
+  // before the parser fixes landed.
+  useEffect(() => {
+    if (savedYears.length === 0) return;
+    let anyChanged = false;
+    for (const y of savedYears) {
+      const d = loadYearData(y);
+      if (!d) continue;
+      if (d.ministries.length > 0) continue;              // healthy — skip
+      if (!d.rawTexts || Object.keys(d.rawTexts).length === 0) continue;  // no source to re-parse
+      const merged = Object.values(d.rawTexts).join('\n\n');
+      const rawMinistries = parseMinistryTable(merged);
+      if (rawMinistries.length === 0) continue;           // parser still can't find anything — leave alone
+      const gt = parseGrandTotal(merged);
+      const headline = parseFiscalHeadline(merged);
+      const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
+      const updated: BudgetYearData = {
+        ...d,
+        ministries: enriched,
+        grandTotal: gt,
+        headline,
+        receipts: parseReceiptsBreakdown(merged),
+        deficits: parseDeficitBlock(merged),
+        comesFrom: parseRupeeComesFrom(merged),
+        goesTo: parseRupeeGoesTo(merged),
+        topSchemes: parseTopSchemes(merged),
+        themes: extractThemes(merged),
+      };
+      saveYearData(updated);
+      anyChanged = true;
+    }
+    if (anyChanged) setDataVersion(v => v + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedYears.length]);
+
   // Current active year's data (from LS). dataVersion is bumped on save/delete
   // so overwriting the same FY refreshes the view.
   const activeData = useMemo<BudgetYearData | null>(() => activeYear ? loadYearData(activeYear) : null, [activeYear, savedYears, dataVersion]);
