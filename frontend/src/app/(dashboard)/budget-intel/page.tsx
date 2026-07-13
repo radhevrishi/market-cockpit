@@ -1,31 +1,35 @@
 'use client';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUDGET INTEL (zzz244) — Two-tab redesign
-//   Tab 1 · KEY INFO        — verbatim extraction: fiscal headline, deficit
-//                             block, receipts breakdown, full ministry table
-//                             (Grand Total row included), top schemes, raw
-//                             text preview per document
-//   Tab 2 · ANALYTICS       — winners/losers, ministry bar chart, receipts +
-//                             expenditure donuts, sector plays with mapped
-//                             listed stocks, narrative theme extractor
+// BUDGET INTEL (zzz245) — Institutional rewrite
 //
-// PARSER CHANGES vs zzz243:
-//   • Ministry table scoping — anchor on "Expenditure of Major Items" and
-//     stop at "Grand Total". Prevents sub-scheme rows from later pages from
-//     being mis-read as ministries.
-//   • Scale gate — BE-new figure must be ≥ ₹5000 Cr. Sub-scheme rows at
-//     ₹1000-3000 Cr are filtered out.
-//   • Receipts breakdown parser for Revenue/Tax/Non-tax/Capital/Borrowings.
-//   • Deficit block parser (Fiscal/Revenue/Effective/Primary).
-//   • Rupee-comes-from + Rupee-goes-to composition parser.
-//   • Top-scheme parser for the analytical side.
+//   Four tabs:
+//     🎯 Executive Summary  — Priority scores + fiscal quality + AI narrative
+//                             + biggest winners / losers / % movers + heatmap
+//     📋 Key Info           — verbatim extraction (headline, deficit, receipts,
+//                             ministry table, top schemes, raw preview)
+//     📈 Analytics          — 4 ranking tables, sector plays, themes, charts
+//     🏛 Ministry Deep-Dive — pick any ministry to see history + capex split
+//                             + sector plays + linked stocks
 //
-// Client-side PDF (pdf.js CDN) + DOCX (mammoth CDN). No npm changes.
+//   Persistence — localStorage keyed by fiscal year. Uploads survive refresh.
+//   Cross-year support — upload multiple years; year picker at top switches
+//   the view. Cross-year comparisons unlock when ≥ 2 years are stored.
+//
+//   Rich calculated columns per ministry:
+//     • Absolute Δ vs RE, vs Actuals, vs prior BE
+//     • % Δ vs RE, vs Actuals, vs prior BE
+//     • Share of total budget (%)
+//     • Rank (1-N)
+//     • Government Priority Score (0-100 composite)
+//     • Category (Winner / Loser / Flat)
+//
+//   Client-side PDF (pdf.js CDN) + DOCX (mammoth CDN). Zero npm changes.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
+// ─── Types ─────────────────────────────────────────────────────────────────
 type MinistryRow = {
   ministry: string;
   actualsPrev: number | null;
@@ -34,6 +38,15 @@ type MinistryRow = {
   beNew: number | null;
   yoyVsRE: number | null;
   yoyVsActual: number | null;
+};
+type EnrichedMinistry = MinistryRow & {
+  yoyVsBE: number | null;
+  absoluteDeltaRE: number | null;
+  absoluteDeltaActual: number | null;
+  shareOfBudget: number | null;
+  rank: number;
+  priorityScore: number;
+  category: 'winner' | 'loser' | 'flat';
 };
 type ReceiptsBreakdown = {
   revenueReceipts: number | null;
@@ -60,8 +73,33 @@ type FiscalHeadline = {
   yearNew: string;
   yearPrev: string;
 };
+type GrandTotal = { actualsPrev: number|null; bePrev: number|null; rePrev: number|null; beNew: number|null };
+type SchemeRow = { name: string; beNew: number; rePrev: number|null; delta: number|null };
+type Theme = { theme: string; icon: string; hits: number; snippet: string };
+type BudgetYearData = {
+  fiscalYear: string;
+  uploadedAt: string;
+  documents: { name: string; size: number; textLen: number }[];
+  rawTexts: Record<string, string>;
+  ministries: EnrichedMinistry[];
+  grandTotal: GrandTotal;
+  headline: FiscalHeadline;
+  receipts: ReceiptsBreakdown;
+  deficits: DeficitBlock;
+  comesFrom: CompositionSlice[];
+  goesTo: CompositionSlice[];
+  topSchemes: SchemeRow[];
+  themes: Theme[];
+};
+type SectorPlay = {
+  sector: string;
+  ministry: string;
+  direction: 'up' | 'down' | 'flat';
+  yoyPct: number;
+  stocks: { ticker: string; name: string; rationale: string }[];
+};
 
-// ─── Ministry → sector-play mapping ────────────────────────────────────────
+// ─── Ministry → sector-play mapping (curated) ──────────────────────────────
 const SECTOR_MAP: Record<string, { sector: string; stocks: { ticker: string; name: string; rationale: string }[] }> = {
   'Defence': { sector: 'Defence & Aerospace', stocks: [
     { ticker: 'HAL', name: 'Hindustan Aeronautics', rationale: 'Tejas MK-1A, engines' },
@@ -175,6 +213,57 @@ const SECTOR_MAP: Record<string, { sector: string; stocks: { ticker: string; nam
   ]},
 };
 
+// ─── Storage layer ─────────────────────────────────────────────────────────
+const STORAGE_PREFIX = 'mc:budget-intel:v1:';
+const INDEX_KEY = STORAGE_PREFIX + '__index';
+
+function loadYearIndex(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(INDEX_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function saveYearIndex(years: string[]): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(INDEX_KEY, JSON.stringify(years)); } catch {}
+}
+function loadYearData(fy: string): BudgetYearData | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + fy);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveYearData(data: BudgetYearData): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_PREFIX + data.fiscalYear, JSON.stringify(data));
+    const idx = loadYearIndex();
+    if (!idx.includes(data.fiscalYear)) {
+      idx.push(data.fiscalYear); idx.sort();
+      saveYearIndex(idx);
+    }
+  } catch (e: any) {
+    // Fallback: strip rawTexts if quota exceeded
+    try {
+      const slim = { ...data, rawTexts: {} };
+      localStorage.setItem(STORAGE_PREFIX + data.fiscalYear, JSON.stringify(slim));
+      const idx = loadYearIndex();
+      if (!idx.includes(data.fiscalYear)) { idx.push(data.fiscalYear); idx.sort(); saveYearIndex(idx); }
+    } catch {}
+  }
+}
+function deleteYearData(fy: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(STORAGE_PREFIX + fy);
+    const idx = loadYearIndex().filter(y => y !== fy);
+    saveYearIndex(idx);
+  } catch {}
+}
+
+// ─── Number / format helpers ───────────────────────────────────────────────
 function parseNumber(s: string): number | null {
   if (!s) return null;
   const cleaned = String(s).replace(/[₹Rs.,  ]/g, '').replace(/[ -⁯]/g, '');
@@ -188,14 +277,21 @@ function pct(cur: number | null, prev: number | null): number | null {
 }
 function fmtCr(v: number | null): string {
   if (v == null) return '—';
-  if (v >= 100000) return `₹${(v / 100000).toFixed(2)} L Cr`;
+  if (Math.abs(v) >= 100000) return `₹${(v / 100000).toFixed(2)} L Cr`;
   return `₹${Math.round(v).toLocaleString('en-IN')} Cr`;
+}
+function fmtDelta(v: number | null): string {
+  if (v == null) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 100000) return `${v >= 0 ? '+' : '−'}₹${(abs / 100000).toFixed(2)} L Cr`;
+  return `${v >= 0 ? '+' : '−'}₹${Math.round(abs).toLocaleString('en-IN')} Cr`;
 }
 function fmtPct(v: number | null): string {
   if (v == null) return '—';
   return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 }
 
+// ─── PDF / DOCX loaders ────────────────────────────────────────────────────
 async function loadPdfJs(): Promise<any> {
   const w = window as any;
   if (w.pdfjsLib) return w.pdfjsLib;
@@ -242,7 +338,7 @@ async function extractDocxText(file: File): Promise<string> {
   return result.value || '';
 }
 
-// Locate the ministry section only, avoiding sub-scheme pollution
+// ─── Parsers ───────────────────────────────────────────────────────────────
 function extractMinistrySection(rawText: string): string {
   const anchor = /Expenditure of Major Items/i;
   const endAnchor = /Grand Total/i;
@@ -255,29 +351,29 @@ function extractMinistrySection(rawText: string): string {
 }
 
 const MINISTRY_MATCHERS: { label: string; pattern: RegExp }[] = [
-  { label: 'Pension',                 pattern: /\bPension\b/ },
-  { label: 'Defence',                 pattern: /\bDefence\b/ },
-  { label: 'Fertiliser',              pattern: /Fertili[sz]er\b/ },
-  { label: 'Food',                    pattern: /\bFood\b/ },
-  { label: 'Petroleum',               pattern: /\bPetroleum\b/ },
-  { label: 'Agriculture',             pattern: /Agriculture and Allied|Agriculture &? Allied/i },
-  { label: 'Commerce and Industry',   pattern: /Commerce and Industry|Commerce &? Industry/i },
+  { label: 'Pension', pattern: /\bPension\b/ },
+  { label: 'Defence', pattern: /\bDefence\b/ },
+  { label: 'Fertiliser', pattern: /Fertili[sz]er\b/ },
+  { label: 'Food', pattern: /\bFood\b/ },
+  { label: 'Petroleum', pattern: /\bPetroleum\b/ },
+  { label: 'Agriculture', pattern: /Agriculture and Allied|Agriculture &? Allied/i },
+  { label: 'Commerce and Industry', pattern: /Commerce and Industry|Commerce &? Industry/i },
   { label: 'Development of North East', pattern: /North\s?East/i },
-  { label: 'Education',               pattern: /\bEducation\b/ },
-  { label: 'Energy',                  pattern: /\bEnergy\b/ },
-  { label: 'External Affairs',        pattern: /External Affairs/i },
-  { label: 'Finance',                 pattern: /\bFinance\b/ },
-  { label: 'Health',                  pattern: /\bHealth\b/ },
-  { label: 'Home Affairs',            pattern: /Home Affairs/i },
-  { label: 'Interest',                pattern: /\bInterest\b/ },
-  { label: 'IT and Telecom',          pattern: /IT and Telecom|IT &? Telecom/i },
-  { label: 'Rural Development',       pattern: /Rural Development/i },
-  { label: 'Scientific Departments',  pattern: /Scientific Departments?/i },
-  { label: 'Social Welfare',          pattern: /Social Welfare/i },
-  { label: 'Tax Administration',      pattern: /Tax Administration/i },
-  { label: 'Transport',               pattern: /\bTransport\b/ },
-  { label: 'Urban Development',       pattern: /Urban Development/i },
-  { label: 'Others',                  pattern: /\bOthers\b/ },
+  { label: 'Education', pattern: /\bEducation\b/ },
+  { label: 'Energy', pattern: /\bEnergy\b/ },
+  { label: 'External Affairs', pattern: /External Affairs/i },
+  { label: 'Finance', pattern: /\bFinance\b/ },
+  { label: 'Health', pattern: /\bHealth\b/ },
+  { label: 'Home Affairs', pattern: /Home Affairs/i },
+  { label: 'Interest', pattern: /\bInterest\b/ },
+  { label: 'IT and Telecom', pattern: /IT and Telecom|IT &? Telecom/i },
+  { label: 'Rural Development', pattern: /Rural Development/i },
+  { label: 'Scientific Departments', pattern: /Scientific Departments?/i },
+  { label: 'Social Welfare', pattern: /Social Welfare/i },
+  { label: 'Tax Administration', pattern: /Tax Administration/i },
+  { label: 'Transport', pattern: /\bTransport\b/ },
+  { label: 'Urban Development', pattern: /Urban Development/i },
+  { label: 'Others', pattern: /\bOthers\b/ },
 ];
 
 function parseMinistryTable(rawText: string): MinistryRow[] {
@@ -301,7 +397,7 @@ function parseMinistryTable(rawText: string): MinistryRow[] {
     const bePrev = parseNumber(b);
     const rePrev = parseNumber(c);
     const beNew = parseNumber(d);
-    if (beNew == null || beNew < 5000) continue;  // scale gate
+    if (beNew == null || beNew < 5000) continue;
     rows.push({
       ministry: matched.label, actualsPrev, bePrev, rePrev, beNew,
       yoyVsRE: pct(beNew, rePrev), yoyVsActual: pct(beNew, actualsPrev),
@@ -310,7 +406,47 @@ function parseMinistryTable(rawText: string): MinistryRow[] {
   return rows;
 }
 
-function parseGrandTotal(rawText: string): { actualsPrev: number|null; bePrev: number|null; rePrev: number|null; beNew: number|null } {
+function enrichMinistries(rows: MinistryRow[], grandTotalBE: number | null): EnrichedMinistry[] {
+  const totalBudget = grandTotalBE ?? rows.reduce((a, r) => a + (r.beNew || 0), 0);
+  // Rank by BE new
+  const ranked = [...rows].sort((a, b) => (b.beNew || 0) - (a.beNew || 0));
+  const rankMap = new Map<string, number>();
+  ranked.forEach((r, i) => rankMap.set(r.ministry, i + 1));
+
+  return rows.map(r => {
+    const rank = rankMap.get(r.ministry) || rows.length;
+    const shareOfBudget = r.beNew && totalBudget > 0 ? Math.round((r.beNew / totalBudget) * 1000) / 10 : null;
+    const yoyVsBE = pct(r.beNew, r.bePrev);
+    const absoluteDeltaRE = (r.beNew != null && r.rePrev != null) ? r.beNew - r.rePrev : null;
+    const absoluteDeltaActual = (r.beNew != null && r.actualsPrev != null) ? r.beNew - r.actualsPrev : null;
+    const y = r.yoyVsRE ?? 0;
+    let category: 'winner' | 'loser' | 'flat' = 'flat';
+    if (y > 3) category = 'winner';
+    else if (y < -3) category = 'loser';
+
+    // Priority Score composite (0-100)
+    let score = 50;
+    score += Math.min(20, Math.max(-20, y)); // growth impact clipped
+    if (rank <= 5) score += 15;
+    else if (rank <= 10) score += 10;
+    else if (rank <= 15) score += 5;
+    if (shareOfBudget != null) {
+      if (shareOfBudget >= 8) score += 10;
+      else if (shareOfBudget >= 4) score += 5;
+    }
+    if (r.yoyVsActual != null && r.yoyVsActual >= 20) score += 5;
+    if (y < -5) score -= 15;
+    if (r.yoyVsActual != null && r.yoyVsActual < 0) score -= 5;
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    return {
+      ...r, yoyVsBE, absoluteDeltaRE, absoluteDeltaActual, shareOfBudget,
+      rank, priorityScore: score, category,
+    };
+  });
+}
+
+function parseGrandTotal(rawText: string): GrandTotal {
   const m = rawText.replace(/[\r\t]/g, ' ').match(/Grand Total\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})/i);
   if (!m) return { actualsPrev: null, bePrev: null, rePrev: null, beNew: null };
   return {
@@ -325,14 +461,16 @@ function parseFiscalHeadline(rawText: string): FiscalHeadline {
     const mm = text.match(re);
     return mm ? parseNumber(mm[1]) : null;
   };
-  const yr = text.match(/BUDGET AT A GLANCE\s+(\d{4}-\d{4})/);
+  const yr = text.match(/BUDGET AT A GLANCE\s+(\d{4}-\d{4})/) || text.match(/Budget\s+(\d{4}-\d{4})/);
   const yearNew = yr ? yr[1] : '';
   const yearPrev = yearNew ? `${parseInt(yearNew.slice(0, 4)) - 1}-${parseInt(yearNew.slice(5, 9)) - 1}` : '';
-  const totalExpBE = grab(/total expenditure[^0-9]{0,80}₹?\s*([\d,]{6,})/i);
-  const totalCapExBE = grab(/total capital expenditure[^0-9]{0,50}₹?\s*([\d,]{6,})/i);
-  const effectiveCapExBE = grab(/effective capital expenditure[^0-9]{0,50}₹?\s*([\d,]{6,})/i);
-  const interestPayments = grab(/Interest Payments?\s+[\d,]{6,}\s+[\d,]{6,}\s+[\d,]{6,}\s+([\d,]{6,})/);
-  return { totalExpBE, totalCapExBE, effectiveCapExBE, interestPayments, yearNew, yearPrev };
+  return {
+    totalExpBE: grab(/total expenditure[^0-9]{0,80}₹?\s*([\d,]{6,})/i),
+    totalCapExBE: grab(/total capital expenditure[^0-9]{0,50}₹?\s*([\d,]{6,})/i),
+    effectiveCapExBE: grab(/effective capital expenditure[^0-9]{0,50}₹?\s*([\d,]{6,})/i),
+    interestPayments: grab(/Interest Payments?\s+[\d,]{6,}\s+[\d,]{6,}\s+[\d,]{6,}\s+([\d,]{6,})/),
+    yearNew, yearPrev,
+  };
 }
 
 function parseReceiptsBreakdown(rawText: string): ReceiptsBreakdown {
@@ -342,23 +480,20 @@ function parseReceiptsBreakdown(rawText: string): ReceiptsBreakdown {
     if (!m) return [null, null];
     return [parseNumber(m[1]), parseNumber(m[4])];
   };
-  const [revAct, revBE]   = grab4(/Revenue Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [taxAct, taxBE]   = grab4(/Tax Revenue[^0-9]*([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [ntAct, ntBE]     = grab4(/Non Tax Revenue\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
-  const [capAct, capBE]   = grab4(/Capital Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [revAct, revBE] = grab4(/Revenue Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [taxAct, taxBE] = grab4(/Tax Revenue[^0-9]*([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [ntAct, ntBE] = grab4(/Non Tax Revenue\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
+  const [capAct, capBE] = grab4(/Capital Receipts\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
   const [loanAct, loanBE] = grab4(/Recovery of Loans\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})/i);
-  const [othAct, othBE]   = grab4(/Other\s+Receipts\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})/i);
+  const [othAct, othBE] = grab4(/Other\s+Receipts\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})\s+([\d,]{4,})/i);
   const [borrAct, borrBE] = grab4(/Borrowings and Other[^0-9]*([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})\s+([\d,]{5,})/i);
   return {
     revenueReceipts: revBE, taxRevenue: taxBE, nonTaxRevenue: ntBE,
     capitalReceipts: capBE, loanRecovery: loanBE, otherReceipts: othBE, borrowings: borrBE,
     yoyBEvsActual: {
-      revenueReceipts: pct(revBE, revAct),
-      taxRevenue: pct(taxBE, taxAct),
-      nonTaxRevenue: pct(ntBE, ntAct),
-      capitalReceipts: pct(capBE, capAct),
-      loanRecovery: pct(loanBE, loanAct),
-      otherReceipts: pct(othBE, othAct),
+      revenueReceipts: pct(revBE, revAct), taxRevenue: pct(taxBE, taxAct),
+      nonTaxRevenue: pct(ntBE, ntAct), capitalReceipts: pct(capBE, capAct),
+      loanRecovery: pct(loanBE, loanAct), otherReceipts: pct(othBE, othAct),
       borrowings: pct(borrBE, borrAct),
     },
   };
@@ -407,7 +542,6 @@ function parseRupeeGoesTo(rawText: string): CompositionSlice[] {
   return out;
 }
 
-type SchemeRow = { name: string; beNew: number; rePrev: number|null; delta: number|null };
 function parseTopSchemes(rawText: string): SchemeRow[] {
   const rows: SchemeRow[] = [];
   const lines = rawText.split(/\n+/);
@@ -424,7 +558,7 @@ function parseTopSchemes(rawText: string): SchemeRow[] {
   }
   rows.sort((a, b) => b.beNew - a.beNew);
   const seen = new Set<string>();
-  return rows.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).slice(0, 25);
+  return rows.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).slice(0, 30);
 }
 
 const THEME_PATTERNS: { theme: string; icon: string; patterns: RegExp[] }[] = [
@@ -441,8 +575,8 @@ const THEME_PATTERNS: { theme: string; icon: string; patterns: RegExp[] }[] = [
   { theme: 'Healthcare access', icon: '🏥', patterns: [/Ayushman/i, /Jan Aushadhi/i, /health insurance/i] },
   { theme: 'Startups / MSME credit', icon: '🚀', patterns: [/startup/i, /\bMSME\b/, /credit guarantee/i, /Mudra\b/i] },
 ];
-function extractThemes(text: string): { theme: string; icon: string; hits: number; snippet: string }[] {
-  const out: { theme: string; icon: string; hits: number; snippet: string }[] = [];
+function extractThemes(text: string): Theme[] {
+  const out: Theme[] = [];
   for (const t of THEME_PATTERNS) {
     let hits = 0; let snippet = '';
     for (const p of t.patterns) {
@@ -464,93 +598,242 @@ function extractThemes(text: string): { theme: string; icon: string; hits: numbe
   return out.sort((a, b) => b.hits - a.hits);
 }
 
+// ─── Fiscal Quality Score ──────────────────────────────────────────────────
+// 0-100 composite. Higher = healthier fiscal posture.
+function fiscalQualityScore(h: FiscalHeadline, gt: GrandTotal, d: DeficitBlock, r: ReceiptsBreakdown): { score: number; parts: { label: string; value: number }[] } {
+  const totalExp = h.totalExpBE ?? gt.beNew ?? 0;
+  const parts: { label: string; value: number }[] = [];
+  let score = 0;
+  // Capex share of total exp — 0 to 30 pts (12% capex = 30 pts, linear)
+  if (h.totalCapExBE != null && totalExp > 0) {
+    const capexShare = h.totalCapExBE / totalExp;
+    const capexPts = Math.min(30, Math.round(capexShare * 250));
+    score += capexPts;
+    parts.push({ label: 'CapEx share', value: capexPts });
+  }
+  // Interest burden — lower is better. 20% = 0 pts, 10% = +30 pts
+  if (h.interestPayments != null && totalExp > 0) {
+    const interestShare = h.interestPayments / totalExp;
+    const interestPts = Math.round(30 * Math.max(0, Math.min(1, (0.20 - interestShare) / 0.10)));
+    score += interestPts;
+    parts.push({ label: 'Interest burden', value: interestPts });
+  }
+  // Fiscal deficit as % of total exp — lower better. 30% = 0, 20% = 20, 15% = 40
+  if (d.fiscalDeficit != null && totalExp > 0) {
+    const fdShare = d.fiscalDeficit / totalExp;
+    const fdPts = Math.round(40 * Math.max(0, Math.min(1, (0.35 - fdShare) / 0.20)));
+    score += fdPts;
+    parts.push({ label: 'Fiscal deficit', value: fdPts });
+  }
+  return { score: Math.max(0, Math.min(100, score)), parts };
+}
+
+// ─── AI Summary (rule-based synthesis) ─────────────────────────────────────
+function buildAISummary(y: BudgetYearData): string {
+  if (!y.ministries.length) return '';
+  const totalBudget = y.headline.totalExpBE ?? y.grandTotal.beNew ?? 0;
+  const growthVsRE = pct(y.grandTotal.beNew, y.grandTotal.rePrev);
+  const growthVsActual = pct(y.grandTotal.beNew, y.grandTotal.actualsPrev);
+  const winners = y.ministries.filter(m => m.category === 'winner').sort((a, b) => (b.absoluteDeltaRE || 0) - (a.absoluteDeltaRE || 0)).slice(0, 3);
+  const losers = y.ministries.filter(m => m.category === 'loser').sort((a, b) => (a.absoluteDeltaRE || 0) - (b.absoluteDeltaRE || 0)).slice(0, 3);
+  const capexShare = y.headline.totalCapExBE && totalBudget > 0 ? (y.headline.totalCapExBE / totalBudget) * 100 : null;
+  const interestShare = y.headline.interestPayments && totalBudget > 0 ? (y.headline.interestPayments / totalBudget) * 100 : null;
+  const topThemes = y.themes.slice(0, 3).map(t => t.theme).join(', ');
+
+  const parts: string[] = [];
+  parts.push(`**Budget FY ${y.fiscalYear}** allocates **${fmtCr(totalBudget)}** across ${y.ministries.length} major ministries` +
+    (growthVsRE != null ? `, ${growthVsRE >= 0 ? 'growing' : 'contracting'} **${Math.abs(growthVsRE).toFixed(1)}%** over the prior year's Revised Estimates` : '') +
+    (growthVsActual != null ? ` and **${growthVsActual >= 0 ? '+' : ''}${growthVsActual.toFixed(1)}%** over prior FY Actuals` : '') + '.');
+  if (capexShare != null) {
+    parts.push(`Capital expenditure at **${fmtCr(y.headline.totalCapExBE)}** represents **${capexShare.toFixed(1)}%** of total spend, ${capexShare >= 22 ? 'indicating a strong public-investment tilt' : capexShare >= 18 ? 'signalling continued capex thrust' : 'suggesting a more revenue-heavy posture'}.`);
+  }
+  if (interestShare != null) {
+    parts.push(`Interest payments consume **${interestShare.toFixed(1)}%** of the budget, ${interestShare >= 22 ? 'constraining discretionary spend' : 'leaving room for productive allocations'}.`);
+  }
+  if (winners.length) {
+    parts.push(`The **largest allocation increases** go to ${winners.map(w => `**${w.ministry}** (${fmtDelta(w.absoluteDeltaRE)} / ${fmtPct(w.yoyVsRE)})`).join(', ')}.`);
+  }
+  if (losers.length) {
+    parts.push(`**Notable cuts** hit ${losers.map(l => `**${l.ministry}** (${fmtDelta(l.absoluteDeltaRE)} / ${fmtPct(l.yoyVsRE)})`).join(', ')}.`);
+  }
+  if (topThemes) {
+    parts.push(`The narrative is dominated by ${topThemes}.`);
+  }
+  // Investment takeaway
+  const upSectors = winners.filter(w => SECTOR_MAP[w.ministry]).map(w => SECTOR_MAP[w.ministry].sector).slice(0, 3);
+  if (upSectors.length) {
+    parts.push(`**Institutional read:** allocation lift favors ${upSectors.join(', ')}. Cross-check with valuation, order-book visibility, and management-quality filters before positioning.`);
+  }
+  return parts.join(' ');
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────
 export default function BudgetIntelPage() {
-  const [files, setFiles] = useState<File[]>([]);
-  const [rawTexts, setRawTexts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pastedText, setPastedText] = useState('');
-  const [tab, setTab] = useState<'info' | 'analytics'>('info');
+  const [tab, setTab] = useState<'exec' | 'info' | 'analytics' | 'ministry'>('exec');
+  const [savedYears, setSavedYears] = useState<string[]>([]);
+  const [activeYear, setActiveYear] = useState<string>('');
+  const [inMemoryTexts, setInMemoryTexts] = useState<Record<string, string>>({});
+  const [inMemoryFiles, setInMemoryFiles] = useState<File[]>([]);
+  const [selectedMinistry, setSelectedMinistry] = useState<string | null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
 
+  // Hydrate saved-year index on mount
+  useEffect(() => {
+    const years = loadYearIndex();
+    setSavedYears(years);
+    if (years.length && !activeYear) setActiveYear(years[years.length - 1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Current active year's data (from LS)
+  const activeData = useMemo<BudgetYearData | null>(() => activeYear ? loadYearData(activeYear) : null, [activeYear, savedYears]);
+
+  // In-progress parse (before save)
   const mergedText = useMemo(
-    () => Object.values(rawTexts).join('\n\n') + '\n\n' + pastedText,
-    [rawTexts, pastedText]
+    () => Object.values(inMemoryTexts).join('\n\n') + '\n\n' + pastedText,
+    [inMemoryTexts, pastedText]
   );
 
-  const ministries = useMemo(() => parseMinistryTable(mergedText), [mergedText]);
-  const grandTotal = useMemo(() => parseGrandTotal(mergedText), [mergedText]);
-  const headline = useMemo(() => parseFiscalHeadline(mergedText), [mergedText]);
-  const receipts = useMemo(() => parseReceiptsBreakdown(mergedText), [mergedText]);
-  const deficits = useMemo(() => parseDeficitBlock(mergedText), [mergedText]);
-  const comesFrom = useMemo(() => parseRupeeComesFrom(mergedText), [mergedText]);
-  const goesTo = useMemo(() => parseRupeeGoesTo(mergedText), [mergedText]);
-  const topSchemes = useMemo(() => parseTopSchemes(mergedText), [mergedText]);
-  const themes = useMemo(() => extractThemes(mergedText), [mergedText]);
+  // Re-parse pending upload for preview
+  const pending = useMemo(() => {
+    if (!mergedText.trim()) return null;
+    const rawMinistries = parseMinistryTable(mergedText);
+    const grandTotal = parseGrandTotal(mergedText);
+    const headline = parseFiscalHeadline(mergedText);
+    const ministries = enrichMinistries(rawMinistries, headline.totalExpBE ?? grandTotal.beNew);
+    const receipts = parseReceiptsBreakdown(mergedText);
+    const deficits = parseDeficitBlock(mergedText);
+    const comesFrom = parseRupeeComesFrom(mergedText);
+    const goesTo = parseRupeeGoesTo(mergedText);
+    const topSchemes = parseTopSchemes(mergedText);
+    const themes = extractThemes(mergedText);
+    return { ministries, grandTotal, headline, receipts, deficits, comesFrom, goesTo, topSchemes, themes };
+  }, [mergedText]);
 
-  const winners = useMemo(() => ministries.filter(m => (m.yoyVsRE ?? 0) > 0).sort((a, b) => (b.yoyVsRE || 0) - (a.yoyVsRE || 0)), [ministries]);
-  const losers = useMemo(() => ministries.filter(m => (m.yoyVsRE ?? 0) < 0).sort((a, b) => (a.yoyVsRE || 0) - (b.yoyVsRE || 0)), [ministries]);
+  const handleFiles = useCallback(async (fs: FileList | File[]) => {
+    const arr = Array.from(fs);
+    setBusy(true); setError(null);
+    try {
+      const nextTexts: Record<string, string> = { ...inMemoryTexts };
+      for (const f of arr) {
+        const ext = f.name.split('.').pop()?.toLowerCase() || '';
+        if (ext === 'pdf') {
+          try { nextTexts[f.name] = await extractPdfText(f); }
+          catch (e: any) { setError(`PDF parse failed for ${f.name}: ${e?.message || e}`); }
+        } else if (ext === 'docx') {
+          try { nextTexts[f.name] = await extractDocxText(f); }
+          catch (e: any) { setError(`DOCX parse failed for ${f.name}: ${e?.message || e}`); }
+        } else if (ext === 'txt' || ext === 'md') {
+          nextTexts[f.name] = await f.text();
+        } else {
+          setError(`${f.name}: try PDF or DOCX, or paste text below.`);
+        }
+      }
+      setInMemoryFiles(prev => {
+        const merged = [...prev];
+        for (const a of arr) if (!merged.find(m => m.name === a.name)) merged.push(a);
+        return merged;
+      });
+      setInMemoryTexts(nextTexts);
+    } finally { setBusy(false); }
+  }, [inMemoryTexts]);
 
-  const sectorPlays = useMemo(() => {
-    return ministries
+  useEffect(() => {
+    const el = dropRef.current;
+    if (!el) return;
+    const prevent = (e: DragEvent) => { e.preventDefault(); e.stopPropagation(); };
+    const drop = (e: DragEvent) => { prevent(e); if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files); };
+    el.addEventListener('dragover', prevent);
+    el.addEventListener('drop', drop);
+    return () => { el.removeEventListener('dragover', prevent); el.removeEventListener('drop', drop); };
+  }, [handleFiles]);
+
+  const savePending = () => {
+    if (!pending) return;
+    const fy = pending.headline.yearNew || prompt('Fiscal year (e.g. 2026-27):') || '';
+    if (!fy || !/^\d{4}-\d{2,4}$/.test(fy)) { alert('Please enter FY as YYYY-YY, e.g. 2026-27'); return; }
+    const data: BudgetYearData = {
+      fiscalYear: fy,
+      uploadedAt: new Date().toISOString(),
+      documents: inMemoryFiles.map(f => ({ name: f.name, size: f.size, textLen: (inMemoryTexts[f.name] || '').length })),
+      rawTexts: inMemoryTexts,
+      ...pending,
+    };
+    saveYearData(data);
+    setSavedYears(loadYearIndex());
+    setActiveYear(fy);
+    setInMemoryFiles([]); setInMemoryTexts({}); setPastedText('');
+    setTab('exec');
+  };
+
+  const clearActiveYear = () => {
+    if (!activeYear) return;
+    if (!confirm(`Delete stored data for FY ${activeYear}?`)) return;
+    deleteYearData(activeYear);
+    const remaining = loadYearIndex();
+    setSavedYears(remaining);
+    setActiveYear(remaining[remaining.length - 1] || '');
+  };
+
+  const exportCSV = () => {
+    if (!activeData) return;
+    const headers = ['Ministry', 'ActualsPrev', 'BEcurrent', 'REcurrent', 'BEnew', 'DeltaVsRE_pct', 'DeltaVsRE_abs', 'DeltaVsActual_pct', 'DeltaVsActual_abs', 'DeltaVsBE_pct', 'ShareOfBudget_pct', 'Rank', 'PriorityScore', 'Category'];
+    const lines = [headers.join(',')];
+    for (const m of activeData.ministries) {
+      lines.push([
+        m.ministry, m.actualsPrev ?? '', m.bePrev ?? '', m.rePrev ?? '', m.beNew ?? '',
+        m.yoyVsRE ?? '', m.absoluteDeltaRE ?? '', m.yoyVsActual ?? '', m.absoluteDeltaActual ?? '',
+        m.yoyVsBE ?? '', m.shareOfBudget ?? '', m.rank, m.priorityScore, m.category,
+      ].join(','));
+    }
+    const csv = lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `budget-intel-${activeData.fiscalYear}-ministries.csv`;
+    a.click();
+  };
+  const exportJSON = () => {
+    if (!activeData) return;
+    const slim = { ...activeData, rawTexts: undefined };
+    const blob = new Blob([JSON.stringify(slim, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `budget-intel-${activeData.fiscalYear}.json`;
+    a.click();
+  };
+
+  // ─ Compute rankings and derived data for the ACTIVE year ────────────
+  const sortedByAbsUp = useMemo(() => activeData ? [...activeData.ministries].filter(m => (m.absoluteDeltaRE ?? 0) > 0).sort((a, b) => (b.absoluteDeltaRE || 0) - (a.absoluteDeltaRE || 0)) : [], [activeData]);
+  const sortedByAbsDown = useMemo(() => activeData ? [...activeData.ministries].filter(m => (m.absoluteDeltaRE ?? 0) < 0).sort((a, b) => (a.absoluteDeltaRE || 0) - (b.absoluteDeltaRE || 0)) : [], [activeData]);
+  const sortedByPctUp = useMemo(() => activeData ? [...activeData.ministries].filter(m => (m.yoyVsRE ?? 0) > 0).sort((a, b) => (b.yoyVsRE || 0) - (a.yoyVsRE || 0)) : [], [activeData]);
+  const sortedByPctDown = useMemo(() => activeData ? [...activeData.ministries].filter(m => (m.yoyVsRE ?? 0) < 0).sort((a, b) => (a.yoyVsRE || 0) - (b.yoyVsRE || 0)) : [], [activeData]);
+  const priorityRanked = useMemo(() => activeData ? [...activeData.ministries].sort((a, b) => b.priorityScore - a.priorityScore) : [], [activeData]);
+  const fq = useMemo(() => activeData ? fiscalQualityScore(activeData.headline, activeData.grandTotal, activeData.deficits, activeData.receipts) : null, [activeData]);
+  const aiSummary = useMemo(() => activeData ? buildAISummary(activeData) : '', [activeData]);
+  const sectorPlays = useMemo<SectorPlay[]>(() => {
+    if (!activeData) return [];
+    return activeData.ministries
       .filter(m => SECTOR_MAP[m.ministry])
       .map(m => {
         const yoy = m.yoyVsRE ?? m.yoyVsActual ?? 0;
         return {
           sector: SECTOR_MAP[m.ministry].sector,
           ministry: m.ministry,
-          direction: yoy > 3 ? 'up' : yoy < -3 ? 'down' : 'flat',
-          yoyPct: yoy,
-          stocks: SECTOR_MAP[m.ministry].stocks,
+          direction: yoy > 3 ? 'up' as const : yoy < -3 ? 'down' as const : 'flat' as const,
+          yoyPct: yoy, stocks: SECTOR_MAP[m.ministry].stocks,
         };
       })
       .sort((a, b) => b.yoyPct - a.yoyPct);
-  }, [ministries]);
+  }, [activeData]);
 
-  const handleFiles = useCallback(async (fs: FileList | File[]) => {
-    const arr = Array.from(fs);
-    setBusy(true); setError(null);
-    try {
-      const next: Record<string, string> = { ...rawTexts };
-      for (const f of arr) {
-        const ext = f.name.split('.').pop()?.toLowerCase() || '';
-        if (ext === 'pdf') {
-          try { next[f.name] = await extractPdfText(f); }
-          catch (e: any) { setError(`PDF parse failed for ${f.name}: ${e?.message || e}`); }
-        } else if (ext === 'docx') {
-          try { next[f.name] = await extractDocxText(f); }
-          catch (e: any) { setError(`DOCX parse failed for ${f.name}: ${e?.message || e}`); }
-        } else if (ext === 'txt' || ext === 'md') {
-          next[f.name] = await f.text();
-        } else {
-          setError(`${f.name}: try PDF or DOCX, or paste text below.`);
-        }
-      }
-      setFiles(prev => {
-        const merged = [...prev];
-        for (const a of arr) if (!merged.find(m => m.name === a.name)) merged.push(a);
-        return merged;
-      });
-      setRawTexts(next);
-    } finally { setBusy(false); }
-  }, [rawTexts]);
+  // Cross-year data
+  const allYearsData = useMemo(() => savedYears.map(y => loadYearData(y)).filter((d): d is BudgetYearData => !!d).sort((a, b) => a.fiscalYear.localeCompare(b.fiscalYear)), [savedYears]);
 
-  useEffect(() => {
-    const el = dropRef.current;
-    if (!el) return;
-    const prevent = (e: DragEvent) => { e.preventDefault(); e.stopPropagation(); };
-    const drop = (e: DragEvent) => {
-      prevent(e);
-      if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
-    };
-    el.addEventListener('dragover', prevent);
-    el.addEventListener('drop', drop);
-    return () => {
-      el.removeEventListener('dragover', prevent);
-      el.removeEventListener('drop', drop);
-    };
-  }, [handleFiles]);
-
+  // ─ Styling helpers ──────────────────────────────────────────────────
   const BG = 'var(--mc-bg-0)';
   const TEXT = 'var(--mc-text-0)';
   const DIM = 'var(--mc-text-3)';
@@ -565,31 +848,56 @@ export default function BudgetIntelPage() {
     </div>
   );
   const tabStyle = (active: boolean): any => ({
-    padding: '10px 20px', borderRadius: 10, fontSize: 13, fontWeight: 800,
+    padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 800,
     background: active ? 'linear-gradient(90deg, #60A5FA, #22D3EE)' : 'var(--mc-bg-2)',
-    color: active ? '#0B1220' : TEXT,
-    border: active ? 'none' : '1px solid var(--mc-bg-4)',
+    color: active ? '#0B1220' : TEXT, border: active ? 'none' : '1px solid var(--mc-bg-4)',
     cursor: 'pointer', letterSpacing: '0.3px',
   });
 
-  const empty = ministries.length === 0 && themes.length === 0 && files.length === 0 && !pastedText;
-  const yearLabel = headline.yearNew || (grandTotal.beNew ? '2026-27' : '');
+  // Ranking row display
+  const RankRow = ({ n, m, absMode }: { n: number; m: EnrichedMinistry; absMode: boolean }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed var(--mc-bg-3)' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
+        <span style={{ fontSize: 11, color: DIM, fontWeight: 800, width: 20 }}>#{n}</span>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, cursor: 'pointer', color: TEXT }} onClick={() => { setSelectedMinistry(m.ministry); setTab('ministry'); }}>{m.ministry}</div>
+          <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>{fmtCr(m.rePrev)} → {fmtCr(m.beNew)}</div>
+        </div>
+      </div>
+      <div style={{ textAlign: 'right' as const }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: (m.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' as const }}>
+          {absMode ? fmtDelta(m.absoluteDeltaRE) : fmtPct(m.yoyVsRE)}
+        </div>
+        <div style={{ fontSize: 10, color: DIM }}>{absMode ? fmtPct(m.yoyVsRE) : fmtDelta(m.absoluteDeltaRE)}</div>
+      </div>
+    </div>
+  );
 
-  const barCard = (data: MinistryRow[]) => {
+  // Heatmap cell
+  const heatColor = (yoy: number): string => {
+    if (yoy >= 15) return '#065F46';
+    if (yoy >= 5) return '#10B981';
+    if (yoy >= 0) return '#84CC16';
+    if (yoy >= -5) return '#FBBF24';
+    if (yoy >= -15) return '#F59E0B';
+    return '#EF4444';
+  };
+
+  // Bar chart card
+  const barCard = (data: EnrichedMinistry[], year: string) => {
     if (!data.length) return null;
     const top = [...data].sort((a, b) => (b.beNew || 0) - (a.beNew || 0)).slice(0, 15);
     const max = Math.max(...top.map(m => m.beNew || 0));
     return (
       <div style={CARD}>
-        <div style={H}>📊 Top 15 ministries by allocation ({yearLabel} BE)</div>
+        <div style={H}>📊 Top 15 ministries by allocation ({year} BE)</div>
         <div>
           {top.map(m => (
             <div key={m.ministry} style={{ marginBottom: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-                <span style={{ color: TEXT, fontWeight: 700 }}>{m.ministry}</span>
+                <span style={{ color: TEXT, fontWeight: 700, cursor: 'pointer' }} onClick={() => { setSelectedMinistry(m.ministry); setTab('ministry'); }}>{m.ministry}</span>
                 <span style={{ color: DIM, fontVariantNumeric: 'tabular-nums' as const }}>
-                  {fmtCr(m.beNew)}
-                  <span style={{ color: (m.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', marginLeft: 8, fontWeight: 800 }}>{fmtPct(m.yoyVsRE)}</span>
+                  {fmtCr(m.beNew)} · <span style={{ color: (m.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>{fmtPct(m.yoyVsRE)}</span>
                 </span>
               </div>
               <div style={{ height: 7, background: 'var(--mc-bg-2)', borderRadius: 4, overflow: 'hidden' }}>
@@ -645,110 +953,253 @@ export default function BudgetIntelPage() {
     );
   };
 
+  const empty = !activeData;
+  const showTabs = !!activeData;
+
+  // Ministry drill-down data
+  const drillMinistry = useMemo(() => {
+    if (!selectedMinistry || !activeData) return null;
+    return activeData.ministries.find(m => m.ministry === selectedMinistry) || null;
+  }, [selectedMinistry, activeData]);
+  const drillHistory = useMemo(() => {
+    if (!selectedMinistry || !allYearsData.length) return [];
+    return allYearsData
+      .map(y => ({ year: y.fiscalYear, m: y.ministries.find(m => m.ministry === selectedMinistry) }))
+      .filter(x => !!x.m) as { year: string; m: EnrichedMinistry }[];
+  }, [selectedMinistry, allYearsData]);
+
   return (
     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+        {/* HEADER */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>📊 Budget Intel</h1>
             <div style={{ marginTop: 4, fontSize: 12.5, color: DIM }}>
-              Union Budget PDF/DOCX in → institutional brief out. Parses ministry allocations, receipts composition, deficit block, and narrative themes fully client-side.
+              Institutional-grade Union Budget analytics. Uploads persist by fiscal year in your browser — refresh doesn't lose work.
             </div>
           </div>
-          {yearLabel && (
-            <div style={{ fontSize: 12, padding: '6px 12px', background: 'color-mix(in srgb, #F59E0B 15%, transparent)', border: '1px solid color-mix(in srgb, #F59E0B 40%, transparent)', color: '#F59E0B', borderRadius: 6, fontWeight: 800 }}>
-              Budget FY {yearLabel}
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {savedYears.length > 0 && (
+              <>
+                <label style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>Year:</label>
+                <select
+                  value={activeYear} onChange={(e) => setActiveYear(e.target.value)}
+                  style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', color: TEXT, padding: '6px 10px', borderRadius: 6, fontSize: 12, fontWeight: 800 }}
+                >
+                  {savedYears.map(y => <option key={y} value={y}>FY {y}</option>)}
+                </select>
+                <button onClick={exportCSV} style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', color: TEXT, padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>⬇ CSV</button>
+                <button onClick={exportJSON} style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', color: TEXT, padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>⬇ JSON</button>
+                <button onClick={clearActiveYear} style={{ background: 'transparent', border: '1px solid var(--mc-bearish)', color: 'var(--mc-bearish)', padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>🗑</button>
+              </>
+            )}
+          </div>
         </div>
 
+        {/* UPLOAD ZONE */}
         <div
           ref={dropRef}
-          style={{ ...CARD, border: '2px dashed color-mix(in srgb, #60A5FA 50%, transparent)', padding: '24px 20px', textAlign: 'center' as const, cursor: 'pointer', background: 'color-mix(in srgb, #60A5FA 4%, transparent)' }}
+          style={{ ...CARD, border: '2px dashed color-mix(in srgb, #60A5FA 50%, transparent)', padding: '20px 20px', cursor: 'pointer', background: 'color-mix(in srgb, #60A5FA 4%, transparent)' }}
           onClick={() => (document.getElementById('budget-file-input') as HTMLInputElement)?.click()}
         >
-          <div style={{ fontSize: 26, marginBottom: 6 }}>📥</div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>Drop PDF / DOCX — or click to pick</div>
-          <div style={{ fontSize: 11.5, color: DIM, marginTop: 4 }}>
-            Budget-at-a-Glance + Highlights + Speech together give best output. Multiple files supported.
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div style={{ fontSize: 22 }}>📥</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Drop Budget PDF / DOCX — Speech + at-a-Glance + Expenditure + Receipts</div>
+              <div style={{ fontSize: 11.5, color: DIM }}>Everything merges into one brief. Uploads persist across refresh.</div>
+            </div>
           </div>
-          {busy && <div style={{ marginTop: 10, fontSize: 12, color: '#F59E0B', fontWeight: 700 }}>Extracting text…</div>}
-          {error && <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--mc-bearish)' }}>{error}</div>}
-          {files.length > 0 && (
-            <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-              {files.map(f => (
+          {busy && <div style={{ marginTop: 10, fontSize: 12, color: '#F59E0B', fontWeight: 700, textAlign: 'center' as const }}>Extracting text…</div>}
+          {error && <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--mc-bearish)', textAlign: 'center' as const }}>{error}</div>}
+          {inMemoryFiles.length > 0 && (
+            <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
+              {inMemoryFiles.map(f => (
                 <span key={f.name} style={{ fontSize: 11, padding: '3px 10px', background: 'color-mix(in srgb, #10B981 15%, transparent)', border: '1px solid color-mix(in srgb, #10B981 40%, transparent)', color: '#10B981', borderRadius: 6, fontWeight: 700 }}>
-                  📄 {f.name} · {Math.round(f.size / 1024)} KB
+                  📄 {f.name}
                 </span>
               ))}
+              {pending && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); savePending(); }}
+                  style={{ background: '#10B981', color: '#0B1220', border: 'none', padding: '6px 16px', borderRadius: 6, fontSize: 11.5, fontWeight: 800, cursor: 'pointer', marginLeft: 8 }}
+                >
+                  💾 Save as FY {pending.headline.yearNew || '?'}
+                </button>
+              )}
             </div>
           )}
           <input id="budget-file-input" type="file" multiple accept=".pdf,.txt,.md,.docx" style={{ display: 'none' }} onChange={(e) => e.target.files && handleFiles(e.target.files)} />
         </div>
 
+        {/* Paste fallback */}
         <details style={{ ...CARD, padding: '10px 14px' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 12, color: DIM, fontWeight: 700 }}>📋 Or paste raw text from PPT/DOC/speech</summary>
-          <textarea
-            value={pastedText}
-            onChange={e => setPastedText(e.target.value)}
-            placeholder="Paste any budget-related text — parsed alongside uploaded files."
-            style={{ marginTop: 8, width: '100%', minHeight: 100, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: 10, color: TEXT, fontSize: 12, fontFamily: 'inherit', resize: 'vertical' }}
-          />
+          <summary style={{ cursor: 'pointer', fontSize: 12, color: DIM, fontWeight: 700 }}>📋 Or paste raw text</summary>
+          <textarea value={pastedText} onChange={e => setPastedText(e.target.value)} placeholder="Paste budget text — parsed alongside uploads."
+            style={{ marginTop: 8, width: '100%', minHeight: 100, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: 10, color: TEXT, fontSize: 12, fontFamily: 'inherit', resize: 'vertical' }} />
         </details>
 
-        {empty && (
+        {empty && !pending && (
           <div style={{ ...CARD, padding: '40px 20px', textAlign: 'center' as const, color: DIM }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>📊</div>
-            <div style={{ fontSize: 14 }}>Upload the Budget PDFs above to unlock Key Info + Analytics tabs.</div>
+            <div style={{ fontSize: 14 }}>Upload a Budget PDF to unlock the institutional dashboard.</div>
           </div>
         )}
 
-        {!empty && (
-          <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--mc-bg-3)', paddingBottom: 8 }}>
-            <button style={tabStyle(tab === 'info')} onClick={() => setTab('info')}>📋 Key Info Extraction</button>
-            <button style={tabStyle(tab === 'analytics')} onClick={() => setTab('analytics')}>📈 Budget Analytics</button>
+        {/* Pending upload preview */}
+        {pending && !activeData && (
+          <div style={CARD}>
+            <div style={H}>🔎 Preview — this parse hasn't been saved yet. Click "Save as FY" above to persist.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+              <KV label="FY detected" value={pending.headline.yearNew || 'unknown'} color="#F59E0B" />
+              <KV label="Ministries parsed" value={pending.ministries.length} />
+              <KV label="Total budget" value={fmtCr(pending.headline.totalExpBE ?? pending.grandTotal.beNew)} color="#22D3EE" />
+              <KV label="Themes detected" value={pending.themes.length} />
+            </div>
           </div>
         )}
 
-        {!empty && tab === 'info' && (
+        {/* TABS */}
+        {showTabs && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--mc-bg-3)', paddingBottom: 8 }}>
+            <button style={tabStyle(tab === 'exec')} onClick={() => setTab('exec')}>🎯 Executive Summary</button>
+            <button style={tabStyle(tab === 'info')} onClick={() => setTab('info')}>📋 Key Info</button>
+            <button style={tabStyle(tab === 'analytics')} onClick={() => setTab('analytics')}>📈 Analytics & Rankings</button>
+            <button style={tabStyle(tab === 'ministry')} onClick={() => setTab('ministry')}>🏛 Ministry Deep-Dive</button>
+          </div>
+        )}
+
+        {/* ═════════════ TAB · EXECUTIVE SUMMARY ═════════════ */}
+        {showTabs && tab === 'exec' && activeData && (
           <>
-            {(headline.totalExpBE || grandTotal.beNew) && (
-              <div>
-                <div style={{ fontSize: 10.5, color: DIM, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 8 }}>🇮🇳 FISCAL HEADLINE — {yearLabel} BE</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
-                  <KV label="Total Expenditure BE" value={fmtCr(headline.totalExpBE ?? grandTotal.beNew)} />
-                  <KV label="Total Capital Expenditure" value={fmtCr(headline.totalCapExBE)} sub={headline.effectiveCapExBE ? `Effective ${fmtCr(headline.effectiveCapExBE)}` : ''} color="#22D3EE" />
-                  <KV label="Interest Payments" value={fmtCr(headline.interestPayments)} sub={(headline.totalExpBE || grandTotal.beNew) && headline.interestPayments ? `${((headline.interestPayments / (headline.totalExpBE || grandTotal.beNew || 1)) * 100).toFixed(1)}% of total` : ''} color="#F59E0B" />
-                  <KV label="Prior year total (Actuals)" value={fmtCr(grandTotal.actualsPrev)} sub={grandTotal.actualsPrev && grandTotal.beNew ? `${fmtPct(pct(grandTotal.beNew, grandTotal.actualsPrev))} growth` : ''} />
-                </div>
-              </div>
-            )}
+            {/* AI summary */}
+            <div style={CARD}>
+              <div style={H}>🤖 AI-generated executive briefing — FY {activeData.fiscalYear}</div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.7, color: TEXT }}
+                   dangerouslySetInnerHTML={{ __html: aiSummary.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+            </div>
 
-            {(deficits.fiscalDeficit || deficits.revenueDeficit) && (
-              <div>
-                <div style={{ fontSize: 10.5, color: DIM, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 8 }}>📉 DEFICIT BLOCK — {yearLabel} BE</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
-                  <KV label="Fiscal Deficit" value={fmtCr(deficits.fiscalDeficit)} color="#EF4444" sub="Total exp − total receipts (excl. debt cap)" />
-                  <KV label="Revenue Deficit" value={fmtCr(deficits.revenueDeficit)} color="#F59E0B" sub="Rev exp − rev receipts" />
-                  <KV label="Effective Rev Deficit" value={fmtCr(deficits.effectiveRevenueDeficit)} sub="Rev def − grants for capital assets" />
-                  <KV label="Primary Deficit" value={fmtCr(deficits.primaryDeficit)} sub="Fiscal def − interest payments" />
-                </div>
-              </div>
-            )}
+            {/* Score cards row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
+              <KV label="Total Expenditure BE" value={fmtCr(activeData.headline.totalExpBE ?? activeData.grandTotal.beNew)} sub={`vs prior ${fmtPct(pct(activeData.grandTotal.beNew, activeData.grandTotal.rePrev))}`} color="#22D3EE" />
+              <KV label="Capital Expenditure" value={fmtCr(activeData.headline.totalCapExBE)} sub={activeData.headline.totalCapExBE && (activeData.headline.totalExpBE ?? activeData.grandTotal.beNew) ? `${((activeData.headline.totalCapExBE / (activeData.headline.totalExpBE ?? activeData.grandTotal.beNew ?? 1)) * 100).toFixed(1)}% of total` : ''} color="#10B981" />
+              <KV label="Fiscal Deficit" value={fmtCr(activeData.deficits.fiscalDeficit)} color="#EF4444" />
+              <KV label="Fiscal Quality Score" value={`${fq?.score ?? '—'}/100`} sub={fq && fq.score >= 70 ? 'strong quality' : fq && fq.score >= 50 ? 'balanced' : 'watch'} color={fq && fq.score >= 70 ? 'var(--mc-bullish)' : fq && fq.score >= 50 ? '#F59E0B' : 'var(--mc-bearish)'} />
+            </div>
 
-            {(receipts.revenueReceipts || receipts.taxRevenue) && (
+            {/* Priority Score ranking */}
+            <div style={CARD}>
+              <div style={H}>🎯 Government Priority Score — Ministry ranking (composite)</div>
+              <div style={{ fontSize: 11, color: DIM, marginBottom: 12 }}>
+                Score = 50 base + growth (±20) + rank bonus (up to 15) + scale bonus (up to 10) + sustained-growth bonus − cut penalty. Higher = higher revealed priority in this Budget.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+                {priorityRanked.slice(0, 12).map((m, i) => (
+                  <div key={m.ministry} style={{ padding: 12, background: 'var(--mc-bg-2)', borderRadius: 8, cursor: 'pointer', borderLeft: `4px solid ${m.priorityScore >= 75 ? 'var(--mc-bullish)' : m.priorityScore >= 55 ? '#F59E0B' : 'var(--mc-bearish)'}` }} onClick={() => { setSelectedMinistry(m.ministry); setTab('ministry'); }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800 }}>#{i + 1} · {m.ministry}</span>
+                      <span style={{ fontSize: 18, fontWeight: 900, color: m.priorityScore >= 75 ? 'var(--mc-bullish)' : m.priorityScore >= 55 ? '#F59E0B' : 'var(--mc-bearish)' }}>{m.priorityScore}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: DIM }}>
+                      {fmtCr(m.beNew)} · {fmtPct(m.yoyVsRE)} vs RE · {m.shareOfBudget != null ? `${m.shareOfBudget}% of budget` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Winners + Losers side by side */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
               <div style={CARD}>
-                <div style={H}>💰 Receipts breakdown ({yearLabel} BE vs prior FY Actuals)</div>
+                <div style={H}>🏆 Biggest Winners — ₹ increase vs RE</div>
+                {sortedByAbsUp.slice(0, 6).map((m, i) => <RankRow key={m.ministry} n={i + 1} m={m} absMode />)}
+              </div>
+              <div style={CARD}>
+                <div style={H}>💔 Biggest Cuts — ₹ decrease vs RE</div>
+                {sortedByAbsDown.length ? sortedByAbsDown.slice(0, 6).map((m, i) => <RankRow key={m.ministry} n={i + 1} m={m} absMode />)
+                  : <div style={{ fontSize: 12, color: DIM }}>No ministry cut vs current RE</div>}
+              </div>
+            </div>
+
+            {/* Sector heatmap */}
+            <div style={CARD}>
+              <div style={H}>🌡 Ministry heatmap — allocation Δ vs RE</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                {activeData.ministries.map(m => (
+                  <div key={m.ministry}
+                    onClick={() => { setSelectedMinistry(m.ministry); setTab('ministry'); }}
+                    style={{ padding: 10, background: heatColor(m.yoyVsRE ?? 0), borderRadius: 8, cursor: 'pointer', color: (m.yoyVsRE ?? 0) >= 0 && (m.yoyVsRE ?? 0) < 5 ? '#0B1220' : 'white' }}>
+                    <div style={{ fontSize: 11, fontWeight: 800 }}>{m.ministry}</div>
+                    <div style={{ fontSize: 16, fontWeight: 900, marginTop: 3 }}>{fmtPct(m.yoyVsRE)}</div>
+                    <div style={{ fontSize: 10, opacity: 0.85 }}>{fmtCr(m.beNew)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6, fontSize: 10, color: DIM, marginTop: 10, alignItems: 'center' }}>
+                <span>Legend:</span>
+                {[['≥+15%','#065F46'],['+5–15%','#10B981'],['0–5%','#84CC16'],['−5–0%','#FBBF24'],['−15%','#F59E0B'],['<−15%','#EF4444']].map(([l,c]) => (
+                  <span key={l as string} style={{ padding: '2px 6px', background: c as string, borderRadius: 3, color: 'white', fontWeight: 700 }}>{l}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* Fiscal Quality decomposition */}
+            {fq && fq.parts.length > 0 && (
+              <div style={CARD}>
+                <div style={H}>⚖ Fiscal Quality decomposition</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+                  {fq.parts.map(p => (
+                    <div key={p.label} style={{ padding: 10, background: 'var(--mc-bg-2)', borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>{p.label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, marginTop: 3, color: '#22D3EE' }}>+{p.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═════════════ TAB · KEY INFO ═════════════ */}
+        {showTabs && tab === 'info' && activeData && (
+          <>
+            {(activeData.headline.totalExpBE || activeData.grandTotal.beNew) && (
+              <div>
+                <div style={{ fontSize: 10.5, color: DIM, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 8 }}>🇮🇳 FISCAL HEADLINE — FY {activeData.fiscalYear} BE</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+                  <KV label="Total Expenditure BE" value={fmtCr(activeData.headline.totalExpBE ?? activeData.grandTotal.beNew)} />
+                  <KV label="Total Capital Expenditure" value={fmtCr(activeData.headline.totalCapExBE)} sub={activeData.headline.effectiveCapExBE ? `Effective ${fmtCr(activeData.headline.effectiveCapExBE)}` : ''} color="#22D3EE" />
+                  <KV label="Interest Payments" value={fmtCr(activeData.headline.interestPayments)} color="#F59E0B" />
+                  <KV label="Prior FY Actuals total" value={fmtCr(activeData.grandTotal.actualsPrev)} sub={activeData.grandTotal.actualsPrev && activeData.grandTotal.beNew ? `${fmtPct(pct(activeData.grandTotal.beNew, activeData.grandTotal.actualsPrev))} growth` : ''} />
+                </div>
+              </div>
+            )}
+
+            {(activeData.deficits.fiscalDeficit || activeData.deficits.revenueDeficit) && (
+              <div>
+                <div style={{ fontSize: 10.5, color: DIM, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 8 }}>📉 DEFICIT BLOCK</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+                  <KV label="Fiscal Deficit" value={fmtCr(activeData.deficits.fiscalDeficit)} color="#EF4444" />
+                  <KV label="Revenue Deficit" value={fmtCr(activeData.deficits.revenueDeficit)} color="#F59E0B" />
+                  <KV label="Effective Rev Deficit" value={fmtCr(activeData.deficits.effectiveRevenueDeficit)} />
+                  <KV label="Primary Deficit" value={fmtCr(activeData.deficits.primaryDeficit)} />
+                </div>
+              </div>
+            )}
+
+            {(activeData.receipts.revenueReceipts || activeData.receipts.taxRevenue) && (
+              <div style={CARD}>
+                <div style={H}>💰 Receipts breakdown</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
                   {([
-                    ['Revenue Receipts', receipts.revenueReceipts, receipts.yoyBEvsActual.revenueReceipts],
-                    ['Tax Revenue (net)', receipts.taxRevenue, receipts.yoyBEvsActual.taxRevenue],
-                    ['Non-Tax Revenue', receipts.nonTaxRevenue, receipts.yoyBEvsActual.nonTaxRevenue],
-                    ['Capital Receipts', receipts.capitalReceipts, receipts.yoyBEvsActual.capitalReceipts],
-                    ['Recovery of Loans', receipts.loanRecovery, receipts.yoyBEvsActual.loanRecovery],
-                    ['Other Receipts (disinvest.)', receipts.otherReceipts, receipts.yoyBEvsActual.otherReceipts],
-                    ['Borrowings (net)', receipts.borrowings, receipts.yoyBEvsActual.borrowings],
+                    ['Revenue Receipts', activeData.receipts.revenueReceipts, activeData.receipts.yoyBEvsActual.revenueReceipts],
+                    ['Tax Revenue (net)', activeData.receipts.taxRevenue, activeData.receipts.yoyBEvsActual.taxRevenue],
+                    ['Non-Tax Revenue', activeData.receipts.nonTaxRevenue, activeData.receipts.yoyBEvsActual.nonTaxRevenue],
+                    ['Capital Receipts', activeData.receipts.capitalReceipts, activeData.receipts.yoyBEvsActual.capitalReceipts],
+                    ['Recovery of Loans', activeData.receipts.loanRecovery, activeData.receipts.yoyBEvsActual.loanRecovery],
+                    ['Other Receipts (disinvest.)', activeData.receipts.otherReceipts, activeData.receipts.yoyBEvsActual.otherReceipts],
+                    ['Borrowings (net)', activeData.receipts.borrowings, activeData.receipts.yoyBEvsActual.borrowings],
                   ] as [string, number|null, number|null][]).filter(([, v]) => v != null).map(([label, val, yoy]) => (
                     <div key={label} style={{ padding: 10, background: 'var(--mc-bg-2)', borderRadius: 8 }}>
                       <div style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>{label}</div>
@@ -760,71 +1211,68 @@ export default function BudgetIntelPage() {
               </div>
             )}
 
-            {ministries.length > 0 && (
+            {activeData.ministries.length > 0 && (
               <div style={CARD}>
-                <div style={H}>📚 Expenditure of Major Items — every ministry, verbatim</div>
+                <div style={H}>📚 Ministry table — rich calculated view</div>
                 <div style={{ overflowX: 'auto' as const }}>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' as const }}>
+                  <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' as const }}>
                     <thead>
                       <tr style={{ color: DIM }}>
-                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700 }}>Ministry</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>Actuals prev FY</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>BE current FY</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>RE current FY</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>BE new FY</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>Δ vs RE</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>Δ vs Actual</th>
+                        <th style={{ textAlign: 'left', padding: '6px 6px' }}>#</th>
+                        <th style={{ textAlign: 'left', padding: '6px 6px' }}>Ministry</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>Actuals</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>BE cur</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>RE cur</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>BE new</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>Δ vs RE ₹</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>Δ vs RE %</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>Δ vs Actual</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>Share</th>
+                        <th style={{ padding: '6px 6px', textAlign: 'right' as const }}>Score</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {ministries.map(m => (
-                        <tr key={m.ministry} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
-                          <td style={{ padding: '6px 8px', fontWeight: 700 }}>{m.ministry}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const }}>{fmtCr(m.actualsPrev)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const, color: DIM }}>{fmtCr(m.bePrev)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const }}>{fmtCr(m.rePrev)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const, fontWeight: 800 }}>{fmtCr(m.beNew)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontWeight: 800, color: (m.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(m.yoyVsRE)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, color: (m.yoyVsActual ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(m.yoyVsActual)}</td>
+                      {activeData.ministries.map(m => (
+                        <tr key={m.ministry} style={{ borderTop: '1px dashed var(--mc-bg-3)', cursor: 'pointer' }} onClick={() => { setSelectedMinistry(m.ministry); setTab('ministry'); }}>
+                          <td style={{ padding: '5px 6px', color: DIM }}>{m.rank}</td>
+                          <td style={{ padding: '5px 6px', fontWeight: 700 }}>{m.ministry}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const }}>{fmtCr(m.actualsPrev)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: DIM }}>{fmtCr(m.bePrev)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const }}>{fmtCr(m.rePrev)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, fontWeight: 800 }}>{fmtCr(m.beNew)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, fontWeight: 700, color: (m.absoluteDeltaRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtDelta(m.absoluteDeltaRE)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, fontWeight: 800, color: (m.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(m.yoyVsRE)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: (m.yoyVsActual ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(m.yoyVsActual)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const }}>{m.shareOfBudget != null ? `${m.shareOfBudget}%` : '—'}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' as const, fontWeight: 800, color: m.priorityScore >= 70 ? 'var(--mc-bullish)' : m.priorityScore >= 50 ? '#F59E0B' : 'var(--mc-bearish)' }}>{m.priorityScore}</td>
                         </tr>
                       ))}
-                      {grandTotal.beNew && (
-                        <tr style={{ borderTop: '2px solid var(--mc-bg-4)', background: 'var(--mc-bg-2)' }}>
-                          <td style={{ padding: '8px', fontWeight: 900 }}>Grand Total</td>
-                          <td style={{ padding: '8px', textAlign: 'right' as const, fontWeight: 900 }}>{fmtCr(grandTotal.actualsPrev)}</td>
-                          <td style={{ padding: '8px', textAlign: 'right' as const, fontWeight: 800, color: DIM }}>{fmtCr(grandTotal.bePrev)}</td>
-                          <td style={{ padding: '8px', textAlign: 'right' as const, fontWeight: 900 }}>{fmtCr(grandTotal.rePrev)}</td>
-                          <td style={{ padding: '8px', textAlign: 'right' as const, fontWeight: 900 }}>{fmtCr(grandTotal.beNew)}</td>
-                          <td colSpan={2} style={{ padding: '8px', textAlign: 'right' as const, fontWeight: 800, color: 'var(--mc-bullish)' }}>
-                            {fmtPct(pct(grandTotal.beNew, grandTotal.rePrev))} vs RE · {fmtPct(pct(grandTotal.beNew, grandTotal.actualsPrev))} vs Actual
-                          </td>
-                        </tr>
-                      )}
                     </tbody>
                   </table>
                 </div>
+                <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginTop: 6 }}>Click any row to open the Ministry Deep-Dive.</div>
               </div>
             )}
 
-            {topSchemes.length > 0 && (
+            {activeData.topSchemes.length > 0 && (
               <div style={CARD}>
-                <div style={H}>🏗 Top scheme allocations (sub-ministry level, top 25 by BE)</div>
+                <div style={H}>🏗 Top scheme allocations (sub-ministry level, top 30 by BE)</div>
                 <div style={{ overflowX: 'auto' as const }}>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' as const }}>
                     <thead>
                       <tr style={{ color: DIM }}>
-                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700 }}>Scheme</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>RE current</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>BE new</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 700, textAlign: 'right' as const }}>Δ</th>
+                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Scheme</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' as const }}>RE cur</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' as const }}>BE new</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' as const }}>Δ</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {topSchemes.map(s => (
+                      {activeData.topSchemes.map(s => (
                         <tr key={s.name} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
                           <td style={{ padding: '6px 8px' }}>{s.name}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right' as const, color: DIM, fontVariantNumeric: 'tabular-nums' as const }}>{fmtCr(s.rePrev)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontWeight: 800, fontVariantNumeric: 'tabular-nums' as const }}>{fmtCr(s.beNew)}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontWeight: 800 }}>{fmtCr(s.beNew)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right' as const, fontWeight: 800, color: (s.delta ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(s.delta)}</td>
                         </tr>
                       ))}
@@ -834,10 +1282,10 @@ export default function BudgetIntelPage() {
               </div>
             )}
 
-            {Object.keys(rawTexts).length > 0 && (
+            {Object.keys(activeData.rawTexts).length > 0 && (
               <div style={CARD}>
-                <div style={H}>📄 Raw extraction preview (per uploaded document)</div>
-                {Object.entries(rawTexts).map(([name, text]) => (
+                <div style={H}>📄 Raw extraction preview</div>
+                {Object.entries(activeData.rawTexts).map(([name, text]) => (
                   <details key={name} style={{ marginBottom: 8 }}>
                     <summary style={{ cursor: 'pointer', color: '#60A5FA', fontWeight: 700, fontSize: 12 }}>{name} · {text.length.toLocaleString('en-IN')} chars</summary>
                     <pre style={{ fontSize: 10.5, color: DIM, whiteSpace: 'pre-wrap' as const, marginTop: 6, maxHeight: 300, overflowY: 'auto' as const, background: 'var(--mc-bg-2)', padding: 10, borderRadius: 6 }}>{text.slice(0, 3500)}{text.length > 3500 ? '…' : ''}</pre>
@@ -848,49 +1296,43 @@ export default function BudgetIntelPage() {
           </>
         )}
 
-        {!empty && tab === 'analytics' && (
+        {/* ═════════════ TAB · ANALYTICS & RANKINGS ═════════════ */}
+        {showTabs && tab === 'analytics' && activeData && (
           <>
-            {ministries.length > 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-                <div style={CARD}>
-                  <div style={H}>📈 Winners — allocation raised vs current RE</div>
-                  {winners.length ? winners.slice(0, 12).map(m => (
-                    <div key={m.ministry} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed var(--mc-bg-3)' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{m.ministry}</div>
-                        <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>{fmtCr(m.rePrev)} → {fmtCr(m.beNew)} · vs Actual {fmtPct(m.yoyVsActual)}</div>
-                      </div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' as const }}>{fmtPct(m.yoyVsRE)}</div>
-                    </div>
-                  )) : <div style={{ fontSize: 12, color: DIM }}>None identified</div>}
-                </div>
-                <div style={CARD}>
-                  <div style={H}>📉 Losers — allocation cut vs current RE</div>
-                  {losers.length ? losers.slice(0, 12).map(m => (
-                    <div key={m.ministry} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed var(--mc-bg-3)' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{m.ministry}</div>
-                        <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>{fmtCr(m.rePrev)} → {fmtCr(m.beNew)} · vs Actual {fmtPct(m.yoyVsActual)}</div>
-                      </div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' as const }}>{fmtPct(m.yoyVsRE)}</div>
-                    </div>
-                  )) : <div style={{ fontSize: 12, color: DIM }}>None identified</div>}
-                </div>
+            {/* 4 ranking blocks */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
+              <div style={CARD}>
+                <div style={H}>🏆 Top absolute ₹ increases (vs RE)</div>
+                {sortedByAbsUp.slice(0, 10).map((m, i) => <RankRow key={m.ministry} n={i + 1} m={m} absMode />)}
               </div>
-            )}
+              <div style={CARD}>
+                <div style={H}>📈 Top % increases (vs RE)</div>
+                {sortedByPctUp.slice(0, 10).map((m, i) => <RankRow key={m.ministry} n={i + 1} m={m} absMode={false} />)}
+              </div>
+              <div style={CARD}>
+                <div style={H}>💔 Top absolute ₹ cuts (vs RE)</div>
+                {sortedByAbsDown.length ? sortedByAbsDown.slice(0, 10).map((m, i) => <RankRow key={m.ministry} n={i + 1} m={m} absMode />)
+                  : <div style={{ fontSize: 12, color: DIM }}>No absolute cuts detected</div>}
+              </div>
+              <div style={CARD}>
+                <div style={H}>📉 Top % cuts (vs RE)</div>
+                {sortedByPctDown.length ? sortedByPctDown.slice(0, 10).map((m, i) => <RankRow key={m.ministry} n={i + 1} m={m} absMode={false} />)
+                  : <div style={{ fontSize: 12, color: DIM }}>No % cuts detected</div>}
+              </div>
+            </div>
 
-            {barCard(ministries)}
+            {barCard(activeData.ministries, activeData.fiscalYear)}
 
-            {(comesFrom.length > 0 || goesTo.length > 0) && (
+            {(activeData.comesFrom.length > 0 || activeData.goesTo.length > 0) && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-                {comesFrom.length > 0 && donut('💵 Where the Rupee Comes From', comesFrom)}
-                {goesTo.length > 0 && donut('💸 Where the Rupee Goes To', goesTo)}
+                {activeData.comesFrom.length > 0 && donut('💵 Where the Rupee Comes From', activeData.comesFrom)}
+                {activeData.goesTo.length > 0 && donut('💸 Where the Rupee Goes To', activeData.goesTo)}
               </div>
             )}
 
             {sectorPlays.length > 0 && (
               <div style={CARD}>
-                <div style={H}>💼 Institutional sector plays — listed names that ride each allocation shift</div>
+                <div style={H}>💼 Sector plays — listed names that ride each allocation shift</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 14 }}>
                   {sectorPlays.map(sp => (
                     <div key={sp.sector} style={{ padding: 12, background: 'var(--mc-bg-2)', border: `1px solid ${sp.direction === 'up' ? 'color-mix(in srgb, var(--mc-bullish) 40%, transparent)' : sp.direction === 'down' ? 'color-mix(in srgb, var(--mc-bearish) 40%, transparent)' : 'var(--mc-bg-4)'}`, borderRadius: 10 }}>
@@ -900,7 +1342,7 @@ export default function BudgetIntelPage() {
                           {sp.direction === 'up' ? '▲' : sp.direction === 'down' ? '▼' : '—'} {fmtPct(sp.yoyPct)}
                         </div>
                       </div>
-                      <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginBottom: 8 }}>Trigger: {sp.ministry}</div>
+                      <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginBottom: 8 }}>Trigger: <span style={{ cursor: 'pointer', color: '#60A5FA' }} onClick={() => { setSelectedMinistry(sp.ministry); setTab('ministry'); }}>{sp.ministry}</span></div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {sp.stocks.slice(0, 9).map(s => (
                           <div key={s.ticker} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11.5 }}>
@@ -912,15 +1354,14 @@ export default function BudgetIntelPage() {
                     </div>
                   ))}
                 </div>
-                <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginTop: 12 }}>Historical beneficiary heuristics — not recommendations.</div>
               </div>
             )}
 
-            {themes.length > 0 && (
+            {activeData.themes.length > 0 && (
               <div style={CARD}>
-                <div style={H}>🔍 Narrative themes across every uploaded document</div>
+                <div style={H}>🔍 Narrative themes</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
-                  {themes.map(t => (
+                  {activeData.themes.map(t => (
                     <div key={t.theme} style={{ padding: 12, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
                         <div style={{ fontSize: 13, fontWeight: 800 }}>{t.icon} {t.theme}</div>
@@ -935,9 +1376,121 @@ export default function BudgetIntelPage() {
           </>
         )}
 
-        {!empty && (
+        {/* ═════════════ TAB · MINISTRY DEEP-DIVE ═════════════ */}
+        {showTabs && tab === 'ministry' && activeData && (
+          <>
+            <div style={CARD}>
+              <div style={H}>🏛 Pick a ministry to drill into</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {activeData.ministries.map(m => (
+                  <button key={m.ministry}
+                    onClick={() => setSelectedMinistry(m.ministry)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                      background: selectedMinistry === m.ministry ? 'linear-gradient(90deg, #60A5FA, #22D3EE)' : 'var(--mc-bg-2)',
+                      color: selectedMinistry === m.ministry ? '#0B1220' : TEXT,
+                      border: '1px solid var(--mc-bg-4)', cursor: 'pointer',
+                    }}>{m.ministry}</button>
+                ))}
+              </div>
+            </div>
+
+            {!selectedMinistry && (
+              <div style={{ ...CARD, textAlign: 'center' as const, color: DIM, padding: '40px 20px' }}>
+                Select a ministry above to see history, allocations, and linked stocks.
+              </div>
+            )}
+
+            {drillMinistry && (
+              <>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{drillMinistry.ministry}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+                    <KV label="BE new" value={fmtCr(drillMinistry.beNew)} color="var(--mc-text-0)" />
+                    <KV label="Δ vs RE" value={`${fmtDelta(drillMinistry.absoluteDeltaRE)} · ${fmtPct(drillMinistry.yoyVsRE)}`} color={(drillMinistry.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'} />
+                    <KV label="Δ vs Actuals" value={`${fmtDelta(drillMinistry.absoluteDeltaActual)} · ${fmtPct(drillMinistry.yoyVsActual)}`} color={(drillMinistry.yoyVsActual ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'} />
+                    <KV label="Share of budget" value={drillMinistry.shareOfBudget != null ? `${drillMinistry.shareOfBudget}%` : '—'} />
+                    <KV label="Rank" value={`#${drillMinistry.rank} of ${activeData.ministries.length}`} />
+                    <KV label="Priority Score" value={`${drillMinistry.priorityScore}/100`} color={drillMinistry.priorityScore >= 70 ? 'var(--mc-bullish)' : drillMinistry.priorityScore >= 50 ? '#F59E0B' : 'var(--mc-bearish)'} />
+                  </div>
+                </div>
+
+                {/* Multi-year history if available */}
+                {drillHistory.length > 1 && (
+                  <div style={CARD}>
+                    <div style={H}>📈 Multi-year allocation history</div>
+                    <div style={{ display: 'flex', gap: 8, overflowX: 'auto' as const, padding: '4px 0' }}>
+                      {drillHistory.map(x => (
+                        <div key={x.year} style={{ minWidth: 140, padding: 10, background: 'var(--mc-bg-2)', borderRadius: 8, textAlign: 'center' as const }}>
+                          <div style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>FY {x.year}</div>
+                          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>{fmtCr(x.m.beNew)}</div>
+                          <div style={{ fontSize: 11, color: (x.m.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>{fmtPct(x.m.yoyVsRE)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Detailed table */}
+                <div style={CARD}>
+                  <div style={H}>📊 Full breakdown — {drillMinistry.ministry}</div>
+                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' as const }}>
+                    <tbody>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>Prior FY Actuals</td><td style={{ padding: 6, textAlign: 'right' as const, fontWeight: 700 }}>{fmtCr(drillMinistry.actualsPrev)}</td></tr>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>Current FY BE</td><td style={{ padding: 6, textAlign: 'right' as const }}>{fmtCr(drillMinistry.bePrev)}</td></tr>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>Current FY RE</td><td style={{ padding: 6, textAlign: 'right' as const }}>{fmtCr(drillMinistry.rePrev)}</td></tr>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>New FY BE</td><td style={{ padding: 6, textAlign: 'right' as const, fontWeight: 900 }}>{fmtCr(drillMinistry.beNew)}</td></tr>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>Δ vs current RE</td><td style={{ padding: 6, textAlign: 'right' as const, color: (drillMinistry.yoyVsRE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>{fmtDelta(drillMinistry.absoluteDeltaRE)} · {fmtPct(drillMinistry.yoyVsRE)}</td></tr>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>Δ vs prior BE</td><td style={{ padding: 6, textAlign: 'right' as const, color: (drillMinistry.yoyVsBE ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(drillMinistry.yoyVsBE)}</td></tr>
+                      <tr style={{ borderTop: '1px dashed var(--mc-bg-3)' }}><td style={{ padding: 6, color: DIM }}>Δ vs prior Actuals</td><td style={{ padding: 6, textAlign: 'right' as const, color: (drillMinistry.yoyVsActual ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtDelta(drillMinistry.absoluteDeltaActual)} · {fmtPct(drillMinistry.yoyVsActual)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Sector map */}
+                {SECTOR_MAP[drillMinistry.ministry] && (
+                  <div style={CARD}>
+                    <div style={H}>💼 Linked sector: {SECTOR_MAP[drillMinistry.ministry].sector}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+                      {SECTOR_MAP[drillMinistry.ministry].stocks.map(s => (
+                        <div key={s.ticker} style={{ padding: 10, background: 'var(--mc-bg-2)', borderRadius: 8 }}>
+                          <a href={`https://www.nseindia.com/get-quotes/equity?symbol=${s.ticker}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', fontWeight: 800, textDecoration: 'none', fontSize: 13 }}>{s.ticker}</a>
+                          <div style={{ fontSize: 10.5, color: DIM, marginTop: 2 }}>{s.name}</div>
+                          <div style={{ fontSize: 11, color: TEXT, marginTop: 4 }}>{s.rationale}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Related schemes */}
+                {activeData.topSchemes.length > 0 && (
+                  <div style={CARD}>
+                    <div style={H}>🏗 Schemes overlap (top-30 by BE, filtered by ministry keyword)</div>
+                    {(() => {
+                      const key = drillMinistry.ministry.split(' ')[0];
+                      const rel = activeData.topSchemes.filter(s => s.name.toLowerCase().includes(key.toLowerCase()) || (drillMinistry.ministry === 'Rural Development' && /rural|MGNREGA|PM-?KISAN|Awas/i.test(s.name)) || (drillMinistry.ministry === 'Urban Development' && /urban|PMAY|Metro|Smart/i.test(s.name)));
+                      return rel.length ? (
+                        <div>
+                          {rel.map(s => (
+                            <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px dashed var(--mc-bg-3)' }}>
+                              <span style={{ fontSize: 12 }}>{s.name}</span>
+                              <span style={{ fontSize: 12, fontWeight: 800, color: (s.delta ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtCr(s.beNew)} · {fmtPct(s.delta)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <div style={{ fontSize: 12, color: DIM }}>No obvious scheme overlap in top-30. Use Key Info tab to browse all schemes.</div>;
+                    })()}
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {activeData && (
           <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', textAlign: 'center' as const, padding: '8px 0' }}>
-            All numbers extracted verbatim from the Ministry of Finance PDFs via anchor-scoped regex. Sector-play stock lists are historical beneficiary heuristics, not recommendations.
+            All numbers extracted verbatim from the Ministry of Finance PDFs. Calculated columns derive from the source figures. Sector-play stock lists are historical beneficiary heuristics, not recommendations. Data persists in your browser (localStorage) — export CSV/JSON to preserve across devices.
           </div>
         )}
 
