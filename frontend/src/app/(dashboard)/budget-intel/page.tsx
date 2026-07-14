@@ -519,20 +519,23 @@ function parseFiscalHeadline(rawText: string): FiscalHeadline {
   };
   const grabFirst = (re: RegExp): number | null => { const mm = text.match(re); return mm ? parseNumber(mm[1]) : null; };
 
-  // zzz257 — Anchor to "total expenditure" so we don't accidentally capture
-  // "GDP ... estimated at ₹3,93,00,393 crore" as total expenditure.
-  // First, try the strongest signal: Grand Total row from the ministry table
-  // (parseGrandTotal handles this separately — used as fallback in display code).
-  // Here, look for phrasing that explicitly mentions "expenditure".
+  // zzz262 — Strict: require "Total Expenditure" (not "Other Expenditure").
+  // Then sanity-check against Grand Total row from ministry table.
   let totalExpBE: number | null = null;
-  const expContextMatches = [...text.matchAll(/(?:total\s+)?expenditure[^0-9]{0,120}?₹\s*([\d,\s]{6,20}?)\s*crore/gi)];
-  if (expContextMatches.length > 0) {
-    // Prefer BE-new (later) mentions
-    totalExpBE = parseNumber(expContextMatches[expContextMatches.length - 1][1]);
+  const strictMatches = [...text.matchAll(/(?<!Other\s)(?<!Revenue\s)(?<!Capital\s)Total\s+Expenditure[^0-9]{0,120}?([\d,]{6,20}?)(?:\s*crore|\s+[\d,]+|\s*$)/gi)];
+  if (strictMatches.length > 0) {
+    // Take LAST match (usually BE-new column of the table row)
+    for (let i = strictMatches.length - 1; i >= 0 && totalExpBE == null; i--) {
+      const v = parseNumber(strictMatches[i][1]);
+      if (v != null && v >= 500_000 && v < 10_000_000) totalExpBE = v;
+    }
   }
-  // Sanity check — total expenditure for India FY26/27 is in the ₹40–70 L Cr
-  // range (4-7 million Cr). Anything above ₹100 L Cr (10M Cr) is almost
-  // certainly GDP (~₹300+ L Cr) that leaked through. Reject.
+  // Fallback: look for the Total Expenditure row with 4 numbers
+  if (totalExpBE == null) {
+    const tableRow = text.match(/Total\s+Expenditure[^\d]*?([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})\s+([\d,]{6,})/i);
+    if (tableRow) totalExpBE = parseNumber(tableRow[4]);   // BE-new = 4th column
+  }
+  // Reject GDP-like huge values
   if (totalExpBE != null && totalExpBE > 10_000_000) totalExpBE = null;
 
   let totalCapExBE = grabFirst(/total\s+capital\s+expenditure.{0,200}?₹\s*([\d,\s]{6,20}?)\s*crore/i);
@@ -628,8 +631,9 @@ function parseRupeeSlices(rawText: string, direction: 'from' | 'to'): Compositio
       if (matched) break;
       const src = p.source;
       const flags = p.flags.includes('i') ? p.flags : p.flags + 'i';
-      // Match label + up to 15 non-digit chars + 1-2 digit pct + optional p/%/paise
-      const re = new RegExp(src + '\\s*[^\\d]{0,15}?(\\d{1,2})\\s*(?:\\.?\\s*p\\.?|%|paise)?', flags);
+      // zzz262 — REQUIRE p/paise/% suffix to avoid picking up raw table numbers
+      // like "Non Tax Revenue 536580" → wrong 53.
+      const re = new RegExp(src + '\\s*[^\\d]{0,25}?(\\d{1,2})\\s*(?:\\.\\s*)?(?:p\\.?|paise|%)(?!\\d)', flags);
       const m = text.match(re);
       if (m) {
         const v = parseInt(m[1], 10);
@@ -727,12 +731,30 @@ function parseTopSchemes(rawText: string): SchemeRow[] {
     if (isMinistryLike(m[2].trim())) continue;
     const rePrev = parseNumber(m[5]);
     const beNew = parseNumber(m[6]);
-    if (beNew == null || beNew < 500) continue;
+    if (beNew == null || beNew < 100) continue;            // zzz262 — floor 100 Cr (catches more small schemes)
+    if (rows.some(r => r.name.toLowerCase() === name.toLowerCase())) continue;
+    rows.push({ name, beNew, rePrev, delta: pct(beNew, rePrev) });
+  }
+  // Pass 3 (zzz262) — Devanagari-tolerant scheme scan for entries where the
+  // English name comes AFTER Hindi text like: "जल जीवि पामिं ... 27 Jal Jeevan Mission ... 22612 67000 17000 67670"
+  // Match: sequence-number + English-name-starting-with-uppercase + 4 numbers
+  const strippedText = text.replace(/[ऀ-ॿ]/g, ' ').replace(/\s+/g, ' ');
+  const re3 = /(\d{1,3})\s+([A-Z][A-Za-z0-9 ()\-&/,\.'"–—]{6,90}?)\s+([\d,]{2,})\s+([\d,]{2,})\s+([\d,]{2,})\s+([\d,]{2,})(?=\s|$)/g;
+  let m3: RegExpExecArray | null;
+  while ((m3 = re3.exec(strippedText)) !== null) {
+    let name = m3[2].replace(/\s+/g, ' ').trim();
+    name = name.replace(/\s*\d+\s*$/, '').trim();
+    if (/Grand Total|^Total\b/i.test(name)) continue;
+    if (name.length < 8) continue;
+    if (isMinistryLike(name)) continue;
+    const rePrev = parseNumber(m3[5]);
+    const beNew = parseNumber(m3[6]);
+    if (beNew == null || beNew < 100) continue;
     if (rows.some(r => r.name.toLowerCase() === name.toLowerCase())) continue;
     rows.push({ name, beNew, rePrev, delta: pct(beNew, rePrev) });
   }
   rows.sort((a, b) => b.beNew - a.beNew);
-  return rows.slice(0, 70);
+  return rows.slice(0, 200);   // zzz262 — cap at 200 (was 70)
 }
 
 const THEME_PATTERNS: { theme: string; icon: string; patterns: RegExp[]; schemeKeywords: RegExp; stockCue: string[] }[] = [
@@ -847,7 +869,8 @@ function fiscalQualityScore(h: FiscalHeadline, gt: GrandTotal, d: DeficitBlock):
 
 function buildAISummary(y: BudgetYearData): string {
   if (!y.ministries.length) return '';
-  const totalBudget = y.headline.totalExpBE ?? y.grandTotal.beNew ?? 0;
+  // zzz262 — prefer larger of grand-total vs headline
+  const totalBudget = Math.max(y.headline.totalExpBE ?? 0, y.grandTotal.beNew ?? 0);
   const growthVsRE = pct(y.grandTotal.beNew, y.grandTotal.rePrev);
   const growthVsActual = pct(y.grandTotal.beNew, y.grandTotal.actualsPrev);
   const rankable = y.ministries.filter(m => !EXCLUDED_FROM_RANKING.has(m.ministry));
@@ -1178,7 +1201,9 @@ export default function BudgetIntelPage() {
     const { ministries: rawMinistries, subsidies } = parseMinistryTable(merged);
     const gt = parseGrandTotal(merged);
     const headline = parseFiscalHeadline(merged);
-    const enriched = enrichMinistries(rawMinistries, headline.totalExpBE ?? gt.beNew);
+    // zzz262 — Prefer grand-total (unambiguous) over headline.totalExpBE for share denominator
+    const denom = (gt.beNew ?? 0) >= (headline.totalExpBE ?? 0) ? gt.beNew : headline.totalExpBE;
+    const enriched = enrichMinistries(rawMinistries, denom);
     const deficits = parseDeficitBlock(merged, headline.gdpEstimate);
     const topSchemes = parseTopSchemes(merged);
     const reparsed: BudgetYearData = {
@@ -1201,7 +1226,8 @@ export default function BudgetIntelPage() {
     const { ministries: rawMinistries, subsidies } = parseMinistryTable(mergedText);
     const grandTotal = parseGrandTotal(mergedText);
     const headline = parseFiscalHeadline(mergedText);
-    const ministries = enrichMinistries(rawMinistries, headline.totalExpBE ?? grandTotal.beNew);
+    const denom2 = (grandTotal.beNew ?? 0) >= (headline.totalExpBE ?? 0) ? grandTotal.beNew : headline.totalExpBE;
+    const ministries = enrichMinistries(rawMinistries, denom2);
     const receipts = parseReceiptsBreakdown(mergedText);
     const deficits = parseDeficitBlock(mergedText, headline.gdpEstimate);
     const comesFrom = parseRupeeComesFrom(mergedText);
@@ -1849,7 +1875,7 @@ export default function BudgetIntelPage() {
 
             {activeData.topSchemes.length > 0 && (
               <div style={CARD}>
-                <div style={H}>🏗 Scheme allocations · {activeData.topSchemes.length} schemes ≥ ₹500 Cr</div>
+                <div style={H}>🏗 Scheme allocations · {activeData.topSchemes.length} schemes parsed (BE ≥ ₹100 Cr)</div>
                 <div style={{ overflowX: 'auto', maxHeight: 460, overflowY: 'auto' }}>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                     <thead>
