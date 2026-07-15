@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-15T09:57:06Z",
+  "lastSync": "2026-07-15T13:05:26Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 9983,
+      "size": 9984,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,7 +25,7 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 5776,
+      "size": 5777,
       "displayName": "Future Leaders"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 16363,
+      "size": 16785,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 6538,
+      "size": 6539,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 24154,
+      "size": 24152,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63310,
+      "size": 63309,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65547,
+      "size": 65549,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 7328,
+      "size": 9074,
       "displayName": "Weekly Volume Pockets"
     }
   ]
