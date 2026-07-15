@@ -1168,6 +1168,14 @@ export default function BudgetIntelPage() {
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
   const [toast, setToast] = useState<string>('');
   const [showRawPreview, setShowRawPreview] = useState<boolean>(false);
+  // zzz263 — sort + filter state per table
+  const [ministrySort, setMinistrySort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'beNew', dir: 'desc' });
+  const [ministryFilter, setMinistryFilter] = useState<string>('');
+  const [schemeSort, setSchemeSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'beNew', dir: 'desc' });
+  const [schemeFilter, setSchemeFilter] = useState<string>('');
+  const [impactSort, setImpactSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'confidence', dir: 'desc' });
+  const [surpriseSort, setSurpriseSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'surprise', dir: 'desc' });
+  const [multSort, setMultSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'gdpAdd', dir: 'desc' });
   const dropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1407,6 +1415,30 @@ export default function BudgetIntelPage() {
       {sub && <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginTop: 2 }}>{sub}</div>}
     </div>
   );
+  // zzz263 — Reusable sort header + filter input
+  const SortTH = ({ label, k, sortState, setSort, align }: { label: string; k: string; sortState: { key: string; dir: 'asc' | 'desc' }; setSort: (s: { key: string; dir: 'asc' | 'desc' }) => void; align?: 'left' | 'right' }) => {
+    const active = sortState.key === k;
+    const arrow = active ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return (
+      <th style={{ textAlign: align || 'left', padding: '6px 8px', cursor: 'pointer', userSelect: 'none' as const, color: active ? '#60A5FA' : DIM }}
+        onClick={() => setSort({ key: k, dir: active && sortState.dir === 'desc' ? 'asc' : 'desc' })}>
+        {label}{arrow}
+      </th>
+    );
+  };
+  const FilterBox = ({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) => (
+    <input type="search" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', color: TEXT, padding: '6px 10px', borderRadius: 6, fontSize: 12, marginBottom: 8, minWidth: 220 }} />
+  );
+  const sortCompare = <T,>(a: T, b: T, getVal: (x: T) => any, dir: 'asc' | 'desc'): number => {
+    const va = getVal(a); const vb = getVal(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'number' && typeof vb === 'number') return dir === 'asc' ? va - vb : vb - va;
+    return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+  };
+
   const tabStyle = (active: boolean): any => ({
     padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 800,
     background: active ? 'linear-gradient(90deg, #60A5FA, #22D3EE)' : 'var(--mc-bg-2)',
@@ -1815,27 +1847,29 @@ export default function BudgetIntelPage() {
 
             {activeData.ministries.length > 0 && (
               <div style={CARD}>
-                <div style={H}>📚 Ministry table — sequential rank shown</div>
+                <div style={H}>📚 Ministry table — click headers to sort</div>
+                <FilterBox value={ministryFilter} onChange={setMinistryFilter} placeholder="🔍 Filter ministry name..." />
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ color: DIM }}>
-                        <th style={{ textAlign: 'left', padding: '6px 6px' }}>Rank</th>
-                        <th style={{ textAlign: 'left', padding: '6px 6px' }}>Ministry</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>FY {activeData.headline.yearActuals} Actuals</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>FY {activeData.headline.yearPrev} BE</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>FY {activeData.headline.yearPrev} RE</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>FY {activeData.fiscalYear} BE</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>Δ vs RE ₹</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>Δ vs RE %</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>Δ vs Actual</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>Share</th>
-                        <th style={{ padding: '6px 6px', textAlign: 'right' }}>Score</th>
+                      <tr>
+                        <th style={{ textAlign: 'left', padding: '6px 6px', color: DIM }}>#</th>
+                        <SortTH label="Ministry" k="ministry" sortState={ministrySort} setSort={setMinistrySort} />
+                        <SortTH label={`FY ${activeData.headline.yearActuals} Actuals`} k="actualsPrev" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label={`FY ${activeData.headline.yearPrev} BE`} k="bePrev" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label={`FY ${activeData.headline.yearPrev} RE`} k="rePrev" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label={`FY ${activeData.fiscalYear} BE`} k="beNew" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label="Δ vs RE ₹" k="absoluteDeltaRE" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label="Δ vs RE %" k="yoyVsRE" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label="Δ vs Actual" k="yoyVsActual" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label="Share" k="shareOfBudget" sortState={ministrySort} setSort={setMinistrySort} align="right" />
+                        <SortTH label="Score" k="priorityScore" sortState={ministrySort} setSort={setMinistrySort} align="right" />
                       </tr>
                     </thead>
                     <tbody>
                       {[...activeData.ministries]
-                        .sort((a, b) => (b.beNew || 0) - (a.beNew || 0))
+                        .filter(m => !ministryFilter || m.ministry.toLowerCase().includes(ministryFilter.toLowerCase()))
+                        .sort((a, b) => sortCompare(a, b, (x: any) => x[ministrySort.key], ministrySort.dir))
                         .map((m, idx) => (
                         <tr key={m.ministry} style={{ borderTop: '1px dashed var(--mc-bg-3)', cursor: 'pointer', background: EXCLUDED_FROM_RANKING.has(m.ministry) ? 'color-mix(in srgb, var(--mc-text-4) 5%, transparent)' : 'transparent' }} onClick={() => { setSelectedMinistry(m.ministry); setTab('ministry'); }}>
                           <td style={{ padding: '5px 6px', color: DIM, fontWeight: 700 }}>{idx + 1}</td>
@@ -1873,33 +1907,40 @@ export default function BudgetIntelPage() {
               </div>
             )}
 
-            {activeData.topSchemes.length > 0 && (
-              <div style={CARD}>
-                <div style={H}>🏗 Scheme allocations · {activeData.topSchemes.length} schemes parsed (BE ≥ ₹100 Cr)</div>
-                <div style={{ overflowX: 'auto', maxHeight: 460, overflowY: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ color: DIM, position: 'sticky', top: 0, background: 'var(--mc-bg-1)' }}>
-                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Scheme</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>FY {activeData.headline.yearPrev} RE</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>FY {activeData.fiscalYear} BE</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Δ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeData.topSchemes.map(s => (
-                        <tr key={s.name} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
-                          <td style={{ padding: '6px 8px' }}>{s.name}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right', color: DIM, fontVariantNumeric: 'tabular-nums' }}>{fmtCr(s.rePrev)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800 }}>{fmtCr(s.beNew)}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: (s.delta ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(s.delta)}</td>
+            {activeData.topSchemes.length > 0 && (() => {
+              const filtered = activeData.topSchemes
+                .filter(s => !schemeFilter || s.name.toLowerCase().includes(schemeFilter.toLowerCase()))
+                .sort((a, b) => sortCompare(a, b, (x: any) => x[schemeSort.key], schemeSort.dir));
+              return (
+                <div style={CARD}>
+                  <div style={H}>🏗 Scheme allocations · {activeData.topSchemes.length} schemes parsed (BE ≥ ₹100 Cr)</div>
+                  <FilterBox value={schemeFilter} onChange={setSchemeFilter} placeholder="🔍 Search scheme (e.g. Jal Jeevan, PMAY, PLI)..." />
+                  <div style={{ fontSize: 11, color: DIM, marginBottom: 6 }}>Showing {filtered.length} of {activeData.topSchemes.length}. Click headers to sort.</div>
+                  <div style={{ overflowX: 'auto', maxHeight: 500, overflowY: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ position: 'sticky', top: 0, background: 'var(--mc-bg-1)', zIndex: 1 }}>
+                          <SortTH label="Scheme" k="name" sortState={schemeSort} setSort={setSchemeSort} />
+                          <SortTH label={`FY ${activeData.headline.yearPrev} RE`} k="rePrev" sortState={schemeSort} setSort={setSchemeSort} align="right" />
+                          <SortTH label={`FY ${activeData.fiscalYear} BE`} k="beNew" sortState={schemeSort} setSort={setSchemeSort} align="right" />
+                          <SortTH label="Δ %" k="delta" sortState={schemeSort} setSort={setSchemeSort} align="right" />
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {filtered.map(s => (
+                          <tr key={s.name} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
+                            <td style={{ padding: '6px 8px' }}>{s.name}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: DIM, fontVariantNumeric: 'tabular-nums' }}>{fmtCr(s.rePrev)}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800 }}>{fmtCr(s.beNew)}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: (s.delta ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(s.delta)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <div style={CARD}>
               <div style={H}>📄 Raw extraction preview</div>
@@ -2049,21 +2090,32 @@ export default function BudgetIntelPage() {
 
               {/* MARKET IMPACT SCORE */}
               <div style={CARD}>
-                <div style={H}>🎯 Market Impact Score — confidence-weighted sector call</div>
+                <div style={H}>🎯 Market Impact Score — confidence-weighted sector call (click headers to sort)</div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ color: DIM }}>
-                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Sector</th>
-                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Trigger ministry</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Δ vs RE</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Share</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Impact</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Confidence</th>
+                      <tr>
+                        <SortTH label="Sector" k="sector" sortState={impactSort} setSort={setImpactSort} />
+                        <SortTH label="Trigger ministry" k="ministry" sortState={impactSort} setSort={setImpactSort} />
+                        <SortTH label="Δ vs RE" k="delta" sortState={impactSort} setSort={setImpactSort} align="right" />
+                        <SortTH label="Share" k="share" sortState={impactSort} setSort={setImpactSort} align="right" />
+                        <SortTH label="Impact" k="impact" sortState={impactSort} setSort={setImpactSort} />
+                        <SortTH label="Confidence" k="confidence" sortState={impactSort} setSort={setImpactSort} align="right" />
                       </tr>
                     </thead>
                     <tbody>
-                      {impactRows.map(row => (
+                      {[...impactRows].sort((a, b) => {
+                        const getV = (r: any) => {
+                          if (impactSort.key === 'sector') return r.sector;
+                          if (impactSort.key === 'ministry') return r.m.ministry;
+                          if (impactSort.key === 'delta') return r.m.yoyVsRE;
+                          if (impactSort.key === 'share') return r.m.shareOfBudget;
+                          if (impactSort.key === 'impact') { const rk = { 'Very Bullish': 5, 'Bullish': 4, 'Moderate': 3, 'Neutral': 2, 'Bearish': 1 }; return rk[r.impact.impact as keyof typeof rk]; }
+                          if (impactSort.key === 'confidence') return r.impact.confidence;
+                          return 0;
+                        };
+                        return sortCompare(a, b, getV, impactSort.dir);
+                      }).map(row => (
                         <tr key={row.m.ministry} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
                           <td style={{ padding: '6px 8px', fontWeight: 700 }}>{row.sector}</td>
                           <td style={{ padding: '6px 8px', color: DIM }}>{row.m.ministry}</td>
@@ -2159,24 +2211,35 @@ export default function BudgetIntelPage() {
 
               {/* ─── Budget Surprise Index ───────────────────────────── */}
               <div style={CARD}>
-                <div style={H}>⭐ Budget Surprise Index — Expected (prior BE) vs Actual (new BE)</div>
+                <div style={H}>⭐ Budget Surprise Index — click headers to sort</div>
                 <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>
                   Positive = allocation exceeded prior year's BE by more than 8%. In-Line = within ±3-8%. Negative = fell short vs prior BE by more than 3%.
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ color: DIM }}>
-                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Ministry</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Expected (prior BE)</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Actual (new BE)</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Surprise</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Verdict</th>
+                      <tr>
+                        <SortTH label="Ministry" k="ministry" sortState={surpriseSort} setSort={setSurpriseSort} />
+                        <SortTH label="Expected (prior BE)" k="expected" sortState={surpriseSort} setSort={setSurpriseSort} align="right" />
+                        <SortTH label="Actual (new BE)" k="actual" sortState={surpriseSort} setSort={setSurpriseSort} align="right" />
+                        <SortTH label="Surprise" k="surprise" sortState={surpriseSort} setSort={setSurpriseSort} align="right" />
+                        <SortTH label="Verdict" k="label" sortState={surpriseSort} setSort={setSurpriseSort} />
                       </tr>
                     </thead>
                     <tbody>
-                      {rankable.slice(0, 15).map(m => {
-                        const s = computeSurpriseIndex(m);
+                      {[...rankable].map(m => ({ m, s: computeSurpriseIndex(m) }))
+                        .sort((a, b) => {
+                          const getV = (r: { m: EnrichedMinistry; s: ReturnType<typeof computeSurpriseIndex> }) => {
+                            if (surpriseSort.key === 'ministry') return r.m.ministry;
+                            if (surpriseSort.key === 'expected') return r.s.expected;
+                            if (surpriseSort.key === 'actual') return r.s.actual;
+                            if (surpriseSort.key === 'surprise') return r.s.surprise;
+                            if (surpriseSort.key === 'label') { const rk = { 'Positive': 3, 'In-Line': 2, 'Negative': 1 }; return rk[r.s.label]; }
+                            return 0;
+                          };
+                          return sortCompare(a, b, getV, surpriseSort.dir);
+                        })
+                        .map(({ m, s }) => {
                         return (
                           <tr key={m.ministry} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
                             <td style={{ padding: '6px 8px', fontWeight: 700 }}>{m.ministry}</td>
@@ -2304,25 +2367,35 @@ export default function BudgetIntelPage() {
 
               {/* ─── GDP multipliers ─────────────────────────────────── */}
               <div style={CARD}>
-                <div style={H}>📊 GDP multipliers — expected growth impact per ₹1 of ministry spend</div>
+                <div style={H}>📊 GDP multipliers — click headers to sort</div>
                 <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>
                   Fiscal multipliers from RBI (2020) and NIPFP research. A 2.0x multiplier means ₹1 of ministry capex expands GDP by ₹2 over 3-5 years.
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ color: DIM }}>
-                        <th style={{ textAlign: 'left', padding: '6px 8px' }}>Ministry</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Allocation</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Multiplier</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Implied GDP add</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Source</th>
+                      <tr>
+                        <SortTH label="Ministry" k="ministry" sortState={multSort} setSort={setMultSort} />
+                        <SortTH label="Allocation" k="alloc" sortState={multSort} setSort={setMultSort} align="right" />
+                        <SortTH label="Multiplier" k="mult" sortState={multSort} setSort={setMultSort} align="right" />
+                        <SortTH label="Implied GDP add" k="gdpAdd" sortState={multSort} setSort={setMultSort} align="right" />
+                        <th style={{ textAlign: 'left', padding: '6px 8px', color: DIM }}>Source</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rankable.filter(m => GDP_MULTIPLIERS[m.ministry]).map(m => {
-                        const mult = GDP_MULTIPLIERS[m.ministry];
-                        const gdpAdd = (m.beNew ?? 0) * mult.mult;
+                      {rankable.filter(m => GDP_MULTIPLIERS[m.ministry])
+                        .map(m => ({ m, mult: GDP_MULTIPLIERS[m.ministry], gdpAdd: (m.beNew ?? 0) * GDP_MULTIPLIERS[m.ministry].mult }))
+                        .sort((a, b) => {
+                          const getV = (r: any) => {
+                            if (multSort.key === 'ministry') return r.m.ministry;
+                            if (multSort.key === 'alloc') return r.m.beNew;
+                            if (multSort.key === 'mult') return r.mult.mult;
+                            if (multSort.key === 'gdpAdd') return r.gdpAdd;
+                            return 0;
+                          };
+                          return sortCompare(a, b, getV, multSort.dir);
+                        })
+                        .map(({ m, mult, gdpAdd }) => {
                         return (
                           <tr key={m.ministry} style={{ borderTop: '1px dashed var(--mc-bg-3)' }}>
                             <td style={{ padding: '6px 8px', fontWeight: 700 }}>{m.ministry}</td>
