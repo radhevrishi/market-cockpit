@@ -1,11 +1,11 @@
 {
-  "lastSync": "2026-07-15T07:27:55Z",
+  "lastSync": "2026-07-15T09:57:06Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11166,
+      "size": 11584,
       "displayName": "100 baggers sales and eps growth"
     },
     {
@@ -25,7 +25,7 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 5354,
+      "size": 5776,
       "displayName": "Future Leaders"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 5285,
+      "size": 4463,
       "displayName": "IPOBASES"
     },
     {
@@ -80,7 +80,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 24155,
+      "size": 24154,
       "displayName": "Latest Portfolio"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65549,
+      "size": 65547,
       "displayName": "Working watchlist"
     },
     {
