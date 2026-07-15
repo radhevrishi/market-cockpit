@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-15T06:10:56Z",
+  "lastSync": "2026-07-15T07:27:55Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 8226,
+      "size": 8225,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 9984,
+      "size": 9983,
       "displayName": "Debt Reduction"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 4855,
+      "size": 5285,
       "displayName": "IPOBASES"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 1556,
+      "size": 1555,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -80,17 +80,17 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 24156,
+      "size": 24155,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63313,
+      "size": 63310,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65551,
+      "size": 65549,
       "displayName": "Working watchlist"
     },
     {
