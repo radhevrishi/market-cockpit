@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-16T10:29:30.039Z",
+  "lastSync": "2026-07-16T14:40:20.511Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 34021,
+      "size": 34105,
       "rowCount": 29,
       "error": null
     },
@@ -19,8 +19,8 @@
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
       "ok": true,
-      "size": 15811,
-      "rowCount": 12,
+      "size": 17998,
+      "rowCount": 14,
       "error": null
     },
     {
@@ -28,8 +28,8 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 39547,
-      "rowCount": 34,
+      "size": 15968,
+      "rowCount": 13,
       "error": null
     },
     {
@@ -37,8 +37,8 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 40285,
-      "rowCount": 35,
+      "size": 42692,
+      "rowCount": 37,
       "error": null
     },
     {
@@ -46,8 +46,8 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 35327,
-      "rowCount": 31,
+      "size": 48966,
+      "rowCount": 43,
       "error": null
     },
     {
@@ -55,8 +55,8 @@
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
       "ok": true,
-      "size": 50329,
-      "rowCount": 43,
+      "size": 49559,
+      "rowCount": 42,
       "error": null
     },
     {
@@ -64,7 +64,7 @@
       "displayName": "Future NVDIA ALAB APP PLTR (USA)",
       "screenerId": "5gzenlmQ",
       "ok": true,
-      "size": 15805,
+      "size": 15821,
       "rowCount": 12,
       "error": null
     },
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 106022,
+      "size": 106104,
       "rowCount": 100,
       "error": null
     },
@@ -82,8 +82,8 @@
       "displayName": "Future Super Scalers like NBIS Full",
       "screenerId": "oRvEFfVY",
       "ok": true,
-      "size": 98225,
-      "rowCount": 89,
+      "size": 91224,
+      "rowCount": 82,
       "error": null
     }
   ]
