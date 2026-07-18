@@ -1,0 +1,16 @@
+HTTP/2 403 
+server: nginx
+date: Sat, 18 Jul 2026 05:59:46 GMT
+content-type: text/html; charset=utf-8
+content-length: 1367
+vary: Accept-Encoding
+x-frame-options: DENY
+vary: Cookie
+x-content-type-options: nosniff
+referrer-policy: strict-origin-when-cross-origin
+cross-origin-opener-policy: same-origin-allow-popups
+set-cookie: sessionid=""; expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/; SameSite=Lax
+x-xss-protection: 1; mode=block
+content-security-policy: default-src 'self' https: data: blob:; script-src 'self' https: 'unsafe-inline'; style-src 'self' https: 'unsafe-inline'; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+
