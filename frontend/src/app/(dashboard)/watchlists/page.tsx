@@ -1398,7 +1398,19 @@ if (typeof window !== 'undefined' && !(window as any).__mc_d2_test_done) {
 // zzz229 — extract d2_pct. Backend will populate later; frontend gracefully
 // handles missing field (predicate returns false to hide unqualified rows).
 function getD2Pct(e: any): number | null {
+  // zzz230 — prefer real d2_pct if backend ships it. Otherwise fall through:
+  //   1. move_pct (cumulative post-filing move — already 2+ trading days if
+  //      the filing was ≥ 2 sessions ago; even better than pure D2).
+  //   2. d1_pct + gap_pct compounded (approx 2-day post-earnings reaction).
+  //   3. bare d1_pct as a floor.
   if (typeof e?.d2_pct === 'number' && Number.isFinite(e.d2_pct)) return e.d2_pct;
+  if (typeof e?.move_pct === 'number' && Number.isFinite(e.move_pct)) return e.move_pct;
+  const d1 = typeof e?.d1_pct === 'number' && Number.isFinite(e.d1_pct) ? e.d1_pct : null;
+  const gap = typeof e?.gap_pct === 'number' && Number.isFinite(e.gap_pct) ? e.gap_pct : null;
+  if (d1 != null && gap != null) {
+    return Math.round(((1 + gap / 100) * (1 + d1 / 100) - 1) * 1000) / 10;
+  }
+  if (d1 != null) return d1;
   return null;
 }
 
@@ -2316,9 +2328,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             { v: -2, lbl: '≤-2%',  color: '#EF4444' },
             { v: -5, lbl: '≤-5%',  color: '#EF4444' },
           ];
-          const hasAnyD2 = entries.some(
-            (e) => typeof (e as any).d2_pct === 'number' && Number.isFinite((e as any).d2_pct),
-          );
+          // zzz229b — accept fallback (move_pct / d1+gap compound / d1 alone) so
+          // chip counts populate even before backend ships d2_pct.
+          const hasAnyD2 = entries.some((e) => getD2Pct(e) != null);
           const countD2 = (v: number) => {
             const probe: ConvFilters = { ...filters, d2Bucket: v };
             return entries.filter((e) => passesConvictionFilter(e, probe)).length;
@@ -2331,7 +2343,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 const n = hasAnyD2 ? countD2(o.v) : null;
                 return (
                   <button key={o.v} onClick={() => toggleD2(o.v)}
-                    title={hasAnyD2 ? `Filter to entries with 2-day cumulative close ${o.lbl}` : 'Awaiting d2_pct enrichment — populates once backend adds 2-trading-day close. Skips Sat/Sun so Monday 2D = Fri close → Mon close.'}
+                    title={hasAnyD2 ? `Filter to entries with 2-day cumulative close ${o.lbl}. Uses best-available signal: real d2_pct if backend populated it, else move_pct, else gap+D1 compounded, else D1 alone.` : 'No usable D1/gap/move data in the bench yet.'}
                     style={active ? chipActive(o.color) : chipBase}>
                     {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '…' : n})</span>
                   </button>
@@ -3111,6 +3123,22 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
                   <span style={{ color: 'var(--mc-text-4)' }}>OPM</span>{' '}
                   <strong style={{ color: col }}>
                     {o.toFixed(1)}%{d != null ? ` (${d >= 0 ? '+' : ''}${d.toFixed(1)}pp)` : ''}
+                  </strong>
+                </span>
+              );
+            })()}
+            {/* zzz230 — Since filing: cumulative % close move from earnings-report
+                date to most recent close. Sourced from server-computed move_pct
+                on the graded API. Shows how the market has voted since results. */}
+            {typeof (entry as any).move_pct === 'number' && Number.isFinite((entry as any).move_pct) && (() => {
+              const m = (entry as any).move_pct as number;
+              const col = m >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+              const arrow = m >= 8 ? '🚀' : m >= 3 ? '📈' : m >= -3 ? '➖' : m >= -8 ? '📉' : '💥';
+              return (
+                <span title={`Cumulative close move since filing date (${entry.filing_date || '?'}). Server-computed from Yahoo daily bars. Refreshed on Hard Refresh.`}>
+                  <span style={{ color: 'var(--mc-text-4)' }}>Since {arrow}</span>{' '}
+                  <strong style={{ color: col }}>
+                    {m >= 0 ? '+' : ''}{m.toFixed(1)}%
                   </strong>
                 </span>
               );
