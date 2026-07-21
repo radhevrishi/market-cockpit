@@ -1210,11 +1210,15 @@ type ConvFilters = {
   // Each value is a SIGNED threshold: positive = "D1 >= N%", negative = "D1 <= N%".
   // null = no filter.
   d1Bucket: number | null;
+  // zzz229 — 2D CLOSE bucket filter. d2_pct = cumulative % close change over
+  // 2 trading sessions (skips weekends/holidays). Value semantics identical
+  // to d1Bucket: positive = "≥ N%", negative = "≤ N%".
+  d2Bucket: number | null;
   // PATCH 1022/1024 — market-cap range filter (uses market_cap_cr in ₹ Cr).
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, opmDelta: null, score: null, opmMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, opmDelta: null, score: null, opmMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1361,6 +1365,43 @@ function deriveGuidanceLabel(e: ConvictionEntry): 'Positive' | 'Negative' | 'Neu
   return 'Neutral';
 }
 
+// zzz229 — Trading-day helper. Given an ISO date string, return the date N
+// trading days earlier. Assumes Mon-Fri only (skips Sat+Sun; NSE holidays not
+// modelled here — good enough for chip labels).
+function tradingDaysBefore(iso: string, days: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  let remaining = days;
+  while (remaining > 0) {
+    d.setUTCDate(d.getUTCDate() - 1);
+    const dow = d.getUTCDay();   // 0 = Sun, 6 = Sat
+    if (dow !== 0 && dow !== 6) remaining--;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+// Self-test — runs once on module load. Verifies trading-day math.
+// User's example: if today = Monday, 2 trading days = Fri + Mon; 1 trading day = Fri.
+if (typeof window !== 'undefined' && !(window as any).__mc_d2_test_done) {
+  (window as any).__mc_d2_test_done = true;
+  const t = (iso: string, n: number, expect: string, label: string) => {
+    const got = tradingDaysBefore(iso, n);
+    // eslint-disable-next-line no-console
+    if (got !== expect) console.warn(`[zzz229 tradingDaysBefore FAIL] ${label} ${iso}-${n} => ${got} expected ${expect}`);
+  };
+  t('2026-07-20', 1, '2026-07-17', 'Mon 1-back = Fri');
+  t('2026-07-20', 2, '2026-07-16', 'Mon 2-back = Thu (skip Sat+Sun)');
+  t('2026-07-22', 2, '2026-07-20', 'Wed 2-back = Mon');
+  t('2026-07-24', 2, '2026-07-22', 'Fri 2-back = Wed');
+  t('2026-07-24', 5, '2026-07-17', 'Fri 5-back = prior Fri');
+}
+
+// zzz229 — extract d2_pct. Backend will populate later; frontend gracefully
+// handles missing field (predicate returns false to hide unqualified rows).
+function getD2Pct(e: any): number | null {
+  if (typeof e?.d2_pct === 'number' && Number.isFinite(e.d2_pct)) return e.d2_pct;
+  return null;
+}
+
 function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
@@ -1438,6 +1479,17 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
       if (d1 < f.d1Bucket) return false;
     } else {
       if (d1 > f.d1Bucket) return false;
+    }
+  }
+  // zzz229 — 2D CLOSE filter. Mirrors D1 semantics (positive = ≥ threshold,
+  // negative = ≤ threshold). Uses d2_pct = cumulative % over 2 trading days.
+  if (f.d2Bucket != null && Number.isFinite(f.d2Bucket)) {
+    const d2 = getD2Pct(e);
+    if (d2 == null) return false;
+    if (f.d2Bucket >= 0) {
+      if (d2 < f.d2Bucket) return false;
+    } else {
+      if (d2 > f.d2Bucket) return false;
     }
   }
   return true;
@@ -2131,8 +2183,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               }}>{rebuildProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.d2Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.d2Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -2240,6 +2292,46 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 return (
                   <button key={o.v} onClick={() => toggleD1(o.v)}
                     title={hasAnyD1 ? `Filter to entries with D1 close ${o.lbl}` : 'Awaiting D1 close enrichment — entries do not yet have d1_pct populated. Counts will fill in once /earnings-opportunities syncs prices.'}
+                    style={active ? chipActive(o.color) : chipBase}>
+                    {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '…' : n})</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
+        {/* zzz229 — 2D CLOSE filter. d2_pct = cumulative % over 2 TRADING
+            sessions (skips weekends). If today is Monday, 2D covers Fri close
+            → Mon close. Users can compose {1D≥0} AND {2D≥+2%} to require
+            day-2 follow-through. Backend populates d2_pct via graded pipeline. */}
+        {(() => {
+          const toggleD2 = (v: number) =>
+            setFilters((f) => ({ ...f, d2Bucket: f.d2Bucket === v ? null : v }));
+          const opts: Array<{ v: number; lbl: string; color: string }> = [
+            { v: 0,  lbl: '≥0%',   color: '#10B981' },
+            { v: 2,  lbl: '≥+2%',  color: '#10B981' },
+            { v: 4,  lbl: '≥+4%',  color: '#10B981' },
+            { v: 7,  lbl: '≥+7%',  color: '#10B981' },
+            { v: 10, lbl: '≥+10%', color: '#10B981' },
+            { v: -2, lbl: '≤-2%',  color: '#EF4444' },
+            { v: -5, lbl: '≤-5%',  color: '#EF4444' },
+          ];
+          const hasAnyD2 = entries.some(
+            (e) => typeof (e as any).d2_pct === 'number' && Number.isFinite((e as any).d2_pct),
+          );
+          const countD2 = (v: number) => {
+            const probe: ConvFilters = { ...filters, d2Bucket: v };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>2D CLOSE</span>
+              {opts.map((o) => {
+                const active = filters.d2Bucket === o.v;
+                const n = hasAnyD2 ? countD2(o.v) : null;
+                return (
+                  <button key={o.v} onClick={() => toggleD2(o.v)}
+                    title={hasAnyD2 ? `Filter to entries with 2-day cumulative close ${o.lbl}` : 'Awaiting d2_pct enrichment — populates once backend adds 2-trading-day close. Skips Sat/Sun so Monday 2D = Fri close → Mon close.'}
                     style={active ? chipActive(o.color) : chipBase}>
                     {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '…' : n})</span>
                   </button>
