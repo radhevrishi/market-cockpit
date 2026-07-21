@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-21T08:33:41.903Z",
+  "lastSync": "2026-07-21T10:42:26.013Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 30665,
+      "size": 30871,
       "rowCount": 26,
       "error": null
     },
@@ -28,7 +28,7 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 17120,
+      "size": 17118,
       "rowCount": 14,
       "error": null
     },
@@ -37,8 +37,8 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 39670,
-      "rowCount": 35,
+      "size": 40824,
+      "rowCount": 36,
       "error": null
     },
     {
@@ -46,8 +46,8 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 12217,
-      "rowCount": 10,
+      "size": 11109,
+      "rowCount": 9,
       "error": null
     },
     {
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 106719,
+      "size": 106585,
       "rowCount": 100,
       "error": null
     },
