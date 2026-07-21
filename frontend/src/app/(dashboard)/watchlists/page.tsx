@@ -2141,18 +2141,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
         {(() => {
-          const presetActive = filters.sales === 20 && filters.pat === 40 && filters.eps === 40 && filters.opmDelta === 0 && filters.opmMin === 12 && filters.score === 65 && filters.d1Bucket === 0;
+          const presetActive = filters.sales === 20 && filters.pat === 30 && filters.eps === 25 && filters.opmDelta === 0 && filters.opmMin === 12 && filters.score === 65 && filters.d1Bucket === 2;
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={() => setFilters((prev) => presetActive
                   ? { ...FILTER_DEFAULT, cap: prev.cap }
-                  : { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, pat: 40, eps: 40, opmDelta: 0, opmMin: 12, score: 65, d1Bucket: 0 })}
-                title="One-click quality screen: Sales YoY ≥20% · PAT YoY ≥40% · EPS YoY ≥40% · OPM expanding (Δ≥0pp) · OPM level ≥12% · Composite score ≥65 · Day-1 close ≥0%. Click again to clear."
+                  : { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, pat: 30, eps: 25, opmDelta: 0, opmMin: 12, score: 65, d1Bucket: 2 })}
+                title="One-click quality screen: Sales YoY ≥20% · PAT YoY ≥30% · EPS YoY ≥25% · OPM expanding (Δ≥0pp) · OPM level ≥12% · Composite score ≥65 · Day-1 close ≥+2%. Click again to clear."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · PAT≥40 · EPS≥40 · OPM↗ ≥12% · Score≥65 · D1≥0 {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · PAT≥30 · EPS≥25 · OPM↗ ≥12% · Score≥65 · D1≥+2% {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -2172,7 +2172,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           { v: 50, lbl: '≥50%' }, { v: 60, lbl: '≥60%' }, { v: 100, lbl: '≥100%' },
         ])}
         {renderChipGroup('EPS YoY', '#F59E0B', 'eps', [
-          { v: 20, lbl: '≥20%' }, { v: 40, lbl: '≥40%' }, { v: 60, lbl: '≥60%' },
+          { v: 20, lbl: '≥20%' }, { v: 25, lbl: '≥25%' }, { v: 40, lbl: '≥40%' }, { v: 60, lbl: '≥60%' },
         ])}
         {/* zzz223 — OPM margin Δ chips (pp YoY) — mirrors the EO margin signal */}
         {renderChipGroup('OPM Δ (pp YoY)', '#F472B6', 'opmDelta', [
