@@ -55,6 +55,10 @@ export interface ConvictionEntry {
   // (same UX as /earnings Hub). Both nullable for legacy entries.
   d1_pct?: number | null;       // Day-1 close % vs prior day
   gap_pct?: number | null;      // Open gap % (open vs prior close)
+  // zzz230 — cumulative % close move from filing date to most recent close.
+  // Server-computed in /api/v1/earnings/graded via priceMove (Yahoo daily bars).
+  // Displayed on Conviction Beats cards as "Since filing +X%".
+  move_pct?: number | null;
   // zzz223 — OPM margin carried from the EO graded payload (latest-quarter
   // OPM % and prior-year OPM %) so Conviction Beats can render + filter the
   // margin expansion/squeeze signal exactly like Earnings Opportunities.
@@ -256,7 +260,7 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
             if ((cur as any)[k] == null && (e as any)[k] != null) (patch as any)[k] = (e as any)[k];
           };
           fill('opm_pct'); fill('opm_prev_pct');
-          fill('d1_pct'); fill('gap_pct');
+          fill('d1_pct'); fill('gap_pct'); fill('move_pct');   // zzz230
           fill('pead_score'); fill('market_cap_cr');
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
