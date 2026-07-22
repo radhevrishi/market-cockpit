@@ -801,6 +801,9 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       if (px.d1_pct != null) {
         out.d1_pct = px.d1_pct;
         out.gap_pct = px.gap_pct;
+        // zzz231 — carry d2_pct + move_pct from extended bhav-copy computation
+        if ((px as any).d2_pct != null) out.d2_pct = (px as any).d2_pct;
+        if ((px as any).move_pct != null) out.move_pct = (px as any).move_pct;
         if (out.current_price == null) out.current_price = px.current_price;
         if (out.prev_close == null) out.prev_close = px.prev_close;
         out._price_source = 'nse-bhavcopy';
