@@ -3182,4 +3182,3 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
     </div>
   );
 }
-—
