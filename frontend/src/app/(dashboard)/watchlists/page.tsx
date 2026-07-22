@@ -2337,11 +2337,17 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               {opts.map((o) => {
                 const active = filters.d2Bucket === o.v;
                 const n = hasAnyD2 ? countD2(o.v) : null;
+                // zzz234 — Disable clicks when no d2/move data available. Prevents
+                // the "select 2D chip → 0 matches" confusion that happens when
+                // backend hasn't enriched entries yet.
+                const disabled = !hasAnyD2;
                 return (
-                  <button key={o.v} onClick={() => toggleD2(o.v)}
-                    title={hasAnyD2 ? `Filter to entries with 2-day cumulative close ${o.lbl}. Bloomberg/Goldman convention: D2 = 2 trading sessions after earnings-day prev-close. Uses real d2_pct if backend populated it, else move_pct (walk-forward cumulative, spans many days). NEVER falls back to d1 to avoid duplicating the 1D chip.` : 'No d2_pct or move_pct in bench yet — Hard Refresh /earnings-opportunities to trigger backend compute.'}
-                    style={active ? chipActive(o.color) : chipBase}>
-                    {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '…' : n})</span>
+                  <button key={o.v}
+                    onClick={disabled ? undefined : () => toggleD2(o.v)}
+                    disabled={disabled}
+                    title={disabled ? '⚠ 2D data not enriched yet. Push zzz231 backend files + Hard Refresh /earnings-opportunities. Until then, chip is disabled to avoid confusing "0 matches" selections.' : `Filter to entries with 2-day cumulative close ${o.lbl}. Bloomberg/Goldman convention: D2 = 2 trading sessions after earnings-day prev-close.`}
+                    style={active ? chipActive(o.color) : { ...chipBase, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}>
+                    {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '⏳' : n})</span>
                   </button>
                 );
               })}
