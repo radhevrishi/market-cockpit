@@ -29,6 +29,10 @@ export interface BhavData {
 export interface PriceReaction {
   gap_pct: number | null;        // (open - prev_close) / prev_close * 100
   d1_pct: number | null;         // (close - prev_close) / prev_close * 100
+  // zzz231 — 2-trading-day cumulative reaction. Computed as (day2_close - prev_close) / prev_close.
+  d2_pct: number | null;
+  // zzz231 — cumulative % close move from reaction day to most recent bhavcopy day.
+  move_pct: number | null;
   current_price: number | null;
   prev_close: number | null;
   volume: number | null;
@@ -171,7 +175,8 @@ export async function getBhavForSymbol(symbol: string, isoDate: string): Promise
  */
 export async function getPriceReaction(symbol: string, filingDateIso: string): Promise<PriceReaction> {
   const empty: PriceReaction = {
-    gap_pct: null, d1_pct: null, current_price: null, prev_close: null,
+    gap_pct: null, d1_pct: null, d2_pct: null, move_pct: null,
+    current_price: null, prev_close: null,
     volume: null, delivery_pct: null,
   };
   if (!symbol || !filingDateIso) return empty;
@@ -186,10 +191,38 @@ export async function getPriceReaction(symbol: string, filingDateIso: string): P
     if (bhav && bhav.prev_close > 0) {
       const gap = ((bhav.open - bhav.prev_close) / bhav.prev_close) * 100;
       const d1 = ((bhav.close - bhav.prev_close) / bhav.prev_close) * 100;
+      const anchorPrev = bhav.prev_close;
+      // zzz231 — walk forward for day-2 close (skip weekends)
+      let d2Pct: number | null = null;
+      let d2Close: number | null = null;
+      let d2Date = attempt;
+      for (let j = 0; j < 5; j++) {
+        d2Date = shiftDate(d2Date, 1);
+        if (isWeekend(d2Date)) continue;
+        const bhav2 = await getBhavForSymbol(symbol, d2Date);
+        if (bhav2 && bhav2.close > 0) {
+          d2Pct = ((bhav2.close - anchorPrev) / anchorPrev) * 100;
+          d2Close = bhav2.close;
+          break;
+        }
+      }
+      // zzz231 — walk forward further to compute cumulative move to most recent bhav
+      let lastClose: number | null = d2Close ?? bhav.close;
+      let walkDate = d2Date;
+      for (let k = 0; k < 40; k++) {
+        walkDate = shiftDate(walkDate, 1);
+        if (isWeekend(walkDate)) continue;
+        if (walkDate > new Date().toISOString().slice(0, 10)) break;
+        const bhavK = await getBhavForSymbol(symbol, walkDate);
+        if (bhavK && bhavK.close > 0) lastClose = bhavK.close;
+      }
+      const movePct = lastClose != null ? ((lastClose - anchorPrev) / anchorPrev) * 100 : null;
       return {
         gap_pct: gap,
         d1_pct: d1,
-        current_price: bhav.close,
+        d2_pct: d2Pct,
+        move_pct: movePct,
+        current_price: lastClose ?? bhav.close,
         prev_close: bhav.prev_close,
         volume: bhav.volume,
         delivery_pct: bhav.delivery_pct,
