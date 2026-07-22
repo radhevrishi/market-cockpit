@@ -794,14 +794,22 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // ELITE qualification. NSE archives bhavcopy is a static CSV that never
   // rejects requests and contains every NSE-listed security's OHLCV.
   // We fetch lazily, cache per-symbol for 90 days.
-  if (filedHint && (out.d1_pct == null || out.gap_pct == null)) {
+  // zzz235 — Fire getPriceReaction when D1/gap OR D2/move are missing. Previously
+  // only fired when D1 was null → existing entries with D1 never got D2/move
+  // populated, keeping the 2D chip stuck at ⏳ pending state.
+  const _needsPrice = filedHint && (
+    out.d1_pct == null || out.gap_pct == null ||
+    (out as any).d2_pct == null || (out as any).move_pct == null
+  );
+  if (_needsPrice) {
     try {
       const { getPriceReaction } = await import('@/lib/nse-bhavcopy');
       const px = await getPriceReaction(symbol, filedHint);
       if (px.d1_pct != null) {
-        out.d1_pct = px.d1_pct;
-        out.gap_pct = px.gap_pct;
-        // zzz231 — carry d2_pct + move_pct from extended bhav-copy computation
+        // Only overwrite null fields — respect any that are already set
+        if (out.d1_pct == null) out.d1_pct = px.d1_pct;
+        if (out.gap_pct == null) out.gap_pct = px.gap_pct;
+        // zzz231/zzz235 — always populate d2/move from fresh bhavcopy compute.
         if ((px as any).d2_pct != null) out.d2_pct = (px as any).d2_pct;
         if ((px as any).move_pct != null) out.move_pct = (px as any).move_pct;
         if (out.current_price == null) out.current_price = px.current_price;
