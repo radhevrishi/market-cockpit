@@ -1398,19 +1398,15 @@ if (typeof window !== 'undefined' && !(window as any).__mc_d2_test_done) {
 // zzz229 — extract d2_pct. Backend will populate later; frontend gracefully
 // handles missing field (predicate returns false to hide unqualified rows).
 function getD2Pct(e: any): number | null {
-  // zzz230 — prefer real d2_pct if backend ships it. Otherwise fall through:
-  //   1. move_pct (cumulative post-filing move — already 2+ trading days if
-  //      the filing was ≥ 2 sessions ago; even better than pure D2).
-  //   2. d1_pct + gap_pct compounded (approx 2-day post-earnings reaction).
-  //   3. bare d1_pct as a floor.
+  // zzz232 — STRICT fallback. Never return bare d1_pct here — that made the
+  // 2D chip identical to the 1D chip when backend hadn't shipped real d2_pct.
+  // Only return:
+  //   1. real d2_pct (server-computed, strict 2-trading-day cumulative)
+  //   2. move_pct (cumulative post-filing walk-forward — different from D1
+  //      because it spans many days, so counts diverge from 1D naturally)
+  // Otherwise return null → chip shows "…" pending state instead of a fake.
   if (typeof e?.d2_pct === 'number' && Number.isFinite(e.d2_pct)) return e.d2_pct;
   if (typeof e?.move_pct === 'number' && Number.isFinite(e.move_pct)) return e.move_pct;
-  const d1 = typeof e?.d1_pct === 'number' && Number.isFinite(e.d1_pct) ? e.d1_pct : null;
-  const gap = typeof e?.gap_pct === 'number' && Number.isFinite(e.gap_pct) ? e.gap_pct : null;
-  if (d1 != null && gap != null) {
-    return Math.round(((1 + gap / 100) * (1 + d1 / 100) - 1) * 1000) / 10;
-  }
-  if (d1 != null) return d1;
   return null;
 }
 
@@ -2343,7 +2339,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 const n = hasAnyD2 ? countD2(o.v) : null;
                 return (
                   <button key={o.v} onClick={() => toggleD2(o.v)}
-                    title={hasAnyD2 ? `Filter to entries with 2-day cumulative close ${o.lbl}. Uses best-available signal: real d2_pct if backend populated it, else move_pct, else gap+D1 compounded, else D1 alone.` : 'No usable D1/gap/move data in the bench yet.'}
+                    title={hasAnyD2 ? `Filter to entries with 2-day cumulative close ${o.lbl}. Bloomberg/Goldman convention: D2 = 2 trading sessions after earnings-day prev-close. Uses real d2_pct if backend populated it, else move_pct (walk-forward cumulative, spans many days). NEVER falls back to d1 to avoid duplicating the 1D chip.` : 'No d2_pct or move_pct in bench yet — Hard Refresh /earnings-opportunities to trigger backend compute.'}
                     style={active ? chipActive(o.color) : chipBase}>
                     {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '…' : n})</span>
                   </button>
@@ -3186,3 +3182,4 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
     </div>
   );
 }
+—
