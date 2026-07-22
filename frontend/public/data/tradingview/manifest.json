@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-22T08:34:13.821Z",
+  "lastSync": "2026-07-22T10:42:34.262Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 37157,
+      "size": 37061,
       "rowCount": 32,
       "error": null
     },
@@ -19,7 +19,7 @@
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
       "ok": true,
-      "size": 19791,
+      "size": 19909,
       "rowCount": 16,
       "error": null
     },
@@ -28,8 +28,8 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 26862,
-      "rowCount": 22,
+      "size": 31104,
+      "rowCount": 26,
       "error": null
     },
     {
@@ -37,7 +37,7 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 45923,
+      "size": 45866,
       "rowCount": 41,
       "error": null
     },
@@ -46,8 +46,8 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 32780,
-      "rowCount": 29,
+      "size": 31759,
+      "rowCount": 28,
       "error": null
     },
     {
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 105804,
+      "size": 106055,
       "rowCount": 100,
       "error": null
     },
