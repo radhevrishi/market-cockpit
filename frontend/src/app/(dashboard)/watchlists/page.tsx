@@ -1766,6 +1766,62 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // dropped out of BLOCKBUSTER/STRONG under the current grading logic
   // (e.g. ADSL after the turnaround gate) gets pruned automatically.
   const [revalidating, setRevalidating] = useState(false);
+  // zzz236 — Auto-enrich entries lacking d2_pct/move_pct. Runs once on mount.
+  // Fires the enrich API for stale entries (added before zzz230/231) so d2/move
+  // fields populate without user needing to click Re-validate.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const list = getConvictionList();
+    const stale = list.filter(e =>
+      e.ticker && e.filing_date &&
+      typeof (e as any).d1_pct === 'number' &&
+      typeof (e as any).move_pct !== 'number'
+    );
+    if (stale.length === 0) return;
+    (async () => {
+      // Batch by filing_date so we can pass filedHint per group
+      const byDate = new Map<string, string[]>();
+      for (const e of stale) {
+        const arr = byDate.get(e.filing_date!) || [];
+        arr.push(e.ticker!);
+        byDate.set(e.filing_date!, arr);
+      }
+      for (const [dt, tickers] of byDate) {
+        try {
+          const url = `/api/v1/earnings/enrich?symbols=${tickers.slice(0, 30).join(',')}&filedHint=${dt}`;
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const j = await res.json();
+          const data = j?.data || {};
+          const syncEntries: any[] = [];
+          for (const sym of tickers) {
+            const enr = data[sym];
+            if (!enr) continue;
+            const existing = list.find(e => e.ticker === sym);
+            if (!existing) continue;
+            syncEntries.push({
+              ticker: sym,
+              company: existing.company,
+              tier: existing.tier,
+              filing_date: existing.filing_date,
+              // Only fields we want to update:
+              d1_pct: typeof enr.d1_pct === 'number' ? enr.d1_pct : (existing as any).d1_pct,
+              gap_pct: typeof enr.gap_pct === 'number' ? enr.gap_pct : (existing as any).gap_pct,
+              d2_pct: typeof enr.d2_pct === 'number' ? enr.d2_pct : null,
+              move_pct: typeof enr.move_pct === 'number' ? enr.move_pct : null,
+              opm_pct: typeof enr.opm_pct === 'number' ? enr.opm_pct : (existing as any).opm_pct,
+              opm_prev_pct: typeof enr.opm_prev_pct === 'number' ? enr.opm_prev_pct : (existing as any).opm_prev_pct,
+            });
+          }
+          if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
+        } catch {}
+        // Throttle between filing dates
+        await new Promise(r => setTimeout(r, 400));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [revalProgress, setRevalProgress] = useState<string | null>(null);
   const runRevalidate = useCallback(async () => {
     if (revalidating) return;
@@ -1801,6 +1857,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
                 d1_pct: typeof c.d1_pct === 'number' ? c.d1_pct : null,
                 gap_pct: typeof c.gap_pct === 'number' ? c.gap_pct : null,
+                // zzz236 — carry d2_pct + move_pct from graded response into bench entry.
+                // Previously dropped — that's why 2D chip stayed at ⏳ even after backend enrich shipped.
+                d2_pct: typeof c.d2_pct === 'number' ? c.d2_pct : null,
+                move_pct: typeof c.move_pct === 'number' ? c.move_pct : null,
                 is_elite: c.is_elite === true,
                 pead_score: typeof c.pead_score === 'number' ? c.pead_score : null,
                 multibagger_setup: c.multibagger_setup === true,
@@ -1874,6 +1934,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
                 d1_pct: typeof c.d1_pct === 'number' ? c.d1_pct : null,
                 gap_pct: typeof c.gap_pct === 'number' ? c.gap_pct : null,
+                // zzz236 — carry d2_pct + move_pct from graded response into bench entry.
+                // Previously dropped — that's why 2D chip stayed at ⏳ even after backend enrich shipped.
+                d2_pct: typeof c.d2_pct === 'number' ? c.d2_pct : null,
+                move_pct: typeof c.move_pct === 'number' ? c.move_pct : null,
                 is_elite: c.is_elite === true,
                 pead_score: typeof c.pead_score === 'number' ? c.pead_score : null,
                 multibagger_setup: c.multibagger_setup === true,
