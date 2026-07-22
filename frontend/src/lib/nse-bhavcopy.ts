@@ -206,15 +206,23 @@ export async function getPriceReaction(symbol: string, filingDateIso: string): P
           break;
         }
       }
-      // zzz231 — walk forward further to compute cumulative move to most recent bhav
+      // zzz237 — Walk BACKWARD from today up to 5 sessions looking for a
+      // bhavcopy. Previous forward walk (up to 40 sessions) blew past the
+      // enrich route's per-ticker timeout, killing the whole compute silently.
+      // This bounded backward walk fetches at most 5 bhavcopies (~2.5s worst case).
       let lastClose: number | null = d2Close ?? bhav.close;
-      let walkDate = d2Date;
-      for (let k = 0; k < 40; k++) {
-        walkDate = shiftDate(walkDate, 1);
-        if (isWeekend(walkDate)) continue;
-        if (walkDate > new Date().toISOString().slice(0, 10)) break;
-        const bhavK = await getBhavForSymbol(symbol, walkDate);
-        if (bhavK && bhavK.close > 0) lastClose = bhavK.close;
+      const today = new Date().toISOString().slice(0, 10);
+      let walkDate = today;
+      let found = false;
+      for (let k = 0; k < 5 && !found; k++) {
+        if (!isWeekend(walkDate)) {
+          const bhavK = await getBhavForSymbol(symbol, walkDate);
+          if (bhavK && bhavK.close > 0) {
+            lastClose = bhavK.close;
+            found = true;
+          }
+        }
+        walkDate = shiftDate(walkDate, -1);
       }
       const movePct = lastClose != null ? ((lastClose - anchorPrev) / anchorPrev) * 100 : null;
       return {
