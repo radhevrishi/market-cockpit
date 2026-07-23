@@ -131,7 +131,8 @@ async function fetchBhavcopyMap(isoDate: string): Promise<Map<string, BhavData>>
       headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv,text/plain,*/*' },
       signal: ctrl.signal,
     });
-    if (!res.ok) { _memPut(isoDate, new Map()); return new Map(); }
+    // zzz241 — do not memo-cache empty on transient failure; retry gets a chance
+    if (!res.ok) { return new Map(); }
     const csv = await res.text();
     const parsed = parseBhavcopy(csv, isoDate);
     _memPut(isoDate, parsed);  // hold in memory, NO bulk KV write
@@ -141,7 +142,7 @@ async function fetchBhavcopyMap(isoDate: string): Promise<Map<string, BhavData>>
     }
     return parsed;
   } catch {
-    _memPut(isoDate, new Map());
+    // zzz241 — do not cache empties on catch; let next request retry
     return new Map();
   } finally {
     clearTimeout(t);
@@ -192,11 +193,12 @@ export async function getPriceReaction(symbol: string, filingDateIso: string): P
       const gap = ((bhav.open - bhav.prev_close) / bhav.prev_close) * 100;
       const d1 = ((bhav.close - bhav.prev_close) / bhav.prev_close) * 100;
       const anchorPrev = bhav.prev_close;
-      // zzz231 — walk forward for day-2 close (skip weekends)
+      // zzz241 — walk forward for day-2 close (skip weekends). Widened from 5 → 10
+      // so long weekends + missing bhavcopies still yield D2.
       let d2Pct: number | null = null;
       let d2Close: number | null = null;
       let d2Date = attempt;
-      for (let j = 0; j < 5; j++) {
+      for (let j = 0; j < 10; j++) {
         d2Date = shiftDate(d2Date, 1);
         if (isWeekend(d2Date)) continue;
         const bhav2 = await getBhavForSymbol(symbol, d2Date);
@@ -206,16 +208,19 @@ export async function getPriceReaction(symbol: string, filingDateIso: string): P
           break;
         }
       }
-      // zzz237 — Walk BACKWARD from today up to 5 sessions looking for a
-      // bhavcopy. Previous forward walk (up to 40 sessions) blew past the
-      // enrich route's per-ticker timeout, killing the whole compute silently.
-      // This bounded backward walk fetches at most 5 bhavcopies (~2.5s worst case).
+      // zzz241 — Walk BACKWARD from today with WEEKDAY-BUDGETED counter.
+      // Previous zzz237 walk of 5 iterations blew budget on 2 weekend days,
+      // leaving only 3 real fetches. If today's bhavcopy is 404 (published late)
+      // + yesterday empty-cached, move_pct falls back to D1 close and looks broken.
+      // New: burn up to 10 real WEEKDAY fetches, up to 20 total date shifts.
       let lastClose: number | null = d2Close ?? bhav.close;
       const today = new Date().toISOString().slice(0, 10);
       let walkDate = today;
       let found = false;
-      for (let k = 0; k < 5 && !found; k++) {
+      let weekdayFetches = 0;
+      for (let k = 0; k < 20 && !found && weekdayFetches < 10; k++) {
         if (!isWeekend(walkDate)) {
+          weekdayFetches++;
           const bhavK = await getBhavForSymbol(symbol, walkDate);
           if (bhavK && bhavK.close > 0) {
             lastClose = bhavK.close;
