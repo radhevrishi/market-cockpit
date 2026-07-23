@@ -797,24 +797,41 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz235 — Fire getPriceReaction when D1/gap OR D2/move are missing. Previously
   // only fired when D1 was null → existing entries with D1 never got D2/move
   // populated, keeping the 2D chip stuck at ⏳ pending state.
+  // zzz238 — Always initialize price fields + diagnostic markers so response
+  // tells us why fields are missing. Distinguishes 'not attempted' vs 'attempted
+  // but null return' vs 'threw exception'.
+  if (out.d1_pct === undefined) out.d1_pct = null;
+  if (out.gap_pct === undefined) out.gap_pct = null;
+  if ((out as any).d2_pct === undefined) out.d2_pct = null;
+  if ((out as any).move_pct === undefined) out.move_pct = null;
   const _needsPrice = filedHint && (
     out.d1_pct == null || out.gap_pct == null ||
     (out as any).d2_pct == null || (out as any).move_pct == null
   );
-  if (_needsPrice) {
+  if (!filedHint) {
+    out._price_source = 'no-filed-hint';
+  } else if (!_needsPrice) {
+    out._price_source = 'skip-all-populated';
+  } else if (_needsPrice) {
     try {
+      const _t0 = Date.now();
       const { getPriceReaction } = await import('@/lib/nse-bhavcopy');
       const px = await getPriceReaction(symbol, filedHint);
+      const _elapsed = Date.now() - _t0;
+      out._price_elapsed_ms = _elapsed;
+      out._price_reaction_d1 = px.d1_pct;
+      out._price_reaction_d2 = (px as any).d2_pct;
+      out._price_reaction_move = (px as any).move_pct;
       if (px.d1_pct != null) {
-        // Only overwrite null fields — respect any that are already set
         if (out.d1_pct == null) out.d1_pct = px.d1_pct;
         if (out.gap_pct == null) out.gap_pct = px.gap_pct;
-        // zzz231/zzz235 — always populate d2/move from fresh bhavcopy compute.
         if ((px as any).d2_pct != null) out.d2_pct = (px as any).d2_pct;
         if ((px as any).move_pct != null) out.move_pct = (px as any).move_pct;
         if (out.current_price == null) out.current_price = px.current_price;
         if (out.prev_close == null) out.prev_close = px.prev_close;
         out._price_source = 'nse-bhavcopy';
+      } else {
+        out._price_source = 'bhavcopy-returned-null';
       }
       // PATCH 1035 — Liquidity fallback. Yahoo's chart (our median-ADTV source) is
       // usually IP-blocked on Railway, so derive traded value from the NSE bhavcopy
@@ -828,8 +845,10 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
           out._adtv_source = 'nse-bhavcopy';
         }
       }
-    } catch (e) {
-      // Non-fatal — Yahoo fallback may still have populated d1/gap above
+    } catch (e: any) {
+      // zzz238 — expose the error so we can diagnose from the response
+      out._price_source = 'bhavcopy-threw';
+      out._price_error = String(e?.message || e).slice(0, 200);
     }
   }
 
@@ -1069,3 +1088,4 @@ export async function GET(req: Request) {
     truncated_at: truncatedAt,
   });
 }
+—
