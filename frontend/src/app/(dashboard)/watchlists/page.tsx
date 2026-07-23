@@ -1788,7 +1788,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       }
       for (const [dt, tickers] of byDate) {
         try {
-          const url = `/api/v1/earnings/enrich?symbols=${tickers.slice(0, 30).join(',')}&filedHint=${dt}`;
+          const url = `/api/v1/earnings/enrich?symbols=${tickers.slice(0, 30).join(',')}&filed=${dt}`;
           const res = await fetch(url, { cache: 'no-store' });
           if (!res.ok) continue;
           const j = await res.json();
