@@ -2015,16 +2015,27 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // enrichment fetch was unreliable for 200+ entries (counts stayed at 0).
   // PATCH 0549 — Returning users with the legacy `'rich'` value still in
   // `mc:conviction-view` localStorage were triggering the dead-fetch on
-  // every page load: the hook fired against all conviction tickers, the
-  // network burned, and the UI ignored the result. Hard-coerce to 'compact'
-  // and drop the legacy key so the fetch never starts. State is preserved
-  // as a constant so the dead-code branch below still type-checks if the
-  // user toggles it back on later.
+  // every page load — coerce to 'compact' and drop the key.
   const viewMode: 'compact' = 'compact';
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try { localStorage.removeItem('mc:conviction-view'); } catch {}
   }, []);
+  // zzz247 — Card vs Table view toggle. Persisted in localStorage. Table view
+  // shows sortable columns for institutional-analyst scanning of 42+ rows.
+  const [tableMode, setTableMode] = useState<boolean>(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { setTableMode(localStorage.getItem('mc:cb:table') === '1'); } catch {}
+  }, []);
+  const toggleTable = () => {
+    setTableMode((v) => {
+      const nv = !v;
+      try { localStorage.setItem('mc:cb:table', nv ? '1' : '0'); } catch {}
+      return nv;
+    });
+  };
+  const [tableSort, setTableSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'pead', dir: 'desc'});
 
   // PATCH 0539 — Hub-Scan-style filter rail (rich view only)
   const [hubFilters, setHubFilters] = useState<HubFilters>(HUB_FILTER_DEFAULT);
@@ -2206,6 +2217,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <button onClick={() => setFilters((f) => ({ ...f, sortByPead: !f.sortByPead }))}
               style={filters.sortByPead ? chipActive('#22D3EE') : chipBase}>
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
+            </button>
+            {/* zzz247 — Table view toggle for institutional scanning */}
+            <button onClick={toggleTable} title="Toggle between Card and Table view. Table view supports sortable columns."
+              style={tableMode ? chipActive('#F59E0B') : chipBase}>
+              {tableMode ? '📇 Card view' : '📊 Table view'}
             </button>
             {/* PATCH 1018 — ELITE / MULTIBAGGER filter chips */}
             <button onClick={() => setFilters((f) => ({ ...f, elite: !f.elite }))}
@@ -2984,7 +3000,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           })()}
         </>
       ) : (
-        // ── COMPACT (legacy rows) ───────────────────────────────────────
+        // ── COMPACT (legacy rows) OR TABLE view ─────────────────────────
+        tableMode ? (
+          <ConvictionTable entries={[...blockbusters, ...strongs]} onRemove={onRemove} sort={tableSort} setSort={setTableSort} />
+        ) : (
         <>
           {blockbusters.length > 0 && (
             <div style={{
@@ -3015,6 +3034,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             </div>
           )}
         </>
+        )
       )}
     </div>
   );
@@ -3189,6 +3209,125 @@ function HubFilterRail({
   );
 }
 
+// zzz247 — 30-day close sparkline. Reads entry.close_30d (populated by zzz248
+// backend). Renders as inline SVG polyline; near-zero cost. Silently hidden
+// when the array is missing/empty so we don't ship broken visuals.
+function Sparkline({ closes, width = 80, height = 22 }: { closes: number[] | undefined | null; width?: number; height?: number }) {
+  if (!Array.isArray(closes) || closes.length < 2) return null;
+  const validCloses = closes.filter((c): c is number => typeof c === 'number' && Number.isFinite(c));
+  if (validCloses.length < 2) return null;
+  const min = Math.min(...validCloses);
+  const max = Math.max(...validCloses);
+  const range = max - min || 1;
+  const step = width / (validCloses.length - 1);
+  const pts = validCloses.map((c, i) => `${(i * step).toFixed(1)},${(height - ((c - min) / range) * height).toFixed(1)}`).join(' ');
+  const first = validCloses[0], last = validCloses[validCloses.length - 1];
+  const up = last >= first;
+  const color = up ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+  return (
+    <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }} aria-label="30-day price sparkline">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+      <circle cx={width} cy={height - ((last - min) / range) * height} r="1.5" fill={color} />
+    </svg>
+  );
+}
+
+// zzz247 — Institutional table view. Sortable columns for analysts who want to
+// scan 42+ rows in 3 seconds. Same filter set, denser layout.
+function ConvictionTable({ entries, onRemove, sort, setSort }: {
+  entries: ConvictionEntry[]; onRemove: (t: string) => void;
+  sort: { col: string; dir: 'asc'|'desc' }; setSort: (s: { col: string; dir: 'asc'|'desc' }) => void;
+}) {
+  const cols: Array<{ key: string; label: string; align?: string; get: (e: any) => any }> = [
+    { key: 'tier',      label: 'Tier',    get: (e) => e.tier === 'BLOCKBUSTER' ? 1 : 0 },
+    { key: 'ticker',    label: 'Ticker',  get: (e) => e.ticker || '' },
+    { key: 'company',   label: 'Company', get: (e) => e.company || '' },
+    { key: 'filed',     label: 'Filed',   get: (e) => e.filing_date || '' },
+    { key: 'sector',    label: 'Sector',  get: (e) => e.sector || '' },
+    { key: 'mcap',      label: 'MktCap',  align: 'right', get: (e) => e.market_cap_cr ?? 0 },
+    { key: 'composite', label: 'Comp',    align: 'right', get: (e) => e.composite_score ?? 0 },
+    { key: 'pead',      label: 'PEAD',    align: 'right', get: (e) => peadScore(e).score },
+    { key: 'sales',     label: 'Sales',   align: 'right', get: (e) => e.sales_yoy_pct ?? -999 },
+    { key: 'pat',       label: 'PAT',     align: 'right', get: (e) => e.net_profit_yoy_pct ?? -999 },
+    { key: 'eps',       label: 'EPS',     align: 'right', get: (e) => e.eps_yoy_pct ?? -999 },
+    { key: 'opm',       label: 'OPM',     align: 'right', get: (e) => e.opm_pct ?? -999 },
+    { key: 'pe',        label: 'P/E',     align: 'right', get: (e) => e.pe ?? Infinity },
+    { key: 'd1',        label: 'D1',      align: 'right', get: (e) => e.d1_pct ?? -999 },
+    { key: 'drift',     label: 'DRIFT',   align: 'right', get: (e) => e.move_pct ?? -999 },
+  ];
+  const sorted = [...entries].sort((a, b) => {
+    const c = cols.find((c) => c.key === sort.col);
+    if (!c) return 0;
+    const av = c.get(a), bv = c.get(b);
+    let cmp: number;
+    if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
+    else cmp = String(av).localeCompare(String(bv));
+    return sort.dir === 'asc' ? cmp : -cmp;
+  });
+  const onSort = (col: string) => {
+    if (sort.col === col) setSort({ col, dir: sort.dir === 'asc' ? 'desc' : 'asc' });
+    else setSort({ col, dir: 'desc' });
+  };
+  const fmtPct = (v: any) => typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
+  const fmtNum = (v: any) => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(1) : '—';
+  const fmtMcap = (v: any) => typeof v === 'number' && Number.isFinite(v) && v > 0 ? (v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : v >= 1000 ? `₹${(v/1000).toFixed(1)}k` : `₹${Math.round(v)}`) : '—';
+  const pctColor = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? (v >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)') : 'var(--mc-text-4)';
+  const arrow = (c: string) => sort.col === c ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  const th = { fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', padding: '6px 8px', borderBottom: '1px solid var(--mc-bg-4)', cursor: 'pointer', letterSpacing: '0.3px', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const, userSelect: 'none' as const };
+  const td = { fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', whiteSpace: 'nowrap' as const, fontVariantNumeric: 'tabular-nums' as any };
+  return (
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, overflow: 'auto', maxHeight: '75vh' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'ui-sans-serif, system-ui' }}>
+        <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--mc-bg-1)', zIndex: 1 }}>
+          <tr>
+            {cols.map((c) => (
+              <th key={c.key} onClick={() => onSort(c.key)} style={{ ...th, textAlign: (c.align as any) || 'left' }} title={`Sort by ${c.label}`}>
+                {c.label}{arrow(c.key)}
+              </th>
+            ))}
+            <th style={{ ...th, textAlign: 'center' }}>·</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((e) => {
+            const tierColor = e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
+            const tierLbl = e.tier === 'BLOCKBUSTER' ? '⭐' : '🟢';
+            return (
+              <tr key={e.ticker + (e.filing_date || '')} style={{ transition: 'background 0.1s' }}
+                onMouseEnter={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'var(--mc-bg-2)'; }}
+                onMouseLeave={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'transparent'; }}>
+                <td style={{ ...td, color: tierColor, fontWeight: 800 }}>{tierLbl}</td>
+                <td style={{ ...td, fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>
+                  {e.source_url ? (
+                    <a href={e.source_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-text-2)', textDecoration: 'none', borderBottom: '1px dotted var(--mc-text-4)' }}>{e.ticker}</a>
+                  ) : e.ticker}
+                </td>
+                <td style={{ ...td, color: 'var(--mc-text-1)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.company}</td>
+                <td style={{ ...td, color: 'var(--mc-text-3)' }}>{e.filing_date || '—'}</td>
+                <td style={{ ...td, color: 'var(--mc-text-3)' }}>{e.sector || '—'}</td>
+                <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-3)' }}>{fmtMcap((e as any).market_cap_cr)}</td>
+                <td style={{ ...td, textAlign: 'right', color: tierColor, fontWeight: 800 }}>{e.composite_score}</td>
+                <td style={{ ...td, textAlign: 'right', color: peadColor(peadScore(e).score), fontWeight: 700 }}>{peadScore(e).score}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor(e.sales_yoy_pct) }}>{fmtPct(e.sales_yoy_pct)}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor(e.net_profit_yoy_pct) }}>{fmtPct(e.net_profit_yoy_pct)}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor(e.eps_yoy_pct) }}>{fmtPct(e.eps_yoy_pct)}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{typeof (e as any).opm_pct === 'number' ? `${(e as any).opm_pct.toFixed(1)}%` : '—'}</td>
+                <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-2)' }}>{fmtNum((e as any).pe) === '—' ? '—' : fmtNum((e as any).pe) + 'x'}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).d1_pct) }}>{fmtPct((e as any).d1_pct)}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).move_pct), fontWeight: 700 }}>{fmtPct((e as any).move_pct)}</td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  <button onClick={() => onRemove(e.ticker)} title="Remove"
+                    style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: 0, fontSize: 13 }}>×</button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: (t: string) => void }) {
   const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
   const pct = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
@@ -3327,6 +3466,13 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           </div>
         );
       })()}
+      {/* zzz247 — 30-day close sparkline (hidden until zzz248 populates close_30d) */}
+      {Array.isArray((entry as any).close_30d) && (entry as any).close_30d.length >= 2 && (
+        <div style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Sparkline closes={(entry as any).close_30d} width={100} height={22} />
+          <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>30D</span>
+        </div>
+      )}
       {/* PATCH 0546 — Always render guidance badge using derived label
           (falls back to YoY-metric heuristic when no explicit field).
           Explicit field shows its signed score; derived label shows the
