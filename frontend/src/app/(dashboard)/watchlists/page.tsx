@@ -15,6 +15,53 @@ import {
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
+
+// zzz253 — hardcoded sector map for known NSE tickers. Backend enrichment
+// often returns null sector; this fallback ensures peer comparison + sector-
+// median P/E coloring work even when Screener/Worker skip sector data.
+const NSE_SECTOR_MAP: Record<string, string> = {
+  LAURUSLABS: 'Pharma', GRANULES: 'Pharma', VENUSREM: 'Pharma', IPCALAB: 'Pharma', GLENMARK: 'Pharma', GUFICBIO: 'Pharma',
+  ATUL: 'Chemicals', KRISHANA: 'Chemicals/Fertilizers', PLASTIBLEN: 'Chemicals/Additives',
+  MAHLIFE: 'Real Estate', DBREALTY: 'Real Estate', PROZONER: 'Real Estate',
+  CYIENTDLM: 'EMS/Defence', AVANTEL: 'Defence', KERNEX: 'Defence',
+  RPEL: 'Refractories', TINNARUBR: 'Rubber Products',
+  SGFIN: 'NBFC', POONAWALLA: 'NBFC', FEDFINA: 'NBFC', LTF: 'NBFC', BFINVEST: 'NBFC',
+  MENONBE: 'Auto Parts', SSWL: 'Auto Parts', JAMNAAUTO: 'Auto Parts', LUMAXTECH: 'Auto Parts',
+  'BAJAJ-AUTO': 'Auto OEM',
+  SESHAPAPER: 'Paper',
+  IDFCFIRSTB: 'Banks', UJJIVANSFB: 'Banks', CSBBANK: 'Banks', KARURVYSYA: 'Banks', JSFB: 'Banks', MAHABANK: 'PSU Banks',
+  ADANIENSOL: 'Power/Transmission', ADANIPOWER: 'Power', GIPCL: 'Power', IREDA: 'Power/Green Finance',
+  JSWSTEEL: 'Steel', JAYNECOIND: 'Steel', STEELXIND: 'Steel',
+  ANGELONE: 'Broker/Fintech',
+  BAJAJCON: 'FMCG', NESTLEIND: 'FMCG',
+  'NAM-INDIA': 'AMC',
+  ORIENTELEC: 'Consumer Durables',
+  LALPATHLAB: 'Diagnostics',
+  CRISIL: 'Ratings/Analytics',
+  GLOBUSSPR: 'Distillers/Breweries',
+  TECHM: 'IT Services', KSOLVES: 'IT Services',
+  ITCHOTELS: 'Hotels',
+  NEWGEN: 'IT Products',
+  SONAMLTD: 'Jewelry/Bullion',
+  INOXGREEN: 'Renewables', OLECTRA: 'EVs/Buses', NIBE: 'Defence/Aerospace',
+  SBC: 'Textiles', ASMS: 'Electronics/Bartronics',
+  SHREEJISPG: 'Textiles',
+  GICL: 'Auto Parts/Globe',
+  RUBICON: 'IT Products',
+  WANBURY: 'Pharma',
+  PASHUPATI: 'Overseas Products',
+  NCLIND: 'Cement',
+  AEGISLOG: 'Logistics',
+  GRMOVER: 'Overseas Trading',
+  ASIANPAINT: 'Paints',
+  DYNPRO: 'Engineering',
+};
+// zzz253 — sector resolver: prefer explicit entry.sector, fall back to map
+const resolveSector = (e: any): string | null => {
+  if (e?.sector && typeof e.sector === 'string' && e.sector.trim() !== '') return e.sector.trim();
+  const t = (e?.ticker || '').toUpperCase();
+  return NSE_SECTOR_MAP[t] || null;
+};
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
@@ -2047,10 +2094,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     (window as any).__cbAllEntries = entries;
     const bySec = new Map<string, number[]>();
     for (const e of entries) {
-      if (e.sector && typeof (e as any).pe === 'number' && Number.isFinite((e as any).pe) && (e as any).pe > 0) {
-        const arr = bySec.get(e.sector) || [];
+      const sec = resolveSector(e);
+      if (sec && typeof (e as any).pe === 'number' && Number.isFinite((e as any).pe) && (e as any).pe > 0) {
+        const arr = bySec.get(sec) || [];
         arr.push((e as any).pe);
-        bySec.set(e.sector, arr);
+        bySec.set(sec, arr);
       }
     }
     const medMap: Record<string, number> = {};
@@ -2066,6 +2114,32 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // zzz250 — Full institutional Excel export. Uses SheetJS (already bundled).
   // Native .xlsx binary format — Mac Excel + Numbers + Windows Excel all open cleanly.
   // Includes freeze-header + auto-filter for immediate scan usability.
+  // zzz253 — force re-enrichment: clear stale price fields for every entry, then
+  // rely on the useEffect auto-enrich to re-fetch. Also invalidates the KV cache
+  // by sending nocache=1 in the first fetch.
+  const handleRefreshPrices = () => {
+    if (typeof window === 'undefined') return;
+    const list = getConvictionList();
+    if (list.length === 0) { alert('No entries to refresh.'); return; }
+    // Read current store, clear price fields for all entries, write back.
+    try {
+      const raw = localStorage.getItem('mc:conviction-beats:v1');
+      const store: any = raw ? JSON.parse(raw) : {};
+      let cleared = 0;
+      for (const key of Object.keys(store)) {
+        const e = store[key];
+        if (!e) continue;
+        // Clear only price-related fields, keep fundamentals intact
+        delete e.move_pct;
+        delete e.d2_pct;
+        delete e.pe;
+        cleared++;
+      }
+      localStorage.setItem('mc:conviction-beats:v1', JSON.stringify(store));
+      alert(`Cleared ${cleared} entries. Reloading to trigger fresh enrichment...`);
+      window.location.reload();
+    } catch (e) { alert('Refresh failed: ' + String(e)); }
+  };
   const handleExportFullExcel = async () => {
     if (typeof window === 'undefined') return;
     const list = filteredEntries;
@@ -2318,6 +2392,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <button onClick={handleExportFullExcel} title="Download all filtered entries with every column (Sales/PAT/EPS/OPM/P/E/D1/D2/DRIFT/MktCap/Sector/Composite/PEAD/Days-Since/Guidance) as native .xlsx. Opens in Excel/Numbers on Mac + Windows."
               style={{ ...chipBase, border: '1px solid #10B981', color: '#10B981', fontWeight: 800 }}>
               📥 Excel (Full)
+            </button>
+            {/* zzz253 — force re-enrichment. Clears stale price fields + re-fetches. */}
+            <button onClick={handleRefreshPrices} title="Force re-fetch of all price data (D1/D2/DRIFT/P/E) for every bench entry. Use when data feels stale — typically after market close."
+              style={{ ...chipBase, border: '1px solid #22D3EE', color: '#22D3EE', fontWeight: 800 }}>
+              🔄 Refresh Prices
             </button>
             {/* PATCH 1018 — ELITE / MULTIBAGGER filter chips */}
             <button onClick={() => setFilters((f) => ({ ...f, elite: !f.elite }))}
@@ -3478,7 +3557,10 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             )}
             <span style={{ color: 'var(--mc-text-4)' }}>·</span>
             <span style={{ whiteSpace: 'nowrap' }}>{entry.filing_date}</span>
-            {entry.sector && (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.sector}</span></>)}
+            {(() => {
+              const sec = resolveSector(entry);
+              return sec ? (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec}</span></>) : null;
+            })()}
             {/* zzz249 — compact mktCap: drop "₹" and " Cr" (context is clear on Indian bench) */}
             {typeof (entry as any).market_cap_cr === 'number' && Number.isFinite((entry as any).market_cap_cr) && (() => {
               const c = (entry as any).market_cap_cr as number;
@@ -3570,7 +3652,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             {typeof (entry as any).pe === 'number' && Number.isFinite((entry as any).pe) && (entry as any).pe > 0 && (() => {
               const pval = (entry as any).pe as number;
               const secMap: Record<string, number> = (typeof window !== 'undefined' && (window as any).__cbSectorPeMed) || {};
-              const secMed = entry.sector ? secMap[entry.sector] : null;
+              const secMed = (() => { const s = resolveSector(entry); return s ? secMap[s] : null; })();
               let col: string; let tip: string;
               if (secMed != null && secMed > 0) {
                 const ratio = pval / secMed;
@@ -3611,9 +3693,11 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
       })()}
       {/* zzz251 — Peer strip: median PEAD + DRIFT of same-sector bench entries.
           Reads window.__cbAllEntries which we populate once per render pass. */}
-      {entry.sector && (() => {
+      {(() => {
+        const mySec = resolveSector(entry);
+        if (!mySec) return null;
         const all: any[] = (typeof window !== 'undefined' && (window as any).__cbAllEntries) || [];
-        const peers = all.filter((p) => p.sector === entry.sector && p.ticker !== entry.ticker);
+        const peers = all.filter((p) => resolveSector(p) === mySec && p.ticker !== entry.ticker);
         if (peers.length < 2) return null;
         const peerPeads = peers.map((p) => peadScore(p).score).filter((n) => Number.isFinite(n));
         const peerDrifts = peers.map((p: any) => p.move_pct).filter((n: any) => typeof n === 'number' && Number.isFinite(n));
@@ -3638,15 +3722,24 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           </div>
         );
       })()}
-      {/* zzz251 — DRIFT PATH mini-chart (Gap→D1→D2→Now trajectory) */}
+      {/* zzz251 — DRIFT PATH mini-chart. zzz253 — show pending placeholder for fresh filings. */}
       {(() => {
-        const hasAny = ['gap_pct','d1_pct','d2_pct','move_pct'].filter(k => typeof (entry as any)[k] === 'number' && Number.isFinite((entry as any)[k])).length >= 2;
-        if (!hasAny) return null;
+        const pts = ['gap_pct','d1_pct','d2_pct','move_pct'].filter(k => typeof (entry as any)[k] === 'number' && Number.isFinite((entry as any)[k])).length;
+        if (pts >= 2) {
+          return (
+            <div style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <DriftPath entry={entry} width={110} height={26} />
+              <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px', fontWeight: 700 }}>DRIFT PATH</span>
+              <span style={{ fontSize: 8, color: 'var(--mc-text-4)', letterSpacing: '0.2px' }}>Gap · D1 · D2 · Now</span>
+            </div>
+          );
+        }
+        // zzz253 — placeholder for cards without any price data yet (bhavcopy lag)
         return (
-          <div style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <DriftPath entry={entry} width={110} height={26} />
-            <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px', fontWeight: 700 }}>DRIFT PATH</span>
-            <span style={{ fontSize: 8, color: 'var(--mc-text-4)', letterSpacing: '0.2px' }}>Gap · D1 · D2 · Now</span>
+          <div title="Bhavcopy for this filing date hasn't published yet. NSE typically publishes daily bhavcopy by 18:00 IST. Chart will populate on next enrichment." style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>
+            <span>⏳</span>
+            <span style={{ fontWeight: 700 }}>DRIFT PATH</span>
+            <span style={{ opacity: 0.7 }}>awaiting price data (bhavcopy lag)</span>
           </div>
         );
       })()}
