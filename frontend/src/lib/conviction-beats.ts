@@ -69,6 +69,9 @@ export interface ConvictionEntry {
   is_elite?: boolean;
   pead_score?: number | null;
   multibagger_setup?: boolean;
+  // zzz242 — trailing P/E (from graded route / enrich Screener path) so
+  // CB cards can render a valuation chip alongside OPM + YoY numbers.
+  pe?: number | null;
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -261,7 +264,7 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           };
           fill('opm_pct'); fill('opm_prev_pct');
           fill('d1_pct'); fill('gap_pct'); fill('move_pct');   // zzz230
-          fill('pead_score'); fill('market_cap_cr');
+          fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {
