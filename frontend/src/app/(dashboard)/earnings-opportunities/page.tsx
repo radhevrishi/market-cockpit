@@ -2072,6 +2072,8 @@ export default function EarningsOpportunitiesPage() {
           // zzz223 — OPM margin for the CB tab (latest + prior-year %)
           opm_pct: typeof (c as any).opm_pct === 'number' ? (c as any).opm_pct : null,
           opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
+          // zzz242 — carry trailing P/E for valuation chip on CB card
+          pe: typeof (c as any).pe === 'number' ? (c as any).pe : (typeof (c as any).stockPE === 'number' ? (c as any).stockPE : null),
         });
       }
     }
