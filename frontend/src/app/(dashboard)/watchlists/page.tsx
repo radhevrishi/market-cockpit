@@ -1801,16 +1801,16 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const list = getConvictionList();
-    // zzz244 — DROP d1_pct precondition. Previous gate required d1_pct populated,
-    // but very-recent filings (last 1-3 days) often have null d1_pct because NSE
-    // bhavcopy hasn't published yet — those entries were skipped forever, so pe
-    // never got backfilled. Now: fire for any entry missing pe/move_pct/d2_pct,
-    // regardless of d1_pct state.
+    // zzz244 — DROP d1_pct precondition. zzz248 — also fire on missing close_30d
+    // so sparklines get populated. Any entry missing pe/move_pct/d2_pct/close_30d
+    // gets re-enriched from the API.
     const stale = list.filter(e =>
       e.ticker && e.filing_date &&
       (typeof (e as any).move_pct !== 'number'
         || typeof (e as any).d2_pct !== 'number'
-        || typeof (e as any).pe !== 'number')
+        || typeof (e as any).pe !== 'number'
+        || !Array.isArray((e as any).close_30d)
+        || (e as any).close_30d.length < 2)
     );
     if (stale.length === 0) return;
     (async () => {
@@ -1848,6 +1848,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               opm_prev_pct: typeof enr.opm_prev_pct === 'number' ? enr.opm_prev_pct : (existing as any).opm_prev_pct,
               // zzz242 — pull trailing P/E from enrich response (fallback to stockPE)
               pe: typeof enr.pe === 'number' ? enr.pe : (typeof enr.stockPE === 'number' ? enr.stockPE : (existing as any).pe),
+              // zzz248 — carry 30-day close series for sparkline
+              close_30d: Array.isArray(enr.close_30d) && enr.close_30d.length >= 2 ? enr.close_30d : (existing as any).close_30d,
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
