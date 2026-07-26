@@ -2038,6 +2038,30 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     });
   };
   const [tableSort, setTableSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'pead', dir: 'desc'});
+  // zzz252 — expose entries + sector median P/E on window so ConvictionRow can
+  // access peer stats without threading them through props. Rerun whenever the
+  // entries list changes (add/remove/re-enrich). Moved out of JSX to avoid the
+  // ternary syntax error that killed zzz251's build.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    (window as any).__cbAllEntries = entries;
+    const bySec = new Map<string, number[]>();
+    for (const e of entries) {
+      if (e.sector && typeof (e as any).pe === 'number' && Number.isFinite((e as any).pe) && (e as any).pe > 0) {
+        const arr = bySec.get(e.sector) || [];
+        arr.push((e as any).pe);
+        bySec.set(e.sector, arr);
+      }
+    }
+    const medMap: Record<string, number> = {};
+    for (const [sec, vals] of bySec) {
+      if (vals.length < 2) continue;
+      const s = [...vals].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      medMap[sec] = s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    }
+    (window as any).__cbSectorPeMed = medMap;
+  }, [entries]);
 
   // zzz250 — Full institutional Excel export. Uses SheetJS (already bundled).
   // Native .xlsx binary format — Mac Excel + Numbers + Windows Excel all open cleanly.
@@ -3072,30 +3096,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           })()}
         </>
       ) : (
-        // zzz251 — expose all entries + sector median P/E for card-level access
-        (() => {
-          if (typeof window === 'undefined') return null;
-          (window as any).__cbAllEntries = entries;
-          // Compute median P/E per sector for color coding
-          const bySec = new Map<string, number[]>();
-          for (const e of entries) {
-            if (e.sector && typeof (e as any).pe === 'number' && Number.isFinite((e as any).pe) && (e as any).pe > 0) {
-              const arr = bySec.get(e.sector) || [];
-              arr.push((e as any).pe);
-              bySec.set(e.sector, arr);
-            }
-          }
-          const medMap: Record<string, number> = {};
-          for (const [sec, vals] of bySec) {
-            if (vals.length < 2) continue;
-            const s = [...vals].sort((a, b) => a - b);
-            const m = Math.floor(s.length / 2);
-            medMap[sec] = s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-          }
-          (window as any).__cbSectorPeMed = medMap;
-          return null;
-        })()}
-        {// ── COMPACT (legacy rows) OR TABLE view ─────────────────────────
+        // ── COMPACT (legacy rows) OR TABLE view ─────────────────────────
         tableMode ? (
           <ConvictionTable entries={[...blockbusters, ...strongs]} onRemove={onRemove} sort={tableSort} setSort={setTableSort} />
         ) : (
