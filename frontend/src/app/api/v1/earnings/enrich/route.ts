@@ -417,6 +417,13 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
         atr_pct = (atr / lastClose) * 100;
       }
     }
+    // zzz248 — Extract last 30 valid closes for client-side sparkline.
+    // Cheap: closes array already in memory. Skip nulls (Indian-market holiday gaps).
+    const _close30d: number[] = [];
+    for (let i = closes.length - 1; i >= 0 && _close30d.length < 30; i--) {
+      const c = closes[i];
+      if (c != null && Number.isFinite(c as number)) _close30d.unshift(c as number);
+    }
     return {
       current_price: lastClose, prev_close: prevClose,
       gap_pct: gap, d1_pct: d1,
@@ -426,6 +433,7 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       return_12w_pct: ret12w,
       stage, trend_template_passes: trendTemplate,
       adtv_cr, rvol, atr_pct,  // PATCH 1034
+      close_30d: _close30d.length >= 2 ? _close30d : null,  // zzz248
     };
   } catch { return null; }
   finally { clearTimeout(t); }
