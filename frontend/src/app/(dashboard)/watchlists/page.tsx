@@ -1214,11 +1214,12 @@ type ConvFilters = {
   // 2 trading sessions (skips weekends/holidays). Value semantics identical
   // to d1Bucket: positive = "≥ N%", negative = "≤ N%".
   d2Bucket: number | null;
+  driftBucket: number | null;  // zzz245 — cumulative drift % filter
   // PATCH 1022/1024 — market-cap range filter (uses market_cap_cr in ₹ Cr).
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, opmDelta: null, score: null, opmMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1498,6 +1499,17 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
       if (d2 < f.d2Bucket) return false;
     } else {
       if (d2 > f.d2Bucket) return false;
+    }
+  }
+  // zzz245 — DRIFT filter. Uses move_pct = cumulative % from filing anchor
+  // to most recent close. Same positive/negative threshold convention as D1/D2.
+  if (f.driftBucket != null && Number.isFinite(f.driftBucket)) {
+    const m = (e as any).move_pct;
+    if (typeof m !== 'number' || !Number.isFinite(m)) return false;
+    if (f.driftBucket >= 0) {
+      if (m < f.driftBucket) return false;
+    } else {
+      if (m > f.driftBucket) return false;
     }
   }
   return true;
@@ -2267,8 +2279,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               }}>{rebuildProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.d2Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.d2Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.d2Bucket == null && filters.driftBucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.d2Bucket == null && filters.driftBucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -2422,6 +2434,45 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                     onClick={disabled ? undefined : () => toggleD2(o.v)}
                     disabled={disabled}
                     title={disabled ? '⚠ 2D data not enriched yet. Push zzz231 backend files + Hard Refresh /earnings-opportunities. Until then, chip is disabled to avoid confusing "0 matches" selections.' : `Filter to entries with 2-day cumulative close ${o.lbl}. Bloomberg/Goldman convention: D2 = 2 trading sessions after earnings-day prev-close.`}
+                    style={active ? chipActive(o.color) : { ...chipBase, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}>
+                    {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '⏳' : n})</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
+        {/* zzz245 — DRIFT (cumulative post-filing move) filter. Uses move_pct.
+            Mirrors 1D/2D CLOSE UX so users can compose D1 + D2 + DRIFT gates. */}
+        {(() => {
+          const toggleDrift = (v: number) =>
+            setFilters((f) => ({ ...f, driftBucket: f.driftBucket === v ? null : v }));
+          const opts: Array<{ v: number; lbl: string; color: string }> = [
+            { v: 0,   lbl: '≥0%',    color: '#10B981' },
+            { v: 3,   lbl: '≥+3%',   color: '#10B981' },
+            { v: 5,   lbl: '≥+5%',   color: '#10B981' },
+            { v: 10,  lbl: '≥+10%',  color: '#10B981' },
+            { v: 20,  lbl: '≥+20%',  color: '#10B981' },
+            { v: -3,  lbl: '≤-3%',   color: '#EF4444' },
+            { v: -8,  lbl: '≤-8%',   color: '#EF4444' },
+          ];
+          const hasAnyDrift = entries.some((e) => typeof (e as any).move_pct === 'number' && Number.isFinite((e as any).move_pct));
+          const countDrift = (v: number) => {
+            const probe: ConvFilters = { ...filters, driftBucket: v };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>DRIFT</span>
+              {opts.map((o) => {
+                const active = filters.driftBucket === o.v;
+                const n = hasAnyDrift ? countDrift(o.v) : null;
+                const disabled = !hasAnyDrift;
+                return (
+                  <button key={o.v}
+                    onClick={disabled ? undefined : () => toggleDrift(o.v)}
+                    disabled={disabled}
+                    title={disabled ? 'DRIFT (cumulative post-filing move) not yet enriched.' : `Filter to entries with cumulative post-filing drift ${o.lbl}. Bernard-Thomas PEAD signal.`}
                     style={active ? chipActive(o.color) : { ...chipBase, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}>
                     {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '⏳' : n})</span>
                   </button>
@@ -3129,10 +3180,21 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             {entry.company}
           </div>
           <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6 }}>
-            <span style={{ fontWeight: 700 }}>{entry.ticker}</span>
+            {entry.source_url ? (
+              <a href={entry.source_url} target="_blank" rel="noreferrer" title="Open filing on NSE"
+                style={{ fontWeight: 700, color: 'var(--mc-text-3)', textDecoration: 'none', borderBottom: '1px dotted var(--mc-text-4)' }}>{entry.ticker}</a>
+            ) : (
+              <span style={{ fontWeight: 700 }}>{entry.ticker}</span>
+            )}
             <span style={{ color: 'var(--mc-text-4)' }}>·</span>
             <span>filed {entry.filing_date}</span>
             {entry.sector && (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span>{entry.sector}</span></>)}
+            {/* zzz245 — mktCap chip: gives valuation context alongside P/E */}
+            {typeof (entry as any).market_cap_cr === 'number' && Number.isFinite((entry as any).market_cap_cr) && (() => {
+              const c = (entry as any).market_cap_cr as number;
+              const s = c >= 100000 ? `₹${(c/100000).toFixed(2)}L Cr` : c >= 1000 ? `₹${(c/1000).toFixed(1)}k Cr` : `₹${Math.round(c)} Cr`;
+              return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span title={`Market cap: ₹${Math.round(c).toLocaleString('en-IN')} Cr`}>{s}</span></>);
+            })()}
           </div>
         </div>
         <div style={{
@@ -3224,8 +3286,8 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
               const col = m >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
               const arrow = m >= 8 ? '🚀' : m >= 3 ? '📈' : m >= -3 ? '➖' : m >= -8 ? '📉' : '💥';
               return (
-                <span title={`Cumulative close move since filing date (${entry.filing_date || '?'}). Server-computed from Yahoo daily bars. Refreshed on Hard Refresh.`}>
-                  <span style={{ color: 'var(--mc-text-4)' }}>Since {arrow}</span>{' '}
+                <span title={`DRIFT: cumulative % close change from earnings-day prev close (${entry.filing_date || '?'}) to most recent close. Post-Earnings Announcement Drift = the classic Bernard-Thomas signal — beats persist to +Xd, misses fade.`}>
+                  <span style={{ color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>DRIFT {arrow}</span>{' '}
                   <strong style={{ color: col }}>
                     {m >= 0 ? '+' : ''}{m.toFixed(1)}%
                   </strong>
@@ -3266,12 +3328,8 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           </div>
         );
       })()}
-      {entry.source_url && (
-        <a href={entry.source_url} target="_blank" rel="noreferrer"
-          style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>
-          📄 Filing →
-        </a>
-      )}
+      {/* zzz245 — Filing link moved to ticker; bottom-of-card link removed for
+          institutional cleanliness. */}
     </div>
   );
 }
