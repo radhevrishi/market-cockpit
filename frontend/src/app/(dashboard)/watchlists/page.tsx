@@ -3016,7 +3016,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 10, letterSpacing: '0.5px' }}>
                 ⭐ BLOCKBUSTER · {blockbusters.length}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 10 }}>
                 {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
               </div>
             </div>
@@ -3030,7 +3030,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', marginBottom: 10, letterSpacing: '0.5px' }}>
                 🟢 STRONG · {strongs.length}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 10 }}>
                 {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
               </div>
             </div>
@@ -3350,21 +3350,21 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {entry.company}
           </div>
-          <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6 }}>
+          <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', rowGap: 2 }}>
             {entry.source_url ? (
               <a href={entry.source_url} target="_blank" rel="noreferrer" title="Open filing on NSE"
-                style={{ fontWeight: 700, color: 'var(--mc-text-3)', textDecoration: 'none', borderBottom: '1px dotted var(--mc-text-4)' }}>{entry.ticker}</a>
+                style={{ fontWeight: 700, color: 'var(--mc-text-2)', textDecoration: 'none', borderBottom: '1px dotted var(--mc-text-4)' }}>{entry.ticker}</a>
             ) : (
               <span style={{ fontWeight: 700 }}>{entry.ticker}</span>
             )}
             <span style={{ color: 'var(--mc-text-4)' }}>·</span>
-            <span>filed {entry.filing_date}</span>
-            {entry.sector && (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span>{entry.sector}</span></>)}
-            {/* zzz245 — mktCap chip: gives valuation context alongside P/E */}
+            <span style={{ whiteSpace: 'nowrap' }}>{entry.filing_date}</span>
+            {entry.sector && (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.sector}</span></>)}
+            {/* zzz249 — compact mktCap: drop "₹" and " Cr" (context is clear on Indian bench) */}
             {typeof (entry as any).market_cap_cr === 'number' && Number.isFinite((entry as any).market_cap_cr) && (() => {
               const c = (entry as any).market_cap_cr as number;
-              const s = c >= 100000 ? `₹${(c/100000).toFixed(2)}L Cr` : c >= 1000 ? `₹${(c/1000).toFixed(1)}k Cr` : `₹${Math.round(c)} Cr`;
-              return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span title={`Market cap: ₹${Math.round(c).toLocaleString('en-IN')} Cr`}>{s}</span></>);
+              const s = c >= 100000 ? `${(c/100000).toFixed(2)}L` : c >= 1000 ? `${(c/1000).toFixed(1)}k` : `${Math.round(c)}`;
+              return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span title={`Market cap: ₹${Math.round(c).toLocaleString('en-IN')} Cr`} style={{ whiteSpace: 'nowrap' }}>₹{s} Cr</span></>);
             })()}
           </div>
         </div>
@@ -3419,7 +3419,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           );
         }
         return (
-          <div style={{ display: 'flex', gap: 10, fontSize: 10.5 }}>
+          <div style={{ display: 'flex', gap: '4px 10px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
             <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
