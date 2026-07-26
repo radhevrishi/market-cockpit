@@ -1772,10 +1772,15 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const list = getConvictionList();
+    // zzz243 — broaden gate: fire whenever any of (move_pct, d2_pct, pe) is missing.
+    // Old gate only fired when move_pct was null, so entries that already had move_pct
+    // never got their pe backfilled (P/E chip disappeared on ~80% of cards).
     const stale = list.filter(e =>
       e.ticker && e.filing_date &&
       typeof (e as any).d1_pct === 'number' &&
-      typeof (e as any).move_pct !== 'number'
+      (typeof (e as any).move_pct !== 'number'
+        || typeof (e as any).d2_pct !== 'number'
+        || typeof (e as any).pe !== 'number')
     );
     if (stale.length === 0) return;
     (async () => {
