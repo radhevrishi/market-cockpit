@@ -1811,6 +1811,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               move_pct: typeof enr.move_pct === 'number' ? enr.move_pct : null,
               opm_pct: typeof enr.opm_pct === 'number' ? enr.opm_pct : (existing as any).opm_pct,
               opm_prev_pct: typeof enr.opm_prev_pct === 'number' ? enr.opm_prev_pct : (existing as any).opm_prev_pct,
+              // zzz242 — pull trailing P/E from enrich response (fallback to stockPE)
+              pe: typeof enr.pe === 'number' ? enr.pe : (typeof enr.stockPE === 'number' ? enr.stockPE : (existing as any).pe),
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
@@ -1867,6 +1869,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 // zzz223 — OPM margin for the CB tab
                 opm_pct: typeof c.opm_pct === 'number' ? c.opm_pct : null,
                 opm_prev_pct: typeof c.opm_prev_pct === 'number' ? c.opm_prev_pct : null,
+                // zzz242 — carry trailing P/E for valuation chip
+                pe: typeof c.pe === 'number' ? c.pe : null,
               });
             }
           }
@@ -1943,6 +1947,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 multibagger_setup: c.multibagger_setup === true,
                 opm_pct: typeof c.opm_pct === 'number' ? c.opm_pct : null,
                 opm_prev_pct: typeof c.opm_prev_pct === 'number' ? c.opm_prev_pct : null,
+                // zzz242 — carry trailing P/E for valuation chip
+                pe: typeof c.pe === 'number' ? c.pe : null,
               });
             }
           }
@@ -3190,6 +3196,17 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
                   <strong style={{ color: col }}>
                     {o.toFixed(1)}%{d != null ? ` (${d >= 0 ? '+' : ''}${d.toFixed(1)}pp)` : ''}
                   </strong>
+                </span>
+              );
+            })()}
+            {/* zzz242 — trailing P/E chip. Sourced from graded/enrich payload. */}
+            {typeof (entry as any).pe === 'number' && Number.isFinite((entry as any).pe) && (entry as any).pe > 0 && (() => {
+              const p = (entry as any).pe as number;
+              const col = p > 100 ? 'var(--mc-bearish)' : p > 60 ? '#F59E0B' : p > 30 ? 'var(--mc-text-2)' : 'var(--mc-bullish)';
+              return (
+                <span title={`Trailing P/E: ${p.toFixed(1)}x. Red > 100x (rich), Amber 60-100x, Grey 30-60x, Green < 30x.`}>
+                  <span style={{ color: 'var(--mc-text-4)' }}>P/E</span>{' '}
+                  <strong style={{ color: col }}>{p.toFixed(1)}x</strong>
                 </span>
               );
             })()}
