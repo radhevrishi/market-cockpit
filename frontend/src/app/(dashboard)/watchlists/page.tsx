@@ -1770,6 +1770,23 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // crashed if the bench populated while the user was on the tab).
   // USER-REQ — filter state (composable AND)
   const [filters, setFilters] = useState<ConvFilters>(FILTER_DEFAULT);
+  // zzz246 — auto-apply Quality Preset v2 on first mount unless user opted out.
+  // Runs once client-side. If localStorage says "optout=1", we respect that
+  // and leave FILTER_DEFAULT (all null). Otherwise we set the preset values.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const optOut = localStorage.getItem('mc:cb:preset:v2:optout') === '1';
+      if (optOut) return;
+      // Only apply if filters are still at their FILTER_DEFAULT initial state.
+      // (Avoids clobbering filters restored from a saved view later.)
+      setFilters((prev) => (
+        prev.sales == null && prev.eps == null && prev.driftBucket == null && prev.pead == null
+          ? { ...prev, sales: 25, eps: 25, driftBucket: 0, pead: 60 }
+          : prev
+      ));
+    } catch {}
+  }, []);
   // zzz226 — detail filter chips are hidden by default; the ⚡ preset button
   // applies the user's standard screen without opening them.
   const [showAdvFilters, setShowAdvFilters] = useState(false);
@@ -2289,18 +2306,31 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
         {(() => {
-          const presetActive = filters.sales === 20 && filters.pat === 30 && filters.eps === 25 && filters.opmDelta === 0 && filters.opmMin === 12 && filters.score === 65 && filters.d1Bucket === 2;
+          // zzz246 — Quality Preset v2: simplified to Sales≥25 · EPS≥25 · DRIFT≥0 · PEAD≥60
+          const presetActive = filters.sales === 25 && filters.eps === 25 && filters.driftBucket === 0 && filters.pead === 60;
+          const OPT_OUT_KEY = 'mc:cb:preset:v2:optout';
+          const handleToggle = () => {
+            setFilters((prev) => {
+              if (presetActive) {
+                // User is turning OFF — remember opt-out
+                try { localStorage.setItem(OPT_OUT_KEY, '1'); } catch {}
+                return { ...FILTER_DEFAULT, cap: prev.cap };
+              } else {
+                // User is turning ON — clear opt-out
+                try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
+                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 25, eps: 25, driftBucket: 0, pead: 60 };
+              }
+            });
+          };
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
-                onClick={() => setFilters((prev) => presetActive
-                  ? { ...FILTER_DEFAULT, cap: prev.cap }
-                  : { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, pat: 30, eps: 25, opmDelta: 0, opmMin: 12, score: 65, d1Bucket: 2 })}
-                title="One-click quality screen: Sales YoY ≥20% · PAT YoY ≥30% · EPS YoY ≥25% · OPM expanding (Δ≥0pp) · OPM level ≥12% · Composite score ≥65 · Day-1 close ≥+2%. Click again to clear."
+                onClick={handleToggle}
+                title="One-click institutional screen: Sales YoY ≥25% · EPS YoY ≥25% · DRIFT ≥0% · PEAD score ≥60. Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · PAT≥30 · EPS≥25 · OPM↗ ≥12% · Score≥65 · D1≥+2% {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥25 · EPS≥25 · DRIFT≥0 · PEAD≥60 {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -2313,7 +2343,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           { v: 1.5, lbl: '≥1.5×' }, { v: 2, lbl: '≥2×' }, { v: 3, lbl: '≥3×' },
         ])}
         {renderChipGroup('SALES YoY', '#22D3EE', 'sales', [
-          { v: 20, lbl: '≥20%' }, { v: 30, lbl: '≥30%' }, { v: 40, lbl: '≥40%' }, { v: 50, lbl: '≥50%' },
+          { v: 20, lbl: '≥20%' }, { v: 25, lbl: '≥25%' }, { v: 30, lbl: '≥30%' }, { v: 40, lbl: '≥40%' }, { v: 50, lbl: '≥50%' },
         ])}
         {renderChipGroup('PAT YoY', '#10B981', 'pat', [
           { v: 20, lbl: '≥20%' }, { v: 30, lbl: '≥30%' }, { v: 40, lbl: '≥40%' },
