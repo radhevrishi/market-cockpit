@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-26T10:17:58.469Z",
+  "lastSync": "2026-07-26T14:11:03.965Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 105836,
+      "size": 105762,
       "rowCount": 100,
       "error": null
     },
