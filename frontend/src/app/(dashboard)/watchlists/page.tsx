@@ -3072,7 +3072,30 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           })()}
         </>
       ) : (
-        // ── COMPACT (legacy rows) OR TABLE view ─────────────────────────
+        // zzz251 — expose all entries + sector median P/E for card-level access
+        (() => {
+          if (typeof window === 'undefined') return null;
+          (window as any).__cbAllEntries = entries;
+          // Compute median P/E per sector for color coding
+          const bySec = new Map<string, number[]>();
+          for (const e of entries) {
+            if (e.sector && typeof (e as any).pe === 'number' && Number.isFinite((e as any).pe) && (e as any).pe > 0) {
+              const arr = bySec.get(e.sector) || [];
+              arr.push((e as any).pe);
+              bySec.set(e.sector, arr);
+            }
+          }
+          const medMap: Record<string, number> = {};
+          for (const [sec, vals] of bySec) {
+            if (vals.length < 2) continue;
+            const s = [...vals].sort((a, b) => a - b);
+            const m = Math.floor(s.length / 2);
+            medMap[sec] = s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+          }
+          (window as any).__cbSectorPeMed = medMap;
+          return null;
+        })()}
+        {// ── COMPACT (legacy rows) OR TABLE view ─────────────────────────
         tableMode ? (
           <ConvictionTable entries={[...blockbusters, ...strongs]} onRemove={onRemove} sort={tableSort} setSort={setTableSort} />
         ) : (
@@ -3281,25 +3304,50 @@ function HubFilterRail({
   );
 }
 
-// zzz247 — 30-day close sparkline. Reads entry.close_30d (populated by zzz248
-// backend). Renders as inline SVG polyline; near-zero cost. Silently hidden
-// when the array is missing/empty so we don't ship broken visuals.
-function Sparkline({ closes, width = 80, height = 22 }: { closes: number[] | undefined | null; width?: number; height?: number }) {
-  if (!Array.isArray(closes) || closes.length < 2) return null;
-  const validCloses = closes.filter((c): c is number => typeof c === 'number' && Number.isFinite(c));
-  if (validCloses.length < 2) return null;
-  const min = Math.min(...validCloses);
-  const max = Math.max(...validCloses);
+// zzz251 — DRIFT PATH mini-chart. Replaces the failed Yahoo-based sparkline
+// with a 4-point post-earnings trajectory (Gap → D1 → D2 → Now) using data
+// already in the localStorage entry. More institutionally meaningful than a
+// generic 30-day line — shows exactly how the beat played out inside the
+// earnings window. Silently hidden if we don't have at least 2 data points.
+function DriftPath({ entry, width = 110, height = 26 }: { entry: any; width?: number; height?: number }) {
+  const raw = [
+    { label: 'Gap', v: typeof entry.gap_pct === 'number' && Number.isFinite(entry.gap_pct) ? entry.gap_pct : null },
+    { label: 'D1', v: typeof entry.d1_pct === 'number' && Number.isFinite(entry.d1_pct) ? entry.d1_pct : null },
+    { label: 'D2', v: typeof entry.d2_pct === 'number' && Number.isFinite(entry.d2_pct) ? entry.d2_pct : null },
+    { label: 'Now', v: typeof entry.move_pct === 'number' && Number.isFinite(entry.move_pct) ? entry.move_pct : null },
+  ];
+  const pts = raw.filter((p) => p.v != null);
+  if (pts.length < 2) return null;
+  const vals = pts.map((p) => p.v as number);
+  const min = Math.min(0, ...vals);
+  const max = Math.max(0, ...vals);
   const range = max - min || 1;
-  const step = width / (validCloses.length - 1);
-  const pts = validCloses.map((c, i) => `${(i * step).toFixed(1)},${(height - ((c - min) / range) * height).toFixed(1)}`).join(' ');
-  const first = validCloses[0], last = validCloses[validCloses.length - 1];
+  const step = width / (raw.length - 1);
+  // Build path only for populated points, but use original index for X positioning
+  const coords = raw.map((p, i) => p.v == null ? null : ({
+    x: i * step,
+    y: height - ((p.v - min) / range) * height,
+    v: p.v,
+    label: p.label,
+  })).filter((c): c is NonNullable<typeof c> => c != null);
+  const path = coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+  const first = vals[0], last = vals[vals.length - 1];
   const up = last >= first;
   const color = up ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+  // Zero-baseline y-coordinate (for reference dashed line)
+  const zeroY = height - ((0 - min) / range) * height;
+  const tip = pts.map((p) => `${p.label}: ${(p.v as number) >= 0 ? '+' : ''}${(p.v as number).toFixed(1)}%`).join(' · ');
   return (
-    <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }} aria-label="30-day price sparkline">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
-      <circle cx={width} cy={height - ((last - min) / range) * height} r="1.5" fill={color} />
+    <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }} aria-label="Post-earnings drift trajectory">
+      <title>DRIFT PATH: {tip}</title>
+      {/* Zero baseline (dashed reference) */}
+      <line x1="0" y1={zeroY} x2={width} y2={zeroY} stroke="var(--mc-text-4)" strokeWidth="0.5" strokeDasharray="2 2" opacity="0.4" />
+      {/* Trajectory path */}
+      <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.95" />
+      {/* Data-point dots */}
+      {coords.map((c, i) => (
+        <circle key={i} cx={c.x} cy={c.y} r={i === coords.length - 1 ? 2 : 1.5} fill={c.v >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'} />
+      ))}
     </svg>
   );
 }
@@ -3516,14 +3564,28 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
                 </span>
               );
             })()}
-            {/* zzz242 — trailing P/E chip. Sourced from graded/enrich payload. */}
+            {/* zzz242 — trailing P/E chip. zzz251 — color-code vs SECTOR MEDIAN P/E
+                (compares apples to apples). Falls back to absolute bands if no sector peers. */}
             {typeof (entry as any).pe === 'number' && Number.isFinite((entry as any).pe) && (entry as any).pe > 0 && (() => {
-              const p = (entry as any).pe as number;
-              const col = p > 100 ? 'var(--mc-bearish)' : p > 60 ? '#F59E0B' : p > 30 ? 'var(--mc-text-2)' : 'var(--mc-bullish)';
+              const pval = (entry as any).pe as number;
+              const secMap: Record<string, number> = (typeof window !== 'undefined' && (window as any).__cbSectorPeMed) || {};
+              const secMed = entry.sector ? secMap[entry.sector] : null;
+              let col: string; let tip: string;
+              if (secMed != null && secMed > 0) {
+                const ratio = pval / secMed;
+                if (ratio >= 1.5) { col = 'var(--mc-bearish)'; tip = `P/E ${pval.toFixed(1)}x is ${((ratio - 1) * 100).toFixed(0)}% above sector median (${secMed.toFixed(1)}x) — expensive vs peers.`; }
+                else if (ratio >= 1.15) { col = '#F59E0B'; tip = `P/E ${pval.toFixed(1)}x is ${((ratio - 1) * 100).toFixed(0)}% above sector median (${secMed.toFixed(1)}x) — richer than peers.`; }
+                else if (ratio >= 0.85) { col = 'var(--mc-text-2)'; tip = `P/E ${pval.toFixed(1)}x is in line with sector median (${secMed.toFixed(1)}x).`; }
+                else if (ratio >= 0.65) { col = 'var(--mc-bullish)'; tip = `P/E ${pval.toFixed(1)}x is ${((1 - ratio) * 100).toFixed(0)}% below sector median (${secMed.toFixed(1)}x) — cheaper than peers.`; }
+                else { col = 'var(--mc-bullish)'; tip = `P/E ${pval.toFixed(1)}x is ${((1 - ratio) * 100).toFixed(0)}% below sector median (${secMed.toFixed(1)}x) — deep value vs peers.`; }
+              } else {
+                col = pval > 100 ? 'var(--mc-bearish)' : pval > 60 ? '#F59E0B' : pval > 30 ? 'var(--mc-text-2)' : 'var(--mc-bullish)';
+                tip = `Trailing P/E: ${pval.toFixed(1)}x. No sector peers in bench — using absolute band. Red > 100x, Amber 60-100x, Grey 30-60x, Green < 30x.`;
+              }
               return (
-                <span title={`Trailing P/E: ${p.toFixed(1)}x. Red > 100x (rich), Amber 60-100x, Grey 30-60x, Green < 30x.`}>
+                <span title={tip}>
                   <span style={{ color: 'var(--mc-text-4)' }}>P/E</span>{' '}
-                  <strong style={{ color: col }}>{p.toFixed(1)}x</strong>
+                  <strong style={{ color: col }}>{pval.toFixed(1)}x</strong>
                 </span>
               );
             })()}
@@ -3546,13 +3608,47 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           </div>
         );
       })()}
-      {/* zzz247 — 30-day close sparkline (hidden until zzz248 populates close_30d) */}
-      {Array.isArray((entry as any).close_30d) && (entry as any).close_30d.length >= 2 && (
-        <div style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Sparkline closes={(entry as any).close_30d} width={100} height={22} />
-          <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>30D</span>
-        </div>
-      )}
+      {/* zzz251 — Peer strip: median PEAD + DRIFT of same-sector bench entries.
+          Reads window.__cbAllEntries which we populate once per render pass. */}
+      {entry.sector && (() => {
+        const all: any[] = (typeof window !== 'undefined' && (window as any).__cbAllEntries) || [];
+        const peers = all.filter((p) => p.sector === entry.sector && p.ticker !== entry.ticker);
+        if (peers.length < 2) return null;
+        const peerPeads = peers.map((p) => peadScore(p).score).filter((n) => Number.isFinite(n));
+        const peerDrifts = peers.map((p: any) => p.move_pct).filter((n: any) => typeof n === 'number' && Number.isFinite(n));
+        const median = (arr: number[]) => {
+          if (arr.length === 0) return null;
+          const s = [...arr].sort((a, b) => a - b);
+          const m = Math.floor(s.length / 2);
+          return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        };
+        const medPead = median(peerPeads);
+        const medDrift = median(peerDrifts);
+        const myPead = peadScore(entry).score;
+        const myDrift = typeof (entry as any).move_pct === 'number' ? (entry as any).move_pct : null;
+        const peadDelta = medPead != null ? myPead - medPead : null;
+        const driftDelta = medDrift != null && myDrift != null ? myDrift - medDrift : null;
+        return (
+          <div title={`Sector peers (${peers.length} in bench): median PEAD ${medPead?.toFixed(0) ?? '—'}, median DRIFT ${medDrift != null ? (medDrift >= 0 ? '+' : '') + medDrift.toFixed(1) + '%' : '—'}. Positive delta = you're beating sector.`}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>
+            <span style={{ fontWeight: 700 }}>vs {entry.sector.slice(0, 14)} ({peers.length}):</span>
+            {peadDelta != null && (<span>PEAD <strong style={{ color: peadDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{peadDelta >= 0 ? '+' : ''}{peadDelta.toFixed(0)}</strong></span>)}
+            {driftDelta != null && (<span>DRIFT <strong style={{ color: driftDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{driftDelta >= 0 ? '+' : ''}{driftDelta.toFixed(1)}%</strong></span>)}
+          </div>
+        );
+      })()}
+      {/* zzz251 — DRIFT PATH mini-chart (Gap→D1→D2→Now trajectory) */}
+      {(() => {
+        const hasAny = ['gap_pct','d1_pct','d2_pct','move_pct'].filter(k => typeof (entry as any)[k] === 'number' && Number.isFinite((entry as any)[k])).length >= 2;
+        if (!hasAny) return null;
+        return (
+          <div style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <DriftPath entry={entry} width={110} height={26} />
+            <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px', fontWeight: 700 }}>DRIFT PATH</span>
+            <span style={{ fontSize: 8, color: 'var(--mc-text-4)', letterSpacing: '0.2px' }}>Gap · D1 · D2 · Now</span>
+          </div>
+        );
+      })()}
       {/* PATCH 0546 — Always render guidance badge using derived label
           (falls back to YoY-metric heuristic when no explicit field).
           Explicit field shows its signed score; derived label shows the
