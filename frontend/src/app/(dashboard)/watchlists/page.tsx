@@ -2039,6 +2039,71 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   };
   const [tableSort, setTableSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'pead', dir: 'desc'});
 
+  // zzz250 — Full institutional Excel export. Uses SheetJS (already bundled).
+  // Native .xlsx binary format — Mac Excel + Numbers + Windows Excel all open cleanly.
+  // Includes freeze-header + auto-filter for immediate scan usability.
+  const handleExportFullExcel = async () => {
+    if (typeof window === 'undefined') return;
+    const list = filteredEntries;
+    if (list.length === 0) { alert('No entries to export. Adjust filters.'); return; }
+    const XLSX = await import('xlsx');
+    const now = new Date();
+    const daysSince = (iso?: string, added?: string) => {
+      const s = added || iso;
+      if (!s) return null;
+      const t = Date.parse(s.length === 10 ? s + 'T09:30:00+05:30' : s);
+      return Number.isFinite(t) ? Math.max(0, Math.round((now.getTime() - t) / 86400000)) : null;
+    };
+    const header = [
+      '#','Tier','Ticker','Company','Filed Date','Days Since','Sector','Market Cap (Cr)',
+      'Composite','PEAD','Sales YoY %','PAT YoY %','EPS YoY %','OPM %','OPM prev %','OPM Δ (pp)',
+      'P/E','Gap %','D1 %','D2 %','DRIFT %','Guidance','Guidance Score','Filing URL'
+    ];
+    const rows: any[][] = [header];
+    list.forEach((e: any, i: number) => {
+      const p = peadScore(e).score;
+      const omP = e.opm_pct, omPr = e.opm_prev_pct;
+      const opmD = (typeof omP === 'number' && typeof omPr === 'number') ? +(omP - omPr).toFixed(2) : '';
+      rows.push([
+        i + 1,
+        e.tier || '',
+        e.ticker || '',
+        e.company || '',
+        e.filing_date || '',
+        daysSince(e.filing_date, e.added_at) ?? '',
+        e.sector || '',
+        typeof e.market_cap_cr === 'number' ? Math.round(e.market_cap_cr) : '',
+        typeof e.composite_score === 'number' ? e.composite_score : '',
+        p,
+        typeof e.sales_yoy_pct === 'number' ? +e.sales_yoy_pct.toFixed(2) : '',
+        typeof e.net_profit_yoy_pct === 'number' ? +e.net_profit_yoy_pct.toFixed(2) : '',
+        typeof e.eps_yoy_pct === 'number' ? +e.eps_yoy_pct.toFixed(2) : '',
+        typeof omP === 'number' ? +omP.toFixed(2) : '',
+        typeof omPr === 'number' ? +omPr.toFixed(2) : '',
+        opmD,
+        typeof e.pe === 'number' ? +e.pe.toFixed(2) : '',
+        typeof e.gap_pct === 'number' ? +e.gap_pct.toFixed(2) : '',
+        typeof e.d1_pct === 'number' ? +e.d1_pct.toFixed(2) : '',
+        typeof e.d2_pct === 'number' ? +e.d2_pct.toFixed(2) : '',
+        typeof e.move_pct === 'number' ? +e.move_pct.toFixed(2) : '',
+        e.guidance || '',
+        typeof e.guidance_score === 'number' ? +e.guidance_score.toFixed(2) : '',
+        e.source_url || '',
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [
+      {wch:4},{wch:12},{wch:12},{wch:32},{wch:11},{wch:11},{wch:16},{wch:14},
+      {wch:9},{wch:6},{wch:11},{wch:11},{wch:11},{wch:8},{wch:11},{wch:10},
+      {wch:8},{wch:8},{wch:8},{wch:8},{wch:9},{wch:11},{wch:14},{wch:60}
+    ];
+    ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: {r:0,c:0}, e: {r:rows.length-1,c:header.length-1} }) };
+    (ws as any)['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Conviction Beats');
+    const fname = `conviction-beats_${now.toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
+  };
   // PATCH 0539 — Hub-Scan-style filter rail (rich view only)
   const [hubFilters, setHubFilters] = useState<HubFilters>(HUB_FILTER_DEFAULT);
 
@@ -2224,6 +2289,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <button onClick={toggleTable} title="Toggle between Card and Table view. Table view supports sortable columns."
               style={tableMode ? chipActive('#F59E0B') : chipBase}>
               {tableMode ? '📇 Card view' : '📊 Table view'}
+            </button>
+            {/* zzz250 — Full institutional Excel export. Every column, native .xlsx (Mac-safe). */}
+            <button onClick={handleExportFullExcel} title="Download all filtered entries with every column (Sales/PAT/EPS/OPM/P/E/D1/D2/DRIFT/MktCap/Sector/Composite/PEAD/Days-Since/Guidance) as native .xlsx. Opens in Excel/Numbers on Mac + Windows."
+              style={{ ...chipBase, border: '1px solid #10B981', color: '#10B981', fontWeight: 800 }}>
+              📥 Excel (Full)
             </button>
             {/* PATCH 1018 — ELITE / MULTIBAGGER filter chips */}
             <button onClick={() => setFilters((f) => ({ ...f, elite: !f.elite }))}
@@ -3365,6 +3435,14 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
               const c = (entry as any).market_cap_cr as number;
               const s = c >= 100000 ? `${(c/100000).toFixed(2)}L` : c >= 1000 ? `${(c/1000).toFixed(1)}k` : `${Math.round(c)}`;
               return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span title={`Market cap: ₹${Math.round(c).toLocaleString('en-IN')} Cr`} style={{ whiteSpace: 'nowrap' }}>₹{s} Cr</span></>);
+            })()}
+            {/* zzz250 — days-since-flagged chip. Color-coded freshness. */}
+            {entry.filing_date && (() => {
+              const ms = Date.parse(entry.filing_date + 'T09:30:00+05:30');
+              if (!Number.isFinite(ms)) return null;
+              const days = Math.max(0, Math.round((Date.now() - ms) / 86400000));
+              const col = days <= 3 ? 'var(--mc-bullish)' : days <= 14 ? 'var(--mc-warn)' : 'var(--mc-text-4)';
+              return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span title={`${days} day${days===1?'':'s'} since filing — freshness matters for post-earnings drift`} style={{ color: col, fontWeight: 700, whiteSpace: 'nowrap' }}>{days}d</span></>);
             })()}
           </div>
         </div>
