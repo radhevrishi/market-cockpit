@@ -3730,8 +3730,11 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         return (
           <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
             <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
+            <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
+            <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
+            <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             {/* zzz223 — OPM margin chip: latest OPM % + pp delta vs prior year */}
             {typeof (entry as any).opm_pct === 'number' && (() => {
               const o = (entry as any).opm_pct as number;
@@ -3801,16 +3804,17 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
       {density !== 'ultra' && (() => {
         const roce = (entry as any).roce, roe = (entry as any).roe;
         const de = (entry as any).debtToEquity ?? (entry as any).debt_to_equity;
-        const hasAny = [roce, roe, de].some((v) => typeof v === 'number' && Number.isFinite(v));
-        if (!hasAny) return null;
         const qCol = (v: any, thr: number) => (typeof v === 'number' && Number.isFinite(v) && v >= thr) ? 'var(--mc-bullish)' : (typeof v === 'number' ? '#F59E0B' : 'var(--mc-text-4)');
         const deCol = (v: any) => (typeof v === 'number' ? (v <= 0.5 ? 'var(--mc-bullish)' : v <= 1 ? 'var(--mc-text-2)' : v <= 2 ? '#F59E0B' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
-        const fmt = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(1) : null;
+        // zzz258 — always render row with — placeholder (visual consistency across cards)
+        const val = (v: any, suffix = '') => (typeof v === 'number' && Number.isFinite(v)) ? (v.toFixed(1) + suffix) : '—';
         return (
           <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10, flexWrap: 'wrap', alignItems: 'baseline', color: 'var(--mc-text-3)', paddingTop: 2, borderTop: '1px dashed var(--mc-bg-3)', marginTop: 2 }}>
-            {fmt(roce) && (<span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{fmt(roce)}%</strong></span>)}
-            {fmt(roe) && (<span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{fmt(roe)}%</strong></span>)}
-            {fmt(de) && (<span title="D/E — Debt-to-Equity. <0.5 conservative, 0.5–1 healthy, 1–2 careful, >2 red flag."><span style={{ color: 'var(--mc-text-4)' }}>D/E</span> <strong style={{ color: deCol(de) }}>{fmt(de)}</strong></span>)}
+            <span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder. Screener/Yahoo may not report ROCE for banks/NBFCs — shown as — when unavailable."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{val(roce, '%')}</strong></span>
+            <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
+            <span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{val(roe, '%')}</strong></span>
+            <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
+            <span title="D/E — Debt-to-Equity. <0.5 conservative, 0.5–1 healthy, 1–2 careful, >2 red flag."><span style={{ color: 'var(--mc-text-4)' }}>D/E</span> <strong style={{ color: deCol(de) }}>{val(de)}</strong></span>
           </div>
         );
       })()}
