@@ -3666,7 +3666,10 @@ function EIEliteTab() {
   const pctCol = (v: any) => (typeof v === 'number' && v >= 0) ? 'var(--mc-bullish)' : (typeof v === 'number' ? 'var(--mc-bearish)' : 'var(--mc-text-4)');
   const excellents = rows.filter(r => r.grade === 'EXCELLENT').length;
   const strongs = rows.filter(r => r.grade === 'STRONG').length;
-  const allTickers = rows.map(r => r.symbol);
+  // zzz268 — export toolbar respects Quality Preset filter (use sorted, not rows)
+  const filteredExcellents = sorted.filter(r => r.grade === 'EXCELLENT').length;
+  const filteredStrongs = sorted.filter(r => r.grade === 'STRONG').length;
+  const allTickers = sorted.map(r => r.symbol);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -3674,10 +3677,15 @@ function EIEliteTab() {
           <strong style={{ color: '#8B5CF6' }}>🎖️ EI Elite</strong> — sticky bench of EXCELLENT+STRONG from EI (last 30d, additive, × to remove)
         </div>
         <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
-          <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #10B981 15%, transparent)', color: '#10B981', borderRadius: 4, fontWeight: 700 }}>EXCELLENT · {excellents}</span>
-          <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #22D3EE 15%, transparent)', color: '#22D3EE', borderRadius: 4, fontWeight: 700 }}>STRONG · {strongs}</span>
+          {/* zzz268 — show filtered counts when preset ON so header matches export */}
+          <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #10B981 15%, transparent)', color: '#10B981', borderRadius: 4, fontWeight: 700 }}>
+            EXCELLENT · {qualityPreset ? `${filteredExcellents}/${excellents}` : excellents}
+          </span>
+          <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #22D3EE 15%, transparent)', color: '#22D3EE', borderRadius: 4, fontWeight: 700 }}>
+            STRONG · {qualityPreset ? `${filteredStrongs}/${strongs}` : strongs}
+          </span>
           {qualityPreset && (
-            <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #F59E0B 15%, transparent)', color: '#F59E0B', borderRadius: 4, fontWeight: 700 }}>Filtered · {sorted.length}</span>
+            <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #F59E0B 15%, transparent)', color: '#F59E0B', borderRadius: 4, fontWeight: 700 }}>Total · {sorted.length}</span>
           )}
         </div>
         {/* zzz266 — Quality Preset toggle, default ON */}
@@ -3732,12 +3740,13 @@ function EIEliteTab() {
             compact
             tickers={allTickers}
             groups={[
-              { label: 'EXCELLENT', emoji: '⭐', tickers: rows.filter(r => r.grade === 'EXCELLENT').map(r => r.symbol), color: '#10B981' },
-              { label: 'STRONG', emoji: '🔵', tickers: rows.filter(r => r.grade === 'STRONG').map(r => r.symbol), color: '#22D3EE' },
+              // zzz268 — groups reflect filtered subset (Quality Preset ON respected)
+              { label: 'EXCELLENT', emoji: '⭐', tickers: sorted.filter(r => r.grade === 'EXCELLENT').map(r => r.symbol), color: '#10B981' },
+              { label: 'STRONG', emoji: '🔵', tickers: sorted.filter(r => r.grade === 'STRONG').map(r => r.symbol), color: '#22D3EE' },
             ]}
             exchange="NSE"
             filenameHint="ei-elite"
-            tickerCompanyMap={rows.reduce<Record<string, string>>((acc, r) => { if (r.symbol && r.company) acc[r.symbol.toUpperCase()] = r.company; return acc; }, {})}
+            tickerCompanyMap={sorted.reduce<Record<string, string>>((acc, r) => { if (r.symbol && r.company) acc[r.symbol.toUpperCase()] = r.company; return acc; }, {})}
           />
           <div style={{ background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, overflow: 'auto', maxHeight: '75vh' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'ui-sans-serif, system-ui' }}>
