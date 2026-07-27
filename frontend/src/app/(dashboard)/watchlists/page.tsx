@@ -3477,7 +3477,8 @@ interface EIEliteRow {
   fetched_at?: string;
 }
 const EI_ELITE_LS_KEY = 'mc:ei-elite:v1';
-const EI_ELITE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const EI_ELITE_HIDDEN_KEY = 'mc:ei-elite:hidden:v1';
+const EI_ELITE_MAX_AGE_DAYS = 30;
 function EIEliteTab() {
   const [rows, setRows] = useState<EIEliteRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -3497,70 +3498,122 @@ function EIEliteTab() {
       }
     } catch {}
   }, []);
-  const universe = useMemo(() => {
-    // Build universe: Conviction Beats + Watchlist tickers
-    if (typeof window === 'undefined') return [] as string[];
-    const set = new Set<string>();
-    try {
-      const cb = JSON.parse(localStorage.getItem('mc:conviction-beats:v1') || '{}');
-      for (const e of Object.values(cb) as any[]) if (e?.ticker) set.add(String(e.ticker).toUpperCase());
-    } catch {}
-    try {
-      const wl = JSON.parse(localStorage.getItem('mc:watchlist:v1') || '[]');
-      for (const t of wl) if (typeof t === 'string') set.add(t.replace(/^(NSE|BSE):/i, '').toUpperCase());
-    } catch {}
-    return Array.from(set).slice(0, 200);
-  }, [rows.length]);
-  const fetchElite = useCallback(async () => {
-    if (universe.length === 0) { alert('No tickers in universe. Add to Watchlist or Conviction Beats first.'); return; }
-    setLoading(true);
-    setProgress(`Fetching ${universe.length} tickers…`);
-    const acc: EIEliteRow[] = [];
-    const CHUNK = 30;
-    for (let i = 0; i < universe.length; i += CHUNK) {
-      const chunk = universe.slice(i, i + CHUNK);
-      setProgress(`Fetching ${i + 1}–${Math.min(i + CHUNK, universe.length)} of ${universe.length}…`);
-      try {
-        const url = '/api/market/earnings-scan?symbols=' + encodeURIComponent(chunk.join(','));
-        const r = await fetch(url, { cache: 'no-store' });
-        if (!r.ok) continue;
-        const j = await r.json();
-        const cards = Array.isArray(j?.cards) ? j.cards : Array.isArray(j?.data) ? j.data : [];
-        for (const c of cards) {
-          const grade = c?.grade || c?.tier;
-          if (grade !== 'EXCELLENT' && grade !== 'STRONG') continue;
-          // zzz262 — API returns camelCase with capital Y at end (revenueYoY not revenueYoy),
-          // totalScore not score, mcap not marketCapCr, cmp not price, resultDate not filed_date.
-          // OPM comes from quarters[last].opm since API doesn't have a top-level opmPct.
-          const qs = Array.isArray(c.quarters) ? c.quarters : [];
-          const lastQ = qs[qs.length - 1] || {};
-          acc.push({
-            symbol: c.symbol || c.ticker || '', company: c.company || c.name || '',
-            grade, score: c.totalScore ?? c.total_score ?? c.score,
-            pe: c.pe, marketCapCr: c.mcap ?? c.marketCapCr ?? c.market_cap_cr,
-            revenueYoy: c.revenueYoY ?? c.revenueYoy ?? c.rev_yoy_pct ?? c.sales_yoy_pct,
-            patYoy: c.patYoY ?? c.patYoy ?? c.pat_yoy_pct,
-            epsYoy: c.epsYoY ?? c.epsYoy ?? c.eps_yoy_pct,
-            opmPct: lastQ.opm ?? c.opmPct ?? c.opm_pct,
-            guidance: c.guidance, price: c.cmp ?? c.price ?? c.currentPrice,
-            d1_close_pct: c.d1_close_pct ?? c.d1_pct ?? c.priceScore,
-            filed_date: c.resultDate ?? c.filed_date ?? c.filing_date, period: c.period ?? lastQ.period,
-            fetched_at: new Date().toISOString(),
-          });
-        }
-      } catch {}
-      await new Promise(r => setTimeout(r, 300));
-    }
-    const now = Date.now();
-    setRows(acc); setLastFetch(now); setLoading(false); setProgress(null);
-    try { localStorage.setItem(EI_ELITE_LS_KEY, JSON.stringify({ rows: acc, ts: now })); } catch {}
-  }, [universe]);
-  // Auto-fetch if cache expired or empty
+  // zzz263 — hidden set: tickers user has manually removed (× button).
+  // Never re-added by auto-sync so removals are permanent unless user restores.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   useEffect(() => {
-    if (rows.length > 0 && lastFetch && Date.now() - lastFetch < EI_ELITE_TTL_MS) return;
-    if (universe.length === 0) return;
-    fetchElite();
-  }, [universe.length]);
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(EI_ELITE_HIDDEN_KEY);
+      if (raw) setHidden(new Set(JSON.parse(raw)));
+    } catch {}
+  }, []);
+  const removeRow = useCallback((sym: string) => {
+    const symUp = sym.toUpperCase();
+    setHidden((prev) => {
+      const next = new Set(prev); next.add(symUp);
+      try { localStorage.setItem(EI_ELITE_HIDDEN_KEY, JSON.stringify(Array.from(next))); } catch {}
+      return next;
+    });
+    setRows((prev) => {
+      const next = prev.filter(r => r.symbol.toUpperCase() !== symUp);
+      try { localStorage.setItem(EI_ELITE_LS_KEY, JSON.stringify({ rows: next, ts: Date.now() })); } catch {}
+      return next;
+    });
+  }, []);
+  // zzz263 — Full Screener-universe sticky sync. Mirrors what EI page does:
+  // (1) fetch /api/market/quotes to get all NSE tickers (~2317)
+  // (2) worker-pool through /api/market/earnings-scan in 15-ticker batches
+  // (3) filter EXCELLENT+STRONG within 30 days of filing
+  // (4) ADDITIVE merge — new tickers added, existing kept; nothing auto-removed
+  // (5) User-hidden set persists across syncs
+  const fetchElite = useCallback(async () => {
+    setLoading(true);
+    setProgress('Loading Screener universe…');
+    // Step 1: full stock list
+    let allStocks: string[] = [];
+    try {
+      const qres = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+      if (!qres.ok) throw new Error('Failed to load stock list');
+      const qj = await qres.json();
+      allStocks = (Array.isArray(qj?.stocks) ? qj.stocks : [])
+        .map((s: any) => s?.ticker).filter((t: any): t is string => typeof t === 'string' && t.length > 0);
+    } catch (e) {
+      setLoading(false); setProgress(null);
+      alert('Failed to load Screener universe: ' + String(e)); return;
+    }
+    // Step 2: worker-pool batched scan
+    const BATCH = 15, WORKERS = 12;
+    const batches: string[][] = [];
+    for (let i = 0; i < allStocks.length; i += BATCH) batches.push(allStocks.slice(i, i + BATCH));
+    let cursor = 0, done = 0;
+    const claimNext = (): string[] | null => cursor < batches.length ? batches[cursor++] : null;
+    const acc: EIEliteRow[] = [];
+    const worker = async () => {
+      while (true) {
+        const batch = claimNext();
+        if (!batch) return;
+        try {
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 20000);
+          const url = '/api/market/earnings-scan?symbols=' + encodeURIComponent(batch.join(','));
+          const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+          clearTimeout(timer);
+          if (r.ok) {
+            const j = await r.json();
+            const cards = Array.isArray(j?.cards) ? j.cards : Array.isArray(j?.data) ? j.data : [];
+            for (const c of cards) {
+              const grade = c?.grade || c?.tier;
+              if (grade !== 'EXCELLENT' && grade !== 'STRONG') continue;
+              const qs = Array.isArray(c.quarters) ? c.quarters : [];
+              const lastQ = qs[qs.length - 1] || {};
+              acc.push({
+                symbol: (c.symbol || c.ticker || '').toUpperCase(), company: c.company || c.name || '',
+                grade, score: c.totalScore ?? c.total_score ?? c.score,
+                pe: c.pe, marketCapCr: c.mcap ?? c.marketCapCr ?? c.market_cap_cr,
+                revenueYoy: c.revenueYoY ?? c.revenueYoy ?? c.rev_yoy_pct ?? c.sales_yoy_pct,
+                patYoy: c.patYoY ?? c.patYoy ?? c.pat_yoy_pct,
+                epsYoy: c.epsYoY ?? c.epsYoy ?? c.eps_yoy_pct,
+                opmPct: lastQ.opm ?? c.opmPct ?? c.opm_pct,
+                guidance: c.guidance, price: c.cmp ?? c.price ?? c.currentPrice,
+                d1_close_pct: c.d1_close_pct ?? c.d1_pct ?? c.priceScore,
+                filed_date: c.resultDate ?? c.filed_date ?? c.filing_date, period: c.period ?? lastQ.period,
+                fetched_at: new Date().toISOString(),
+              });
+            }
+          }
+        } catch {}
+        done++;
+        setProgress(`Scanning ${done}/${batches.length} batches (${acc.length} elite found so far)…`);
+      }
+    };
+    await Promise.all(Array.from({length: WORKERS}, () => worker()));
+    // Step 3: filter to last 30 days by filing date + drop hidden
+    const cutoff = Date.now() - EI_ELITE_MAX_AGE_DAYS * 86400000;
+    const freshOnly = acc.filter(r => {
+      if (hidden.has(r.symbol.toUpperCase())) return false;
+      const t = r.filed_date ? Date.parse(r.filed_date.length === 10 ? r.filed_date + 'T09:30:00+05:30' : r.filed_date) : 0;
+      return t >= cutoff;
+    });
+    // Step 4: additive merge — union existing rows + new fresh (dedupe by symbol, prefer new)
+    setRows((prev) => {
+      const merged = new Map<string, EIEliteRow>();
+      for (const r of prev) if (!hidden.has(r.symbol.toUpperCase())) merged.set(r.symbol.toUpperCase(), r);
+      for (const r of freshOnly) merged.set(r.symbol.toUpperCase(), r); // new overwrites stale
+      const arr = Array.from(merged.values());
+      try { localStorage.setItem(EI_ELITE_LS_KEY, JSON.stringify({ rows: arr, ts: Date.now() })); } catch {}
+      return arr;
+    });
+    setLastFetch(Date.now()); setLoading(false); setProgress(null);
+  }, [hidden]);
+  // No auto-fetch on mount — expensive (2min+); only manual refresh trigger.
+  useEffect(() => {
+    // If no cache exists AND user hasn't set hidden set, trigger initial sync silently
+    if (rows.length === 0 && hidden.size === 0 && !loading) {
+      // Fire and forget the first sync
+      fetchElite();
+    }
+  }, []);
   const sorted = useMemo(() => {
     return [...rows].sort((a: any, b: any) => {
       const av = a[sort.col], bv = b[sort.col];
@@ -3582,7 +3635,7 @@ function EIEliteTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 13, color: 'var(--mc-text-2)' }}>
-          <strong style={{ color: '#8B5CF6' }}>🎖️ EI Elite</strong> — auto-synced EXCELLENT+STRONG from Earnings Intelligence
+          <strong style={{ color: '#8B5CF6' }}>🎖️ EI Elite</strong> — sticky bench of EXCELLENT+STRONG from EI (last 30d, additive, × to remove)
         </div>
         <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
           <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #10B981 15%, transparent)', color: '#10B981', borderRadius: 4, fontWeight: 700 }}>EXCELLENT · {excellents}</span>
@@ -3592,6 +3645,15 @@ function EIEliteTab() {
           style={{ padding: '6px 12px', fontSize: 11.5, fontWeight: 700, borderRadius: 6, background: 'none', border: '1px solid #8B5CF6', color: '#8B5CF6', cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? '⏳ Fetching…' : '🔄 Refresh'}
         </button>
+        {hidden.size > 0 && (
+          <button onClick={() => {
+            if (!confirm(`Restore all ${hidden.size} hidden tickers? They will be eligible for re-add on next sync.`)) return;
+            setHidden(new Set());
+            try { localStorage.removeItem(EI_ELITE_HIDDEN_KEY); } catch {}
+          }} style={{ padding: '6px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, background: 'none', border: '1px solid var(--mc-text-4)', color: 'var(--mc-text-3)', cursor: 'pointer' }}>
+            ↩ Restore ({hidden.size})
+          </button>
+        )}
         {lastFetch && (
           <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>
             Last: {new Date(lastFetch).toLocaleString()}
@@ -3629,13 +3691,14 @@ function EIEliteTab() {
                     ['grade', 'Grade'], ['symbol', 'Ticker'], ['company', 'Company'], ['period', 'Period'],
                     ['score', 'Score'], ['pe', 'P/E'], ['marketCapCr', 'MktCap'],
                     ['revenueYoy', 'Rev YoY'], ['patYoy', 'PAT YoY'], ['epsYoy', 'EPS YoY'], ['opmPct', 'OPM'],
-                    ['d1_close_pct', 'D1'], ['guidance', 'Guidance']
+                    ['d1_close_pct', 'D1'], ['filed_date', 'Filed'], ['guidance', 'Guidance']
                   ].map(([k, l]) => (
                     <th key={k} onClick={() => onSort(k)}
                       style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', padding: '6px 8px', borderBottom: '1px solid var(--mc-bg-4)', cursor: 'pointer', textAlign: 'left', letterSpacing: '0.3px', textTransform: 'uppercase', whiteSpace: 'nowrap', userSelect: 'none' }}>
                       {l}{arrow(k)}
                     </th>
                   ))}
+                  <th style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', padding: '6px 8px', borderBottom: '1px solid var(--mc-bg-4)', textAlign: 'center' }}>·</th>
                 </tr>
               </thead>
               <tbody>
@@ -3657,7 +3720,12 @@ function EIEliteTab() {
                       <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.epsYoy), fontVariantNumeric: 'tabular-nums' as any }}>{fmtPct(r.epsYoy)}</td>
                       <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right' }}>{typeof r.opmPct === 'number' ? r.opmPct.toFixed(1) + '%' : '—'}</td>
                       <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.d1_close_pct) }}>{fmtPct(r.d1_close_pct)}</td>
+                      <td style={{ fontSize: 10.5, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>{r.filed_date || '—'}</td>
                       <td style={{ fontSize: 10.5, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>{r.guidance || '—'}</td>
+                      <td style={{ fontSize: 12, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'center' }}>
+                        <button onClick={() => removeRow(r.symbol)} title="Remove from EI Elite (permanent unless restored)"
+                          style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: 0, fontSize: 14 }}>×</button>
+                      </td>
                     </tr>
                   );
                 })}
