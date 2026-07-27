@@ -3487,6 +3487,8 @@ function EIEliteTab() {
   const [sort, setSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'score', dir: 'desc'});
   // zzz266 — Quality Preset default ON: Sales≥20, PAT≥20, EPS≥25, OPM≥11
   const [qualityPreset, setQualityPreset] = useState(true);
+  // zzz267 — time window selector; period filtered on scan result
+  const [timeWindow, setTimeWindow] = useState<'7d' | '1m' | '2m' | '3m'>('1m');
   // Load from cache on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3590,12 +3592,33 @@ function EIEliteTab() {
       }
     };
     await Promise.all(Array.from({length: WORKERS}, () => worker()));
-    // Step 3: filter — drop hidden only. zzz265 — 30-day filter removed because
-    // earnings-scan API returns resultDate as quarter strings like "Jun 2026" (not
-    // ISO filing dates). Date.parse turns that into June 1, appearing 57 days old,
-    // dropping every entry. EI's own EXCELLENT/STRONG grading already implies the
-    // company reported a recent quarter — no need for our own date filter on top.
-    const freshOnly = acc.filter(r => !hidden.has(r.symbol.toUpperCase()));
+    // Step 3: filter — drop hidden + apply time-window filter via period quarter.
+    // zzz267 — Use the period string (e.g. "Jun 2026") as a proxy for recency.
+    // We map today → current quarter, then count quarters back based on window.
+    // 7d/1M → only current quarter | 2M → current + prev | 3M → current + prev 2
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth(); // 0-11
+    // Quarter mapping: Jan-Mar → Q4 prev FY (Mar), Apr-Jun → Q1 (Jun), Jul-Sep → Q2 (Sep), Oct-Dec → Q3 (Dec)
+    const quarterOf = (m: number) => m <= 2 ? 'Mar' : m <= 5 ? 'Jun' : m <= 8 ? 'Sep' : 'Dec';
+    const yearOf = (m: number, y: number) => m <= 2 ? y : y; // simplified — same calendar year
+    // Build acceptable "period" strings based on window
+    const acceptPeriods: Set<string> = new Set();
+    const monthsBack = timeWindow === '7d' || timeWindow === '1m' ? 0 : timeWindow === '2m' ? 3 : 6;
+    const quartersBack = Math.ceil(monthsBack / 3);
+    for (let q = 0; q <= quartersBack + 1; q++) {
+      const monthOffset = curMonth - q * 3;
+      let year = curYear;
+      let month = monthOffset;
+      while (month < 0) { month += 12; year -= 1; }
+      acceptPeriods.add(`${quarterOf(month)} ${year}`);
+    }
+    const freshOnly = acc.filter(r => {
+      if (hidden.has(r.symbol.toUpperCase())) return false;
+      // If period is unknown, keep (data quality) unless very strict window
+      if (!r.period) return timeWindow !== '7d';
+      return acceptPeriods.has(String(r.period));
+    });
     // Step 4: additive merge — union existing rows + new fresh (dedupe by symbol, prefer new)
     // zzz264 — add diagnostic so user can verify: found X elite, Y after date filter, Z stored total.
     const foundElite = acc.length;
@@ -3615,14 +3638,8 @@ function EIEliteTab() {
     }, 100);
     setLastFetch(Date.now()); setLoading(false); setProgress(null);
   }, [hidden]);
-  // No auto-fetch on mount — expensive (2min+); only manual refresh trigger.
-  useEffect(() => {
-    // If no cache exists AND user hasn't set hidden set, trigger initial sync silently
-    if (rows.length === 0 && hidden.size === 0 && !loading) {
-      // Fire and forget the first sync
-      fetchElite();
-    }
-  }, []);
+  // zzz267 — NO auto-fetch. User must click Refresh with a time window selected.
+  // Prevents 90-second scan running silently on every tab visit.
   const sorted = useMemo(() => {
     // zzz266 — apply Quality Preset filter (Sales≥20, PAT≥20, EPS≥25, OPM≥11) before sort
     const filtered = qualityPreset
@@ -3668,6 +3685,17 @@ function EIEliteTab() {
           style={{ padding: '6px 12px', fontSize: 11.5, fontWeight: 800, borderRadius: 6, background: qualityPreset ? '#F59E0B' : 'none', border: '1px solid #F59E0B', color: qualityPreset ? '#0B1220' : '#F59E0B', cursor: 'pointer' }}>
           ⚡ Quality Preset {qualityPreset ? '✓ ON' : 'OFF'}
         </button>
+        {/* zzz267 — Time window selector */}
+        <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', marginLeft: 8 }}>WINDOW:</span>
+        <div style={{ display: 'flex', gap: 3 }}>
+          {(['7d', '1m', '2m', '3m'] as const).map((w) => (
+            <button key={w} onClick={() => setTimeWindow(w)}
+              title={w === '7d' ? 'Last 7 days (current quarter only)' : w === '1m' ? 'Last 1 month' : w === '2m' ? 'Last 2 months' : 'Last 3 months'}
+              style={{ padding: '5px 10px', fontSize: 11, fontWeight: 700, borderRadius: 5, background: timeWindow === w ? '#22D3EE' : 'none', border: '1px solid #22D3EE', color: timeWindow === w ? '#0B1220' : '#22D3EE', cursor: 'pointer' }}>
+              {w === '7d' ? '7D' : w.toUpperCase()}
+            </button>
+          ))}
+        </div>
         <button onClick={fetchElite} disabled={loading}
           style={{ padding: '6px 12px', fontSize: 11.5, fontWeight: 700, borderRadius: 6, background: 'none', border: '1px solid #8B5CF6', color: '#8B5CF6', cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? '⏳ Fetching…' : '🔄 Refresh'}
@@ -3694,7 +3722,8 @@ function EIEliteTab() {
       )}
       {rows.length === 0 && !loading && (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--mc-text-3)', background: 'var(--mc-bg-1)', border: '1px dashed var(--mc-bg-4)', borderRadius: 10 }}>
-          No EI Elite data yet. Click Refresh to fetch from Earnings Intelligence.
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-text-2)', marginBottom: 6 }}>No EI Elite data yet</div>
+          <div style={{ fontSize: 12 }}>1. Pick a time window (7D / 1M / 2M / 3M) — smaller windows scan fewer quarters<br/>2. Click <strong>🔄 Refresh</strong> to scan the Screener universe once<br/>Subsequent visits show cached data (never auto-fetches).</div>
         </div>
       )}
       {rows.length > 0 && (
@@ -3718,7 +3747,7 @@ function EIEliteTab() {
                     ['grade', 'Grade'], ['symbol', 'Ticker'], ['company', 'Company'], ['period', 'Period'],
                     ['score', 'Score'], ['pe', 'P/E'], ['marketCapCr', 'MktCap'],
                     ['revenueYoy', 'Rev YoY'], ['patYoy', 'PAT YoY'], ['epsYoy', 'EPS YoY'], ['opmPct', 'OPM'],
-                    ['d1_close_pct', 'D1'], ['filed_date', 'Filed'], ['guidance', 'Guidance']
+                    ['filed_date', 'Filed'], ['guidance', 'Guidance']
                   ].map(([k, l]) => (
                     <th key={k} onClick={() => onSort(k)}
                       style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', padding: '6px 8px', borderBottom: '1px solid var(--mc-bg-4)', cursor: 'pointer', textAlign: 'left', letterSpacing: '0.3px', textTransform: 'uppercase', whiteSpace: 'nowrap', userSelect: 'none' }}>
@@ -3746,7 +3775,6 @@ function EIEliteTab() {
                       <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.patYoy), fontVariantNumeric: 'tabular-nums' as any }}>{fmtPct(r.patYoy)}</td>
                       <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.epsYoy), fontVariantNumeric: 'tabular-nums' as any }}>{fmtPct(r.epsYoy)}</td>
                       <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right' }}>{typeof r.opmPct === 'number' ? r.opmPct.toFixed(1) + '%' : '—'}</td>
-                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.d1_close_pct) }}>{fmtPct(r.d1_close_pct)}</td>
                       <td style={{ fontSize: 10.5, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>{r.filed_date || '—'}</td>
                       <td style={{ fontSize: 10.5, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>{r.guidance || '—'}</td>
                       <td style={{ fontSize: 12, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'center' }}>
