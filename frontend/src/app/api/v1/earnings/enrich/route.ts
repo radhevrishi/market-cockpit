@@ -803,6 +803,22 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       null,
     _enriched_at: new Date().toISOString(),
   };
+  // zzz259 — Cherry-pick institutional-quality fields from Yahoo fundamentals
+  // even when a higher-priority source (Worker/NSE/Screener) won the merge.
+  // Screener/Worker frequently return null for D/E; Yahoo's defaultKeyStatistics
+  // reliably has it. Only fill fields that the primary source left null so we
+  // never overwrite better data.
+  if (yahooFund) {
+    const yf = yahooFund as any;
+    if (out.debtToEquity == null && typeof yf.debtToEquity === 'number' && Number.isFinite(yf.debtToEquity)) {
+      out.debtToEquity = yf.debtToEquity;
+      out._de_source = 'yahoo-fundamentals';
+    }
+    if (out.roe == null && typeof yf.roe === 'number' && Number.isFinite(yf.roe)) {
+      out.roe = yf.roe;
+      out._roe_source = 'yahoo-fundamentals';
+    }
+  }
 
   // PATCH 1016 — NSE Bhavcopy overlay for D1/Gap price reaction.
   // Yahoo blocks Railway IPs often → D1/Gap missing for most tickers, blocking
