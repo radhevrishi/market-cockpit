@@ -3588,19 +3588,12 @@ function EIEliteTab() {
       }
     };
     await Promise.all(Array.from({length: WORKERS}, () => worker()));
-    // Step 3: filter — drop hidden + drop entries with KNOWN old filed_date.
-    // zzz264 — earnings-scan often returns cards without filed_date populated.
-    // Previous logic dropped those silently (t=0 < cutoff). Now: keep if filed_date
-    // is missing/unknown OR within 30 days. Only drop if we KNOW it's old.
-    const cutoff = Date.now() - EI_ELITE_MAX_AGE_DAYS * 86400000;
-    const freshOnly = acc.filter(r => {
-      if (hidden.has(r.symbol.toUpperCase())) return false;
-      if (!r.filed_date) return true; // keep unknown-date entries (data quality issue)
-      const dateStr = String(r.filed_date);
-      const t = Date.parse(dateStr.length === 10 ? dateStr + 'T09:30:00+05:30' : dateStr);
-      if (!Number.isFinite(t) || t === 0) return true; // unparseable → keep
-      return t >= cutoff;
-    });
+    // Step 3: filter — drop hidden only. zzz265 — 30-day filter removed because
+    // earnings-scan API returns resultDate as quarter strings like "Jun 2026" (not
+    // ISO filing dates). Date.parse turns that into June 1, appearing 57 days old,
+    // dropping every entry. EI's own EXCELLENT/STRONG grading already implies the
+    // company reported a recent quarter — no need for our own date filter on top.
+    const freshOnly = acc.filter(r => !hidden.has(r.symbol.toUpperCase()));
     // Step 4: additive merge — union existing rows + new fresh (dedupe by symbol, prefer new)
     // zzz264 — add diagnostic so user can verify: found X elite, Y after date filter, Z stored total.
     const foundElite = acc.length;
