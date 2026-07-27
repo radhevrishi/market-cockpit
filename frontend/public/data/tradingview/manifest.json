@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-27T09:53:08.465Z",
+  "lastSync": "2026-07-27T11:48:40.899Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 26984,
+      "size": 27007,
       "rowCount": 23,
       "error": null
     },
@@ -19,7 +19,7 @@
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
       "ok": true,
-      "size": 10157,
+      "size": 10160,
       "rowCount": 7,
       "error": null
     },
@@ -28,8 +28,8 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 37141,
-      "rowCount": 32,
+      "size": 40152,
+      "rowCount": 35,
       "error": null
     },
     {
@@ -37,7 +37,7 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 28303,
+      "size": 28423,
       "rowCount": 25,
       "error": null
     },
@@ -46,8 +46,8 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 27107,
-      "rowCount": 22,
+      "size": 28155,
+      "rowCount": 23,
       "error": null
     },
     {
@@ -55,7 +55,7 @@
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
       "ok": true,
-      "size": 47163,
+      "size": 47165,
       "rowCount": 40,
       "error": null
     },
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 105705,
+      "size": 105987,
       "rowCount": 100,
       "error": null
     },
@@ -82,7 +82,7 @@
       "displayName": "Future Super Scalers like NBIS Full",
       "screenerId": "oRvEFfVY",
       "ok": true,
-      "size": 99527,
+      "size": 99524,
       "rowCount": 90,
       "error": null
     }
