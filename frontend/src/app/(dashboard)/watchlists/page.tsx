@@ -3529,16 +3529,22 @@ function EIEliteTab() {
         for (const c of cards) {
           const grade = c?.grade || c?.tier;
           if (grade !== 'EXCELLENT' && grade !== 'STRONG') continue;
+          // zzz262 — API returns camelCase with capital Y at end (revenueYoY not revenueYoy),
+          // totalScore not score, mcap not marketCapCr, cmp not price, resultDate not filed_date.
+          // OPM comes from quarters[last].opm since API doesn't have a top-level opmPct.
+          const qs = Array.isArray(c.quarters) ? c.quarters : [];
+          const lastQ = qs[qs.length - 1] || {};
           acc.push({
             symbol: c.symbol || c.ticker || '', company: c.company || c.name || '',
-            grade, score: c.score ?? c.total_score,
-            pe: c.pe, marketCapCr: c.marketCapCr ?? c.market_cap_cr,
-            revenueYoy: c.revenueYoy ?? c.rev_yoy_pct ?? c.sales_yoy_pct,
-            patYoy: c.patYoy ?? c.pat_yoy_pct, epsYoy: c.epsYoy ?? c.eps_yoy_pct,
-            opmPct: c.opmPct ?? c.opm_pct,
-            guidance: c.guidance, price: c.price ?? c.currentPrice,
-            d1_close_pct: c.d1_close_pct ?? c.d1_pct,
-            filed_date: c.filed_date ?? c.filing_date, period: c.period,
+            grade, score: c.totalScore ?? c.total_score ?? c.score,
+            pe: c.pe, marketCapCr: c.mcap ?? c.marketCapCr ?? c.market_cap_cr,
+            revenueYoy: c.revenueYoY ?? c.revenueYoy ?? c.rev_yoy_pct ?? c.sales_yoy_pct,
+            patYoy: c.patYoY ?? c.patYoy ?? c.pat_yoy_pct,
+            epsYoy: c.epsYoY ?? c.epsYoy ?? c.eps_yoy_pct,
+            opmPct: lastQ.opm ?? c.opmPct ?? c.opm_pct,
+            guidance: c.guidance, price: c.cmp ?? c.price ?? c.currentPrice,
+            d1_close_pct: c.d1_close_pct ?? c.d1_pct ?? c.priceScore,
+            filed_date: c.resultDate ?? c.filed_date ?? c.filing_date, period: c.period ?? lastQ.period,
             fetched_at: new Date().toISOString(),
           });
         }
