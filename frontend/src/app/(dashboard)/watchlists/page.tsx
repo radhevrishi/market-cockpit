@@ -603,7 +603,7 @@ export default function WatchlistsPage() {
   const searchParams = useSearchParams();
   const initialTab: 'main' | 'conviction' =
     searchParams?.get('tab') === 'conviction' ? 'conviction' : 'main';
-  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals' | 'ei-elite'>(initialTab);
   // Also react to URL changes mid-session (e.g. user clicks the chip again
   // from another page → SPA nav). Without this, the activeTab state from
   // the first render would stay on whatever tab was active.
@@ -1119,9 +1119,20 @@ export default function WatchlistsPage() {
             color: convictionCount > 0 ? 'var(--mc-warn)' : 'var(--mc-text-4)',
           }}>{convictionCount}</span>
         </button>
+        {/* zzz261 — EI Elite tab: EXCELLENT+STRONG from Earnings Intelligence, auto-synced */}
+        <button onClick={() => setActiveTab('ei-elite')}
+          style={{
+            padding: '10px 16px', background: 'none',
+            border: 'none', borderBottom: `2px solid ${activeTab === 'ei-elite' ? '#8B5CF6' : 'transparent'}`,
+            color: activeTab === 'ei-elite' ? '#8B5CF6' : 'var(--mc-text-3)',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+          🎖️ EI Elite
+        </button>
       </div>
 
-      {activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
+      {activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <ConvictionBeatsPanel
           entries={convictionEntries}
           onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
@@ -3440,6 +3451,215 @@ function HubFilterRail({
           ⚡ Divergence Only <span style={{ color: filters.divergenceOnly ? 'var(--mc-warn)' : 'var(--mc-text-4)', marginLeft: 3 }}>({countDivergenceChip()})</span>
         </button>
       </div>
+    </div>
+  );
+}
+
+// zzz261 — EI Elite tab. Fetches EXCELLENT+STRONG from Earnings Intelligence
+// via /api/market/earnings-scan for the user's Conviction Beats + Watchlist
+// tickers. Cached in localStorage 4h TTL. Renders sortable table + export toolbar.
+interface EIEliteRow {
+  symbol: string;
+  company: string;
+  grade: string;
+  score?: number;
+  pe?: number;
+  marketCapCr?: number;
+  revenueYoy?: number;
+  patYoy?: number;
+  epsYoy?: number;
+  opmPct?: number;
+  guidance?: string;
+  price?: number;
+  d1_close_pct?: number;
+  filed_date?: string;
+  period?: string;
+  fetched_at?: string;
+}
+const EI_ELITE_LS_KEY = 'mc:ei-elite:v1';
+const EI_ELITE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+function EIEliteTab() {
+  const [rows, setRows] = useState<EIEliteRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [lastFetch, setLastFetch] = useState<number | null>(null);
+  const [sort, setSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'score', dir: 'desc'});
+  // Load from cache on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(EI_ELITE_LS_KEY);
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (cached && Array.isArray(cached.rows) && typeof cached.ts === 'number') {
+        setRows(cached.rows);
+        setLastFetch(cached.ts);
+      }
+    } catch {}
+  }, []);
+  const universe = useMemo(() => {
+    // Build universe: Conviction Beats + Watchlist tickers
+    if (typeof window === 'undefined') return [] as string[];
+    const set = new Set<string>();
+    try {
+      const cb = JSON.parse(localStorage.getItem('mc:conviction-beats:v1') || '{}');
+      for (const e of Object.values(cb) as any[]) if (e?.ticker) set.add(String(e.ticker).toUpperCase());
+    } catch {}
+    try {
+      const wl = JSON.parse(localStorage.getItem('mc:watchlist:v1') || '[]');
+      for (const t of wl) if (typeof t === 'string') set.add(t.replace(/^(NSE|BSE):/i, '').toUpperCase());
+    } catch {}
+    return Array.from(set).slice(0, 200);
+  }, [rows.length]);
+  const fetchElite = useCallback(async () => {
+    if (universe.length === 0) { alert('No tickers in universe. Add to Watchlist or Conviction Beats first.'); return; }
+    setLoading(true);
+    setProgress(`Fetching ${universe.length} tickers…`);
+    const acc: EIEliteRow[] = [];
+    const CHUNK = 30;
+    for (let i = 0; i < universe.length; i += CHUNK) {
+      const chunk = universe.slice(i, i + CHUNK);
+      setProgress(`Fetching ${i + 1}–${Math.min(i + CHUNK, universe.length)} of ${universe.length}…`);
+      try {
+        const url = '/api/market/earnings-scan?symbols=' + encodeURIComponent(chunk.join(','));
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) continue;
+        const j = await r.json();
+        const cards = Array.isArray(j?.cards) ? j.cards : Array.isArray(j?.data) ? j.data : [];
+        for (const c of cards) {
+          const grade = c?.grade || c?.tier;
+          if (grade !== 'EXCELLENT' && grade !== 'STRONG') continue;
+          acc.push({
+            symbol: c.symbol || c.ticker || '', company: c.company || c.name || '',
+            grade, score: c.score ?? c.total_score,
+            pe: c.pe, marketCapCr: c.marketCapCr ?? c.market_cap_cr,
+            revenueYoy: c.revenueYoy ?? c.rev_yoy_pct ?? c.sales_yoy_pct,
+            patYoy: c.patYoy ?? c.pat_yoy_pct, epsYoy: c.epsYoy ?? c.eps_yoy_pct,
+            opmPct: c.opmPct ?? c.opm_pct,
+            guidance: c.guidance, price: c.price ?? c.currentPrice,
+            d1_close_pct: c.d1_close_pct ?? c.d1_pct,
+            filed_date: c.filed_date ?? c.filing_date, period: c.period,
+            fetched_at: new Date().toISOString(),
+          });
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 300));
+    }
+    const now = Date.now();
+    setRows(acc); setLastFetch(now); setLoading(false); setProgress(null);
+    try { localStorage.setItem(EI_ELITE_LS_KEY, JSON.stringify({ rows: acc, ts: now })); } catch {}
+  }, [universe]);
+  // Auto-fetch if cache expired or empty
+  useEffect(() => {
+    if (rows.length > 0 && lastFetch && Date.now() - lastFetch < EI_ELITE_TTL_MS) return;
+    if (universe.length === 0) return;
+    fetchElite();
+  }, [universe.length]);
+  const sorted = useMemo(() => {
+    return [...rows].sort((a: any, b: any) => {
+      const av = a[sort.col], bv = b[sort.col];
+      if (typeof av === 'number' && typeof bv === 'number') return sort.dir === 'asc' ? av - bv : bv - av;
+      const as = String(av || ''), bs = String(bv || '');
+      return sort.dir === 'asc' ? as.localeCompare(bs) : bs.localeCompare(as);
+    });
+  }, [rows, sort]);
+  const onSort = (col: string) => setSort((s) => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'desc' });
+  const arrow = (c: string) => sort.col === c ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  const fmtPct = (v: any) => typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
+  const fmtNum = (v: any) => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(1) : '—';
+  const fmtMcap = (v: any) => typeof v === 'number' && v > 0 ? (v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : v >= 1000 ? `₹${(v/1000).toFixed(1)}k` : `₹${Math.round(v)}`) : '—';
+  const pctCol = (v: any) => (typeof v === 'number' && v >= 0) ? 'var(--mc-bullish)' : (typeof v === 'number' ? 'var(--mc-bearish)' : 'var(--mc-text-4)');
+  const excellents = rows.filter(r => r.grade === 'EXCELLENT').length;
+  const strongs = rows.filter(r => r.grade === 'STRONG').length;
+  const allTickers = rows.map(r => r.symbol);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-text-2)' }}>
+          <strong style={{ color: '#8B5CF6' }}>🎖️ EI Elite</strong> — auto-synced EXCELLENT+STRONG from Earnings Intelligence
+        </div>
+        <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
+          <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #10B981 15%, transparent)', color: '#10B981', borderRadius: 4, fontWeight: 700 }}>EXCELLENT · {excellents}</span>
+          <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #22D3EE 15%, transparent)', color: '#22D3EE', borderRadius: 4, fontWeight: 700 }}>STRONG · {strongs}</span>
+        </div>
+        <button onClick={fetchElite} disabled={loading}
+          style={{ padding: '6px 12px', fontSize: 11.5, fontWeight: 700, borderRadius: 6, background: 'none', border: '1px solid #8B5CF6', color: '#8B5CF6', cursor: loading ? 'wait' : 'pointer' }}>
+          {loading ? '⏳ Fetching…' : '🔄 Refresh'}
+        </button>
+        {lastFetch && (
+          <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>
+            Last: {new Date(lastFetch).toLocaleString()}
+          </span>
+        )}
+      </div>
+      {progress && (
+        <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #8B5CF6 8%, transparent)', border: '1px solid color-mix(in srgb, #8B5CF6 25%, transparent)', borderRadius: 6, fontSize: 11.5, color: '#8B5CF6' }}>
+          {progress}
+        </div>
+      )}
+      {rows.length === 0 && !loading && (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--mc-text-3)', background: 'var(--mc-bg-1)', border: '1px dashed var(--mc-bg-4)', borderRadius: 10 }}>
+          No EI Elite data yet. Click Refresh to fetch from Earnings Intelligence.
+        </div>
+      )}
+      {rows.length > 0 && (
+        <>
+          <TickerExportToolbar
+            compact
+            tickers={allTickers}
+            groups={[
+              { label: 'EXCELLENT', emoji: '⭐', tickers: rows.filter(r => r.grade === 'EXCELLENT').map(r => r.symbol), color: '#10B981' },
+              { label: 'STRONG', emoji: '🔵', tickers: rows.filter(r => r.grade === 'STRONG').map(r => r.symbol), color: '#22D3EE' },
+            ]}
+            exchange="NSE"
+            filenameHint="ei-elite"
+            tickerCompanyMap={rows.reduce<Record<string, string>>((acc, r) => { if (r.symbol && r.company) acc[r.symbol.toUpperCase()] = r.company; return acc; }, {})}
+          />
+          <div style={{ background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, overflow: 'auto', maxHeight: '75vh' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'ui-sans-serif, system-ui' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--mc-bg-1)', zIndex: 1 }}>
+                <tr>
+                  {[
+                    ['grade', 'Grade'], ['symbol', 'Ticker'], ['company', 'Company'], ['period', 'Period'],
+                    ['score', 'Score'], ['pe', 'P/E'], ['marketCapCr', 'MktCap'],
+                    ['revenueYoy', 'Rev YoY'], ['patYoy', 'PAT YoY'], ['epsYoy', 'EPS YoY'], ['opmPct', 'OPM'],
+                    ['d1_close_pct', 'D1'], ['guidance', 'Guidance']
+                  ].map(([k, l]) => (
+                    <th key={k} onClick={() => onSort(k)}
+                      style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', padding: '6px 8px', borderBottom: '1px solid var(--mc-bg-4)', cursor: 'pointer', textAlign: 'left', letterSpacing: '0.3px', textTransform: 'uppercase', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                      {l}{arrow(k)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((r) => {
+                  const gColor = r.grade === 'EXCELLENT' ? '#10B981' : '#22D3EE';
+                  return (
+                    <tr key={r.symbol} style={{ transition: 'background 0.1s' }}
+                      onMouseEnter={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'var(--mc-bg-2)'; }}
+                      onMouseLeave={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'transparent'; }}>
+                      <td style={{ fontSize: 10, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: gColor, fontWeight: 800 }}>{r.grade}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{r.symbol}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-1)', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ fontSize: 10.5, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>{r.period || '—'}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: gColor, fontWeight: 700 }}>{r.score ?? '—'}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right' }}>{fmtNum(r.pe)}{typeof r.pe === 'number' ? 'x' : ''}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: 'var(--mc-text-3)' }}>{fmtMcap(r.marketCapCr)}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.revenueYoy), fontVariantNumeric: 'tabular-nums' as any }}>{fmtPct(r.revenueYoy)}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.patYoy), fontVariantNumeric: 'tabular-nums' as any }}>{fmtPct(r.patYoy)}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.epsYoy), fontVariantNumeric: 'tabular-nums' as any }}>{fmtPct(r.epsYoy)}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right' }}>{typeof r.opmPct === 'number' ? r.opmPct.toFixed(1) + '%' : '—'}</td>
+                      <td style={{ fontSize: 11, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', textAlign: 'right', color: pctCol(r.d1_close_pct) }}>{fmtPct(r.d1_close_pct)}</td>
+                      <td style={{ fontSize: 10.5, padding: '5px 8px', borderBottom: '1px solid var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>{r.guidance || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
