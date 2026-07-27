@@ -3588,22 +3588,36 @@ function EIEliteTab() {
       }
     };
     await Promise.all(Array.from({length: WORKERS}, () => worker()));
-    // Step 3: filter to last 30 days by filing date + drop hidden
+    // Step 3: filter — drop hidden + drop entries with KNOWN old filed_date.
+    // zzz264 — earnings-scan often returns cards without filed_date populated.
+    // Previous logic dropped those silently (t=0 < cutoff). Now: keep if filed_date
+    // is missing/unknown OR within 30 days. Only drop if we KNOW it's old.
     const cutoff = Date.now() - EI_ELITE_MAX_AGE_DAYS * 86400000;
     const freshOnly = acc.filter(r => {
       if (hidden.has(r.symbol.toUpperCase())) return false;
-      const t = r.filed_date ? Date.parse(r.filed_date.length === 10 ? r.filed_date + 'T09:30:00+05:30' : r.filed_date) : 0;
+      if (!r.filed_date) return true; // keep unknown-date entries (data quality issue)
+      const dateStr = String(r.filed_date);
+      const t = Date.parse(dateStr.length === 10 ? dateStr + 'T09:30:00+05:30' : dateStr);
+      if (!Number.isFinite(t) || t === 0) return true; // unparseable → keep
       return t >= cutoff;
     });
     // Step 4: additive merge — union existing rows + new fresh (dedupe by symbol, prefer new)
+    // zzz264 — add diagnostic so user can verify: found X elite, Y after date filter, Z stored total.
+    const foundElite = acc.length;
+    const afterFilter = freshOnly.length;
+    let finalCount = 0;
     setRows((prev) => {
       const merged = new Map<string, EIEliteRow>();
       for (const r of prev) if (!hidden.has(r.symbol.toUpperCase())) merged.set(r.symbol.toUpperCase(), r);
       for (const r of freshOnly) merged.set(r.symbol.toUpperCase(), r); // new overwrites stale
       const arr = Array.from(merged.values());
+      finalCount = arr.length;
       try { localStorage.setItem(EI_ELITE_LS_KEY, JSON.stringify({ rows: arr, ts: Date.now() })); } catch {}
       return arr;
     });
+    setTimeout(() => {
+      console.log('[EI Elite] Sync complete:', { foundElite, afterFilter, finalCount });
+    }, 100);
     setLastFetch(Date.now()); setLoading(false); setProgress(null);
   }, [hidden]);
   // No auto-fetch on mount — expensive (2min+); only manual refresh trigger.
