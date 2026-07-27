@@ -72,6 +72,13 @@ export interface ConvictionEntry {
   // zzz242 — trailing P/E (from graded route / enrich Screener path) so
   // CB cards can render a valuation chip alongside OPM + YoY numbers.
   pe?: number | null;
+  // zzz257 — institutional quality fields (Yahoo fundamentals / Screener).
+  roce?: number | null;
+  roe?: number | null;
+  debtToEquity?: number | null;
+  // zzz248 — 30-day close series for sparkline. Yahoo blocked on Railway
+  // so this is often null; DriftPath component falls back gracefully.
+  close_30d?: number[] | null;
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -263,8 +270,13 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
             if ((cur as any)[k] == null && (e as any)[k] != null) (patch as any)[k] = (e as any)[k];
           };
           fill('opm_pct'); fill('opm_prev_pct');
-          fill('d1_pct'); fill('gap_pct'); fill('move_pct');   // zzz230
+          fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct');   // zzz230/231
           fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
+          // zzz257 — institutional-quality fields + 30d sparkline series.
+          // Previously the sync payload carried them but this fill() list didn't,
+          // so backfills silently dropped them and the ROCE/ROE row never rendered.
+          fill('roce' as any); fill('roe' as any); fill('debtToEquity' as any);
+          fill('close_30d' as any);
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {
