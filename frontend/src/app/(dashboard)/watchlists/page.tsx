@@ -3055,55 +3055,6 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         })()}
         </>)}
       </div>
-      <div style={{
-        padding: '8px 12px', backgroundColor: 'var(--mc-bg-0)',
-        border: '1px solid var(--mc-bg-4)', borderRadius: 8,
-        fontSize: 10.5, color: 'var(--mc-text-4)', lineHeight: 1.5,
-        order: 99, marginTop: 12,
-      }}>
-        <div>
-          Institutional bench of high-quality post-earnings setups.
-          Auto-populated from <strong style={{ color: 'var(--mc-cyan)' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
-          Removed entries don't auto-readd — use × to permanently prune.
-        </div>
-        {/* PATCH 0918 — Explain why bench is heavily skewed toward current quarter.
-            User feedback: clicked Jan 29 2026 on EO, saw 101 scheduled, expected
-            those to land on the bench. They don't — bench only gains entries
-            when a company is GRADED BLOCKBUSTER/STRONG (i.e. it actually filed
-            financials AND beat the bar), not when a board meeting is announced. */}
-        {(() => {
-          // Compute quarter distribution to show user why their filters look skewed.
-          const counts = { Q1: 0, Q2: 0, Q3: 0, Q4: 0, none: 0 };
-          for (const e of entries) {
-            const qfy = deriveQuarterFY(e);
-            if (qfy) counts[qfy.q]++; else counts.none++;
-          }
-          const totalQ = counts.Q1 + counts.Q2 + counts.Q3 + counts.Q4;
-          const dominantQ = (Object.entries(counts) as Array<[string, number]>)
-            .filter(([k]) => k !== 'none')
-            .sort((a, b) => b[1] - a[1])[0];
-          if (!dominantQ || totalQ === 0) return null;
-          const dominantPct = (dominantQ[1] / totalQ) * 100;
-          if (dominantPct < 70) return null; // Only show when one quarter dominates >70%
-          // PATCH 0922 — Quarter→date-range cheat sheet so user can verify.
-          const qPeriodMap: Record<string, string> = {
-            Q1: 'Apr–Jun results (filed Jul–Aug)',
-            Q2: 'Jul–Sep results (filed Oct–Nov)',
-            Q3: 'Oct–Dec results (filed Jan–Feb)',
-            Q4: 'Jan–Mar results · annual (filed Apr–Jun)',
-          };
-          return (
-            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: 'var(--mc-state-persistent)', lineHeight: 1.6 }}>
-              ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates only when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
-              We&apos;re in the middle of <strong>Q4 FY26 filing season</strong> (May–Jun 2026 — companies publishing their Jan–Mar 2026 numbers), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
-              <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
-                <strong style={{ color: 'var(--mc-text-1)' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-
       {/* PATCH 0196 — Export toolbar (CSV, TradingView, .txt, Open chart). Tier-grouped.
           PATCH 0366 — tickerCompanyMap wired for Screener.in name-based matching. */}
       <TickerExportToolbar
@@ -3271,6 +3222,55 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         </>
         )
       )}
+      <div style={{
+        padding: '8px 12px', backgroundColor: 'var(--mc-bg-0)',
+        border: '1px solid var(--mc-bg-4)', borderRadius: 8,
+        fontSize: 10.5, color: 'var(--mc-text-4)', lineHeight: 1.5,
+        marginTop: 20,
+      }}>
+        <div>
+          Institutional bench of high-quality post-earnings setups.
+          Auto-populated from <strong style={{ color: 'var(--mc-cyan)' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
+          Removed entries don't auto-readd — use × to permanently prune.
+        </div>
+        {/* PATCH 0918 — Explain why bench is heavily skewed toward current quarter.
+            User feedback: clicked Jan 29 2026 on EO, saw 101 scheduled, expected
+            those to land on the bench. They don't — bench only gains entries
+            when a company is GRADED BLOCKBUSTER/STRONG (i.e. it actually filed
+            financials AND beat the bar), not when a board meeting is announced. */}
+        {(() => {
+          // Compute quarter distribution to show user why their filters look skewed.
+          const counts = { Q1: 0, Q2: 0, Q3: 0, Q4: 0, none: 0 };
+          for (const e of entries) {
+            const qfy = deriveQuarterFY(e);
+            if (qfy) counts[qfy.q]++; else counts.none++;
+          }
+          const totalQ = counts.Q1 + counts.Q2 + counts.Q3 + counts.Q4;
+          const dominantQ = (Object.entries(counts) as Array<[string, number]>)
+            .filter(([k]) => k !== 'none')
+            .sort((a, b) => b[1] - a[1])[0];
+          if (!dominantQ || totalQ === 0) return null;
+          const dominantPct = (dominantQ[1] / totalQ) * 100;
+          if (dominantPct < 70) return null; // Only show when one quarter dominates >70%
+          // PATCH 0922 — Quarter→date-range cheat sheet so user can verify.
+          const qPeriodMap: Record<string, string> = {
+            Q1: 'Apr–Jun results (filed Jul–Aug)',
+            Q2: 'Jul–Sep results (filed Oct–Nov)',
+            Q3: 'Oct–Dec results (filed Jan–Feb)',
+            Q4: 'Jan–Mar results · annual (filed Apr–Jun)',
+          };
+          return (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: 'var(--mc-state-persistent)', lineHeight: 1.6 }}>
+              ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates only when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
+              We&apos;re in the middle of <strong>Q4 FY26 filing season</strong> (May–Jun 2026 — companies publishing their Jan–Mar 2026 numbers), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
+              <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
+                <strong style={{ color: 'var(--mc-text-1)' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
     </div>
   );
 }
@@ -3513,7 +3513,7 @@ function DriftPath({ entry, width = 130, height = 26, showLabels = true }: { ent
       {/* zzz254 — value labels under each dot */}
       {showLabels && raw.map((p, i) => (
         <text key={i} x={i * step} y={height + 10} textAnchor={i === 0 ? 'start' : i === raw.length - 1 ? 'end' : 'middle'}
-          style={{ fontSize: 7.5, fill: p.v == null ? 'var(--mc-text-4)' : (p.v >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'), fontFamily: 'ui-monospace, monospace', opacity: 0.85 }}>
+          style={{ fontSize: 9, fill: p.v == null ? 'var(--mc-text-4)' : (p.v >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'), fontFamily: 'ui-monospace, monospace', opacity: 1, fontWeight: 600 }}>
           {p.v == null ? '—' : `${p.v >= 0 ? '+' : ''}${p.v.toFixed(1)}`}
         </text>
       ))}
@@ -3682,15 +3682,13 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
               style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '2px 6px', fontSize: 15, lineHeight: 1, marginLeft: 2 }}>×</button>
           </div>
           <div title={`Composite Score: ${entry.composite_score} — magnitude 35% + quality 25% + technical 25% + methodology 15%`}
-            style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>COMP</span>
-            <MiniBar value={entry.composite_score} width={38} height={4} />
-            <span style={{ fontSize: 11, fontWeight: 800, color: tierColor, fontFamily: 'ui-monospace, monospace', minWidth: 20, textAlign: 'right' }}>{entry.composite_score}</span>
+            style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <MiniBar value={entry.composite_score} width={44} height={5} />
+            <span style={{ fontSize: 11, fontWeight: 800, color: tierColor, fontFamily: 'ui-monospace, monospace', minWidth: 22, textAlign: 'right' }}>{entry.composite_score}</span>
           </div>
-          <div title={peadTip} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'help' }}>
-            <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>PEAD</span>
-            <MiniBar value={pead.score} width={38} height={4} />
-            <span style={{ fontSize: 11, fontWeight: 800, color: peadClr, fontFamily: 'ui-monospace, monospace', minWidth: 20, textAlign: 'right' }}>{pead.score}</span>
+          <div title={peadTip} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'help' }}>
+            <MiniBar value={pead.score} width={44} height={5} />
+            <span style={{ fontSize: 11, fontWeight: 800, color: peadClr, fontFamily: 'ui-monospace, monospace', minWidth: 22, textAlign: 'right' }}>{pead.score}</span>
           </div>
         </div>
       </div>
@@ -3749,6 +3747,8 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
                 </span>
               );
             })()}
+            {/* zzz256 — force P/E + DRIFT onto own row */}
+            <span style={{ flexBasis: '100%', height: 0, margin: 0 }} />
             {/* zzz242 — trailing P/E chip. zzz251 — color-code vs SECTOR MEDIAN P/E
                 (compares apples to apples). Falls back to absolute bands if no sector peers. */}
             {typeof (entry as any).pe === 'number' && Number.isFinite((entry as any).pe) && (entry as any).pe > 0 && (() => {
