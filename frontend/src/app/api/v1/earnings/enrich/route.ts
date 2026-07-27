@@ -454,7 +454,7 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
 // This gives us a fighting chance to surface YoY data for tickers like
 // JAINREC, IOC, IGL, HLEGLAS when Screener is blocking.
 async function fetchYahooFundamentals(symbol: string): Promise<any | null> {
-  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}.NS?modules=incomeStatementHistoryQuarterly,price,summaryDetail`;
+  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}.NS?modules=incomeStatementHistoryQuarterly,price,summaryDetail,defaultKeyStatistics,financialData`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), YAHOO_TIMEOUT_MS);
   try {
@@ -515,6 +515,13 @@ async function fetchYahooFundamentals(symbol: string): Promise<any | null> {
       latest_quarter_end_iso: !isNaN(latestDate.getTime()) ? latestDate.toISOString().slice(0, 10) : undefined,
       period_ended: !isNaN(latestDate.getTime()) ? latestDate.toISOString().slice(0, 10) : undefined,
       pe: result.summaryDetail?.trailingPE?.raw ?? null,
+      // zzz258 — Bug B fallback: pull debtToEquity from Yahoo defaultKeyStatistics
+      // or financialData module. Screener often returns null for this field.
+      debtToEquity: result.defaultKeyStatistics?.debtToEquity?.raw
+        ?? result.financialData?.debtToEquity?.raw ?? null,
+      // Also grab returnOnEquity + returnOnCapital if available (backup for banks/NBFCs)
+      roe: result.financialData?.returnOnEquity?.raw != null
+        ? result.financialData.returnOnEquity.raw * 100 : null,
       financials_source: 'yahoo-fundamentals',
     };
     return out;
