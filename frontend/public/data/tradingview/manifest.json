@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-26T14:11:03.965Z",
+  "lastSync": "2026-07-27T08:05:53.783Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 26929,
+      "size": 27003,
       "rowCount": 23,
       "error": null
     },
@@ -28,7 +28,7 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 34716,
+      "size": 34840,
       "rowCount": 30,
       "error": null
     },
@@ -37,7 +37,7 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 28466,
+      "size": 28404,
       "rowCount": 25,
       "error": null
     },
@@ -46,8 +46,8 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 38340,
-      "rowCount": 33,
+      "size": 27034,
+      "rowCount": 22,
       "error": null
     },
     {
@@ -55,7 +55,7 @@
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
       "ok": true,
-      "size": 47164,
+      "size": 47163,
       "rowCount": 40,
       "error": null
     },
@@ -64,7 +64,7 @@
       "displayName": "Future NVDIA ALAB APP PLTR (USA)",
       "screenerId": "5gzenlmQ",
       "ok": true,
-      "size": 16962,
+      "size": 16963,
       "rowCount": 13,
       "error": null
     },
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 105762,
+      "size": 106444,
       "rowCount": 100,
       "error": null
     },
