@@ -56,6 +56,26 @@ const NSE_SECTOR_MAP: Record<string, string> = {
   ASIANPAINT: 'Paints',
   DYNPRO: 'Engineering',
 };
+// zzz254 — Sector color palette for the sector-dot chip. Stable, distinctive
+// hues so an analyst scanning 42 cards instantly clusters by industry.
+const SECTOR_COLORS: Record<string, string> = {
+  'Pharma': '#14B8A6', 'Chemicals': '#8B5CF6', 'Chemicals/Fertilizers': '#8B5CF6',
+  'Chemicals/Additives': '#8B5CF6', 'Real Estate': '#EF4444',
+  'EMS/Defence': '#A78BFA', 'Defence': '#A78BFA', 'Defence/Aerospace': '#A78BFA',
+  'Refractories': '#F97316', 'Rubber Products': '#F97316', 'Paper': '#84CC16',
+  'NBFC': '#6366F1', 'Banks': '#F59E0B', 'PSU Banks': '#EAB308',
+  'Auto Parts': '#F97316', 'Auto OEM': '#F97316',
+  'Power/Transmission': '#0EA5E9', 'Power': '#0EA5E9', 'Power/Green Finance': '#0EA5E9',
+  'Steel': '#64748B', 'Broker/Fintech': '#EC4899', 'FMCG': '#10B981',
+  'AMC': '#22D3EE', 'Consumer Durables': '#F59E0B', 'Diagnostics': '#14B8A6',
+  'Ratings/Analytics': '#22D3EE', 'Distillers/Breweries': '#8B5CF6',
+  'IT Services': '#22D3EE', 'IT Products': '#22D3EE', 'Hotels': '#F472B6',
+  'Jewelry/Bullion': '#EAB308', 'Renewables': '#10B981', 'EVs/Buses': '#10B981',
+  'Textiles': '#8B5CF6', 'Electronics/Bartronics': '#A78BFA',
+  'Cement': '#94A3B8', 'Logistics': '#0EA5E9', 'Paints': '#EC4899', 'Engineering': '#F97316',
+};
+const sectorColor = (sec: string | null): string => (sec && SECTOR_COLORS[sec]) || 'var(--mc-text-4)';
+
 // zzz253 — sector resolver: prefer explicit entry.sector, fall back to map
 const resolveSector = (e: any): string | null => {
   if (e?.sector && typeof e.sector === 'string' && e.sector.trim() !== '') return e.sector.trim();
@@ -1897,6 +1917,12 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               pe: typeof enr.pe === 'number' ? enr.pe : (typeof enr.stockPE === 'number' ? enr.stockPE : (existing as any).pe),
               // zzz248 — carry 30-day close series for sparkline
               close_30d: Array.isArray(enr.close_30d) && enr.close_30d.length >= 2 ? enr.close_30d : (existing as any).close_30d,
+              // zzz254 — institutional quality fields (all optional; carry from Screener/Yahoo)
+              roce: typeof enr.roce === 'number' ? enr.roce : (existing as any).roce,
+              roe: typeof enr.roe === 'number' ? enr.roe : (existing as any).roe,
+              debtToEquity: typeof enr.debtToEquity === 'number' ? enr.debtToEquity : ((existing as any).debtToEquity ?? (existing as any).debt_to_equity),
+              rs_rating: typeof enr.rs_rating === 'number' ? enr.rs_rating : (existing as any).rs_rating,
+              ocf_to_pat_ratio: typeof enr.ocf_to_pat_ratio === 'number' ? enr.ocf_to_pat_ratio : (existing as any).ocf_to_pat_ratio,
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
@@ -2085,6 +2111,20 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     });
   };
   const [tableSort, setTableSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'pead', dir: 'desc'});
+  // zzz254 — density toggle: comfy (default) | compact | ultra
+  const [density, setDensity] = useState<'comfy'|'compact'|'ultra'>('comfy');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const d = localStorage.getItem('mc:cb:density');
+      if (d === 'compact' || d === 'ultra' || d === 'comfy') setDensity(d);
+    } catch {}
+  }, []);
+  const cycleDensity = () => {
+    const next = density === 'comfy' ? 'compact' : density === 'compact' ? 'ultra' : 'comfy';
+    setDensity(next);
+    try { localStorage.setItem('mc:cb:density', next); } catch {}
+  };
   // zzz252 — expose entries + sector median P/E on window so ConvictionRow can
   // access peer stats without threading them through props. Rerun whenever the
   // entries list changes (add/remove/re-enrich). Moved out of JSX to avoid the
@@ -2397,6 +2437,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <button onClick={handleRefreshPrices} title="Force re-fetch of all price data (D1/D2/DRIFT/P/E) for every bench entry. Use when data feels stale — typically after market close."
               style={{ ...chipBase, border: '1px solid #22D3EE', color: '#22D3EE', fontWeight: 800 }}>
               🔄 Refresh Prices
+            </button>
+            {/* zzz254 — density toggle */}
+            <button onClick={cycleDensity} title="Cycle card density: Comfy (default) → Compact → Ultra-compact. Persists across visits."
+              style={{ ...chipBase, border: '1px solid #A78BFA', color: '#A78BFA', fontWeight: 800 }}>
+              {density === 'comfy' ? '🔳 Comfy' : density === 'compact' ? '▦ Compact' : '▬ Ultra'}
             </button>
             {/* PATCH 1018 — ELITE / MULTIBAGGER filter chips */}
             <button onClick={() => setFilters((f) => ({ ...f, elite: !f.elite }))}
@@ -3179,35 +3224,45 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         tableMode ? (
           <ConvictionTable entries={[...blockbusters, ...strongs]} onRemove={onRemove} sort={tableSort} setSort={setTableSort} />
         ) : (
-        <>
-          {blockbusters.length > 0 && (
-            <div style={{
-              backgroundColor: 'var(--mc-bg-1)',
-              border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderLeft: '4px solid var(--mc-warn)',
-              borderRadius: 12, padding: '14px 18px',
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 10, letterSpacing: '0.5px' }}>
-                ⭐ BLOCKBUSTER · {blockbusters.length}
+<>
+          {/* zzz254 — Side-by-side split when both tiers have entries. On narrow
+              screens (< 1280px) it collapses back to stacked via 1fr fallback. */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: (blockbusters.length > 0 && strongs.length > 0)
+              ? 'repeat(auto-fit, minmax(min(100%, 640px), 1fr))'
+              : '1fr',
+            gap: 12,
+          }}>
+            {blockbusters.length > 0 && (
+              <div style={{
+                backgroundColor: 'var(--mc-bg-1)',
+                border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderLeft: '4px solid var(--mc-warn)',
+                borderRadius: 12, padding: density === 'ultra' ? '8px 12px' : density === 'compact' ? '10px 14px' : '14px 18px',
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 10, letterSpacing: '0.5px' }}>
+                  ⭐ BLOCKBUSTER · {blockbusters.length}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
+                  {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} />)}
+                </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 10 }}>
-                {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
+            )}
+            {strongs.length > 0 && (
+              <div style={{
+                backgroundColor: 'var(--mc-bg-1)',
+                border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderLeft: '4px solid var(--mc-bullish)',
+                borderRadius: 12, padding: density === 'ultra' ? '8px 12px' : density === 'compact' ? '10px 14px' : '14px 18px',
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', marginBottom: 10, letterSpacing: '0.5px' }}>
+                  🟢 STRONG · {strongs.length}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
+                  {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} />)}
+                </div>
               </div>
-            </div>
-          )}
-          {strongs.length > 0 && (
-            <div style={{
-              backgroundColor: 'var(--mc-bg-1)',
-              border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderLeft: '4px solid var(--mc-bullish)',
-              borderRadius: 12, padding: '14px 18px',
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', marginBottom: 10, letterSpacing: '0.5px' }}>
-                🟢 STRONG · {strongs.length}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 10 }}>
-                {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
         )
       )}
@@ -3384,12 +3439,37 @@ function HubFilterRail({
   );
 }
 
-// zzz251 — DRIFT PATH mini-chart. Replaces the failed Yahoo-based sparkline
-// with a 4-point post-earnings trajectory (Gap → D1 → D2 → Now) using data
-// already in the localStorage entry. More institutionally meaningful than a
-// generic 30-day line — shows exactly how the beat played out inside the
-// earnings window. Silently hidden if we don't have at least 2 data points.
-function DriftPath({ entry, width = 110, height = 26 }: { entry: any; width?: number; height?: number }) {
+// zzz254 — Mini progress bar for Composite / PEAD scores. Fixed 40px wide.
+// Colored by tier band: red < 50, amber 50-70, green >= 70.
+function MiniBar({ value, width = 40, height = 5, invert = false }: { value: number | null | undefined; width?: number; height?: number; invert?: boolean }) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const clamped = Math.max(0, Math.min(100, value));
+  const color = invert
+    ? (clamped >= 70 ? 'var(--mc-bearish)' : clamped >= 40 ? '#F59E0B' : 'var(--mc-bullish)')
+    : (clamped >= 70 ? 'var(--mc-bullish)' : clamped >= 50 ? '#F59E0B' : 'var(--mc-bearish)');
+  return (
+    <div style={{ width, height, backgroundColor: 'var(--mc-bg-3)', borderRadius: 2, overflow: 'hidden' }}>
+      <div style={{ width: `${clamped}%`, height: '100%', backgroundColor: color }} />
+    </div>
+  );
+}
+
+// zzz254 — Prominent tier badge pill (top-right of card). Filled color, high-contrast.
+function TierPill({ tier }: { tier: string }) {
+  const isBB = tier === 'BLOCKBUSTER';
+  const bg = isBB ? '#F59E0B' : '#10B981';
+  return (
+    <span style={{
+      fontSize: 8.5, fontWeight: 800, letterSpacing: '0.6px',
+      padding: '2px 6px', borderRadius: 3, background: bg, color: '#0B1220',
+      fontFamily: 'ui-sans-serif, system-ui', whiteSpace: 'nowrap',
+    }}>{isBB ? 'BLOCKBUSTER' : 'STRONG'}</span>
+  );
+}
+
+// zzz251 — DRIFT PATH mini-chart. zzz254 — expanded with tick-value labels
+// below each dot so analyst reads exact %s without hovering.
+function DriftPath({ entry, width = 130, height = 26, showLabels = true }: { entry: any; width?: number; height?: number; showLabels?: boolean }) {
   const raw = [
     { label: 'Gap', v: typeof entry.gap_pct === 'number' && Number.isFinite(entry.gap_pct) ? entry.gap_pct : null },
     { label: 'D1', v: typeof entry.d1_pct === 'number' && Number.isFinite(entry.d1_pct) ? entry.d1_pct : null },
@@ -3414,19 +3494,23 @@ function DriftPath({ entry, width = 110, height = 26 }: { entry: any; width?: nu
   const first = vals[0], last = vals[vals.length - 1];
   const up = last >= first;
   const color = up ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
-  // Zero-baseline y-coordinate (for reference dashed line)
   const zeroY = height - ((0 - min) / range) * height;
   const tip = pts.map((p) => `${p.label}: ${(p.v as number) >= 0 ? '+' : ''}${(p.v as number).toFixed(1)}%`).join(' · ');
+  const labelH = showLabels ? 12 : 0;
   return (
-    <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }} aria-label="Post-earnings drift trajectory">
+    <svg width={width} height={height + labelH} style={{ display: 'block', overflow: 'visible' }} aria-label="Post-earnings drift trajectory">
       <title>DRIFT PATH: {tip}</title>
-      {/* Zero baseline (dashed reference) */}
       <line x1="0" y1={zeroY} x2={width} y2={zeroY} stroke="var(--mc-text-4)" strokeWidth="0.5" strokeDasharray="2 2" opacity="0.4" />
-      {/* Trajectory path */}
       <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.95" />
-      {/* Data-point dots */}
       {coords.map((c, i) => (
         <circle key={i} cx={c.x} cy={c.y} r={i === coords.length - 1 ? 2 : 1.5} fill={c.v >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'} />
+      ))}
+      {/* zzz254 — value labels under each dot */}
+      {showLabels && raw.map((p, i) => (
+        <text key={i} x={i * step} y={height + 10} textAnchor={i === 0 ? 'start' : i === raw.length - 1 ? 'end' : 'middle'}
+          style={{ fontSize: 7.5, fill: p.v == null ? 'var(--mc-text-4)' : (p.v >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'), fontFamily: 'ui-monospace, monospace', opacity: 0.85 }}>
+          {p.v == null ? '—' : `${p.v >= 0 ? '+' : ''}${p.v.toFixed(1)}`}
+        </text>
       ))}
     </svg>
   );
@@ -3528,7 +3612,7 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
   );
 }
 
-function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: (t: string) => void }) {
+function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: ConvictionEntry; onRemove: (t: string) => void; density?: 'comfy'|'compact'|'ultra' }) {
   const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
   const pct = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
   // USER-REQ — PEAD score chip (formula from PEAD_Strategy_vF + checklists).
@@ -3538,14 +3622,20 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
     `Sales norm ${pead.sales_norm}, PAT norm ${pead.pat_norm}, EPS norm ${pead.eps_norm}, base ${pead.raw}\n` +
     `Op-leverage +${pead.op_leverage_bonus}, Quality +${pead.quality_signal}, Tier +${pead.tier_bonus}, decay ×${pead.drift_decay}`;
   return (
-    <div style={{
-      padding: '10px 12px', backgroundColor: 'var(--mc-bg-0)',
-      border: '1px solid var(--mc-bg-4)', borderLeft: `3px solid ${tierColor}`,
-      borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6,
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+    <div
+      onMouseEnter={(ev) => { const t = ev.currentTarget as HTMLElement; t.style.transform = 'translateY(-2px)'; t.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)'; t.style.borderColor = tierColor; }}
+      onMouseLeave={(ev) => { const t = ev.currentTarget as HTMLElement; t.style.transform = ''; t.style.boxShadow = ''; t.style.borderColor = 'var(--mc-bg-4)'; }}
+      style={{
+        padding: density === 'ultra' ? '6px 10px' : density === 'compact' ? '8px 12px' : '10px 12px',
+        backgroundColor: 'var(--mc-bg-0)',
+        border: '1px solid var(--mc-bg-4)', borderLeft: `3px solid ${tierColor}`,
+        borderRadius: 8, display: 'flex', flexDirection: 'column', gap: density === 'ultra' ? 3 : density === 'compact' ? 5 : 6,
+        transition: 'transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease',
+        willChange: 'transform',
+      }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: density === 'ultra' ? 12 : 13, fontWeight: 800, color: 'var(--mc-text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {entry.company}
           </div>
           <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', rowGap: 2 }}>
@@ -3559,7 +3649,9 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             <span style={{ whiteSpace: 'nowrap' }}>{entry.filing_date}</span>
             {(() => {
               const sec = resolveSector(entry);
-              return sec ? (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec}</span></>) : null;
+              if (!sec) return null;
+              const dotColor = sectorColor(sec);
+              return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><span title={sec} style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />{sec}</span></>);
             })()}
             {/* zzz249 — compact mktCap: drop "₹" and " Cr" (context is clear on Indian bench) */}
             {typeof (entry as any).market_cap_cr === 'number' && Number.isFinite((entry as any).market_cap_cr) && (() => {
@@ -3577,20 +3669,25 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             })()}
           </div>
         </div>
-        <div style={{
-          fontSize: 14, fontWeight: 900, color: tierColor,
-          fontFamily: 'ui-monospace, monospace',
-        }}>{entry.composite_score}</div>
-        <div title={peadTip} style={{
-          fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4,
-          background: `${peadClr}20`, color: peadClr, border: `1px solid ${peadClr}55`,
-          fontFamily: 'ui-monospace, monospace', cursor: 'help', whiteSpace: 'nowrap',
-        }}>PEAD {pead.score}</div>
-        <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
-          style={{
-            background: 'none', border: 'none', color: 'var(--mc-text-4)',
-            cursor: 'pointer', padding: '2px 6px', fontSize: 14,
-          }}>×</button>
+        {/* zzz254 — right-side stack: TierPill + Composite bar + PEAD bar + × */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <TierPill tier={entry.tier} />
+            <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
+              style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '0 4px', fontSize: 14, lineHeight: 1 }}>×</button>
+          </div>
+          <div title={`Composite Score: ${entry.composite_score} — magnitude 35% + quality 25% + technical 25% + methodology 15%`}
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>COMP</span>
+            <MiniBar value={entry.composite_score} width={38} height={4} />
+            <span style={{ fontSize: 11, fontWeight: 800, color: tierColor, fontFamily: 'ui-monospace, monospace', minWidth: 20, textAlign: 'right' }}>{entry.composite_score}</span>
+          </div>
+          <div title={peadTip} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'help' }}>
+            <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>PEAD</span>
+            <MiniBar value={pead.score} width={38} height={4} />
+            <span style={{ fontSize: 11, fontWeight: 800, color: peadClr, fontFamily: 'ui-monospace, monospace', minWidth: 20, textAlign: 'right' }}>{pead.score}</span>
+          </div>
+        </div>
       </div>
       {/*
        * PATCH 0965 BUG #9 — "Results Pending" badge for unfiled stocks.
@@ -3628,7 +3725,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           );
         }
         return (
-          <div style={{ display: 'flex', gap: '4px 10px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
+          <div style={{ display: 'flex', gap: '4px 8px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
             <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
@@ -3669,6 +3766,9 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
                 <span title={tip}>
                   <span style={{ color: 'var(--mc-text-4)' }}>P/E</span>{' '}
                   <strong style={{ color: col }}>{pval.toFixed(1)}x</strong>
+                  {secMed != null && density !== 'ultra' && (
+                    <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', marginLeft: 3 }}>(med {secMed.toFixed(1)})</span>
+                  )}
                 </span>
               );
             })()}
@@ -3688,6 +3788,32 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
                 </span>
               );
             })()}
+          </div>
+        );
+      })()}
+      {/* zzz254 — Institutional-quality row: ROCE, ROE, D/E, RS, OCF/PAT.
+          Hidden in ultra-compact density. Fields come from Yahoo fundamentals /
+          Screener via the enrich API (already fetched). */}
+      {density !== 'ultra' && (() => {
+        const roce = (entry as any).roce, roe = (entry as any).roe;
+        const de = (entry as any).debtToEquity ?? (entry as any).debt_to_equity;
+        const rs = (entry as any).rs_rating;
+        const ocfPat = (entry as any).ocf_to_pat_ratio;
+        const hasAny = [roce, roe, de, rs, ocfPat].some((v) => typeof v === 'number' && Number.isFinite(v));
+        if (!hasAny) return null;
+        // Color for ROCE/ROE (>= threshold = green)
+        const qCol = (v: any, thr: number) => (typeof v === 'number' && Number.isFinite(v) && v >= thr) ? 'var(--mc-bullish)' : (typeof v === 'number' ? '#F59E0B' : 'var(--mc-text-4)');
+        const deCol = (v: any) => (typeof v === 'number' ? (v <= 0.5 ? 'var(--mc-bullish)' : v <= 1 ? 'var(--mc-text-2)' : v <= 2 ? '#F59E0B' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
+        const rsCol = (v: any) => (typeof v === 'number' ? (v >= 80 ? 'var(--mc-bullish)' : v >= 60 ? 'var(--mc-text-2)' : v >= 40 ? '#F59E0B' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
+        const ocfCol = (v: any) => (typeof v === 'number' ? (v >= 0.8 ? 'var(--mc-bullish)' : v >= 0.6 ? 'var(--mc-text-2)' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
+        const fmt = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(1) : null;
+        return (
+          <div style={{ display: 'flex', gap: '4px 10px', fontSize: 10, flexWrap: 'wrap', alignItems: 'baseline', color: 'var(--mc-text-3)' }}>
+            {fmt(roce) && (<span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{fmt(roce)}%</strong></span>)}
+            {fmt(roe) && (<span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{fmt(roe)}%</strong></span>)}
+            {fmt(de) && (<span title="D/E — Debt-to-Equity. <0.5 conservative, 0.5–1 healthy, 1–2 careful, >2 red flag."><span style={{ color: 'var(--mc-text-4)' }}>D/E</span> <strong style={{ color: deCol(de) }}>{fmt(de)}</strong></span>)}
+            {fmt(rs) && (<span title="RS Rating — Relative Strength vs market (0–100). ≥80 = top decile momentum."><span style={{ color: 'var(--mc-text-4)' }}>RS</span> <strong style={{ color: rsCol(rs) }}>{Math.round(rs)}</strong></span>)}
+            {fmt(ocfPat) && (<span title="OCF/PAT — Operating Cash Flow ÷ Net Profit. ≥0.8 = high-quality earnings, <0.6 = accounting profit ≠ cash."><span style={{ color: 'var(--mc-text-4)' }}>OCF/PAT</span> <strong style={{ color: ocfCol(ocfPat) }}>{fmt(ocfPat)}x</strong></span>)}
           </div>
         );
       })()}
@@ -3716,7 +3842,8 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
         return (
           <div title={`Sector peers (${peers.length} in bench): median PEAD ${medPead?.toFixed(0) ?? '—'}, median DRIFT ${medDrift != null ? (medDrift >= 0 ? '+' : '') + medDrift.toFixed(1) + '%' : '—'}. Positive delta = you're beating sector.`}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>
-            <span style={{ fontWeight: 700 }}>vs {entry.sector.slice(0, 14)} ({peers.length}):</span>
+            <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: sectorColor(mySec) }} />
+            <span style={{ fontWeight: 700 }}>vs {peers.length} {mySec.slice(0, 18)} peer{peers.length === 1 ? '' : 's'}:</span>
             {peadDelta != null && (<span>PEAD <strong style={{ color: peadDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{peadDelta >= 0 ? '+' : ''}{peadDelta.toFixed(0)}</strong></span>)}
             {driftDelta != null && (<span>DRIFT <strong style={{ color: driftDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{driftDelta >= 0 ? '+' : ''}{driftDelta.toFixed(1)}%</strong></span>)}
           </div>
