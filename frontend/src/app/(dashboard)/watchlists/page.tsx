@@ -1029,8 +1029,10 @@ export default function WatchlistsPage() {
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 4px' }}>Watchlist</h1>
-          <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
+          {activeTab !== 'conviction' && (<>
+            <h1 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 4px' }}>Watchlist</h1>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
+          </>)}
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
@@ -1868,14 +1870,15 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const list = getConvictionList();
-    // zzz244 — DROP d1_pct precondition. zzz248 — also fire on missing close_30d
-    // so sparklines get populated. Any entry missing pe/move_pct/d2_pct/close_30d
-    // gets re-enriched from the API.
+    // zzz244/248/255 — broaden auto-enrich gate. Fire whenever ANY expected field
+    // is missing (move_pct, d2, pe, close_30d, roce). This includes new institutional
+    // fields added in zzz254 so existing entries backfill on next page load.
     const stale = list.filter(e =>
       e.ticker && e.filing_date &&
       (typeof (e as any).move_pct !== 'number'
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
+        || typeof (e as any).roce !== 'number'  // zzz255
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
@@ -3053,9 +3056,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         </>)}
       </div>
       <div style={{
-        padding: '10px 14px', backgroundColor: 'var(--mc-bg-0)',
+        padding: '8px 12px', backgroundColor: 'var(--mc-bg-0)',
         border: '1px solid var(--mc-bg-4)', borderRadius: 8,
-        fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.5,
+        fontSize: 10.5, color: 'var(--mc-text-4)', lineHeight: 1.5,
+        order: 99, marginTop: 12,
       }}>
         <div>
           Institutional bench of high-quality post-earnings setups.
@@ -3103,6 +3107,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       {/* PATCH 0196 — Export toolbar (CSV, TradingView, .txt, Open chart). Tier-grouped.
           PATCH 0366 — tickerCompanyMap wired for Screener.in name-based matching. */}
       <TickerExportToolbar
+        compact
         tickers={allTickers}
         groups={[
           // zzz224 — ELITE leads: in the sectioned TradingView copy, elite
@@ -3671,10 +3676,10 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         </div>
         {/* zzz254 — right-side stack: TierPill + Composite bar + PEAD bar + × */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <TierPill tier={entry.tier} />
             <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
-              style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '0 4px', fontSize: 14, lineHeight: 1 }}>×</button>
+              style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '2px 6px', fontSize: 15, lineHeight: 1, marginLeft: 2 }}>×</button>
           </div>
           <div title={`Composite Score: ${entry.composite_score} — magnitude 35% + quality 25% + technical 25% + methodology 15%`}
             style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -3725,7 +3730,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           );
         }
         return (
-          <div style={{ display: 'flex', gap: '4px 8px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
+          <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
             <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
@@ -3791,29 +3796,21 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           </div>
         );
       })()}
-      {/* zzz254 — Institutional-quality row: ROCE, ROE, D/E, RS, OCF/PAT.
-          Hidden in ultra-compact density. Fields come from Yahoo fundamentals /
-          Screener via the enrich API (already fetched). */}
+      {/* zzz254 — Institutional-quality row: ROCE, ROE, D/E. zzz255 — dropped RS/OCF
+          because enrich API doesn't return them (only graded API does). Hidden in ultra. */}
       {density !== 'ultra' && (() => {
         const roce = (entry as any).roce, roe = (entry as any).roe;
         const de = (entry as any).debtToEquity ?? (entry as any).debt_to_equity;
-        const rs = (entry as any).rs_rating;
-        const ocfPat = (entry as any).ocf_to_pat_ratio;
-        const hasAny = [roce, roe, de, rs, ocfPat].some((v) => typeof v === 'number' && Number.isFinite(v));
+        const hasAny = [roce, roe, de].some((v) => typeof v === 'number' && Number.isFinite(v));
         if (!hasAny) return null;
-        // Color for ROCE/ROE (>= threshold = green)
         const qCol = (v: any, thr: number) => (typeof v === 'number' && Number.isFinite(v) && v >= thr) ? 'var(--mc-bullish)' : (typeof v === 'number' ? '#F59E0B' : 'var(--mc-text-4)');
         const deCol = (v: any) => (typeof v === 'number' ? (v <= 0.5 ? 'var(--mc-bullish)' : v <= 1 ? 'var(--mc-text-2)' : v <= 2 ? '#F59E0B' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
-        const rsCol = (v: any) => (typeof v === 'number' ? (v >= 80 ? 'var(--mc-bullish)' : v >= 60 ? 'var(--mc-text-2)' : v >= 40 ? '#F59E0B' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
-        const ocfCol = (v: any) => (typeof v === 'number' ? (v >= 0.8 ? 'var(--mc-bullish)' : v >= 0.6 ? 'var(--mc-text-2)' : 'var(--mc-bearish)') : 'var(--mc-text-4)');
         const fmt = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(1) : null;
         return (
-          <div style={{ display: 'flex', gap: '4px 10px', fontSize: 10, flexWrap: 'wrap', alignItems: 'baseline', color: 'var(--mc-text-3)' }}>
+          <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10, flexWrap: 'wrap', alignItems: 'baseline', color: 'var(--mc-text-3)', paddingTop: 2, borderTop: '1px dashed var(--mc-bg-3)', marginTop: 2 }}>
             {fmt(roce) && (<span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{fmt(roce)}%</strong></span>)}
             {fmt(roe) && (<span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{fmt(roe)}%</strong></span>)}
             {fmt(de) && (<span title="D/E — Debt-to-Equity. <0.5 conservative, 0.5–1 healthy, 1–2 careful, >2 red flag."><span style={{ color: 'var(--mc-text-4)' }}>D/E</span> <strong style={{ color: deCol(de) }}>{fmt(de)}</strong></span>)}
-            {fmt(rs) && (<span title="RS Rating — Relative Strength vs market (0–100). ≥80 = top decile momentum."><span style={{ color: 'var(--mc-text-4)' }}>RS</span> <strong style={{ color: rsCol(rs) }}>{Math.round(rs)}</strong></span>)}
-            {fmt(ocfPat) && (<span title="OCF/PAT — Operating Cash Flow ÷ Net Profit. ≥0.8 = high-quality earnings, <0.6 = accounting profit ≠ cash."><span style={{ color: 'var(--mc-text-4)' }}>OCF/PAT</span> <strong style={{ color: ocfCol(ocfPat) }}>{fmt(ocfPat)}x</strong></span>)}
           </div>
         );
       })()}
@@ -3843,8 +3840,8 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           <div title={`Sector peers (${peers.length} in bench): median PEAD ${medPead?.toFixed(0) ?? '—'}, median DRIFT ${medDrift != null ? (medDrift >= 0 ? '+' : '') + medDrift.toFixed(1) + '%' : '—'}. Positive delta = you're beating sector.`}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>
             <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: sectorColor(mySec) }} />
-            <span style={{ fontWeight: 700 }}>vs {peers.length} {mySec.slice(0, 18)} peer{peers.length === 1 ? '' : 's'}:</span>
-            {peadDelta != null && (<span>PEAD <strong style={{ color: peadDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{peadDelta >= 0 ? '+' : ''}{peadDelta.toFixed(0)}</strong></span>)}
+            <span style={{ fontWeight: 700, marginRight: 4 }}>vs {peers.length} {mySec.slice(0, 18)} peer{peers.length === 1 ? '' : 's'}:</span>
+            {peadDelta != null && (<span style={{ marginRight: 6 }}>PEAD <strong style={{ color: peadDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{peadDelta >= 0 ? '+' : ''}{peadDelta.toFixed(0)}</strong></span>)}
             {driftDelta != null && (<span>DRIFT <strong style={{ color: driftDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{driftDelta >= 0 ? '+' : ''}{driftDelta.toFixed(1)}%</strong></span>)}
           </div>
         );
@@ -3854,10 +3851,12 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         const pts = ['gap_pct','d1_pct','d2_pct','move_pct'].filter(k => typeof (entry as any)[k] === 'number' && Number.isFinite((entry as any)[k])).length;
         if (pts >= 2) {
           return (
-            <div style={{ marginTop: 2, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <DriftPath entry={entry} width={110} height={26} />
-              <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px', fontWeight: 700 }}>DRIFT PATH</span>
-              <span style={{ fontSize: 8, color: 'var(--mc-text-4)', letterSpacing: '0.2px' }}>Gap · D1 · D2 · Now</span>
+            <div style={{ marginTop: 4, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <DriftPath entry={entry} width={130} height={26} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <span style={{ fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px', fontWeight: 700 }}>DRIFT PATH</span>
+                <span style={{ fontSize: 8, color: 'var(--mc-text-4)', letterSpacing: '0.2px' }}>Gap · D1 · D2 · Now</span>
+              </div>
             </div>
           );
         }
