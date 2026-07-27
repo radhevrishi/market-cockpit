@@ -3485,6 +3485,8 @@ function EIEliteTab() {
   const [progress, setProgress] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<number | null>(null);
   const [sort, setSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'score', dir: 'desc'});
+  // zzz266 — Quality Preset default ON: Sales≥20, PAT≥20, EPS≥25, OPM≥11
+  const [qualityPreset, setQualityPreset] = useState(true);
   // Load from cache on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3576,7 +3578,7 @@ function EIEliteTab() {
                 epsYoy: c.epsYoY ?? c.epsYoy ?? c.eps_yoy_pct,
                 opmPct: lastQ.opm ?? c.opmPct ?? c.opm_pct,
                 guidance: c.guidance, price: c.cmp ?? c.price ?? c.currentPrice,
-                d1_close_pct: c.d1_close_pct ?? c.d1_pct ?? c.priceScore,
+                d1_close_pct: c.d1_close_pct ?? c.d1_pct, // zzz266: dropped priceScore fallback (was 50 default)
                 filed_date: c.resultDate ?? c.filed_date ?? c.filing_date, period: c.period ?? lastQ.period,
                 fetched_at: new Date().toISOString(),
               });
@@ -3622,13 +3624,23 @@ function EIEliteTab() {
     }
   }, []);
   const sorted = useMemo(() => {
-    return [...rows].sort((a: any, b: any) => {
+    // zzz266 — apply Quality Preset filter (Sales≥20, PAT≥20, EPS≥25, OPM≥11) before sort
+    const filtered = qualityPreset
+      ? rows.filter((r) => {
+          const s = typeof r.revenueYoy === 'number' ? r.revenueYoy : -Infinity;
+          const pt = typeof r.patYoy === 'number' ? r.patYoy : -Infinity;
+          const ep = typeof r.epsYoy === 'number' ? r.epsYoy : -Infinity;
+          const om = typeof r.opmPct === 'number' ? r.opmPct : -Infinity;
+          return s >= 20 && pt >= 20 && ep >= 25 && om >= 11;
+        })
+      : rows;
+    return [...filtered].sort((a: any, b: any) => {
       const av = a[sort.col], bv = b[sort.col];
       if (typeof av === 'number' && typeof bv === 'number') return sort.dir === 'asc' ? av - bv : bv - av;
       const as = String(av || ''), bs = String(bv || '');
       return sort.dir === 'asc' ? as.localeCompare(bs) : bs.localeCompare(as);
     });
-  }, [rows, sort]);
+  }, [rows, sort, qualityPreset]);
   const onSort = (col: string) => setSort((s) => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'desc' });
   const arrow = (c: string) => sort.col === c ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
   const fmtPct = (v: any) => typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
@@ -3647,7 +3659,15 @@ function EIEliteTab() {
         <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
           <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #10B981 15%, transparent)', color: '#10B981', borderRadius: 4, fontWeight: 700 }}>EXCELLENT · {excellents}</span>
           <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #22D3EE 15%, transparent)', color: '#22D3EE', borderRadius: 4, fontWeight: 700 }}>STRONG · {strongs}</span>
+          {qualityPreset && (
+            <span style={{ padding: '2px 8px', background: 'color-mix(in srgb, #F59E0B 15%, transparent)', color: '#F59E0B', borderRadius: 4, fontWeight: 700 }}>Filtered · {sorted.length}</span>
+          )}
         </div>
+        {/* zzz266 — Quality Preset toggle, default ON */}
+        <button onClick={() => setQualityPreset(v => !v)} title="Toggle Quality Preset: Sales≥20, PAT≥20, EPS≥25, OPM≥11. Same institutional gate as Conviction Beats."
+          style={{ padding: '6px 12px', fontSize: 11.5, fontWeight: 800, borderRadius: 6, background: qualityPreset ? '#F59E0B' : 'none', border: '1px solid #F59E0B', color: qualityPreset ? '#0B1220' : '#F59E0B', cursor: 'pointer' }}>
+          ⚡ Quality Preset {qualityPreset ? '✓ ON' : 'OFF'}
+        </button>
         <button onClick={fetchElite} disabled={loading}
           style={{ padding: '6px 12px', fontSize: 11.5, fontWeight: 700, borderRadius: 6, background: 'none', border: '1px solid #8B5CF6', color: '#8B5CF6', cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? '⏳ Fetching…' : '🔄 Refresh'}
