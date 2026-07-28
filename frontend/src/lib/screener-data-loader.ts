@@ -139,7 +139,8 @@ export type SyncStatus = {
   hasManifest: boolean;
   lastSync: Date | null;
   hoursOld: number | null;
-  isStale: boolean;       // > 36h
+  isStale: boolean;       // > 36h since last successful sync
+  syncBroken: boolean;    // zzz269 — sync ran but 0 files landed (auth failure most common)
   okCount: number;
   failCount: number;
   files: string[];
@@ -148,15 +149,21 @@ export type SyncStatus = {
 export async function getSyncStatus(): Promise<SyncStatus> {
   const m = await fetchManifest();
   if (!m) {
-    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, okCount: 0, failCount: 0, files: [] };
+    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, syncBroken: true, okCount: 0, failCount: 0, files: [] };
   }
   const lastSync = new Date(m.lastSync);
   const hoursOld = (Date.now() - lastSync.getTime()) / 3_600_000;
+  // zzz269 — a "broken" sync = manifest updated but zero files succeeded and at
+  // least one attempted. Symptom of expired SCREENER_SESSION secret: workflow
+  // runs, all POST /api/export requests return HTTP 403 HTML, IS_HTML guard
+  // refuses to overwrite good CSVs, files rot in place while lastSync ticks.
+  const syncBroken = m.ok === 0 && m.fail > 0;
   return {
     hasManifest: true,
     lastSync,
     hoursOld,
-    isStale: hoursOld > 36,
+    isStale: hoursOld > 36 || syncBroken,
+    syncBroken,
     okCount: m.ok,
     failCount: m.fail,
     files: m.files.map(f => f.name),
@@ -230,15 +237,17 @@ export async function fetchTradingviewCsvsAsFiles(filenames: readonly string[]):
 export async function getTradingviewSyncStatus(): Promise<SyncStatus> {
   const m = await fetchTradingviewManifest();
   if (!m) {
-    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, okCount: 0, failCount: 0, files: [] };
+    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, syncBroken: true, okCount: 0, failCount: 0, files: [] };
   }
   const lastSync = new Date(m.lastSync);
   const hoursOld = (Date.now() - lastSync.getTime()) / 3_600_000;
+  const syncBroken = m.ok === 0 && m.fail > 0;
   return {
     hasManifest: true,
     lastSync,
     hoursOld,
-    isStale: hoursOld > 36,
+    isStale: hoursOld > 36 || syncBroken,
+    syncBroken,
     okCount: m.ok,
     failCount: m.fail,
     files: m.files.map(f => f.name),
