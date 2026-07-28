@@ -1,14 +1,15 @@
 {
-  "lastSync": "2026-07-28T10:57:13.028Z",
-  "workflowVersion": "zzz162",
-  "approach": "scanner-api-interception + field-id translation",
-  "ok": 9,
+  "lastSync": "2026-07-28T13:05:06.732Z",
+  "workflowVersion": "zzz270",
+  "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
+  "ok": 10,
   "fail": 0,
   "files": [
     {
       "name": "minervini-stocks.csv",
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
+      "kind": "screener",
       "ok": true,
       "size": 28234,
       "rowCount": 24,
@@ -18,6 +19,7 @@
       "name": "qullamaggie-leaders.csv",
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
+      "kind": "screener",
       "ok": true,
       "size": 14487,
       "rowCount": 11,
@@ -27,8 +29,9 @@
       "name": "episodic-pivot.csv",
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
+      "kind": "screener",
       "ok": true,
-      "size": 46951,
+      "size": 46948,
       "rowCount": 40,
       "error": null
     },
@@ -36,8 +39,9 @@
       "name": "liquidity-leaders.csv",
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
+      "kind": "screener",
       "ok": true,
-      "size": 25044,
+      "size": 25041,
       "rowCount": 22,
       "error": null
     },
@@ -45,8 +49,9 @@
       "name": "weekly-gainer-usa.csv",
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
+      "kind": "screener",
       "ok": true,
-      "size": 25764,
+      "size": 25767,
       "rowCount": 22,
       "error": null
     },
@@ -54,8 +59,9 @@
       "name": "sales-eps-growth-bonde.csv",
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
+      "kind": "screener",
       "ok": true,
-      "size": 46093,
+      "size": 46078,
       "rowCount": 39,
       "error": null
     },
@@ -63,6 +69,7 @@
       "name": "future-nvda-alab-app-pltr.csv",
       "displayName": "Future NVDIA ALAB APP PLTR (USA)",
       "screenerId": "5gzenlmQ",
+      "kind": "screener",
       "ok": true,
       "size": 16949,
       "rowCount": 13,
@@ -72,8 +79,9 @@
       "name": "usa-multibagger-3.csv",
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
+      "kind": "screener",
       "ok": true,
-      "size": 105877,
+      "size": 106514,
       "rowCount": 100,
       "error": null
     },
@@ -81,9 +89,20 @@
       "name": "future-super-scalers-nbis.csv",
       "displayName": "Future Super Scalers like NBIS Full",
       "screenerId": "oRvEFfVY",
+      "kind": "screener",
       "ok": true,
-      "size": 103668,
+      "size": 103670,
       "rowCount": 94,
+      "error": null
+    },
+    {
+      "name": "watchlist-usa-339270482.csv",
+      "displayName": "USA Portfolio (TradingView 339270482)",
+      "screenerId": "339270482",
+      "kind": "watchlist",
+      "ok": true,
+      "size": 52149,
+      "rowCount": 45,
       "error": null
     }
   ]
