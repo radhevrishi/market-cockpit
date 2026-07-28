@@ -913,11 +913,11 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ color: COL.muted, fontSize: 12 }}>
-                    <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}>TICKER</th>
-                    <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}>COMPANY</th>
-                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12 }}>PRICE</th>
-                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12 }}>EMA</th>
-                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12 }}>% vs MA</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>TICKER</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>COMPANY</th>
+                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>PRICE</th>
+                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>EMA</th>
+                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>% vs MA</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -936,7 +936,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           </div>
         );
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(520px, 1fr))', gap: 14 }}>
             {renderTable(`↓ Below 50-EMA — ${below50.length} of ${totalWithEma}`, 'price under the 50-day exponential moving average', below50, 'ema50', 'pctVsEma50', '#EF4444')}
             {renderTable(`↑ Above 50-EMA — ${above50.length} of ${totalWithEma}`, 'price above the 50-day exponential moving average', above50, 'ema50', 'pctVsEma50', '#10B981')}
             {renderTable(`↓ Below 200-EMA — ${below200.length} of ${totalWithEma}`, 'price under the 200-day exponential moving average', below200, 'ema200', 'pctVsEma200', '#EF4444')}
