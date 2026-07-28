@@ -33,6 +33,52 @@ const SCREENERS = [
   { id: 'oRvEFfVY', slug: 'future-super-scalers-nbis', name: 'Future Super Scalers like NBIS Full' },
 ];
 
+// zzz270 — TradingView WATCHLISTS (personal saved lists). Different from
+// screeners: watchlist page just shows tickers, no fundamentals grid. So we:
+//   1. Fetch symbol list via /api/v1/symbols_list/custom/<id>/
+//   2. POST those tickers to scanner.tradingview.com/america/scan with the
+//      same fundamentals column set the SCREENERS use.
+//   3. Convert response to CSV in the same format (parseUSARow() reads).
+const WATCHLISTS = [
+  { id: '339270482', slug: 'watchlist-usa-339270482', name: 'USA Portfolio (TradingView 339270482)' },
+];
+
+// Column list mirroring what TV's fundamentals screener page requests. The
+// scanner API returns data in the SAME order, so scannerJsonToCsv() below
+// can reuse the exact translation logic (via FIELD_MAP / DROP_FIELDS).
+// Order matches request → response.
+const WATCHLIST_COLUMNS = [
+  'ticker-view',
+  'sector', 'industry',
+  'market_cap_basic', 'close',
+  'total_revenue_yoy_growth_fq', 'total_revenue_yoy_growth_fy',
+  'gross_profit_yoy_growth_fq', 'gross_margin_ttm', 'gross_margin_fy',
+  'operating_margin_ttm', 'net_margin_ttm', 'ebitda_margin_ttm',
+  'free_cash_flow_margin_fy', 'free_cash_flow_ttm', 'free_cash_flow_fy',
+  'price_earnings_ttm', 'non_gaap_price_to_earnings_per_share_forecast_next_fy',
+  'price_earnings_growth_ttm', 'price_sales_current', 'price_book_fq',
+  'enterprise_value_ebitda_ttm', 'enterprise_value_to_revenue_ttm',
+  'net_debt_fy', 'net_debt_to_ebitda_fy', 'debt_to_equity_fq',
+  'return_on_equity_fq', 'return_on_invested_capital_fy', 'return_on_capital_employed_fy',
+  'earnings_per_share_diluted_yoy_growth_ttm', 'earnings_per_share_diluted_yoy_growth_fq',
+  'earnings_per_share_forecast_next_fy',
+  'total_revenue_cagr_5y',
+  'piotroski_f_score_ttm', 'altman_z_score_ttm',
+  'share_buyback_ratio_fy', 'buyback_yield',
+  'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.Y',
+  'price_52_week_high', 'price_52_week_low',
+  'SMA50', 'SMA150', 'SMA200', 'EMA21', 'EMA50', 'EMA200',
+  'RSI', 'ATR', 'Volatility.M', 'Volatility.W',
+  'volume', 'average_volume_30d_calc', 'relative_volume_10d_calc|1W', 'gap',
+  'float_shares_percent_current', 'total_shares_outstanding_current',
+  'number_of_employees_fy', 'revenue_per_employee_fy',
+  'cash_n_equivalents_fy', 'cash_n_short_term_invest_fy', 'long_term_debt_fy',
+  'earnings_release_next_trading_date_fq', 'price_target_1y',
+  'beta_5_year', 'AnalystRating', 'interst_cover_fy',
+  'research_and_dev_ratio_fy', 'sustainable_growth_rate_fy',
+  'sloan_ratio_fy', 'capex_per_share_ttm', 'free_cash_flow_per_share_ttm',
+];
+
 // ─── Field ID → friendly column header map ─────────────────────────────────
 // Names on the right side must match what parseUSARow() in page.tsx looks for.
 // Anything in DROP_FIELDS is skipped entirely; ticker-view is handled separately.
@@ -308,18 +354,92 @@ for (const sc of SCREENERS) {
   }
 }
 
+// zzz270 — After screeners, sync any personal WATCHLISTS. Different path:
+// hit TradingView's watchlist symbols API + scanner API directly (Playwright
+// request client, session cookie already attached).
+for (const wl of WATCHLISTS) {
+  console.log(`\n=== [WATCHLIST] ${wl.name} (${wl.id}) ===`);
+  const outPath = path.join(OUT_DIR, `${wl.slug}.csv`);
+  const rawJsonPath = path.join(DEBUG_DIR, `${wl.slug}-scanner-response.json`);
+
+  try {
+    // Step 1: fetch the watchlist's symbol list. TV serves this as JSON at
+    // /api/v1/symbols_list/custom/<id>/ when authenticated via sessionid.
+    const symUrl = `https://www.tradingview.com/api/v1/symbols_list/custom/${wl.id}/`;
+    console.log(`  → GET ${symUrl}`);
+    const symResp = await context.request.get(symUrl, {
+      headers: { 'Accept': 'application/json', 'Referer': `https://www.tradingview.com/watchlists/${wl.id}/` },
+    });
+    console.log(`  symbols_list HTTP ${symResp.status()}`);
+    if (!symResp.ok()) throw new Error(`symbols_list returned HTTP ${symResp.status()}`);
+    const symJson = await symResp.json();
+    // Response shape varies; try a few paths.
+    let tickers = symJson.symbols || symJson.tickers || [];
+    if (!Array.isArray(tickers) || !tickers.length) {
+      // Alternate: /api/v1/watchlists/<id>/ returns { symbols: [...] }
+      const alt = await context.request.get(`https://www.tradingview.com/api/v1/watchlists/${wl.id}/`);
+      if (alt.ok()) {
+        const altJson = await alt.json();
+        tickers = altJson.symbols || altJson.tickers || [];
+      }
+    }
+    if (!Array.isArray(tickers) || !tickers.length) {
+      throw new Error(`Watchlist ${wl.id} returned no tickers (response keys: ${Object.keys(symJson).join(',')})`);
+    }
+    // Filter to strings like "NASDAQ:AAPL" (drop separators like "###USA STOCKS")
+    tickers = tickers.filter(t => typeof t === 'string' && t.includes(':') && !t.startsWith('#'));
+    console.log(`  ✓ got ${tickers.length} tickers (sample: ${tickers.slice(0, 3).join(', ')})`);
+
+    // Step 2: POST tickers to scanner API to get fundamentals.
+    const scanUrl = 'https://scanner.tradingview.com/america/scan';
+    const scanBody = { symbols: { tickers }, columns: WATCHLIST_COLUMNS };
+    console.log(`  → POST ${scanUrl} (columns=${WATCHLIST_COLUMNS.length})`);
+    const scanResp = await context.request.post(scanUrl, {
+      data: scanBody,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': 'https://www.tradingview.com',
+        'Referer': `https://www.tradingview.com/watchlists/${wl.id}/`,
+      },
+    });
+    console.log(`  scanner HTTP ${scanResp.status()}`);
+    if (!scanResp.ok()) throw new Error(`scanner returned HTTP ${scanResp.status()}`);
+    const scanJson = await scanResp.json();
+    fs.writeFileSync(rawJsonPath, JSON.stringify({ url: scanUrl, request: scanBody, response: scanJson }, null, 2));
+    if (!Array.isArray(scanJson.data) || !scanJson.data.length) {
+      throw new Error(`scanner returned 0 rows (totalCount=${scanJson.totalCount})`);
+    }
+    console.log(`  ✓ scanner returned ${scanJson.data.length} rows`);
+
+    // Step 3: reuse existing CSV converter with the columns we sent.
+    const csv = scannerJsonToCsv(scanJson, { columns: WATCHLIST_COLUMNS });
+    if (!csv) throw new Error('Failed to convert scanner JSON to CSV');
+    fs.writeFileSync(outPath, csv);
+    const stat = fs.statSync(outPath);
+    console.log(`  ✓ ${path.basename(outPath)} (${stat.size} bytes, ${scanJson.data.length} rows)`);
+    results.push({ ...wl, ok: true, size: stat.size, rowCount: scanJson.data.length, kind: 'watchlist' });
+  } catch (e) {
+    const errMsg = e.message || String(e);
+    console.error(`  ✗ ${wl.slug}: ${errMsg}`);
+    results.push({ ...wl, ok: false, error: errMsg, kind: 'watchlist' });
+  }
+  await new Promise(r => setTimeout(r, 1500));
+}
+
 await browser.close();
 
 const manifest = {
   lastSync: new Date().toISOString(),
-  workflowVersion: 'zzz162',
-  approach: 'scanner-api-interception + field-id translation',
+  workflowVersion: 'zzz270',
+  approach: 'scanner-api-interception (screeners) + direct scanner POST (watchlists)',
   ok: results.filter(r => r.ok).length,
   fail: results.filter(r => !r.ok).length,
   files: results.map(r => ({
     name: `${r.slug}.csv`,
     displayName: r.name,
     screenerId: r.id,
+    kind: r.kind || 'screener',
     ok: r.ok,
     size: r.size || 0,
     rowCount: r.rowCount || 0,
@@ -330,6 +450,6 @@ fs.writeFileSync(path.join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, n
 console.log(`\n=== Manifest: ${manifest.ok} ok, ${manifest.fail} failed ===`);
 
 if (manifest.fail === results.length) {
-  console.error('::error::All screeners failed.');
+  console.error('::error::All screeners and watchlists failed.');
   process.exit(2);
 }
