@@ -13,6 +13,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 // and Watchlist analyzers stay populated without manual upload.
 import {
   SYNC_ROUTING, fetchCsvText, getSyncStatus, getDisplayName,
+  fetchTradingviewCsvText, getTradingviewSyncStatus,
   shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
 } from '@/lib/screener-data-loader';
 
@@ -388,22 +389,27 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
   // watchlist-10432429.csv (their LATEST portfolio); Watchlist scope loads two
   // additional watchlists alongside any manual uploads.
   // INDIA-only: USA market preserves manual upload flow.
+  const isUsaPortfolio = scope === 'portfolio' && market === 'USA';
   const autoLoadScope = (scope === 'portfolio' || scope === 'watchlist') && market === 'INDIA'
     ? 'fundamentals-' + scope + '-india'
-    : '';
+    : isUsaPortfolio
+      ? 'fundamentals-portfolio-usa'
+      : '';
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   useEffect(() => {
     if (!autoLoadScope) return;
-    getSyncStatus().then(setSyncStatus);
-  }, [autoLoadScope]);
+    const p = isUsaPortfolio ? getTradingviewSyncStatus() : getSyncStatus();
+    p.then(setSyncStatus);
+  }, [autoLoadScope, isUsaPortfolio]);
   const runAutoSync = useCallback(async (force = false) => {
     if (syncLoading || !autoLoadScope) return;
     setSyncLoading(true);
     try {
       let filenames: readonly string[] = [];
-      if (scope === 'portfolio') filenames = [SYNC_ROUTING.portfolioIndia];
-      else if (scope === 'watchlist') filenames = SYNC_ROUTING.watchlistIndia;
+      if (scope === 'portfolio' && market === 'INDIA') filenames = [SYNC_ROUTING.portfolioIndia];
+      else if (scope === 'watchlist' && market === 'INDIA') filenames = SYNC_ROUTING.watchlistIndia;
+      else if (isUsaPortfolio) filenames = [SYNC_ROUTING.portfolioUsa];
       else return;
       let loaded = 0;
       // zzz195: AUTHORITATIVE SYNC. Collect fresh CSV rows in-memory FIRST,
@@ -414,10 +420,10 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       const freshRowKeys = new Set<string>();
       const displayNames: string[] = [];
       for (const fn of filenames) {
-        const text = await fetchCsvText(fn);
+        const text = isUsaPortfolio ? await fetchTradingviewCsvText(fn) : await fetchCsvText(fn);
         if (!text) continue;
         let displayName: string;
-        try { displayName = await getDisplayName(fn); } catch { displayName = fn; }
+        try { displayName = isUsaPortfolio ? fn : await getDisplayName(fn); } catch { displayName = fn; }
         displayNames.push(displayName);
         try {
           const incoming = toObjects(parseCSV(text));
