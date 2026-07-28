@@ -906,28 +906,28 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
         const renderTable = (title: string, sub: string, items: any[], maKey: 'ema50' | 'ema200', pctKey: 'pctVsEma50' | 'pctVsEma200', titleColor: string) => (
           <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
             <div style={{ fontSize: 13, fondWeight: 800, color: titleColor, marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
-            <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>{sub}</div>
+            <div style={{ fontSize: 12, color: COL.muted, marginBottom: 10 }}>{sub}</div>
             {items.length === 0 ? (
               <div style={{ color: COL.muted, fontSize: 11 }}>None — all stocks trading above this MA. 🟢</div>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
-                  <tr style={{ color: COL.muted, fontSize: 10 }}>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>TICKER</th>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>COMPANY</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>PRICE</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>EMA</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>% vs MA</th>
+                  <tr style={{ color: COL.muted, fontSize: 12 }}>
+                    <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}>TICKER</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}>COMPANY</th>
+                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12 }}>PRICE</th>
+                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12 }}>EMA</th>
+                    <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12 }}>% vs MA</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.slice(0, 12).map(r => (
+                  {items.map(r => (
                     <tr key={r.symbol} style={{ borderTop: `1px solid ${COL.line}` }}>
-                      <td style={{ padding: '4px 6px', color: COL.cyan, fontWeight: 700 }}>{r.symbol}</td>
-                      <td style={{ padding: '4px 6px', color: COL.muted, fontSize: 10, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.txt }}>{r.price?.toFixed(2) ?? '—'}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.muted }}>{(r[maKey] as number)?.toFixed(2) ?? '—'}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: titleColor, fontWeight: 800 }}>{(r[pctKey] as number)?.toFixed(1)}%</td>
+                      <td style={{ padding: '7px 10px', color: COL.cyan, fontWeight: 700, fontSize: 13 }}>{r.symbol}</td>
+                      <td style={{ padding: '7px 10px', color: COL.muted, fontSize: 12, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ padding: '7px 10px', textAlign: 'right', color: COL.txt, fontSize: 13 }}>{r.price?.toFixed(2) ?? '—'}</td>
+                      <td style={{ padding: '7px 10px', textAlign: 'right', color: COL.muted, fontSize: 13 }}>{(r[maKey] as number)?.toFixed(2) ?? '—'}</td>
+                      <td style={{ padding: '7px 10px', textAlign: 'right', color: titleColor, fontWeight: 800, fontSize: 13 }}>{(r[pctKey] as number)?.toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
