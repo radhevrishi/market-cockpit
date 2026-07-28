@@ -73,6 +73,7 @@ export const SYNC_ROUTING = {
     'usa-multibagger-3.csv',
     'future-super-scalers-nbis.csv',
   ],
+  portfolioUsa: 'watchlist-usa-339270482.csv',
 } as const;
 
 const MANIFEST_URL = '/data/screener/manifest.json';
