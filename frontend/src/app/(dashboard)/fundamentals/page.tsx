@@ -899,9 +899,13 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           .sort((a, b) => (a.pctVsEma50 ?? 0) - (b.pctVsEma50 ?? 0));
         const below200 = rows.filter(r => typeof r.pctVsEma200 === 'number' && r.pctVsEma200 < 0)
           .sort((a, b) => (a.pctVsEma200 ?? 0) - (b.pctVsEma200 ?? 0));
-        const renderTable = (title: string, sub: string, items: any[], maKey: 'ema50' | 'ema200', pctKey: 'pctVsEma50' | 'pctVsEma200') => (
+        const above50 = rows.filter(r => typeof r.pctVsEma50 === 'number' && r.pctVsEma50 > 0)
+          .sort((a, b) => (b.pctVsEma50 ?? 0) - (a.pctVsEma50 ?? 0));
+        const above200 = rows.filter(r => typeof r.pctVsEma200 === 'number' && r.pctVsEma200 > 0)
+          .sort((a, b) => (b.pctVsEma200 ?? 0) - (a.pctVsEma200 ?? 0));
+        const renderTable = (title: string, sub: string, items: any[], maKey: 'ema50' | 'ema200', pctKey: 'pctVsEma50' | 'pctVsEma200', titleColor: string) => (
           <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
+            <div style={{ fontSize: 13, fondWeight: 800, color: titleColor, marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
             <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>{sub}</div>
             {items.length === 0 ? (
               <div style={{ color: COL.muted, fontSize: 11 }}>None — all stocks trading above this MA. 🟢</div>
@@ -923,7 +927,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
                       <td style={{ padding: '4px 6px', color: COL.muted, fontSize: 10, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.txt }}>{r.price?.toFixed(2) ?? '—'}</td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.muted }}>{(r[maKey] as number)?.toFixed(2) ?? '—'}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: '#EF4444', fontWeight: 800 }}>{(r[pctKey] as number)?.toFixed(1)}%</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: titleColor, fontWeight: 800 }}>{(r[pctKey] as number)?.toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -933,8 +937,10 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
         );
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
-            {renderTable(`↓ Below 50-EMA — ${below50.length} of ${totalWithEma}`, 'price under the 50-day exponential moving average', below50, 'ema50', 'pctVsEma50')}
-            {renderTable(`↓ Below 200-EMA — ${below200.length} of ${totalWithEma}`, 'price under the 200-day exponential moving average', below200, 'ema200', 'pctVsEma200')}
+            {renderTable(`↓ Below 50-EMA — ${below50.length} of ${totalWithEma}`, 'price under the 50-day exponential moving average', below50, 'ema50', 'pctVsEma50', '#EF4444')}
+            {renderTable(`↑ Above 50-EMA — ${above50.length} of ${totalWithEma}`, 'price above the 50-day exponential moving average', above50, 'ema50', 'pctVsEma50', '#10B981')}
+            {renderTable(`↓ Below 200-EMA — ${below200.length} of ${totalWithEma}`, 'price under the 200-day exponential moving average', below200, 'ema200', 'pctVsEma200', '#EF4444')}
+            {renderTable(`↑ Above 200-EMA — ${above200.length} of ${totalWithEma}`, 'price above the 200-day exponential moving average', above200, 'ema200', 'pctVsEma200', '#10B981')}
           </div>
         );
       })()}
