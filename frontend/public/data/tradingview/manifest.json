@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-01T14:09:05.773Z",
+  "lastSync": "2026-08-02T07:10:05.533Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 10,
@@ -11,7 +11,7 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 31292,
+      "size": 31289,
       "rowCount": 27,
       "error": null
     },
@@ -21,7 +21,7 @@
       "screenerId": "WJDx6FZ9",
       "kind": "screener",
       "ok": true,
-      "size": 15798,
+      "size": 15792,
       "rowCount": 12,
       "error": null
     },
@@ -31,7 +31,7 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 28134,
+      "size": 28292,
       "rowCount": 24,
       "error": null
     },
@@ -41,7 +41,7 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 27288,
+      "size": 27279,
       "rowCount": 24,
       "error": null
     },
@@ -51,7 +51,7 @@
       "screenerId": "Neuim2Bm",
       "kind": "screener",
       "ok": true,
-      "size": 113854,
+      "size": 114036,
       "rowCount": 100,
       "error": null
     },
@@ -61,8 +61,8 @@
       "screenerId": "RtSuWTgK",
       "kind": "screener",
       "ok": true,
-      "size": 52634,
-      "rowCount": 45,
+      "size": 53862,
+      "rowCount": 46,
       "error": null
     },
     {
@@ -71,8 +71,8 @@
       "screenerId": "5gzenlmQ",
       "kind": "screener",
       "ok": true,
-      "size": 17878,
-      "rowCount": 14,
+      "size": 18976,
+      "rowCount": 15,
       "error": null
     },
     {
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 105843,
+      "size": 105863,
       "rowCount": 100,
       "error": null
     },
@@ -91,7 +91,7 @@
       "screenerId": "oRvEFfVY",
       "kind": "screener",
       "ok": true,
-      "size": 101574,
+      "size": 101576,
       "rowCount": 92,
       "error": null
     },
@@ -101,7 +101,7 @@
       "screenerId": "339270482",
       "kind": "watchlist",
       "ok": true,
-      "size": 41146,
+      "size": 41211,
       "rowCount": 35,
       "error": null
     }
