@@ -1,11 +1,11 @@
 {
-  "lastSync": "2026-08-01T12:51:01Z",
+  "lastSync": "2026-08-02T06:29:32Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 10272,
+      "size": 10271,
       "displayName": "100 baggers sales and eps growth"
     },
     {
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 9146,
+      "size": 8715,
       "displayName": "Debt Reduction"
     },
     {
@@ -40,17 +40,17 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4476,
+      "size": 4475,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 11906,
+      "size": 12333,
       "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 4614,
+      "size": 4613,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -60,12 +60,12 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 2484,
+      "size": 2483,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 3300,
+      "size": 3299,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -80,7 +80,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 22846,
+      "size": 22845,
       "displayName": "Latest Portfolio"
     },
     {
@@ -90,12 +90,12 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65567,
+      "size": 65566,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 6833,
+      "size": 7262,
       "displayName": "Weekly Volume Pockets"
     }
   ]
