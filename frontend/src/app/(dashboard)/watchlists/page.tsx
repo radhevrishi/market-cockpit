@@ -84,6 +84,7 @@ const resolveSector = (e: any): string | null => {
 };
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
+import PortfolioEarningsTab from './PortfolioEarningsTab'; // zzz283
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import {
@@ -603,7 +604,7 @@ export default function WatchlistsPage() {
   const searchParams = useSearchParams();
   const initialTab: 'main' | 'conviction' =
     searchParams?.get('tab') === 'conviction' ? 'conviction' : 'main';
-  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals' | 'ei-elite'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals' | 'ei-elite' | 'portfolio-earnings'>(initialTab);
   // Also react to URL changes mid-session (e.g. user clicks the chip again
   // from another page → SPA nav). Without this, the activeTab state from
   // the first render would stay on whatever tab was active.
@@ -1130,9 +1131,20 @@ export default function WatchlistsPage() {
           }}>
           🎖️ EI Elite
         </button>
+        {/* zzz283 — Portfolio Earnings tab */}
+        <button onClick={() => setActiveTab('portfolio-earnings')}
+          style={{
+            padding: '10px 16px', background: 'none',
+            border: 'none', borderBottom: `2px solid ${activeTab === 'portfolio-earnings' ? '#22C55E' : 'transparent'}`,
+            color: activeTab === 'portfolio-earnings' ? '#22C55E' : 'var(--mc-text-3)',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+          ���� Portfolio Earnings
+        </button>
       </div>
 
-      {activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
+      {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <ConvictionBeatsPanel
           entries={convictionEntries}
           onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
