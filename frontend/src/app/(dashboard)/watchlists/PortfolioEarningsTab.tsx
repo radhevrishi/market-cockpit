@@ -120,7 +120,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
           //   - grade=BAD with score 0 => empty stub
           //   - filing older than 180 days => stale (mark tier null so it shows
           //     "NO RECENT FILING" instead of misleading AVOID)
-          const filingDate = graded?.filing_date || monEnd(rawPeriod) || '';
+          const filingDate = gradedEntry?.filing_date || monEnd(rawPeriod) || '';
           const isMissing = dataAge === 'missing' || !rawPeriod || rawPeriod === 'N/A';
           const isZeroStub = scanScore === 0 && String(scanCard.grade || '').toUpperCase() === 'BAD';
           const isStale = (() => {
@@ -130,7 +130,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
             const ageDays = (Date.now() - d.getTime()) / (86400 * 1000);
             return ageDays > 180;
           })();
-          if (isMissing || isZeroStub || (isStale && !graded)) {
+          if (isMissing || isZeroStub || (isStale && !gradedEntry)) {
             merged[t] = gradedEntry ?? null;
           } else {
             const graded2 = gradedEntry && gradedEntry.quarter === scanQ ? gradedEntry : null;
