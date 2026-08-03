@@ -187,25 +187,23 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
     setLoading(false);
   };
 
-  // zzz295 — on mount / when portfolio changes, load cached grades if available;
-  // only re-fetch on explicit Refresh button click.
+  // zzz298 — ALWAYS use cached grades if present. Refresh only on explicit
+  // Refresh-button click. New tickers show NO FILING until user refreshes; that
+  // matches the professional "cache-only, manual refresh" behavior the user asked for.
   useEffect(() => {
     if (!tickers.length) return;
     try {
       const raw = localStorage.getItem('mc:portfolio-earnings-tab:v1');
       if (raw) {
         const cached = JSON.parse(raw);
-        const sameSet = Array.isArray(cached?.tickers)
-          && cached.tickers.length === tickers.length
-          && cached.tickers.every((t: string, i: number) => String(t).toUpperCase() === tickers[i]);
-        if (cached?.grades && sameSet) {
+        if (cached?.grades) {
           setGrades(cached.grades);
           setRefreshedAt(cached.ts || null);
-          return; // use cache, skip fetch
+          return; // cache hit, no auto-fetch
         }
       }
     } catch {}
-    // No usable cache -> fetch once
+    // Cold cache (first time ever) -> fetch once to seed
     refresh();
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [tickers.length]);
