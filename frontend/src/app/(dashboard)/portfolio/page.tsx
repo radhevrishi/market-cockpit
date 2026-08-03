@@ -2114,7 +2114,6 @@ export default function PortfolioPage() {
                     { key: 'pnlPercent' as SortField, label: 'P&L', align: 'right' },
                     { key: 'score' as SortField, label: 'SCORE', align: 'right' },
                     { key: 'symbol' as SortField, label: 'TREND', align: 'right', noSort: true },
-                    { key: 'decision' as SortField, label: 'DECISION', align: 'right' },
                     { key: 'changePercent' as SortField, label: 'DAY%', align: 'right' },
                     { key: 'symbol' as SortField, label: '', align: 'right', noSort: true },
                   ].map((col, i) => (
@@ -2272,18 +2271,6 @@ export default function PortfolioPage() {
                             color: r.sectorTrend === 'Bullish' ? 'var(--mc-bullish)' : r.sectorTrend === 'Bearish' ? 'var(--mc-bearish)' : 'var(--mc-warn)',
                           }}>
                             {r.sectorTrend}
-                          </span>
-                        ) : '—'}
-                      </td>
-                      {/* Decision */}
-                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                        {r.decision ? (
-                          <span style={{
-                            display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
-                            backgroundColor: r.decision === 'BUY' ? 'rgba(16,185,129,0.15)' : r.decision === 'ADD' ? 'rgba(5,150,105,0.15)' : r.decision === 'HOLD' ? 'rgba(251,191,36,0.15)' : r.decision === 'TRIM' ? 'rgba(249,115,22,0.15)' : r.decision === 'EXIT' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)',
-                            color: r.decision === 'BUY' ? 'var(--mc-bullish)' : r.decision === 'ADD' ? '#059669' : r.decision === 'HOLD' ? 'var(--mc-warn)' : r.decision === 'TRIM' ? 'var(--mc-warn)' : r.decision === 'EXIT' ? 'var(--mc-bearish)' : 'var(--mc-text-4)',
-                          }}>
-                            {r.decision}
                           </span>
                         ) : '—'}
                       </td>
