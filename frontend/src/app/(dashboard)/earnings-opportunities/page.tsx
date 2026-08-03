@@ -3881,7 +3881,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
       )}
 
       {/* PATCH 1006 — Institutional badges row */}
-      {((stock as any).is_elite || ((stock as any).pead_score ?? 0) >= 70 || (stock as any).multibagger_setup) && (
+      {((stock as any).is_elite || typeof (stock as any).pead_score === 'number' || (stock as any).multibagger_setup) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
           {(stock as any).is_elite && (
             <span title="ELITE — passes BLOCKBUSTER + all institutional gates" style={{
@@ -3891,14 +3891,23 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
               color: '#FCD34D',
             }}>⭐ ELITE</span>
           )}
-          {typeof (stock as any).pead_score === 'number' && (stock as any).pead_score >= 70 && (
-            <span title="PEAD score — academic post-earnings drift driver" style={{
-              fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
-              padding: '2px 8px', borderRadius: 4,
-              border: '1px solid #F87171', background: '#7F1D1D',
-              color: '#FCA5A5',
-            }}>🔥 PEAD {(stock as any).pead_score}</span>
-          )}
+          {typeof (stock as any).pead_score === 'number' && (() => {
+            const p = (stock as any).pead_score as number;
+            // zzz278 — show PEAD on every card. Color by tier: red ≥70 (fire),
+            // amber 50-69 (warm), grey <50 (cool). Threshold notation kept in title.
+            const style = p >= 70
+              ? { border: '1px solid #F87171', background: '#7F1D1D', color: '#FCA5A5', icon: '🔥' }
+              : p >= 50
+                ? { border: '1px solid #F59E0B', background: '#78350F', color: '#FCD34D', icon: '⚡' }
+                : { border: '1px solid #6B7280', background: '#1F2937', color: '#9CA3AF', icon: '📊' };
+            return (
+              <span title={`PEAD score ${p} — academic post-earnings drift driver (≥70 strong, 50-69 moderate, <50 weak)`} style={{
+                fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
+                padding: '2px 8px', borderRadius: 4,
+                border: style.border, background: style.background, color: style.color,
+              }}>{style.icon} PEAD {p}</span>
+            );
+          })()}
           {(stock as any).multibagger_setup && (
             <span title="MULTIBAGGER SETUP — 6-criterion SQGLP compounder filter" style={{
               fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
