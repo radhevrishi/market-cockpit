@@ -111,19 +111,40 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
         const gradedEntry = gradedResults[t];
         if (!scanCard && !gradedEntry) { merged[t] = null; continue; }
         if (scanCard) {
-          const scanQ = periodToQuarter(scanCard.period || scanCard.resultDate);
+          const rawPeriod = scanCard.period || scanCard.resultDate;
+          const scanQ = periodToQuarter(rawPeriod);
           const scanScore = typeof scanCard.totalScore === 'number' ? scanCard.totalScore : null;
-          const graded = gradedEntry && gradedEntry.quarter === scanQ ? gradedEntry : null;
-          merged[t] = {
-            ticker: t,
-            company: String(scanCard.company || t),
-            filing_date: graded?.filing_date || monEnd(scanCard.period || scanCard.resultDate) || '',
-            tier: (graded?.tier as Tier) || scanToTier(scanCard.grade, scanScore ?? undefined),
-            sector: graded?.sector || null,
-            market_cap_cr: graded?.market_cap_cr ?? null,
-            quarter: scanQ || graded?.quarter || null,
-            composite_score: graded?.composite_score ?? scanScore,
-          };
+          const dataAge = String(scanCard.dataAge || '').toLowerCase();
+          // zzz290 — reject junk from Screener:
+          //   - dataAge=missing or period=N/A => not covered
+          //   - grade=BAD with score 0 => empty stub
+          //   - filing older than 180 days => stale (mark tier null so it shows
+          //     "NO RECENT FILING" instead of misleading AVOID)
+          const filingDate = graded?.filing_date || monEnd(rawPeriod) || '';
+          const isMissing = dataAge === 'missing' || !rawPeriod || rawPeriod === 'N/A';
+          const isZeroStub = scanScore === 0 && String(scanCard.grade || '').toUpperCase() === 'BAD';
+          const isStale = (() => {
+            if (!filingDate) return false;
+            const d = new Date(filingDate);
+            if (isNaN(d.getTime())) return false;
+            const ageDays = (Date.now() - d.getTime()) / (86400 * 1000);
+            return ageDays > 180;
+          })();
+          if (isMissing || isZeroStub || (isStale && !graded)) {
+            merged[t] = gradedEntry ?? null;
+          } else {
+            const graded2 = gradedEntry && gradedEntry.quarter === scanQ ? gradedEntry : null;
+            merged[t] = {
+              ticker: t,
+              company: String(scanCard.company || t),
+              filing_date: filingDate,
+              tier: (graded2?.tier as Tier) || scanToTier(scanCard.grade, scanScore ?? undefined),
+              sector: graded2?.sector || null,
+              market_cap_cr: graded2?.market_cap_cr ?? null,
+              quarter: scanQ || graded2?.quarter || null,
+              composite_score: graded2?.composite_score ?? scanScore,
+            };
+          }
         } else {
           merged[t] = gradedEntry;
         }
