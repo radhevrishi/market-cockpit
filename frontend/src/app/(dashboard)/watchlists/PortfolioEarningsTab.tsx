@@ -21,6 +21,7 @@ type GradeEntry = {
   market_cap_cr?: number | null;
   quarter?: string | null;
   composite_score?: number | null;
+  pead_score?: number | null; // zzz294 — from earnings-scan priceScore
 };
 
 const STORAGE_KEY = 'mc_watchlist_tickers';
@@ -41,6 +42,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<'tier' | 'filing' | 'score' | 'ticker'>('tier');
   const [tierFilter, setTierFilter] = useState<'all' | Tier | 'NONE'>('all');
+  const [quarterFilter, setQuarterFilter] = useState<string>('all'); // zzz294
 
   // zzz285 — prefer explicit tickers prop (from /portfolio holdings), fall back to
   // watchlist-tickers localStorage. Lets one component serve both entry points.
@@ -66,7 +68,11 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
     if (!tickers.length) return;
     setLoading(true);
     try {
-      const csv = encodeURIComponent(tickers.join(','));
+      // zzz295 — strip NSE trading-segment suffixes (-BE, -BZ, -BL, -EQ, -SM)
+      // before hitting earnings-scan; Screener uses the base ticker.
+      const stripSuffix = (t: string) => t.replace(/-(BE|BZ|BL|EQ|SM|T)$/i, '');
+      const normTickers = tickers.map(stripSuffix);
+      const csv = encodeURIComponent(normTickers.join(','));
       const [gradesRes, scanRes] = await Promise.all([
         fetch(`/api/v1/portfolio/earnings-grades?tickers=${csv}`, { cache: 'no-store' }),
         fetch(`/api/market/earnings-scan?symbols=${csv}`, { cache: 'no-store' }),
@@ -78,6 +84,13 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
       for (const c of (scanJson.cards || [])) {
         const sym = String(c?.symbol || '').toUpperCase();
         if (sym) scanByTicker[sym] = c;
+      }
+      // zzz295 — populate suffixed variants so lookup by original ticker works
+      for (const t of tickers) {
+        const norm = t.replace(/-(BE|BZ|BL|EQ|SM|T)$/i, '');
+        if (norm !== t && scanByTicker[norm] && !scanByTicker[t]) {
+          scanByTicker[t] = scanByTicker[norm];
+        }
       }
       const periodToQuarter = (p?: string): string | null => {
         if (!p) return null;
@@ -156,6 +169,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
               market_cap_cr: graded2?.market_cap_cr ?? null,
               quarter: scanQ || graded2?.quarter || null,
               composite_score: graded2?.composite_score ?? scanScore,
+              pead_score: typeof scanCard.priceScore === 'number' ? scanCard.priceScore : null, // zzz294
             };
           }
         } else {
@@ -163,12 +177,38 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
         }
       }
       setGrades(merged);
-      setRefreshedAt(Date.now());
+      const ts = Date.now();
+      setRefreshedAt(ts);
+      try {
+        // zzz295 — persist so next visit shows cached data instantly
+        localStorage.setItem('mc:portfolio-earnings-tab:v1', JSON.stringify({ ts, grades: merged, tickers }));
+      } catch {}
     } catch {}
     setLoading(false);
   };
 
-  useEffect(() => { if (tickers.length) refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tickers.length]);
+  // zzz295 — on mount / when portfolio changes, load cached grades if available;
+  // only re-fetch on explicit Refresh button click.
+  useEffect(() => {
+    if (!tickers.length) return;
+    try {
+      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v1');
+      if (raw) {
+        const cached = JSON.parse(raw);
+        const sameSet = Array.isArray(cached?.tickers)
+          && cached.tickers.length === tickers.length
+          && cached.tickers.every((t: string, i: number) => String(t).toUpperCase() === tickers[i]);
+        if (cached?.grades && sameSet) {
+          setGrades(cached.grades);
+          setRefreshedAt(cached.ts || null);
+          return; // use cache, skip fetch
+        }
+      }
+    } catch {}
+    // No usable cache -> fetch once
+    refresh();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [tickers.length]);
 
   const rows = useMemo(() => tickers.map(t => ({ ticker: t, grade: grades[t] || null })), [tickers, grades]);
 
@@ -195,7 +235,18 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
     return Object.entries(bySector).sort((a, b) => b[1].TOTAL - a[1].TOTAL);
   }, [rows]);
 
-  const filtered = tierFilter === 'all' ? rows : rows.filter(r => (tierFilter === 'NONE' ? !r.grade : r.grade?.tier === tierFilter));
+  // zzz294 — unique quarters across portfolio, sorted newest first
+  const quartersInPortfolio = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) if (r.grade?.quarter) set.add(r.grade.quarter);
+    const rank = (s: string) => { const m = /Q(\d)\s+FY(\d+)/.exec(s); return m ? parseInt(m[2]) * 10 + parseInt(m[1]) : 0; };
+    return Array.from(set).sort((a, b) => rank(b) - rank(a));
+  }, [rows]);
+  const filtered = useMemo(() => {
+    let out = tierFilter === 'all' ? rows : rows.filter(r => (tierFilter === 'NONE' ? !r.grade : r.grade?.tier === tierFilter));
+    if (quarterFilter !== 'all') out = out.filter(r => r.grade?.quarter === quarterFilter);
+    return out;
+  }, [rows, tierFilter, quarterFilter]);
 
   const sorted = useMemo(() => {
     const s = [...filtered];
@@ -270,6 +321,30 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
         </button>
       </div>
 
+      {/* zzz294 — quarter filter chip row */}
+      {quartersInPortfolio.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-text-4)', letterSpacing: '0.4px', marginRight: 4 }}>QUARTER:</span>
+          <button onClick={() => setQuarterFilter('all')} style={{
+            padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+            background: quarterFilter === 'all' ? 'var(--mc-cyan)' : 'var(--mc-bg-2)',
+            color: quarterFilter === 'all' ? '#000' : 'var(--mc-text-3)',
+            border: '1px solid var(--mc-border-1)', cursor: 'pointer',
+          }}>All</button>
+          {quartersInPortfolio.map(q => {
+            const active = quarterFilter === q;
+            const count = rows.filter(r => r.grade?.quarter === q).length;
+            return (
+              <button key={q} onClick={() => setQuarterFilter(active ? 'all' : q)} style={{
+                padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                background: active ? 'var(--mc-cyan)' : 'var(--mc-bg-2)',
+                color: active ? '#000' : 'var(--mc-text-2)',
+                border: '1px solid var(--mc-border-1)', cursor: 'pointer',
+              }}>{q} <span style={{ opacity: 0.6, fontFamily: 'ui-monospace, monospace', fontSize: 9 }}>{count}</span></button>
+            );
+          })}
+        </div>
+      )}
       {tierFilter !== 'all' && (
         <div style={{ marginBottom: 10 }}>
           <button onClick={clearFilter} style={{ fontSize: 11, color: 'var(--mc-cyan)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
@@ -311,7 +386,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
         </div>
       ) : (
         <div style={{ background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 120px 110px 110px 90px',
+          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 120px 110px 100px 70px 70px',
               background: 'var(--mc-bg-2)', padding: '8px 12px', fontSize: 10, fontWeight: 800,
               color: 'var(--mc-text-3)', letterSpacing: '0.5px', borderBottom: '1px solid var(--mc-border-1)' }}>
             <div style={{ cursor: 'pointer' }} onClick={() => setSortBy('ticker')}>TICKER {sortBy === 'ticker' && '↓'}</div>
@@ -320,12 +395,13 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
             <div style={{ cursor: 'pointer' }} onClick={() => setSortBy('filing')}>FILING {sortBy === 'filing' && '↓'}</div>
             <div>QUARTER</div>
             <div style={{ cursor: 'pointer', textAlign: 'right' }} onClick={() => setSortBy('score')}>SCORE {sortBy === 'score' && '↓'}</div>
+            <div style={{ textAlign: 'right' }} title="PEAD (price score post-earnings)">PEAD</div>
           </div>
           {sorted.map(({ ticker, grade }) => {
             const style = grade ? TIER_STYLE[grade.tier] : null;
             return (
               <div key={ticker} style={{
-                display: 'grid', gridTemplateColumns: '110px 1fr 120px 110px 110px 90px',
+                display: 'grid', gridTemplateColumns: '110px 1fr 120px 110px 100px 70px 70px',
                 padding: '10px 12px', fontSize: 12, borderBottom: '1px solid var(--mc-border-1)',
                 alignItems: 'center',
               }}>
@@ -348,6 +424,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
                 <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.filing_date || '—'}</div>
                 <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.quarter || '—'}</div>
                 <div style={{ textAlign: 'right', color: 'var(--mc-text-2)', fontWeight: 700 }}>{grade?.composite_score ?? '—'}</div>
+                <div style={{ textAlign: 'right', color: (grade as any)?.pead_score >= 70 ? 'var(--mc-bullish)' : (grade as any)?.pead_score >= 50 ? 'var(--mc-warn)' : 'var(--mc-text-3)', fontWeight: 700, fontSize: 11 }}>{(grade as any)?.pead_score ?? '—'}</div>
               </div>
             );
           })}
