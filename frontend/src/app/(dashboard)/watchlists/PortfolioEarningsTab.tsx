@@ -34,7 +34,7 @@ const TIER_STYLE: Record<Tier, { bg: string; fg: string; border: string; icon: s
 
 const TIER_ORDER: Record<string, number> = { BLOCKBUSTER: 4, STRONG: 3, MIXED: 2, AVOID: 1 };
 
-export default function PortfolioEarningsTab() {
+export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers?: string[] } = {}) {
   const [tickers, setTickers] = useState<string[]>([]);
   const [grades, setGrades] = useState<Record<string, GradeEntry | null>>({});
   const [loading, setLoading] = useState(false);
@@ -42,7 +42,13 @@ export default function PortfolioEarningsTab() {
   const [sortBy, setSortBy] = useState<'tier' | 'filing' | 'score' | 'ticker'>('tier');
   const [tierFilter, setTierFilter] = useState<'all' | Tier | 'NONE'>('all');
 
+  // zzz285 — prefer explicit tickers prop (from /portfolio holdings), fall back to
+  // watchlist-tickers localStorage. Lets one component serve both entry points.
   useEffect(() => {
+    if (propTickers && propTickers.length > 0) {
+      setTickers(propTickers.map(t => String(t).toUpperCase()).filter(Boolean));
+      return;
+    }
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       const list = raw ? JSON.parse(raw) : [];
@@ -50,7 +56,7 @@ export default function PortfolioEarningsTab() {
         setTickers(list.map((t: string) => String(t).toUpperCase()).filter(Boolean));
       }
     } catch {}
-  }, []);
+  }, [propTickers ? propTickers.join(',') : '']);
 
   const refresh = async () => {
     if (!tickers.length) return;
