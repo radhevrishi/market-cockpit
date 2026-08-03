@@ -2904,7 +2904,7 @@ export default function EarningsOpportunitiesPage() {
           {/* zzz276 — Search across the last 120 business days of graded filings.
               Institutional pattern: debounced typeahead, keyboard nav, recent picks.
               Click a result → jump to that filing date + scroll to the card. */}
-          <EarningsSearch onSelect={(r: EarningsSearchResult) => {
+          <EarningsSearch onSelect={async (r: EarningsSearchResult) => {
             // zzz280 — scan-fallback results have no reliable filing date.
             // Force-include the ticker on the currently-loaded date; the enrich
             // pipeling will surface it as a card using the latest fundamentals.
@@ -2913,6 +2913,27 @@ export default function EarningsOpportunitiesPage() {
               try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
               return;
             }
+            // zzz282 — VERIFY the graded payload for r.filing_date actually
+            // contains this ticker. Stale local-bench entries can point at
+            // dates where the ticker never filed (e.g. THERMAX bench with
+            // filing_date=2026-07-15 when the real Q1 print was on 07-22).
+            // If not present, fall back to force-include on current date.
+            try {
+              const vr = await fetch(`/api/v1/earnings/graded?date=${r.filing_date}`, { cache: 'no-store' });
+              if (vr.ok) {
+                const vj = await vr.json();
+                const bt = vj.by_tier || {};
+                const has = ['BLOCKBUSTER','STRONG','MIXED','AVOID'].some((t) => {
+                  const arr = bt[t];
+                  return Array.isArray(arr) && arr.some((e: any) => e && String(e.ticker || '').toUpperCase() === r.ticker.toUpperCase());
+                });
+                if (!has) {
+                  addForceInclude(r.ticker);
+                  try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
+                  return;
+                }
+              }
+            } catch {}
             setFilterDate(r.filing_date);
             try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
           }} />
