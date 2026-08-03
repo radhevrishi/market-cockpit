@@ -2029,11 +2029,11 @@ export default function PortfolioPage() {
       {!loading && holdings.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '8px 0 14px' }}>
           <div style={{ display: 'flex', gap: 4, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)', borderRadius: 10, padding: 4 }}>
-            {(['holdings', 'analytics', 'fundamentals'] as const).map(t => (
+            {(['holdings', 'analytics', 'fundamentals', 'earnings'] as const).map(t => (
               <button key={t} onClick={() => setViewTab(t)} style={{
                 padding: '7px 16px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px',
                 background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : 'var(--mc-text-3)',
-              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : 'Fundamentals'}</button>
+              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : t === 'fundamentals' ? 'Fundamentals' : '\ud83d\udcc8 Earnings'}</button>
             ))}
           
           </div>
@@ -2059,6 +2059,7 @@ export default function PortfolioPage() {
 
       {/* PATCH 1100 — Analytics view */}
       {!loading && holdings.length > 0 && viewTab === 'fundamentals' && <FundamentalsAnalyzerPage scope="portfolio" />}
+      {!loading && holdings.length > 0 && viewTab === 'earnings' && <PortfolioEarningsTab tickers={holdings.map(h => h.symbol)} />}
         {!loading && holdings.length > 0 && viewTab === 'analytics' && (
         <PortfolioAnalytics rows={sortedRows} onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }} />
       )}
