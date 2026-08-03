@@ -18,12 +18,16 @@ type Tier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 export type EarningsSearchResult = {
   ticker: string;
   company: string;
-  filing_date: string;      // YYYY-MM-DD
+  filing_date: string;      // YYYY-MM-DD (empty when via_scan — filing date unknown)
   tier: Tier;
   sector?: string;
   market_cap_cr?: number | null;
   quarter?: string;
   composite_score?: number;
+  // zzz280 — set when the entry came from the earnings-scan fallback (not
+  // in the graded index). Parent should force-include on current date
+  // instead of jumping, since we don't know the real filing date.
+  via_scan?: boolean;
 };
 
 type Props = {
@@ -213,10 +217,11 @@ export default function EarningsSearch({ onSelect, placeholder = 'Search company
                 merged = [{
                   ticker: String(card.symbol).toUpperCase(),
                   company: card.company || card.symbol,
-                  filing_date: filingDate,
+                  filing_date: '',
                   tier,
                   quarter: card.period || undefined,
                   composite_score: typeof card.totalScore === 'number' ? card.totalScore : undefined,
+                  via_scan: true,
                 }];
               }
             }
