@@ -9,6 +9,7 @@ import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0300 — Shared freshness chip for the quote refresh state.
 import { PanelFreshness } from '@/components/PanelFreshness';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
+import PortfolioEarningsTab from '../watchlists/PortfolioEarningsTab'; // zzz285
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
@@ -1423,7 +1424,7 @@ export default function PortfolioPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'fundamentals'>('holdings'); // PATCH 1100
+  const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'fundamentals' | 'earnings'>('holdings'); // PATCH 1100 + zzz285
   const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
   const [capMap, setCapMap] = useState<Record<string, string>>({}); // PATCH 1101 — ticker -> cap (Large/Mid/Small/Micro)
 
