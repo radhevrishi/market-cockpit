@@ -71,6 +71,87 @@ function pushRecent(r: EarningsSearchResult) {
   } catch {}
 }
 
+// zzz277 — Local Conviction Beats + EI Elite bench fallback. Reads the user's
+// persistent localStorage bench so search works even when the server-side KV
+// cache has aged out (older filings drop from KV; the bench keeps them forever).
+function searchLocalBench(q: string): EarningsSearchResult[] {
+  if (typeof window === 'undefined') return [];
+  const Q = q.trim().toUpperCase();
+  if (Q.length < 2) return [];
+  const out: EarningsSearchResult[] = [];
+  const scoreMatch = (t: string, c: strine): number => {
+    if (t === Q) return 100;
+    if (t.startsWith(Q)) return 70;
+    if (t.includes(Q)) return 35;
+    if (c.startsWith(Q)) return 50;
+    if (c.includes(Q)) return 20;
+    return 0;
+  };
+  // Conviction Beats bench (map keyed by TICKER or TICKER@Q-FY)
+  try {
+    const raw = localStorage.getItem('mc:conviction-beats:v1');
+    const map = raw ? JSON.parse(raw) : {};
+    for (const key of Object.keys(map || {})) {
+      const e = map[key];
+      if (!e || !e.ticker) continue;
+      const t = String(e.ticker).toUpperCase();
+      const c = String(e.company || '').toUpperCase();
+      if (scoreMatch(t, c) <= 0) continue;
+      const tier = (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG') ? e.tier : 'STRONG';
+      out.push({
+        ticker: t,
+        company: e.company || t,
+        filing_date: e.filing_date || '',
+        tier,
+        sector: e.sector,
+        market_cap_cr: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
+        quarter: e.quarter && e.fiscal_year ? `${e.quarter} FY${String(e.fiscal_year).slice(-2)}` : undefined,
+        composite_score: typeof e.composite_score === 'number' ? e.composite_score : undefined,
+      });
+    }
+  } catch {}
+  // EI Elite bench (mc:ei-elite:v1) — array of {symbol, company, grade, ...}
+  try {
+    const raw = localStorage.getItem('mc:ei-elite:v1');
+    const arr = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(arr)) {
+      for (const e of arr) {
+        if (!e || !e.symbol) continue;
+        const t = String(e.symbol).toUpperCase();
+        const c = String(e.company || '').toUpperCase();
+        if (scoreMatch(t, c) <= 0) continue;
+        out.push({
+          ticker: t,
+          company: e.company || t,
+          filing_date: e.filed_date || e.resultDate || '',
+          tier: 'STRONG',
+          market_cap_cr: typeof e.marketCapCr === 'number' ? e.marketCapCr : null,
+          quarter: e.period || undefined,
+        });
+      }
+    }
+  } catch {}
+  return out;
+}
+
+function mergeResults(server: EarningsSearchResult[], local: EarningsSearchResult[]): EarningsSearchResult[] {
+  const seen = new Set<string>();
+  const merged: EarningsSearchResult[] = [];
+  for (const r of server) {
+    const k = r.ticker + '@' + (r.quarter || r.filing_date);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    merged.push(r);
+  }
+  for (const r of local) {
+    const k = r.ticker + '@' + (r.quarter || r.filing_date);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    merged.push(r);
+  }
+  return merged;
+}
+
 export default function EarningsSearch({ onSelect, placeholder = 'Search company or ticker (e.g. Asian, LAURUS)…' }: Props) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -100,9 +181,11 @@ export default function EarningsSearch({ onSelect, placeholder = 'Search company
           cache: 'no-store',
           signal: ctrl.signal,
         });
-        if (!res.ok) { setResults([]); return; }
+        if (!res.ok) { setResults(searchLocalBench(trimmed)); return; }
         const j = await res.json();
-        setResults(Array.isArray(j?.results) ? j.results : []);
+        const serverResults = Array.isArray(j?.results) ? j.results : [];
+        // zzz277 — always merge local bench so KV-expired entries still surface
+        setResults(mergeResults(serverResults, searchLocalBench(trimmed)));
         setActiveIdx(0);
       } catch (e: any) {
         if (e?.name !== 'AbortError') setResults([]);
