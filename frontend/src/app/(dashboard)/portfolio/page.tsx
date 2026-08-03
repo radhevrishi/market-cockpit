@@ -1656,9 +1656,11 @@ export default function PortfolioPage() {
       const normalized = normalizeTicker(h.symbol);
       const upperSym = String(h.symbol || '').toUpperCase();
       const upperNorm = String(normalized || '').toUpperCase();
+      // zzz296 — also try base ticker (strip NSE trading-segment suffix)
+      const upperNoSuffix = upperSym.replace(/-(BE|BZ|BL|EQ|SM|T)$/i, '');
       const quote = quotes.find(q => {
         const qt = String(q.ticker || '').toUpperCase();
-        return qt === upperSym || qt === upperNorm;
+        return qt === upperSym || qt === upperNorm || (upperNoSuffix !== upperSym && qt === upperNoSuffix);
       });
       const cmp = quote?.price || 0;
       const change = quote?.change || 0;
