@@ -58,17 +58,78 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
     } catch {}
   }, [propTickers ? propTickers.join(',') : '']);
 
+  // zzz289 — client-side scan fallback. Server portfolio-grades endpoint runs
+  // into a Next.js self-loop issue when it tries to fetch /api/market/earnings-scan
+  // from itself; the client has no such problem, so we call scan directly in
+  // parallel and merge the freshest quarter for each ticker.
   const refresh = async () => {
     if (!tickers.length) return;
     setLoading(true);
     try {
-      const url = `/api/v1/portfolio/earnings-grades?tickers=${encodeURIComponent(tickers.join(','))}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (res.ok) {
-        const j = await res.json();
-        setGrades(j.results || {});
-        setRefreshedAt(Date.now());
+      const csv = encodeURIComponent(tickers.join(','));
+      const [gradesRes, scanRes] = await Promise.all([
+        fetch(`/api/v1/portfolio/earnings-grades?tickers=${csv}`, { cache: 'no-store' }),
+        fetch(`/api/market/earnings-scan?symbols=${csv}`, { cache: 'no-store' }),
+      ]);
+      const gradesJson: any = gradesRes.ok ? await gradesRes.json() : { results: {} };
+      const scanJson: any = scanRes.ok ? await scanRes.json() : { cards: [] };
+      const gradedResults: Record<string, any> = gradesJson.results || {};
+      const scanByTicker: Record<string, any> = {};
+      for (const c of (scanJson.cards || [])) {
+        const sym = String(c?.symbol || '').toUpperCase();
+        if (sym) scanByTicker[sym] = c;
       }
+      const periodToQuarter = (p?: string): string | null => {
+        if (!p) return null;
+        const m = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})$/.exec(p);
+        if (!m) return null;
+        const yr = parseInt(m[2]);
+        const q: Record<string, [string, number]> = { Mar: ['Q4', 0], Jun: ['Q1', 1], Sep: ['Q2', 1], Dec: ['Q3', 1] };
+        const it = q[m[1]]; if (!it) return null;
+        return `${it[0]} FY${String(yr + it[1]).slice(-2)}`;
+      };
+      const monEnd = (p?: string): string | null => {
+        if (!p) return null;
+        const m = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})$/.exec(p);
+        if (!m) return null;
+        const idx = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(m[1]);
+        const yr = parseInt(m[2]);
+        const day = new Date(yr, idx + 1, 0).getDate();
+        return `${yr}-${String(idx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      };
+      const scanToTier = (grade?: string, score?: number): Tier => {
+        const g = String(grade || '').toUpperCase();
+        const s = typeof score === 'number' ? score : 0;
+        if (g === 'EXCELLENT' || s >= 80) return 'BLOCKBUSTER';
+        if (g === 'GOOD' || s >= 65) return 'STRONG';
+        if (g === 'POOR' || g === 'BAD' || s < 45) return 'AVOID';
+        return 'MIXED';
+      };
+      const merged: Record<string, GradeEntry | null> = {};
+      for (const t of tickers) {
+        const scanCard = scanByTicker[t];
+        const gradedEntry = gradedResults[t];
+        if (!scanCard && !gradedEntry) { merged[t] = null; continue; }
+        if (scanCard) {
+          const scanQ = periodToQuarter(scanCard.period || scanCard.resultDate);
+          const scanScore = typeof scanCard.totalScore === 'number' ? scanCard.totalScore : null;
+          const graded = gradedEntry && gradedEntry.quarter === scanQ ? gradedEntry : null;
+          merged[t] = {
+            ticker: t,
+            company: String(scanCard.company || t),
+            filing_date: graded?.filing_date || monEnd(scanCard.period || scanCard.resultDate) || '',
+            tier: (graded?.tier as Tier) || scanToTier(scanCard.grade, scanScore ?? undefined),
+            sector: graded?.sector || null,
+            market_cap_cr: graded?.market_cap_cr ?? null,
+            quarter: scanQ || graded?.quarter || null,
+            composite_score: graded?.composite_score ?? scanScore,
+          };
+        } else {
+          merged[t] = gradedEntry;
+        }
+      }
+      setGrades(merged);
+      setRefreshedAt(Date.now());
     } catch {}
     setLoading(false);
   };
