@@ -185,7 +185,44 @@ export default function EarningsSearch({ onSelect, placeholder = 'Search company
         const j = await res.json();
         const serverResults = Array.isArray(j?.results) ? j.results : [];
         // zzz277 — always merge local bench so KV-expired entries still surface
-        setResults(mergeResults(serverResults, searchLocalBench(trimmed)));
+        let merged = mergeResults(serverResults, searchLocalBench(trimmed));
+        // zzz279 — Last-resort ticker probe: if the graded pipeline missed this
+        // filing (e.g. Syrma reported Q1 FY27 on 2026-07-29 but wasn't graded),
+        // hit /api/market/earnings-scan which has broader coverage. Only fires
+        // when the query looks like a bare ticker AND server+bench came up empty.
+        if (merged.length === 0 && /^[A-Za-z][A-Za-z0-9\-]{2,14}$/.test(trimmed)) {
+          try {
+            const scanRes = await fetch('/api/market/earnings-scan?symbols=' + encodeURIComponent(trimmed.toUpperCase()), { cache: 'no-store', signal: ctrl.signal });
+            if (scanRes.ok) {
+              const scanJ = await scanRes.json();
+              const card = Array.isArray(scanJ?.cards) ? scanJ.cards[0] : null;
+              if (card && card.symbol) {
+                // Derive filing_date from `period` quarter label (e.g. "Jun 2026" → filed Jul-Aug 2026 → use last day of that filing month heuristic)
+                let filingDate = '';
+                const pm = String(card.period || '').match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
+                if (pm) {
+                  const monthMap: Record<string, number> = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+                  const qEndMonth = monthMap[pm[1].toLowerCase().slice(0,3)];
+                  // Filings typically land ~00-45 days after quarter end. Use mid-of-next-month as approximation.
+                  const filedMonth = qEndMonth + 1 > 12 ? 1 : qEndMonth + 1;
+                  const filedYear = qEndMonth + 1 > 12 ? Number(im[2]) + 1 : Number(pm[2]);
+                  filingDate = `${filedYear}-${String(filedMonth).padStart(2,'0')}-15`;
+                }
+                const grade = String(card.grade || '').toUpperCase();
+                const tier: Tier = grade === 'EXCELLENT' ? 'BLOCKBUSTER' : grade === 'STRONG' || grade === 'GOOD' ? 'STRONG' : 'MIXED';
+                merged = [{
+                  ticker: String(card.symbol).toUpperCase(),
+                  company: card.company || card.symbol,
+                  filing_date: filingDate,
+                  tier,
+                  quarter: card.period || undefined,
+                  composite_score: typeof card.totalScore === 'number' ? card.totalScore : undefined,
+                }];
+              }
+            }
+          } catch {}
+        }
+        setResults(merged);
         setActiveIdx(0);
       } catch (e: any) {
         if (e?.name !== 'AbortError') setResults([]);
