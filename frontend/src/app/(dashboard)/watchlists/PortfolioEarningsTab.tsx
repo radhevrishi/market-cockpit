@@ -120,7 +120,20 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
           //   - grade=BAD with score 0 => empty stub
           //   - filing older than 180 days => stale (mark tier null so it shows
           //     "NO RECENT FILING" instead of misleading AVOID)
-          const filingDate = gradedEntry?.filing_date || monEnd(rawPeriod) || '';
+          // zzz293 — real filing_date instead of raw quarter end. Indian companies
+          // typically file 30-60 days after quarter close; estimate quarter_end + 45
+          // days, cap at today so we never show future dates.
+          const filingDate = (() => {
+            if (gradedEntry?.filing_date) return gradedEntry.filing_date;
+            const qe = monEnd(rawPeriod);
+            if (!qe) return '';
+            const est = new Date(qe);
+            if (isNaN(est.getTime())) return qe;
+            est.setDate(est.getDate() + 45);
+            const today = new Date();
+            const pick = est > today ? today : est;
+            return pick.toISOString().slice(0, 10);
+          })();
           const isMissing = dataAge === 'missing' || !rawPeriod || rawPeriod === 'N/A';
           const isZeroStub = scanScore === 0 && String(scanCard.grade || '').toUpperCase() === 'BAD';
           const isStale = (() => {
