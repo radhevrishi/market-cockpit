@@ -2905,6 +2905,14 @@ export default function EarningsOpportunitiesPage() {
               Institutional pattern: debounced typeahead, keyboard nav, recent picks.
               Click a result → jump to that filing date + scroll to the card. */}
           <EarningsSearch onSelect={(r: EarningsSearchResult) => {
+            // zzz280 — scan-fallback results have no reliable filing date.
+            // Force-include the ticker on the currently-loaded date; the enrich
+            // pipeling will surface it as a card using the latest fundamentals.
+            if (r.via_scan) {
+              addForceInclude(r.ticker);
+              try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
+              return;
+            }
             setFilterDate(r.filing_date);
             try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
           }} />
