@@ -19,6 +19,8 @@ import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, Chevron
 import api from '@/lib/api';
 // PATCH 0186 — Auto-sync BLOCKBUSTER/STRONG cards into Conviction Beats pipeline
 import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats';
+// zzz276 — Institutional-style typeahead search (Asian → Asian Paints / Asian Energy / …)
+import EarningsSearch, { type EarningsSearchResult } from './EarningsSearch';
 // PATCH 0545 — AUDIT #95 debounced LS writes for the hot graded payload writer.
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
@@ -972,6 +974,31 @@ export default function EarningsOpportunitiesPage() {
         localStorage.removeItem('mc:eo:v12:filterDate');
       }
     } catch {}
+  }, [filterDate]);
+  // zzz276 — Hash-scroll: when URL has `#eo-card-TICKER` (from the search
+  // typeahead), poll for the card element to mount then scroll+pulse-ring.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash;
+    if (!hash || !hash.startsWith('#eo-card-')) return;
+    const id = hash.slice(1);
+    let attempts = 0;
+    const maxAttempts = 25;
+    const tryScroll = () => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const prev = el.style.boxShadow;
+        el.style.boxShadow = '0 0 0 3px var(--mc-cyan), 0 0 24px color-mix(in srgb, var(--mc-cyan) 40%, transparent)';
+        el.style.transition = 'box-shadow 0.3s';
+        setTimeout(() => { el.style.boxShadow = prev; }, 3000);
+        try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch {}
+        return;
+      }
+      if (++attempts < maxAttempts) setTimeout(tryScroll, 200);
+    };
+    const t = setTimeout(tryScroll, 400);
+    return () => clearTimeout(t);
   }, [filterDate]);
   const [showAbout, setShowAbout] = useState(false);
   const [expanded, setExpanded] = useState<Record<EarningsTier, boolean>>({
@@ -2874,6 +2901,13 @@ export default function EarningsOpportunitiesPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* zzz276 — Search across the last 120 business days of graded filings.
+              Institutional pattern: debounced typeahead, keyboard nav, recent picks.
+              Click a result → jump to that filing date + scroll to the card. */}
+          <EarningsSearch onSelect={(r: EarningsSearchResult) => {
+            setFilterDate(r.filing_date);
+            try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
+          }} />
           {/* PATCH 0916 — FILING DATE box now includes an inline native
               date picker so user can jump to ANY date with one click + one
               calendar pick. Plus quick-jump chips for Today / Yesterday /
@@ -3745,7 +3779,10 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
   })();
 
   return (
-    <div style={{
+    <div
+      id={`eo-card-${stock.ticker}`}
+      data-ticker={stock.ticker}
+      style={{
       backgroundColor: 'var(--mc-bg-0)',
       border: '1px solid var(--mc-bg-4)',
       borderLeft: `3px solid ${tierColor}`,
