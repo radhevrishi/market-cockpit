@@ -91,10 +91,14 @@ function searchLocalBench(q: string): EarningsSearchResult[] {
     if (c.includes(Q)) return 20;
     return 0;
   };
-  // Conviction Beats bench (map keyed by TICKER or TICKER@Q-FY)
+  // Conviction Beats bench (map keyed by TICKER or TICKER@Q-FY).
+  // zzz281 — dedup by ticker, keep the LATEST filing_date. User bench often has
+  // both a bare-ticker entry (older Q) and composite-key entries (newer Qs);
+  // returning both makes clicks land on the stale older date.
   try {
     const raw = localStorage.getItem('mc:conviction-beats:v1');
     const map = raw ? JSON.parse(raw) : {};
+    const bestByTicker = new Map<string, EarningsSearchResult>();
     for (const key of Object.keys(map || {})) {
       const e = map[key];
       if (!e || !e.ticker) continue;
@@ -102,7 +106,7 @@ function searchLocalBench(q: string): EarningsSearchResult[] {
       const c = String(e.company || '').toUpperCase();
       if (scoreMatch(t, c) <= 0) continue;
       const tier = (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG') ? e.tier : 'STRONG';
-      out.push({
+      const candidate: EarningsSearchResult = {
         ticker: t,
         company: e.company || t,
         filing_date: e.filing_date || '',
@@ -111,8 +115,13 @@ function searchLocalBench(q: string): EarningsSearchResult[] {
         market_cap_cr: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
         quarter: e.quarter && e.fiscal_year ? `${e.quarter} FY${String(e.fiscal_year).slice(-2)}` : undefined,
         composite_score: typeof e.composite_score === 'number' ? e.composite_score : undefined,
-      });
+      };
+      const existing = bestByTicker.get(t);
+      if (!existing || (candidate.filing_date && candidate.filing_date > (existing.filing_date || ''))) {
+        bestByTicker.set(t, candidate);
+      }
     }
+    for (const r of bestByTicker.values()) out.push(r);
   } catch {}
   // EI Elite bench (mc:ei-elite:v1) — array of {symbol, company, grade, ...}
   try {
