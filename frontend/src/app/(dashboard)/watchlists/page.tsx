@@ -634,6 +634,68 @@ export default function WatchlistsPage() {
       window.removeEventListener('storage', refresh);
     };
   }, []);
+
+  // zzz305 — Auto-populate CB bench from recent server graded data.
+  // Bug: syncFromEarningsOps only fired when user visited /earnings-opportunities
+  // for a specific date. New BLOCKBUSTER/STRONG entries for dates the user
+  // never visited never landed. Fix: on /watchlists mount + every 10min,
+  // pull last 14 days of graded data and sync any BB/ST. Dedupe logic in
+  // syncFromEarningsOps handles same-filing upserts safely.
+  useEffect(() => {
+    let cancelled = false;
+    const scan = async () => {
+      const today = new Date();
+      const dates: string[] = [];
+      for (let i = 0; i < 14; i++) {
+        const d = new Date(today.getTime() - i * 86400_000);
+        dates.push(d.toISOString().slice(0, 10));
+      }
+      const entries: Array<any> = [];
+      for (const dstr of dates) {
+        if (cancelled) return;
+        try {
+          const r = await fetch('/api/v1/earnings/graded?date=' + dstr);
+          if (!r.ok) continue;
+          const j: any = await r.json();
+          for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
+            for (const c of (j?.by_tier?.[tier] || [])) {
+              let qParsed: 'Q1' | 'Q2' | 'Q3' | 'Q4' | undefined;
+              let fyParsed: number | undefined;
+              if (typeof c.quarter === 'string') {
+                const qm = c.quarter.match(/Q([1-4])/i);
+                if (qm) qParsed = ('Q' + qm[1]) as any;
+                const fm = c.quarter.match(/FY\s?(\d{2})/i);
+                if (fm) { const yy = parseInt(fm[1], 10); fyParsed = yy < 50 ? 2000 + yy : 1900 + yy; }
+              }
+              entries.push({
+                ticker: c.ticker, company: c.company, tier,
+                composite_score: c.composite_score,
+                sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
+                filing_date: c.filing_date, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
+                market_cap_cr: (c as any).market_cap_cr ?? null,
+                source_url: c.filing_url,
+                ...(qParsed ? { quarter: qParsed } : {}),
+                ...(fyParsed ? { fiscal_year: fyParsed } : {}),
+                d1_pct: typeof (c as any).d1_pct === 'number' ? (c as any).d1_pct : null,
+                gap_pct: typeof (c as any).gap_pct === 'number' ? (c as any).gap_pct : null,
+                pead_score: typeof (c as any).pead_score === 'number' ? (c as any).pead_score : null,
+                is_elite: (c as any).is_elite === true,
+                multibagger_setup: (c as any).multibagger_setup === true,
+                opm_pct: typeof (c as any).opm_pct === 'number' ? (c as any).opm_pct : null,
+                opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
+                pe: typeof (c as any).pe === 'number' ? (c as any).pe : null,
+              });
+            }
+          }
+        } catch {}
+      }
+      if (cancelled || entries.length === 0) return;
+      try { syncFromEarningsOps(entries); } catch {}
+    };
+    scan();
+    const interval = setInterval(scan, 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
   const convictionCount = convictionEntries.length;
 
   // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
