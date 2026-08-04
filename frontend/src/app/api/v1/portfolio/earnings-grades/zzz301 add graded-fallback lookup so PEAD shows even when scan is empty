@@ -170,41 +170,52 @@ export async function GET(req: NextRequest) {
     if (!existing || (e.fd || '') > (existing.fd || '')) gradedByKey.set(k, e);
   }
 
+  // zzz301 — latest graded entry per ticker (regardless of quarter). Used as a
+  // fallback so we can still return pead_score/tier when the scan endpoint
+  // returns nothing (which currently happens for many tickers on Railway).
+  const latestGradedByTicker = new Map<string, IndexEntry>();
+  for (const e of index) {
+    if (!e || !e.t) continue;
+    const cur = latestGradedByTicker.get(e.t);
+    if (!cur || (e.fd || '') > (cur.fd || '')) latestGradedByTicker.set(e.t, e);
+  }
+
   const results: Record<string, any> = {};
   for (const t of tickers) {
     const c = scan[t];
-    if (!c) { results[t] = null; continue; }
+    const scanQuarter = c ? periodToQuarter(c.period || c.resultDate) : null;
+    const scanScore = c && typeof c.totalScore === 'number' ? c.totalScore : null;
+    const gradedQ = scanQuarter ? gradedByKey.get(`${t}@${scanQuarter}`) : undefined;
+    const gradedAny = latestGradedByTicker.get(t);
+    const graded = gradedQ || gradedAny;
 
-    const scanQuarter = periodToQuarter(c.period || c.resultDate);
-    const scanScore = typeof c.totalScore === 'number' ? c.totalScore : null;
-    const graded = scanQuarter ? gradedByKey.get(`${t}@${scanQuarter}`) : undefined;
+    // zzz301 — only skip if BOTH scan and graded miss. Previously we short-circuited
+    // on !scan[t], which caused pead_score to be null for all tickers whenever the
+    // scan endpoint returned empty cards (a common upstream failure mode).
+    if (!c && !graded) { results[t] = null; continue; }
 
-    const tier: Tier = graded?.tier ?? scanToTier(c.grade, scanScore ?? undefined);
+    const tier: Tier = graded?.tier ?? scanToTier(c?.grade, scanScore ?? undefined);
     const composite_score: number | null = graded?.cs ?? scanScore;
     const pead_score: number | null = (graded as any)?.p ?? null; // zzz299
 
     results[t] = {
       ticker: t,
-      company: String(c.company || t),
-      // filing_date: use graded's date if we have it, else derive rough date from
-      // period ("Jun 2026" -> 2026-06-30). Rough dates are fine because the client
-      // only uses this for a scan-fallback jump.
-      filing_date: graded?.fd || quarterEndFromPeriod(c.period || c.resultDate) || '',
+      company: String(c?.company || graded?.c || t),
+      filing_date: graded?.fd || quarterEndFromPeriod(c?.period || c?.resultDate) || '',
       tier,
       sector: graded?.sec || null,
       market_cap_cr: graded?.mc ?? null,
       quarter: scanQuarter || graded?.q || null,
       composite_score,
       pead_score, // zzz299 — real PEAD from graded pipeline
-      // extras — YoY momentum + freshness source
-      revenue_yoy: typeof c.revenueYoY === 'number' ? c.revenueYoY : null,
-      pat_yoy: typeof c.patYoY === 'number' ? c.patYoY : null,
-      eps_yoy: typeof c.epsYoY === 'number' ? c.epsYoY : null,
-      source: graded ? 'graded' : 'scan',
+      revenue_yoy: c && typeof c.revenueYoY === 'number' ? c.revenueYoY : null,
+      pat_yoy: c && typeof c.patYoY === 'number' ? c.patYoY : null,
+      eps_yoy: c && typeof c.epsYoY === 'number' ? c.epsYoY : null,
+      source: gradedQ ? 'graded' : (gradedAny ? 'graded-fallback' : 'scan'),
     };
   }
 
-  const graded = Object.values(results).filter((r: any) => r && r.source === 'graded').length;
+    const graded = Object.values(results).filter((r: any) => r && r.source === 'graded').length;
   const covered = Object.values(results).filter(Boolean).length;
   return Response.json({
     count: tickers.length,
