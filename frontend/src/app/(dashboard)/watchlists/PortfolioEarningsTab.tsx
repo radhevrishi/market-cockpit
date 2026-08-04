@@ -171,7 +171,9 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
               composite_score: graded2?.composite_score ?? scanScore,
               // zzz299 — real PEAD from graded pipeline (server portfolio-grades). scan.priceScore is a stub-50.
               pead_score: (gradedEntry as any)?.pead_score ?? null,
-            };
+              // zzz302 — proxy PEAD from scan fundamentalsScore when real is missing.
+              pead_proxy: (gradedEntry as any)?.pead_score == null && typeof scanCard.fundamentalsScore === 'number' ? scanCard.fundamentalsScore : null,
+            } as any;
           }
         } else {
           merged[t] = gradedEntry;
@@ -423,7 +425,18 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
                 <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.filing_date || '—'}</div>
                 <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.quarter || '—'}</div>
                 <div style={{ textAlign: 'right', color: 'var(--mc-text-2)', fontWeight: 700 }}>{grade?.composite_score ?? '—'}</div>
-                <div style={{ textAlign: 'right', color: (grade as any)?.pead_score >= 70 ? 'var(--mc-bullish)' : (grade as any)?.pead_score >= 50 ? 'var(--mc-warn)' : 'var(--mc-text-3)', fontWeight: 700, fontSize: 11 }}>{(grade as any)?.pead_score ?? '—'}</div>
+                <div style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }}>{(() => {
+                  const real = (grade as any)?.pead_score;
+                  const proxy = (grade as any)?.pead_proxy;
+                  if (typeof real === 'number') {
+                    const color = real >= 70 ? 'var(--mc-bullish)' : real >= 50 ? 'var(--mc-warn)' : 'var(--mc-text-3)';
+                    return <span style={{ color }}>{real}</span>;
+                  }
+                  if (typeof proxy === 'number') {
+                    return <span title="Proxy PEAD from earnings-scan fundamentals score (real PEAD unavailable — ticker not in graded pipeline)" style={{ color: 'var(--mc-text-4)', fontStyle: 'italic', fontWeight: 500 }}>≈{proxy}</span>;
+                  }
+                  return <span style={{ color: 'var(--mc-text-4)' }}>—</span>;
+                })()}</div>
               </div>
             );
           })}
