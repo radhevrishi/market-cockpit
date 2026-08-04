@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-04T06:23:25Z",
+  "lastSync": "2026-08-04T07:59:22Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9787,
+      "size": 10197,
       "displayName": "CAPEX"
     },
     {
@@ -35,12 +35,12 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 4930,
+      "size": 5255,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4475,
+      "size": 4880,
       "displayName": "Lowequitycapital"
     },
     {
@@ -80,17 +80,17 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 22844,
+      "size": 22845,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63380,
+      "size": 63381,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65566,
+      "size": 65565,
       "displayName": "Working watchlist"
     },
     {
