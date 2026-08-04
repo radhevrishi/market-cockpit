@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-08-04T07:59:22Z",
+  "lastSync": "2026-08-04T10:32:10Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 10269,
+      "size": 10688,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 10197,
+      "size": 8977,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 8715,
+      "size": 7899,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,17 +25,17 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 7005,
+      "size": 6993,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 2367,
+      "size": 2368,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5255,
+      "size": 4832,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 13573,
+      "size": 13572,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,12 +55,12 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 6170,
+      "size": 6171,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 2919,
+      "size": 3362,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -70,12 +70,12 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 1565,
+      "size": 1981,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
       "name": "turnarounds.csv",
-      "size": 4477,
+      "size": 5310,
       "displayName": "Turnarounds"
     },
     {
@@ -85,7 +85,7 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63381,
+      "size": 63383,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 5930,
+      "size": 5929,
       "displayName": "Weekly Volume Pockets"
     }
   ]
