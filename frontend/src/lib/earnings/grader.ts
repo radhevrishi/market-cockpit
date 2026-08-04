@@ -271,14 +271,18 @@ function inferCaveatTags(mb?: MBLite, p?: Partial<ParsedEarning>, articleText?: 
   if (mb?.cfoToPat != null && mb.cfoToPat < 0.8) tags.add('ocf divergence');
 
   // Optical EPS — EPS YoY > 3x sales YoY OR > 100% AND prior near zero (base effect)
+  // zzz303 — when OPM expanded meaningfully (>=3pp), operating leverage genuinely
+  // explains EPS outpacing sales, so DON'T tag optical for ratio-based rules.
+  // MOREPENLAB Q1 FY27 case: EPS +415%, Sales +34%, but OPM 6->14 (+8pp) — real op leverage.
   const epsY = p?.eps_yoy_pct ?? mb?.epsGrowth ?? null;
   const salesY = p?.sales_yoy_pct ?? mb?.yoySalesGrowth ?? null;
-  if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) {
+  const opmExpanded = mb?.opmExpansion != null && mb.opmExpansion >= 3;
+  if (!opmExpanded && epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) {
     tags.add('optical eps');
   }
-  if (epsY != null && epsY >= 200) tags.add('optical eps');  // 200%+ usually base effect
+  if (!opmExpanded && epsY != null && epsY >= 200) tags.add('optical eps');  // 200%+ usually base effect
   if (p?.eps_prev != null && p.eps_curr != null && Math.abs(p.eps_prev) < 1 && p.eps_curr > 5) {
-    tags.add('optical eps');
+    tags.add('optical eps');  // real base effect — keep even if OPM expanded
   }
 
   // Tax distortion — explicit text mention
@@ -303,9 +307,9 @@ function inferCaveatTags(mb?: MBLite, p?: Partial<ParsedEarning>, articleText?: 
   // One-time order
   if (/\bone[- ]time\s+order\b|\bsingle\s+order\b|\blarge\s+one[- ]off\s+order\b|\bdamas\b/i.test(text)) tags.add('one time order');
 
-  // Net-profit YoY > 100% but sales YoY < 25% → optical
+  // Net-profit YoY > 100% but sales YoY < 25% → optical (unless OPM expanded).
   const patY = p?.net_profit_yoy_pct ?? mb?.yoyProfitGrowth ?? null;
-  if (patY != null && salesY != null && patY >= 100 && salesY < 25) tags.add('optical eps');
+  if (!opmExpanded && patY != null && salesY != null && patY >= 100 && salesY < 25) tags.add('optical eps');
 
   // Multiple quality flags → low quality
   if (tags.size >= 3) tags.add('low quality');
