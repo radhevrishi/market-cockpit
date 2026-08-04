@@ -20,7 +20,7 @@ import { kvGet, kvSet } from '@/lib/kv';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const INDEX_KEY = 'search:idx:v2';
+const INDEX_KEY = 'search:idx:v3'; // zzz300 — bumped to invalidate old cache w/o pead
 const INDEX_TTL_SECONDS = 15 * 60;
 const CACHE_PREFIX = 'graded:v10:';
 const LOOKBACK_BUSINESS_DAYS = 120;
