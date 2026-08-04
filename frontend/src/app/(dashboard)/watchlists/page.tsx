@@ -2047,7 +2047,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         const d = dates[i];
         setRevalProgress(`Re-validating ${i + 1}/${dates.length} · ${d}`);
         try {
-          const res = await fetch(`/api/v1/earnings/graded?date=${d}`, { cache: 'no-store' });
+          // zzz306 — force fresh grade for the LAST 3 dates so cfo_to_pat_ratio (added in
+          // zzz304a) actually populates cached payloads that were built before it. Older
+          // dates use existing cache to keep the rebuild cheap.
+          const _force = i < 3 ? '&force=1' : '';
+          const res = await fetch(`/api/v1/earnings/graded?date=${d}${_force}`, { cache: 'no-store' });
           if (!res.ok) continue;
           const j = await res.json();
           const bt = j?.by_tier || {};
@@ -2079,6 +2083,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 opm_prev_pct: typeof c.opm_prev_pct === 'number' ? c.opm_prev_pct : null,
                 // zzz242 — carry trailing P/E for valuation chip
                 pe: typeof c.pe === 'number' ? c.pe : null,
+                // zzz306 — carry CFO/PAT so bench cards can render the earnings-quality chip.
+                cfo_to_pat_ratio: typeof c.cfo_to_pat_ratio === 'number' ? c.cfo_to_pat_ratio : null,
               });
             }
           }
