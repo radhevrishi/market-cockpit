@@ -31,6 +31,7 @@ const TIERS: Tier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
 type IndexEntry = {
   t: string; c: string; fd: string; tier: Tier;
   sec: string | null; mc: number | null; q: string | null; cs: number | null; db: number;
+  p?: number | null; // zzz299 — pead_score
 };
 
 function businessDaysBack(n: number): string[] {
@@ -77,6 +78,7 @@ async function buildIndex(): Promise<IndexEntry[]> {
             mc: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
             q: e.quarter || null,
             cs: typeof e.composite_score === 'number' ? e.composite_score : null,
+            p: typeof e.pead_score === 'number' ? e.pead_score : null, // zzz299
             db: daysBack,
           });
         }
@@ -179,6 +181,7 @@ export async function GET(req: NextRequest) {
 
     const tier: Tier = graded?.tier ?? scanToTier(c.grade, scanScore ?? undefined);
     const composite_score: number | null = graded?.cs ?? scanScore;
+    const pead_score: number | null = (graded as any)?.p ?? null; // zzz299
 
     results[t] = {
       ticker: t,
@@ -192,6 +195,7 @@ export async function GET(req: NextRequest) {
       market_cap_cr: graded?.mc ?? null,
       quarter: scanQuarter || graded?.q || null,
       composite_score,
+      pead_score, // zzz299 — real PEAD from graded pipeline
       // extras — YoY momentum + freshness source
       revenue_yoy: typeof c.revenueYoY === 'number' ? c.revenueYoY : null,
       pat_yoy: typeof c.patYoY === 'number' ? c.patYoY : null,
