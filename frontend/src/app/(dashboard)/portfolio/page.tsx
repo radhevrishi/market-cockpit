@@ -965,8 +965,62 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
     </div>
   );
 
+  // zzz297 — Earnings tier mix from PortfolioEarningsTab cache
+  let etMix: any = null;
+  try {
+    if (typeof window !== 'undefined') {
+      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v1');
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (c && c.grades) {
+          const bt: any = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [], NONE: [] };
+          for (const k in c.grades) {
+            const g = c.grades[k];
+            const t = (g && g.tier) || 'NONE';
+            (bt[t] = bt[t] || []).push({ t: k, s: g && g.composite_score, q: g && g.quarter });
+          }
+          etMix = { bt, ts: c.ts, tot: Object.keys(c.grades).length };
+        }
+      }
+    }
+  } catch {}
+  const etCol: any = {
+    BLOCKBUSTER: { fg: '#FCD34D', bg: '#78350F', bd: '#F59E0B', act: 'HOLD/ADD' },
+    STRONG:      { fg: '#86EFAC', bg: '#14532D', bd: '#22C55E', act: 'HOLD' },
+    MIXED:       { fg: '#FCA5A5', bg: '#78350F', bd: '#F59E0B', act: 'REVIEW' },
+    AVOID:       { fg: '#FECACA', bg: '#7F1D1D', bd: '#DC2626', act: 'TRIM' },
+    NONE:        { fg: '#94A3B8', bg: '#1F2937', bd: '#475569', act: '-' },
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* zzz297 tier mix */}
+      {etMix && etMix.tot > 0 && (
+        <div style={card}>
+          <div style={h}>Earnings tier mix ({etMix.tot} holdings)</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, marginBottom: 12 }}>
+            {['BLOCKBUSTER','STRONG','MIXED','AVOID','NONE'].map((t) => {
+              const st = etCol[t]; const list = etMix.bt[t] || []; const p = Math.round((list.length / etMix.tot) * 100);
+              return (<div key={t} style={{ padding: 10, background: st.bg, border: '1px solid ' + st.bd, borderRadius: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: st.fg }}>{t}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: st.fg }}>{list.length}</div>
+                <div style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>{p}%</div>
+              </div>);
+            })}
+          </div>
+          {['BLOCKBUSTER','STRONG','MIXED','AVOID'].map((t) => {
+            const list = (etMix.bt[t] || []).slice().sort((a: any, b: any) => (b.s || 0) - (a.s || 0));
+            if (!list.length) return null; const st = etCol[t];
+            return (<div key={t} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: st.fg, marginBottom: 4 }}>{t} - {list.length} - {st.act}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {list.map((x: any) => (<span key={x.t} style={{ fontSize: 10, padding: '3px 8px', background: 'var(--mc-bg-2)', color: 'var(--mc-text-2)', border: '1px solid ' + st.bd, borderRadius: 4, fontWeight: 700 }}>{x.t} <span style={{ color: st.fg, marginLeft: 4 }}>{x.s || ''}</span></span>))}
+              </div>
+            </div>);
+          })}
+        </div>
+      )}
+
       {/* Headline stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
         <Stat label="CURRENT VALUE" value={fmtRs(totalCur)} />
