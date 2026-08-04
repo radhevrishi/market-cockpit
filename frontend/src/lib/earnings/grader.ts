@@ -137,6 +137,7 @@ export interface ParsedEarning {
   is_elite?: boolean;          // passes BB + all institutional gates
   pead_score?: number | null;  // 0-100, academic post-earnings drift
   multibagger_setup?: boolean; // 6-criterion SQGLP compounder filter
+  cfo_to_pat_ratio?: number | null;  // zzz304 — earnings quality: CFO/PAT (Screener). <0.8 = cash conversion concern.
 }
 
 export type MethodologyTag =
@@ -521,6 +522,8 @@ export function gradeFromMB(mb: MBLite, article?: NewsArticleLite): ParsedEarnin
     narrative: '',
     filing_url: article?.source_url || article?.url,
     source_article_id: article?.id,
+    // zzz304 — expose CFO/PAT ratio so downstream (CB card + filter) can display it.
+    cfo_to_pat_ratio: typeof mb?.cfoToPat === 'number' ? mb.cfoToPat : null,
   };
   out.narrative = buildNarrative(out, mb, article?.summary || article?.description);
   return out;
