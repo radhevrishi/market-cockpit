@@ -684,6 +684,7 @@ export default function WatchlistsPage() {
                 opm_pct: typeof (c as any).opm_pct === 'number' ? (c as any).opm_pct : null,
                 opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
                 pe: typeof (c as any).pe === 'number' ? (c as any).pe : null,
+                cfo_to_pat_ratio: typeof (c as any).cfo_to_pat_ratio === 'number' ? (c as any).cfo_to_pat_ratio : null, // zzz304
               });
             }
           }
@@ -1339,6 +1340,9 @@ type ConvFilters = {
   // zzz226e — minimum ABSOLUTE OPM level (latest quarter %), distinct from
   // the delta filter — screens out structurally thin-margin businesses.
   opmMin?: number | null;
+  // zzz304 — minimum CFO/PAT ratio (Screener). Filters low earnings quality;
+  // 0.5 = weak, 0.8 = healthy, 1.0 = pristine cash conversion.
+  cfoPatMin?: number | null;
   sortByPead: boolean;
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
   elite: boolean;
@@ -1373,7 +1377,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, cfoPatMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1582,6 +1586,12 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.opmMin != null) {
     const o = (e as any).opm_pct;
     if (typeof o !== 'number' || o < f.opmMin) return false;
+  }
+  // zzz304 — minimum CFO/PAT ratio filter. Entries without ratio value fail
+  // the filter (we prefer surfacing entries with proven cash conversion).
+  if (f.cfoPatMin != null) {
+    const c = (e as any).cfo_to_pat_ratio;
+    if (typeof c !== 'number' || c < f.cfoPatMin) return false;
   }
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
@@ -2683,6 +2693,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz226e — absolute OPM level chips (latest quarter %) */}
         {renderChipGroup('OPM LEVEL', '#F472B6', 'opmMin', [
           { v: 10, lbl: '≥10%' }, { v: 12, lbl: '≥12%' }, { v: 15, lbl: '≥15%' }, { v: 20, lbl: '≥20%' },
+        ])}
+        {/* zzz304 — CFO/PAT minimum ratio chips (earnings quality: cash conversion). */}
+        {renderChipGroup('CFO/PAT MIN', '#34D399', 'cfoPatMin' as any, [
+          { v: 0.5, lbl: '≥0.5' }, { v: 0.7, lbl: '≥0.7' }, { v: 0.8, lbl: '≥0.8' }, { v: 1.0, lbl: '≥1.0' },
         ])}
         {/* zzz225 — composite tier score chips (the big number on each card) */}
         {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
@@ -4179,6 +4193,22 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
                   <strong style={{ color: col }}>
                     {o.toFixed(1)}%{d != null ? ` (${d >= 0 ? '+' : ''}${d.toFixed(1)}pp)` : ''}
                   </strong>
+                </span>
+              );
+            })()}
+            {/* zzz304 — CFO/PAT chip. Green >= 0.8 (healthy), amber 0.5-0.8, red < 0.5. */}
+            {typeof (entry as any).cfo_to_pat_ratio === 'number' && (() => {
+              const r = (entry as any).cfo_to_pat_ratio as number;
+              const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
+              const tip = r >= 1 ? 'CFO/PAT ' + r.toFixed(2) + ' — pristine cash conversion (>=1 means CFO ≥ profit).'
+                : r >= 0.8 ? 'CFO/PAT ' + r.toFixed(2) + ' — healthy cash conversion.'
+                : r >= 0.5 ? 'CFO/PAT ' + r.toFixed(2) + ' — cash conversion below profits; watch working capital.'
+                : 'CFO/PAT ' + r.toFixed(2) + ' — WEAK: profits not translating into cash. Earnings quality concern.';
+              return (
+                <span title={tip}>
+                  <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
+                  <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT</span>{' '}
+                  <strong style={{ color: col }}>{r.toFixed(2)}</strong>
                 </span>
               );
             })()}
