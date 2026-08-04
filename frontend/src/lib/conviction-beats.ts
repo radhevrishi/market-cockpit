@@ -272,6 +272,7 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           fill('opm_pct'); fill('opm_prev_pct');
           fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct');   // zzz230/231
           fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
+          fill('cfo_to_pat_ratio' as any);  // zzz306 — earnings quality (CFO/PAT ratio)
           // zzz257 — institutional-quality fields + 30d sparkline series.
           // Previously the sync payload carried them but this fill() list didn't,
           // so backfills silently dropped them and the ROCE/ROE row never rendered.
