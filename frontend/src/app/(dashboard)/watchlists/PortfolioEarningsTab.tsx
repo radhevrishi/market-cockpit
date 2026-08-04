@@ -169,7 +169,8 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
               market_cap_cr: graded2?.market_cap_cr ?? null,
               quarter: scanQ || graded2?.quarter || null,
               composite_score: graded2?.composite_score ?? scanScore,
-              pead_score: typeof scanCard.priceScore === 'number' ? scanCard.priceScore : null, // zzz294
+              // zzz299 — real PEAD from graded pipeline (server portfolio-grades). scan.priceScore is a stub-50.
+              pead_score: (gradedEntry as any)?.pead_score ?? null,
             };
           }
         } else {
