@@ -30,7 +30,7 @@ const MONO: CSSProperties = { fontFamily: 'ui-monospace, "SF Mono", Menlo, monos
 // User's actual targets remain 20–40%; 10/15 just frame the opportunity cost
 // of staying in low-return vehicles. The flagship highlight stays at 25%.
 const CAGRS = [10, 15, 20, 25, 30, 35, 40] as const;
-const HORIZONS = [10, 15, 20, 25, 30] as const;
+const HORIZONS = [5, 10, 15, 20, 25] as const; // zzz308 — added 5Y, removed 30Y
 
 function compound(start: number, cagrPct: number, years: number): number {
   return start * Math.pow(1 + cagrPct / 100, years);
