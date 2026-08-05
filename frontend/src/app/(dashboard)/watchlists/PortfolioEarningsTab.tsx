@@ -191,10 +191,14 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
   };
 
   // zzz298 — ALWAYS use cached grades if present. Refresh only on explicit
-  // Refresh-button click. New tickers show NO FILING until user refreshes; that
-  // matches the professional "cache-only, manual refresh" behavior the user asked for.
+  // Refresh-button click.
+  // zzz313 — SILENT backfill for NO FILING entries. If cache is >6h old AND
+  // has any null grades, kick a background refresh so upstream retries pick
+  // them up. Fresh caches with populated grades still use the cache-only path.
   useEffect(() => {
     if (!tickers.length) return;
+    let hasCache = false;
+    let staleNulls = false;
     try {
       const raw = localStorage.getItem('mc:portfolio-earnings-tab:v1');
       if (raw) {
@@ -202,12 +206,18 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
         if (cached?.grades) {
           setGrades(cached.grades);
           setRefreshedAt(cached.ts || null);
-          return; // cache hit, no auto-fetch
+          hasCache = true;
+          const ageMs = Date.now() - (cached.ts || 0);
+          const SIX_HOURS = 6 * 60 * 60 * 1000;
+          if (ageMs > SIX_HOURS) {
+            for (const t of tickers) {
+              if (!cached.grades[t]) { staleNulls = true; break; }
+            }
+          }
         }
       }
     } catch {}
-    // Cold cache (first time ever) -> fetch once to seed
-    refresh();
+    if (!hasCache || staleNulls) refresh();
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [tickers.length]);
 
