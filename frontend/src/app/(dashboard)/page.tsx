@@ -2620,6 +2620,7 @@ export default function HomeDashboard() {
               <Link href="/market-cycles"                  style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
               <Link href="/news-triage"                    style={navChip('#EF4444')}>📰 News Triage</Link>
               <Link href="/budget-intel"                   style={navChip('#F59E0B')}>📊 Budget Intel</Link>
+              <Link href="/journey"                       style={navChip('#22D3EE')}>🚀 The Journey</Link>
             </div>
           </div>
 
@@ -2804,7 +2805,7 @@ export default function HomeDashboard() {
                 Relationships / Peak Performance / Stress / Signals / Special Sit /
                 Strategic Vis / Super Investors were removed here. */}
             <Link href="/system-health"          style={navChip('#10B981')}>🩺 System Health</Link>
-            <Link href="/journey"                style={navChip('#22D3EE')}>🚀 The Journey</Link>
+            {/* zzz307 — 🚀 The Journey moved to Favourites row above */}
             <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
             {/* zzz239 — 📈 USA Technicals and 🧮 Valuation Calc moved to Favourites row above */}
             <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
