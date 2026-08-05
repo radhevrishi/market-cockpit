@@ -1,51 +1,51 @@
 {
-  "lastSync": "2026-08-04T13:41:20Z",
+  "lastSync": "2026-08-05T06:23:30Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 10689,
+      "size": 10236,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 9388,
+      "size": 9387,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 8325,
+      "size": 8301,
       "displayName": "Debt Reduction"
     },
     {
       "name": "fii.csv",
-      "size": 1992,
+      "size": 1991,
       "displayName": "FII"
     },
     {
       "name": "future-leaders.csv",
-      "size": 6993,
+      "size": 6995,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 2795,
+      "size": 3213,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5502,
+      "size": 6714,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4880,
+      "size": 4499,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 12431,
+      "size": 8938,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 6171,
+      "size": 6177,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -65,12 +65,12 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 3299,
+      "size": 3300,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 1981,
+      "size": 2418,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
@@ -85,17 +85,17 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63383,
+      "size": 63380,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65571,
+      "size": 65575,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 6341,
+      "size": 4163,
       "displayName": "Weekly Volume Pockets"
     }
   ]
