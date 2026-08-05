@@ -965,7 +965,9 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
     </div>
   );
 
-  // zzz297 — Earnings tier mix from PortfolioEarningsTab cache
+  // zzz297 — Earnings tier mix from PortfolioEarningsTab cache.
+  // zzz312 — intersect with CURRENT holdings so tickers user later removed
+  // (e.g. IONEXCHANG) don't linger in the tier mix from stale cache.
   let etMix: any = null;
   try {
     if (typeof window !== 'undefined') {
@@ -973,13 +975,23 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
       if (raw) {
         const c = JSON.parse(raw);
         if (c && c.grades) {
+          const currentSet = new Set((rows || []).map((r: any) => String(r.symbol || '').toUpperCase()));
           const bt: any = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [], NONE: [] };
+          let tot = 0;
           for (const k in c.grades) {
+            if (!currentSet.has(String(k).toUpperCase())) continue;
             const g = c.grades[k];
             const t = (g && g.tier) || 'NONE';
             (bt[t] = bt[t] || []).push({ t: k, s: g && g.composite_score, q: g && g.quarter });
+            tot++;
           }
-          etMix = { bt, ts: c.ts, tot: Object.keys(c.grades).length };
+          for (const sym of currentSet) {
+            if (!(sym in c.grades)) {
+              bt.NONE.push({ t: sym, s: null, q: null });
+              tot++;
+            }
+          }
+          etMix = { bt, ts: c.ts, tot };
         }
       }
     }
