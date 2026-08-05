@@ -889,7 +889,7 @@ function capBadge(c?: string) {
   return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 5, fontSize: 10.5, fontWeight: 800, background: `${col}22`, color: col, letterSpacing: '0.3px' }}>{label}</span>;
 }
 
-function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSelectCap?: (cap: string) => void }) {
+function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: { rows: PortfolioRow[]; onSelectCap?: (cap: string) => void; onSelectTier?: (tier: string) => void; selectedTier?: string | null }) {
   const fmtRs = (v: number) => '₹' + Math.round(v || 0).toLocaleString('en-IN');
   const pctTxt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
   const totalCur = rows.reduce((a, r) => a + (r.currentValue || 0), 0) || 1;
@@ -984,11 +984,14 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
       }
     }
   } catch {}
+  // zzz310 — retuned for solid contrast on the dark portfolio background.
+  //   BLOCKBUSTER = gold, STRONG = green, MIXED = amber, AVOID = red, NONE = slate.
+  //   MIXED used to be red-on-brown which read as "broken" instead of "caution".
   const etCol: any = {
-    BLOCKBUSTER: { fg: '#FCD34D', bg: '#78350F', bd: '#F59E0B', act: 'HOLD/ADD' },
-    STRONG:      { fg: '#86EFAC', bg: '#14532D', bd: '#22C55E', act: 'HOLD' },
-    MIXED:       { fg: '#FCA5A5', bg: '#78350F', bd: '#F59E0B', act: 'REVIEW' },
-    AVOID:       { fg: '#FECACA', bg: '#7F1D1D', bd: '#DC2626', act: 'TRIM' },
+    BLOCKBUSTER: { fg: '#FCD34D', bg: '#3F2A0A', bd: '#F59E0B', act: 'HOLD/ADD' },
+    STRONG:      { fg: '#86EFAC', bg: '#052E1A', bd: '#22C55E', act: 'HOLD' },
+    MIXED:       { fg: '#FDE68A', bg: '#3B2E0A', bd: '#EAB308', act: 'REVIEW' },
+    AVOID:       { fg: '#FCA5A5', bg: '#3F0F0F', bd: '#DC2626', act: 'TRIM' },
     NONE:        { fg: '#94A3B8', bg: '#1F2937', bd: '#475569', act: '-' },
   };
 
@@ -1001,8 +1004,13 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, marginBottom: 12 }}>
             {['BLOCKBUSTER','STRONG','MIXED','AVOID','NONE'].map((t) => {
               const st = etCol[t]; const list = etMix.bt[t] || []; const p = Math.round((list.length / etMix.tot) * 100);
-              return (<div key={t} style={{ padding: 10, background: st.bg, border: '1px solid ' + st.bd, borderRadius: 6 }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: st.fg }}>{t}</div>
+              const isSel = selectedTier === t;
+              const disabled = list.length === 0;
+              return (<div key={t}
+                onClick={() => { if (!disabled && onSelectTier) onSelectTier(isSel ? '' : t); }}
+                title={disabled ? `No ${t} holdings` : (isSel ? `Click again to clear ${t} filter` : `Show only the ${list.length} ${t} holding${list.length === 1 ? '' : 's'} in the Holdings table`)}
+                style={{ padding: 10, background: st.bg, border: (isSel ? '2px solid ' : '1px solid ') + st.bd, borderRadius: 6, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1, boxShadow: isSel ? `0 0 0 2px ${st.bd}33` : 'none', transition: 'box-shadow 120ms' }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: st.fg }}>{t}{isSel && ' ✓'}</div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: st.fg }}>{list.length}</div>
                 <div style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>{p}%</div>
               </div>);
@@ -1480,6 +1488,24 @@ export default function PortfolioPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'fundamentals' | 'earnings'>('holdings'); // PATCH 1100 + zzz285
   const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
+  // zzz311 — tier filter driven from Analytics tier-mix chips. '' = no filter.
+  const [tierFilter, setTierFilter] = useState<'' | 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID' | 'NONE'>('');
+  // zzz311 — read the earnings-tab cache once for the ticker->tier map used by the filter.
+  const tickerToTier = useMemo<Record<string, string>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v1');
+      if (!raw) return {};
+      const c = JSON.parse(raw);
+      if (!c || !c.grades) return {};
+      const map: Record<string, string> = {};
+      for (const k in c.grades) {
+        const g = c.grades[k];
+        map[k.toUpperCase()] = (g && g.tier) || 'NONE';
+      }
+      return map;
+    } catch { return {}; }
+  }, [viewTab]);
   const [capMap, setCapMap] = useState<Record<string, string>>({}); // PATCH 1101 — ticker -> cap (Large/Mid/Small/Micro)
 
   // Init: load from API, fallback to localStorage
@@ -1810,9 +1836,12 @@ export default function PortfolioPage() {
 
   // PATCH 1100 — cap normalization + cap-filtered view for the holdings table.
   const displayRows = useMemo(() => {
-    if (capFilter === 'all') return sortedRows;
-    return sortedRows.filter(r => normCapBucket(r.cap) === capFilter);
-  }, [sortedRows, capFilter]);
+    let out = capFilter === 'all' ? sortedRows : sortedRows.filter(r => normCapBucket(r.cap) === capFilter);
+    if (tierFilter) {
+      out = out.filter(r => (tickerToTier[String(r.symbol).toUpperCase()] || 'NONE') === tierFilter);
+    }
+    return out;
+  }, [sortedRows, capFilter, tierFilter, tickerToTier]);
 
   // PATCH 1101 — Market-cap is the user's #1 requirement and must never be empty.
   // The per-ticker quote endpoint that prices small/mid holdings returns NO cap,
@@ -2117,7 +2146,11 @@ export default function PortfolioPage() {
       {!loading && holdings.length > 0 && viewTab === 'fundamentals' && <FundamentalsAnalyzerPage scope="portfolio" />}
       {!loading && holdings.length > 0 && viewTab === 'earnings' && <PortfolioEarningsTab tickers={holdings.map(h => h.symbol)} />}
         {!loading && holdings.length > 0 && viewTab === 'analytics' && (
-        <PortfolioAnalytics rows={sortedRows} onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }} />
+        <PortfolioAnalytics rows={sortedRows}
+          onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }}
+          onSelectTier={(t) => { setTierFilter(t as any); setViewTab('holdings'); }}
+          selectedTier={tierFilter}
+        />
       )}
 
       {/* ── Fetch error banner ──────────────────────────────────────── */}
