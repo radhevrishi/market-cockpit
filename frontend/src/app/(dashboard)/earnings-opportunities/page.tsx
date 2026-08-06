@@ -2101,6 +2101,9 @@ export default function EarningsOpportunitiesPage() {
           opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
           // zzz242 — carry trailing P/E for valuation chip on CB card
           pe: typeof (c as any).pe === 'number' ? (c as any).pe : (typeof (c as any).stockPE === 'number' ? (c as any).stockPE : null),
+          // zzz314 — carry CFO/PAT ratio (earnings quality) so the chip surfaces
+          // on CB cards. Accept both aliases returned by the graded route.
+          cfo_to_pat_ratio: typeof (c as any).cfo_to_pat_ratio === 'number' ? (c as any).cfo_to_pat_ratio : (typeof (c as any).ocf_to_pat_ratio === 'number' ? (c as any).ocf_to_pat_ratio : null),
         });
       }
     }
