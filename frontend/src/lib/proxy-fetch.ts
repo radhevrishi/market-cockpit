@@ -54,6 +54,10 @@ export interface WorkerStockData {
   latest_quarter_end_iso?: string;
   pe?: number | null;
   market_cap_cr?: number;
+  // zzz324 — CFO/PAT from Worker (annual, computed inside indiaearninghub worker after CFO patch is deployed there)
+  ocf_annual_cr?: number | null;
+  pat_annual_cr?: number | null;
+  ocf_to_pat_ratio?: number | null;
   financials_source: 'screener-worker';
 }
 
@@ -165,6 +169,10 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
       latest_quarter_end_iso: monthEndIso(period),
       pe: j.stockPE ?? null,
       market_cap_cr: j.marketCapCr,
+      // zzz324 — pass CFO fields through if the worker returned them
+      ocf_annual_cr: (typeof j.ocf_annual_cr === 'number' ? j.ocf_annual_cr : null),
+      pat_annual_cr: (typeof j.pat_annual_cr === 'number' ? j.pat_annual_cr : null),
+      ocf_to_pat_ratio: (typeof j.ocf_to_pat_ratio === 'number' ? j.ocf_to_pat_ratio : null),
       financials_source: 'screener-worker',
     };
   } catch {
