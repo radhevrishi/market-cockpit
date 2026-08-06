@@ -794,26 +794,73 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // PATCH 0519 — Worker (indiaearninghub) added as PRIMARY source. Returns
   // pre-parsed Screener financials via Cloudflare's network — never blocked.
   // When Worker returns valid data, we still fetch the others as overlays.
+  // zzz320 — standalone CFO/PAT fetcher. Runs independently of the main
+  // fetchScreenerForSymbol (which was returning null for many tickers because
+  // its q.labels.length < 5 gate is too strict). Uses simple regex over the
+  // consolidated HTML — Screener's cash-flow row is stable across all pages.
+  const fetchScreenerCFO = async (sym: string): Promise<{ ocf_annual_cr: number | null; pat_annual_cr: number | null; ocf_to_pat_ratio: number | null } | null> => {
+    const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
+    let html: string | null = null;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const res = await proxiedFetch(url, { headers: browserHeaders('https://www.screener.in/'), signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) html = await res.text();
+    } catch { return null; }
+    if (!html) return null;
+    // Strip tags helper local (top-level stripTags exists elsewhere).
+    const strip = (s: string) => String(s).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/,/g, '').trim();
+    const toNum = (s: string) => { const n = parseFloat(strip(s)); return Number.isFinite(n) ? n : null; };
+    // Match ANY <tr> that contains the row label, then take the LAST numeric <td>.
+    const findLastNum = (labelRe: RegExp): number | null => {
+      const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+      let mm: RegExpExecArray | null;
+      while ((mm = trRe.exec(html!)) !== null) {
+        const row = mm[1];
+        // Only consider TRs where the first cell text matches the label
+        const cells = Array.from(row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(m => strip(m[1]));
+        if (!cells.length) continue;
+        if (!labelRe.test(cells[0])) continue;
+        // Latest = last cell with a numeric value
+        for (let i = cells.length - 1; i >= 1; i--) {
+          const v = toNum(cells[i]);
+          if (v != null) return v;
+        }
+      }
+      return null;
+    };
+    const ocf = findLastNum(/^\s*Cash from Operating Activity\s*[+\-]?\s*$/i);
+    // Annual Net Profit row lives in the P&L annual table; row label is 'Net Profit'.
+    // Guard against picking up quarters (same label): P&L annual is typically the LAST 'Net Profit' occurrence.
+    const netProfit = findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i);
+    const ratio = (typeof ocf === 'number' && typeof netProfit === 'number' && netProfit > 0)
+      ? Math.round((ocf / netProfit) * 100) / 100
+      : null;
+    return { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio };
+  };
+
   const tryVariant = async (sym: string, filedHint?: string) => {  // PATCH 0986
-    const [worker, nse, screener, yahoo, yahooFund] = await Promise.all([
+    const [worker, nse, screener, yahoo, yahooFund, cfoOnly] = await Promise.all([
       fetchWorkerStock(sym),
       fetchNseFinancials(sym),
       fetchScreenerForSymbol(sym),
       fetchYahooForSymbol(sym, filedHint),  // PATCH 0986
       fetchYahooFundamentals(sym),
+      fetchScreenerCFO(sym), // zzz320 — dedicated CFO row extractor (Cloudflare-proxied)
     ]);
     const anyHit = worker || nse || screener || yahoo || yahooFund;
-    return { sym, worker, nse, screener, yahoo, yahooFund, anyHit };
+    return { sym, worker, nse, screener, yahoo, yahooFund, cfoOnly, anyHit };
   };
 
   // Run all variants in parallel; keep the first variant that actually
   // produced ANY data. Variant order matters: original first, then
   // sanitized forms.
-  let worker: any = null, nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null;
+  let worker: any = null, nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null, cfoOnly: any = null;
   if (symVariants.length === 1) {
     // Fast path — no special chars in symbol, no variant fan-out needed
     const r = await tryVariant(symbol, filedHint);  // PATCH 0986
-    worker = r.worker; nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund;
+    worker = r.worker; nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund; cfoOnly = r.cfoOnly;
   } else {
     // Slow path — fan-out to variants in parallel, pick the most-populated.
     const results = await Promise.all(symVariants.map((v) => tryVariant(v, filedHint)));  // PATCH 0986
@@ -824,7 +871,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     }));
     scored.sort((a, b) => b.score - a.score);
     const best = scored[0];
-    worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund;
+    worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund; cfoOnly = best.cfoOnly;
   }
   // Merge priority (most reliable first):
   //   1. Cloudflare Worker  — pre-parsed, Cloudflare-immune (Patch 0519)
@@ -888,6 +935,21 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     }
     if (out.ocf_to_pat_ratio == null && typeof sc.ocf_to_pat_ratio === 'number') {
       out.ocf_to_pat_ratio = sc.ocf_to_pat_ratio;
+    }
+  }
+  // zzz320 — cfoOnly is the dedicated proxied CFO scrape. Runs even when the
+  // main Screener HTML parser bombs out on the strict quarters gate.
+  if (cfoOnly) {
+    const co = cfoOnly as any;
+    if (out.ocf_annual_cr == null && typeof co.ocf_annual_cr === 'number') {
+      out.ocf_annual_cr = co.ocf_annual_cr;
+      out._cfo_source = 'screener-cfo-only';
+    }
+    if (out.pat_annual_cr == null && typeof co.pat_annual_cr === 'number') {
+      out.pat_annual_cr = co.pat_annual_cr;
+    }
+    if (out.ocf_to_pat_ratio == null && typeof co.ocf_to_pat_ratio === 'number') {
+      out.ocf_to_pat_ratio = co.ocf_to_pat_ratio;
     }
   }
 
