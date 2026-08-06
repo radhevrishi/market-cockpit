@@ -799,15 +799,15 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // its q.labels.length < 5 gate is too strict). Uses simple regex over the
   // consolidated HTML — Screener's cash-flow row is stable across all pages.
   const fetchScreenerCFO = async (sym: string): Promise<{ ocf_annual_cr: number | null; pat_annual_cr: number | null; ocf_to_pat_ratio: number | null } | null> => {
-    const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
-    let html: string | null = null;
+    // zzz322 — KV cache first (24h TTL)
+    const kvKey = `cfo:v1:${sym}`;
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      const res = await proxiedFetch(url, { headers: browserHeaders('https://www.screener.in/'), signal: ctrl.signal });
-      clearTimeout(t);
-      if (res.ok) html = await res.text();
-    } catch { return null; }
+      const cached = await kvGet<any>(kvKey);
+      if (cached && typeof cached === 'object' && ('ocf_to_pat_ratio' in cached)) return cached;
+    } catch {}
+    // zzz322 — reuse fetchScreenerHtml (3-attempt retry with backoff)
+    const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
+    const html = await fetchScreenerHtml(url);
     if (!html) return null;
     // Strip tags helper local (top-level stripTags exists elsewhere).
     const strip = (s: string) => String(s).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/,/g, '').trim();
@@ -830,14 +830,17 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       }
       return null;
     };
-    const ocf = findLastNum(/^\s*Cash from Operating Activity\s*[+\-]?\s*$/i);
-    // Annual Net Profit row lives in the P&L annual table; row label is 'Net Profit'.
-    // Guard against picking up quarters (same label): P&L annual is typically the LAST 'Net Profit' occurrence.
-    const netProfit = findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i);
+    // zzz322 — loosened label match
+    const ocf = findLastNum(/(cash\s+from\s+operating|cash\s+from\s+operations|operating\s+cash\s+flow|net\s+cash\s+from\s+operating)/i);
+    const netProfit = findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i)
+                   ?? findLastNum(/^\s*Profit for (the )?year\s*[+\-]?\s*$/i)
+                   ?? findLastNum(/^\s*Net Profit\b/i);
     const ratio = (typeof ocf === 'number' && typeof netProfit === 'number' && netProfit > 0)
       ? Math.round((ocf / netProfit) * 100) / 100
       : null;
-    return { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio };
+    const result = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio };
+    try { await kvSet(`cfo:v1:${sym}`, result, 24 * 3600); } catch {}
+    return result;
   };
 
   const tryVariant = async (sym: string, filedHint?: string) => {  // PATCH 0986
