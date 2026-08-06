@@ -26,11 +26,13 @@ type GradeEntry = {
 
 const STORAGE_KEY = 'mc_watchlist_tickers';
 
+// zzz315 — retuned to match /portfolio Analytics palette (zzz310).
+// MIXED used to be red-on-brown which read as "broken"; now amber-on-dark.
 const TIER_STYLE: Record<Tier, { bg: string; fg: string; border: string; icon: string; label: string }> = {
-  BLOCKBUSTER: { bg: '#78350F', fg: '#FCD34D', border: '#F59E0B', icon: 'BB', label: 'BLOCKBUSTER' },
-  STRONG:      { bg: '#14532D', fg: '#86EFAC', border: '#22C55E', icon: 'ST', label: 'STRONG' },
-  MIXED:       { bg: '#78350F', fg: '#FCA5A5', border: '#F59E0B', icon: 'MX', label: 'MIXED' },
-  AVOID:       { bg: '#7F1D1D', fg: '#FECACA', border: '#DC2626', icon: 'AV', label: 'AVOID' },
+  BLOCKBUSTER: { bg: '#3F2A0A', fg: '#FCD34D', border: '#F59E0B', icon: 'BB', label: 'BLOCKBUSTER' },
+  STRONG:      { bg: '#052E1A', fg: '#86EFAC', border: '#22C55E', icon: 'ST', label: 'STRONG' },
+  MIXED:       { bg: '#3B2E0A', fg: '#FDE68A', border: '#EAB308', icon: 'MX', label: 'MIXED' },
+  AVOID:       { bg: '#3F0F0F', fg: '#FCA5A5', border: '#DC2626', icon: 'AV', label: 'AVOID' },
 };
 
 const TIER_ORDER: Record<string, number> = { BLOCKBUSTER: 4, STRONG: 3, MIXED: 2, AVOID: 1 };
@@ -308,28 +310,47 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
           const n = counts[tier] || 0;
           const pct = Math.round((n / total) * 100);
           const active = tierFilter === tier;
+          const disabled = n === 0;
           return (
-            <button key={tier} onClick={() => setTierFilter(active ? 'all' : tier)} style={{
-              padding: 12, background: active ? style.bg : 'var(--mc-bg-2)',
-              border: `2px solid ${active ? style.fg : style.border}`, borderRadius: 8,
-              cursor: 'pointer', textAlign: 'left',
-              transition: 'background 120ms',
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: style.fg, marginBottom: 4, letterSpacing: '0.4px' }}>{style.label}</div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: active ? style.fg : 'var(--mc-text-1)', lineHeight: 1 }}>{n}</div>
+            <button key={tier}
+              onClick={() => { if (!disabled) setTierFilter(active ? 'all' : tier); }}
+              disabled={disabled}
+              title={disabled ? `No ${style.label} holdings` : (active ? `Click again to clear ${style.label} filter` : `Show only the ${n} ${style.label} holding${n === 1 ? '' : 's'}`)}
+              style={{
+                padding: 12, background: style.bg,
+                border: (active ? '2px solid ' : '1px solid ') + style.border, borderRadius: 8,
+                cursor: disabled ? 'default' : 'pointer', textAlign: 'left',
+                opacity: disabled ? 0.4 : 1,
+                boxShadow: active ? `0 0 0 2px ${style.border}55` : 'none',
+                transition: 'box-shadow 120ms',
+              }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: style.fg, marginBottom: 4, letterSpacing: '0.4px' }}>{style.label}{active && ' ✓'}</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: style.fg, lineHeight: 1 }}>{n}</div>
               <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 4 }}>{pct}% of portfolio</div>
             </button>
           );
         })}
-        <button onClick={() => setTierFilter(tierFilter === 'NONE' ? 'all' : 'NONE')} style={{
-          padding: 12, background: tierFilter === 'NONE' ? 'var(--mc-bg-3)' : 'var(--mc-bg-2)',
-          border: `2px solid ${tierFilter === 'NONE' ? 'var(--mc-text-3)' : 'var(--mc-border-1)'}`, borderRadius: 8,
-          cursor: 'pointer', textAlign: 'left',
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-3)', marginBottom: 4, letterSpacing: '0.4px' }}>NO FILING (120d)</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--mc-text-2)', lineHeight: 1 }}>{counts.NONE || 0}</div>
-          <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 4 }}>{Math.round(((counts.NONE || 0) / total) * 100)}% quiet</div>
-        </button>
+        {(() => {
+          const noneCount = counts.NONE || 0;
+          const activeN = tierFilter === 'NONE';
+          const disabledN = noneCount === 0;
+          return (<button
+            onClick={() => { if (!disabledN) setTierFilter(activeN ? 'all' : 'NONE'); }}
+            disabled={disabledN}
+            title={disabledN ? 'No NO FILING holdings' : (activeN ? 'Click again to clear NO FILING filter' : `Show only the ${noneCount} NO FILING holding${noneCount === 1 ? '' : 's'}`)}
+            style={{
+              padding: 12, background: '#1F2937',
+              border: (activeN ? '2px solid ' : '1px solid ') + '#475569', borderRadius: 8,
+              cursor: disabledN ? 'default' : 'pointer', textAlign: 'left',
+              opacity: disabledN ? 0.4 : 1,
+              boxShadow: activeN ? '0 0 0 2px #47556955' : 'none',
+              transition: 'box-shadow 120ms',
+            }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#94A3B8', marginBottom: 4, letterSpacing: '0.4px' }}>NO FILING (120d){activeN && ' ✓'}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: '#94A3B8', lineHeight: 1 }}>{noneCount}</div>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 4 }}>{Math.round((noneCount / total) * 100)}% quiet</div>
+          </button>);
+        })()}
       </div>
 
       {/* zzz294 — quarter filter chip row */}
