@@ -141,6 +141,34 @@ function parseQuartersTable(html: string): { labels: string[]; rows: Record<stri
   return { labels, rows };
 }
 
+// zzz316 — generic section table parser (mirrors parseQuartersTable but for
+// any Screener section id: 'cash-flow', 'profit-loss', 'balance-sheet', etc.)
+function parseSectionTable(html: string, sectionId: string): { labels: string[]; rows: Record<string, (number | null)[]> } | null {
+  const idRe = new RegExp('<section[^>]*\\bid=["\']' + sectionId + '["\'][^>]*>', 'i');
+  const open = html.match(idRe);
+  if (!open || open.index === undefined) return null;
+  const start = open.index + open[0].length;
+  const tail = html.slice(start, start + 80_000);
+  const next = tail.search(/<section\s+[^>]*\bid=["\']/i);
+  const block = next > 0 ? tail.slice(0, next) : tail;
+  const tbl = block.match(/<table[\s\S]*?<\/table>/i);
+  if (!tbl) return null;
+  const thead = tbl[0].match(/<thead[\s\S]*?<\/thead>/i);
+  if (!thead) return null;
+  const ths = Array.from(thead[0].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)).map((m) => stripTags(m[1]));
+  const labels = ths.slice(1);
+  const tbody = tbl[0].match(/<tbody[\s\S]*?<\/tbody>/i);
+  const rows: Record<string, (number | null)[]> = {};
+  if (tbody) {
+    for (const tr of Array.from(tbody[0].matchAll(/<tr[\s\S]*?<\/tr>/gi))) {
+      const tds = Array.from(tr[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)).map((x) => stripTags(x[1]));
+      if (!tds[0]) continue;
+      rows[tds[0]] = tds.slice(1).map((v) => num(v));
+    }
+  }
+  return { labels, rows };
+}
+
 function parseSector(html: string): string | null {
   const peer = html.match(/<a[^>]*href=["']\/company\/compare\/[^"']+["'][^>]*>([\s\S]*?)<\/a>/i);
   if (peer) {
@@ -251,6 +279,31 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
       eps_yoy_pct: pct(epsCurr, epsPrev),
       latest_quarter_label: q.labels[latestIdx],
       financials_source: 'screener',
+      // zzz316 — CFO/PAT from cash-flow + profit-loss annual tables. Same HTML,
+      // same source of truth Screener shows users. Ratio > 0.8 = healthy cash
+      // conversion; <0.5 = profits not translating to cash (earnings-quality flag).
+      ...(() => {
+        const cf = parseSectionTable(html, 'cash-flow');
+        const pl = parseSectionTable(html, 'profit-loss');
+        const cfLatest = cf && cf.labels.length > 0 ? cf.labels.length - 1 : -1;
+        const plLatest = pl && pl.labels.length > 0 ? pl.labels.length - 1 : -1;
+        const getRow = (t: { rows: Record<string, (number | null)[]> } | null, kw: string, idx: number): number | null => {
+          if (!t || idx < 0) return null;
+          const k = Object.keys(t.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          return k ? (t.rows[k]?.[idx] ?? null) : null;
+        };
+        const ocfAnnual = getRow(cf, 'Cash from Operating', cfLatest);
+        // Try TTM last (right-most) column of P&L first; fall back to latest annual.
+        const patAnnual = getRow(pl, 'Net Profit', plLatest) ?? getRow(pl, 'Profit', plLatest);
+        const ratio = (typeof ocfAnnual === 'number' && typeof patAnnual === 'number' && patAnnual > 0)
+          ? Math.round((ocfAnnual / patAnnual) * 100) / 100
+          : null;
+        return {
+          ocf_annual_cr: ocfAnnual,
+          pat_annual_cr: patAnnual,
+          ocf_to_pat_ratio: ratio,
+        };
+      })(),
     };
   }
   return null;
