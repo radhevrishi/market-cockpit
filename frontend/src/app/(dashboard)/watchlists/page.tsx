@@ -4202,18 +4202,26 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
                 </span>
               );
             })()}
-            {/* zzz304 — CFO/PAT chip. Green >= 0.8 (healthy), amber 0.5-0.8, red < 0.5. */}
+            {/* zzz304 — CFO/PAT chip. Green >= 0.8 (healthy), amber 0.5-0.8, red < 0.5.
+                zzz317 — Explicitly ANNUAL CFO / ANNUAL PAT from Screener's annual
+                cash-flow + P&L tables. Screener does not publish quarterly cash
+                flow, so this is a multi-year quality signal — a company that
+                consistently converts profit to cash over years — NOT a per-
+                quarter check on the specific earnings event that triggered the
+                BLOCKBUSTER/STRONG grade. Label + tooltip make the annual scope
+                explicit so it isn't misread against quarterly PAT growth. */}
             {typeof (entry as any).cfo_to_pat_ratio === 'number' && (() => {
               const r = (entry as any).cfo_to_pat_ratio as number;
               const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
-              const tip = r >= 1 ? 'CFO/PAT ' + r.toFixed(2) + ' — pristine cash conversion (>=1 means CFO ≥ profit).'
-                : r >= 0.8 ? 'CFO/PAT ' + r.toFixed(2) + ' — healthy cash conversion.'
-                : r >= 0.5 ? 'CFO/PAT ' + r.toFixed(2) + ' — cash conversion below profits; watch working capital.'
-                : 'CFO/PAT ' + r.toFixed(2) + ' — WEAK: profits not translating into cash. Earnings quality concern.';
+              const base = 'Annual CFO/PAT ' + r.toFixed(2) + ' (Screener FY figures — cash flow is published annually, not quarterly). ';
+              const tip = r >= 1 ? base + 'Pristine cash conversion (>=1 means annual CFO ≥ reported profit).'
+                : r >= 0.8 ? base + 'Healthy multi-year cash conversion.'
+                : r >= 0.5 ? base + 'Cash conversion running below reported profit — watch working capital days.'
+                : base + 'WEAK: profits not translating into cash. Earnings-quality concern that predates this quarter.';
               return (
                 <span title={tip}>
                   <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                  <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT</span>{' '}
+                  <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT FY</span>{' '}
                   <strong style={{ color: col }}>{r.toFixed(2)}</strong>
                 </span>
               );
