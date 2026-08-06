@@ -525,6 +525,14 @@ function gradeRow(row: any): ParsedEarning | null {
     // this final return shape never included the field. Fix: include them.
     opm_pct: row.opm_pct ?? null,
     opm_prev_pct: row.opm_prev_pct ?? null,
+    // zzz314 — SAME class of bug as PATCH 1015: enrichment provides
+    // ocf_to_pat_ratio (used above for the 'ocf divergence' caveat), but
+    // gradeRow was dropping it from the response so downstream CB cards
+    // couldn't render a CFO/PAT chip. Expose it here under two aliases:
+    // ocf_to_pat_ratio (matches the internal field name) and
+    // cfo_to_pat_ratio (matches downstream sync + display code).
+    ocf_to_pat_ratio: row.ocf_to_pat_ratio ?? null,
+    cfo_to_pat_ratio: row.ocf_to_pat_ratio ?? null,
   } as any;
 }
 
