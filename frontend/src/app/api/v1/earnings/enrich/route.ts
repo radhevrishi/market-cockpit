@@ -803,7 +803,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     const kvKey = `cfo:v1:${sym}`;
     try {
       const cached = await kvGet<any>(kvKey);
-      if (cached && typeof cached === 'object' && ('ocf_to_pat_ratio' in cached)) return cached;
+      if (cached && typeof cached === 'object' && (typeof cached.ocf_annual_cr === 'number' || typeof cached.pat_annual_cr === 'number' || typeof cached.ocf_to_pat_ratio === 'number')) return cached;
     } catch {}
     // zzz322 — reuse fetchScreenerHtml (3-attempt retry with backoff)
     const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
@@ -839,7 +839,9 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       ? Math.round((ocf / netProfit) * 100) / 100
       : null;
     const result = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio };
-    try { await kvSet(`cfo:v1:${sym}`, result, 24 * 3600); } catch {}
+    if (typeof ocf === 'number' || typeof netProfit === 'number') {
+      try { await kvSet(`cfo:v1:${sym}`, result, 24 * 3600); } catch {}
+    }
     return result;
   };
 
