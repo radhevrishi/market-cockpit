@@ -872,6 +872,24 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       out._roe_source = 'yahoo-fundamentals';
     }
   }
+  // zzz317 — Cherry-pick CFO/PAT fields from the direct Screener scrape even
+  // when Worker won the primary merge. The Cloudflare Worker does not return
+  // cash-flow data, so without this hoist the worker path always leaves the
+  // ratio null. This is annual CFO/PAT (Screener does not publish quarterly
+  // cash flow) — treat as multi-year quality signal, not a per-quarter check.
+  if (screener) {
+    const sc = screener as any;
+    if (out.ocf_annual_cr == null && typeof sc.ocf_annual_cr === 'number') {
+      out.ocf_annual_cr = sc.ocf_annual_cr;
+      out._cfo_source = 'screener';
+    }
+    if (out.pat_annual_cr == null && typeof sc.pat_annual_cr === 'number') {
+      out.pat_annual_cr = sc.pat_annual_cr;
+    }
+    if (out.ocf_to_pat_ratio == null && typeof sc.ocf_to_pat_ratio === 'number') {
+      out.ocf_to_pat_ratio = sc.ocf_to_pat_ratio;
+    }
+  }
 
   // PATCH 1016 — NSE Bhavcopy overlay for D1/Gap price reaction.
   // Yahoo blocks Railway IPs often → D1/Gap missing for most tickers, blocking
