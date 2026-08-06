@@ -1945,8 +1945,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       // Only apply if filters are still at their FILTER_DEFAULT initial state.
       // (Avoids clobbering filters restored from a saved view later.)
       setFilters((prev) => (
-        prev.sales == null && prev.eps == null && prev.pead == null
-          ? { ...prev, sales: 20, eps: 25, pead: 60 }
+        prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null
+          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0 }
           : prev
       ));
     } catch {}
@@ -2646,8 +2646,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
         {(() => {
-          // zzz309 — Quality Preset v3: Sales≥20 · EPS≥25 · PEAD≥60 (DRIFT gate dropped).
-          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.driftBucket == null;
+          // zzz309 → zzz319 — Quality Preset v4: Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ ≥0.
+          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.driftBucket == null;
           const OPT_OUT_KEY = 'mc:cb:preset:v2:optout';
           const handleToggle = () => {
             setFilters((prev) => {
@@ -2658,7 +2658,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               } else {
                 // User is turning ON — clear opt-out
                 try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60 };
+                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0 };
               }
             });
           };
@@ -2666,11 +2666,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60. Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
+                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60 · OPM Δ ≥0pp (expanding margins). Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
