@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-07T05:33:20Z",
+  "lastSync": "2026-08-07T06:41:26Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -25,7 +25,7 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 7901,
+      "size": 7902,
       "displayName": "Future Leaders"
     },
     {
@@ -35,12 +35,12 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 5865,
+      "size": 5132,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 3644,
+      "size": 3234,
       "displayName": "Lowequitycapital"
     },
     {
@@ -80,7 +80,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 22071,
+      "size": 22070,
       "displayName": "Latest Portfolio"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65590,
+      "size": 65591,
       "displayName": "Working watchlist"
     },
     {
