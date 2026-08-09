@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-09T05:31:47.329Z",
+  "lastSync": "2026-08-09T06:57:00.647Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 10,
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106203,
+      "size": 105946,
       "rowCount": 100,
       "error": null
     },
