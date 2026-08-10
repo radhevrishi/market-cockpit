@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import React from 'react';
+import ConnectTheDots from './ConnectTheDots';
 
 const C = {
   bg:    '#0B0E14',
@@ -276,6 +277,8 @@ function ScoreCalculator() {
         </button>
       </div>
     </div>
+      )}
+    </div>
   );
 }
 
@@ -516,7 +519,25 @@ function MultiOrderCalculator() {
 }
 
 export default function NewsTriagePage() {
+  const [tab, setTab] = React.useState<'playbook' | 'ctd'>('playbook');
+  const tabBtn = (id: 'playbook' | 'ctd', label: string, emoji: string) => (
+    <button onClick={() => setTab(id)} style={{
+      padding: '10px 20px', background: tab === id ? C.cyan + '22' : 'transparent',
+      border: '1px solid ' + (tab === id ? C.cyan : C.border), borderRadius: 8,
+      color: tab === id ? C.cyan : C.text2, fontSize: 14, fontWeight: 800,
+      cursor: 'pointer', letterSpacing: '0.3px',
+    }}>{emoji} {label}</button>
+  );
   return (
+    <div style={{ background: C.bg, minHeight: '100vh' }}>
+      <div style={{
+        display: 'flex', gap: 10, padding: '20px 28px', borderBottom: '1px solid ' + C.border,
+        background: C.panel, position: 'sticky', top: 0, zIndex: 10,
+      }}>
+        {tabBtn('playbook', 'News Triage Playbook', '📰')}
+        {tabBtn('ctd', 'Connect The Dots', '🔗')}
+      </div>
+      {tab === 'ctd' ? <ConnectTheDots /> : (
     <div style={{
       maxWidth: 1280, margin: '0 auto', padding: '32px 36px 100px',
       color: C.text, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
