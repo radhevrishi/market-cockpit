@@ -1342,6 +1342,8 @@ type ConvFilters = {
   opmMin?: number | null;
   // zzz329 — max trailing P/E (null = no cap; excludes negative-earnings tickers)
   peMax?: number | null;
+  // zzz332 - when true, entries with filing_date within last 3 business days bypass preset gates
+  freshBypass?: boolean;
   // zzz304 — minimum CFO/PAT ratio (Screener). Filters low earnings quality;
   // 0.5 = weak, 0.8 = healthy, 1.0 = pristine cash conversion.
   cfoPatMin?: number | null;
@@ -1379,7 +1381,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, cfoPatMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, cfoPatMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1575,6 +1577,15 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
+  // zzz332 FRESH bypass: entries within last 3 biz days skip all gates
+  if (f.freshBypass) {
+    const fd = String((e as any).filing_date || '');
+    if (fd) {
+      const filedTs = new Date(fd + 'T00:00:00').getTime();
+      const daysDelta = Math.floor((Date.now() - filedTs) / 86400000);
+      if (daysDelta >= 0 && daysDelta <= 5) return true;
+    }
+  }
   if (f.sales != null && sales < f.sales) return false;
   if (f.pat != null && pat < f.pat) return false;
   if (f.eps != null && eps < f.eps) return false;
@@ -2713,6 +2724,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {renderChipGroup('P/E MAX', '#A78BFA', 'peMax' as any, [
           { v: 15, lbl: '≤15' }, { v: 20, lbl: '≤20' }, { v: 30, lbl: '≤30' }, { v: 50, lbl: '≤50' }, { v: 80, lbl: '≤80' },
         ])}
+        {/* zzz332 FRESH 3D bypass toggle */}
+        <button onClick={() => setFilters(prev => ({ ...prev, freshBypass: !prev.freshBypass }))} title="When ON, entries filed within last 3 business days ALWAYS show regardless of preset gates (Sales/EPS/PEAD/OPM/CFO-PAT). Off by default so preset applies uniformly." style={{ padding: '4px 10px', borderRadius: 6, cursor: 'pointer', background: filters.freshBypass ? '#F59E0B22' : 'transparent', border: '1px solid ' + (filters.freshBypass ? '#F59E0B' : '#334155'), color: filters.freshBypass ? '#F59E0B' : '#94A3B8', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}>{filters.freshBypass ? '✓ 🆕 FRESH 3D' : '🆕 FRESH 3D'}</button>
         {/* zzz225 — composite tier score chips (the big number on each card) */}
         {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
           { v: 60, lbl: '≥60' }, { v: 65, lbl: '≥65' }, { v: 70, lbl: '≥70' }, { v: 75, lbl: '≥75' }, { v: 80, lbl: '≥80' },
