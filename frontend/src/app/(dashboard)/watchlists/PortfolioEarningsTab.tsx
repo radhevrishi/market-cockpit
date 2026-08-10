@@ -162,15 +162,20 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
             merged[t] = gradedEntry ?? null;
           } else {
             const graded2 = gradedEntry && gradedEntry.quarter === scanQ ? gradedEntry : null;
+            // zzz328 — Prefer ANY graded tier over scan heuristic even if quarter mismatch.
+            // Graded pipeline is the source of truth (matches EO individual card). Scan tier
+            // is a fallback for tickers with NO graded entry at all. Eliminates DREDGECORP-style
+            // discrepancy where Portfolio Earnings showed STRONG (scan=74) but EO card showed MIXED.
+            const gradedAnyQuarter = gradedEntry?.tier as Tier | undefined;
             merged[t] = {
               ticker: t,
               company: String(scanCard.company || t),
               filing_date: filingDate,
-              tier: (graded2?.tier as Tier) || scanToTier(scanCard.grade, scanScore ?? undefined),
+              tier: gradedAnyQuarter || scanToTier(scanCard.grade, scanScore ?? undefined),
               sector: graded2?.sector || null,
               market_cap_cr: graded2?.market_cap_cr ?? null,
               quarter: scanQ || graded2?.quarter || null,
-              composite_score: graded2?.composite_score ?? scanScore,
+              composite_score: gradedEntry?.composite_score ?? graded2?.composite_score ?? scanScore,
               // zzz299 — real PEAD from graded pipeline (server portfolio-grades). scan.priceScore is a stub-50.
               pead_score: (gradedEntry as any)?.pead_score ?? null,
               // zzz302 — proxy PEAD from scan fundamentalsScore when real is missing.
