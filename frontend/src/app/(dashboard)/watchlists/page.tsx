@@ -1340,6 +1340,8 @@ type ConvFilters = {
   // zzz226e — minimum ABSOLUTE OPM level (latest quarter %), distinct from
   // the delta filter — screens out structurally thin-margin businesses.
   opmMin?: number | null;
+  // zzz329 — max trailing P/E (null = no cap; excludes negative-earnings tickers)
+  peMax?: number | null;
   // zzz304 — minimum CFO/PAT ratio (Screener). Filters low earnings quality;
   // 0.5 = weak, 0.8 = healthy, 1.0 = pristine cash conversion.
   cfoPatMin?: number | null;
@@ -1377,7 +1379,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, cfoPatMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, cfoPatMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1592,6 +1594,11 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.cfoPatMin != null) {
     const c = (e as any).cfo_to_pat_ratio;
     if (typeof c !== 'number' || c < f.cfoPatMin) return false;
+  }
+  // zzz329 — maximum trailing P/E filter (excludes negative-earnings tickers)
+  if (f.peMax != null) {
+    const p = (e as any).pe;
+    if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0 || p > f.peMax) return false;
   }
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
@@ -2703,6 +2710,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz304 — CFO/PAT minimum ratio chips (earnings quality: cash conversion). */}
         {renderChipGroup('CFO/PAT MIN', '#34D399', 'cfoPatMin' as any, [
           { v: 0.5, lbl: '≥0.5' }, { v: 0.7, lbl: '≥0.7' }, { v: 0.8, lbl: '≥0.8' }, { v: 1.0, lbl: '≥1.0' },
+        ])}
+        {/* zzz329 — Max trailing P/E chips. Excludes negative-earnings names automatically. */}
+        {renderChipGroup('P/E MAX', '#A78BFA', 'peMax' as any, [
+          { v: 15, lbl: '≤15' }, { v: 20, lbl: '≤20' }, { v: 30, lbl: '≤30' }, { v: 50, lbl: '≤50' }, { v: 80, lbl: '≤80' },
         ])}
         {/* zzz225 — composite tier score chips (the big number on each card) */}
         {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
