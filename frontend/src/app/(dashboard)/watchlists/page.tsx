@@ -1588,41 +1588,41 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
       if (__d >= 0 && __d <= 5) __isFresh = true;
     }
   }
-  if (!__isFresh && f.sales != null && sales < f.sales) return false;
-  if (!__isFresh && f.pat != null && pat < f.pat) return false;
-  if (!__isFresh && f.eps != null && eps < f.eps) return false;
-  if (!__isFresh && f.opLev != null) {
+  if ((!__isFresh || f.sales !== 20) && f.sales != null && sales < f.sales) return false;
+  if (f.pat != null && pat < f.pat) return false;
+  if ((!__isFresh || f.eps !== 25) && f.eps != null && eps < f.eps) return false;
+  if (f.opLev != null) {
     const ratio = pat / Math.max(sales, 0.01);
     if (!(ratio >= f.opLev)) return false;
   }
   // zzz225 — composite tier score threshold (the card's big number)
-  if (!__isFresh && f.score != null && (e.composite_score ?? 0) < f.score) return false;
+  if (f.score != null && (e.composite_score ?? 0) < f.score) return false;
   // zzz226e — absolute OPM level threshold (latest quarter %)
-  if (!__isFresh && f.opmMin != null) {
+  if (f.opmMin != null) {
     const o = (e as any).opm_pct;
     if (typeof o !== 'number' || o < f.opmMin) return false;
   }
   // zzz304 — minimum CFO/PAT ratio filter. Entries without ratio value fail
   // the filter (we prefer surfacing entries with proven cash conversion).
-  if (!__isFresh && f.cfoPatMin != null) {
+  if ((!__isFresh || f.cfoPatMin !== 0.5) && f.cfoPatMin != null) {
     const c = (e as any).cfo_to_pat_ratio;
     if (typeof c !== 'number' || c < f.cfoPatMin) return false;
   }
   // zzz329 — maximum trailing P/E filter (excludes negative-earnings tickers)
-  if (!__isFresh && f.peMax != null) {
+  if (f.peMax != null) {
     const p = (e as any).pe;
     if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0 || p > f.peMax) return false;
   }
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
-  if (!__isFresh && f.opmDelta != null) {
+  if ((!__isFresh || f.opmDelta !== 0) && f.opmDelta != null) {
     const o = (e as any).opm_pct; const p = (e as any).opm_prev_pct;
     if (typeof o !== 'number' || typeof p !== 'number') return false;
     const d = o - p;
     if (f.opmDelta >= 0 ? d < f.opmDelta : d > f.opmDelta) return false;
   }
   // USER-REQ — PEAD score threshold filter (combinable with all others)
-  if (!__isFresh && f.pead != null) {
+  if ((!__isFresh || f.pead !== 60) && f.pead != null) {
     if (peadScore(e).score < f.pead) return false;
   }
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters
