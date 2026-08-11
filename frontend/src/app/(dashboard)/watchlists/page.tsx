@@ -1577,20 +1577,18 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
-  // zzz338 FRESH-3D bypass scope: only skip PRESET gates (sales/eps/pead/opmDelta/cfoPatMin/peMax/opmMin/score).
-  // Other user-picked filters (cap, elite, multibagger, quarter/fy, date range, d1/d2/drift, guidance) STILL apply.
-  let __isFresh = false;
+  // zzz340 FRESH-3D as POSITIVE filter (not bypass). When chip is ON, drop any entry NOT filed within last ~3 biz days (5 calendar days).
+  // All other filters including CFO/PAT, PEAD, etc. apply strictly regardless.
   if (f.freshBypass) {
     const __fd = String((e as any).filing_date || '');
-    if (__fd) {
-      const __ts = new Date(__fd + 'T00:00:00').getTime();
-      const __d = Math.floor((Date.now() - __ts) / 86400000);
-      if (__d >= 0 && __d <= 5) __isFresh = true;
-    }
+    if (!__fd) return false;
+    const __ts = new Date(__fd + 'T00:00:00').getTime();
+    const __d = Math.floor((Date.now() - __ts) / 86400000);
+    if (__d < 0 || __d > 5) return false;
   }
-  if ((!__isFresh || f.sales !== 20) && f.sales != null && sales < f.sales) return false;
+  if (f.sales != null && sales < f.sales) return false;
   if (f.pat != null && pat < f.pat) return false;
-  if ((!__isFresh || f.eps !== 25) && f.eps != null && eps < f.eps) return false;
+  if (f.eps != null && eps < f.eps) return false;
   if (f.opLev != null) {
     const ratio = pat / Math.max(sales, 0.01);
     if (!(ratio >= f.opLev)) return false;
@@ -1604,7 +1602,7 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   }
   // zzz304 — minimum CFO/PAT ratio filter. Entries without ratio value fail
   // the filter (we prefer surfacing entries with proven cash conversion).
-  if ((!__isFresh || f.cfoPatMin !== 0.5) && f.cfoPatMin != null) {
+  if (f.cfoPatMin != null) {
     const c = (e as any).cfo_to_pat_ratio;
     if (typeof c !== 'number' || c < f.cfoPatMin) return false;
   }
@@ -1615,14 +1613,14 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   }
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
-  if ((!__isFresh || f.opmDelta !== 0) && f.opmDelta != null) {
+  if (f.opmDelta != null) {
     const o = (e as any).opm_pct; const p = (e as any).opm_prev_pct;
     if (typeof o !== 'number' || typeof p !== 'number') return false;
     const d = o - p;
     if (f.opmDelta >= 0 ? d < f.opmDelta : d > f.opmDelta) return false;
   }
   // USER-REQ — PEAD score threshold filter (combinable with all others)
-  if ((!__isFresh || f.pead !== 60) && f.pead != null) {
+  if (f.pead != null) {
     if (peadScore(e).score < f.pead) return false;
   }
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters
