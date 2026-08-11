@@ -1381,7 +1381,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: true, cfoPatMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, cfoPatMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1577,50 +1577,52 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
-  // zzz332 FRESH bypass: entries within last 3 biz days skip all gates
+  // zzz338 FRESH-3D bypass scope: only skip PRESET gates (sales/eps/pead/opmDelta/cfoPatMin/peMax/opmMin/score).
+  // Other user-picked filters (cap, elite, multibagger, quarter/fy, date range, d1/d2/drift, guidance) STILL apply.
+  let __isFresh = false;
   if (f.freshBypass) {
-    const fd = String((e as any).filing_date || '');
-    if (fd) {
-      const filedTs = new Date(fd + 'T00:00:00').getTime();
-      const daysDelta = Math.floor((Date.now() - filedTs) / 86400000);
-      if (daysDelta >= 0 && daysDelta <= 5) return true;
+    const __fd = String((e as any).filing_date || '');
+    if (__fd) {
+      const __ts = new Date(__fd + 'T00:00:00').getTime();
+      const __d = Math.floor((Date.now() - __ts) / 86400000);
+      if (__d >= 0 && __d <= 5) __isFresh = true;
     }
   }
-  if (f.sales != null && sales < f.sales) return false;
-  if (f.pat != null && pat < f.pat) return false;
-  if (f.eps != null && eps < f.eps) return false;
-  if (f.opLev != null) {
+  if (!__isFresh && f.sales != null && sales < f.sales) return false;
+  if (!__isFresh && f.pat != null && pat < f.pat) return false;
+  if (!__isFresh && f.eps != null && eps < f.eps) return false;
+  if (!__isFresh && f.opLev != null) {
     const ratio = pat / Math.max(sales, 0.01);
     if (!(ratio >= f.opLev)) return false;
   }
   // zzz225 — composite tier score threshold (the card's big number)
-  if (f.score != null && (e.composite_score ?? 0) < f.score) return false;
+  if (!__isFresh && f.score != null && (e.composite_score ?? 0) < f.score) return false;
   // zzz226e — absolute OPM level threshold (latest quarter %)
-  if (f.opmMin != null) {
+  if (!__isFresh && f.opmMin != null) {
     const o = (e as any).opm_pct;
     if (typeof o !== 'number' || o < f.opmMin) return false;
   }
   // zzz304 — minimum CFO/PAT ratio filter. Entries without ratio value fail
   // the filter (we prefer surfacing entries with proven cash conversion).
-  if (f.cfoPatMin != null) {
+  if (!__isFresh && f.cfoPatMin != null) {
     const c = (e as any).cfo_to_pat_ratio;
     if (typeof c !== 'number' || c < f.cfoPatMin) return false;
   }
   // zzz329 — maximum trailing P/E filter (excludes negative-earnings tickers)
-  if (f.peMax != null) {
+  if (!__isFresh && f.peMax != null) {
     const p = (e as any).pe;
     if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0 || p > f.peMax) return false;
   }
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
-  if (f.opmDelta != null) {
+  if (!__isFresh && f.opmDelta != null) {
     const o = (e as any).opm_pct; const p = (e as any).opm_prev_pct;
     if (typeof o !== 'number' || typeof p !== 'number') return false;
     const d = o - p;
     if (f.opmDelta >= 0 ? d < f.opmDelta : d > f.opmDelta) return false;
   }
   // USER-REQ — PEAD score threshold filter (combinable with all others)
-  if (f.pead != null) {
+  if (!__isFresh && f.pead != null) {
     if (peadScore(e).score < f.pead) return false;
   }
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters
