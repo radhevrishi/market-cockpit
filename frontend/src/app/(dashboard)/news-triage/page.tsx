@@ -277,8 +277,6 @@ function ScoreCalculator() {
         </button>
       </div>
     </div>
-      )}
-    </div>
   );
 }
 
@@ -520,24 +518,24 @@ function MultiOrderCalculator() {
 
 export default function NewsTriagePage() {
   const [tab, setTab] = React.useState<'playbook' | 'ctd'>('playbook');
-  const tabBtn = (id: 'playbook' | 'ctd', label: string, emoji: string) => (
-    <button onClick={() => setTab(id)} style={{
-      padding: '10px 20px', background: tab === id ? C.cyan + '22' : 'transparent',
-      border: '1px solid ' + (tab === id ? C.cyan : C.border), borderRadius: 8,
-      color: tab === id ? C.cyan : C.text2, fontSize: 14, fontWeight: 800,
-      cursor: 'pointer', letterSpacing: '0.3px',
-    }}>{emoji} {label}</button>
-  );
+  // zzz334 — early-return for CTD tab avoids ternary that broke JSX in zzz326a
+  if (tab === 'ctd') {
+    return (
+      <div style={{ background: C.bg, minHeight: '100vh' }}>
+        <div style={{ display: 'flex', gap: 10, padding: '20px 28px', borderBottom: '1px solid ' + C.border, background: C.panel, position: 'sticky', top: 0, zIndex: 10 }}>
+          <button onClick={() => setTab('playbook')} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid ' + C.border, borderRadius: 8, color: C.text2, fontSize: 14, fontWeight: 800, cursor: 'pointer', letterSpacing: '0.3px' }}>📰 News Triage Playbook</button>
+          <button onClick={() => setTab('ctd')} style={{ padding: '10px 20px', background: C.cyan + '22', border: '1px solid ' + C.cyan, borderRadius: 8, color: C.cyan, fontSize: 14, fontWeight: 800, cursor: 'pointer', letterSpacing: '0.3px' }}>🔗 Connect The Dots</button>
+        </div>
+        <ConnectTheDots />
+      </div>
+    );
+  }
   return (
     <div style={{ background: C.bg, minHeight: '100vh' }}>
-      <div style={{
-        display: 'flex', gap: 10, padding: '20px 28px', borderBottom: '1px solid ' + C.border,
-        background: C.panel, position: 'sticky', top: 0, zIndex: 10,
-      }}>
-        {tabBtn('playbook', 'News Triage Playbook', '📰')}
-        {tabBtn('ctd', 'Connect The Dots', '🔗')}
+      <div style={{ display: 'flex', gap: 10, padding: '20px 28px', borderBottom: '1px solid ' + C.border, background: C.panel, position: 'sticky', top: 0, zIndex: 10 }}>
+        <button onClick={() => setTab('playbook')} style={{ padding: '10px 20px', background: C.cyan + '22', border: '1px solid ' + C.cyan, borderRadius: 8, color: C.cyan, fontSize: 14, fontWeight: 800, cursor: 'pointer', letterSpacing: '0.3px' }}>📰 News Triage Playbook</button>
+        <button onClick={() => setTab('ctd')} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid ' + C.border, borderRadius: 8, color: C.text2, fontSize: 14, fontWeight: 800, cursor: 'pointer', letterSpacing: '0.3px' }}>🔗 Connect The Dots</button>
       </div>
-      {tab === 'ctd' ? <ConnectTheDots /> : (
     <div style={{
       maxWidth: 1280, margin: '0 auto', padding: '32px 36px 100px',
       color: C.text, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -1284,6 +1282,7 @@ export default function NewsTriagePage() {
         your individual risk tolerance. This is not investment advice — always do your own due diligence and verify
         before trading.
       </div>
+    </div>
     </div>
   );
 }
