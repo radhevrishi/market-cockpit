@@ -1209,7 +1209,7 @@ export default function WatchlistsPage() {
 
       {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <ConvictionBeatsPanel
-          entries={convictionEntries}
+          entries={(() => { const map = new Map<string, any>(); for (const e of convictionEntries) { const t = String(e.ticker || '').toUpperCase(); if (!t) continue; const cur = map.get(t); const eScore = (e as any).composite_score ?? -1; const cScore = cur ? (cur.composite_score ?? -1) : -Infinity; if (!cur || eScore > cScore) map.set(t, e); } return Array.from(map.values()); })()}
           onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
           /* PATCH zzz99 — bulk Clear All for Conviction Beats. Iterates the
              current list and removes each ticker via the same per-entry API
