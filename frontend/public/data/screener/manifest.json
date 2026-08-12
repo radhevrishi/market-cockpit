@@ -1,11 +1,11 @@
 {
-  "lastSync": "2026-08-12T06:51:27Z",
+  "lastSync": "2026-08-12T09:07:29Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11538,
+      "size": 11537,
       "displayName": "100 baggers sales and eps growth"
     },
     {
@@ -25,22 +25,22 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 9181,
+      "size": 9180,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 4950,
+      "size": 4949,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5789,
+      "size": 5341,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 3640,
+      "size": 3225,
       "displayName": "Lowequitycapital"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 5582,
+      "size": 5157,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -70,12 +70,12 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 4126,
+      "size": 4125,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
       "name": "turnarounds.csv",
-      "size": 11933,
+      "size": 11934,
       "displayName": "Turnarounds"
     },
     {
@@ -85,12 +85,12 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63421,
+      "size": 63420,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65605,
+      "size": 65603,
       "displayName": "Working watchlist"
     },
     {
