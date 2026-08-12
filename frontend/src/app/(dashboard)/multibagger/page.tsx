@@ -5787,6 +5787,8 @@ export default function MultibaggerPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [activeTab, setActiveTab] = useState<MbTab>(initialTab);
+  // zzz342 — clicking the Auto Screens tab navigates to the /multibagger/screens sub-route.
+  React.useEffect(() => { if (typeof window !== 'undefined' && activeTab === 'auto-screens') { window.location.href = '/multibagger/screens'; } }, [activeTab]);
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
@@ -6078,7 +6080,7 @@ export default function MultibaggerPage() {
               {id:'usa-checklist',          label:'🇺🇸 USA Checklist'},
               {id:'checklist',              label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
               {id:'capital-alloc',          label:'💰 Capital Allocation'},
-              {id:'reference',              label:'📚 Multibagger Reference'},
+              {id:'reference',              label:'📚 Multibagger Reference'}, {id:'auto-screens', label:'🔍 Auto Screens (live)'},
             ] as const).map(tab=>{
               const active=activeTab===tab.id;
               return (
