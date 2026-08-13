@@ -5,16 +5,16 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
-type ScreenDef = { slug: string; label: string; emoji: string; url: string };
+type ScreenDef = { slug: string; label: string; short: string; emoji: string; url: string };
 const SCREENS: ScreenDef[] = [
-  { slug: 'stocks-like-bajaj-consumer', label: 'Stocks like Bajaj Consumer', emoji: '🧴', url: 'https://www.screener.in/screens/3549314/stocks-like-bajaj-consumer/' },
-  { slug: 'rajeev-thakkar-ppfas-screener', label: 'Rajeev Thakkar PPFAS', emoji: '💎', url: 'https://www.screener.in/screens/3565418/rajeev-thakkar-ppfas-screener/' },
-  { slug: 'pead-master-screener-rishi-framework', label: 'PEAD Master (Rishi Framework)', emoji: '🎯', url: 'https://www.screener.in/screens/3612486/pead-master-screener-rishi-framework/' },
-  { slug: 'multibagger-like-acutaasatlantadee-dev', label: 'Multibagger: Acutaas/Atlanta/Dee-Dev', emoji: '🚀', url: 'https://www.screener.in/screens/3601571/multibagger-like-acutaasatlantadee-dev/' },
-  { slug: 'multibagger2-ignoring-trend', label: 'Multibagger 2 (Ignoring Trend)', emoji: '💥', url: 'https://www.screener.in/screens/3545352/multibagger2-ignoring-trend/' },
-  { slug: 'fii', label: 'FII Screener', emoji: '🏦', url: 'https://www.screener.in/screens/3443614/fii/' },
-  { slug: 'future-leaders', label: 'Future Leaders', emoji: '👑', url: 'https://www.screener.in/screens/3470949/future-leaders/' },
-  { slug: 'great-results-and-pullback', label: 'Great Results + Pullback', emoji: '📉', url: 'https://www.screener.in/screens/3658091/great-results-and-pullback/' },
+  { slug: 'stocks-like-bajaj-consumer', label: 'Stocks like Bajaj Consumer', short: 'Bajaj Consumer', emoji: '🧴', url: 'https://www.screener.in/screens/3549314/stocks-like-bajaj-consumer/' },
+  { slug: 'rajeev-thakkar-ppfas-screener', label: 'Rajeev Thakkar PPFAS', short: 'PPFAS', emoji: '💎', url: 'https://www.screener.in/screens/3565418/rajeev-thakkar-ppfas-screener/' },
+  { slug: 'pead-master-screener-rishi-framework', label: 'PEAD Master (Rishi Framework)', short: 'PEAD Master', emoji: '🎯', url: 'https://www.screener.in/screens/3612486/pead-master-screener-rishi-framework/' },
+  { slug: 'multibagger-like-acutaasatlantadee-dev', label: 'Multibagger: Acutaas/Atlanta/Dee-Dev', short: 'Multibagger 1', emoji: '🚀', url: 'https://www.screener.in/screens/3601571/multibagger-like-acutaasatlantadee-dev/' },
+  { slug: 'multibagger2-ignoring-trend', label: 'Multibagger 2 (Ignoring Trend)', short: 'Multibagger 2', emoji: '💥', url: 'https://www.screener.in/screens/3545352/multibagger2-ignoring-trend/' },
+  { slug: 'fii', label: 'FII Screener', short: 'FII', emoji: '🏦', url: 'https://www.screener.in/screens/3443614/fii/' },
+  { slug: 'future-leaders', label: 'Future Leaders', short: 'Future Leaders', emoji: '👑', url: 'https://www.screener.in/screens/3470949/future-leaders/' },
+  { slug: 'great-results-and-pullback', label: 'Great Results + Pullback', short: 'Great Results', emoji: '📉', url: 'https://www.screener.in/screens/3658091/great-results-and-pullback/' },
 ];
 
 const C = { bg: '#0B0E14', panel: '#11151F', panel2: '#161B27', border: '#1F2937', text: '#E5E7EB', text2: '#94A3B8', text3: '#64748B', green: '#22C55E', red: '#EF4444', cyan: '#06B6D4', gold: '#FBBF24', amber: '#F59E0B', purple: '#A78BFA' };
@@ -268,7 +268,7 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
             <tbody>
               {SCREENS.map((s, i) => (
                 <tr key={s.slug}>
-                  <td style={{ ...tdStyle, fontWeight: 700, position: 'sticky', left: 0, background: C.panel2, whiteSpace: 'nowrap' }} title={s.label}>{s.emoji} {s.label.slice(0, 22)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 700, position: 'sticky', left: 0, background: C.panel2, whiteSpace: 'nowrap' }} title={s.label}>{s.emoji} {s.short}</td>
                   {SCREENS.map((_, j) => {
                     const v = matrix[i]?.[j] ?? 0;
                     const isDiag = i === j;
@@ -345,7 +345,7 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
             return (
               <label key={s.slug} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: on ? C.cyan + '22' : C.panel2, border: `1px solid ${on ? C.cyan : C.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700, color: on ? C.cyan : C.text2 }}>
                 <input type="checkbox" checked={on} onChange={() => { const n = new Set(enabled); if (on) n.delete(s.slug); else n.add(s.slug); setEnabled(n); }} style={{ cursor: 'pointer' }} />
-                {s.emoji} {s.label.slice(0, 24)}
+                {s.emoji} {s.short}
               </label>
             );
           })}
