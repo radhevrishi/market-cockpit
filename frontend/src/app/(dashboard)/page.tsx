@@ -2621,6 +2621,7 @@ export default function HomeDashboard() {
               <Link href="/news-triage"                    style={navChip('#EF4444')}>📰 News Triage</Link>
               <Link href="/budget-intel"                   style={navChip('#F59E0B')}>📊 Budget Intel</Link>
               <Link href="/journey"                       style={navChip('#22D3EE')}>🚀 The Journey</Link>
+              <Link href="/multibagger/screens"           style={navChip('#F59E0B')}>🔍 Auto Screens</Link>
             </div>
           </div>
 
