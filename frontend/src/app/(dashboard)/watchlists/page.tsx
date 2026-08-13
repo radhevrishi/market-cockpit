@@ -1344,6 +1344,8 @@ type ConvFilters = {
   peMax?: number | null;
   // zzz332 - when true, entries with filing_date within last 3 business days bypass preset gates
   freshBypass?: boolean;
+  // zzz348 — minimum market cap in Cr (null = no min)
+  mktCapMin?: number | null;
   // zzz304 — minimum CFO/PAT ratio (Screener). Filters low earnings quality;
   // 0.5 = weak, 0.8 = healthy, 1.0 = pristine cash conversion.
   cfoPatMin?: number | null;
@@ -1381,7 +1383,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, cfoPatMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1605,6 +1607,11 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.cfoPatMin != null) {
     const c = (e as any).cfo_to_pat_ratio;
     if (typeof c !== 'number' || c < f.cfoPatMin) return false;
+  }
+  // zzz348 — minimum market cap filter (Cr)
+  if (f.mktCapMin != null) {
+    const mc = (e as any).market_cap_cr;
+    if (typeof mc !== 'number' || mc < f.mktCapMin) return false;
   }
   // zzz329 — maximum trailing P/E filter (excludes negative-earnings tickers)
   if (f.peMax != null) {
@@ -1963,8 +1970,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       // Only apply if filters are still at their FILTER_DEFAULT initial state.
       // (Avoids clobbering filters restored from a saved view later.)
       setFilters((prev) => (
-        prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null && prev.cfoPatMin == null
-          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5 }
+        prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null && prev.cfoPatMin == null && prev.mktCapMin == null
+          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000 }
           : prev
       ));
     } catch {}
@@ -2665,7 +2672,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             below stay collapsed unless expanded. */}
         {(() => {
           // zzz309 → zzz319 → zzz330 — Quality Preset v5: Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ ≥0 · CFO/PAT ≥0.5.
-          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.driftBucket == null;
+          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.driftBucket == null;
           const OPT_OUT_KEY = 'mc:cb:preset:v2:optout';
           const handleToggle = () => {
             setFilters((prev) => {
@@ -2674,7 +2681,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 return { ...FILTER_DEFAULT, cap: prev.cap };
               } else {
                 try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5 };
+                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000 };
               }
             });
           };
@@ -2682,11 +2689,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60 · OPM Δ ≥0pp · CFO/PAT ≥0.5 (healthy cash conversion). Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
+                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60 · OPM Δ ≥0pp · CFO/PAT ≥0.5 · MktCap ≥₹3k Cr. Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -2719,6 +2726,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz304 — CFO/PAT minimum ratio chips (earnings quality: cash conversion). */}
         {renderChipGroup('CFO/PAT MIN', '#34D399', 'cfoPatMin' as any, [
           { v: 0.5, lbl: '≥0.5' }, { v: 0.7, lbl: '≥0.7' }, { v: 0.8, lbl: '≥0.8' }, { v: 1.0, lbl: '≥1.0' },
+        ])}
+        {/* zzz348 - market cap min chips */}
+        {renderChipGroup('MKT CAP MIN', '#F59E0B', 'mktCapMin' as any, [
+          { v: 500, lbl: '≥₹500 Cr' }, { v: 1000, lbl: '≥₹1k Cr' }, { v: 3000, lbl: '≥₹3k Cr' }, { v: 5000, lbl: '≥₹5k Cr' }, { v: 10000, lbl: '≥₹10k Cr' },
         ])}
         {/* zzz329 — Max trailing P/E chips. Excludes negative-earnings names automatically. */}
         {renderChipGroup('P/E MAX', '#A78BFA', 'peMax' as any, [
