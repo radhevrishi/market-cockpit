@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-14T09:33:26.626Z",
+  "lastSync": "2026-08-14T13:55:50.789Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 10,
@@ -11,8 +11,8 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 58629,
-      "rowCount": 52,
+      "size": 64321,
+      "rowCount": 57,
       "error": null
     },
     {
@@ -21,8 +21,8 @@
       "screenerId": "WJDx6FZ9",
       "kind": "screener",
       "ok": true,
-      "size": 37068,
-      "rowCount": 31,
+      "size": 23725,
+      "rowCount": 19,
       "error": null
     },
     {
@@ -31,8 +31,8 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 50440,
-      "rowCount": 44,
+      "size": 10571,
+      "rowCount": 8,
       "error": null
     },
     {
@@ -41,8 +41,8 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 83874,
-      "rowCount": 76,
+      "size": 95278,
+      "rowCount": 86,
       "error": null
     },
     {
@@ -51,8 +51,8 @@
       "screenerId": "Neuim2Bm",
       "kind": "screener",
       "ok": true,
-      "size": 100905,
-      "rowCount": 92,
+      "size": 104353,
+      "rowCount": 95,
       "error": null
     },
     {
@@ -61,8 +61,8 @@
       "screenerId": "RtSuWTgK",
       "kind": "screener",
       "ok": true,
-      "size": 57277,
-      "rowCount": 49,
+      "size": 56610,
+      "rowCount": 48,
       "error": null
     },
     {
@@ -71,7 +71,7 @@
       "screenerId": "5gzenlmQ",
       "kind": "screener",
       "ok": true,
-      "size": 19150,
+      "size": 19229,
       "rowCount": 15,
       "error": null
     },
@@ -81,8 +81,8 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106046,
-      "rowCount": 100,
+      "size": 95793,
+      "rowCount": 90,
       "error": null
     },
     {
@@ -91,8 +91,8 @@
       "screenerId": "oRvEFfVY",
       "kind": "screener",
       "ok": true,
-      "size": 97662,
-      "rowCount": 88,
+      "size": 70480,
+      "rowCount": 63,
       "error": null
     },
     {
@@ -101,7 +101,7 @@
       "screenerId": "339270482",
       "kind": "watchlist",
       "ok": true,
-      "size": 51378,
+      "size": 51704,
       "rowCount": 44,
       "error": null
     }
