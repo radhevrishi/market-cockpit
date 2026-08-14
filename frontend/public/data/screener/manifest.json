@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-14T05:28:45Z",
+  "lastSync": "2026-08-14T06:52:04Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 10660,
+      "size": 10662,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10509,
+      "size": 10508,
       "displayName": "Debt Reduction"
     },
     {
@@ -35,12 +35,12 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 5736,
+      "size": 5307,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4458,
+      "size": 4456,
       "displayName": "Lowequitycapital"
     },
     {
@@ -70,7 +70,7 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2439,
+      "size": 2897,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
@@ -85,12 +85,12 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63499,
+      "size": 63502,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65656,
+      "size": 65658,
       "displayName": "Working watchlist"
     },
     {
