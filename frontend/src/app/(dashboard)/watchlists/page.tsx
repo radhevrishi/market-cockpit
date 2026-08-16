@@ -2012,6 +2012,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
+        || (e as any).cb_enrich_v !== 360  // zzz361 — one-time re-enrich to populate new field set
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
@@ -2059,6 +2060,39 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               debtToEquity: typeof enr.debtToEquity === 'number' ? enr.debtToEquity : ((existing as any).debtToEquity ?? (existing as any).debt_to_equity),
               rs_rating: typeof enr.rs_rating === 'number' ? enr.rs_rating : (existing as any).rs_rating,
               ocf_to_pat_ratio: typeof enr.ocf_to_pat_ratio === 'number' ? enr.ocf_to_pat_ratio : (existing as any).ocf_to_pat_ratio,
+              // zzz361 — carry full institutional field set onto bench
+              quarters_sales: Array.isArray(enr.quarters_sales) ? enr.quarters_sales : (existing as any).quarters_sales,
+              quarters_eps: Array.isArray(enr.quarters_eps) ? enr.quarters_eps : (existing as any).quarters_eps,
+              quarters_opm: Array.isArray(enr.quarters_opm) ? enr.quarters_opm : (existing as any).quarters_opm,
+              quarters_material_cost_pct: Array.isArray(enr.quarters_material_cost_pct) ? enr.quarters_material_cost_pct : (existing as any).quarters_material_cost_pct,
+              quarters_other_income_pct: Array.isArray(enr.quarters_other_income_pct) ? enr.quarters_other_income_pct : (existing as any).quarters_other_income_pct,
+              quarters_tax_pct: Array.isArray(enr.quarters_tax_pct) ? enr.quarters_tax_pct : (existing as any).quarters_tax_pct,
+              annual_cfo_pat: Array.isArray(enr.annual_cfo_pat) ? enr.annual_cfo_pat : (existing as any).annual_cfo_pat,
+              ebitda_margin_pct: typeof enr.ebitda_margin_pct === 'number' ? enr.ebitda_margin_pct : (existing as any).ebitda_margin_pct,
+              receivables_yoy_pct: typeof enr.receivables_yoy_pct === 'number' ? enr.receivables_yoy_pct : (existing as any).receivables_yoy_pct,
+              inventory_yoy_pct: typeof enr.inventory_yoy_pct === 'number' ? enr.inventory_yoy_pct : (existing as any).inventory_yoy_pct,
+              avg_vol_20d: typeof enr.avg_vol_20d === 'number' ? enr.avg_vol_20d : (existing as any).avg_vol_20d,
+              vol_ratio_20d: typeof enr.vol_ratio_20d === 'number' ? enr.vol_ratio_20d : (existing as any).vol_ratio_20d,
+              dist_52w_pct_yahoo: typeof enr.dist_52w_pct_yahoo === 'number' ? enr.dist_52w_pct_yahoo : (existing as any).dist_52w_pct_yahoo,
+              pledged_pct: typeof enr.pledged_pct === 'number' ? enr.pledged_pct : (existing as any).pledged_pct,
+              roic: typeof enr.roic === 'number' ? enr.roic : (existing as any).roic,
+              int_coverage: typeof enr.int_coverage === 'number' ? enr.int_coverage : (existing as any).int_coverage,
+              debtor_days: typeof enr.debtor_days === 'number' ? enr.debtor_days : (existing as any).debtor_days,
+              inventory_days: typeof enr.inventory_days === 'number' ? enr.inventory_days : (existing as any).inventory_days,
+              wc_days: typeof enr.wc_days === 'number' ? enr.wc_days : (existing as any).wc_days,
+              pat_margin_curr: typeof enr.pat_margin_curr === 'number' ? enr.pat_margin_curr : (existing as any).pat_margin_curr,
+              pat_margin_prev: typeof enr.pat_margin_prev === 'number' ? enr.pat_margin_prev : (existing as any).pat_margin_prev,
+              other_income_pct_sales_curr: typeof enr.other_income_pct_sales_curr === 'number' ? enr.other_income_pct_sales_curr : (existing as any).other_income_pct_sales_curr,
+              other_income_pct_sales_prev: typeof enr.other_income_pct_sales_prev === 'number' ? enr.other_income_pct_sales_prev : (existing as any).other_income_pct_sales_prev,
+              effective_tax_rate_curr: typeof enr.effective_tax_rate_curr === 'number' ? enr.effective_tax_rate_curr : (existing as any).effective_tax_rate_curr,
+              effective_tax_rate_prev: typeof enr.effective_tax_rate_prev === 'number' ? enr.effective_tax_rate_prev : (existing as any).effective_tax_rate_prev,
+              dep_yoy_pct: typeof enr.dep_yoy_pct === 'number' ? enr.dep_yoy_pct : (existing as any).dep_yoy_pct,
+              finance_cost_curr_cr: typeof enr.finance_cost_curr_cr === 'number' ? enr.finance_cost_curr_cr : (existing as any).finance_cost_curr_cr,
+              ebit_curr_cr: typeof enr.ebit_curr_cr === 'number' ? enr.ebit_curr_cr : (existing as any).ebit_curr_cr,
+              ebit_yoy_pct: typeof enr.ebit_yoy_pct === 'number' ? enr.ebit_yoy_pct : (existing as any).ebit_yoy_pct,
+              ebitda_curr_cr: typeof enr.ebitda_curr_cr === 'number' ? enr.ebitda_curr_cr : (existing as any).ebitda_curr_cr,
+              ebitda_yoy_pct: typeof enr.ebitda_yoy_pct === 'number' ? enr.ebitda_yoy_pct : (existing as any).ebitda_yoy_pct,
+              cb_enrich_v: 360,
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
@@ -4642,15 +4676,26 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
             tip: `CFO/PAT unavailable — Q1 filings rarely disclose cash-flow statements (annual/H1 cadence). Not a red flag; earnings-quality proxy pending H1.` });
         }
 
-        // ⚠ DEGRADED — BLOCKBUSTER tier but red-flag-ish (simple guarded check).
+        // ⚠ DEGRADED — BLOCKBUSTER tier but genuinely broken (3+ red flags, the
+        // same conditions that drive the AVOID verdict). zzz361 — ROCE<15 alone
+        // is common among solid cyclicals and over-fired the banner on ~15 cards.
         const tierBB = String(e.tier || '').toUpperCase().includes('BLOCKBUSTER');
-        const degraded = tierBB && ((cfoR !== null && cfoR < 0.5) || (roceV !== null && roceV < 15));
+        const sYoY = num(e.sales_yoy_pct), pYoY = num(e.net_profit_yoy_pct), epsYoY = num(e.eps_yoy_pct);
+        const opmD = (num(e.opm_pct) != null && num(e.opm_prev_pct) != null) ? (num(e.opm_pct)! - num(e.opm_prev_pct)!) : null;
+        const drift = num(e.move_pct);
+        let rfCount = 0;
+        if (cfoR !== null && cfoR < 0.5) rfCount++;
+        if (sYoY != null && pYoY != null && sYoY > 5 && pYoY > 5 * sYoY) rfCount++;
+        if (epsYoY != null && pYoY != null && Math.abs(pYoY) > 10 && Math.abs(epsYoY - pYoY) > 30) rfCount++;
+        if (opmD != null && opmD < -3) rfCount++;
+        if (drift != null && drift < -5 && tierBB) rfCount++;
+        const degraded = tierBB && (rfCount >= 3 || (drift != null && drift < -12));
 
         if (chips.length === 0 && !degraded) return null;
         return (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)' }}>
             {degraded && (
-              <div title={`Tier BLOCKBUSTER but quality degraded: ${cfoR !== null && cfoR < 0.5 ? `CFO/PAT ${cfoR.toFixed(2)} <0.5` : ''}${(cfoR !== null && cfoR < 0.5 && roceV !== null && roceV < 15) ? ' · ' : ''}${roceV !== null && roceV < 15 ? `ROCE ${roceV.toFixed(0)}% <15` : ''}. Headline tier overstates the setup — treat with caution.`}
+              <div title={`3+ quality red flags on a BLOCKBUSTER print — headline tier overstates the setup.`}
                 style={{ flexBasis: '100%', padding: '2px 8px', borderRadius: 3, background: '#F59E0B22', color: '#F59E0B', fontWeight: 800, border: '1px solid #F59E0B66', fontSize: 9.5, letterSpacing: '0.4px' }}>
                 ⚠ DEGRADED — BLOCKBUSTER tier but quality flags present
               </div>
@@ -4772,7 +4817,14 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         if (taxDrop) qbits.push('tax');
         if (oiRising) qbits.push('other-income');
         if (cfoWeak) qbits.push('cash');
-        if (qbits.length) { concl.push('(low-quality: ' + qbits.join('/') + '-aided)'); firedTips.push('quality flags: ' + qbits.join(', ')); }
+        if (qbits.length) {
+          // zzz361 — when the quality-flags clause is the ONLY one that fired,
+          // render it as a proper statement instead of a bare parenthetical.
+          concl.push(concl.length === 0
+            ? 'Beat quality: low (' + qbits.join('/') + '-aided)'
+            : '(low-quality: ' + qbits.join('/') + '-aided)');
+          firedTips.push('quality flags: ' + qbits.join(', '));
+        }
         // pledge
         if (pledgeNum != null) {
           if (pledgeNum > 0) { concl.push('⚠ promoter pledge ' + pledgeNum.toFixed(pledgeNum < 1 ? 2 : 1) + '%'); firedTips.push('promoter pledge ' + pledgeNum + '%'); }

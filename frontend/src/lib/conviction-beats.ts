@@ -115,6 +115,9 @@ export interface ConvictionEntry {
   wc_days?: number | null;                         // zzz360
   roic?: number | null;                            // zzz360
   int_coverage?: number | null;                    // zzz360
+  // zzz361 — version marker stamped when the full enrich field set is merged
+  // onto the bench, so the one-time client re-enrich fires exactly once.
+  cb_enrich_v?: number | null;                     // zzz361
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -330,6 +333,7 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           fill('annual_cfo_pat' as any); fill('pledged_pct' as any);
           fill('debtor_days' as any); fill('inventory_days' as any); fill('wc_days' as any);
           fill('roic' as any); fill('int_coverage' as any);
+          fill('cb_enrich_v' as any);  // zzz361 — stamp version marker so re-enrich fires once
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {
