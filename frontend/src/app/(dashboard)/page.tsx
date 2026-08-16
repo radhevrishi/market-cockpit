@@ -2622,6 +2622,7 @@ export default function HomeDashboard() {
               <Link href="/budget-intel"                   style={navChip('#F59E0B')}>📊 Budget Intel</Link>
               <Link href="/journey"                       style={navChip('#22D3EE')}>🚀 The Journey</Link>
               <Link href="/multibagger/screens"           style={navChip('#F59E0B')}>🔍 Auto Screens</Link>
+              <Link href="/learn"                          style={navChip('#A78BFA')}>📚 Learn</Link>
             </div>
           </div>
 
