@@ -1680,10 +1680,19 @@ function cbComputeQuality(e: any): {
     else if (salesOK && !patStrong) { triLabel = 'VOLUME-ONLY'; triCol = '#F59E0B'; }
   }
 
+  // zzz366 — "cash-confirmed": CFO/PAT >= 1.5 means the period's cash generation
+  // EXCEEDS reported profit by 50%+, so a headline PAT spike is validated by real
+  // cash, not an accrual mirage. The MARGIN-SPIKE red flag exists to catch profit
+  // that ISN'T real; when cash confirms it, the flag is a false positive. Aegis
+  // Logistics (CFO/PAT 3.72, OPM +16pp, ROE 16%, undervalued) was hitting exactly
+  // 3 red flags — MARGIN-SPIKE + EPS≠PAT + MKT-DOUBT — and getting AVOID purely on
+  // that count, despite the beat being fully cash-backed. Suppressing MARGIN-SPIKE
+  // when cash-confirmed drops it to 2 flags → WATCH (fair: real but low-base).
+  const cashConfirmed = typeof cfo === 'number' && cfo >= 1.5 && !fin;
   // Count red flags (mirrors the RED FLAGS render block)
   let rf = 0;
   if (typeof cfo === 'number' && cfo > 0 && cfo < 0.5 && !fin) rf++; // zzz362/zzz364 (BUG 6) — CASH-CONV only for genuine weak-but-positive; financials exempt
-  if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales) rf++;
+  if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales && !cashConfirmed) rf++; // zzz366 — cash-confirmed beats don't count MARGIN-SPIKE
   if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 10 && Math.abs(eps - pat) > 30) rf++;
   if (typeof opm === 'number' && typeof opmP === 'number' && !fin && (opm - opmP) < -3) rf++; // zzz364 (BUG 2a) — financials: OPM-based signal not meaningful
   if (typeof drift === 'number' && drift < -5 && ['BLOCKBUSTER','ELITE','STRONG'].includes(String(e.tier || '').toUpperCase())) rf++;
@@ -2140,13 +2149,17 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const optOut = localStorage.getItem('mc:cb:preset:v2:optout') === '1';
+      // zzz366 — optout key bumped v2->v3. The preset meaning changed (verdicts now
+      // default to STRONG BUY + BUY + WATCH), so a stale v2 opt-out must NOT suppress
+      // the new default. A fresh v3 key means every user gets the new preset auto-ON
+      // once; they can still opt out again (which sets v3) and that choice sticks.
+      const optOut = localStorage.getItem('mc:cb:preset:v3:optout') === '1';
       if (optOut) return;
       // Only apply if filters are still at their FILTER_DEFAULT initial state.
       // (Avoids clobbering filters restored from a saved view later.)
       setFilters((prev) => (
         prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null && prev.cfoPatMin == null && prev.mktCapMin == null && prev.verdicts == null /* zzz362 */
-          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY'] /* zzz362 */ }
+          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 — user: preset auto-ON with SB+BUY+WATCH */ }
           : prev
       ));
     } catch {}
@@ -2174,7 +2187,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
-        || (e as any).cb_enrich_v !== 363  // zzz363 — one-time re-enrich (v9 cache + exceptional fields)
+        || (e as any).cb_enrich_v !== 366  // zzz366 — one-time re-enrich (v10 cache: Screener-overlay fix surfaces trend/pledge/one-off fields the Worker merge was dropping)
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
@@ -2257,7 +2270,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // zzz363 — one-off / exceptional-item fields (v9 cache)
               exceptional_curr_cr: typeof enr.exceptional_curr_cr === 'number' ? enr.exceptional_curr_cr : (existing as any).exceptional_curr_cr,
               exceptional_pct_pbt: typeof enr.exceptional_pct_pbt === 'number' ? enr.exceptional_pct_pbt : (existing as any).exceptional_pct_pbt,
-              cb_enrich_v: 363,  // zzz363 — bump so re-enrich fires once for v9 cache + exceptional fields
+              cb_enrich_v: 366,  // zzz366 — bump so re-enrich fires once for v10 cache (Screener-overlay fix)
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
@@ -2898,8 +2911,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             below stay collapsed unless expanded. */}
         {(() => {
           // zzz309 → zzz319 → zzz330 — Quality Preset v5: Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ ≥0 · CFO/PAT ≥0.5.
-          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.pledgedMax === 0 /* zzz360 */ && filters.driftBucket == null && JSON.stringify((filters.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY']) /* zzz362 */;
-          const OPT_OUT_KEY = 'mc:cb:preset:v2:optout';
+          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.pledgedMax === 0 /* zzz360 */ && filters.driftBucket == null && JSON.stringify((filters.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']) /* zzz366 */;
+          const OPT_OUT_KEY = 'mc:cb:preset:v3:optout';
           const handleToggle = () => {
             setFilters((prev) => {
               if (presetActive) {
@@ -2907,7 +2920,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 return { ...FILTER_DEFAULT, cap: prev.cap };
               } else {
                 try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY'] /* zzz362 */ };
+                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 */ };
               }
             });
           };
@@ -2919,7 +2932,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: BUY+ {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: STRONG BUY·BUY·WATCH {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -4798,11 +4811,16 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           chips.push({ icon: '📊', label: 'LOW-BASE', color: AMBER,
             tip: `Optical growth off a tiny base: prior-period sales ₹${priorSales.toFixed(0)} Cr with +${salesY.toFixed(0)}% YoY. High % masks small absolute size.` });
         }
-        // 💧 CFO-INFLATED — cfo_to_pat_ratio > 3 (WC release or depressed PAT).
+        // 💧 CASH-RICH — cfo_to_pat_ratio > 3 (cash flow far exceeds profit).
+        // zzz366 — reframed from the old alarmist "CFO-INFLATED" amber flag. A very
+        // high CFO/PAT is usually a POSITIVE (strong cash generation, or a heavy-
+        // depreciation asset base adding back), and it was sitting contradictorily
+        // next to a cash-backed beat. Rendered neutral grey as an informational note,
+        // not a red/amber warning, with a caveat to check the driver.
         const cfoR = num(e.cfo_to_pat_ratio);
         if (cfoR !== null && cfoR > 3 && !cbIsFinancial(e)) { // zzz362 — financials: CFO/PAT not meaningful
-          chips.push({ icon: '💧', label: 'CFO-INFLATED', color: AMBER,
-            tip: `CFO/PAT ${cfoR.toFixed(1)}× (>3×). Cash flow far exceeds profit — likely working-capital release or depressed PAT. Verify sustainability.` });
+          chips.push({ icon: '💧', label: `CASH-RICH ${cfoR.toFixed(1)}×`, color: 'var(--mc-text-4)',
+            tip: `CFO/PAT ${cfoR.toFixed(1)}× — operating cash flow far exceeds reported profit. Usually healthy (strong cash conversion or heavy depreciation add-back); occasionally a working-capital release or a depressed-PAT base. Informational, not a red flag.` });
         }
         // ⚠️ ONE-OFF — latest quarter carries a large exceptional/one-off item.
         // zzz363 — |exceptional| ≥ 15% of PBT. Amber when >0 (gain-flattered),
@@ -5051,7 +5069,12 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         if (typeof cfoR === 'number' && cfoR > 0 && cfoR < 0.5 && !cbIsFinancial(entry)) { // zzz362/zzz364 (BUG 6) — only genuine weak-but-positive (0<r<0.5); negative/huge are artifacts, financials exempt
           flags.push({icon:'🚩', label:'CASH-CONV', tip:`CFO/PAT ${cfoR.toFixed(2)} — annual cash conversion below 0.5 (but positive). Reported profit isn't translating into cash. Investigate receivables/inventory build.`});
         }
-        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales) {
+        // zzz366 — mirror cbComputeQuality: a cash-confirmed beat (CFO/PAT ≥1.5)
+        // has its profit spike validated by real cash, so MARGIN-SPIKE would be a
+        // false positive. Suppress the flag here too so the card and the verdict
+        // agree (both suppress) instead of showing a red flag the verdict ignored.
+        const _cashConfirmed = typeof cfoR === 'number' && cfoR >= 1.5 && !cbIsFinancial(entry);
+        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales && !_cashConfirmed) {
           flags.push({icon:'⚠️', label:'MARGIN-SPIKE', tip:`PAT +${pat.toFixed(0)}% vs Sales +${sales.toFixed(0)}% (${(pat/sales).toFixed(1)}× ratio). Big margin expansion — check if driven by one-off / low base / other income. Rarely sustains.`});
         }
         if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 10 && Math.abs(eps - pat) > 30) {

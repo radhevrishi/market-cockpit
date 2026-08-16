@@ -337,6 +337,20 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           fill('roic' as any); fill('int_coverage' as any);
           fill('exceptional_curr_cr' as any); fill('exceptional_pct_pbt' as any);  // zzz363
           fill('cb_enrich_v' as any);  // zzz361 — stamp version marker so re-enrich fires once
+          // zzz366 — the version marker + the fields a re-enrich EXISTS to refresh
+          // must OVERWRITE, not null-fill. fill() only writes when cur is null, so an
+          // entry already stamped at an older cb_enrich_v (e.g. 363) could never
+          // advance to 366 — the re-enrich gate stayed permanently true (re-fetching
+          // every load) and stale trend/pledge/one-off values could never refresh.
+          // For these specific fields, take the incoming value whenever present.
+          const forceRefresh = (k: keyof ConvictionEntry) => {
+            if ((e as any)[k] != null && (e as any)[k] !== (cur as any)[k]) (patch as any)[k] = (e as any)[k];
+          };
+          forceRefresh('cb_enrich_v' as any);
+          forceRefresh('quarters_material_cost_pct' as any); forceRefresh('quarters_other_income_pct' as any);
+          forceRefresh('quarters_tax_pct' as any); forceRefresh('annual_cfo_pat' as any);
+          forceRefresh('pledged_pct' as any);
+          forceRefresh('exceptional_curr_cr' as any); forceRefresh('exceptional_pct_pbt' as any);
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {

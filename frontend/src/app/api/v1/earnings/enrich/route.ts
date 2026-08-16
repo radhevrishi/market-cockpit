@@ -1062,7 +1062,11 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // Cache key includes filed date so a new filing busts old cache
   // PATCH 1013 — bumped v5 → v6 to invalidate stale entries lacking opm_pct.
   // zzz363 — bump v8->v9 to surface zzz360/zzz363 fields (stale KV was hiding them)
-  const cacheKey = filedHint ? `enrich:v9:${symbol}:${filedHint}` : `enrich:v9:${symbol}`;
+  // zzz366 — bump v9->v10: the trend/pledge/one-off fields were being DROPPED whenever
+  // the Cloudflare Worker won the source merge (see overlay block below). v9 KV cached
+  // those field-less payloads, so a straight code fix alone wouldn't surface them —
+  // the cache key MUST change to force a clean re-fetch that carries the overlay.
+  const cacheKey = filedHint ? `enrich:v10:${symbol}:${filedHint}` : `enrich:v10:${symbol}`;
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1285,6 +1289,39 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     if (out.ocf_to_pat_ratio == null && typeof co.ocf_to_pat_ratio === 'number') {
       out.ocf_to_pat_ratio = co.ocf_to_pat_ratio;
     }
+  }
+
+  // zzz366 — CRITICAL FIX (root cause of "I still don't see Other Income / Tax /
+  // one-off / pledge trends"): every one of these fields is extracted ONLY by the
+  // direct Screener scrape (fetchScreenerForSymbol → the zzz360/zzz363 blocks). But
+  // the primary merge is `const fin = worker || nse || screener || ...`, so whenever
+  // the Cloudflare Worker (indiaearninghub) returns data — the COMMON case — `fin`
+  // is the worker payload and the entire `screener` object (with all these fields)
+  // is discarded. The chips/Q-TRENDS/pledge therefore never had data to render.
+  // The Worker payload NEVER carries any of these, so a plain fill (only when
+  // out.<f> is null/undefined) is safe and can never clobber a better value.
+  if (screener) {
+    const sc = screener as any;
+    const SCREENER_ONLY_FIELDS = [
+      // zzz360 quarterly trend series + annual CFO/PAT + pledge + WC/return ratios
+      'quarters_material_cost_pct', 'quarters_other_income_pct', 'quarters_tax_pct',
+      'annual_cfo_pat', 'pledged_pct', 'roic', 'int_coverage',
+      'debtor_days', 'inventory_days', 'wc_days',
+      // zzz363 one-off / exceptional-item detection
+      'exceptional_curr_cr', 'exceptional_pct_pbt',
+      // zzz360 P&L-quality scalars (Screener-derived; Worker doesn't provide)
+      'other_income_pct_sales_curr', 'other_income_pct_sales_prev',
+      'effective_tax_rate_curr', 'effective_tax_rate_prev',
+      'dep_yoy_pct', 'finance_cost_curr_cr', 'ebit_curr_cr', 'ebit_yoy_pct',
+      'ebitda_curr_cr', 'ebitda_yoy_pct', 'pat_margin_curr', 'pat_margin_prev',
+      // zzz356 quarterly base series + BS deltas (fill only when Worker left them null)
+      'quarters_sales', 'quarters_eps', 'quarters_opm',
+      'ebitda_margin_pct', 'receivables_yoy_pct', 'inventory_yoy_pct',
+    ];
+    for (const f of SCREENER_ONLY_FIELDS) {
+      if ((out as any)[f] == null && sc[f] != null) (out as any)[f] = sc[f];
+    }
+    if (out._screener_overlay == null) out._screener_overlay = 'zzz366';
   }
 
   // PATCH 1016 — NSE Bhavcopy overlay for D1/Gap price reaction.
