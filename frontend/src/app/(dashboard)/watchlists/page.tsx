@@ -4226,12 +4226,15 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
               const p = (entry as any).opm_prev_pct as number | null | undefined;
               const d = typeof p === 'number' ? o - p : null;
               const col = d == null ? 'var(--mc-text-2)' : d >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+              // zzz354 — explicit OPM trend classification
+              const cls = d == null ? null : d >= 1 ? '🟢 EXPANDING' : d >= -1 ? '🟡 FLAT' : '🔴 CONTRACTING';
               return (
-                <span title={typeof p === 'number' ? `OPM ${o.toFixed(1)}% vs ${p.toFixed(1)}% prior year — ${(d as number) >= 0 ? '+' : ''}${(d as number).toFixed(1)}pp` : `OPM ${o.toFixed(1)}% (no prior-year value)`}>
+                <span title={typeof p === 'number' ? `OPM ${o.toFixed(1)}% vs ${p.toFixed(1)}% prior year — ${(d as number) >= 0 ? '+' : ''}${(d as number).toFixed(1)}pp. Trend: ${cls || 'unknown'}` : `OPM ${o.toFixed(1)}% (no prior-year value)`}>
                   <span style={{ color: 'var(--mc-text-4)' }}>OPM</span>{' '}
                   <strong style={{ color: col }}>
                     {o.toFixed(1)}%{d != null ? ` (${d >= 0 ? '+' : ''}${d.toFixed(1)}pp)` : ''}
                   </strong>
+                  {cls && <span style={{ marginLeft: 4, fontSize: 9.5, color: 'var(--mc-text-3)' }}>{cls}</span>}
                 </span>
               );
             })()}
@@ -4289,6 +4292,41 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
                 </span>
               );
             })()}
+            {/* zzz354 — PEG chip: P/E ÷ EPS growth. <1 undervalued, 1-2 fair, >2 rich, <0 negative-growth guard.
+                Uses trailing P/E and latest EPS YoY %. Skips when EPS growth ≤ 0 or missing. */}
+            {typeof (entry as any).pe === 'number' && Number.isFinite((entry as any).pe) && (entry as any).pe > 0 && typeof entry.eps_yoy_pct === 'number' && (entry.eps_yoy_pct as number) > 5 && (() => {
+              const pe = (entry as any).pe as number;
+              const g = entry.eps_yoy_pct as number;
+              const peg = pe / g;
+              const col = peg < 0.5 ? 'var(--mc-bullish)' : peg < 1 ? 'var(--mc-bullish)' : peg < 2 ? '#F59E0B' : 'var(--mc-bearish)';
+              const label = peg < 0.5 ? 'DEEP VALUE' : peg < 1 ? 'CHEAP vs growth' : peg < 2 ? 'FAIR' : 'RICH vs growth';
+              return (
+                <span title={`PEG = P/E (${pe.toFixed(1)}) ÷ EPS YoY % (${g.toFixed(1)}%) = ${peg.toFixed(2)}. Traditional PEG: <1 undervalued, 1-2 fair, >2 overvalued. Verdict: ${label}.`}>
+                  <span style={{ color: 'var(--mc-text-4)' }}>PEG</span>{' '}
+                  <strong style={{ color: col }}>{peg.toFixed(2)}</strong>
+                  <span style={{ marginLeft: 3, fontSize: 8.5, color: 'var(--mc-text-4)' }}>({label})</span>
+                </span>
+              );
+            })()}
+            {/* zzz354 — P/E-vs-growth verdict chip: standalone classifier that works even when
+                EPS growth is 0 or negative (which PEG skips). Compares P/E ratio to EPS growth
+                rate directly: P/E > 2×growth = OVERVALUED, P/E < 0.5×growth = UNDERVALUED, else FAIR.
+                For negative EPS growth (turnaround): always OVERVALUED regardless of P/E. */}
+            {typeof (entry as any).pe === 'number' && Number.isFinite((entry as any).pe) && (entry as any).pe > 0 && typeof entry.eps_yoy_pct === 'number' && (() => {
+              const pe = (entry as any).pe as number;
+              const g = entry.eps_yoy_pct as number;
+              let verdict: string; let col: string;
+              if (g <= 0) { verdict = 'NEG-GROWTH'; col = 'var(--mc-bearish)'; }
+              else if (pe > 2 * g) { verdict = 'OVERVALUED'; col = 'var(--mc-bearish)'; }
+              else if (pe < 0.5 * g) { verdict = 'UNDERVALUED'; col = 'var(--mc-bullish)'; }
+              else { verdict = 'FAIR'; col = 'var(--mc-text-2)'; }
+              return (
+                <span title={`P/E-vs-Growth verdict: ${verdict}. P/E ${pe.toFixed(1)}x vs EPS growth ${g.toFixed(1)}%. Rule: >2×growth = OVERVALUED, <0.5×growth = UNDERVALUED, negative growth = flag.`}>
+                  <span style={{ color: 'var(--mc-text-4)' }}>VAL</span>{' '}
+                  <strong style={{ color: col, fontSize: 10 }}>{verdict}</strong>
+                </span>
+              );
+            })()}
             {/* zzz230 — Since filing: cumulative % close move from earnings-report
                 date to most recent close. Sourced from server-computed move_pct
                 on the graded API. Shows how the market has voted since results. */}
@@ -4320,6 +4358,50 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
             <span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder. Screener/Yahoo may not report ROCE for banks/NBFCs — shown as — when unavailable."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{val(roce, '%')}</strong></span>
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             <span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{val(roe, '%')}</strong></span>
+          </div>
+        );
+      })()}
+      {/* zzz354 — RED FLAGS row: quality-of-earnings warning badges computed from
+          existing bench fields. Only renders when at least one flag is triggered.
+          Flags: (1) CFO/PAT < 0.5 = cash conversion broken;
+                 (2) PAT growth > 3× Sales growth = margin windfall (not sustainable);
+                 (3) EPS growth wildly different from PAT growth = share-count noise;
+                 (4) OPM contracted > 3pp = margin deterioration;
+                 (5) DRIFT negative post beat = market disbelief. */}
+      {density !== 'ultra' && (() => {
+        const flags: Array<{icon: string; label: string; tip: string}> = [];
+        const cfoR = (entry as any).cfo_to_pat_ratio;
+        const sales = entry.sales_yoy_pct;
+        const pat = entry.net_profit_yoy_pct;
+        const eps = entry.eps_yoy_pct;
+        const opmD = typeof (entry as any).opm_pct === 'number' && typeof (entry as any).opm_prev_pct === 'number'
+          ? ((entry as any).opm_pct - (entry as any).opm_prev_pct) : null;
+        const drift = (entry as any).move_pct;
+        if (typeof cfoR === 'number' && cfoR < 0.5) {
+          flags.push({icon:'🚩', label:'CASH-CONV', tip:`CFO/PAT ${cfoR.toFixed(2)} — annual cash conversion below 0.5. Reported profit isn't translating into cash. Investigate receivables/inventory build.`});
+        }
+        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 3 * sales) {
+          flags.push({icon:'⚠️', label:'MARGIN-SPIKE', tip:`PAT +${pat.toFixed(0)}% vs Sales +${sales.toFixed(0)}% (${(pat/sales).toFixed(1)}× ratio). Big margin expansion — check if driven by one-off / low base / other income. Rarely sustains.`});
+        }
+        if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 10 && Math.abs(eps - pat) > 30) {
+          flags.push({icon:'⚠️', label:'EPS≠PAT', tip:`EPS ${eps.toFixed(0)}% vs PAT ${pat.toFixed(0)}%. Wide gap suggests share-count change (buyback/dilution/split). Verify EPS number.`});
+        }
+        if (typeof opmD === 'number' && opmD < -3) {
+          flags.push({icon:'🔴', label:'OPM-DROP', tip:`OPM contracted ${opmD.toFixed(1)}pp YoY. Margin deterioration — pricing pressure, cost inflation, or mix shift.`});
+        }
+        if (typeof drift === 'number' && drift < -5 && ['BLOCKBUSTER','ELITE','STRONG'].includes(String(entry.tier || '').toUpperCase())) {
+          flags.push({icon:'📉', label:'MKT-DOUBT', tip:`Stock is ${drift.toFixed(1)}% below filing-day price despite ${entry.tier} print. Market is fading the beat — sustainability suspicion or forward-guidance concern.`});
+        }
+        if (flags.length === 0) return null;
+        return (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingTop: 3, marginTop: 2, borderTop: '1px dashed rgba(239,68,68,0.20)' }}>
+            {flags.map((f, i) => (
+              <span key={i} title={f.tip} style={{
+                fontSize: 9, padding: '1px 6px', borderRadius: 3, cursor: 'help',
+                background: 'rgba(239,68,68,0.10)', color: '#F87171', fontWeight: 700,
+                border: '1px solid rgba(239,68,68,0.25)', letterSpacing: '0.3px'
+              }}>{f.icon} {f.label}</span>
+            ))}
           </div>
         );
       })()}
