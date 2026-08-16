@@ -2702,16 +2702,19 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     return entries.filter((e) => passesConvictionFilter(e, probe)).length;
   };
 
-  // zzz362 — verdict tally across the currently-loaded bench, for the VERDICT
-  // multi-select chip counts. Computed once per entries change (cheap pure fn).
-  const verdictCounts = useMemo(() => {
+  // zzz362/zzz364 — verdict tally across the currently-loaded bench, for the
+  // VERDICT multi-select chip counts. zzz364 FIX: this sits AFTER conditional
+  // early-returns in the component, so it MUST NOT be a hook (useMemo here
+  // caused React #310 "rendered more hooks than previous render"). Plain const
+  // recomputed each render — cheap, same cost as countWith which also scans.
+  const verdictCounts: Record<string, number> = (() => {
     const m: Record<string, number> = { 'STRONG BUY': 0, 'BUY': 0, 'WATCH': 0, 'AVOID': 0, 'HIGH RISK': 0 };
     for (const e of entries) {
       const { verdictLabel } = cbComputeQuality(e);
       if (m[verdictLabel] != null) m[verdictLabel]++;
     }
     return m;
-  }, [entries]);
+  })();
 
   const chipBase: React.CSSProperties = {
     fontSize: 10.5, fontWeight: 700, padding: '4px 9px', borderRadius: 14,
