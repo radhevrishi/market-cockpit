@@ -57,11 +57,11 @@ export default function InvestingPlaybookPage() {
       <aside style={{ width: 340, minWidth: 340, background: C.panel, borderRight: '1px solid ' + C.border, height: '100vh', overflowY: 'auto', position: 'sticky', top: 0 }}>
         <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid ' + C.border }}>
           <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 4 }}>INVESTING PLAYBOOK</div>
-          <h1 style={{ fontSize: 18, fontWeight: 800, margin: 0, letterSpacing: '-0.3px' }}>\ud83d\udcda Master Learning Tab</h1>
-          <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>{BOOK.length} parts \u00b7 {BOOK.reduce((n, p) => n + p.subs.length, 0)} sections</div>
+          <h1 style={{ fontSize: 18, fontWeight: 800, margin: 0, letterSpacing: '-0.3px' }}>📚 Master Learning Tab</h1>
+          <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>{BOOK.length} parts · {BOOK.reduce((n, p) => n + p.subs.length, 0)} sections</div>
         </div>
         <div style={{ padding: '12px 14px' }}>
-          <input type="text" placeholder="\ud83d\udd0d Search entire book\u2026" value={q} onChange={e => setQ(e.target.value)} style={{ width: '100%', padding: '8px 12px', background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text, fontSize: 13, outline: 'none' }} />
+          <input type="text" placeholder="🔍 Search entire book…" value={q} onChange={e => setQ(e.target.value)} style={{ width: '100%', padding: '8px 12px', background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text, fontSize: 13, outline: 'none' }} />
         </div>
         <nav style={{ paddingBottom: 40 }}>
           {BOOK.map((p, pi) => {
@@ -73,12 +73,12 @@ export default function InvestingPlaybookPage() {
                 <button
                   onClick={() => { setActivePart(pi); setActiveSub(-1); const e = new Set(expandedParts); if (e.has(pi)) e.delete(pi); else e.add(pi); setExpandedParts(e); }}
                   style={{ width: '100%', textAlign: 'left', padding: '10px 16px', background: active ? C.cyan + '15' : 'transparent', border: 'none', borderLeft: active ? '3px solid ' + C.cyan : '3px solid transparent', color: active ? C.cyan : C.text, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{expanded ? '\u25bc' : '\u25b6'} {p.title}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{expanded ? '▼' : '▶'} {p.title}</span>
                   <span style={{ fontSize: 10, color: C.text3, fontWeight: 500 }}>{totalParas}</span>
                 </button>
                 {expanded && p.subs.length > 0 && (
                   <div style={{ background: C.panel2, borderLeft: '3px solid ' + C.border }}>
-                    <button onClick={() => { setActivePart(pi); setActiveSub(-1); }} style={{ width: '100%', textAlign: 'left', padding: '6px 20px', background: activeSub === -1 && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === -1 && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', fontStyle: 'italic' }}>\u21e2 All sections</button>
+                    <button onClick={() => { setActivePart(pi); setActiveSub(-1); }} style={{ width: '100%', textAlign: 'left', padding: '6px 20px', background: activeSub === -1 && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === -1 && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', fontStyle: 'italic' }}>⇢ All sections</button>
                     {p.subs.map((s, si) => (
                       <button key={si} onClick={() => { setActivePart(pi); setActiveSub(si); }} style={{ width: '100%', textAlign: 'left', padding: '5px 20px', background: activeSub === si && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === si && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{si + 1}. {s.title.slice(0, 45)}</button>
                     ))}
@@ -96,7 +96,7 @@ export default function InvestingPlaybookPage() {
             {searchHits.map((h, i) => (
               <div key={i} onClick={() => { setActivePart(h.partIdx); setActiveSub(h.subIdx); setQ(''); }} style={{ padding: '12px 14px', background: C.panel, border: '1px solid ' + C.border, borderRadius: 8, marginBottom: 8, cursor: 'pointer' }}>
                 <div style={{ fontSize: 11, color: C.cyan, fontWeight: 700, marginBottom: 4 }}>{h.title}</div>
-                <div style={{ fontSize: 13, color: C.text }} dangerouslySetInnerHTML={{ __html: highlight(h.snippet, q) + '\u2026' }} />
+                <div style={{ fontSize: 13, color: C.text }} dangerouslySetInnerHTML={{ __html: highlight(h.snippet, q) + '…' }} />
               </div>
             ))}
           </div>
