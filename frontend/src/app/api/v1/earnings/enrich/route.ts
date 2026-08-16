@@ -279,6 +279,50 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
       eps_yoy_pct: pct(epsCurr, epsPrev),
       latest_quarter_label: q.labels[latestIdx],
       financials_source: 'screener',
+      // zzz356 — 4-quarter history (Sales/EPS/OPM) + EBITDA margin + Receivables/
+      // Inventory YoY. All parsed from the same Screener HTML we already have,
+      // no extra fetch cost. Powers acceleration chips + working-capital red flags.
+      ...(() => {
+        const lastN = (kw: string, n: number): (number | null)[] => {
+          const rowKey = Object.keys(q.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          if (!rowKey) return [];
+          const arr = q.rows[rowKey] || [];
+          return arr.slice(Math.max(0, arr.length - n));
+        };
+        const salesQ4 = lastN('Sales', 4).length ? lastN('Sales', 4) : (lastN('Revenue', 4).length ? lastN('Revenue', 4) : lastN('Income', 4));
+        const epsQ4 = lastN('EPS', 4);
+        const opmQ4 = lastN('OPM', 4).length ? lastN('OPM', 4) : lastN('Financing Margin', 4);
+        // EBITDA margin from P&L "OPM %" row (annual). Falls back to quarterly OPM.
+        const pl = parseSectionTable(html, 'profit-loss');
+        const plLatest = pl && pl.labels.length > 0 ? pl.labels.length - 1 : -1;
+        const getPL = (kw: string, idx: number): number | null => {
+          if (!pl || idx < 0) return null;
+          const k = Object.keys(pl.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          return k ? (pl.rows[k]?.[idx] ?? null) : null;
+        };
+        const opmAnnual = getPL('OPM', plLatest);
+        // Receivables + Inventory YoY from balance-sheet section
+        const bs = parseSectionTable(html, 'balance-sheet');
+        const bsLatest = bs && bs.labels.length > 0 ? bs.labels.length - 1 : -1;
+        const bsPrior = bsLatest > 0 ? bsLatest - 1 : -1;
+        const getBS = (kw: string, idx: number): number | null => {
+          if (!bs || idx < 0) return null;
+          const k = Object.keys(bs.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          return k ? (bs.rows[k]?.[idx] ?? null) : null;
+        };
+        const recvCurr = getBS('Trade Receivables', bsLatest) ?? getBS('Receivables', bsLatest);
+        const recvPrev = getBS('Trade Receivables', bsPrior) ?? getBS('Receivables', bsPrior);
+        const invCurr = getBS('Inventor', bsLatest);
+        const invPrev = getBS('Inventor', bsPrior);
+        return {
+          quarters_sales: salesQ4.length >= 2 ? salesQ4 : null,
+          quarters_eps: epsQ4.length >= 2 ? epsQ4 : null,
+          quarters_opm: opmQ4.length >= 2 ? opmQ4 : null,
+          ebitda_margin_pct: opmAnnual,
+          receivables_yoy_pct: pct(recvCurr, recvPrev),
+          inventory_yoy_pct: pct(invCurr, invPrev),
+        };
+      })(),
       // zzz316 — CFO/PAT from cash-flow + profit-loss annual tables. Same HTML,
       // same source of truth Screener shows users. Ratio > 0.8 = healthy cash
       // conversion; <0.5 = profits not translating to cash (earnings-quality flag).
@@ -487,6 +531,24 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       stage, trend_template_passes: trendTemplate,
       adtv_cr, rvol, atr_pct,  // PATCH 1034
       close_30d: _close30d.length >= 2 ? _close30d : null,  // zzz248
+      // zzz356 — 20-day avg volume + latest/avg ratio for institutional-
+      // demand confirmation. Yahoo 52W high already present on Screener
+      // path; the Yahoo copy here is the fallback when Screener is blocked.
+      ...(() => {
+        const _vol20: number[] = [];
+        for (let i = volumes.length - 1; i >= 0 && _vol20.length < 20; i--) {
+          const v = volumes[i];
+          if (v != null && Number.isFinite(v as number) && (v as number) > 0) _vol20.unshift(v as number);
+        }
+        const avg = _vol20.length >= 5 ? _vol20.reduce((a, b) => a + b, 0) / _vol20.length : null;
+        const latestVol = _vol20.length ? _vol20[_vol20.length - 1] : null;
+        const ratio = (avg != null && avg > 0 && latestVol != null) ? Math.round((latestVol / avg) * 100) / 100 : null;
+        const hi52Yahoo = (meta.fiftyTwoWeekHigh as number | undefined) ?? null;
+        const dist52 = (hi52Yahoo != null && lastClose != null && hi52Yahoo > 0)
+          ? Math.round(((lastClose - hi52Yahoo) / hi52Yahoo) * 1000) / 10
+          : null;
+        return { avg_vol_20d: avg, vol_ratio_20d: ratio, dist_52w_pct_yahoo: dist52 };
+      })(),
     };
   } catch { return null; }
   finally { clearTimeout(t); }
