@@ -79,6 +79,18 @@ export interface ConvictionEntry {
   // zzz248 — 30-day close series for sparkline. Yahoo blocked on Railway
   // so this is often null; DriftPath component falls back gracefully.
   close_30d?: number[] | null;
+  // zzz356 — Phase 2B backend enrichment. Quarterly history (last 4 Q),
+  // annual EBITDA margin, working-capital YoY, 52W distance + volume
+  // confirmation. All optional; null on pre-zzz356 bench entries.
+  quarters_sales?: (number | null)[] | null;
+  quarters_eps?: (number | null)[] | null;
+  quarters_opm?: (number | null)[] | null;
+  ebitda_margin_pct?: number | null;
+  receivables_yoy_pct?: number | null;
+  inventory_yoy_pct?: number | null;
+  avg_vol_20d?: number | null;
+  vol_ratio_20d?: number | null;
+  dist_52w_pct_yahoo?: number | null;
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -278,6 +290,11 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           // so backfills silently dropped them and the ROCE/ROE row never rendered.
           fill('roce' as any); fill('roe' as any); fill('debtToEquity' as any);
           fill('close_30d' as any);
+          // zzz356 — Phase 2B backend enrichment fields.
+          fill('quarters_sales' as any); fill('quarters_eps' as any); fill('quarters_opm' as any);
+          fill('ebitda_margin_pct' as any);
+          fill('receivables_yoy_pct' as any); fill('inventory_yoy_pct' as any);
+          fill('avg_vol_20d' as any); fill('vol_ratio_20d' as any); fill('dist_52w_pct_yahoo' as any);
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {
