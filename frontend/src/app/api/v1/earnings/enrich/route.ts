@@ -184,6 +184,116 @@ function parseSectionTable(html: string, sectionId: string): { labels: string[];
   return { labels, rows };
 }
 
+// zzz367 — TOLERANT table parser. parseQuartersTable/parseSectionTable require a
+// <thead> (and quarters gates on >=5 labels); on the PROXIED Screener HTML that
+// reaches the production server those strict parsers return null, so
+// fetchScreenerForSymbol silently yields null and EVERY trend/quarterly/pledge/
+// one-off field was missing in prod. (fetchScreenerCFO's looser row-scan is the
+// only Screener path that survives there — proven by CFO/PAT populating live.)
+// This parser drops the thead requirement (derives column labels from the first
+// mostly-non-numeric row) and never gates on length.
+function parseTableLoose(html: string, sectionId: string): { labels: string[]; rows: Record<string, (number | null)[]> } | null {
+  const idRe = new RegExp('<section[^>]*\\bid=["\']' + sectionId + '["\'][^>]*>', 'i');
+  const open = html.match(idRe);
+  if (!open || open.index === undefined) return null;
+  const start = open.index + open[0].length;
+  const tail = html.slice(start, start + 120_000);
+  const next = tail.search(/<section\s+[^>]*\bid=["']/i);
+  const block = next > 0 ? tail.slice(0, next) : tail;
+  const tbl = block.match(/<table[\s\S]*?<\/table>/i);
+  if (!tbl) return null;
+  let labels: string[] = [];
+  const thead = tbl[0].match(/<thead[\s\S]*?<\/thead>/i);
+  if (thead) {
+    labels = Array.from(thead[0].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)).map((m) => stripTags(m[1])).slice(1);
+  }
+  const bodyM = tbl[0].match(/<tbody[\s\S]*?<\/tbody>/i);
+  const bodySrc = bodyM ? bodyM[0] : tbl[0];
+  const rows: Record<string, (number | null)[]> = {};
+  for (const tr of Array.from(bodySrc.matchAll(/<tr[\s\S]*?<\/tr>/gi))) {
+    const cells = Array.from(tr[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)).map((x) => stripTags(x[1]));
+    if (!cells.length || !cells[0]) continue;
+    if (labels.length === 0) {
+      const vals = cells.slice(1);
+      const numeric = vals.filter((v) => num(v) !== null).length;
+      if (vals.length > 0 && numeric < vals.length / 2) { labels = vals; continue; }
+    }
+    rows[cells[0]] = cells.slice(1).map(num);
+  }
+  return { labels, rows };
+}
+
+// zzz367 — extract quarterly trend series + annual CFO/PAT + one-off/exceptional +
+// pledge from raw Screener HTML using the tolerant parser, independent of the strict
+// fetchScreenerForSymbol gate. Mirrors the zzz360/zzz363 computations. Every field is
+// null-safe; null-only keys are stripped so the payload stays lean.
+function extractScreenerTrends(html: string): Record<string, any> {
+  const outT: Record<string, any> = {};
+  const last = (arr: (number | null)[] | null): number | null => (arr && arr.length ? arr[arr.length - 1] : null);
+  try {
+    const q = parseTableLoose(html, 'quarters');
+    const qRow = (kw: string): (number | null)[] | null => {
+      if (!q) return null;
+      const k = Object.keys(q.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+      return k ? (q.rows[k] || null) : null;
+    };
+    const salesRow = qRow('Sales') ?? qRow('Revenue') ?? qRow('Income') ?? qRow('Interest') ?? qRow('Premium');
+    const QN = salesRow ? Math.min(8, salesRow.length) : 0;
+    const tailArr = (arr: (number | null)[] | null): (number | null)[] | null =>
+      (arr && QN > 0 ? arr.slice(Math.max(0, arr.length - QN)) : null);
+    const salesTail = tailArr(salesRow);
+    const oiRow = tailArr(qRow('Other income normal') ?? qRow('Other Income'));
+    outT.quarters_material_cost_pct = tailArr(qRow('Material Cost %'));
+    outT.quarters_tax_pct = tailArr(qRow('Tax %'));
+    outT.quarters_sales = salesTail;
+    outT.quarters_eps = tailArr(qRow('EPS'));
+    outT.quarters_opm = tailArr(qRow('OPM'));
+    outT.quarters_other_income_pct = (oiRow && salesTail)
+      ? oiRow.map((oi, i) => { const s = salesTail[i]; return oi != null && s != null && s !== 0 ? Math.round((oi / s) * 1000) / 10 : null; })
+      : null;
+    // one-off / exceptional (latest quarter)
+    const exc = last(qRow('Exceptional'));
+    const pbt = last(qRow('Profit before tax') ?? qRow('Profit Before Tax'));
+    outT.exceptional_curr_cr = exc;
+    outT.exceptional_pct_pbt = (exc != null && pbt != null && pbt !== 0) ? Math.round((exc / Math.abs(pbt)) * 1000) / 10 : null;
+    // annual CFO / PAT series (right-aligned)
+    const cf = parseTableLoose(html, 'cash-flow');
+    const pl = parseTableLoose(html, 'profit-loss');
+    const secRow = (t: { rows: Record<string, (number | null)[]> } | null, kw: string): (number | null)[] | null => {
+      if (!t) return null;
+      const k = Object.keys(t.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+      return k ? (t.rows[k] || null) : null;
+    };
+    const cfoRow = secRow(cf, 'Cash from Operating');
+    const patRow = secRow(pl, 'Net Profit') ?? secRow(pl, 'Profit');
+    if (cfoRow && patRow) {
+      const L = Math.min(cfoRow.length, patRow.length);
+      const pairs: (number | null)[] = [];
+      for (let k = 0; k < L; k++) {
+        const c = cfoRow[cfoRow.length - L + k] ?? null;
+        const p = patRow[patRow.length - L + k] ?? null;
+        pairs.push(c == null || p == null || p === 0 ? null : Math.round((c / p) * 100) / 100);
+      }
+      outT.annual_cfo_pat = pairs.slice(Math.max(0, pairs.length - 6));
+    }
+    // pledge + return ratios from top-ratios block
+    const ratios = parseTopRatios(html);
+    const pk = Object.keys(ratios).find((k) => /pledg/i.test(k));
+    if (pk) outT.pledged_pct = ratios[pk] ?? null;
+    const ric = Object.keys(ratios).find((k) => /roic|return on invested/i.test(k));
+    if (ric) outT.roic = ratios[ric] ?? null;
+    // latest-quarter P&L-quality scalars (used by the institutional chips)
+    const oiCurr = last(qRow('Other income normal') ?? qRow('Other Income'));
+    const sCurr = last(salesRow);
+    outT.other_income_pct_sales_curr = (oiCurr != null && sCurr != null && sCurr !== 0) ? Math.round((oiCurr / sCurr) * 1000) / 10 : null;
+    const taxTail = qRow('Tax %');
+    outT.effective_tax_rate_curr = last(taxTail);
+    outT.effective_tax_rate_prev = taxTail && taxTail.length >= 2 ? taxTail[taxTail.length - 2] : null;
+  } catch { /* null-safe: any parse hiccup yields no trend fields, never a throw */ }
+  for (const k of Object.keys(outT)) { if (outT[k] == null) delete outT[k]; }
+  return outT;
+}
+
 function parseSector(html: string): string | null {
   const peer = html.match(/<a[^>]*href=["']\/company\/compare\/[^"']+["'][^>]*>([\s\S]*?)<\/a>/i);
   if (peer) {
@@ -1066,7 +1176,10 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // the Cloudflare Worker won the source merge (see overlay block below). v9 KV cached
   // those field-less payloads, so a straight code fix alone wouldn't surface them —
   // the cache key MUST change to force a clean re-fetch that carries the overlay.
-  const cacheKey = filedHint ? `enrich:v10:${symbol}:${filedHint}` : `enrich:v10:${symbol}`;
+  // zzz367 — v10->v11: v10 cached the field-less payloads (fetchScreenerForSymbol
+  // was null in prod, so no trends). v11 forces a clean re-fetch that now carries the
+  // trends via the proven fetchScreenerCFO path (extractScreenerTrends).
+  const cacheKey = filedHint ? `enrich:v11:${symbol}:${filedHint}` : `enrich:v11:${symbol}`;
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1096,12 +1209,16 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // fetchScreenerForSymbol (which was returning null for many tickers because
   // its q.labels.length < 5 gate is too strict). Uses simple regex over the
   // consolidated HTML — Screener's cash-flow row is stable across all pages.
-  const fetchScreenerCFO = async (sym: string): Promise<{ ocf_annual_cr: number | null; pat_annual_cr: number | null; ocf_to_pat_ratio: number | null } | null> => {
+  // zzz367 — this proven-in-prod path now ALSO carries the quarterly trend series,
+  // annual CFO/PAT, one-off/exceptional and pledge (via extractScreenerTrends on the
+  // same HTML), because fetchScreenerForSymbol — the former sole source of those —
+  // returns null on the proxied prod HTML. Cache bumped v1->v2 to include the trends.
+  const fetchScreenerCFO = async (sym: string): Promise<any | null> => {
     // zzz322 — KV cache first (24h TTL)
-    const kvKey = `cfo:v1:${sym}`;
+    const kvKey = `cfo:v2:${sym}`;
     try {
       const cached = await kvGet<any>(kvKey);
-      if (cached && typeof cached === 'object' && (typeof cached.ocf_annual_cr === 'number' || typeof cached.pat_annual_cr === 'number' || typeof cached.ocf_to_pat_ratio === 'number')) return cached;
+      if (cached && typeof cached === 'object' && (typeof cached.ocf_annual_cr === 'number' || typeof cached.pat_annual_cr === 'number' || typeof cached.ocf_to_pat_ratio === 'number' || cached._trends)) return cached;
     } catch {}
     // zzz322 — reuse fetchScreenerHtml (3-attempt retry with backoff)
     const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
@@ -1148,9 +1265,12 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
         && Math.abs(netProfit) < 0.02 * Math.abs(salesAnnual);
       if (patTinyVsSales || Math.abs(ratio) > 8) ratio = null;
     }
-    const result = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio };
-    if (typeof ocf === 'number' || typeof netProfit === 'number') {
-      try { await kvSet(`cfo:v1:${sym}`, result, 24 * 3600); } catch {}
+    // zzz367 — extract the trend/pledge/one-off fields from the SAME html.
+    const trends = extractScreenerTrends(html);
+    const result: any = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio, ...trends };
+    if (Object.keys(trends).length > 0) result._trends = true;
+    if (typeof ocf === 'number' || typeof netProfit === 'number' || result._trends) {
+      try { await kvSet(`cfo:v2:${sym}`, result, 24 * 3600); } catch {}
     }
     return result;
   };
@@ -1289,6 +1409,22 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     if (out.ocf_to_pat_ratio == null && typeof co.ocf_to_pat_ratio === 'number') {
       out.ocf_to_pat_ratio = co.ocf_to_pat_ratio;
     }
+    // zzz367 — hoist the trend/quarterly/pledge/one-off fields extracted on this
+    // proven-working path. These are the fields that were missing in production
+    // because fetchScreenerForSymbol (their former sole source) returns null there.
+    // Fill only when the primary merge left them null, so a good Worker value is
+    // never overwritten.
+    const TREND_HOIST = [
+      'quarters_material_cost_pct', 'quarters_other_income_pct', 'quarters_tax_pct',
+      'quarters_sales', 'quarters_eps', 'quarters_opm',
+      'annual_cfo_pat', 'pledged_pct', 'roic',
+      'exceptional_curr_cr', 'exceptional_pct_pbt',
+      'other_income_pct_sales_curr', 'effective_tax_rate_curr', 'effective_tax_rate_prev',
+    ];
+    for (const f of TREND_HOIST) {
+      if ((out as any)[f] == null && co[f] != null) (out as any)[f] = co[f];
+    }
+    if (co._trends && out._screener_overlay == null) out._screener_overlay = 'zzz367-cfo-path';
   }
 
   // zzz366 — CRITICAL FIX (root cause of "I still don't see Other Income / Tax /

@@ -2187,7 +2187,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
-        || (e as any).cb_enrich_v !== 366  // zzz366 — one-time re-enrich (v10 cache: Screener-overlay fix surfaces trend/pledge/one-off fields the Worker merge was dropping)
+        || (e as any).cb_enrich_v !== 367  // zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
@@ -2270,7 +2270,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // zzz363 — one-off / exceptional-item fields (v9 cache)
               exceptional_curr_cr: typeof enr.exceptional_curr_cr === 'number' ? enr.exceptional_curr_cr : (existing as any).exceptional_curr_cr,
               exceptional_pct_pbt: typeof enr.exceptional_pct_pbt === 'number' ? enr.exceptional_pct_pbt : (existing as any).exceptional_pct_pbt,
-              cb_enrich_v: 366,  // zzz366 — bump so re-enrich fires once for v10 cache (Screener-overlay fix)
+              cb_enrich_v: 367,  // zzz367 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
