@@ -110,8 +110,23 @@ function parseTopRatios(html: string): Record<string, number | null> {
     const li = mm[1];
     const nameM = li.match(/class=["'][^"']*\bname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
     const numM = li.match(/class=["'][^"']*\bnumber\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
-    if (!nameM || !numM) continue;
-    out[stripTags(nameM[1]).trim()] = num(stripTags(numM[1]));
+    if (nameM && numM) {
+      out[stripTags(nameM[1]).trim()] = num(stripTags(numM[1]));
+      continue;
+    }
+    // zzz358 BUG3 — tolerant fallback for edge-case layouts (missing/renamed
+    // "number" span). If we can identify the ratio name, salvage the numeric
+    // value from any trailing <span class="value"> or the raw li text so
+    // ROCE/ROE aren't silently dropped when Screener tweaks its markup.
+    if (nameM) {
+      const label = stripTags(nameM[1]).trim();
+      if (!label) continue;
+      const valM = li.match(/class=["'][^"']*\bvalue\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+      // Strip the name span out first so its text can't be mistaken for the value.
+      const rest = li.replace(nameM[0], '');
+      const salvaged = valM ? num(stripTags(valM[1])) : num(stripTags(rest));
+      if (salvaged != null && out[label] === undefined) out[label] = salvaged;
+    }
   }
   return out;
 }
@@ -262,6 +277,11 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     return {
       sector,
       pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
+      // zzz358 BUG3 — surface ROCE/ROE from the Screener top-ratios <ul> so the
+      // direct-Screener path (worker absent) carries them. Tolerant key lookup
+      // handles "ROCE" / "ROCE %" / "Return on capital employed" layouts.
+      roce: ratios['ROCE'] ?? ratios['ROCE %'] ?? ratios['Return on capital employed'] ?? null,
+      roe: ratios['ROE'] ?? ratios['ROE %'] ?? ratios['Return on equity'] ?? null,
       market_cap_cr: mcap,
       market_cap_bucket: bucket,
       current_price: cp ?? null,
@@ -346,6 +366,171 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
           ocf_annual_cr: ocfAnnual,
           pat_annual_cr: patAnnual,
           ocf_to_pat_ratio: ratio,
+        };
+      })(),
+      // zzz358 — Tier 2 P&L quality fields, computed from the SAME quarterly
+      // table (`q` / `get` / `salesCurr` etc.) we already parsed above. No extra
+      // fetch. Every field is null-safe: when a source row is absent get(...)
+      // returns null and the arithmetic / pct() below short-circuit to null
+      // rather than throwing, so existing extraction is never broken.
+      ...(() => {
+        // Screener quarterly P&L rows: "Other Income", "Depreciation",
+        // "Interest" (= finance cost for non-financials), "Tax %".
+        const otherIncCurr = get('Other Income', latestIdx);
+        const otherIncPrev = get('Other Income', priorIdx);
+        const depCurr = get('Depreciation', latestIdx);
+        const depPrev = get('Depreciation', priorIdx);
+        // Finance cost: Screener labels the P&L expense row "Interest".
+        // (For banks/NBFCs "Interest" is a revenue line — this field is only
+        //  meaningful for non-financials; left as-is, additive + null-safe.)
+        const finCurr = get('Interest', latestIdx);
+        // Effective tax rate: Screener publishes the ready "Tax %" row, which
+        // IS Tax / PBT (%). Read it directly rather than deriving from an
+        // absolute Tax row (Screener quarters expose no absolute Tax figure).
+        const taxRateCurr = get('Tax %', latestIdx);
+        const taxRatePrev = get('Tax %', priorIdx);
+        // Other Income as % of Sales.
+        const oiPct = (oi: number | null, sales: number | null): number | null =>
+          (oi != null && sales != null && sales !== 0)
+            ? Math.round((oi / sales) * 1000) / 10
+            : null;
+        // EBIT = Operating Profit − Depreciation (both from quarters table).
+        const ebitCurr = (opCurr != null && depCurr != null) ? opCurr - depCurr : null;
+        const ebitPrev = (opPrev != null && depPrev != null) ? opPrev - depPrev : null;
+        // EBITDA on Operating-Profit basis: Screener "Operating Profit" is
+        // pre-Depreciation, so it already equals EBITDA.
+        const ebitdaCurr = opCurr;
+        const ebitdaPrev = opPrev;
+        return {
+          other_income_pct_sales_curr: oiPct(otherIncCurr, salesCurr),
+          other_income_pct_sales_prev: oiPct(otherIncPrev, salesPrev),
+          effective_tax_rate_curr: taxRateCurr,
+          effective_tax_rate_prev: taxRatePrev,
+          dep_yoy_pct: pct(depCurr, depPrev),
+          finance_cost_curr_cr: finCurr,
+          ebit_curr_cr: ebitCurr,
+          ebit_yoy_pct: pct(ebitCurr, ebitPrev),
+          ebitda_curr_cr: ebitdaCurr,
+          ebitda_yoy_pct: pct(ebitdaCurr, ebitdaPrev),
+        };
+      })(),
+      // zzz360 — quarterly cost/tax/other-income series + annual CFO/PAT +
+      // pledge + working-capital / return ratios. All parsed from the SAME
+      // Screener HTML already in hand (`q` quarters table, `ratios` top-ratios
+      // block, `parseSectionTable` for annual cash-flow / profit-loss / ratios).
+      // Every field is null-safe: a missing source row yields null (or a null
+      // element inside the array), never a throw. Additive only — nothing above
+      // is touched.
+      ...(() => {
+        // Whole-row lookup by keyword against the quarterly P&L table.
+        const qRow = (kw: string): (number | null)[] | null => {
+          const k = Object.keys(q.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          return k ? (q.rows[k] || null) : null;
+        };
+        // Sales row drives the alignment window: up to the last 8 quarters,
+        // right-aligned to the newest quarter (chronological oldest→newest),
+        // consistent with the existing quarters_sales series.
+        const salesRow =
+          qRow('Sales') ?? qRow('Revenue') ?? qRow('Income') ?? qRow('Interest') ?? qRow('Premium');
+        const QN = salesRow ? Math.min(8, salesRow.length) : 0;
+        // Right-tail an array to the same QN window (best-effort per-row length).
+        const tail = (arr: (number | null)[] | null): (number | null)[] | null =>
+          arr && QN > 0 ? arr.slice(Math.max(0, arr.length - QN)) : null;
+
+        const materialRow = tail(qRow('Material Cost %'));
+        const taxRow = tail(qRow('Tax %'));
+        // Prefer the "Other income normal" row (recurring), else "Other Income".
+        const oiRow = tail(qRow('Other income normal') ?? qRow('Other Income'));
+        const salesTail = tail(salesRow);
+
+        // Quarterly Other Income as % of that quarter's Sales, element-aligned.
+        const quarters_other_income_pct: (number | null)[] | null =
+          oiRow && salesTail
+            ? oiRow.map((oi, i) => {
+                const s = salesTail[i];
+                return oi != null && s != null && s !== 0 ? Math.round((oi / s) * 1000) / 10 : null;
+              })
+            : null;
+
+        // ── Annual CFO / PAT per financial year (last up to 6 FY) ──
+        const cf = parseSectionTable(html, 'cash-flow');
+        const pl = parseSectionTable(html, 'profit-loss');
+        const secRow = (
+          t: { rows: Record<string, (number | null)[]> } | null,
+          kw: string,
+        ): (number | null)[] | null => {
+          if (!t) return null;
+          const k = Object.keys(t.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          return k ? (t.rows[k] || null) : null;
+        };
+        const cfoRow = secRow(cf, 'Cash from Operating');
+        const patRow = secRow(pl, 'Net Profit') ?? secRow(pl, 'Profit');
+        let annual_cfo_pat: (number | null)[] | null = null;
+        if (cf && pl && cfoRow && patRow) {
+          // Align by column label so a trailing P&L "TTM" column can't skew the
+          // year pairing. Fall back to right-aligned positional if labels miss.
+          const plIndex: Record<string, number> = {};
+          pl.labels.forEach((lb, i) => {
+            plIndex[String(lb).trim()] = i;
+          });
+          let pairs: (number | null)[] = cf.labels.map((lb, i) => {
+            const j = plIndex[String(lb).trim()];
+            const cfo = cfoRow[i] ?? null;
+            const pat = j != null ? (patRow[j] ?? null) : null;
+            if (cfo == null || pat == null) return null;
+            if (pat === 0) return null; // divide-by-zero guard (negatives allowed)
+            return Math.round((cfo / pat) * 100) / 100;
+          });
+          const anyMatched = pairs.some((v) => v != null);
+          if (!anyMatched) {
+            // No label overlap — align both rows from the right (newest FY).
+            const L = Math.min(cfoRow.length, patRow.length);
+            pairs = [];
+            for (let k = 0; k < L; k++) {
+              const cfo = cfoRow[cfoRow.length - L + k] ?? null;
+              const pat = patRow[patRow.length - L + k] ?? null;
+              pairs.push(cfo == null || pat == null || pat === 0 ? null : Math.round((cfo / pat) * 100) / 100);
+            }
+          }
+          annual_cfo_pat = pairs.slice(Math.max(0, pairs.length - 6));
+        }
+
+        // ── Pledge + return / working-capital ratios ──
+        // Pledged percentage from the top-ratios block (0 is valid, not null).
+        const pledgedKey = Object.keys(ratios).find((k) => /pledg/i.test(k));
+        const pledged_pct = pledgedKey ? (ratios[pledgedKey] ?? null) : null;
+
+        // ROIC / Interest coverage from the top-ratios block (tolerant match).
+        const topGet = (re: RegExp): number | null => {
+          const k = Object.keys(ratios).find((kk) => re.test(kk));
+          return k ? (ratios[k] ?? null) : null;
+        };
+        const roic = topGet(/roic|return on invested/i);
+        const int_coverage = topGet(/int(?:erest)?\.?\s*coverage/i);
+
+        // Debtor / Inventory / Working-capital days from the annual Ratios table.
+        const rt = parseSectionTable(html, 'ratios');
+        const rtLatest = rt && rt.labels.length > 0 ? rt.labels.length - 1 : -1;
+        const rtGet = (kw: string): number | null => {
+          if (!rt || rtLatest < 0) return null;
+          const k = Object.keys(rt.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+          return k ? (rt.rows[k]?.[rtLatest] ?? null) : null;
+        };
+        const debtor_days = rtGet('Debtor Days');
+        const inventory_days = rtGet('Inventory Days');
+        const wc_days = rtGet('Working Capital Days');
+
+        return {
+          quarters_material_cost_pct: materialRow, // zzz360
+          quarters_other_income_pct, // zzz360
+          quarters_tax_pct: taxRow, // zzz360
+          annual_cfo_pat, // zzz360
+          pledged_pct, // zzz360
+          debtor_days, // zzz360
+          inventory_days, // zzz360
+          wc_days, // zzz360
+          roic, // zzz360
+          int_coverage, // zzz360
         };
       })(),
     };
@@ -637,6 +822,15 @@ async function fetchYahooFundamentals(symbol: string): Promise<any | null> {
       // Also grab returnOnEquity + returnOnCapital if available (backup for banks/NBFCs)
       roe: result.financialData?.returnOnEquity?.raw != null
         ? result.financialData.returnOnEquity.raw * 100 : null,
+      // zzz358 BUG3 — ROCE fallback. Yahoo has no direct ROCE field; use
+      // returnOnAssets (financialData, already requested in modules) as the
+      // closest proxy so ROCE-blank cards (BDL/POWERINDIA/GOPAL) get a value
+      // when the Screener top-ratios <ul> is absent/blocked. Null when Yahoo
+      // also lacks it — never fabricated.
+      roce: result.financialData?.returnOnAssets?.raw != null
+        ? result.financialData.returnOnAssets.raw * 100
+        : (result.financialData?.returnOnCapital?.raw != null
+            ? result.financialData.returnOnCapital.raw * 100 : null),
       financials_source: 'yahoo-fundamentals',
     };
     return out;
@@ -975,6 +1169,22 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // Screener/Worker frequently return null for D/E; Yahoo's defaultKeyStatistics
   // reliably has it. Only fill fields that the primary source left null so we
   // never overwrite better data.
+  // zzz358 BUG3 — hoist ROCE/ROE from the direct Screener top-ratios scrape
+  // first (runs before the Yahoo fill below), so when the Worker/NSE path won
+  // the merge but left ROCE/ROE null, the more-reliable Screener value fills
+  // ahead of the Yahoo returnOnAssets proxy. Guarded on null → never overwrites
+  // a good primary value.
+  if (screener) {
+    const sc = screener as any;
+    if (out.roce == null && typeof sc.roce === 'number' && Number.isFinite(sc.roce)) {
+      out.roce = sc.roce;
+      out._roce_source = 'screener';
+    }
+    if (out.roe == null && typeof sc.roe === 'number' && Number.isFinite(sc.roe)) {
+      out.roe = sc.roe;
+      out._roe_source = 'screener';
+    }
+  }
   if (yahooFund) {
     const yf = yahooFund as any;
     if (out.debtToEquity == null && typeof yf.debtToEquity === 'number' && Number.isFinite(yf.debtToEquity)) {
@@ -984,6 +1194,13 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     if (out.roe == null && typeof yf.roe === 'number' && Number.isFinite(yf.roe)) {
       out.roe = yf.roe;
       out._roe_source = 'yahoo-fundamentals';
+    }
+    // zzz358 BUG3 — ROCE fallback from Yahoo (returnOnAssets/returnOnCapital
+    // proxy). Only fills when the primary source left ROCE null so a good
+    // Screener/Worker value is never overwritten.
+    if (out.roce == null && typeof yf.roce === 'number' && Number.isFinite(yf.roce)) {
+      out.roce = yf.roce;
+      out._roce_source = 'yahoo-fundamentals';
     }
   }
   // zzz317 — Cherry-pick CFO/PAT fields from the direct Screener scrape even

@@ -1349,6 +1349,9 @@ type ConvFilters = {
   // zzz304 — minimum CFO/PAT ratio (Screener). Filters low earnings quality;
   // 0.5 = weak, 0.8 = healthy, 1.0 = pristine cash conversion.
   cfoPatMin?: number | null;
+  // zzz360 — max promoter-pledge % (null = no cap). 0 = only unpledged names.
+  // Null pledged_pct passes (don't over-filter unknowns).
+  pledgedMax?: number | null;
   sortByPead: boolean;
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
   elite: boolean;
@@ -1383,7 +1386,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1602,11 +1605,21 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     const o = (e as any).opm_pct;
     if (typeof o !== 'number' || o < f.opmMin) return false;
   }
-  // zzz304 — minimum CFO/PAT ratio filter. Entries without ratio value fail
-  // the filter (we prefer surfacing entries with proven cash conversion).
+  // zzz304 — minimum CFO/PAT ratio filter.
+  // zzz359 (BUG 4) — NULL-SAFE. Q1 press releases rarely bundle a cash-flow
+  // statement, so cfo_to_pat_ratio is legitimately null for ~40% of legit Q1
+  // filings (Divgi TorqTransfer case). Treating null as fail silently dropped
+  // them. Now only reject entries that HAVE a CFO/PAT number below the floor;
+  // null passes through (the WC-STRETCH chip acts as the CFO proxy on the card).
   if (f.cfoPatMin != null) {
     const c = (e as any).cfo_to_pat_ratio;
-    if (typeof c !== 'number' || c < f.cfoPatMin) return false;
+    if (typeof c === 'number' && c < f.cfoPatMin) return false;
+  }
+  // zzz360 — max promoter-pledge % filter. Null pledged_pct passes (unknown ≠
+  // fail — mirrors the zzz359 CFO/PAT null-safe philosophy). 0 = valid/good.
+  if (f.pledgedMax != null) {
+    const p = (e as any).pledged_pct;
+    if (typeof p === 'number' && Number.isFinite(p) && p > f.pledgedMax) return false;
   }
   // zzz348 — minimum market cap filter (Cr)
   if (f.mktCapMin != null) {
@@ -1971,7 +1984,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       // (Avoids clobbering filters restored from a saved view later.)
       setFilters((prev) => (
         prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null && prev.cfoPatMin == null && prev.mktCapMin == null
-          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000 }
+          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */ }
           : prev
       ));
     } catch {}
@@ -2672,7 +2685,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             below stay collapsed unless expanded. */}
         {(() => {
           // zzz309 → zzz319 → zzz330 — Quality Preset v5: Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ ≥0 · CFO/PAT ≥0.5.
-          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.driftBucket == null;
+          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.pledgedMax === 0 /* zzz360 */ && filters.driftBucket == null;
           const OPT_OUT_KEY = 'mc:cb:preset:v2:optout';
           const handleToggle = () => {
             setFilters((prev) => {
@@ -2681,7 +2694,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 return { ...FILTER_DEFAULT, cap: prev.cap };
               } else {
                 try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000 };
+                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */ };
               }
             });
           };
@@ -2689,11 +2702,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60 · OPM Δ ≥0pp · CFO/PAT ≥0.5 · MktCap ≥₹3k Cr. Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
+                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60 · OPM Δ ≥0pp · CFO/PAT ≥0.5 · MktCap ≥₹3k Cr · Promoter pledge 0% (zzz360; null pledge passes). Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -2726,6 +2739,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz304 — CFO/PAT minimum ratio chips (earnings quality: cash conversion). */}
         {renderChipGroup('CFO/PAT MIN', '#34D399', 'cfoPatMin' as any, [
           { v: 0.5, lbl: '≥0.5' }, { v: 0.7, lbl: '≥0.7' }, { v: 0.8, lbl: '≥0.8' }, { v: 1.0, lbl: '≥1.0' },
+        ])}
+        {/* zzz360 — promoter-pledge MAX chips. 0 = only unpledged names (governance
+            clean). Null pledged_pct passes the gate so unknowns aren't dropped. */}
+        {renderChipGroup('PLEDGED MAX', '#EF4444', 'pledgedMax' as any, [
+          { v: 0, lbl: '0%' }, { v: 1, lbl: '≤1%' }, { v: 5, lbl: '≤5%' },
         ])}
         {/* zzz348 - market cap min chips */}
         {renderChipGroup('MKT CAP MIN', '#F59E0B', 'mktCapMin' as any, [
@@ -4298,8 +4316,10 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
               const pe = (entry as any).pe as number;
               const g = entry.eps_yoy_pct as number;
               const peg = pe / g;
-              const col = peg < 0.5 ? 'var(--mc-bullish)' : peg < 1 ? 'var(--mc-bullish)' : peg < 2 ? '#F59E0B' : 'var(--mc-bearish)';
-              const label = peg < 0.5 ? 'DEEP VALUE' : peg < 1 ? 'CHEAP vs growth' : peg < 2 ? 'FAIR' : 'RICH vs growth';
+              // zzz357/zzz358 — PEG < 0.15 is almost always a low-base optical artifact
+              // (GNFC PEG 0.03, SFL PEG 0.04) not genuine deep value. Flag it as BASE EFFECT?.
+              const col = peg < 0.15 ? '#F59E0B' : peg < 0.5 ? 'var(--mc-bullish)' : peg < 1 ? 'var(--mc-bullish)' : peg < 2 ? '#F59E0B' : 'var(--mc-bearish)';
+              const label = peg < 0.15 ? 'BASE EFFECT?' : peg < 0.5 ? 'DEEP VALUE' : peg < 1 ? 'CHEAP vs growth' : peg < 2 ? 'FAIR' : 'RICH vs growth';
               return (
                 <span title={`PEG = P/E (${pe.toFixed(1)}) ÷ EPS YoY % (${g.toFixed(1)}%) = ${peg.toFixed(2)}. Traditional PEG: <1 undervalued, 1-2 fair, >2 overvalued. Verdict: ${label}.`}>
                   <span style={{ color: 'var(--mc-text-4)' }}>PEG</span>{' '}
@@ -4316,12 +4336,17 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
               const pe = (entry as any).pe as number;
               const g = entry.eps_yoy_pct as number;
               let verdict: string; let col: string;
-              if (g <= 0) { verdict = 'NEG-GROWTH'; col = 'var(--mc-bearish)'; }
+              // zzz357 — absolute P/E ceilings override the growth-relative verdict.
+              // Fixes NYKAA 351x / CUPID 271x / HITACHI 131x rendering as FAIR when a
+              // large EPS-growth base made P/E < 2×growth. No triple-digit multiple is "fair".
+              if (pe > 200) { verdict = 'EXTREME'; col = 'var(--mc-bearish)'; }
+              else if (pe > 100) { verdict = 'OVERVALUED'; col = 'var(--mc-bearish)'; }
+              else if (g <= 0) { verdict = 'NEG-GROWTH'; col = 'var(--mc-bearish)'; }
               else if (pe > 2 * g) { verdict = 'OVERVALUED'; col = 'var(--mc-bearish)'; }
               else if (pe < 0.5 * g) { verdict = 'UNDERVALUED'; col = 'var(--mc-bullish)'; }
               else { verdict = 'FAIR'; col = 'var(--mc-text-2)'; }
               return (
-                <span title={`P/E-vs-Growth verdict: ${verdict}. P/E ${pe.toFixed(1)}x vs EPS growth ${g.toFixed(1)}%. Rule: >2×growth = OVERVALUED, <0.5×growth = UNDERVALUED, negative growth = flag.`}>
+                <span title={`P/E-vs-Growth verdict: ${verdict}. P/E ${pe.toFixed(1)}x vs EPS growth ${g.toFixed(1)}%. Rule: P/E>200 = EXTREME, P/E>100 = OVERVALUED, >2×growth = OVERVALUED, <0.5×growth = UNDERVALUED, negative growth = flag.`}>
                   <span style={{ color: 'var(--mc-text-4)' }}>VAL</span>{' '}
                   <strong style={{ color: col, fontSize: 10 }}>{verdict}</strong>
                 </span>
@@ -4358,6 +4383,24 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
             <span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder. Screener/Yahoo may not report ROCE for banks/NBFCs — shown as — when unavailable."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{val(roce, '%')}</strong></span>
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             <span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{val(roe, '%')}</strong></span>
+            {/* zzz360 — promoter-pledge chip. 0% = clean (green); any pledge = red
+                governance flag. Guarded on typeof number so unknown pledge omits. */}
+            {typeof (entry as any).pledged_pct === 'number' && Number.isFinite((entry as any).pledged_pct) && (() => {
+              const p = (entry as any).pledged_pct as number;
+              const clean = p === 0;
+              const col = clean ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+              return (
+                <>
+                  <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
+                  <span title={clean
+                    ? 'Promoter pledge 0% — no shares pledged. Clean governance signal.'
+                    : `Promoter pledge ${p.toFixed(p < 1 ? 2 : 1)}% of promoter holding. Pledged shares = leverage/liquidity risk; forced sale on margin call can cascade the price.`}>
+                    <span style={{ color: 'var(--mc-text-4)' }}>PLEDGE</span>{' '}
+                    <strong style={{ color: col }}>{clean ? '0%' : p.toFixed(p < 1 ? 2 : 1) + '%'}</strong>
+                  </span>
+                </>
+              );
+            })()}
           </div>
         );
       })()}
@@ -4407,7 +4450,22 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           if (peg < 1) { q += 10; bits.push('PEG ' + peg.toFixed(2) + '→10'); }
           else if (peg < 2) { q += 5; bits.push('PEG ' + peg.toFixed(2) + '→5'); }
         }
-        const qScore = Math.min(100, Math.round(q));
+        // zzz357 — ROCE weight (0-20). Capital efficiency is the single best quality proxy.
+        const roceQ = (entry as any).roce, roeQ = (entry as any).roe;
+        if (typeof roceQ === 'number' && Number.isFinite(roceQ)) {
+          if (roceQ >= 25) { q += 20; bits.push('ROCE ' + roceQ.toFixed(0) + '%→20'); }
+          else if (roceQ >= 20) { q += 15; bits.push('ROCE ' + roceQ.toFixed(0) + '%→15'); }
+          else if (roceQ >= 15) { q += 10; bits.push('ROCE ' + roceQ.toFixed(0) + '%→10'); }
+          else { bits.push('ROCE ' + roceQ.toFixed(0) + '%→0'); }
+        }
+        let qScore = Math.min(100, Math.round(q));
+        // zzz357 — weak capital efficiency caps quality at 55 regardless of accrual metrics.
+        // Fixes BHAGCHEM (ROCE 4.5%) still showing QUALITY 75 off a strong CFO/OPM print.
+        if ((typeof roceQ === 'number' && Number.isFinite(roceQ) && roceQ < 15)
+            || (typeof roeQ === 'number' && Number.isFinite(roeQ) && roeQ < 10)) {
+          qScore = Math.min(qScore, 55);
+          bits.push('ROCE/ROE cap→55');
+        }
         const qCol = qScore >= 75 ? '#22C55E' : qScore >= 60 ? '#84CC16' : qScore >= 40 ? '#F59E0B' : '#EF4444';
 
         // Growth triangulation - is growth coherent across the three metrics?
@@ -4425,7 +4483,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         // Count red flags (mirrors below)
         let rf = 0;
         if (typeof cfo === 'number' && cfo < 0.5) rf++;
-        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 3 * sales) rf++;
+        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales) rf++;
         if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 10 && Math.abs(eps - pat) > 30) rf++;
         if (typeof opm === 'number' && typeof opmP === 'number' && (opm - opmP) < -3) rf++;
         if (typeof drift === 'number' && drift < -5 && ['BLOCKBUSTER','ELITE','STRONG'].includes(String(entry.tier || '').toUpperCase())) rf++;
@@ -4434,7 +4492,8 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         let verdict: {label: string; icon: string; color: string; tip: string};
         const valPE = typeof pe === 'number' && pe > 0 ? pe : null;
         const valGrowth = typeof eps === 'number' ? eps : null;
-        const isOvervalued = valPE != null && valGrowth != null && valGrowth > 0 && valPE > 2 * valGrowth;
+        const isOvervalued = (valPE != null && valPE > 100) /* zzz357 absolute ceiling */
+          || (valPE != null && valGrowth != null && valGrowth > 0 && valPE > 2 * valGrowth);
         const isCheap = valPE != null && valGrowth != null && valGrowth > 0 && valPE < 0.5 * valGrowth;
         const driftBad = typeof drift === 'number' && drift < -8;
         if (rf >= 3 || (typeof drift === 'number' && drift < -12) || (valGrowth != null && valGrowth <= 0)) {
@@ -4471,6 +4530,291 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           </div>
         );
       })()}
+      {/* zzz358 — INSTITUTIONAL CHIPS row: positive/neutral signal pills (blue-ish).
+          Additive to the SCORES + RED FLAGS rows. Every chip is individually
+          guarded (typeof === 'number' && Number.isFinite) so an absent field
+          simply omits its chip — never crashes. Some Tier-2 fields (ebit_yoy_pct,
+          pat_margin_*, finance_cost_curr_cr / ebit_curr_cr, other_income_pct_sales_*,
+          effective_tax_rate_*, dep_yoy_pct) don't yet exist on the bench schema —
+          those chips no-op until the enrich backend ships them. */}
+      {density !== 'ultra' && (() => {
+        const e: any = entry;
+        const num = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+        const chips: Array<{ icon: string; label: string; tip: string; color: string }> = [];
+        const BLUE = '#3B82F6', CYAN = '#06B6D4', GREEN = '#22C55E', AMBER = '#F59E0B', VIOLET = '#A855F7';
+
+        // ── Tier 1 (payload data) ──────────────────────────────────────────
+        // 🚀 QoQ ACCEL — sequential sales growth accelerating (quarters_sales, 4Q).
+        // Assume chronological oldest→newest; last QoQ growth > prior QoQ growth.
+        const qs: any[] | null = Array.isArray(e.quarters_sales) ? e.quarters_sales : null;
+        if (qs && qs.length >= 4) {
+          const q2 = num(qs[qs.length - 3]), q3 = num(qs[qs.length - 2]), q4 = num(qs[qs.length - 1]), q1 = num(qs[qs.length - 4]);
+          if (q1 !== null && q2 !== null && q3 !== null && q4 !== null && q1 > 0 && q2 > 0 && q3 > 0) {
+            const lastQoQ = (q4 - q3) / q3, priorQoQ = (q3 - q2) / q2;
+            if (lastQoQ > priorQoQ) {
+              chips.push({ icon: '🚀', label: 'QoQ ACCEL', color: CYAN,
+                tip: `Sequential sales growth accelerating: latest QoQ +${(lastQoQ * 100).toFixed(1)}% > prior QoQ +${(priorQoQ * 100).toFixed(1)}% (quarters_sales 4Q).` });
+            }
+          }
+        }
+        // ⚙️ OP-LEV — EBIT YoY exceeds EBITDA YoY by >20pp (operating leverage).
+        const ebitY = num(e.ebit_yoy_pct), ebitdaY = num(e.ebitda_yoy_pct);
+        if (ebitY !== null && ebitdaY !== null && (ebitY - ebitdaY) > 20) {
+          chips.push({ icon: '⚙️', label: 'OP-LEV', color: BLUE,
+            tip: `Operating leverage: EBIT +${ebitY.toFixed(1)}% YoY vs EBITDA +${ebitdaY.toFixed(1)}% YoY (${(ebitY - ebitdaY).toFixed(1)}pp gap). Below-EBITDA costs scaling slower than revenue.` });
+        }
+        // PAT-M ±X.Xpp — PAT margin YoY delta (curr vs prev).
+        const patmC = num(e.pat_margin_curr), patmP = num(e.pat_margin_prev);
+        if (patmC !== null && patmP !== null) {
+          const d = patmC - patmP, sign = d >= 0 ? '+' : '−';
+          chips.push({ icon: '', label: `PAT-M ${sign}${Math.abs(d).toFixed(1)}pp`, color: d >= 0 ? GREEN : AMBER,
+            tip: `PAT margin ${patmC.toFixed(1)}% vs ${patmP.toFixed(1)}% YoY (${sign}${Math.abs(d).toFixed(1)}pp).` });
+        }
+        // 💧 WC-STRETCH / WC-TIGHT — receivables/inventory YoY vs sales YoY.
+        const salesY = num(e.sales_yoy_pct), recvY = num(e.receivables_yoy_pct), invY = num(e.inventory_yoy_pct);
+        if (salesY !== null && (recvY !== null || invY !== null)) {
+          const wcMax = Math.max(recvY ?? -Infinity, invY ?? -Infinity);
+          const wcMin = Math.min(recvY ?? Infinity, invY ?? Infinity);
+          if (Number.isFinite(wcMax) && wcMax > salesY + 15) {
+            chips.push({ icon: '💧', label: 'WC-STRETCH', color: AMBER,
+              tip: `Working capital stretching: receivables/inventory YoY (${wcMax.toFixed(0)}%) well above sales YoY (${salesY.toFixed(0)}%). Watch cash conversion.` });
+          } else if (Number.isFinite(wcMin) && wcMin < salesY - 15) {
+            chips.push({ icon: '💧', label: 'WC-TIGHT', color: GREEN,
+              tip: `Working capital disciplined: receivables/inventory YoY (${wcMin.toFixed(0)}%) clearly below sales YoY (${salesY.toFixed(0)}%).` });
+          }
+        }
+        // 💰 DEBT-FREE — finance cost < 2% of EBIT.
+        const finC = num(e.finance_cost_curr_cr), ebitC = num(e.ebit_curr_cr);
+        if (finC !== null && ebitC !== null && ebitC > 0 && finC < 0.02 * ebitC) {
+          chips.push({ icon: '💰', label: 'DEBT-FREE', color: GREEN,
+            tip: `Finance cost ₹${finC.toFixed(1)} Cr is <2% of EBIT ₹${ebitC.toFixed(1)} Cr — effectively debt-free / negligible interest burden.` });
+        }
+
+        // ── Tier 2 (new backend fields, may be null until enrich ships) ─────
+        // 📊 OTHER-INC ↓ — other income falling as % of sales (cleaner quality).
+        const oiC = num(e.other_income_pct_sales_curr), oiP = num(e.other_income_pct_sales_prev);
+        if (oiC !== null && oiP !== null && oiC < oiP) {
+          chips.push({ icon: '📊', label: 'OTHER-INC ↓', color: BLUE,
+            tip: `Other income falling as % of sales (${oiC.toFixed(1)}% vs ${oiP.toFixed(1)}%) — cleaner, more operating-driven earnings.` });
+        }
+        // ⚠️ TAX-BENEFIT −Xpp — effective tax rate below prev by >5pp (optical EPS boost).
+        const taxC = num(e.effective_tax_rate_curr), taxP = num(e.effective_tax_rate_prev);
+        if (taxC !== null && taxP !== null && (taxP - taxC) > 5) {
+          chips.push({ icon: '⚠️', label: `TAX-BENEFIT −${(taxP - taxC).toFixed(0)}pp`, color: AMBER,
+            tip: `Effective tax rate dropped ${(taxP - taxC).toFixed(1)}pp YoY (${taxP.toFixed(1)}% → ${taxC.toFixed(1)}%). Optical EPS boost — check if one-off.` });
+        }
+        // 📈 SCALE ✓ — depreciation YoY ÷ sales YoY < 0.3 (operating scale).
+        const depY = num(e.dep_yoy_pct);
+        if (depY !== null && salesY !== null && salesY > 0 && (depY / salesY) < 0.3) {
+          chips.push({ icon: '📈', label: 'SCALE ✓', color: GREEN,
+            tip: `Operating scale: depreciation +${depY.toFixed(0)}% YoY growing far slower than sales +${salesY.toFixed(0)}% YoY (ratio ${(depY / salesY).toFixed(2)} <0.3).` });
+        }
+
+        // ── Extras ─────────────────────────────────────────────────────────
+        // 📊 LOW-BASE — prior-period sales < ₹100 Cr AND sales YoY > 100 (optical growth).
+        const priorSales = qs && qs.length >= 4 ? num(qs[0]) : null;
+        if (priorSales !== null && priorSales < 100 && salesY !== null && salesY > 100) {
+          chips.push({ icon: '📊', label: 'LOW-BASE', color: AMBER,
+            tip: `Optical growth off a tiny base: prior-period sales ₹${priorSales.toFixed(0)} Cr with +${salesY.toFixed(0)}% YoY. High % masks small absolute size.` });
+        }
+        // 💧 CFO-INFLATED — cfo_to_pat_ratio > 3 (WC release or depressed PAT).
+        const cfoR = num(e.cfo_to_pat_ratio);
+        if (cfoR !== null && cfoR > 3) {
+          chips.push({ icon: '💧', label: 'CFO-INFLATED', color: AMBER,
+            tip: `CFO/PAT ${cfoR.toFixed(1)}× (>3×). Cash flow far exceeds profit — likely working-capital release or depressed PAT. Verify sustainability.` });
+        }
+        // 👑 PREMIUM — ROCE ≥ 30 AND ROE ≥ 25 (compounder tier).
+        const roceV = num(e.roce), roeV = num(e.roe);
+        if (roceV !== null && roeV !== null && roceV >= 30 && roeV >= 25) {
+          chips.push({ icon: '👑', label: 'PREMIUM', color: VIOLET,
+            tip: `Compounder tier: ROCE ${roceV.toFixed(0)}% (≥30) and ROE ${roeV.toFixed(0)}% (≥25).` });
+        }
+        // CFO N/A (Q1) — cfo ratio absent AND Q1-looking filing. zzz359 CFO proxy note.
+        const filingMonth = (() => {
+          const fd = typeof e.filing_date === 'string' ? e.filing_date : '';
+          const m = /^\d{4}-(\d{2})/.exec(fd);
+          return m ? parseInt(m[1], 10) : null;
+        })();
+        const isQ1Filing = String(e.quarter || '').toUpperCase() === 'Q1'
+          || (filingMonth !== null && filingMonth >= 4 && filingMonth <= 6);
+        if (cfoR === null && isQ1Filing) {
+          chips.push({ icon: '', label: 'CFO N/A (Q1)', color: 'var(--mc-text-4)',
+            tip: `CFO/PAT unavailable — Q1 filings rarely disclose cash-flow statements (annual/H1 cadence). Not a red flag; earnings-quality proxy pending H1.` });
+        }
+
+        // ⚠ DEGRADED — BLOCKBUSTER tier but red-flag-ish (simple guarded check).
+        const tierBB = String(e.tier || '').toUpperCase().includes('BLOCKBUSTER');
+        const degraded = tierBB && ((cfoR !== null && cfoR < 0.5) || (roceV !== null && roceV < 15));
+
+        if (chips.length === 0 && !degraded) return null;
+        return (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)' }}>
+            {degraded && (
+              <div title={`Tier BLOCKBUSTER but quality degraded: ${cfoR !== null && cfoR < 0.5 ? `CFO/PAT ${cfoR.toFixed(2)} <0.5` : ''}${(cfoR !== null && cfoR < 0.5 && roceV !== null && roceV < 15) ? ' · ' : ''}${roceV !== null && roceV < 15 ? `ROCE ${roceV.toFixed(0)}% <15` : ''}. Headline tier overstates the setup — treat with caution.`}
+                style={{ flexBasis: '100%', padding: '2px 8px', borderRadius: 3, background: '#F59E0B22', color: '#F59E0B', fontWeight: 800, border: '1px solid #F59E0B66', fontSize: 9.5, letterSpacing: '0.4px' }}>
+                ⚠ DEGRADED — BLOCKBUSTER tier but quality flags present
+              </div>
+            )}
+            {chips.map((c, i) => (
+              <span key={i} title={c.tip} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 5px', borderRadius: 3, cursor: 'help',
+                background: c.color + '18', color: c.color, fontWeight: 700,
+                border: '1px solid ' + c.color + '44', fontSize: 9, letterSpacing: '0.2px',
+              }}>{c.icon ? c.icon + ' ' : ''}{c.label}</span>
+            ))}
+          </div>
+        );
+      })()}
+      {/* zzz360 — QUARTER TRENDS + CFO/PAT-annual + CONCLUSIONS. Additive to the
+          zzz358 chips block. Every array is guarded (Array.isArray && length>=2,
+          last two entries finite) and every scalar via typeof===number &&
+          Number.isFinite. Institutional color semantics per metric. Renders
+          nothing when no series/scalar is present. */}
+      {density !== 'ultra' && (() => {
+        const e: any = entry;
+        const GREEN = '#22C55E', AMBER = '#F59E0B', RED = '#EF4444', NEU = 'var(--mc-text-2)';
+        // last two finite values of a chronological (oldest→newest) array
+        const lastTwo = (v: any): { latest: number; prev: number } | null => {
+          if (!Array.isArray(v) || v.length < 2) return null;
+          const latest = v[v.length - 1], prev = v[v.length - 2];
+          if (typeof latest !== 'number' || !Number.isFinite(latest)) return null;
+          if (typeof prev !== 'number' || !Number.isFinite(prev)) return null;
+          return { latest, prev };
+        };
+        const seriesStr = (v: any): string => Array.isArray(v)
+          ? v.slice(-5).map((x: any) => (typeof x === 'number' && Number.isFinite(x)) ? x.toFixed(1) : '—').join(' → ')
+          : '';
+
+        type TP = { key: string; label: string; latest: number; delta: number; col: string; tip: string };
+        const tps: TP[] = [];
+
+        // OPM % — rising = good (green), falling = amber/red.
+        const opm = lastTwo(e.quarters_opm);
+        if (opm) {
+          const d = opm.latest - opm.prev;
+          const col = d >= 0.1 ? GREEN : d <= -1.5 ? RED : d < 0 ? AMBER : NEU;
+          tps.push({ key: 'opm', label: 'OPM', latest: opm.latest, delta: d, col,
+            tip: `OPM % by quarter (oldest→newest): ${seriesStr(e.quarters_opm)}. Rising = margin tailwind (good), falling = margin pressure.` });
+        }
+        // Material Cost % — FALLING = good (green), rising = red (input-cost pressure).
+        const mat = lastTwo(e.quarters_material_cost_pct);
+        if (mat) {
+          const d = mat.latest - mat.prev;
+          const col = d < 0 ? GREEN : d > 0 ? RED : NEU;
+          tps.push({ key: 'mat', label: 'MAT-COST', latest: mat.latest, delta: d, col,
+            tip: `Material cost % of sales by quarter: ${seriesStr(e.quarters_material_cost_pct)}. FALLING = margin tailwind (good); rising = input-cost pressure (red).` });
+        }
+        // Other Income % — FALLING = good/cleaner (green), rising = amber (quality watch).
+        const oi = lastTwo(e.quarters_other_income_pct);
+        if (oi) {
+          const d = oi.latest - oi.prev;
+          const col = d < 0 ? GREEN : d > 0 ? AMBER : NEU;
+          tps.push({ key: 'oi', label: 'OTHER-INC', latest: oi.latest, delta: d, col,
+            tip: `Other income % by quarter: ${seriesStr(e.quarters_other_income_pct)}. FALLING = cleaner/operating-driven (good); rising = earnings-quality watch (amber).` });
+        }
+        // Tax % — show latest; sharp DROP (>5pp below prior) = amber "tax-aided"; up = neutral.
+        const tax = lastTwo(e.quarters_tax_pct);
+        if (tax) {
+          const d = tax.latest - tax.prev;
+          const taxAided = d < -5;
+          const col = taxAided ? AMBER : NEU;
+          tps.push({ key: 'tax', label: taxAided ? 'TAX·aided' : 'TAX', latest: tax.latest, delta: d, col,
+            tip: `Tax rate % by quarter: ${seriesStr(e.quarters_tax_pct)}. Sharp drop (>5pp below prior) = tax-aided EPS (amber); normalizing up = neutral.` });
+        }
+
+        // ── CFO/PAT annual trend pill (annual_cfo_pat) ──────────────────────
+        const cfoAnnArr: number[] | null = Array.isArray(e.annual_cfo_pat)
+          ? e.annual_cfo_pat.filter((x: any) => typeof x === 'number' && Number.isFinite(x))
+          : null;
+        const cfoAnnLatest = cfoAnnArr && cfoAnnArr.length >= 1 ? cfoAnnArr[cfoAnnArr.length - 1] : null;
+        let cfoAnnPill: React.ReactNode = null;
+        if (cfoAnnArr && cfoAnnArr.length >= 2) {
+          const latest = cfoAnnArr[cfoAnnArr.length - 1], prev = cfoAnnArr[cfoAnnArr.length - 2];
+          const d = latest - prev, rising = d >= 0;
+          const col = (latest >= 1 && rising) ? GREEN : (latest < 0.8 || !rising) ? AMBER : NEU;
+          const arrow = d > 0 ? '▲' : d < 0 ? '▼' : '▬';
+          cfoAnnPill = (
+            <span title={`CFO/PAT annual series (Screener cash-flow is published ANNUALLY, so this is a yearly trend, not quarterly): ${cfoAnnArr.map((x) => x.toFixed(2)).join(' → ')}. Green when ≥1 and rising; amber when <0.8 or falling.`}
+              style={{ display: 'inline-flex', alignItems: 'baseline', gap: 3, padding: '1px 5px', borderRadius: 3, cursor: 'help', background: col + '14', border: '1px solid ' + col + '40', fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT (annual)</span>
+              <strong style={{ color: col }}>{latest.toFixed(2)}</strong>
+              <span style={{ color: col }}>{arrow}{d >= 0 ? '+' : ''}{d.toFixed(2)}</span>
+            </span>
+          );
+        }
+
+        // ── CONCLUSIONS synthesis ───────────────────────────────────────────
+        const concl: string[] = []; const firedTips: string[] = [];
+        const opmRising = !!opm && opm.latest > opm.prev;
+        const opmFalling = !!opm && opm.latest < opm.prev;
+        const matFalling = !!mat && mat.latest < mat.prev;
+        const matRising = !!mat && mat.latest > mat.prev;
+        const taxDrop = !!tax && (tax.latest - tax.prev) < -5;
+        const oiRising = !!oi && (oi.latest - oi.prev) > 1;
+        const cfoRatio = (typeof e.cfo_to_pat_ratio === 'number' && Number.isFinite(e.cfo_to_pat_ratio)) ? e.cfo_to_pat_ratio as number : null;
+        const cfoWeak = cfoRatio != null && cfoRatio < 0.8;
+        const pledgeNum = (typeof e.pledged_pct === 'number' && Number.isFinite(e.pledged_pct)) ? e.pledged_pct as number : null;
+        // margin
+        if (opm) {
+          if (opmRising && matFalling) { concl.push('Clean margin-led'); firedTips.push('OPM rising + material cost falling'); }
+          else if (opmRising && matRising) { concl.push('Margin up despite cost pressure'); firedTips.push('OPM rising but material cost also rising'); }
+          else if (opmRising) { concl.push('Margin-led'); firedTips.push('OPM rising'); }
+          else if (opmFalling) { concl.push('Margin compressing'); firedTips.push('OPM falling'); }
+        }
+        // cash
+        let cashWeak = false;
+        if (cfoAnnLatest != null) {
+          if (cfoAnnLatest >= 1) { concl.push('cash-backed'); firedTips.push('annual CFO/PAT ≥1'); }
+          else if (cfoAnnLatest < 0.5) { concl.push('weak cash conversion'); cashWeak = true; firedTips.push('annual CFO/PAT <0.5'); }
+        }
+        // quality flags
+        const qbits: string[] = [];
+        if (taxDrop) qbits.push('tax');
+        if (oiRising) qbits.push('other-income');
+        if (cfoWeak) qbits.push('cash');
+        if (qbits.length) { concl.push('(low-quality: ' + qbits.join('/') + '-aided)'); firedTips.push('quality flags: ' + qbits.join(', ')); }
+        // pledge
+        if (pledgeNum != null) {
+          if (pledgeNum > 0) { concl.push('⚠ promoter pledge ' + pledgeNum.toFixed(pledgeNum < 1 ? 2 : 1) + '%'); firedTips.push('promoter pledge ' + pledgeNum + '%'); }
+          else { concl.push('no pledge'); }
+        }
+        const caution = qbits.length > 0 || matRising || cashWeak || opmFalling || (pledgeNum != null && pledgeNum > 0);
+        let sentence = '';
+        if (concl.length) {
+          const raw = concl.join(', ');
+          sentence = raw.charAt(0).toUpperCase() + raw.slice(1) + (raw.endsWith('.') ? '' : '.');
+        }
+
+        if (tps.length === 0 && !cfoAnnPill && concl.length === 0) return null;
+        return (
+          <>
+            {(tps.length > 0 || cfoAnnPill) && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)' }}>
+                <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>Q-TRENDS</span>
+                {tps.map((t) => {
+                  const arrow = t.delta > 0 ? '▲' : t.delta < 0 ? '▼' : '▬';
+                  return (
+                    <span key={t.key} title={t.tip}
+                      style={{ display: 'inline-flex', alignItems: 'baseline', gap: 3, padding: '1px 5px', borderRadius: 3, cursor: 'help', background: t.col + '14', border: '1px solid ' + t.col + '40', fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
+                      <span style={{ color: 'var(--mc-text-4)' }}>{t.label}</span>
+                      <strong style={{ color: t.col }}>{t.latest.toFixed(1)}%</strong>
+                      <span style={{ color: t.col }}>{arrow}{t.delta >= 0 ? '+' : ''}{t.delta.toFixed(1)}</span>
+                    </span>
+                  );
+                })}
+                {cfoAnnPill}
+              </div>
+            )}
+            {concl.length > 0 && (
+              <div title={'Signals fired: ' + firedTips.join(' · ')}
+                style={{ display: 'flex', alignItems: 'baseline', gap: 5, paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)', fontSize: 9.5, cursor: 'help' }}>
+                <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>READ</span>
+                <span style={{ color: caution ? AMBER : GREEN, fontWeight: 700 }}>{sentence}</span>
+              </div>
+            )}
+          </>
+        );
+      })()}
       {/* zzz354 — RED FLAGS row: quality-of-earnings warning badges computed from
           existing bench fields. Only renders when at least one flag is triggered.
           Flags: (1) CFO/PAT < 0.5 = cash conversion broken;
@@ -4490,7 +4834,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         if (typeof cfoR === 'number' && cfoR < 0.5) {
           flags.push({icon:'🚩', label:'CASH-CONV', tip:`CFO/PAT ${cfoR.toFixed(2)} — annual cash conversion below 0.5. Reported profit isn't translating into cash. Investigate receivables/inventory build.`});
         }
-        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 3 * sales) {
+        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales) {
           flags.push({icon:'⚠️', label:'MARGIN-SPIKE', tip:`PAT +${pat.toFixed(0)}% vs Sales +${sales.toFixed(0)}% (${(pat/sales).toFixed(1)}× ratio). Big margin expansion — check if driven by one-off / low base / other income. Rarely sustains.`});
         }
         if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 10 && Math.abs(eps - pat) > 30) {

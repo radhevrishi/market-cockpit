@@ -91,6 +91,30 @@ export interface ConvictionEntry {
   avg_vol_20d?: number | null;
   vol_ratio_20d?: number | null;
   dist_52w_pct_yahoo?: number | null;
+  // zzz360 — Phase 2C P&L-quality + balance-sheet enrichment carried from
+  // the enrich API. All optional; null on pre-zzz360 bench entries.
+  other_income_pct_sales_curr?: number | null;   // zzz360
+  other_income_pct_sales_prev?: number | null;   // zzz360
+  effective_tax_rate_curr?: number | null;        // zzz360
+  effective_tax_rate_prev?: number | null;        // zzz360
+  dep_yoy_pct?: number | null;                     // zzz360
+  finance_cost_curr_cr?: number | null;            // zzz360
+  ebit_curr_cr?: number | null;                    // zzz360
+  ebit_yoy_pct?: number | null;                    // zzz360
+  ebitda_curr_cr?: number | null;                  // zzz360
+  ebitda_yoy_pct?: number | null;                  // zzz360
+  pat_margin_curr?: number | null;                 // zzz360
+  pat_margin_prev?: number | null;                 // zzz360
+  quarters_material_cost_pct?: number[] | null;    // zzz360
+  quarters_other_income_pct?: number[] | null;     // zzz360
+  quarters_tax_pct?: number[] | null;              // zzz360
+  annual_cfo_pat?: number[] | null;                // zzz360
+  pledged_pct?: number | null;                     // zzz360
+  debtor_days?: number | null;                     // zzz360
+  inventory_days?: number | null;                  // zzz360
+  wc_days?: number | null;                         // zzz360
+  roic?: number | null;                            // zzz360
+  int_coverage?: number | null;                    // zzz360
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -282,7 +306,7 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
             if ((cur as any)[k] == null && (e as any)[k] != null) (patch as any)[k] = (e as any)[k];
           };
           fill('opm_pct'); fill('opm_prev_pct');
-          fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct');   // zzz230/231
+          fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct' as any);   // zzz230/231
           fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
           fill('cfo_to_pat_ratio' as any);  // zzz306 — earnings quality (CFO/PAT ratio)
           // zzz257 — institutional-quality fields + 30d sparkline series.
@@ -295,6 +319,17 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           fill('ebitda_margin_pct' as any);
           fill('receivables_yoy_pct' as any); fill('inventory_yoy_pct' as any);
           fill('avg_vol_20d' as any); fill('vol_ratio_20d' as any); fill('dist_52w_pct_yahoo' as any);
+          // zzz360 — Phase 2C P&L-quality + balance-sheet enrichment fields.
+          fill('other_income_pct_sales_curr' as any); fill('other_income_pct_sales_prev' as any);
+          fill('effective_tax_rate_curr' as any); fill('effective_tax_rate_prev' as any);
+          fill('dep_yoy_pct' as any); fill('finance_cost_curr_cr' as any);
+          fill('ebit_curr_cr' as any); fill('ebit_yoy_pct' as any);
+          fill('ebitda_curr_cr' as any); fill('ebitda_yoy_pct' as any);
+          fill('pat_margin_curr' as any); fill('pat_margin_prev' as any);
+          fill('quarters_material_cost_pct' as any); fill('quarters_other_income_pct' as any); fill('quarters_tax_pct' as any);
+          fill('annual_cfo_pat' as any); fill('pledged_pct' as any);
+          fill('debtor_days' as any); fill('inventory_days' as any); fill('wc_days' as any);
+          fill('roic' as any); fill('int_coverage' as any);
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {
