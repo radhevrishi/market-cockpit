@@ -4361,6 +4361,116 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           </div>
         );
       })()}
+      {/* zzz355 — SCORES row: composite Earnings Quality Score (0-100) + Overall Verdict pill.
+          Quality Score components (max 100):
+            - CFO/PAT: >=1 → 30, 0.8-1 → 25, 0.5-0.8 → 15, <0.5 → 0
+            - OPM Δ (pp): >3 → 25, 1-3 → 20, 0-1 → 10, <0 → 0
+            - PAT/Sales ratio (op-lev sanity): 1-2× → 20, 2-3× → 10, >3× → 0, <1× → 15
+            - EPS-PAT gap (dilution proxy): ≤10pp → 15, ≤30pp → 8, >30pp → 0
+            - PEG (valuation): <1 → 10, 1-2 → 5
+          Overall Verdict combines Quality + PE-vs-growth + red flag count + DRIFT. */}
+      {density !== 'ultra' && (() => {
+        const cfo = (entry as any).cfo_to_pat_ratio;
+        const opm = (entry as any).opm_pct, opmP = (entry as any).opm_prev_pct;
+        const sales = entry.sales_yoy_pct, pat = entry.net_profit_yoy_pct, eps = entry.eps_yoy_pct;
+        const pe = (entry as any).pe;
+        const drift = (entry as any).move_pct;
+        let q = 0; const bits: string[] = [];
+        if (typeof cfo === 'number') {
+          if (cfo >= 1) { q += 30; bits.push('CFO/PAT ' + cfo.toFixed(2) + '→30'); }
+          else if (cfo >= 0.8) { q += 25; bits.push('CFO/PAT ' + cfo.toFixed(2) + '→25'); }
+          else if (cfo >= 0.5) { q += 15; bits.push('CFO/PAT ' + cfo.toFixed(2) + '→15'); }
+          else bits.push('CFO/PAT ' + cfo.toFixed(2) + '→0');
+        }
+        if (typeof opm === 'number' && typeof opmP === 'number') {
+          const d = opm - opmP;
+          if (d > 3) { q += 25; bits.push('OPM Δ +' + d.toFixed(1) + '→25'); }
+          else if (d > 1) { q += 20; bits.push('OPM Δ +' + d.toFixed(1) + '→20'); }
+          else if (d >= 0) { q += 10; bits.push('OPM Δ +' + d.toFixed(1) + '→10'); }
+          else bits.push('OPM Δ ' + d.toFixed(1) + '→0');
+        }
+        if (typeof sales === 'number' && typeof pat === 'number' && Math.abs(sales) > 3) {
+          const r = pat / Math.max(sales, 0.01);
+          if (r >= 1 && r <= 2) { q += 20; bits.push('PAT/Sales ' + r.toFixed(1) + '×→20'); }
+          else if (r > 2 && r <= 3) { q += 10; bits.push('PAT/Sales ' + r.toFixed(1) + '×→10'); }
+          else if (r > 3) bits.push('PAT/Sales ' + r.toFixed(1) + '×→0(windfall)');
+          else if (r > 0) { q += 15; bits.push('PAT/Sales ' + r.toFixed(1) + '×→15'); }
+        }
+        if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 5) {
+          const gap = Math.abs(eps - pat);
+          if (gap <= 10) { q += 15; bits.push('EPS-PAT gap ' + gap.toFixed(0) + '→15'); }
+          else if (gap <= 30) { q += 8; bits.push('EPS-PAT gap ' + gap.toFixed(0) + '→8'); }
+          else bits.push('EPS-PAT gap ' + gap.toFixed(0) + '→0');
+        }
+        if (typeof pe === 'number' && pe > 0 && typeof eps === 'number' && eps > 0) {
+          const peg = pe / eps;
+          if (peg < 1) { q += 10; bits.push('PEG ' + peg.toFixed(2) + '→10'); }
+          else if (peg < 2) { q += 5; bits.push('PEG ' + peg.toFixed(2) + '→5'); }
+        }
+        const qScore = Math.min(100, Math.round(q));
+        const qCol = qScore >= 75 ? '#22C55E' : qScore >= 60 ? '#84CC16' : qScore >= 40 ? '#F59E0B' : '#EF4444';
+
+        // Growth triangulation - is growth coherent across the three metrics?
+        let triLabel: string | null = null; let triCol = '';
+        if (typeof sales === 'number' && typeof pat === 'number' && typeof eps === 'number'
+            && sales > 10 && pat > 0 && eps > 0) {
+          const salesOK = sales >= 15;
+          const patStrong = pat >= sales;
+          const epsCoherent = Math.abs(eps - pat) <= 25;
+          if (salesOK && patStrong && epsCoherent) { triLabel = 'GROWTH TRIPLE ✓'; triCol = '#22C55E'; }
+          else if (patStrong && !salesOK) { triLabel = 'MARGIN-LED'; triCol = '#F59E0B'; }
+          else if (salesOK && !patStrong) { triLabel = 'VOLUME-ONLY'; triCol = '#F59E0B'; }
+        }
+
+        // Count red flags (mirrors below)
+        let rf = 0;
+        if (typeof cfo === 'number' && cfo < 0.5) rf++;
+        if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 3 * sales) rf++;
+        if (typeof eps === 'number' && typeof pat === 'number' && Math.abs(pat) > 10 && Math.abs(eps - pat) > 30) rf++;
+        if (typeof opm === 'number' && typeof opmP === 'number' && (opm - opmP) < -3) rf++;
+        if (typeof drift === 'number' && drift < -5 && ['BLOCKBUSTER','ELITE','STRONG'].includes(String(entry.tier || '').toUpperCase())) rf++;
+
+        // Overall verdict — combines Quality + valuation + risk
+        let verdict: {label: string; icon: string; color: string; tip: string};
+        const valPE = typeof pe === 'number' && pe > 0 ? pe : null;
+        const valGrowth = typeof eps === 'number' ? eps : null;
+        const isOvervalued = valPE != null && valGrowth != null && valGrowth > 0 && valPE > 2 * valGrowth;
+        const isCheap = valPE != null && valGrowth != null && valGrowth > 0 && valPE < 0.5 * valGrowth;
+        const driftBad = typeof drift === 'number' && drift < -8;
+        if (rf >= 3 || (typeof drift === 'number' && drift < -12) || (valGrowth != null && valGrowth <= 0)) {
+          verdict = { label: 'AVOID', icon: '🚫', color: '#EF4444', tip: 'Multiple red flags OR sharp market disbelief OR negative EPS growth. Downside heavy.' };
+        } else if (qScore >= 80 && !isOvervalued && rf <= 1 && !driftBad) {
+          verdict = { label: 'STRONG BUY', icon: '🚀', color: '#22C55E', tip: 'Composite: high earnings quality (' + qScore + ') + reasonable valuation + no serious flags + no market disbelief. Institutional-grade setup.' };
+        } else if (qScore >= 65 && rf <= 2 && !driftBad) {
+          verdict = { label: 'BUY', icon: '📈', color: '#84CC16', tip: 'Quality (' + qScore + ') solid, risk manageable. Position sizing at conviction.' };
+        } else if (qScore >= 45 && rf <= 3) {
+          verdict = { label: 'WATCH', icon: '👁', color: '#F59E0B', tip: 'Mixed signals — quality ' + qScore + '/100, ' + rf + ' red flags. Track catalyst/management commentary before sizing.' };
+        } else {
+          verdict = { label: 'HIGH RISK', icon: '⚠️', color: '#EF4444', tip: 'Weak composite — quality ' + qScore + ', ' + rf + ' red flags. High probability of downside surprise.' };
+        }
+
+        return (
+          <div style={{ display: 'flex', gap: '8px 10px', flexWrap: 'wrap', alignItems: 'center', paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)', fontSize: 10 }}>
+            <span title={'Earnings Quality Score (0-100). Composite of: ' + bits.join(' | ')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help' }}>
+              <span style={{ color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>QUALITY</span>
+              <span style={{ position: 'relative', width: 44, height: 5, background: 'var(--mc-bg-3)', borderRadius: 2 }}>
+                <span style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: qScore + '%', background: qCol, borderRadius: 2 }} />
+              </span>
+              <strong style={{ color: qCol, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 22 }}>{qScore}</strong>
+            </span>
+            {triLabel && (
+              <span title="Growth Triangulation: are Sales+PAT+EPS all coherent? GROWTH TRIPLE = healthy across the board. MARGIN-LED = PAT strong but Sales weak (watch sustainability). VOLUME-ONLY = Sales up but margins compressing." style={{ padding: '1px 6px', borderRadius: 3, background: triCol + '22', color: triCol, fontWeight: 700, border: '1px solid ' + triCol + '55', fontSize: 9.5, letterSpacing: '0.3px' }}>{triLabel}</span>
+            )}
+            <span title={verdict.tip} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 8px', borderRadius: 3, cursor: 'help',
+              background: verdict.color + '22', color: verdict.color, fontWeight: 800,
+              border: '1px solid ' + verdict.color + '66', fontSize: 10.5, letterSpacing: '0.5px',
+              marginLeft: 'auto',
+            }}>{verdict.icon} {verdict.label}</span>
+          </div>
+        );
+      })()}
       {/* zzz354 — RED FLAGS row: quality-of-earnings warning badges computed from
           existing bench fields. Only renders when at least one flag is triggered.
           Flags: (1) CFO/PAT < 0.5 = cash conversion broken;
