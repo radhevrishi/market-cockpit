@@ -359,9 +359,23 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
         const ocfAnnual = getRow(cf, 'Cash from Operating', cfLatest);
         // Try TTM last (right-most) column of P&L first; fall back to latest annual.
         const patAnnual = getRow(pl, 'Net Profit', plLatest) ?? getRow(pl, 'Profit', plLatest);
-        const ratio = (typeof ocfAnnual === 'number' && typeof patAnnual === 'number' && patAnnual > 0)
+        // zzz364 — annual sales for the meaningfulness gate below.
+        const salesAnnual = getRow(pl, 'Sales', plLatest) ?? getRow(pl, 'Revenue', plLatest);
+        let ratio = (typeof ocfAnnual === 'number' && typeof patAnnual === 'number' && patAnnual > 0)
           ? Math.round((ocfAnnual / patAnnual) * 100) / 100
           : null;
+        // zzz364 BUG B FIX — CFO/PAT explodes into artifacts (-65.58, 21.75,
+        // -12.84) when PAT is tiny/near-zero. Null the ratio out when it is not
+        // a meaningful earnings-quality signal: (a) |PAT| is a rounding-scale
+        // sliver of sales (< 2% of |sales|, when sales is known), or (b) the
+        // ratio magnitude exceeds 8 (clearly an artifact, not real cash
+        // conversion). Genuine values in [-8, 8] are kept.
+        if (ratio != null) {
+          const patTinyVsSales = typeof salesAnnual === 'number' && salesAnnual !== 0
+            && typeof patAnnual === 'number'
+            && Math.abs(patAnnual) < 0.02 * Math.abs(salesAnnual);
+          if (patTinyVsSales || Math.abs(ratio) > 8) ratio = null;
+        }
         return {
           ocf_annual_cr: ocfAnnual,
           pat_annual_cr: patAnnual,
@@ -531,6 +545,27 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
           wc_days, // zzz360
           roic, // zzz360
           int_coverage, // zzz360
+        };
+      })(),
+      // zzz363 — one-off (exceptional) income detection from the SAME quarterly
+      // P&L table already in hand (`get` / `latestIdx`). A large exceptional
+      // GAIN can flatter a headline "beat", so we expose the latest-quarter
+      // Exceptional-items value and its share of that quarter's Profit before
+      // tax. The ratio uses |PBT| in the denominator so the sign always tracks
+      // the exceptional item itself (a big positive % = one-off gain inflating
+      // the print; negative = one-off charge depressing it). Fully null-safe:
+      // a missing Exceptional row, a missing PBT, or PBT == 0 yields null.
+      ...(() => {
+        // Screener quarterly rows: "Exceptional items", "Profit before tax".
+        const exceptional_curr_cr = get('Exceptional items', latestIdx); // zzz363
+        const pbtCurr = get('Profit before tax', latestIdx); // zzz363
+        const exceptional_pct_pbt =
+          exceptional_curr_cr != null && pbtCurr != null && pbtCurr !== 0
+            ? Math.round((exceptional_curr_cr / Math.abs(pbtCurr)) * 1000) / 10
+            : null; // zzz363
+        return {
+          exceptional_curr_cr, // zzz363
+          exceptional_pct_pbt, // zzz363
         };
       })(),
     };
@@ -822,15 +857,17 @@ async function fetchYahooFundamentals(symbol: string): Promise<any | null> {
       // Also grab returnOnEquity + returnOnCapital if available (backup for banks/NBFCs)
       roe: result.financialData?.returnOnEquity?.raw != null
         ? result.financialData.returnOnEquity.raw * 100 : null,
-      // zzz358 BUG3 — ROCE fallback. Yahoo has no direct ROCE field; use
-      // returnOnAssets (financialData, already requested in modules) as the
-      // closest proxy so ROCE-blank cards (BDL/POWERINDIA/GOPAL) get a value
-      // when the Screener top-ratios <ul> is absent/blocked. Null when Yahoo
-      // also lacks it — never fabricated.
-      roce: result.financialData?.returnOnAssets?.raw != null
-        ? result.financialData.returnOnAssets.raw * 100
-        : (result.financialData?.returnOnCapital?.raw != null
-            ? result.financialData.returnOnCapital.raw * 100 : null),
+      // zzz364 BUG A FIX — do NOT alias returnOnAssets → ROCE. ROA ≪ ROCE for
+      // any leveraged balance sheet (ROCE uses EBIT / capital-employed; ROA
+      // uses net income / total assets), so the old zzz358 proxy systematically
+      // UNDERSTATED ROCE and wrongly tripped the client's `roce < 15` quality
+      // cap. A null ROCE renders as an honest "—" rather than a corrupt low
+      // value that mis-caps quality. Only populate from a genuine
+      // return-on-capital field; leave null otherwise (Screener supplies the
+      // real ROCE when its top-ratios <ul> is reachable — never fabricate here).
+      roce: result.financialData?.returnOnCapital?.raw != null
+        ? result.financialData.returnOnCapital.raw * 100
+        : null,
       financials_source: 'yahoo-fundamentals',
     };
     return out;
@@ -1024,7 +1061,8 @@ async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<str
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   // PATCH 1013 — bumped v5 → v6 to invalidate stale entries lacking opm_pct.
-  const cacheKey = filedHint ? `enrich:v8:${symbol}:${filedHint}` : `enrich:v8:${symbol}`;
+  // zzz363 — bump v8->v9 to surface zzz360/zzz363 fields (stale KV was hiding them)
+  const cacheKey = filedHint ? `enrich:v9:${symbol}:${filedHint}` : `enrich:v9:${symbol}`;
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1091,9 +1129,21 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     const netProfit = findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i)
                    ?? findLastNum(/^\s*Profit for (the )?year\s*[+\-]?\s*$/i)
                    ?? findLastNum(/^\s*Net Profit\b/i);
-    const ratio = (typeof ocf === 'number' && typeof netProfit === 'number' && netProfit > 0)
+    // zzz364 — annual sales for the meaningfulness gate below.
+    const salesAnnual = findLastNum(/^\s*Sales\b/i) ?? findLastNum(/^\s*Revenue\b/i);
+    let ratio = (typeof ocf === 'number' && typeof netProfit === 'number' && netProfit > 0)
       ? Math.round((ocf / netProfit) * 100) / 100
       : null;
+    // zzz364 BUG B FIX — same artifact guard as the zzz316 annual path: when
+    // PAT is tiny/near-zero the CFO/PAT ratio explodes (-65.58, 21.75, -12.84).
+    // Null it out when it is not a meaningful quality signal: |PAT| < 2% of
+    // |sales| (when sales is known) OR |ratio| > 8. Keep genuine [-8, 8] values.
+    if (ratio != null) {
+      const patTinyVsSales = typeof salesAnnual === 'number' && salesAnnual !== 0
+        && typeof netProfit === 'number'
+        && Math.abs(netProfit) < 0.02 * Math.abs(salesAnnual);
+      if (patTinyVsSales || Math.abs(ratio) > 8) ratio = null;
+    }
     const result = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio };
     if (typeof ocf === 'number' || typeof netProfit === 'number') {
       try { await kvSet(`cfo:v1:${sym}`, result, 24 * 3600); } catch {}
