@@ -108,6 +108,8 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Star className="w-5 h-5" />,
     items: [
       { href: '/multibagger',     label: 'Multibagger',           icon: <Star className="w-4 h-4" /> },
+      // zzz403 — Nifty Smallcap 100 scenario simulator (Monte-Carlo scenario planner)
+      { href: '/smallcap-simulator', label: 'Smallcap Simulator', icon: <LineChart className="w-4 h-4" /> },
       { href: '/buy-strategy', label: 'Buy Strategy', icon: <Rocket className="w-4 h-4" /> },
       { href: '/capex-tracker', label: 'Capex Tracker', icon: <Factory className="w-4 h-4" /> },
       { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },

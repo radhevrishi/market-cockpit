@@ -2623,6 +2623,7 @@ export default function HomeDashboard() {
               <Link href="/journey"                       style={navChip('#22D3EE')}>🚀 The Journey</Link>
               <Link href="/multibagger/screens"           style={navChip('#F59E0B')}>🔍 Auto Screens</Link>
               <Link href="/learn"                          style={navChip('#A78BFA')}>📚 Learn</Link>
+              <Link href="/smallcap-simulator"             style={navChip('#A78BFA')}>🎲 Smallcap Simulator</Link>
               {/* zzz401 — Book Watch + TheWrap trackers removed from Favourites (still in Event-Driven nav) */}
             </div>
           </div>
