@@ -1344,11 +1344,16 @@ async function fetchAllNews(): Promise<any[]> {
           // Only STRUCTURAL or BOTTLENECK articles can persist beyond
           // 90 days; everything else decays. Stops the "Barclays 1
           // year ago" persistence problem.
-          const pubMs = pubDate ? new Date(pubDate).getTime() : Date.now();
-          const ageDays = (Date.now() - pubMs) / 86400000;
+          // zzz382 — a NON-EMPTY but malformed pubDate used to yield NaN, and the
+          // decay gates (NaN > 90 / NaN > 365) both evaluate FALSE, so genuinely old
+          // (or undateable) articles slipped through and were then stamped now() below
+          // → surfaced as "breaking". Treat any missing/invalid date as infinitely old
+          // so it is dropped by the hard cap rather than shown as fresh.
+          const _pubT = pubDate ? new Date(pubDate).getTime() : NaN;
+          const ageDays = Number.isFinite(_pubT) ? (Date.now() - _pubT) / 86400000 : Infinity;
           const isPersistent = article_type === 'BOTTLENECK' || article_type === 'COMMENTARY';
           if (ageDays > 90 && !isPersistent) continue;
-          if (ageDays > 365) continue; // hard cap, even structural
+          if (ageDays > 365) continue; // hard cap, even structural (also drops undateable)
 
           // Consequence score — institutional weight on five dimensions.
           const rawConsequence = computeConsequenceScore(title, desc, article_type);
@@ -1704,9 +1709,13 @@ async function fetchAllNews(): Promise<any[]> {
             // Validate pubDate before storing — some new RSS feeds emit
             // malformed dates that crash the UI's formatDistanceToNow.
             published_at: (() => {
-              if (!pubDate) return new Date().toISOString();
+              // zzz382 — a missing/invalid date must NOT become now() (that's what made
+              // undateable articles rank as "breaking"). Stamp a clearly-old sentinel
+              // (>1yr) so it can never masquerade as fresh and any decay check drops it.
+              const _OLD = new Date(Date.now() - 400 * 86400000).toISOString();
+              if (!pubDate) return _OLD;
               const d = new Date(pubDate);
-              return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+              return isNaN(d.getTime()) ? _OLD : d.toISOString();
             })(),
             region,
             article_type,

@@ -335,7 +335,7 @@ function PanelStaleStrip({
   const veryStaleAfterMs = staleAfterMs * 3;
   if (age <= veryStaleAfterMs) return null;
   const d = new Date(dataUpdatedAt);
-  const hhmm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const hhmm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });  // zzz382 — UI labels these IST
   const ageMin = Math.floor(age / 60_000);
   return (
     <div
@@ -348,7 +348,7 @@ function PanelStaleStrip({
         color: 'var(--mc-warn)',
         fontSize: 11, fontWeight: 600,
       }}
-      title={`This panel's data is from ${d.toLocaleString()} — refresh to pull fresh.`}
+      title={`This panel's data is from ${d.toLocaleString(undefined, { timeZone: 'Asia/Kolkata' })} IST — refresh to pull fresh.`}
     >
       <span>⚠ Showing {label} as of {hhmm} ({ageMin} min ago). Older than the freshness window.</span>
       {onRefresh && (
@@ -628,8 +628,8 @@ function formatRelativeTight(d: Date): string {
   const deltaMs = nowMs - ts;
   // Future dates → absolute
   if (deltaMs < 0) {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
-           ', ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true });
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }) +
+           ', ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });  // zzz382
   }
   const sec = Math.floor(deltaMs / 1000);
   if (sec < 60) return 'now';
@@ -640,7 +640,7 @@ function formatRelativeTight(d: Date): string {
   const day = Math.floor(hr / 24);
   if (day <= 7) return `${day}d ago`;
   const yearOpt = d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {};
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...yearOpt });
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...yearOpt, timeZone: 'Asia/Kolkata' });  // zzz382
 }
 
 /** Absolute "tooltip" form — used when the caller wants hover detail. */
@@ -1500,7 +1500,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>LIFECYCLE</span>
                 <span style={{ fontSize: 11, color: 'var(--mc-text-2)' }}>
-                  {bucket} · published {article.published_at ? new Date(article.published_at).toLocaleString() : '—'}
+                  {bucket} · published {article.published_at ? new Date(article.published_at).toLocaleString(undefined, { timeZone: 'Asia/Kolkata' }) + ' IST' : '—'}
                 </span>
               </div>
             );
@@ -2436,7 +2436,7 @@ export default function NewsFeedPage() {
   const isLoading = rawIsLoading && !newsTimeout; // PATCH 0693 — drop skeleton after timeout
   // Format the last-fetched time for display
   const newsFetchedAt = dataUpdatedAt
-    ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })  /* zzz382 */
     : null;
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay, dataUpdatedAt: inPlayUpdatedAt, isFetching: inPlayFetching, isError: inPlayError } = useInPlay();
   // Phase 1.3 / 1.5 / 2.5: Must Read + Forward Calendar + Anomaly hooks
@@ -3173,7 +3173,7 @@ export default function NewsFeedPage() {
                       <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-cyan)' }}>🧭</span>
                     )}
                     <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--mc-text-3)', fontWeight: 600 }}>
-                      {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
+                      {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata' }) : '—'}
                     </span>
                   </div>
                   {/* PATCH 0085: title 11 → 16 */}

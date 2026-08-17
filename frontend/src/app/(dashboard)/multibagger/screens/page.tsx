@@ -174,8 +174,14 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
 
   const loaded = SCREENS.filter(s => allData[s.slug]?.rows?.length).length;
   const totalStocks = Object.values(allData).reduce((sum, d) => sum + (d?.rows?.length || 0), 0);
+  // zzz382 — an entry exists once a slug's fetch has SETTLED (success sets rows,
+  // failure sets {rows:[], err}). Distinguish "still loading" from "all failed" so a
+  // 404/500 on every CSV shows an error instead of a perpetual "Loading…" spinner.
+  const attempted = SCREENS.filter(s => allData[s.slug] !== undefined).length;
+  const failed = SCREENS.filter(s => allData[s.slug]?.err).length;
 
-  if (loaded === 0) return <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>Loading all 8 CSVs…</div>;
+  if (loaded === 0 && attempted < SCREENS.length) return <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>Loading all {SCREENS.length} CSVs… ({attempted}/{SCREENS.length})</div>;
+  if (loaded === 0 && attempted >= SCREENS.length) return <div style={{ padding: 40, textAlign: 'center', color: C.red || '#EF4444' }}>⚠ Could not load any screen data ({failed}/{SCREENS.length} failed). The daily screener CSVs may not be published yet, or a slug was renamed. Reload in a bit, or check /data/screener/*.csv.</div>;
 
   return (
     <div>
@@ -324,8 +330,12 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
     if (onlyMulti) rows = rows.filter(r => r.__count >= 2);
     rows.sort((a: any, b: any) => {
       const av = a[sortCol]; const bv = b[sortCol];
-      const an = typeof av === 'number' ? av : parseFloat(String(av)) || 0;
-      const bn = typeof bv === 'number' ? bv : parseFloat(String(bv)) || 0;
+      // zzz382 — missing/'—'/non-numeric must sink to the END in BOTH directions,
+      // not coerce to 0 (which floated blanks above genuine negatives on a desc sort).
+      const pav = typeof av === 'number' ? av : parseFloat(String(av));
+      const pbv = typeof bv === 'number' ? bv : parseFloat(String(bv));
+      const an = Number.isFinite(pav) ? pav : (sortDir === 'asc' ? Infinity : -Infinity);
+      const bn = Number.isFinite(pbv) ? pbv : (sortDir === 'asc' ? Infinity : -Infinity);
       return sortDir === 'asc' ? an - bn : bn - an;
     });
     return rows;
