@@ -115,7 +115,8 @@ function bandHigh(v: number, greenAt: number, amberAt: number): string {
   if (v >= amberAt - 1) return C.red;
   return C.redDim;
 }
-function fmtCr(v: number): string {
+function fmtCr(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';  // zzz378 — no NaN in strips
   if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'k';
   return v.toFixed(0);
 }

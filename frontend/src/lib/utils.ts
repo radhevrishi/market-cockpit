@@ -6,7 +6,8 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /** Format a number as ₹1.23L / ₹45K / ₹123 */
-export function fmtINR(value: number): string {
+export function fmtINR(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';  // zzz378 — no ₹NaN
   const abs = Math.abs(value);
   const sign = value < 0 ? '-' : '';
   if (abs >= 1_00_000) return `${sign}₹${(abs / 1_00_000).toFixed(2)}L`;
@@ -15,7 +16,8 @@ export function fmtINR(value: number): string {
 }
 
 /** Format a number as $1.23M / $45K / $123 */
-export function fmtUSD(value: number): string {
+export function fmtUSD(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';  // zzz378 — no $NaN
   const abs = Math.abs(value);
   const sign = value < 0 ? '-' : '';
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
@@ -24,7 +26,8 @@ export function fmtUSD(value: number): string {
 }
 
 /** Format a change percent with sign */
-export function fmtPct(value: number, decimals = 2): string {
+export function fmtPct(value: number | null | undefined, decimals = 2): string {
+  if (value == null || !Number.isFinite(value)) return '—';  // zzz378 — no NaN%/undefined throw
   return `${value >= 0 ? '+' : ''}${value.toFixed(decimals)}%`;
 }
 

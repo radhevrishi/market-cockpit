@@ -877,13 +877,20 @@ export default function WatchlistsPage() {
       let aVal: any = (a as any)[sortField];
       let bVal: any = (b as any)[sortField];
 
-      if (typeof aVal === 'string') {
-        aVal = aVal.toLowerCase();
-        bVal = (bVal as string).toLowerCase();
+      // zzz378 — string branch keyed on aVal only could call bVal.toLowerCase() on a
+      // non-string; and null/NaN numerics compared with </> ordered blank-metric rows
+      // arbitrarily. Guard both: strings compared case-insensitively, nullish sunk to end.
+      if (typeof aVal === 'string' || typeof bVal === 'string') {
+        const as = (aVal ?? '').toString().toLowerCase();
+        const bs = (bVal ?? '').toString().toLowerCase();
+        if (as < bs) return sortOrder === 'asc' ? -1 : 1;
+        if (as > bs) return sortOrder === 'asc' ? 1 : -1;
+        return 0;
       }
-
-      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      const an = (typeof aVal === 'number' && Number.isFinite(aVal)) ? aVal : (sortOrder === 'asc' ? Infinity : -Infinity);
+      const bn = (typeof bVal === 'number' && Number.isFinite(bVal)) ? bVal : (sortOrder === 'asc' ? Infinity : -Infinity);
+      if (an < bn) return sortOrder === 'asc' ? -1 : 1;
+      if (an > bn) return sortOrder === 'asc' ? 1 : -1;
       return 0;
     });
 

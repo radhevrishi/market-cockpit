@@ -192,7 +192,7 @@ export default function CalendarPage() {
 
   // Group results by date
   const resultsByDate: Record<string, EarningsResult[]> = {};
-  const filteredResults = data?.results.filter(r => qualityFilter === 'All' || r.quality === qualityFilter) || [];
+  const filteredResults = (Array.isArray(data?.results) ? data!.results : []).filter(r => qualityFilter === 'All' || r.quality === qualityFilter);  // zzz378 — guard 200-with-bad-body (data.results could be undefined → .filter threw → white screen)
 
   for (const r of filteredResults) {
     const d = r.resultDate?.split('T')[0] || '';
@@ -243,7 +243,7 @@ export default function CalendarPage() {
         </div>
         <p style={{ color: THEME.textSecondary, margin: 0, fontSize: '13px' }}>
           Indian quarterly results with AI quality ratings
-          {data ? ` • 1 ${viewMonth.toLocaleDateString('en-US', { month: 'short' })} — ${daysInMonth} ${viewMonth.toLocaleDateString('en-US', { month: 'short' })} (${data.summary.total} results)` : ''}
+          {data ? ` • 1 ${viewMonth.toLocaleDateString('en-US', { month: 'short' })} — ${daysInMonth} ${viewMonth.toLocaleDateString('en-US', { month: 'short' })} (${data.summary?.total ?? filteredResults.length} results)` : ''}
         </p>
       </div>
 

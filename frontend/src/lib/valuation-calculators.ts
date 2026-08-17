@@ -86,7 +86,7 @@ const buildCases = (
   months: number,
   opts?: { currentPrice?: number; sharesOutstandingCr?: number; currency?: '₹' | '$' },
 ): CalculatorCase => {
-  const upsidePct = ((marketCapCr - current) / current) * 100;
+  const upsidePct = current > 0 ? ((marketCapCr - current) / current) * 100 : 0;  // zzz378 — current=0 (blank mkt-cap) → Infinity%/NaN% upside
   let targetPrice: number | undefined;
   if (opts?.currentPrice && opts?.sharesOutstandingCr && opts.sharesOutstandingCr > 0) {
     targetPrice = marketCapCr / opts.sharesOutstandingCr;  // both in Cr -> price in rupees/dollars

@@ -543,10 +543,11 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     priced.length > 0
       ? {
           label: 'TOTAL P&L',
-          value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`,
           // PATCH 1101zzz11 — flag equity-only when cash exists so user
           // doesn't compare it to wealth-level numbers above.
           // PATCH 1101zzz27 — use effective values + stale indicator.
+          // zzz378 — removed duplicate `value:` key (the totalPnl one was dead — JS
+          // kept the effective* one below; TS1117). Effective values are intended.
           sub: showingStale ? '🔄 refreshing prices…' : (totalCash > 0 ? 'equity only' : undefined),
           value: `${effectiveTotalPnl < 0 ? '-' : ''}${fmt(Math.abs(effectiveTotalPnl))} (${fmtPct(effectiveTotalPnlPct)})`,
           color: effectiveTotalPnl >= 0 ? '#10B981' : '#EF4444',
@@ -892,10 +893,15 @@ function capBadge(c?: string) {
 function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: { rows: PortfolioRow[]; onSelectCap?: (cap: string) => void; onSelectTier?: (tier: string) => void; selectedTier?: string | null }) {
   const fmtRs = (v: number) => '₹' + Math.round(v || 0).toLocaleString('en-IN');
   const pctTxt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
-  const totalCur = rows.reduce((a, r) => a + (r.currentValue || 0), 0) || 1;
-  const totalInv = rows.reduce((a, r) => a + (r.investedValue || 0), 0) || 1;
-  const totalPnl = rows.reduce((a, r) => a + (r.pnl || 0), 0);
-  const dayPnl = rows.reduce((a, r) => a + (r.dayPnl || 0), 0);
+  // zzz378 — only PRICED holdings (cmp>0) count toward current/P&L/day totals. The
+  // per-row currentValue falls back to invested when unpriced, so summing all rows
+  // silently valued a dead/BSE-only/weekend-missing holding at cost (P&L hidden, book
+  // overstated) — and made the Analytics tab disagree with the Summary card.
+  const pricedRows = rows.filter(r => (r.cmp || 0) > 0);
+  const totalCur = pricedRows.reduce((a, r) => a + (r.currentValue || 0), 0) || 1;
+  const totalInv = pricedRows.reduce((a, r) => a + (r.investedValue || 0), 0) || 1;
+  const totalPnl = pricedRows.reduce((a, r) => a + (r.pnl || 0), 0);
+  const dayPnl = pricedRows.reduce((a, r) => a + (r.dayPnl || 0), 0);
 
   // Cap allocation (value-weighted % AND counts)
   const capOrder: Array<'large' | 'mid' | 'small' | 'micro' | 'other'> = ['large', 'mid', 'small', 'micro', 'other'];
@@ -1827,9 +1833,11 @@ export default function PortfolioPage() {
         decision: signal?.action ?? fallbackDecision,
         cap: capMap[upperSym] || capMap[upperNorm] || quote?.indexGroup || '', marketCap: quote?.marketCap || 0 }; // PATCH 1100/1101
     });
-    // Second pass: weight by current value (proper risk weighting)
-    const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
-    return rawRows.map(r => ({ ...r, weight: totalCurrent > 0 ? (r.currentValue / totalCurrent) * 100 : 0 }));
+    // Second pass: weight by current value (proper risk weighting).
+    // zzz378 — denominator = priced holdings only; an unpriced holding valued at cost
+    // was diluting every real weight and could trip false over/under-weight flags.
+    const totalCurrent = rawRows.reduce((s, r) => s + ((r.cmp || 0) > 0 ? r.currentValue : 0), 0);
+    return rawRows.map(r => ({ ...r, weight: (totalCurrent > 0 && (r.cmp || 0) > 0) ? (r.currentValue / totalCurrent) * 100 : 0 }));
   }, [holdings, quotes, intelligence, trendMap, capMap]);
 
   // Sorted rows
@@ -1841,7 +1849,12 @@ export default function PortfolioPage() {
       if (typeof aVal === 'string' && typeof bVal === 'string') {
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
-      return sortOrder === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+      // zzz378 — coerce nullish numerics and push them to the END regardless of
+      // direction (undefined − number = NaN → undefined ordering, e.g. SCORE column
+      // on a partially-scored book).
+      const av = (typeof aVal === 'number' && Number.isFinite(aVal)) ? aVal : (sortOrder === 'asc' ? Infinity : -Infinity);
+      const bv = (typeof bVal === 'number' && Number.isFinite(bVal)) ? bVal : (sortOrder === 'asc' ? Infinity : -Infinity);
+      return sortOrder === 'asc' ? av - bv : bv - av;
     });
     return sorted;
   }, [rows, sortField, sortOrder]);

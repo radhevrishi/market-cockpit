@@ -1773,13 +1773,16 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       switch(sortField) {
         case 'pe':                  return r.pe ?? (sortAsc ? 999 : -1);
         case 'peg':                 return r.peg ?? (sortAsc ? 999 : -1);
-        case 'roce':                return r.roce ?? (sortAsc ? -1 : 999);
-        case 'revCagr':             return r.revCagr ?? (sortAsc ? -1 : 999);
-        case 'profitCagr':          return r.profitCagr ?? (sortAsc ? -1 : 999);
-        case 'marketCapCr':         return r.marketCapCr ?? (sortAsc ? 999999 : -1);
-        case 'revenueAcceleration': return r.revenueAcceleration ?? (sortAsc ? -999 : 999);
-        case 'opm':                 return r.opm ?? (sortAsc ? -1 : 999);
-        case 'cfoToPat':            return r.cfoToPat ?? (sortAsc ? -1 : 999);
+        // zzz378 — missing values must sink to the BOTTOM in BOTH directions
+        // (== ascending ? +BIG : -BIG). The old hi-good sentinels were inverted, so
+        // rows with no ROCE/OPM/CFO-PAT/CAGR floated to the TOP of a descending sort.
+        case 'roce':                return r.roce ?? (sortAsc ? 1e9 : -1e9);
+        case 'revCagr':             return r.revCagr ?? (sortAsc ? 1e9 : -1e9);
+        case 'profitCagr':          return r.profitCagr ?? (sortAsc ? 1e9 : -1e9);
+        case 'marketCapCr':         return r.marketCapCr ?? (sortAsc ? 1e9 : -1e9);
+        case 'revenueAcceleration': return r.revenueAcceleration ?? (sortAsc ? 1e9 : -1e9);
+        case 'opm':                 return r.opm ?? (sortAsc ? 1e9 : -1e9);
+        case 'cfoToPat':            return r.cfoToPat ?? (sortAsc ? 1e9 : -1e9);
         default:                    return r.score; // 'score'
       }
     };

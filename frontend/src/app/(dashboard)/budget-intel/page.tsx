@@ -1701,7 +1701,7 @@ export default function BudgetIntelPage() {
             <div style={CARD}>
               <div style={H}>🤖 AI-generated executive briefing — FY {activeData.fiscalYear}</div>
               <div style={{ fontSize: 13.5, lineHeight: 1.7, color: TEXT }}
-                   dangerouslySetInnerHTML={{ __html: aiSummary.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+                   dangerouslySetInnerHTML={{ __html: aiSummary.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;')).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />  {/* zzz378 — HTML-escape uploaded-PDF-derived text before markdown-bold (self-XSS) */}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
