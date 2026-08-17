@@ -1809,7 +1809,7 @@ export default function BudgetIntelPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
                   <KV label="Total Expenditure BE" value={fmtCr(budgetTotal)} />
                   <KV label="Total Capital Expenditure" value={fmtCr(activeData.headline.totalCapExBE)} sub={activeData.headline.effectiveCapExBE ? `Effective ${fmtCr(activeData.headline.effectiveCapExBE)}` : ''} color="#22D3EE" />
-                  <KV label="Interest Payments" value={fmtCr(activeData.headline.interestPayments)} sub={activeData.headline.interestPayments && budgetTotal ? `${((activeData.headline.interestPayments / budgetTotal) * 100).toFixed(1)}% of total exp` : ''} color="#F59E0B" />
+                  <KV label="Interest Payments" value={fmtCr(activeData.headline.interestPayments)} sub={activeData.headline.interestPayments && budgetTotal ? `${((activeData.headline.interestPayments / budgetTotal) * 100).toFixed(1)}% of total outlay` : ''} color="#F59E0B" />
                   <KV label={`FY ${activeData.headline.yearActuals || 'prior'} Actuals total`} value={fmtCr(activeData.grandTotal.actualsPrev)} sub={activeData.grandTotal.actualsPrev && activeData.grandTotal.beNew ? `${fmtPct(pct(activeData.grandTotal.beNew, activeData.grandTotal.actualsPrev))} growth` : ''} />
                 </div>
               </div>

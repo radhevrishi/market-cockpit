@@ -25,6 +25,7 @@ import EarningsSearch, { type EarningsSearchResult } from './EarningsSearch';
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta } from '@/lib/earnings-grade-shared';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 // PATCH 0715 — centralized IST helpers.
@@ -610,27 +611,12 @@ function gradeRow(row: any): ParsedEarning | null {
   const magnitude = magW > 0 ? magS / magW : 30;
 
   // Quality — 100 minus caveat-specific deductions
-  const caveatPenalty: Record<string, number> = {
-    'optical eps': 20, 'tax distortion': 15, 'ocf divergence': 25,
-    'low quality': 25, 'segment mix shift': 10, 'exceptional item': 10,
-    'forex gain': 8, 'forex loss': 8, 'accelerated depreciation': 10,
-    'accounting change': 12, 'pooling of interests restate': 12, 'one time order': 10,
-  };
+  // zzz390 — caveat-penalty table + margin ladder now imported from the shared
+  // module @/lib/earnings-grade-shared (single source of truth with the server
+  // graded/route.ts) so the two copies can't drift again (they did: zzz384/386/387).
   let quality = 100;
-  for (const tag of caveat_tags) quality -= (caveatPenalty[tag] ?? 8);
-  // zzz386/zzz387 — full margin ladder (mirror server graded/route.ts PATCH 1000):
-  // margin expansion bonus AND contraction penalty. The client previously had only
-  // the single +8 expansion bonus, so contracting-margin rows were never docked and
-  // could over-grade to STRONG where the server said MIXED. zzz387 reorders so severe
-  // contraction (≤ -2pp) is checked BEFORE mild (≤ -0.5pp) — the -14 branch was
-  // otherwise unreachable. Applied to BOTH copies so client == server.
-  if (opmExp != null) {
-    if (opmExp >= 5) quality += 14;
-    else if (opmExp >= 3) quality += 10;
-    else if (opmExp >= 1) quality += 5;
-    else if (opmExp <= -2) quality -= 14;    // severe contraction (check first)
-    else if (opmExp <= -0.5) quality -= 8;   // mild contraction
-  }
+  for (const tag of caveat_tags) quality -= (CAVEAT_PENALTY[tag] ?? CAVEAT_PENALTY_DEFAULT);
+  quality += marginQualityDelta(opmExp);   // PATCH 1000 + zzz387 ordering
   quality = Math.max(0, Math.min(100, quality));
 
   // Technical — Stage base + RS / 3 + 52w proximity + trend-template bonus

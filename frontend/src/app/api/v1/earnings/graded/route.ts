@@ -24,6 +24,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
 // hard-coded 'Q4' that mislabelled every non-Jan–Mar filing (an August/Q1-FY27
@@ -276,21 +277,12 @@ function gradeRow(row: any): ParsedEarning | null {
   if (epsY   != null) { magS += scoreYoy(epsY)   * 0.35; magW += 0.35; }
   const magnitude = magW > 0 ? magS / magW : 30;
 
-  const caveatPenalty: Record<string, number> = {
-    'optical eps': 20, 'tax distortion': 15, 'ocf divergence': 25, 'low quality': 25,
-    'segment mix shift': 10, 'exceptional item': 10, 'forex gain': 8, 'forex loss': 8,
-    'accelerated depreciation': 10, 'accounting change': 12, 'pooling of interests restate': 12, 'one time order': 10,
-  };
+  // zzz390 — caveat-penalty table + margin ladder now live in the shared module
+  // @/lib/earnings-grade-shared, imported by both this route and the client
+  // gradeRow so the two copies can't drift (they repeatedly did: zzz384/386/387).
   let quality = 100;
-  for (const tag of caveat_tags) quality -= (caveatPenalty[tag] ?? 8);
-  // PATCH 1000 — margin-expansion ladder (was: only +8 at ≥3 pp).
-  if (opmExp != null) {
-    if (opmExp >= 5) quality += 14;
-    else if (opmExp >= 3) quality += 10;
-    else if (opmExp >= 1) quality += 5;
-    else if (opmExp <= -2) quality -= 14;    // zzz387 — severe contraction checked FIRST (was shadowed by -0.5, so -14 never fired)
-    else if (opmExp <= -0.5) quality -= 8;   // mild contraction
-  }
+  for (const tag of caveat_tags) quality -= (CAVEAT_PENALTY[tag] ?? CAVEAT_PENALTY_DEFAULT);
+  quality += marginQualityDelta(opmExp);   // PATCH 1000 + zzz387 ordering
   quality = Math.max(0, Math.min(100, quality));
 
   const stageBase = stage === 2 ? 70 : stage === 1 ? 45 : stage === 3 ? 30 : stage === 4 ? 10 : 50;
