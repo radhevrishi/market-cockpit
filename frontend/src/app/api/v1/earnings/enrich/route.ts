@@ -282,10 +282,15 @@ function extractScreenerTrends(html: string): Record<string, any> {
     if (pk) outT.pledged_pct = ratios[pk] ?? null;
     const ric = Object.keys(ratios).find((k) => /roic|return on invested/i.test(k));
     if (ric) outT.roic = ratios[ric] ?? null;
-    // latest-quarter P&L-quality scalars (used by the institutional chips)
-    const oiCurr = last(qRow('Other income normal') ?? qRow('Other Income'));
-    const sCurr = last(salesRow);
+    // latest + prior-quarter P&L-quality scalars (used by the institutional chips)
+    const oiFull = qRow('Other income normal') ?? qRow('Other Income');
+    const prevOf = (arr: (number | null)[] | null): number | null => (arr && arr.length >= 2 ? arr[arr.length - 2] : null);
+    const oiCurr = last(oiFull), oiPrev = prevOf(oiFull);
+    const sCurr = last(salesRow), sPrev = prevOf(salesRow);
     outT.other_income_pct_sales_curr = (oiCurr != null && sCurr != null && sCurr !== 0) ? Math.round((oiCurr / sCurr) * 1000) / 10 : null;
+    // zzz368 — prior-quarter Other-Income % of sales so the scalar "OTHER-INC ↓/↑"
+    // chip (which needs both curr AND prev) actually fires. Without prev it was null.
+    outT.other_income_pct_sales_prev = (oiPrev != null && sPrev != null && sPrev !== 0) ? Math.round((oiPrev / sPrev) * 1000) / 10 : null;
     const taxTail = qRow('Tax %');
     outT.effective_tax_rate_curr = last(taxTail);
     outT.effective_tax_rate_prev = taxTail && taxTail.length >= 2 ? taxTail[taxTail.length - 2] : null;
@@ -1419,7 +1424,8 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       'quarters_sales', 'quarters_eps', 'quarters_opm',
       'annual_cfo_pat', 'pledged_pct', 'roic',
       'exceptional_curr_cr', 'exceptional_pct_pbt',
-      'other_income_pct_sales_curr', 'effective_tax_rate_curr', 'effective_tax_rate_prev',
+      'other_income_pct_sales_curr', 'other_income_pct_sales_prev',
+      'effective_tax_rate_curr', 'effective_tax_rate_prev',
     ];
     for (const f of TREND_HOIST) {
       if ((out as any)[f] == null && co[f] != null) (out as any)[f] = co[f];

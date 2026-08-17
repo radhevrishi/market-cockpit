@@ -1,13 +1,13 @@
 'use client';
 
-// zzz-learn-full — Investing Playbook (learning) tab.
-// Content moved to ./book-data.ts (bundled at build time — no /data fetch, no 404).
-// Now carries EVERY line from Investing Book 1 + Book 2 (exact-duplicate lines
-// removed): 110 sections, 2070 subsections, ~20,250 content lines.
-// Left sidebar TOC (grouped by book, collapsible) + subsection nav + content
-// viewer + full-text search across the entire corpus.
+// zzz-learn-full-v2 — Investing Playbook (learning) tab.
+// Content in ./book-data.ts (bundled at build — no fetch, no 404). Carries EVERY
+// line from Investing Book 1 + Book 2 (only whole duplicate sections merged; NO
+// per-line deletion): 104 sections, ~2,150 sub-sections, ~30,300 lines.
+// Reading-optimised: fixed reading column, per-section "what you'll learn" blurb,
+// prev/next navigation, progress, sub-section jump list, full-text search.
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { BOOK, type Part } from './book-data';
 
 const C = {
@@ -25,9 +25,13 @@ export default function InvestingPlaybookPage() {
   const [activeSub, setActiveSub] = useState<number>(-1);
   const [q, setQ] = useState<string>('');
   const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set([0]));
+  const mainRef = useRef<HTMLDivElement>(null);
 
   const totalLines = useMemo(() => BOOK.reduce((n, p) => n + partLines(p), 0), []);
   const totalSubs = useMemo(() => BOOK.reduce((n, p) => n + p.subs.length, 0), []);
+
+  // Scroll content to top whenever the active section/sub changes.
+  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [activePart, activeSub]);
 
   const searchHits = useMemo(() => {
     if (!q.trim()) return null;
@@ -38,19 +42,16 @@ export default function InvestingPlaybookPage() {
       for (const para of p.paras || []) {
         if (para.toLowerCase().includes(needle)) {
           hits.push({ partIdx: pi, subIdx: -1, snippet: para.slice(0, 180), title: p.title });
-          if (hits.length >= 200) return hits;
+          if (hits.length >= 250) return hits;
         }
       }
       for (let si = 0; si < p.subs.length; si++) {
         const s = p.subs[si];
-        if (s.title.toLowerCase().includes(needle)) {
-          hits.push({ partIdx: pi, subIdx: si, snippet: s.title.slice(0, 180), title: p.title + ' · ' + s.title });
-          if (hits.length >= 200) return hits;
-        }
+        if (s.title.toLowerCase().includes(needle)) hits.push({ partIdx: pi, subIdx: si, snippet: s.title, title: p.title + ' · ' + s.title });
         for (const para of s.paras) {
           if (para.toLowerCase().includes(needle)) {
             hits.push({ partIdx: pi, subIdx: si, snippet: para.slice(0, 180), title: p.title + ' · ' + s.title });
-            if (hits.length >= 200) return hits;
+            if (hits.length >= 250) return hits;
           }
         }
       }
@@ -60,8 +61,8 @@ export default function InvestingPlaybookPage() {
 
   const currentPart = BOOK[activePart];
   const displayedSubs = activeSub >= 0 ? [currentPart.subs[activeSub]] : currentPart.subs;
+  const go = (pi: number, si: number = -1) => { setActivePart(pi); setActiveSub(si); if (!expandedParts.has(pi)) { const e = new Set(expandedParts); e.add(pi); setExpandedParts(e); } };
 
-  // Group parts by book for the sidebar (Book 1 / Book 2 headers).
   let lastBook = -1;
 
   return (
@@ -89,16 +90,16 @@ export default function InvestingPlaybookPage() {
                   </div>
                 )}
                 <button
-                  onClick={() => { setActivePart(pi); setActiveSub(-1); const e = new Set(expandedParts); if (e.has(pi)) e.delete(pi); else e.add(pi); setExpandedParts(e); }}
+                  onClick={() => { go(pi, -1); const e = new Set(expandedParts); if (e.has(pi)) e.delete(pi); else e.add(pi); setExpandedParts(e); }}
                   style={{ width: '100%', textAlign: 'left', padding: '9px 16px', background: active ? C.cyan + '15' : 'transparent', border: 'none', borderLeft: active ? '3px solid ' + C.cyan : '3px solid transparent', color: active ? C.cyan : C.text, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.subs.length > 0 ? (expanded ? '▼' : '▶') : '·'} {p.title}</span>
                   <span style={{ fontSize: 10, color: C.text3, fontWeight: 500 }}>{partLines(p)}</span>
                 </button>
                 {expanded && p.subs.length > 0 && (
                   <div style={{ background: C.panel2, borderLeft: '3px solid ' + C.border }}>
-                    <button onClick={() => { setActivePart(pi); setActiveSub(-1); }} style={{ width: '100%', textAlign: 'left', padding: '6px 20px', background: activeSub === -1 && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === -1 && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', fontStyle: 'italic' }}>⇢ All sub-sections</button>
+                    <button onClick={() => go(pi, -1)} style={{ width: '100%', textAlign: 'left', padding: '6px 20px', background: activeSub === -1 && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === -1 && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', fontStyle: 'italic' }}>⇢ Read full section</button>
                     {p.subs.map((s, si) => (
-                      <button key={si} onClick={() => { setActivePart(pi); setActiveSub(si); }} style={{ width: '100%', textAlign: 'left', padding: '5px 20px', background: activeSub === si && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === si && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title.slice(0, 48)}</button>
+                      <button key={si} onClick={() => go(pi, si)} style={{ width: '100%', textAlign: 'left', padding: '5px 20px', background: activeSub === si && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === si && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title.slice(0, 48)}</button>
                     ))}
                   </div>
                 )}
@@ -107,21 +108,42 @@ export default function InvestingPlaybookPage() {
           })}
         </nav>
       </aside>
-      <main style={{ flex: 1, padding: '30px 40px 80px', overflow: 'auto', minWidth: 0 }}>
+      <main ref={mainRef} style={{ flex: 1, padding: '30px 40px 90px', overflow: 'auto', minWidth: 0 }}>
         {searchHits ? (
-          <div>
-            <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>{searchHits.length}{searchHits.length >= 200 ? '+' : ''} results for "{q}"</div>
+          <div style={{ maxWidth: 820, margin: '0 auto' }}>
+            <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>{searchHits.length}{searchHits.length >= 250 ? '+' : ''} results for "{q}"</div>
             {searchHits.map((h, i) => (
-              <div key={i} onClick={() => { setActivePart(h.partIdx); setActiveSub(h.subIdx); setQ(''); }} style={{ padding: '12px 14px', background: C.panel, border: '1px solid ' + C.border, borderRadius: 8, marginBottom: 8, cursor: 'pointer' }}>
+              <div key={i} onClick={() => { go(h.partIdx, h.subIdx); setQ(''); }} style={{ padding: '12px 14px', background: C.panel, border: '1px solid ' + C.border, borderRadius: 8, marginBottom: 8, cursor: 'pointer' }}>
                 <div style={{ fontSize: 11, color: C.cyan, fontWeight: 700, marginBottom: 4 }}>{h.title}</div>
                 <div style={{ fontSize: 13, color: C.text }} dangerouslySetInnerHTML={{ __html: highlight(h.snippet, q) + '…' }} />
               </div>
             ))}
           </div>
         ) : (
-          <article>
-            <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 6 }}>BOOK {currentPart.book}</div>
-            <h1 style={{ fontSize: 30, fontWeight: 800, marginTop: 0, marginBottom: 24, letterSpacing: '-0.5px' }}>{currentPart.title}</h1>
+          <article style={{ maxWidth: 820, margin: '0 auto' }}>
+            <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 6 }}>
+              BOOK {currentPart.book} · Section {activePart + 1} of {BOOK.length}
+            </div>
+            <h1 style={{ fontSize: 30, fontWeight: 800, marginTop: 0, marginBottom: 14, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{currentPart.title}</h1>
+            {(currentPart as any).summary && (
+              <div style={{ background: C.cyan + '10', border: '1px solid ' + C.cyan + '33', borderRadius: 8, padding: '12px 16px', marginBottom: 24, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <span style={{ fontSize: 15 }}>📖</span>
+                <div>
+                  <div style={{ fontSize: 10.5, color: C.cyan, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 3 }}>PREVIEW</div>
+                  <div style={{ fontSize: 14, color: C.text, lineHeight: 1.5 }}>{(currentPart as any).summary}</div>
+                </div>
+              </div>
+            )}
+            {activeSub === -1 && currentPart.subs.length > 0 && (
+              <div style={{ background: C.panel, border: '1px solid ' + C.border, borderRadius: 8, padding: '12px 16px', marginBottom: 26 }}>
+                <div style={{ fontSize: 10.5, color: C.text3, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 8 }}>IN THIS SECTION ({currentPart.subs.length})</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {currentPart.subs.map((s, si) => (
+                    <button key={si} onClick={() => go(activePart, si)} style={{ background: C.panel2, border: '1px solid ' + C.border, borderRadius: 5, color: C.text2, fontSize: 11.5, padding: '4px 9px', cursor: 'pointer', textAlign: 'left' }}>{s.title.slice(0, 46)}</button>
+                  ))}
+                </div>
+              </div>
+            )}
             {currentPart.paras && currentPart.paras.length > 0 && (
               <section style={{ marginBottom: 30 }}>
                 {currentPart.paras.map((p, i) => renderPara(p, i))}
@@ -133,9 +155,17 @@ export default function InvestingPlaybookPage() {
                 {s.paras.map((p, j) => renderPara(p, j))}
               </section>
             ))}
-            {activeSub >= 0 && (
-              <button onClick={() => setActiveSub(-1)} style={{ marginTop: 10, padding: '8px 14px', background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.cyan, fontSize: 12, cursor: 'pointer' }}>⇢ Show all sub-sections of this part</button>
-            )}
+            {/* Prev / Next navigation */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 40, paddingTop: 20, borderTop: '1px solid ' + C.border }}>
+              <button disabled={activePart === 0} onClick={() => go(activePart - 1, -1)} style={{ flex: 1, textAlign: 'left', padding: '12px 16px', background: activePart === 0 ? 'transparent' : C.panel, border: '1px solid ' + C.border, borderRadius: 8, color: activePart === 0 ? C.text3 : C.text, cursor: activePart === 0 ? 'default' : 'pointer', opacity: activePart === 0 ? 0.4 : 1 }}>
+                <div style={{ fontSize: 10.5, color: C.text3 }}>← Previous</div>
+                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activePart > 0 ? BOOK[activePart - 1].title : ''}</div>
+              </button>
+              <button disabled={activePart === BOOK.length - 1} onClick={() => go(activePart + 1, -1)} style={{ flex: 1, textAlign: 'right', padding: '12px 16px', background: activePart === BOOK.length - 1 ? 'transparent' : C.panel, border: '1px solid ' + C.border, borderRadius: 8, color: activePart === BOOK.length - 1 ? C.text3 : C.text, cursor: activePart === BOOK.length - 1 ? 'default' : 'pointer', opacity: activePart === BOOK.length - 1 ? 0.4 : 1 }}>
+                <div style={{ fontSize: 10.5, color: C.text3 }}>Next →</div>
+                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activePart < BOOK.length - 1 ? BOOK[activePart + 1].title : ''}</div>
+              </button>
+            </div>
           </article>
         )}
       </main>
@@ -147,12 +177,16 @@ function renderPara(p: string, key: React.Key): React.ReactNode {
   const trimmed = p.trim();
   if (!trimmed) return null;
   if (trimmed.startsWith('•') || trimmed.startsWith('-') || trimmed.startsWith('*') || /^\d+\.\s/.test(trimmed)) {
-    return <div key={key} style={{ padding: '6px 0 6px 20px', fontSize: 15, lineHeight: 1.7, color: C.text }}>{trimmed}</div>;
+    return <div key={key} style={{ padding: '5px 0 5px 20px', fontSize: 15.5, lineHeight: 1.75, color: C.text }}>{trimmed}</div>;
   }
   if (trimmed.length < 80 && trimmed.endsWith(':') && trimmed[0] === trimmed[0].toUpperCase()) {
-    return <div key={key} style={{ padding: '10px 0 4px', fontSize: 15, fontWeight: 700, color: C.gold }}>{trimmed}</div>;
+    return <div key={key} style={{ padding: '12px 0 4px', fontSize: 15.5, fontWeight: 700, color: C.gold }}>{trimmed}</div>;
   }
-  return <p key={key} style={{ fontSize: 15, lineHeight: 1.75, color: C.text, margin: '10px 0' }}>{trimmed}</p>;
+  // Arrow-chain / formula lines get a subtle mono treatment for readability.
+  if (/[→↓↑]/.test(trimmed) && trimmed.length < 120) {
+    return <div key={key} style={{ padding: '6px 0', fontSize: 14.5, lineHeight: 1.7, color: C.purple, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{trimmed}</div>;
+  }
+  return <p key={key} style={{ fontSize: 15.5, lineHeight: 1.8, color: C.text, margin: '11px 0' }}>{trimmed}</p>;
 }
 
 function highlight(text: string, q: string): string {
