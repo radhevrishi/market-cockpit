@@ -414,6 +414,20 @@ function parseTrendlynePeriodEnd(s: string): string | null {
 // PATCH 0145: additionally skip rows whose company hasn't actually filed yet
 //  — either filing_date is in the future, OR Screener's latest quarter
 //  doesn't match the period Trendlyne promised.
+// zzz379 — derive the RESULT quarter from a filing date instead of hard-coded 'Q4'
+// (August/Q1-FY27 filings were rendering "Q4 results"). Matches the server helper.
+function deriveQuarterLabel(filingDate?: string | null): 'Q1'|'Q2'|'Q3'|'Q4' {
+  try {
+    const iso = filingDate && filingDate.length === 10 ? filingDate + 'T00:00:00Z' : (filingDate || '');
+    const d = iso ? new Date(iso) : new Date();
+    const m = (Number.isFinite(d.getTime()) ? d.getUTCMonth() : new Date().getUTCMonth()) + 1;
+    if (m >= 1 && m <= 3) return 'Q3';
+    if (m >= 4 && m <= 6) return 'Q4';
+    if (m >= 7 && m <= 9) return 'Q1';
+    return 'Q2';
+  } catch { return 'Q4'; }
+}
+
 function gradeRow(row: any): ParsedEarning | null {
   const salesY: number | null = row?.sales_yoy_pct ?? null;
   const patY:   number | null = row?.pat_yoy_pct ?? null;
@@ -447,7 +461,7 @@ function gradeRow(row: any): ParsedEarning | null {
       company: row.company || row.symbol,
       sector: row.sector,
       filing_date: row.filing_date,
-      quarter: row.quarter || 'Q4',
+      quarter: row.quarter || deriveQuarterLabel(row.filing_date),
       market_cap_bucket: row.market_cap_bucket,
       market_cap_cr: row.market_cap_cr ?? null,
       pe: null,
@@ -468,7 +482,7 @@ function gradeRow(row: any): ParsedEarning | null {
       tier,
       methodology_tags: [],
       caveat_tags: [],
-      narrative: `${row.company || row.symbol} reported Q4 results${moveLabel}. Financial detail awaiting enrichment.`,
+      narrative: `${row.company || row.symbol} reported ${deriveQuarterLabel(row.filing_date)} results${moveLabel}. Financial detail awaiting enrichment.`,
       filing_url: row.source_url,
       source: 'NSE+BSE',
     };
@@ -752,7 +766,7 @@ function gradeRow(row: any): ParsedEarning | null {
 
   // ── Narrative ──────────────────────────────────────────────────────────
   const co = row.company || row.symbol;
-  const q = row.quarter || 'Q4';
+  const q = row.quarter || deriveQuarterLabel(row.filing_date);
   // PATCH 1034 — Liquidity / thin-float gate (mirrors server). Demote thin names
   // out of the top tiers + tag. Missing ADTV is not punished.
   const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
@@ -777,7 +791,7 @@ function gradeRow(row: any): ParsedEarning | null {
     company: row.company || row.symbol,
     sector: row.sector,
     filing_date: row.filing_date,
-    quarter: row.quarter || 'Q4',
+    quarter: row.quarter || deriveQuarterLabel(row.filing_date),
     market_cap_bucket: row.market_cap_bucket,
     market_cap_cr: row.market_cap_cr ?? null,
     pe: row.pe ?? null,
@@ -858,7 +872,7 @@ function useEarningsOpportunitiesJoined(
       symbol: m.ticker,
       company: m.company,
       filing_date: m.resultDate,
-      quarter: m.quarter || e.quarter || 'Q4',
+      quarter: m.quarter || e.quarter || deriveQuarterLabel((m as any).resultDate || (m as any).filing_date),
       sector: m.sector || e.sector,
       market_cap_bucket: e.market_cap_bucket
         || (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
@@ -2171,7 +2185,7 @@ export default function EarningsOpportunitiesPage() {
           // No financials available even via direct fetch — still inject preview
           out.push({
             ticker, company: e.company || ticker, sector: e.sector,
-            filing_date: resolvedDateForGrading, quarter: e.quarter || 'Q4',
+            filing_date: resolvedDateForGrading, quarter: e.quarter || deriveQuarterLabel(resolvedDateForGrading),
             market_cap_bucket: e.market_cap_bucket || null,
             market_cap_cr: e.market_cap_cr ?? null,
             pe: null, price: e.current_price ?? null,
@@ -2193,7 +2207,7 @@ export default function EarningsOpportunitiesPage() {
         const row = {
           symbol: ticker, company: e.company || ticker,
           filing_date: resolvedDateForGrading,
-          quarter: e.quarter || 'Q4', sector: e.sector,
+          quarter: e.quarter || deriveQuarterLabel(resolvedDateForGrading), sector: e.sector,
           market_cap_bucket: e.market_cap_bucket,
           market_cap_cr: e.market_cap_cr ?? null,
           source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(ticker)}`,

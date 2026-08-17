@@ -1193,8 +1193,9 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   // Math.floor ensures caps bind exactly. 78 stays 75. 72 stays 70.
   score = Math.max(0, Math.min(100, Math.floor(score/5)*5));
 
-  // Grade
-  const grade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
+  // Grade (zzz379 — `let` so the post-RS-momentum re-clamp below can keep it
+  // consistent with the final score; still never improves past the capped grade).
+  let grade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
 
   // Recompute derived fields every time — fixes stale localStorage data where
   // these were undefined because they were added after the original upload.
@@ -1229,6 +1230,18 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     if (rs >= 80) strengths.push(`🚀 RS Rating ${rs} — top 20% momentum (3M ${p3.toFixed(0)}% · 6M ${p6.toFixed(0)}% · 1Y ${p12.toFixed(0)}%)`);
     else if (rs <= 20) risks.push(`⚠️ RS Rating ${rs} — bottom 20% momentum, name is being sold`);
     score = Math.round(score + Math.min(6, Math.max(-6, (rs - 50) / 10)));
+    // zzz379 — the ±6 momentum tilt was mutating score AFTER the authoritative
+    // floor-cap+grade, so a hard-capped-78 (→75) name with strong momentum showed
+    // 81 with a B+ grade (breached the cap + score↔grade mismatch). Re-floor, and
+    // recompute the grade but NEVER let momentum improve it past the pre-momentum
+    // capped grade (caps bind); then clamp the displayed score into the final
+    // grade's band so an "81 · B+" can't render.
+    score = Math.max(0, Math.min(100, Math.floor(score / 5) * 5));
+    const _momGrade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
+    const _gOrder: USAGrade[] = ['A+','A','B+','B','C','D'];
+    grade = _gOrder[Math.max(_gOrder.indexOf(grade), _gOrder.indexOf(_momGrade))];
+    const _bandTop: Record<USAGrade, number> = { 'A+':100, 'A':89, 'B+':79, 'B':67, 'C':54, 'D':41 };
+    if (score > _bandTop[grade]) score = _bandTop[grade];
   }
   // FORWARD PEG — Forward P/E ÷ forward EPS growth %
   let forwardPeg: number | undefined = undefined;

@@ -25,6 +25,22 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
+// zzz379 — derive the correct RESULT quarter from a filing date instead of the
+// hard-coded 'Q4' that mislabelled every non-Jan–Mar filing (an August/Q1-FY27
+// print was rendering "reported Q4 results"). Mapping matches getExpectedQuarter
+// in api/market/earnings: Jan–Mar filing → Q3, Apr–Jun → Q4, Jul–Sep → Q1, Oct–Dec → Q2.
+function deriveQuarterLabel(filingDate?: string | null): string {
+  try {
+    const iso = filingDate && filingDate.length === 10 ? filingDate + 'T00:00:00Z' : (filingDate || '');
+    const d = iso ? new Date(iso) : new Date();
+    const m = (Number.isFinite(d.getTime()) ? d.getUTCMonth() : new Date().getUTCMonth()) + 1;
+    if (m >= 1 && m <= 3) return 'Q3';
+    if (m >= 4 && m <= 6) return 'Q4';
+    if (m >= 7 && m <= 9) return 'Q1';
+    return 'Q2';
+  } catch { return 'Q4'; }
+}
+
 
 // PATCH 0983 — Railway self-fetch loopback fallback (module-level).
 // graded/route.ts makes TWO self-fetches to /api/v1/earnings/enrich
@@ -127,11 +143,11 @@ function gradeRow(row: any): ParsedEarning | null {
     if (row?.eps_curr != null) absoluteBits.push(`EPS \u20B9${row.eps_curr}`);
     const absStr = absoluteBits.length ? ' \u00b7 ' + absoluteBits.join(' \u00b7 ') : '';
     const narrative = hasAnyAbsolute
-      ? `${row.company || row.symbol} Q4 results${moveLabel}${absStr}. YoY comparison unavailable (prior-period data missing).`
-      : `${row.company || row.symbol} reported Q4 results${moveLabel}. Financial detail awaiting enrichment.`;
+      ? `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${absStr}. YoY comparison unavailable (prior-period data missing).`
+      : `${row.company || row.symbol} reported ${deriveQuarterLabel(row.filing_date)} results${moveLabel}. Financial detail awaiting enrichment.`;
     return {
       ticker: row.symbol, company: row.company || row.symbol, sector: row.sector, filing_date: row.filing_date,
-      quarter: row.quarter || 'Q4', market_cap_bucket: row.market_cap_bucket,
+      quarter: row.quarter || deriveQuarterLabel(row.filing_date), market_cap_bucket: row.market_cap_bucket,
       market_cap_cr: row.marketCapCr ?? row.market_cap_cr ?? null,
       pe: row.pe ?? row.stockPE ?? null,
       price: row.current_price ?? null,
@@ -432,7 +448,7 @@ function gradeRow(row: any): ParsedEarning | null {
 
   // Narrative
   const co = row.company || row.symbol;
-  const q = row.quarter || 'Q4';
+  const q = row.quarter || deriveQuarterLabel(row.filing_date);
   const fmtP = (lbl: string, v: number | null) => v == null ? '' : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`;
   const head = tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${q}` :
                tier === 'STRONG' ? `${co} delivers strong ${q}` :
@@ -499,7 +515,7 @@ function gradeRow(row: any): ParsedEarning | null {
     company: row.company || row.symbol,
     sector: row.sector,
     filing_date: row.filing_date,
-    quarter: row.quarter || 'Q4',
+    quarter: row.quarter || deriveQuarterLabel(row.filing_date),
     market_cap_bucket: row.market_cap_bucket,
     market_cap_cr: row.market_cap_cr ?? null,
     adtv_cr: _adtv,  // PATCH 1034 — liquidity (median ₹Cr/day)
@@ -999,7 +1015,7 @@ export async function GET(req: Request) {
             ticker: sym,
             company: f.company || sym,
             resultDate: date,
-            quarter: 'Q4',  // default; gradeRow can still process it
+            quarter: deriveQuarterLabel(date),  // zzz379 — was 'Q4'; derive from filing date
             sector: null,
             marketCap: null,
             quality: 'Confirmed',  // it's a real NSE filing, not a board-meeting forecast
@@ -1056,7 +1072,7 @@ export async function GET(req: Request) {
             ticker: sym,
             company: it.company || sym,
             resultDate: date,
-            quarter: 'Q4',
+            quarter: deriveQuarterLabel(date),  // zzz379
             sector: null,
             marketCap: null,
             quality: 'Confirmed',
@@ -1107,7 +1123,7 @@ export async function GET(req: Request) {
             ticker: sym,
             company: f.company || sym,
             resultDate: date,
-            quarter: 'Q4',
+            quarter: deriveQuarterLabel(date),  // zzz379
             sector: null,
             marketCap: null,
             quality: 'Confirmed',
@@ -1280,7 +1296,7 @@ export async function GET(req: Request) {
         ? e.company
         : (m.company && m.company.toUpperCase() !== String(m.ticker).toUpperCase() ? m.company : (e.company || m.company || m.ticker)),
       filing_date: m.resultDate,
-      quarter: m.quarter || e.quarter || 'Q4',
+      quarter: m.quarter || e.quarter || deriveQuarterLabel(m.resultDate),
       sector: e.sector || m.sector,
       market_cap_bucket: e.market_cap_bucket ||
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),

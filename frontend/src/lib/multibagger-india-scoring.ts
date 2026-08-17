@@ -955,6 +955,17 @@ export function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
       }
     }
 
+    // zzz379 — SCORE-BAND CEILING (architecture rule #1: never let percentile rank
+    // PROMOTE a row above its capped score). The rank grade above can lift a
+    // low-score row to A/A+ in a weak/small universe even though scoreExcelRow
+    // capped its SCORE at 48/60 for structural flags. Take the WORSE of the rank
+    // grade and the score-band grade (r.grade from the score→grade bands at the end
+    // of scoreExcelRow) — exactly what the USA engine does (Math.max(scoreRank,
+    // rankRank)). Rank can still DEMOTE; it can no longer promote past the score.
+    const GRADE_RANK: Grade[] = ['A+', 'A', 'B+', 'B', 'C', 'D'];
+    const worseIdx = Math.max(GRADE_RANK.indexOf(grade), GRADE_RANK.indexOf(r.grade));
+    if (worseIdx >= 0) grade = GRADE_RANK[worseIdx];
+
     return { ...r, grade };
   });
 }
