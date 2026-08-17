@@ -382,7 +382,35 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
         }
       }
     }
-    map[bareKey] = { ...(e as any), ticker, added_at: existing?.added_at || new Date().toISOString() };
+    // zzz372 — when the incoming record replaces an existing one for the SAME
+    // filing (tier upgrade STRONG→BLOCKBUSTER) or a newer filing, carry over any
+    // enrichment field the incoming record doesn't supply. Graded/EO payloads
+    // never carry P/E, ROCE, drift, trend series or the cb_enrich_v marker, so a
+    // plain overwrite blanked P/E + DRIFT on the card until the next re-enrich
+    // walk (and left it blank for good if that walk's chunk timed out).
+    // Price/drift fields are only carried for the SAME filing_date (a new
+    // quarter's drift must be re-anchored, so those start null and re-enrich).
+    let carried: Record<string, any> = {};
+    if (existing) {
+      const sameFiling = existing.filing_date === e.filing_date;
+      const SLOW = ['roce', 'roe', 'debtToEquity', 'debt_to_equity', 'rs_rating', 'sector', 'market_cap_cr',
+        'pledged_pct', 'roic', 'int_coverage', 'debtor_days', 'inventory_days', 'wc_days',
+        'quarters_sales', 'quarters_eps', 'quarters_opm', 'quarters_material_cost_pct',
+        'quarters_other_income_pct', 'quarters_tax_pct', 'annual_cfo_pat',
+        'other_income_pct_sales_curr', 'other_income_pct_sales_prev',
+        'effective_tax_rate_curr', 'effective_tax_rate_prev', 'exceptional_curr_cr', 'exceptional_pct_pbt',
+        'ebitda_margin_pct', 'receivables_yoy_pct', 'inventory_yoy_pct', 'dep_yoy_pct',
+        'finance_cost_curr_cr', 'ebit_curr_cr', 'ebit_yoy_pct', 'ebitda_curr_cr', 'ebitda_yoy_pct',
+        'pat_margin_curr', 'pat_margin_prev', 'avg_vol_20d', 'vol_ratio_20d', 'dist_52w_pct_yahoo', 'cfo_to_pat_ratio', 'ocf_to_pat_ratio'];
+      const PRICE = ['pe', 'move_pct', 'd2_pct', 'd1_pct', 'gap_pct', 'close_30d', 'opm_pct', 'opm_prev_pct', 'pead_score', 'cb_enrich_v', 'cb_trend_attempts', 'guidance', 'guidance_score'];
+      const keys = sameFiling ? [...SLOW, ...PRICE] : SLOW;
+      for (const k of keys) {
+        if ((e as any)[k] == null && (existing as any)[k] != null) carried[k] = (existing as any)[k];
+      }
+    }
+    const merged: any = { ...(e as any), ticker, added_at: existing?.added_at || new Date().toISOString() };
+    for (const k of Object.keys(carried)) { if (merged[k] == null) merged[k] = carried[k]; }  // incoming explicit nulls don't beat carried values
+    map[bareKey] = merged;
     count++;
   }
   if (count > 0) {
@@ -469,6 +497,37 @@ export function getConvictionList(): ConvictionEntry[] {
     if (a.tier !== b.tier) return a.tier === 'BLOCKBUSTER' ? -1 : 1;
     return b.composite_score - a.composite_score;
   });
+}
+
+/** zzz372 — OVERWRITE specific fields on existing bare-ticker entries.
+ *  syncFromEarningsOps() deliberately null-fills (fill only when current is null)
+ *  so a stale cached graded payload can never clobber fresher data. But the
+ *  watchlists re-enrich walk fetches LIVE values (drift, P/E, CFO/PAT, ROCE) and
+ *  those must replace what is on the bench — e.g. the zzz371 CFO/PAT alignment
+ *  fix (KMEW 1.17 → 0.62) could never land through fill(). Only non-null incoming
+ *  values are written; unknown tickers are ignored. One write + one event. */
+export function patchConvictionEntries(patches: Array<Record<string, any> & { ticker: string }>): number {
+  if (typeof window === 'undefined') return 0;
+  const map = readConvictionBeats();
+  let count = 0;
+  for (const p of patches) {
+    const key = String(p.ticker || '').toUpperCase();
+    const cur = map[key];
+    if (!cur) continue;
+    let changed = false;
+    for (const k of Object.keys(p)) {
+      if (k === 'ticker') continue;
+      const v = (p as any)[k];
+      if (v == null) continue;
+      if ((cur as any)[k] !== v) { (cur as any)[k] = v; changed = true; }
+    }
+    if (changed) { map[key] = { ...cur }; count++; }
+  }
+  if (count > 0) {
+    writeConvictionBeats(map);
+    window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
+  }
+  return count;
 }
 
 /** Clear all entries (rarely used — admin reset) */

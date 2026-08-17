@@ -11,6 +11,7 @@ import { isPriceSuspect } from '@/lib/nse';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import {
   getConvictionList, removeConviction, syncFromEarningsOps,
+  patchConvictionEntries,  // zzz372
   readConvictionBin, restoreConvictionBin,
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
@@ -2204,7 +2205,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
-        || (e as any).cb_enrich_v !== 369  // zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
+        || (e as any).cb_enrich_v !== 371  // zzz372 (was 369) — one-time re-enrich so zzz371 CFO/PAT value fixes propagate. zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
         || needsTrends(e)  // zzz369 — keep retrying until the trend series lands
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
@@ -2233,10 +2234,26 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           const chunk = tickers.slice(ci, ci + 8);
           try {
           const url = `/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${dt}${retry ? '&nocache=1' : ''}`;
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) { await new Promise(r => setTimeout(r, 300)); continue; }
-          const j = await res.json();
-          const data = j?.data || {};
+          // zzz372 — a failed/timed-out batch used to be SKIPPED, leaving every symbol in
+          // the chunk without P/E, DRIFT, ROCE (the "P/E vanished on many cards" symptom,
+          // clustered by chunk/date). Now: fall back to per-symbol fetches so one slow
+          // Screener scrape can't blank seven neighbours.
+          let data: Record<string, any> = {};
+          let batchOk = false;
+          try {
+            const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
+            if (res.ok) { const j = await res.json(); data = j?.data || {}; batchOk = true; }
+          } catch {}
+          if (!batchOk || chunk.some(sym => !data[sym])) {
+            for (const sym of chunk) {
+              if (data[sym]) continue;
+              try {
+                const r1 = await fetch(`/api/v1/earnings/enrich?symbols=${sym}&filed=${dt}${retry ? '&nocache=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
+                if (r1.ok) { const j1 = await r1.json(); if (j1?.data?.[sym]) data[sym] = j1.data[sym]; }
+              } catch {}
+              await new Promise(r => setTimeout(r, 150));
+            }
+          }
           const syncEntries: any[] = [];
           for (const sym of chunk) {
             const enr = data[sym];
@@ -2255,8 +2272,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // Only fields we want to update:
               d1_pct: typeof enr.d1_pct === 'number' ? enr.d1_pct : (existing as any).d1_pct,
               gap_pct: typeof enr.gap_pct === 'number' ? enr.gap_pct : (existing as any).gap_pct,
-              d2_pct: typeof enr.d2_pct === 'number' ? enr.d2_pct : null,
-              move_pct: typeof enr.move_pct === 'number' ? enr.move_pct : null,
+              // zzz372 — never null-out drift on a partial/nocache response; keep what we have.
+              d2_pct: typeof enr.d2_pct === 'number' ? enr.d2_pct : (existing as any).d2_pct,
+              move_pct: typeof enr.move_pct === 'number' ? enr.move_pct : (existing as any).move_pct,
               opm_pct: typeof enr.opm_pct === 'number' ? enr.opm_pct : (existing as any).opm_pct,
               opm_prev_pct: typeof enr.opm_prev_pct === 'number' ? enr.opm_prev_pct : (existing as any).opm_prev_pct,
               // zzz242 — pull trailing P/E from enrich response (fallback to stockPE)
@@ -2304,12 +2322,34 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // zzz363 — one-off / exceptional-item fields (v9 cache)
               exceptional_curr_cr: typeof enr.exceptional_curr_cr === 'number' ? enr.exceptional_curr_cr : (existing as any).exceptional_curr_cr,
               exceptional_pct_pbt: typeof enr.exceptional_pct_pbt === 'number' ? enr.exceptional_pct_pbt : (existing as any).exceptional_pct_pbt,
-              cb_enrich_v: 369,  // zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
+              cb_enrich_v: 371,  // zzz372 — bump (was 369) so re-enrich fires once for the v13 cache. zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
               // zzz369 — count trend-fetch attempts so needsTrends() retry is bounded.
               cb_trend_attempts: ((existing as any).cb_trend_attempts || 0) + 1,
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
+          // zzz372 — syncFromEarningsOps null-fills only (by design, so stale graded
+          // payloads can't clobber data). But THIS walk carries LIVE values, and some
+          // must OVERWRITE: the zzz371 CFO/PAT alignment fix (KMEW 1.17 → 0.62),
+          // fresh drift/P/E after a re-enrich, corrected ROCE/ROE. Patch those in.
+          if (syncEntries.length > 0) {
+            const live = syncEntries.map(se => {
+              const enr = data[se.ticker] || {};
+              const n = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+              return {
+                ticker: se.ticker,
+                move_pct: n(enr.move_pct), d2_pct: n(enr.d2_pct), d1_pct: n(enr.d1_pct), gap_pct: n(enr.gap_pct),
+                pe: n(enr.pe) ?? n(enr.stockPE),
+                roce: n(enr.roce), roe: n(enr.roe), debtToEquity: n(enr.debtToEquity),
+                cfo_to_pat_ratio: n(enr.ocf_to_pat_ratio), ocf_to_pat_ratio: n(enr.ocf_to_pat_ratio),
+                close_30d: Array.isArray(enr.close_30d) && enr.close_30d.length >= 2 ? enr.close_30d : null,
+                other_income_pct_sales_curr: n(enr.other_income_pct_sales_curr), other_income_pct_sales_prev: n(enr.other_income_pct_sales_prev),
+                effective_tax_rate_curr: n(enr.effective_tax_rate_curr), effective_tax_rate_prev: n(enr.effective_tax_rate_prev),
+                roic: n(enr.roic), pledged_pct: n(enr.pledged_pct),
+              };
+            });
+            try { patchConvictionEntries(live); } catch {}
+          }
           } catch {}
           // Throttle between chunks
           await new Promise(r => setTimeout(r, 300));
@@ -4843,7 +4883,10 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         }
         // ⚠️ TAX-BENEFIT −Xpp — effective tax rate below prev by >5pp (optical EPS boost).
         const taxC = num(e.effective_tax_rate_curr), taxP = num(e.effective_tax_rate_prev);
-        if (taxC !== null && taxP !== null && (taxP - taxC) > 5) {
+        // zzz372 — sanity band: effective tax rates outside [-50, 100] are artifacts of a
+        // near-zero / negative PBT denominator (DCW showed −9497%). Skip the chip then.
+        const taxSane = (v: number | null): v is number => v !== null && v >= -50 && v <= 100;
+        if (taxSane(taxC) && taxSane(taxP) && (taxP - taxC) > 5) {
           chips.push({ icon: '⚠️', label: `TAX-BENEFIT −${(taxP - taxC).toFixed(0)}pp`, color: AMBER,
             tip: `Effective tax rate dropped ${(taxP - taxC).toFixed(1)}pp YoY (${taxP.toFixed(1)}% → ${taxC.toFixed(1)}%). Optical EPS boost — check if one-off.` });
         }
@@ -4987,18 +5030,25 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
             tip: `Other income % by quarter: ${seriesStr(e.quarters_other_income_pct)}. FALLING = cleaner/operating-driven (good); rising = earnings-quality watch (amber).` });
         }
         // Tax % — show latest; sharp DROP (>5pp below prior) = amber "tax-aided"; up = neutral.
-        const tax = lastTwo(e.quarters_tax_pct);
+        // zzz372 — same sanity band as the TAX-BENEFIT chip: a quarter with ~0 or negative
+        // PBT makes tax % explode (DCW −9497%). Drop those points before taking lastTwo.
+        const taxSeries = Array.isArray(e.quarters_tax_pct)
+          ? e.quarters_tax_pct.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && x >= -50 && x <= 100)
+          : null;
+        const tax = lastTwo(taxSeries);
         if (tax) {
           const d = tax.latest - tax.prev;
           const taxAided = d < -5;
           const col = taxAided ? AMBER : NEU;
           tps.push({ key: 'tax', label: taxAided ? 'TAX·aided' : 'TAX', latest: tax.latest, delta: d, col,
-            tip: `Tax rate % by quarter: ${seriesStr(e.quarters_tax_pct)}. Sharp drop (>5pp below prior) = tax-aided EPS (amber); normalizing up = neutral.` });
+            tip: `Tax rate % by quarter: ${seriesStr(taxSeries)}. Sharp drop (>5pp below prior) = tax-aided EPS (amber); normalizing up = neutral.` });
         }
 
         // ── CFO/PAT annual trend pill (annual_cfo_pat) ──────────────────────
         const cfoAnnArr: number[] | null = Array.isArray(e.annual_cfo_pat)
-          ? e.annual_cfo_pat.filter((x: any) => typeof x === 'number' && Number.isFinite(x))
+          // zzz372 — |ratio| > 5 is a near-zero-PAT artifact (VIPCLOTHNG showed −7.4 → 2.0 as
+          // "▲+9.40"); drop those years so the pill reflects the real trend.
+          ? e.annual_cfo_pat.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= 5)
           : null;
         const cfoAnnLatest = cfoAnnArr && cfoAnnArr.length >= 1 ? cfoAnnArr[cfoAnnArr.length - 1] : null;
         let cfoAnnPill: React.ReactNode = null;
@@ -5128,7 +5178,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         // has its profit spike validated by real cash, so MARGIN-SPIKE would be a
         // false positive. Suppress the flag here too so the card and the verdict
         // agree (both suppress) instead of showing a red flag the verdict ignored.
-        const _cashConfirmed = typeof cfoR === 'number' && cfoR >= 1.5 && !cbIsFinancial(entry);
+        const _cashConfirmed = typeof cfoR === 'number' && cfoR >= 1.5 && cfoR <= 5 && !cbIsFinancial(entry);  // zzz372 — same band as cbComputeQuality (>5 = artifact, not confirmation)
         if (typeof sales === 'number' && typeof pat === 'number' && sales > 5 && pat > 5 * sales && !_cashConfirmed) {
           flags.push({icon:'⚠️', label:'MARGIN-SPIKE', tip:`PAT +${pat.toFixed(0)}% vs Sales +${sales.toFixed(0)}% (${(pat/sales).toFixed(1)}× ratio). Big margin expansion — check if driven by one-off / low base / other income. Rarely sustains.`});
         }

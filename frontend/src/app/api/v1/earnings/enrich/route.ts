@@ -1206,7 +1206,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz367 — v10->v11: v10 cached the field-less payloads (fetchScreenerForSymbol
   // was null in prod, so no trends). v11 forces a clean re-fetch that now carries the
   // trends via the proven fetchScreenerCFO path (extractScreenerTrends).
-  const cacheKey = filedHint ? `enrich:v12:${symbol}:${filedHint}` : `enrich:v12:${symbol}`;  // zzz369 v11->v12: flush trend-less poisoned entries
+  const cacheKey = filedHint ? `enrich:v13:${symbol}:${filedHint}` : `enrich:v13:${symbol}`;  // zzz372 v12->v13: flush entries computed before the zzz371 CFO/PAT alignment fix. zzz369 v11->v12: flush trend-less poisoned entries
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1247,7 +1247,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // cfo payload (that KV read was silently defeating zzz370's retry). Also: a cached
     // payload that has NO trends is never a valid hit for the trend consumers — fall
     // through and re-scrape so a transient miss self-heals.
-    const kvKey = `cfo:v3:${sym}`;
+    const kvKey = `cfo:v4:${sym}`;
     if (!bypassCache) {
       try {
         const cached = await kvGet<any>(kvKey);
@@ -1329,7 +1329,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // a trend-less CFO payload for 24h and starving the enrich hoist.
     const cfoTtl = result._trends ? 24 * 3600 : 30 * 60;
     if (typeof ocf === 'number' || typeof netProfit === 'number' || result._trends) {
-      try { await kvSet(`cfo:v3:${sym}`, result, cfoTtl); } catch {}
+      try { await kvSet(`cfo:v4:${sym}`, result, cfoTtl); } catch {}
     }
     return result;
   };
