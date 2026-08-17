@@ -1582,6 +1582,9 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
         </Card>
       </div>
 
+      {/* zzz388 — full sortable India holdings table with promoter-trend arrows */}
+      <IndiaHoldingsTable rows={data} name={name} nse={nse} />
+
       {/* KPI strip */}
       <SecTitle>Watchlist averages &amp; medians</SecTitle>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(176px,1fr))', gap: 10 }}>
@@ -1810,6 +1813,96 @@ function LeaderTable({ rows, valKey, unit, name, nse, extra }: {
         })}
       </tbody>
     </table>
+  );
+}
+
+// zzz388 — India Holdings: full sortable table with promoter-stake 3-yr trend
+// arrows. Additive — reads only already-parsed Screener columns (Promoter
+// holding / Change in promoter holding 3Years / Pledged percentage, plus
+// FII/DII when those columns are present in the upload). Complements the
+// existing top-10 promoter-buying/reducing leaderboards with a full,
+// analyst-sortable view. No scoring, no side effects.
+function IndiaHoldingsTable({ rows, name, nse }: { rows: Row[]; name: (d: Row) => string; nse: (d: Row) => string }) {
+  const firstOf = (d: Row, keys: string[]): number => {
+    for (const k of keys) { const v = num(d[k]); if (!isNaN(v)) return v; }
+    return NaN;
+  };
+  const PROM = ['Promoter holding', 'Promoter holding %', 'Promoter'];
+  const CHG  = ['Change in promoter holding 3Years', 'Change in promoter holding 3 Years', 'Change in promoter holding'];
+  const PLG  = ['Pledged percentage', 'Pledged Percentage', 'Promoter pledge'];
+  const FII  = ['FII holding', 'FII holding %', 'FII'];
+  const DII  = ['DII holding', 'DII holding %', 'DII'];
+
+  const holders = rows.filter((d) => !isNaN(firstOf(d, PROM)) || !isNaN(firstOf(d, CHG)));
+  const hasFII = holders.some((d) => !isNaN(firstOf(d, FII)));
+  const hasDII = holders.some((d) => !isNaN(firstOf(d, DII)));
+
+  type SK = 'chg' | 'prom' | 'plg' | 'fii' | 'dii' | 'name';
+  const [sortKey, setSortKey] = useState<SK>('chg');
+  const [asc, setAsc] = useState(false);
+  if (!holders.length) return null;
+
+  const valFor = (d: Row, k: SK): number =>
+    k === 'prom' ? firstOf(d, PROM) : k === 'plg' ? firstOf(d, PLG) :
+    k === 'fii' ? firstOf(d, FII) : k === 'dii' ? firstOf(d, DII) : firstOf(d, CHG);
+  const sorted = [...holders].sort((a, b) => {
+    if (sortKey === 'name') return asc ? name(a).localeCompare(name(b)) : name(b).localeCompare(name(a));
+    const va = valFor(a, sortKey), vb = valFor(b, sortKey);
+    const na = isNaN(va) ? (asc ? Infinity : -Infinity) : va;
+    const nb = isNaN(vb) ? (asc ? Infinity : -Infinity) : vb;
+    return asc ? na - nb : nb - na;
+  });
+  const setSort = (k: SK) => { if (k === sortKey) setAsc(!asc); else { setSortKey(k); setAsc(false); } };
+  const arr = (k: SK) => (sortKey === k ? (asc ? ' ▲' : ' ▼') : '');
+  const hzR: any = { ...thR, cursor: 'pointer' };
+  const hzL: any = { ...thL, cursor: 'pointer' };
+
+  const trend = (chg: number) => {
+    if (isNaN(chg)) return { icon: '·', col: COL.dim, lab: 'n/a' };
+    if (chg > 2) return { icon: '↑', col: COL.green, lab: 'accumulating' };
+    if (chg < -2) return { icon: '↓', col: COL.red, lab: 'reducing' };
+    return { icon: '→', col: COL.muted, lab: 'stable' };
+  };
+
+  return (
+    <div>
+      <SecTitle>🇮🇳 India Holdings — sortable · promoter stake + 3-yr trend + pledge{hasFII ? ' + FII' : ''}{hasDII ? ' + DII' : ''} ({holders.length})</SecTitle>
+      <div style={{ background: COL.panel, border: `1px solid ${COL.line}`, borderRadius: 8, overflowX: 'auto' }}>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={hzL} onClick={() => setSort('name')}>Company{arr('name')}</th>
+              <th style={hzR} onClick={() => setSort('prom')}>Promoter %{arr('prom')}</th>
+              <th style={hzR} onClick={() => setSort('chg')}>Δ 3Y{arr('chg')}</th>
+              <th style={thR}>Trend</th>
+              <th style={hzR} onClick={() => setSort('plg')}>Pledge %{arr('plg')}</th>
+              {hasFII && <th style={hzR} onClick={() => setSort('fii')}>FII %{arr('fii')}</th>}
+              {hasDII && <th style={hzR} onClick={() => setSort('dii')}>DII %{arr('dii')}</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((d, i) => {
+              const prom = firstOf(d, PROM), chg = firstOf(d, CHG), plg = firstOf(d, PLG);
+              const t = trend(chg);
+              return (
+                <tr key={i}>
+                  <td style={tdL}><b>{name(d)}</b><span style={nseS}>{nse(d)}</span></td>
+                  <td style={{ ...tdR, fontWeight: 700 }}>{isNaN(prom) ? '—' : fmt(prom, 1) + '%'}</td>
+                  <td style={{ ...tdR, fontWeight: 700, color: pcCol(chg) }}>{pctStr(chg)}</td>
+                  <td style={{ ...tdR, color: t.col, fontWeight: 700 }} title={t.lab}>{t.icon} <span style={{ fontSize: 10, color: COL.dim, fontWeight: 500 }}>{t.lab}</span></td>
+                  <td style={{ ...tdR, color: isNaN(plg) ? COL.dim : plg > 15 ? COL.red : plg > 0 ? COL.amber : COL.green }}>{isNaN(plg) ? '—' : fmt(plg, 1) + '%'}</td>
+                  {hasFII && <td style={tdR}>{(() => { const v = firstOf(d, FII); return isNaN(v) ? '—' : fmt(v, 1) + '%'; })()}</td>}
+                  {hasDII && <td style={tdR}>{(() => { const v = firstOf(d, DII); return isNaN(v) ? '—' : fmt(v, 1) + '%'; })()}</td>}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 10, color: COL.dim, textAlign: 'center', marginTop: 6 }}>
+        Trend arrow off 3-yr change in promoter holding: ↑ accumulating (&gt; +2pp) · → stable · ↓ reducing (&lt; -2pp). Pledge &gt; 15% flagged red. Click any header to sort.
+      </div>
+    </div>
   );
 }
 
