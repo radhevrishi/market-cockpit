@@ -2374,7 +2374,7 @@ export default function BudgetIntelPage() {
               <div style={CARD}>
                 <div style={H}>📊 GDP multipliers — click headers to sort</div>
                 <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>
-                  Fiscal multipliers from RBI (2020) and NIPFP research. A 2.0x multiplier means ₹1 of ministry capex expands GDP by ₹2 over 3-5 years.
+                  Fiscal multipliers are static reference assumptions informed by RBI (2020) and NIPFP research. A 2.0x multiplier means ₹1 of spend expands GDP by ₹2 over 3-5 years. Note: &apos;Implied GDP add&apos; applies the multiplier to each ministry&apos;s TOTAL allocation, not capex alone, so it overstates the pure capex-driven impact.
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
@@ -2420,7 +2420,7 @@ export default function BudgetIntelPage() {
               <div style={CARD}>
                 <div style={H}>💰 Valuation overlay — allocation vs sector PE bands</div>
                 <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>
-                  Positive policy ≠ buy signal when valuations are stretched. Historical PE = 5-year median (indicative). Current PE = trailing 12M median for the sector's largest listed names.
+                  Positive policy ≠ buy signal when valuations are stretched. Historical PE = indicative 5-year median. Current PE = static reference estimate hand-set per sector (not a live trailing-12M median).
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 10 }}>
                   {rankable.filter(m => VALUATION_OVERLAY[m.ministry] && (m.yoyVsRE ?? 0) > 0).map(m => {

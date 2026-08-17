@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { InstitutionalReport } from '@/components/earnings/InstitutionalReport';
 import { IndiaInstitutionalReport } from '@/components/earnings/IndiaInstitutionalReport';
 import { buildSnapshot, FinancialsInput, EstimatesInput, HistoryInput } from '@/lib/earnings/build';
@@ -9,6 +9,7 @@ import type { EarningsSnapshot } from '@/lib/earnings/snapshot';
 import { saveConcallSnapshot } from '@/lib/concall-snapshot-store';
 // PATCH 0681 — inline valuation panel rendered at the bottom of the Concall AI page
 import InlineValuationPanel from '@/components/InlineValuationPanel';
+import type { AutoValuationReport } from '@/app/(dashboard)/auto-valuation/engine';
 
 // ── Design tokens
 const BG      = '#0a0a0f';
@@ -1615,6 +1616,23 @@ interface EngineOutput {
   summary: string;        // 1-sentence verdict
 }
 
+// ── VALUATION BRIDGE ─────────────────────────────────────────────────────────
+// Compute the BASE-CASE average upside% across the auto-valuation report's
+// P/E · P/S · EV/EBITDA calculators (mirrors buildReport's own avgBaseUpside
+// derivation in auto-valuation/engine.ts). Returns undefined when the report is
+// null/empty or the average is not finite, so the scorer contributes 0.
+function baseCaseUpsideFromReport(report: AutoValuationReport | null | undefined): number | undefined {
+  if (!report) return undefined;
+  const upsides = [report.peResult, report.psResult, report.evResult]
+    .flatMap(r => {
+      const c = r?.cases?.find(cc => cc.label === 'BASE');
+      return (c && Number.isFinite(c.upsidePct)) ? [c.upsidePct] : [];
+    });
+  if (upsides.length === 0) return undefined;
+  const avg = upsides.reduce((a, b) => a + b, 0) / upsides.length;
+  return Number.isFinite(avg) ? avg : undefined;
+}
+
 // ── ENGINE 1: ACCOUNTING QUALITY ─────────────────────────────────────────────
 
 // ── DATA QUALITY GATE: Returns a failure output when data is too unreliable to score ──
@@ -1631,7 +1649,7 @@ function countValidMetrics(d: RawFinancials): number {
   return [d.revenue, d.grossMargin, d.pat, d.ebit, d.cfo].filter(v => v !== null).length;
 }
 
-function scoreAccountingQuality(d: RawFinancials): EngineOutput {
+function scoreAccountingQuality(d: RawFinancials, valUpside?: number): EngineOutput {
   // GATE 1: Parse state determines whether scoring is allowed at all
   if (d.parseState === 'failed') {
     return dataQualityFail('Accounting Quality', `Parse state: FAILED (confidence ${d.parseConfidence}%) — revenue extraction failed, no scores generated`);
@@ -1696,6 +1714,26 @@ function scoreAccountingQuality(d: RawFinancials): EngineOutput {
   if (!d.isDataReliable) {
     sigs.push({ type:'amber', text:'⚠ Some extraction inconsistencies detected — treat scores as indicative', weight:0 });
     score = Math.min(score, 65); // Hard cap when uncertain
+  }
+
+  // ── VALUATION UPSIDE (base case) — ~10% weight (capped ±8) ─────────────────
+  // Wired from InlineValuationPanel's auto-valuation report (P/E · P/S ·
+  // EV/EBITDA base-case average upside). Graceful: if no report is present or
+  // the upside is not finite, contribute 0 and push no signal. Applied BEFORE
+  // the final clamp so it can never push the score past the existing bounds.
+  if (typeof valUpside === 'number' && Number.isFinite(valUpside)) {
+    const u = valUpside;
+    let weight = 0;
+    if (u >= 40) weight = 8;
+    else if (u >= 20) weight = 5;
+    else if (u >= 8) weight = 3;
+    else if (u <= -40) weight = -8;
+    else if (u <= -20) weight = -5;
+    else if (u <= -8) weight = -3;
+    if (weight !== 0) {
+      sigs.push({ type: weight > 0 ? 'green' : 'red', text: `Valuation upside ${u>0?'+':''}${Math.round(u)}% (base case)`, weight });
+      score += weight;
+    }
   }
 
   // Recalibrated cap: max 88 (not 95) — 90+ should be extremely rare
@@ -2166,6 +2204,9 @@ export default function EarningsAnalysisPage() {
   const [pasteText, setPasteText] = useState('');
   const [urlInput, setUrlInput] = useState('');
   const [result, setResult] = useState<{ d: RawFinancials; q: EngineOutput; r: EngineOutput; nar: ReturnType<typeof scoreNarrative> }|null>(null);
+  // PATCH — auto-valuation report lifted up from InlineValuationPanel so the
+  // concall (accounting-quality) score can weight base-case valuation upside.
+  const [valReport, setValReport] = useState<AutoValuationReport | null>(null);
   const [snapshot, setSnapshot] = useState<EarningsSnapshot | null>(null);
   const [reportView, setReportView] = useState<'institutional' | 'legacy'>('institutional');
   // Last EDGAR enrichment payload (sicDescription, businessText, exchange) — used by buildSnapshot
@@ -2789,7 +2830,7 @@ export default function EarningsAnalysisPage() {
       d.hardFailures = sanitizationIssues;
       d.isDataReliable = sanitizationIssues.filter(s => !s.includes('verify')).length === 0;
 
-      const q = scoreAccountingQuality(d);
+      const q = scoreAccountingQuality(d, baseCaseUpsideFromReport(valReport));
       const r = scoreEarningsReaction(d);
       const nar = scoreNarrative(d);
       setResult({ d, q, r, nar });
@@ -2903,7 +2944,7 @@ export default function EarningsAnalysisPage() {
     setTimeout(() => {
       try {
         const d = parseEarnings(text);
-        const q = scoreAccountingQuality(d);
+        const q = scoreAccountingQuality(d, baseCaseUpsideFromReport(valReport));
         const r = scoreEarningsReaction(d);
         const nar = scoreNarrative(d);
         setResult({ d, q, r, nar });
@@ -2931,6 +2972,20 @@ export default function EarningsAnalysisPage() {
       setLoading(false); setLoadingMsg(''); setLoadingPct(0);
     }, 10);
   }, [history]);
+
+  // PATCH — when the InlineValuationPanel (re)computes or clears its report, the
+  // base-case valuation upside changes. Re-run the accounting-quality scorer so
+  // the concall score picks up the ±8 valuation contribution without the user
+  // having to re-paste / re-fetch. Bails out (returns prev) when the recomputed
+  // score is unchanged to avoid needless re-renders / loops.
+  useEffect(() => {
+    setResult(prev => {
+      if (!prev) return prev;
+      const q = scoreAccountingQuality(prev.d, baseCaseUpsideFromReport(valReport));
+      if (q.score === prev.q.score && q.signals.length === prev.q.signals.length) return prev;
+      return { ...prev, q };
+    });
+  }, [valReport]);
 
   async function handleFile(files: FileList|null) {
     if (!files?.length) return;
@@ -3217,7 +3272,7 @@ export default function EarningsAnalysisPage() {
             too ensures the Auto-Valuation P/E + P/S + EV/EBITDA report shows
             up regardless of which institutional view the user is in. */}
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 20px' }}>
-          <InlineValuationPanel />
+          <InlineValuationPanel onReport={setValReport} />
         </div>
       </div>
     );
@@ -4350,7 +4405,7 @@ export default function EarningsAnalysisPage() {
 
       {/* PATCH 0681 — Inline Auto-Valuation panel: drop same docs to also
           get a P/E + P/S + EV/EBITDA report on the same page. */}
-      <InlineValuationPanel />
+      <InlineValuationPanel onReport={setValReport} />
     </div>
   );
 }

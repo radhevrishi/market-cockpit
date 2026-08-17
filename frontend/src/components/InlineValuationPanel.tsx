@@ -29,7 +29,11 @@ const DIM = '#8A95A3';
 
 const recColor = (r: string) => r === 'BUY' ? '#10B981' : r === 'WATCH' ? '#22D3EE' : r === 'WAIT' ? '#F59E0B' : r === 'AVOID' ? '#EF4444' : DIM;
 
-export default function InlineValuationPanel() {
+// PATCH — optional callback so a parent (e.g. the Concall AI page) can lift the
+// computed report UP and weight its concall score by base-case valuation upside.
+// Additive + optional: the panel renders standalone exactly as before when the
+// prop is omitted.
+export default function InlineValuationPanel({ onReport }: { onReport?: (report: AutoValuationReport | null) => void } = {}) {
   const [docs, setDocs] = useState<ParsedDoc[]>([]);
   const [report, setReport] = useState<AutoValuationReport | null>(null);
   const [building, setBuilding] = useState(false);
@@ -107,6 +111,13 @@ export default function InlineValuationPanel() {
       setReport({ guidance: [], rationale: [`Error building report: ${err?.message || String(err)}. Try re-uploading.`], recommendation: 'NEED_MORE_DATA' } as any);
     });
   }, [docs]);
+
+  // PATCH — notify the parent whenever the report (re)computes or clears, so it
+  // can weight its concall score by the base-case valuation upside. No-op when
+  // onReport isn't supplied (standalone rendering).
+  useEffect(() => {
+    onReport?.(report);
+  }, [report, onReport]);
 
   // PATCH 0687 — once any file has flowed in (either via own dropzone or via
   // the Concall AI event bridge) we suppress the standalone upload box so the
