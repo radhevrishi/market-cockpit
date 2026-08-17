@@ -1871,7 +1871,26 @@ export default function AutoValuationPage() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px' }}>
                 💾 SAVED COMPANIES ({savedList.length})
               </span>
-              <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }}>persists in browser · auto-saved on each report</span>
+              <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                {/* zzz392 — batch-recompute every saved entry's sector with the current classifier */}
+                <button
+                  title="Recompute the sector for every saved company using the current classifier — fixes stale labels in bulk. No re-upload needed."
+                  onClick={() => {
+                    let changed = 0;
+                    for (const s of listAutoValuations()) {
+                      const text = [s.company || '', ...(s.guidance || []).map((g) => g.rawPhrase || ''), ...(s.rationale || [])].join(' ');
+                      const next = inferSector(text, s.company);
+                      if (next && next !== s.sector) { saveAutoValuation({ ...s, sector: next }); changed++; }
+                    }
+                    refreshSaved();
+                    setSecNote((m) => ({ ...m, __all__: changed ? `↻ ${changed} updated` : 'all up to date' }));
+                    setTimeout(() => setSecNote((m) => { const n = { ...m }; delete n.__all__; return n; }), 2600);
+                  }}
+                  style={{ fontSize: 9, padding: '3px 8px', background: 'transparent', border: `1px solid ${DIM}66`, color: DIM, borderRadius: 3, cursor: 'pointer', fontWeight: 800, whiteSpace: 'nowrap' }}
+                >↻ recompute all sectors</button>
+                {secNote.__all__ && <span style={{ fontSize: 9, color: secNote.__all__.startsWith('↻') ? '#10B981' : DIM, fontWeight: 700 }}>{secNote.__all__}</span>}
+                <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }}>persists in browser · auto-saved on each report</span>
+              </span>
             </div>
             <div style={{ fontSize: 11, color: DIM, marginBottom: 10, lineHeight: 1.5 }}>
               Reports you&apos;ve already generated. Click <b style={{ color: 'var(--mc-cyan)' }}>Open</b> to view without re-uploading. <b style={{ color: 'var(--mc-warn)' }}>Add docs</b> appends new files (e.g. next quarter&apos;s PDFs). <b style={{ color: 'var(--mc-bearish)' }}>Clear</b> wipes and lets you start fresh.
