@@ -2181,9 +2181,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // zzz236 — Auto-enrich entries lacking d2_pct/move_pct. Runs once on mount.
   // Fires the enrich API for stale entries (added before zzz230/231) so d2/move
   // fields populate without user needing to click Re-validate.
-  useEffect(() => {
+  // zzz373 — the walk is now a reusable function so the "⟳ Fill missing" button
+  // can run it on demand (manual=true → ignore attempt bound, force nocache, report
+  // progress). The mount effect below calls it once with manual=false.
+  const [fillProgress, setFillProgress] = useState<string | null>(null);
+  const fillRunningRef = useRef(false);
+  const runEnrichWalk = useCallback(async (manual: boolean) => {
     if (typeof window === 'undefined') return;
+    if (fillRunningRef.current) return;
+    fillRunningRef.current = true;
     const list = getConvictionList();
+    let done = 0, total = 0;
+    const report = (msg: string) => { if (manual) setFillProgress(msg); };
     // zzz244/248/255 — broaden auto-enrich gate. Fire whenever ANY expected field
     // is missing (move_pct, d2, pe, close_30d, roce). This includes new institutional
     // fields added in zzz254 so existing entries backfill on next page load.
@@ -2197,7 +2206,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       if (cbIsFinancial(e)) return false; // financials: OPM/tax trends not meaningful
       const hasTrend = Array.isArray(e.quarters_opm) || Array.isArray(e.quarters_tax_pct)
         || Array.isArray(e.quarters_other_income_pct) || Array.isArray(e.annual_cfo_pat);
-      return !hasTrend && ((e.cb_trend_attempts || 0) < 6);
+      return !hasTrend && (manual || (e.cb_trend_attempts || 0) < 6);
     };
     const stale = list.filter(e =>
       e.ticker && e.filing_date &&
@@ -2210,7 +2219,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
-    if (stale.length === 0) return;
+    if (stale.length === 0) { fillRunningRef.current = false; if (manual) { setFillProgress('✓ Nothing missing — every card already has trends / P/E / DRIFT (or is a financial).'); setTimeout(() => setFillProgress(null), 8000); } return; }
+    total = stale.length;
+    report(`Filling 0/${total}…`);
     // zzz370 — walk is a reusable pass so we can run a RETRY SWEEP after the first
     // full walk. `retry=true` adds nocache=1 so a symbol whose first fetch hit a
     // transient Screener miss (and got a short-TTL trend-less payload cached) is
@@ -2328,6 +2339,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
+          done += chunk.length;
+          report(`Filling ${Math.min(done, total)}/${total} · ${chunk.join(', ')}`);
           // zzz372 — syncFromEarningsOps null-fills only (by design, so stale graded
           // payloads can't clobber data). But THIS walk carries LIVE values, and some
           // must OVERWRITE: the zzz371 CFO/PAT alignment fix (KMEW 1.17 → 0.62),
@@ -2356,9 +2369,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         }
       }
     };
-    (async () => {
-      // Pass 1 — everything the gate flagged.
-      await runPass(stale, false);
+    try {
+      // Pass 1 — everything the gate flagged. Manual runs go straight to nocache=1
+      // (the user is asking for a FRESH scrape, not a cache replay).
+      await runPass(stale, manual);
       // zzz370 — Pass 2: RETRY SWEEP. Re-read the bench (pass 1 mutated it) and
       // re-fetch, with nocache=1, only the non-financial entries that STILL lack a
       // trend series. Fixes the "only some populating" symptom: well-covered names
@@ -2367,10 +2381,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       // instead of waiting for the next page load. Bounded by cb_trend_attempts.
       await new Promise(r => setTimeout(r, 1500));
       const again = getConvictionList().filter(e => e.ticker && e.filing_date && needsTrends(e));
-      if (again.length > 0) await runPass(again, true);
-    })();
+      if (again.length > 0) { done = 0; total = again.length; report(`Retry sweep 0/${total}…`); await runPass(again, true); }
+      if (manual) {
+        const stillMissing = getConvictionList().filter(e => e.ticker && e.filing_date && needsTrends(e)).length;
+        setFillProgress(stillMissing === 0
+          ? `✓ Done — all ${stale.length} entries filled.`
+          : `✓ Done — ${stale.length - stillMissing} filled · ${stillMissing} still without trends (Screener has no parsable quarterly table for them, or it is a financial). Re-run later to retry.`);
+        setTimeout(() => setFillProgress(null), 15_000);
+      }
+    } finally { fillRunningRef.current = false; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => { runEnrichWalk(false); }, [runEnrichWalk]);
 
   const [revalProgress, setRevalProgress] = useState<string | null>(null);
   const runRevalidate = useCallback(async () => {
@@ -2896,6 +2918,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               style={{ ...chipBase, border: '1px solid #22D3EE', color: '#22D3EE', fontWeight: 800 }}>
               🔄 Refresh Prices
             </button>
+            <button onClick={() => runEnrichWalk(true)} disabled={!!fillProgress && !fillProgress.startsWith('✓')}
+              title="Fill whatever is missing on the cards — Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT annual), QoQ ACCEL, P/E, DRIFT, ROCE. Only touches entries that lack data; entries that already have it are left alone. Forces a fresh Screener scrape (bypasses cache)."
+              style={{ ...chipBase, border: '1px solid #A78BFA', color: '#A78BFA', fontWeight: 700 }}>
+              ⟳ Fill missing (trends · P/E · DRIFT)
+            </button>
             {/* zzz254 — density toggle */}
             <button onClick={cycleDensity} title="Cycle card density: Comfy (default) → Compact → Ultra-compact. Persists across visits."
               style={{ ...chipBase, border: '1px solid #A78BFA', color: '#A78BFA', fontWeight: 800 }}>
@@ -2972,6 +2999,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 🗑 Clear All ({entries.length})
               </button>
             )}
+            {fillProgress && (
+              <span style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 4, background: 'rgba(167,139,250,0.10)', border: '1px solid rgba(167,139,250,0.35)', color: '#A78BFA', fontWeight: 600 }}>{fillProgress}</span>
+            )}
             {revalProgress && (
               <span style={{
                 fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
@@ -3022,7 +3052,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: STRONG BUY·BUY·WATCH {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: STRONG BUY·BUY·WATCH {presetActive ? '✓ ON' : '· OFF — click to enable'}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -3752,6 +3782,15 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           if (!dominantQ || totalQ === 0) return null;
           const dominantPct = (dominantQ[1] / totalQ) * 100;
           if (dominantPct < 70) return null; // Only show when one quarter dominates >70%
+          // zzz373 — season label derived from the calendar (was hard-coded "Q4 FY26 · May–Jun 2026").
+          const seasonLabel = (() => {
+            const now = new Date(); const m = now.getMonth() + 1; const y = now.getFullYear();
+            // Indian FY ends March. Jul–Aug = Q1 (Apr–Jun) season; Oct–Nov = Q2; Jan–Feb = Q3; Apr–Jun = Q4/annual.
+            if (m >= 7 && m <= 9) return `Q1 FY${String(y + 1).slice(2)} filing season (Jul–Aug ${y} — companies publishing their Apr–Jun ${y} numbers)`;
+            if (m >= 10 && m <= 12) return `Q2 FY${String(y + 1).slice(2)} filing season (Oct–Nov ${y} — companies publishing their Jul–Sep ${y} numbers)`;
+            if (m >= 1 && m <= 3) return `Q3 FY${String(y).slice(2)} filing season (Jan–Feb ${y} — companies publishing their Oct–Dec ${y - 1} numbers)`;
+            return `Q4 FY${String(y).slice(2)} filing season (Apr–Jun ${y} — companies publishing their Jan–Mar ${y} numbers)`;
+          })();
           // PATCH 0922 — Quarter→date-range cheat sheet so user can verify.
           const qPeriodMap: Record<string, string> = {
             Q1: 'Apr–Jun results (filed Jul–Aug)',
@@ -3762,7 +3801,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           return (
             <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: 'var(--mc-state-persistent)', lineHeight: 1.6 }}>
               ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates only when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
-              We&apos;re in the middle of <strong>Q4 FY26 filing season</strong> (May–Jun 2026 — companies publishing their Jan–Mar 2026 numbers), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
+              We&apos;re in the middle of <strong>{seasonLabel}</strong>, so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
               <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
                 <strong style={{ color: 'var(--mc-text-1)' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
               </div>
@@ -4876,16 +4915,23 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
 
         // ── Tier 2 (new backend fields, may be null until enrich ships) ─────
         // 📊 OTHER-INC ↓ — other income falling as % of sales (cleaner quality).
-        const oiC = num(e.other_income_pct_sales_curr), oiP = num(e.other_income_pct_sales_prev);
-        if (oiC !== null && oiP !== null && oiC < oiP) {
+        // zzz373 — when the quarterly series exists, derive curr/prev FROM IT so this chip and
+        // the Q-TRENDS OTHER-INC pill can never contradict (TIIL showed "OTHER-INC ↓" next to
+        // "OTHER-INC 5.0% ▲+3.0" because the scalar came from an older enrich pass).
+        const oiSeries = Array.isArray(e.quarters_other_income_pct) ? e.quarters_other_income_pct.filter((x: any) => typeof x === 'number' && Number.isFinite(x)) : null;
+        const oiC = oiSeries && oiSeries.length >= 2 ? oiSeries[oiSeries.length - 1] : num(e.other_income_pct_sales_curr);
+        const oiP = oiSeries && oiSeries.length >= 2 ? oiSeries[oiSeries.length - 2] : num(e.other_income_pct_sales_prev);
+        if (oiC !== null && oiP !== null && (oiP - oiC) >= 0.5) {
           chips.push({ icon: '📊', label: 'OTHER-INC ↓', color: BLUE,
             tip: `Other income falling as % of sales (${oiC.toFixed(1)}% vs ${oiP.toFixed(1)}%) — cleaner, more operating-driven earnings.` });
         }
         // ⚠️ TAX-BENEFIT −Xpp — effective tax rate below prev by >5pp (optical EPS boost).
-        const taxC = num(e.effective_tax_rate_curr), taxP = num(e.effective_tax_rate_prev);
-        // zzz372 — sanity band: effective tax rates outside [-50, 100] are artifacts of a
+        const taxSeriesChip = Array.isArray(e.quarters_tax_pct) ? e.quarters_tax_pct.filter((x: any) => typeof x === 'number' && Number.isFinite(x)) : null;
+        const taxC = taxSeriesChip && taxSeriesChip.length >= 2 ? taxSeriesChip[taxSeriesChip.length - 1] : num(e.effective_tax_rate_curr);
+        const taxP = taxSeriesChip && taxSeriesChip.length >= 2 ? taxSeriesChip[taxSeriesChip.length - 2] : num(e.effective_tax_rate_prev);
+        // zzz372/373 — sanity band: effective tax rates outside [-10, 70] are artifacts of a
         // near-zero / negative PBT denominator (DCW showed −9497%). Skip the chip then.
-        const taxSane = (v: number | null): v is number => v !== null && v >= -50 && v <= 100;
+        const taxSane = (v: number | null): v is number => v !== null && v >= -10 && v <= 70;
         if (taxSane(taxC) && taxSane(taxP) && (taxP - taxC) > 5) {
           chips.push({ icon: '⚠️', label: `TAX-BENEFIT −${(taxP - taxC).toFixed(0)}pp`, color: AMBER,
             tip: `Effective tax rate dropped ${(taxP - taxC).toFixed(1)}pp YoY (${taxP.toFixed(1)}% → ${taxC.toFixed(1)}%). Optical EPS boost — check if one-off.` });
@@ -5033,7 +5079,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         // zzz372 — same sanity band as the TAX-BENEFIT chip: a quarter with ~0 or negative
         // PBT makes tax % explode (DCW −9497%). Drop those points before taking lastTwo.
         const taxSeries = Array.isArray(e.quarters_tax_pct)
-          ? e.quarters_tax_pct.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && x >= -50 && x <= 100)
+          ? e.quarters_tax_pct.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && x >= -10 && x <= 70)
           : null;
         const tax = lastTwo(taxSeries);
         if (tax) {
@@ -5130,7 +5176,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           <>
             {(tps.length > 0 || cfoAnnPill) && (
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)' }}>
-                <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>Q-TRENDS</span>
+                <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }} title="Quarter-on-quarter trend (latest quarter vs the one before). The OPM Δ in the header row is YEAR-on-year (same quarter last year), so the two can differ.">Q-TRENDS (QoQ)</span>
                 {tps.map((t) => {
                   const arrow = t.delta > 0 ? '▲' : t.delta < 0 ? '▼' : '▬';
                   return (
