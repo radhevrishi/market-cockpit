@@ -1206,7 +1206,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz367 — v10->v11: v10 cached the field-less payloads (fetchScreenerForSymbol
   // was null in prod, so no trends). v11 forces a clean re-fetch that now carries the
   // trends via the proven fetchScreenerCFO path (extractScreenerTrends).
-  const cacheKey = filedHint ? `enrich:v14:${symbol}:${filedHint}` : `enrich:v14:${symbol}`;  // zzz375 v13->v14: flush entries missing trends before the standalone-page fallback. zzz372 v12->v13. zzz369 v11->v12
+  const cacheKey = filedHint ? `enrich:v15:${symbol}:${filedHint}` : `enrich:v15:${symbol}`;  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1516,6 +1516,14 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // zzz376 — carry WHY the trends are (or aren't) here so the UI can tell the
     // user "genuinely absent" vs "Screener fetch failed — transient".
     if (typeof co._trends_status === 'string') out._trends_status = co._trends_status;
+  }
+  // zzz377 — if the WORKER supplied the quarterly series (the reliable path), the
+  // trends ARE present regardless of whether the direct Screener scrape failed.
+  // Overwrite any 'fetch-failed'/'no-table' status the cfoOnly path may have set.
+  if (Array.isArray((out as any).quarters_opm) || Array.isArray((out as any).quarters_tax_pct)
+      || Array.isArray((out as any).quarters_other_income_pct)) {
+    (out as any)._trends_status = 'ok';
+    if (out._screener_overlay == null) out._screener_overlay = 'zzz377-worker-quarters';
   }
 
   // zzz366 — CRITICAL FIX (root cause of "I still don't see Other Income / Tax /

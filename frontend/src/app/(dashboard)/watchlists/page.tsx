@@ -2226,7 +2226,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
-        || (e as any).cb_enrich_v !== 375  // zzz375 (was 371) — re-enrich once so the Screener standalone-page fallback fills names that only had /consolidated/ misses. zzz372 (was 369) — one-time re-enrich so zzz371 CFO/PAT value fixes propagate. zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
+        || (e as any).cb_enrich_v !== 377  // zzz377 (was 375) — re-enrich once so worker-sourced Q-TRENDS land (Screener direct scrape is IP-blocked on Railway). zzz375 (was 371) — re-enrich once so the Screener standalone-page fallback fills names that only had /consolidated/ misses. zzz372 (was 369) — one-time re-enrich so zzz371 CFO/PAT value fixes propagate. zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
         || needsTrends(e)  // zzz369 — keep retrying until the trend series lands
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
@@ -2345,7 +2345,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // zzz363 — one-off / exceptional-item fields (v9 cache)
               exceptional_curr_cr: typeof enr.exceptional_curr_cr === 'number' ? enr.exceptional_curr_cr : (existing as any).exceptional_curr_cr,
               exceptional_pct_pbt: typeof enr.exceptional_pct_pbt === 'number' ? enr.exceptional_pct_pbt : (existing as any).exceptional_pct_pbt,
-              cb_enrich_v: 375,  // zzz375 — bump (was 371) so re-enrich fires once for the v13 cache. zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
+              cb_enrich_v: 377,  // zzz377 — bump (was 375) so re-enrich fires once for the v13 cache. zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
               // zzz369 — count trend-fetch attempts so needsTrends() retry is bounded.
               cb_trend_attempts: ((existing as any).cb_trend_attempts || 0) + 1,
               // zzz376 — carry the server's reason so the card can say "genuinely

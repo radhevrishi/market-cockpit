@@ -58,6 +58,15 @@ export interface WorkerStockData {
   ocf_annual_cr?: number | null;
   pat_annual_cr?: number | null;
   ocf_to_pat_ratio?: number | null;
+  // zzz377 — quarterly trend series lifted from the Worker's `quarters` object.
+  // The Worker is Cloudflare-immune and reliable; the direct Screener HTML scrape
+  // (fetchScreenerCFO) is blocked from Railway's datacenter IP for ~85% of symbols,
+  // so these Worker-sourced arrays are what actually populate Q-TRENDS in prod.
+  quarters_opm?: (number | null)[] | null;
+  quarters_sales?: (number | null)[] | null;
+  quarters_eps?: (number | null)[] | null;
+  quarters_tax_pct?: (number | null)[] | null;
+  quarters_other_income_pct?: (number | null)[] | null;
   financials_source: 'screener-worker';
 }
 
@@ -173,6 +182,31 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
       ocf_annual_cr: (typeof j.ocf_annual_cr === 'number' ? j.ocf_annual_cr : null),
       pat_annual_cr: (typeof j.pat_annual_cr === 'number' ? j.pat_annual_cr : null),
       ocf_to_pat_ratio: (typeof j.ocf_to_pat_ratio === 'number' ? j.ocf_to_pat_ratio : null),
+      // zzz377 — quarterly trend series straight from the Worker's `quarters` object.
+      // q.tax is already the tax-RATE % (netProfit ≈ PBT·(1−tax/100) checks out).
+      // Other-income is normalised to % of sales to match the existing pill semantics.
+      ...(() => {
+        const q = j.quarters;
+        if (!q || typeof q !== 'object') return {};
+        const numArr = (a: any): (number | null)[] | null =>
+          Array.isArray(a) ? a.map((x: any) => (typeof x === 'number' && Number.isFinite(x)) ? x : null) : null;
+        const opm = numArr(q.opm);
+        const sales = numArr(q.sales);
+        const eps = numArr(q.eps);
+        const tax = numArr(q.tax);
+        const oiRaw = numArr(q.otherIncome);
+        const oiPct = (oiRaw && sales)
+          ? oiRaw.map((oi, i) => { const s = sales[i]; return (oi != null && s != null && s !== 0) ? Math.round((oi / s) * 1000) / 10 : null; })
+          : null;
+        const hasAny = (a: (number | null)[] | null) => !!a && a.some((x) => x != null);
+        return {
+          ...(hasAny(opm) ? { quarters_opm: opm } : {}),
+          ...(hasAny(sales) ? { quarters_sales: sales } : {}),
+          ...(hasAny(eps) ? { quarters_eps: eps } : {}),
+          ...(hasAny(tax) ? { quarters_tax_pct: tax } : {}),
+          ...(hasAny(oiPct) ? { quarters_other_income_pct: oiPct } : {}),
+        };
+      })(),
       financials_source: 'screener-worker',
     };
   } catch {
