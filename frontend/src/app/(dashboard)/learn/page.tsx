@@ -20,11 +20,15 @@ function partLines(p: Part): number {
   return (p.paras?.length || 0) + p.subs.reduce((n, s) => n + s.paras.length + 1, 0);
 }
 
+// zzz402 — the two Books (1, 2) the parts group under.
+const ALL_BOOKS = Array.from(new Set(BOOK.map(p => p.book)));
+
 export default function InvestingPlaybookPage() {
   const [activePart, setActivePart] = useState<number>(0);
   const [activeSub, setActiveSub] = useState<number>(-1);
   const [q, setQ] = useState<string>('');
-  const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set()); // zzz401 — all collapsed by default
+  const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set()); // zzz401 — PART-XX sub-list collapsed by default
+  const [collapsedBooks, setCollapsedBooks] = useState<Set<number>>(new Set(ALL_BOOKS)); // zzz402 — all Books collapsed by default
   const mainRef = useRef<HTMLDivElement>(null);
 
   const totalLines = useMemo(() => BOOK.reduce((n, p) => n + partLines(p), 0), []);
@@ -64,11 +68,14 @@ export default function InvestingPlaybookPage() {
   const go = (pi: number, si: number = -1) => {
     setActivePart(pi); setActiveSub(si);
     setExpandedParts(prev => { if (prev.has(pi)) return prev; const e = new Set(prev); e.add(pi); return e; });
+    // reveal the containing Book so search / prev-next navigation isn't hidden
+    setCollapsedBooks(prev => { const b = BOOK[pi].book; if (!prev.has(b)) return prev; const e = new Set(prev); e.delete(b); return e; });
   };
   const toggleExpand = (pi: number) => setExpandedParts(prev => { const e = new Set(prev); if (e.has(pi)) e.delete(pi); else e.add(pi); return e; });
-  const anyExpanded = expandedParts.size > 0;
-  const collapseAll = () => setExpandedParts(new Set());
-  const expandAll = () => setExpandedParts(new Set(BOOK.map((_, i) => i).filter(i => BOOK[i].subs.length > 0)));
+  const toggleBook = (b: number) => setCollapsedBooks(prev => { const e = new Set(prev); if (e.has(b)) e.delete(b); else e.add(b); return e; });
+  const anyBookOpen = ALL_BOOKS.some(b => !collapsedBooks.has(b));
+  const collapseAll = () => setCollapsedBooks(new Set(ALL_BOOKS));
+  const expandAll = () => setCollapsedBooks(new Set());
 
   let lastBook = -1;
 
@@ -80,6 +87,7 @@ export default function InvestingPlaybookPage() {
         .lp-title:hover > span:first-child { color: ${C.cyan}; }
         .lp-sub:hover { background: ${C.cyan}12; color: ${C.text}; }
         .lp-ctrl:hover { border-color: ${C.cyan}; color: ${C.cyan}; }
+        .lp-book:hover { background: ${C.panel2}; }
       `}</style>
       <aside style={{ width: 360, minWidth: 360, background: C.panel, borderRight: '1px solid ' + C.border, height: '100vh', overflowY: 'auto', position: 'sticky', top: 0 }}>
         <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid ' + C.border }}>
@@ -91,10 +99,10 @@ export default function InvestingPlaybookPage() {
           <input type="text" placeholder="🔍 Search entire book…" value={q} onChange={e => setQ(e.target.value)} style={{ width: '100%', padding: '8px 12px', background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text, fontSize: 13, outline: 'none' }} />
         </div>
         <div style={{ padding: '0 14px 10px', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-          <button onClick={anyExpanded ? collapseAll : expandAll} className="lp-ctrl" style={{ background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text2, fontSize: 11.5, fontWeight: 700, padding: '6px 10px', cursor: 'pointer' }}>
-            {anyExpanded ? '⊟ Collapse all' : '⊞ Expand all'}
+          <button onClick={anyBookOpen ? collapseAll : expandAll} className="lp-ctrl" style={{ background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text2, fontSize: 11.5, fontWeight: 700, padding: '6px 10px', cursor: 'pointer' }}>
+            {anyBookOpen ? '⊟ Collapse all' : '⊞ Expand all'}
           </button>
-          <span style={{ fontSize: 10.5, color: C.text3 }}>{expandedParts.size} of {BOOK.length} open</span>
+          <span style={{ fontSize: 10.5, color: C.text3 }}>{ALL_BOOKS.length - collapsedBooks.size} of {ALL_BOOKS.length} books open</span>
         </div>
         <nav style={{ paddingBottom: 40 }}>
           {BOOK.map((p, pi) => {
@@ -105,10 +113,13 @@ export default function InvestingPlaybookPage() {
             return (
               <div key={pi}>
                 {showBookHdr && (
-                  <div style={{ padding: '12px 16px 6px', fontSize: 10.5, color: C.gold, fontWeight: 800, letterSpacing: '0.8px', textTransform: 'uppercase', borderTop: pi > 0 ? '1px solid ' + C.border : 'none', marginTop: pi > 0 ? 6 : 0 }}>
-                    ▸ Book {p.book}
-                  </div>
+                  <button onClick={() => toggleBook(p.book)} className="lp-book" style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px 8px', fontSize: 11, color: C.gold, fontWeight: 800, letterSpacing: '0.8px', textTransform: 'uppercase', borderTop: pi > 0 ? '1px solid ' + C.border : 'none', marginTop: pi > 0 ? 6 : 0, background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                    <span style={{ display: 'inline-block', fontSize: 9, transition: 'transform .15s ease', transform: collapsedBooks.has(p.book) ? 'rotate(0deg)' : 'rotate(90deg)' }}>▶</span>
+                    <span style={{ flex: 1, textAlign: 'left' }}>Book {p.book}</span>
+                    <span style={{ fontSize: 9.5, color: C.text3, fontWeight: 600 }}>{BOOK.filter(x => x.book === p.book).length} parts</span>
+                  </button>
                 )}
+                {!collapsedBooks.has(p.book) && (<>
                 <div className={'lp-row' + (active ? ' lp-active' : '')} style={{ display: 'flex', alignItems: 'stretch', background: active ? C.cyan + '15' : 'transparent', borderLeft: active ? '3px solid ' + C.cyan : '3px solid transparent' }}>
                   {p.subs.length > 0 ? (
                     <button aria-label="toggle section" onClick={() => toggleExpand(pi)} className="lp-chev" style={{ flex: '0 0 30px', background: 'transparent', border: 'none', color: C.text3, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -130,6 +141,7 @@ export default function InvestingPlaybookPage() {
                     ))}
                   </div>
                 )}
+                </>)}
               </div>
             );
           })}
