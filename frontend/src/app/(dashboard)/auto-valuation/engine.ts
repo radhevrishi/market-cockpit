@@ -503,7 +503,7 @@ function pickGuidanceScenarios(g: GuidanceItem | undefined): { bear?: number; ba
 // only assigned if it dominates 2:1 over Industrials (because pure-play
 // defence names — HAL/BEL/BDL/MAZDOCK — saturate the PDF with defence
 // vocabulary, while diversified industrials only sprinkle it occasionally).
-function inferSector(text: string, company?: string): string | undefined {
+export function inferSector(text: string, company?: string): string | undefined {
   const t = (text + ' ' + (company || '')).toLowerCase();
   // [sector, [keyword, weight] pairs]
   // Higher weight = more specific signal. Generic words like "engineering"
@@ -556,10 +556,19 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bsubstation\b|\bgrid\b/g, 2],
     ]],
     ['Auto Components', [
-      [/\bauto component\b|\bautomotive\b/g, 3],
+      [/\bauto\s+component(?:s)?\b|\bautomotive\b/g, 4],
       [/\btyres?\b|\btires?\b/g, 3],
       [/\bforging\b|\bgearbox\b|\bdriveline\b/g, 4],
-      [/\bOEM\b/g, 1],
+      [/\bOEM(?:s)?\b/g, 2],
+      // PATCH 0844 — Sandhar/Minda/Bosch-class profile: locks/mirrors/sheet
+      // metal/cabins/two-wheeler are dead giveaways for auto-comps.
+      [/\block(?:s|ing)?\b|\bmirror(?:s)?\b|\bwiper(?:s)?\b|\bhorn(?:s)?\b/g, 3],
+      [/\bsheet metal\b|\bstamping\b|\bdie[- ]casting\b/g, 4],
+      [/\bcabin(?:s)?\b/g, 2],
+      [/\b(?:two|four)[- ]wheeler\b|\b2W\b|\b4W\b/g, 3],
+      [/\bEV\s+powertrain\b|\bbattery\s+pack\b|\bcharger\b/g, 4],
+      [/\bclutch\b|\bbrake\b|\bsuspension\b|\baxle\b/g, 3],
+      [/\b(?:Maruti|Tata|Mahindra|TVS|Hero|Bajaj|Honda|Hyundai)\s+(?:Suzuki|Motors|Auto)?\b/g, 2],  // OEM customers
     ]],
     ['AI Infrastructure (India)', [
       [/\bESDM\b|\belectronics manufacturing services\b/g, 5],
@@ -569,10 +578,13 @@ function inferSector(text: string, company?: string): string | undefined {
     ]],
     ['Financial Services / NBFC', [
       [/\bNBFC\b/g, 5],
-      [/\bbank\b/g, 2],
       [/\basset management\b/g, 3],
-      [/\binsurance\b/g, 3],
-      [/\bAUM\b|\bloan book\b/g, 4],
+      [/\binsurance company\b|\blife insurance\b|\bgeneral insurance\b/g, 4],
+      [/\bAUM\b|\bloan book\b|\bdisburs(?:ed|ement|als)\b/g, 4],
+      [/\bnet interest margin\b|\bNIM\b/g, 5],
+      // PATCH 0844 — generic 'bank' is too loose; only count when paired with banking-specific terms
+      [/\b(?:retail|wholesale|corporate|cooperative|small finance|private)\s+bank\b/g, 3],
+      [/\bcredit growth\b|\bgross NPA\b|\bprovisioning\b|\bbasel\b/g, 4],
     ]],
     ['IT / Tech Services', [
       [/\bIT services\b/g, 4],
@@ -585,6 +597,14 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bconsumer durables?\b/g, 4],
       [/\bjewell?ery\b/g, 4],
       [/\bbrand premium\b|\bdistribution reach\b/g, 3],
+      // PATCH 0844 — Personal Care + FMCG-Indian specific terms (Bajaj Consumer Care, HUL, Dabur class)
+      [/\bpersonal care\b|\bhair oil\b|\bshampoo\b|\bcosmetic(?:s)?\b|\bdetergent\b|\btoothpaste\b|\bsoap\b|\bskin care\b/g, 5],
+      [/\boral care\b|\bdeodorant\b|\bperfume\b|\bbeauty\b/g, 4],
+      [/\b(?:packaged|branded)\s+food(?:s)?\b|\bbeverages?\b|\bdairy\b|\bsnack(?:s)?\b|\bbiscuit(?:s)?\b/g, 4],
+      [/\bvolume\s+growth\b|\brural\s+(?:growth|demand|distribution|reach)\b/g, 3],
+      [/\b(?:hair|skin|oral)\s+(?:colou?r|treatment|nutrition)\b/g, 4],
+      [/\bADHO\b|\balmond drops\b/g, 5],  // explicit Bajaj Consumer Care brand
+      [/\bconsumer\s+(?:care|goods|products|brands?)\b/g, 4],
     ]],
     ['SaaS / Software (US)', [
       [/\bSaaS\b/g, 5],

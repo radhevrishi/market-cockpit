@@ -25,7 +25,7 @@ import EarningsSearch, { type EarningsSearchResult } from './EarningsSearch';
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate } from '@/lib/earnings-grade-shared';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 // PATCH 0715 — centralized IST helpers.
@@ -733,93 +733,59 @@ function gradeRow(row: any): ParsedEarning | null {
   // ── Three paths to BLOCKBUSTER (RS / Stage / bonde NOT required):
   // Path A — CLEAN MAGNITUDE + STRUCTURE: clean triple-beat + ≤1 caveat +
   //   composite ≥ 78 + (Tier-1 method ≥ 1 OR positive guidance) + chart OK
-  const blockbusterPathA =
-    composite >= 78 &&
-    cleanMagnitude &&
-    caveat_tags.length <= 1 &&
-    (tier1MethodCount >= 1 || positiveGuidance) &&
-    chartOk;
-
-  // Path B — EXCEPTIONAL MAGNITUDE: ≥40/50/50 triple-beat + ≤2 caveats +
-  //   composite ≥ 72 + chart OK (no methodology requirement)
-  const blockbusterPathB =
-    composite >= 72 &&
-    exceptionalMagnitude &&
-    caveat_tags.length <= 2 &&
-    chartOk;
-
-  // Path C — MEGA MAGNITUDE: ≥40/75/75 triple-beat + ≤3 caveats + chart not Stage 4
-  //   (the magnitude IS the signal — EarningsPulse Atlanta & Antelopus cases.
-  //    Antelopus had 3 caveats — accelerated depreciation + pooling + exceptional
-  //    item — but magnitude was still extreme +65/+139/+157 = BLOCKBUSTER.)
-  const blockbusterPathC =
-    megaMagnitude &&
-    caveat_tags.length <= 3 &&
-    stage !== 4;
-
-  const blockbusterGate = blockbusterPathA || blockbusterPathB || blockbusterPathC;
+  // zzz395 PART 2 — the BLOCKBUSTER gate (Paths A–E) and the full tier-decision
+  // chain (graduated margin gate + loss-maker / turnaround / quality-STRONG
+  // rules) now live in @/lib/earnings-grade-shared → decideTier, shared verbatim
+  // with the authoritative server copy (graded/route.ts) so the two can never
+  // re-drift. The magnitude booleans (cleanMagnitude / exceptionalMagnitude /
+  // megaMagnitude, computed above) and the margin-inflection booleans below are
+  // the gate ingredients passed in.
+  const marginInflection =
+    patY != null && patY >= 100 && epsY != null && epsY >= 100 && salesY != null && salesY >= -5;
+  const marginInflectionLoose =
+    patY != null && patY >= 75 && epsY != null && epsY >= 75 && salesY != null && salesY >= 0 && stage !== 4;
 
   // (suppress unused variable warning for chartHealthy — reserved for future tier-bonus)
   void chartHealthy;
 
-  // zzz384 — DUAL-COPY RECONCILE: port the server's (graded/route.ts) tier
-  // downgrades that this client copy lacked, so force-included / client-joined
-  // cards can't be over-graded relative to the server. Loss-makers, turnaround
-  // bases (prior period negative → YoY% meaningless), and margin contraction
-  // must not carry a BLOCKBUSTER/STRONG label even on huge headline growth.
-  // zzz386 — stillLossMaking / turnaroundBase now declared + caveat-pushed ABOVE
-  // (before the quality/composite computation) to mirror the server. Only the
-  // margin-contraction booleans (tier-only, no caveat) are computed here.
-  const marginContracting = opmExp != null && opmExp <= -0.5;        // PATCH 1000
-  const marginSevereContraction = opmExp != null && opmExp <= -1.5;  // PATCH 1020
+  tier = decideTier({
+    composite,
+    broken,
+    stillLossMaking,
+    turnaroundBase,
+    marginContracting: opmExp != null && opmExp <= -0.5,        // PATCH 1000
+    marginSevereContraction: opmExp != null && opmExp <= -1.5,  // PATCH 1020
+    caveatCount: caveat_tags.length,
+    mCount,
+    stage,
+    salesY, patY, epsY, opmExp,
+    cleanMag: cleanMagnitude,
+    exceptMag: exceptionalMagnitude,
+    megaMag: megaMagnitude,
+    marginInflection, marginInflectionLoose,
+    tier1MethodCount,
+    positiveGuidance,
+    chartOk,
+  }).tier;
 
-  if (broken && composite < 70) tier = 'AVOID';
-  else if (stillLossMaking && blockbusterGate) tier = 'MIXED';
-  else if (turnaroundBase && blockbusterGate) tier = 'MIXED';
-  else if (blockbusterGate && marginSevereContraction) tier = 'MIXED';
-  else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
-  else if (blockbusterGate && marginContracting) tier = 'STRONG';
-  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase && !marginSevereContraction) tier = 'STRONG';
-  // PATCH 1022 — QUALITY STRONG: double-digit sales + strong PAT + genuinely
-  // EXPANDING margins can be STRONG a point or two under the 68 floor.
-  else if (
-    composite >= 60 &&
-    salesY != null && salesY >= 10 &&
-    patY != null && patY >= 25 &&
-    epsY != null && epsY >= 15 &&
-    opmExp != null && opmExp >= 0.5 &&
-    !stillLossMaking && !turnaroundBase &&
-    caveat_tags.length <= 3 && stage !== 4
-  ) tier = 'STRONG';
-  else if (composite >= 35) tier = 'MIXED';
-  else tier = 'AVOID';
-
-  // PATCH 0938 — Market-reaction gate (one-way, only downgrades). A print the
-  // market sold off on Day-1 loses its top-tier label regardless of headline beat.
-  const d1Reaction = typeof row?.d1_pct === 'number' ? row.d1_pct : null;
-  const gapReaction = typeof row?.gap_pct === 'number' ? row.gap_pct : null;
-  if (d1Reaction !== null) {
-    if (d1Reaction <= -7) {
-      if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
-      if (!caveat_tags.includes('sold off post-results')) caveat_tags.push('sold off post-results');
-    } else if (d1Reaction <= -3) {
-      if (tier === 'BLOCKBUSTER') tier = 'STRONG';
-      if (!caveat_tags.includes('market rejected print')) caveat_tags.push('market rejected print');
-    }
-    if (gapReaction !== null && gapReaction >= 3 && d1Reaction <= -2 && !caveat_tags.includes('intraday reversal · distribution')) {
-      caveat_tags.push('intraday reversal · distribution');
-    }
+  // PATCH 0938 — Market-reaction gate (one-way, only downgrades). Shared with
+  // the server copy via marketReactionDelta so the ladder can't drift.
+  {
+    const _mr = marketReactionDelta(tier, row?.d1_pct, row?.gap_pct);
+    tier = _mr.tier;
+    for (const c of _mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
 
   // ── Narrative ──────────────────────────────────────────────────────────
   const co = row.company || row.symbol;
   const q = row.quarter || deriveQuarterLabel(row.filing_date);
-  // PATCH 1034 — Liquidity / thin-float gate (mirrors server). Demote thin names
-  // out of the top tiers + tag. Missing ADTV is not punished.
+  // PATCH 1034 — Liquidity / thin-float gate. Shared with the server via
+  // thinFloatGate. _adtv retained locally for the return object below.
   const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
-  if (_adtv != null && _adtv < 1) {
-    if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
-    if (!caveat_tags.includes('thin float')) caveat_tags.push('thin float');
+  {
+    const _tf = thinFloatGate(tier, _adtv);
+    tier = _tf.tier;
+    for (const c of _tf.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
   // zzz383 — clamp base-effect blow-ups: a near-zero/negative prior base makes YoY %
   // explode (e.g. +5000% on a ₹0.5 Cr → ₹50 Cr PAT). Exact precision is meaningless

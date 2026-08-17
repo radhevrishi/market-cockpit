@@ -55,3 +55,139 @@ export function marginQualityDelta(opmExp: number | null | undefined): number {
   if (opmExp <= -0.5) return -8;  // mild contraction
   return 0;
 }
+
+// zzz395 — the per-quarter tier-decision chain, extracted so the two gradeRow
+// copies (server graded/route.ts + client earnings-opportunities/page.tsx)
+// share ONE authoritative implementation. Prior to zzz395 the client's
+// BLOCKBUSTER gate was missing Paths D+E (margin inflection); Part 1 of zzz395
+// brought the client to parity, Part 2 (this) removed the possibility of
+// re-drift by making both call sites delegate here.
+//
+// Pure: no React, no server-only APIs, no browser/node globals.
+
+export type EarningsTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
+
+/**
+ * Inputs for {@link decideTier}. These are the exact values both call sites
+ * already compute inline; the caller derives the magnitude / margin-inflection
+ * booleans and passes them in so this function stays a pure decision.
+ */
+export interface DecideTierInputs {
+  composite: number;
+  broken: boolean;
+  stillLossMaking: boolean;
+  turnaroundBase: boolean;
+  marginContracting: boolean;        // opmExp <= -0.5 (PATCH 1000)
+  marginSevereContraction: boolean;  // opmExp <= -1.5 (PATCH 1020)
+  caveatCount: number;               // caveat_tags.length
+  mCount: number;                    // methodology_tags.length
+  stage: number | null;
+  salesY: number | null;
+  patY: number | null;
+  epsY: number | null;
+  opmExp: number | null;
+  // BLOCKBUSTER-gate ingredients (Paths A–E)
+  cleanMag: boolean;
+  exceptMag: boolean;
+  megaMag: boolean;
+  marginInflection: boolean;         // PAT>=100 & EPS>=100 & sales>=-5
+  marginInflectionLoose: boolean;    // PAT>=75 & EPS>=75 & sales>=0 & stage!=4
+  tier1MethodCount: number;          // TT / SEPA / CANSLIM count
+  positiveGuidance: boolean;
+  chartOk: boolean;
+}
+
+/**
+ * The core tier decision (BLOCKBUSTER gate v3 + graduated margin gate +
+ * loss-maker / turnaround / quality-STRONG rules). Returns the base tier BEFORE
+ * the one-way market-reaction and thin-float downgrades — apply those via
+ * {@link marketReactionDelta} and {@link thinFloatGate} in that order.
+ *
+ * `addCaveats` is reserved (the base decision itself never pushes caveats); the
+ * downgrade helpers are what emit caveats.
+ */
+export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveats?: string[] } {
+  // BLOCKBUSTER gate — Paths A–E (any one qualifies).
+  const bbPathA = i.composite >= 78 && i.cleanMag && i.caveatCount <= 1 && (i.tier1MethodCount >= 1 || i.positiveGuidance) && i.chartOk;
+  const bbPathB = i.composite >= 72 && i.exceptMag && i.caveatCount <= 2 && i.chartOk;
+  const bbPathC = i.megaMag && i.caveatCount <= 3 && i.stage !== 4;
+  const bbPathD = i.marginInflection && i.caveatCount <= 3 && i.stage !== 4;        // PATCH 0837
+  const bbPathE = i.marginInflectionLoose && i.caveatCount <= 2;                    // PATCH 0838
+  const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD || bbPathE;
+
+  let tier: EarningsTier;
+  if (i.broken && i.composite < 70) tier = 'AVOID';
+  else if (i.stillLossMaking && blockbusterGate) tier = 'MIXED';                    // PATCH 1001
+  else if (i.turnaroundBase && blockbusterGate) tier = 'MIXED';                     // PATCH 1008
+  else if (blockbusterGate && i.marginSevereContraction) tier = 'MIXED';            // PATCH 1020
+  else if (blockbusterGate && !i.marginContracting) tier = 'BLOCKBUSTER';
+  else if (blockbusterGate && i.marginContracting) tier = 'STRONG';                 // PATCH 1000
+  else if (i.composite >= 68 && i.mCount >= 1 && i.caveatCount <= 3 && i.stage !== 4 && !i.stillLossMaking && !i.turnaroundBase && !i.marginSevereContraction) tier = 'STRONG';
+  // PATCH 1022 — QUALITY STRONG: double-digit sales + strong PAT + genuinely
+  // EXPANDING margins can be STRONG a point or two under the 68 floor.
+  else if (
+    i.composite >= 60 &&
+    i.salesY != null && i.salesY >= 10 &&
+    i.patY != null && i.patY >= 25 &&
+    i.epsY != null && i.epsY >= 15 &&
+    i.opmExp != null && i.opmExp >= 0.5 &&
+    !i.stillLossMaking && !i.turnaroundBase &&
+    i.caveatCount <= 3 && i.stage !== 4
+  ) tier = 'STRONG';
+  else if (i.composite >= 35) tier = 'MIXED';
+  else tier = 'AVOID';
+
+  return { tier };
+}
+
+/**
+ * PATCH 0938 — Day-1 market-reaction ladder. One-way (only downgrades). A print
+ * the market sold off on Day-1 loses its top-tier label regardless of headline
+ * beat. Returns the (possibly-demoted) tier plus caveats to merge into the
+ * card's caveat list (caller dedups against existing tags).
+ */
+export function marketReactionDelta(
+  tier: EarningsTier,
+  d1Pct: number | null | undefined,
+  gapPct: number | null | undefined,
+): { tier: EarningsTier; addCaveats: string[] } {
+  const d1Reaction = typeof d1Pct === 'number' ? d1Pct : null;
+  const gapReaction = typeof gapPct === 'number' ? gapPct : null;
+  const addCaveats: string[] = [];
+  let t = tier;
+  if (d1Reaction !== null) {
+    if (d1Reaction <= -7) {
+      if (t === 'BLOCKBUSTER' || t === 'STRONG') t = 'MIXED';
+      addCaveats.push('sold off post-results');
+    } else if (d1Reaction <= -3) {
+      if (t === 'BLOCKBUSTER') t = 'STRONG';
+      addCaveats.push('market rejected print');
+    }
+    if (gapReaction !== null && gapReaction >= 3 && d1Reaction <= -2) {
+      addCaveats.push('intraday reversal · distribution');
+    }
+  }
+  return { tier: t, addCaveats };
+}
+
+/**
+ * PATCH 1034 — Liquidity / thin-float gate. A name that barely trades (median
+ * traded value < ₹1 Cr/day) can't be built or exited at size, so it doesn't
+ * belong in the top conviction tiers. Demote (never delete) + tag. Missing ADTV
+ * is NOT punished (data gap ≠ illiquid).
+ */
+export function thinFloatGate(
+  tier: EarningsTier,
+  adtvCr: number | null | undefined,
+): { tier: EarningsTier; addCaveats: string[] } {
+  const THIN_ADTV_CR = 1;  // < ₹1 Cr/day median traded value = thin float / illiquid
+  const adtv = (typeof adtvCr === 'number' && Number.isFinite(adtvCr)) ? adtvCr : null;
+  const thinFloat = adtv != null && adtv < THIN_ADTV_CR;
+  const addCaveats: string[] = [];
+  let t = tier;
+  if (thinFloat) {
+    if (t === 'BLOCKBUSTER' || t === 'STRONG') t = 'MIXED';
+    addCaveats.push('thin float');
+  }
+  return { tier: t, addCaveats };
+}

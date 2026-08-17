@@ -24,7 +24,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
 // hard-coded 'Q4' that mislabelled every non-Jan–Mar filing (an August/Q1-FY27
@@ -340,56 +340,26 @@ function gradeRow(row: any): ParsedEarning | null {
   const positiveGuidance = _guidanceMatches >= 2;
 
   const chartOk = stage !== 4 && (pct52 == null || pct52 >= -25);
-  const bbPathA = composite >= 78 && cleanMag && caveat_tags.length <= 1 && (_t1MethodCount >= 1 || positiveGuidance) && chartOk;
-  const bbPathB = composite >= 72 && exceptMag && caveat_tags.length <= 2 && chartOk;
-  const bbPathC = megaMag && caveat_tags.length <= 3 && stage !== 4;
-  // PATCH 0837 — Path D: pure margin inflection (PAT+EPS >= 100%). Ignores
-  // sales growth requirement — the extreme PAT/EPS magnitude IS the signal.
-  const bbPathD = marginInflection && caveat_tags.length <= 3 && stage !== 4;
-  // PATCH 0838 — Path E: loose margin inflection (PAT+EPS >= 75% + sales >= 0).
-  // Tighter caveat limit (<=2) and stage filter since the magnitude is less
-  // extreme than Path D. Catches operating-leverage stories where PAT/EPS
-  // double on modest sales growth — Investment & Precision Castings class.
-  const bbPathE = marginInflectionLoose && caveat_tags.length <= 2;
-  const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD || bbPathE;
-  // PATCH 1000 — Hard MARGIN GATE on BLOCKBUSTER. If OPM is KNOWN to be
-  // contracting (opmExp <= -0.5 pp), cap tier at STRONG even if growth and
-  // composite both pass. User-reported: 'many companies incorrectly marked
-  // as blockbuster' due to revenue magnitude alone without margin support.
-  // Unknown OPM (null) → no gate (don't penalize data gaps).
-  // PATCH 1000 / 1020 — graduated margin gate.
-  //   marginContracting (≤ -0.5 pp): mild contraction → blocks BLOCKBUSTER,
-  //     demotes to STRONG. A growth print with a small margin dip is OK as STRONG.
-  //   marginSevereContraction (≤ -1.5 pp): clear contraction → blocks STRONG
-  //     too, caps at MIXED. User: 'if margins are bad it should not be in
-  //     strong or blockbuster' — e.g. VARROC OPM -2pp + optical eps was wrongly STRONG.
-  const marginContracting = opmExp != null && opmExp <= -0.5;
-  const marginSevereContraction = opmExp != null && opmExp <= -1.5;
-  if (broken && composite < 70) tier = 'AVOID';
-  else if (stillLossMaking && blockbusterGate) tier = 'MIXED';  // PATCH 1001 — loss-makers cannot be BB
-  else if (turnaroundBase && blockbusterGate) tier = 'MIXED';  // PATCH 1008 — turnaround base cannot be BB
-  else if (blockbusterGate && marginSevereContraction) tier = 'MIXED';  // PATCH 1020 — severe contraction caps at MIXED
-  else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
-  else if (blockbusterGate && marginContracting) tier = 'STRONG';
-  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase && !marginSevereContraction) tier = 'STRONG';  // PATCH 1001/1008/1020 — STRONG excludes loss-makers, turnaround base, AND severe margin contraction
-  // PATCH 1022 — QUALITY STRONG path. A print with solid double-digit sales
-  // growth + strong PAT growth + ACTUALLY EXPANDING margins is STRONG even if
-  // the composite lands a point or two below the 68 floor. User-reported:
-  // ASTRAMICRO (sales +20% / PAT +45% / EPS +44% / OPM +4pp / D1 +10% /
-  // composite 67) was wrongly MIXED purely because composite was 1 pt short.
-  // Requires margins genuinely expanding (opmExp >= +0.5pp) so this never
-  // rescues a contracting-margin name.
-  else if (
-    composite >= 60 &&
-    salesY != null && salesY >= 10 &&
-    patY != null && patY >= 25 &&
-    epsY != null && epsY >= 15 &&
-    opmExp != null && opmExp >= 0.5 &&
-    !stillLossMaking && !turnaroundBase &&
-    caveat_tags.length <= 3 && stage !== 4
-  ) tier = 'STRONG';
-  else if (composite >= 35) tier = 'MIXED';
-  else tier = 'AVOID';
+  // zzz395 — tier-decision chain (BLOCKBUSTER gate Paths A–E + graduated margin
+  // gate + loss-maker/turnaround/quality-STRONG rules) now lives in the shared
+  // module so this server copy and the client gradeRow can never re-drift.
+  tier = decideTier({
+    composite,
+    broken,
+    stillLossMaking,
+    turnaroundBase,
+    marginContracting: opmExp != null && opmExp <= -0.5,        // PATCH 1000
+    marginSevereContraction: opmExp != null && opmExp <= -1.5,  // PATCH 1020
+    caveatCount: caveat_tags.length,
+    mCount,
+    stage,
+    salesY, patY, epsY, opmExp,
+    cleanMag, exceptMag, megaMag,
+    marginInflection, marginInflectionLoose,
+    tier1MethodCount: _t1MethodCount,
+    positiveGuidance,
+    chartOk,
+  }).tier;
 
   // PATCH 0938 — Market-reaction gate (user-reported: POCL +78%/+124% scored
   // BLOCKBUSTER but stock sold off -6% D1; CARRARO same pattern at -5% D1).
@@ -407,35 +377,23 @@ function gradeRow(row: any): ParsedEarning | null {
   //   Gap >= +3 BUT D1 close <= -2% → caveat 'intraday reversal · distribution'
   //
   // Logic is one-way (only downgrades). A negative D1 reaction never elevates a tier.
-  const d1Reaction = typeof row?.d1_pct === 'number' ? row.d1_pct : null;
-  const gapReaction = typeof row?.gap_pct === 'number' ? row.gap_pct : null;
-  if (d1Reaction !== null) {
-    if (d1Reaction <= -7) {
-      // Severe rejection — even a true blockbuster gets capped at MIXED.
-      if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
-      if (!caveat_tags.includes('sold off post-results')) caveat_tags.push('sold off post-results');
-    } else if (d1Reaction <= -3) {
-      // Moderate rejection — downgrade BLOCKBUSTER → STRONG.
-      if (tier === 'BLOCKBUSTER') tier = 'STRONG';
-      if (!caveat_tags.includes('market rejected print')) caveat_tags.push('market rejected print');
-    }
-    // Distribution-day pattern — opened up but closed down.
-    if (gapReaction !== null && gapReaction >= 3 && d1Reaction <= -2) {
-      if (!caveat_tags.includes('intraday reversal · distribution')) {
-        caveat_tags.push('intraday reversal · distribution');
-      }
-    }
+  {
+    const _mr = marketReactionDelta(tier, row?.d1_pct, row?.gap_pct);
+    tier = _mr.tier;
+    for (const c of _mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
 
   // PATCH 1034 — Liquidity / thin-float gate. A name that barely trades can't be
   // built or exited at size, so it doesn't belong in the top conviction tiers.
   // Demote (never delete) + tag. Missing ADTV is NOT punished (data gap ≠ illiquid).
+  // _adtv / _thinFloat retained locally: _adtv feeds the return object, _thinFloat
+  // gates the ELITE flag below. The tier demotion itself is the shared thinFloatGate.
   const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
-  const THIN_ADTV_CR = 1;  // < ₹1 Cr/day median traded value = thin float / illiquid
-  const _thinFloat = _adtv != null && _adtv < THIN_ADTV_CR;
-  if (_thinFloat) {
-    if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
-    if (!caveat_tags.includes('thin float')) caveat_tags.push('thin float');
+  const _thinFloat = _adtv != null && _adtv < 1;  // < ₹1 Cr/day median traded value = thin float
+  {
+    const _tf = thinFloatGate(tier, _adtv);
+    tier = _tf.tier;
+    for (const c of _tf.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
 
   // Narrative
