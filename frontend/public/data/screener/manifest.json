@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-17T05:58:23Z",
+  "lastSync": "2026-08-17T08:36:45Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9847,
+      "size": 9848,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10930,
+      "size": 10929,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,17 +30,17 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 7129,
+      "size": 7130,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 6795,
+      "size": 6826,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4463,
+      "size": 4868,
       "displayName": "Lowequitycapital"
     },
     {
@@ -50,17 +50,17 @@
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 3677,
+      "size": 3678,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3689,
+      "size": 3690,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 5619,
+      "size": 5171,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -70,27 +70,27 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2439,
+      "size": 2001,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
       "name": "turnarounds.csv",
-      "size": 19243,
+      "size": 19246,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 19843,
+      "size": 21249,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63490,
+      "size": 63492,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65654,
+      "size": 65657,
       "displayName": "Working watchlist"
     },
     {
