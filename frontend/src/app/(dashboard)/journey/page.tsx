@@ -171,7 +171,7 @@ export default function JourneyPage() {
                     background: active ? 'color-mix(in srgb, var(--mc-cyan) 18%, transparent)' : 'transparent',
                     border: '1px solid ' + (active ? C.cyan : C.border),
                     borderRadius: 5,
-                    color: active ? C.cyan : C.text2,
+                    color: active ? C.cyan : C.muted,  // zzz381 — C.text2 was undefined
                     fontSize: 11, fontWeight: 700, cursor: 'pointer',
                     ...MONO,
                   }}>{opt.label}</button>

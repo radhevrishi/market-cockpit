@@ -1708,7 +1708,7 @@ function BottleneckDashboard({
                   <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
                     {bucket.signal_count} signal{bucket.signal_count !== 1 ? 's' : ''} · {bucket.article_count} article{bucket.article_count !== 1 ? 's' : ''}
                   </span>
-                  {bucket.key_tickers.slice(0, 4).map(t => (
+                  {(bucket.key_tickers ?? []).slice(0, 4).map(t => (  /* zzz381 — guard partial payload → no white-screen */
                     <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 15%, transparent)' }}>
                       {t}
                     </span>
@@ -1743,7 +1743,7 @@ function BottleneckDashboard({
                   {bucket.description}
                 </p>
 
-                {bucket.signals.map((signal, idx) => {
+                {(bucket.signals ?? []).map((signal, idx) => {  /* zzz381 */
                   const signalKey = `${bucket.bucket_id}-${idx}`;
                   const signalExpanded = expandedSignals.has(signalKey);
                   return (
@@ -1773,14 +1773,14 @@ function BottleneckDashboard({
                           )}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>
-                              {signal.sources.join(', ')}
+                              {(signal.sources ?? []).join(', ')}
                             </span>
                             {signal.evidence_count > 1 && (
                               <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-warn)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', padding: '1px 6px', borderRadius: '3px' }}>
                                 +{signal.evidence_count - 1} related
                               </span>
                             )}
-                            {signal.tickers.slice(0, 3).map(t => (
+                            {(signal.tickers ?? []).slice(0, 3).map(t => (  /* zzz381 */
                               <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 7%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 13%, transparent)' }}>
                                 {t}
                               </span>
@@ -1801,7 +1801,7 @@ function BottleneckDashboard({
                       {signalExpanded && signal.evidence_count > 1 && (
                         <div style={{ borderTop: '1px solid var(--mc-bg-4)', padding: '8px 14px 10px', paddingLeft: '30px' }}>
                           <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 6px', letterSpacing: '0.5px' }}>EVIDENCE ARTICLES</p>
-                          {signal.articles.map((art, aidx) => (
+                          {(signal.articles ?? []).map((art, aidx) => (  /* zzz381 */
                             <a
                               key={aidx}
                               href={art.source_url || '#'}

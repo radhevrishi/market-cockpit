@@ -927,7 +927,7 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   const _latestSalesGuard = excelData?.latestSales || 0;
   if (_latestSalesGuard > 0 && revScen.base !== undefined) {
     const _maxPlausible = _latestSalesGuard * 10;  // 10× allows 5-yr peak guidance
-    const _minPlausible = _latestSalesGuard * 0.2; // 5× drop = catastrophic, almost certainly wrong
+    const _minPlausible = _latestSalesGuard * 0.5; // zzz381 — tightened 0.2→0.5 to match engine.ts (Rubicon FY29 0.28× false-positive)
     if (revScen.base > _maxPlausible || revScen.base < _minPlausible) {
       console.warn(`[auto-val] Guidance sanity-clamp: REVENUE ₹${revScen.base.toFixed(0)} Cr implausible vs latest ₹${_latestSalesGuard.toFixed(0)} Cr — rejecting and falling back.`);
       revScen = {};
@@ -943,11 +943,30 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     }
   }
   if (excelData?.latestPAT && excelData.latestPAT > 0 && patScen.base !== undefined) {
-    if (patScen.base > excelData.latestPAT * 20 || patScen.base < excelData.latestPAT * 0.05) {
+    // zzz381 — tightened floor 0.05×→0.4× (PATCH 1019, mirrors engine.ts): extractor
+    // noise often grabs small standalone numbers ('0.5 Cr capex') and tags them PAT.
+    if (patScen.base > excelData.latestPAT * 20 || patScen.base < excelData.latestPAT * 0.4) {
       console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr implausible vs latest ₹${excelData.latestPAT.toFixed(0)} Cr — rejecting.`);
       patScen = {};
       forwardPAT = undefined;
     }
+  }
+  // zzz381 — DUAL-COPY RECONCILE: port the two impossible-PAT rejects that only
+  // existed in engine.ts (used by the Concall-AI embed) into this main /auto-valuation
+  // copy. Without them the main page produced wrong BUY/AVOID from mis-attributed PAT.
+  // (1) PATCH 1019 — PAT ≥ 50% of forward Revenue is essentially impossible (even
+  // pharma majors peak ~25%). Rubicon: extractor put ₹500 Cr on BOTH Revenue and PAT.
+  if (revScen.base !== undefined && patScen.base !== undefined && patScen.base >= revScen.base * 0.5) {
+    console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr >= 50% of Revenue ₹${revScen.base.toFixed(0)} Cr — almost certainly mis-attributed. Rejecting PAT.`);
+    patScen = {};
+    forwardPAT = undefined;
+  }
+  // (2) PATCH 1020 — PAT > EBITDA is mathematically impossible (PAT = EBITDA − Dep −
+  // Interest − Tax). Gujarat Pipavav: extractor gave PAT ₹655 Cr vs EBITDA ₹453 Cr.
+  if (ebitdaScen.base !== undefined && patScen.base !== undefined && patScen.base > ebitdaScen.base) {
+    console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr > EBITDA ₹${ebitdaScen.base.toFixed(0)} Cr — impossible. Rejecting PAT.`);
+    patScen = {};
+    forwardPAT = undefined;
   }
 
   // PATCH 0653 — apply guided GROWTH% per scenario to latest sales when
@@ -1037,7 +1056,7 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // got applied to EBITDA → 75% implied margin. Override with opmAvg.
   if (ebitdaScen.base && revScen.base) {
     const impliedMargin = (ebitdaScen.base / revScen.base) * 100;
-    const isFinancial = sector === 'Financial Services / NBFC';
+    const isFinancial = sector === 'Financial Services / NBFC' || sector === 'Insurance';  // zzz381 — port engine.ts Insurance exemption
     const upperBound = isFinancial ? 80 : 50;  // banks/NBFCs can have higher
     if (impliedMargin > upperBound && opmAvg && opmAvg > 0 && opmAvg < upperBound) {
       const correctedBase = revScen.base * (opmAvg / 100);

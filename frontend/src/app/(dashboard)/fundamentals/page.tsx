@@ -714,7 +714,7 @@ const drop: any = { border: `1px dashed ${COL.line2}`, borderRadius: 8, padding:
 // days, promoter holding, etc.) are absent in USA exports so we don't pretend
 // they exist; instead we surface what TV actually provides.
 function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; onRemove: (key: string) => void; onClear: () => void }) {
-  const [sortKey, setSortKey] = useState<string>('Market capitalization');
+  const [sortKey, setSortKey] = useState<string>('mcapB');  // zzz381 — was 'Market capitalization' which matches no USARow field → unsorted on load
   const [sortDesc, setSortDesc] = useState(true);
 
   const get = (r: Row, ...keys: string[]) => {
