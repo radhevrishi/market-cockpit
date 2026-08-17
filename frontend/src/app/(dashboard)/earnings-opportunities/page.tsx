@@ -563,8 +563,20 @@ function gradeRow(row: any): ParsedEarning | null {
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) {
     caveat_tags.push('tax distortion');
   }
-  // segment mix shift — OPM compressed > 1.5pp YoY
+  // zzz386 — DUAL-COPY RECONCILE (composite inputs): the server (graded/route.ts)
+  // pushes these 'low quality' caveats BEFORE computing quality/composite, so the
+  // loss-making / turnaround-base penalty is baked into the score. This client copy
+  // previously added them only in the tier section (after composite), leaving the
+  // client composite higher than the server for the same row. Declared here so the
+  // tier chain below still references the same booleans (mirror server exactly,
+  // incl. the unconditional push — duplicates dock quality the same way).
+  const stillLossMaking = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);  // PATCH 1001
+  if (stillLossMaking) caveat_tags.push('low quality');
+  const turnaroundBase = (row?.pat_prev_cr != null && row.pat_prev_cr < 0) || (row?.eps_prev != null && row.eps_prev < 0);  // PATCH 1008
+  if (turnaroundBase) caveat_tags.push('low quality');
+  // segment mix shift — OPM compressed > 1.5pp YoY (server also pushes at ≤ -0.5pp)
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
+  if (opmExp != null && opmExp <= -0.5 && !caveat_tags.includes('segment mix shift')) caveat_tags.push('segment mix shift');
   // ocf divergence — annual OCF < 60% of annual PAT (when PAT > 0), OR OCF < 0 while PAT > 0
   if (row?.ocf_to_pat_ratio != null) {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
@@ -606,7 +618,19 @@ function gradeRow(row: any): ParsedEarning | null {
   };
   let quality = 100;
   for (const tag of caveat_tags) quality -= (caveatPenalty[tag] ?? 8);
-  if (opmExp != null && opmExp >= 3) quality += 8;       // margin expansion bonus
+  // zzz386 — full margin ladder (mirror server graded/route.ts PATCH 1000): margin
+  // expansion bonus AND contraction penalty. Previously the client had only the
+  // single +8 expansion bonus, so contracting-margin rows were never docked and
+  // could over-grade to STRONG where the server said MIXED. Ordering mirrors the
+  // server exactly (‑0.5 before ‑2 — see note; the ‑2 branch is unreachable while
+  // both copies keep this order, kept only for parity so the two stay identical).
+  if (opmExp != null) {
+    if (opmExp >= 5) quality += 14;
+    else if (opmExp >= 3) quality += 10;
+    else if (opmExp >= 1) quality += 5;
+    else if (opmExp <= -0.5) quality -= 8;
+    else if (opmExp <= -2) quality -= 14;
+  }
   quality = Math.max(0, Math.min(100, quality));
 
   // Technical — Stage base + RS / 3 + 52w proximity + trend-template bonus
@@ -757,10 +781,9 @@ function gradeRow(row: any): ParsedEarning | null {
   // cards can't be over-graded relative to the server. Loss-makers, turnaround
   // bases (prior period negative → YoY% meaningless), and margin contraction
   // must not carry a BLOCKBUSTER/STRONG label even on huge headline growth.
-  const stillLossMaking = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);  // PATCH 1001
-  if (stillLossMaking && !caveat_tags.includes('low quality')) caveat_tags.push('low quality');
-  const turnaroundBase = (row?.pat_prev_cr != null && row.pat_prev_cr < 0) || (row?.eps_prev != null && row.eps_prev < 0);  // PATCH 1008
-  if (turnaroundBase && !caveat_tags.includes('low quality')) caveat_tags.push('low quality');
+  // zzz386 — stillLossMaking / turnaroundBase now declared + caveat-pushed ABOVE
+  // (before the quality/composite computation) to mirror the server. Only the
+  // margin-contraction booleans (tier-only, no caveat) are computed here.
   const marginContracting = opmExp != null && opmExp <= -0.5;        // PATCH 1000
   const marginSevereContraction = opmExp != null && opmExp <= -1.5;  // PATCH 1020
 
@@ -4278,7 +4301,15 @@ function OpmTile({ opm, opmPrev }: { opm: number | null | undefined; opmPrev: nu
 
 function MetricTile({ label, pct, curr, prev }: { label: string; pct: number | null; curr: string | null; prev: string | null }) {
   const color = pct == null ? '#6B7A8D' : pct >= 0 ? '#10B981' : '#EF4444';
-  const pctLabel = pct == null ? '—' : `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
+  // zzz385 — clamp base-effect blow-ups on the card tile (mirror the narrative fmtP
+  // clamp): a near-zero prior base makes YoY % explode (e.g. ₹0.5 Cr → ₹50 Cr PAT =
+  // +5000%). Exact precision is meaningless there and reads as fabricated, so show
+  // '>500%' above the threshold. The curr-vs-prev ₹Cr line below still shows the real
+  // magnitude so the low base is obvious.
+  const pctLabel = pct == null || !Number.isFinite(pct)
+    ? '—'
+    : pct >= 500 ? '>500%'
+    : `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
   return (
     <div style={{ padding: '8px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
       <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>{label}</div>
