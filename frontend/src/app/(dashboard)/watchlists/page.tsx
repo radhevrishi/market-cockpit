@@ -1595,9 +1595,14 @@ function cbIsFinancial(e: any): boolean {
   // sector only resolves via NSE_SECTOR_MAP are caught (PAISALO etc). Company-
   // name regex now carries the `i` flag so lower-case variants match too.
   const sec = String(resolveSector(e) || e?.sector || '').toLowerCase();
-  if (/nbfc|bank|financ|finance|insurance|capital|housing|holding|amc|securit|microfin|invit|reit|broking|mutual|fincorp|investment/.test(sec)) return true;
+  // zzz371 (audit) — the old bare `capital|housing|holding|amc` tokens exempted
+  // "Capital Goods" industrials, Ashiana Housing, R-AMC-o Cements, and any
+  // "Holdings" from every CFO/OPM signal (their trends went blank). Only treat
+  // as financial when the token is a genuine financial phrase / word-anchored.
+  if (/nbfc|bank|financ|finance|insurance|capital\s*market|housing\s*fin|holding\s*co|\bamc\b|asset\s*manag|securit|microfin|invit|reit|broking|mutual\s*fund|fincorp|investment\s*(co|trust|manag)/.test(sec)) return true;
+  if (/^(capital goods|capital equipment|capital markets?\s*infra)/.test(sec)) return false; // explicit industrial carve-out
   const co = String(e?.company || '');
-  if (/Finance|Financial|Fincorp|Microfin|Housing|Bank|Capital|Investment|Holdings|Securities|AMC|Insurance|NBFC/i.test(co)) return true;
+  if (/\b(Finance|Financial|Fincorp|Microfin|Housing Finance|Bank|Capital(?!\s*Goods)|Investments?\b|Holdings?\s*Ltd|Securities|AMC|Insurance|NBFC)\b/i.test(co)) return true;
   return false;
 }
 
@@ -1688,7 +1693,7 @@ function cbComputeQuality(e: any): {
   // 3 red flags — MARGIN-SPIKE + EPS≠PAT + MKT-DOUBT — and getting AVOID purely on
   // that count, despite the beat being fully cash-backed. Suppressing MARGIN-SPIKE
   // when cash-confirmed drops it to 2 flags → WATCH (fair: real but low-base).
-  const cashConfirmed = typeof cfo === 'number' && cfo >= 1.5 && !fin;
+  const cashConfirmed = typeof cfo === 'number' && cfo >= 1.5 && cfo <= 5 && !fin; // zzz371 — |ratio|>5 is an artifact band, not confirmation
   // Count red flags (mirrors the RED FLAGS render block)
   let rf = 0;
   if (typeof cfo === 'number' && cfo > 0 && cfo < 0.5 && !fin) rf++; // zzz362/zzz364 (BUG 6) — CASH-CONV only for genuine weak-but-positive; financials exempt
@@ -1722,7 +1727,7 @@ function cbComputeQuality(e: any): {
     verdict = { label: 'AVOID', icon: '🚫', color: '#EF4444', tip: 'Multiple red flags OR sharp market disbelief OR negative EPS growth. Downside heavy.' };
   } else if (qScore >= 80 && !isOvervalued && rf <= 1 && !driftBad) {
     verdict = { label: 'STRONG BUY', icon: '🚀', color: '#22C55E', tip: 'Composite: high earnings quality (' + qScore + ') + reasonable valuation + no serious flags + no market disbelief. Institutional-grade setup.' };
-  } else if (qScore >= 65 && rf <= 2 && !driftBad) {
+  } else if (qScore >= 65 && rf <= 2 && !driftBad && !isOvervalued) { // zzz371 — BUY must not ignore the valuation gate STRONG BUY already applies
     verdict = { label: 'BUY', icon: '📈', color: '#84CC16', tip: 'Quality (' + qScore + ') solid, risk manageable. Position sizing at conviction.' };
   } else if (qScore >= 45 && rf <= 3) {
     verdict = { label: 'WATCH', icon: '👁', color: '#F59E0B', tip: 'Mixed signals — quality ' + qScore + '/100, ' + rf + ' red flags. Track catalyst/management commentary before sizing.' };
@@ -2205,10 +2210,14 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || (e as any).close_30d.length < 2)
     );
     if (stale.length === 0) return;
-    (async () => {
+    // zzz370 — walk is a reusable pass so we can run a RETRY SWEEP after the first
+    // full walk. `retry=true` adds nocache=1 so a symbol whose first fetch hit a
+    // transient Screener miss (and got a short-TTL trend-less payload cached) is
+    // re-scraped fresh instead of being served the same empty result again.
+    const runPass = async (targets: typeof stale, retry: boolean) => {
       // Batch by filing_date so we can pass filedHint per group
       const byDate = new Map<string, string[]>();
-      for (const e of stale) {
+      for (const e of targets) {
         const arr = byDate.get(e.filing_date!) || [];
         arr.push(e.ticker!);
         byDate.set(e.filing_date!, arr);
@@ -2223,7 +2232,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         for (let ci = 0; ci < tickers.length; ci += 8) {
           const chunk = tickers.slice(ci, ci + 8);
           try {
-          const url = `/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${dt}`;
+          const url = `/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${dt}${retry ? '&nocache=1' : ''}`;
           const res = await fetch(url, { cache: 'no-store' });
           if (!res.ok) { await new Promise(r => setTimeout(r, 300)); continue; }
           const j = await res.json();
@@ -2232,7 +2241,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           for (const sym of chunk) {
             const enr = data[sym];
             if (!enr) continue;
-            const existing = list.find(e => e.ticker === sym);
+            // zzz371 — read the CURRENT bench entry, not the mount-time `list` snapshot.
+            // Pass 1 mutates the bench (stamps cb_enrich_v / cb_trend_attempts); if pass 2
+            // read the stale snapshot, cb_trend_attempts would never advance and the
+            // 6-attempt retry bound could never be consumed.
+            const existing = getConvictionList().find(e => e.ticker === sym) || list.find(e => e.ticker === sym);
             if (!existing) continue;
             syncEntries.push({
               ticker: sym,
@@ -2302,6 +2315,19 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           await new Promise(r => setTimeout(r, 300));
         }
       }
+    };
+    (async () => {
+      // Pass 1 — everything the gate flagged.
+      await runPass(stale, false);
+      // zzz370 — Pass 2: RETRY SWEEP. Re-read the bench (pass 1 mutated it) and
+      // re-fetch, with nocache=1, only the non-financial entries that STILL lack a
+      // trend series. Fixes the "only some populating" symptom: well-covered names
+      // (NAVINFLUOR / DIVISLAB / DEEPAKNTR ...) whose single first attempt hit a
+      // transient Screener miss now get a fresh live scrape in the same session
+      // instead of waiting for the next page load. Bounded by cb_trend_attempts.
+      await new Promise(r => setTimeout(r, 1500));
+      const again = getConvictionList().filter(e => e.ticker && e.filing_date && needsTrends(e));
+      if (again.length > 0) await runPass(again, true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -4842,7 +4868,9 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         // next to a cash-backed beat. Rendered neutral grey as an informational note,
         // not a red/amber warning, with a caveat to check the driver.
         const cfoR = num(e.cfo_to_pat_ratio);
-        if (cfoR !== null && cfoR > 3 && !cbIsFinancial(e)) { // zzz362 — financials: CFO/PAT not meaningful
+        // zzz371 (audit) — cap at the same 5x artifact ceiling the top-line uses, so a card
+        // can never show "CFO/PAT FY n/m" AND "CASH-RICH 8.7x" at once (TVSSRICHAK).
+        if (cfoR !== null && cfoR > 3 && cfoR <= 5 && !cbIsFinancial(e)) { // zzz362 — financials: CFO/PAT not meaningful
           chips.push({ icon: '💧', label: `CASH-RICH ${cfoR.toFixed(1)}×`, color: 'var(--mc-text-4)',
             tip: `CFO/PAT ${cfoR.toFixed(1)}× — operating cash flow far exceeds reported profit. Usually healthy (strong cash conversion or heavy depreciation add-back); occasionally a working-capital release or a depressed-PAT base. Informational, not a red flag.` });
         }
@@ -4915,7 +4943,10 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           nothing when no series/scalar is present. */}
       {density !== 'ultra' && (() => {
         const e: any = entry;
-        const GREEN = '#22C55E', AMBER = '#F59E0B', RED = '#EF4444', NEU = 'var(--mc-text-2)';
+        // zzz371 (audit) — NEU must be a real hex, not a CSS var(): the pill style
+        // appends a hex-alpha suffix (col + '14' / col + '40'), and 'var(--x)14' is
+        // invalid CSS, so neutral TAX/OPM pills silently lost their bg + border.
+        const GREEN = '#22C55E', AMBER = '#F59E0B', RED = '#EF4444', NEU = '#94A3B8';
         // last two finite values of a chronological (oldest→newest) array
         const lastTwo = (v: any): { latest: number; prev: number } | null => {
           if (!Array.isArray(v) || v.length < 2) return null;

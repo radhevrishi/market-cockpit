@@ -267,14 +267,36 @@ function extractScreenerTrends(html: string): Record<string, any> {
     const cfoRow = secRow(cf, 'Cash from Operating');
     const patRow = secRow(pl, 'Net Profit') ?? secRow(pl, 'Profit');
     if (cfoRow && patRow) {
-      const L = Math.min(cfoRow.length, patRow.length);
+      // zzz371 — VALUE FIX (audit): the P&L table carries a trailing "TTM" column
+      // that the cash-flow table does NOT have. Blind right-alignment therefore
+      // paired FY-N CFO with FY-N+1 PAT — every annual CFO/PAT ratio was shifted
+      // one year. Align by column LABEL (e.g. "Mar 2025"), skipping non-FY labels
+      // like TTM; fall back to right-alignment only if labels are unavailable.
       const pairs: (number | null)[] = [];
-      for (let k = 0; k < L; k++) {
-        const c = cfoRow[cfoRow.length - L + k] ?? null;
-        const p = patRow[patRow.length - L + k] ?? null;
-        pairs.push(c == null || p == null || p === 0 ? null : Math.round((c / p) * 100) / 100);
+      const cfLabels = (cf && cf.labels) || [];
+      const plLabels = (pl && pl.labels) || [];
+      const isFY = (lb: string) => /^[A-Za-z]{3}\s+\d{4}$/.test(String(lb).trim());
+      if (cfLabels.length === cfoRow.length && plLabels.length === patRow.length && cfLabels.some(isFY)) {
+        const plIdx: Record<string, number> = {};
+        plLabels.forEach((lb, i) => { if (isFY(lb)) plIdx[String(lb).trim()] = i; });
+        cfLabels.forEach((lb, i) => {
+          if (!isFY(lb)) return;
+          const j = plIdx[String(lb).trim()];
+          const c = cfoRow[i] ?? null;
+          const pv = j != null ? (patRow[j] ?? null) : null;
+          pairs.push(c == null || pv == null || pv === 0 ? null : Math.round((c / pv) * 100) / 100);
+        });
+      } else {
+        // fallback: strip a trailing TTM on the P&L side, then right-align
+        const patFY = plLabels.length === patRow.length ? patRow.filter((_, i) => isFY(plLabels[i])) : patRow;
+        const L = Math.min(cfoRow.length, patFY.length);
+        for (let k = 0; k < L; k++) {
+          const c = cfoRow[cfoRow.length - L + k] ?? null;
+          const pv = patFY[patFY.length - L + k] ?? null;
+          pairs.push(c == null || pv == null || pv === 0 ? null : Math.round((c / pv) * 100) / 100);
+        }
       }
-      outT.annual_cfo_pat = pairs.slice(Math.max(0, pairs.length - 6));
+      if (pairs.length) outT.annual_cfo_pat = pairs.slice(Math.max(0, pairs.length - 6));
     }
     // pledge + return ratios from top-ratios block
     const ratios = parseTopRatios(html);
@@ -1220,11 +1242,18 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // returns null on the proxied prod HTML. Cache bumped v1->v2 to include the trends.
   const fetchScreenerCFO = async (sym: string): Promise<any | null> => {
     // zzz322 — KV cache first (24h TTL)
+    // zzz371 — honor the caller's bypassCache (nocache=1) so the client RETRY SWEEP
+    // actually re-scrapes Screener instead of being re-served the same trend-less
+    // cfo payload (that KV read was silently defeating zzz370's retry). Also: a cached
+    // payload that has NO trends is never a valid hit for the trend consumers — fall
+    // through and re-scrape so a transient miss self-heals.
     const kvKey = `cfo:v3:${sym}`;
-    try {
-      const cached = await kvGet<any>(kvKey);
-      if (cached && typeof cached === 'object' && (typeof cached.ocf_annual_cr === 'number' || typeof cached.pat_annual_cr === 'number' || typeof cached.ocf_to_pat_ratio === 'number' || cached._trends)) return cached;
-    } catch {}
+    if (!bypassCache) {
+      try {
+        const cached = await kvGet<any>(kvKey);
+        if (cached && typeof cached === 'object' && cached._trends) return cached;
+      } catch {}
+    }
     // zzz322 — reuse fetchScreenerHtml (3-attempt retry with backoff)
     const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
     const html = await fetchScreenerHtml(url);
@@ -1252,11 +1281,32 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     };
     // zzz322 — loosened label match
     const ocf = findLastNum(/(cash\s+from\s+operating|cash\s+from\s+operations|operating\s+cash\s+flow|net\s+cash\s+from\s+operating)/i);
-    const netProfit = findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i)
+    // zzz371 — VALUE FIX (audit): the page-wide row scan matched the QUARTERS table's
+    // "Net Profit" first (a single-quarter figure), and even on the P&L it took the
+    // trailing TTM cell — so annual CFO was being divided by a quarterly/TTM PAT
+    // (KMEW showed 1.17 top-line vs 0.62 in the annual pill from the same data).
+    // Read the P&L section's latest FY column (label "Mon YYYY", skip TTM) so
+    // numerator and denominator are the SAME fiscal year. Falls back to the old
+    // scan only when the section parser can't find the P&L table.
+    const plT = parseTableLoose(html, 'profit-loss');
+    const fyIdxOf = (t: { labels: string[] } | null): number => {
+      if (!t) return -1;
+      for (let i = t.labels.length - 1; i >= 0; i--) if (/^[A-Za-z]{3}\s+\d{4}$/.test(String(t.labels[i]).trim())) return i;
+      return -1;
+    };
+    const plFy = fyIdxOf(plT);
+    const plRow = (kw: RegExp): number | null => {
+      if (!plT || plFy < 0) return null;
+      const k = Object.keys(plT.rows).find((kk) => kw.test(kk));
+      const v = k ? plT.rows[k][plFy] : null;
+      return typeof v === 'number' && Number.isFinite(v) ? v : null;
+    };
+    const netProfit = plRow(/^\s*Net Profit/i) ?? plRow(/^\s*Profit for/i)
+                   ?? findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i)
                    ?? findLastNum(/^\s*Profit for (the )?year\s*[+\-]?\s*$/i)
                    ?? findLastNum(/^\s*Net Profit\b/i);
     // zzz364 — annual sales for the meaningfulness gate below.
-    const salesAnnual = findLastNum(/^\s*Sales\b/i) ?? findLastNum(/^\s*Revenue\b/i);
+    const salesAnnual = plRow(/^\s*Sales/i) ?? plRow(/^\s*Revenue/i) ?? findLastNum(/^\s*Sales\b/i) ?? findLastNum(/^\s*Revenue\b/i);
     let ratio = (typeof ocf === 'number' && typeof netProfit === 'number' && netProfit > 0)
       ? Math.round((ocf / netProfit) * 100) / 100
       : null;
