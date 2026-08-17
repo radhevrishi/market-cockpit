@@ -15,6 +15,7 @@ import { PdfExportButton } from '@/components/PdfExportButton';
 import MarketHours from '@/components/MarketHours';
 // PATCH 0283 — Surface Conviction Beats count in the global header.
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { scheduleBookSync } from '@/lib/book-sync-client';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
@@ -310,6 +311,27 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       window.removeEventListener('conviction-beats:updated', refresh);
     };
   }, []);
+
+  // zzz397 — Book Watch sync. Keep the server-side "book" (holdings + bench +
+  // watchlist + decision snapshots) current from anywhere in the dashboard so
+  // the book-watch cron can alert on names you actually own even with no tab
+  // open. Debounced, fire-and-forget. Fires on mount, on navigation, and on
+  // every relevant cross-tab update event.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    scheduleBookSync(1500);
+    const onChange = () => scheduleBookSync();
+    window.addEventListener('storage', onChange);
+    window.addEventListener('conviction-beats:updated', onChange);
+    window.addEventListener('mc:decisions:updated', onChange);
+    window.addEventListener('mc:watchlist:updated', onChange);
+    return () => {
+      window.removeEventListener('storage', onChange);
+      window.removeEventListener('conviction-beats:updated', onChange);
+      window.removeEventListener('mc:decisions:updated', onChange);
+      window.removeEventListener('mc:watchlist:updated', onChange);
+    };
+  }, [pathname]);
 
   // ── Auth check: mark as checked (public data loads regardless) ──────────
   useEffect(() => {
