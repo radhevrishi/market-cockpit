@@ -288,8 +288,8 @@ function gradeRow(row: any): ParsedEarning | null {
     if (opmExp >= 5) quality += 14;
     else if (opmExp >= 3) quality += 10;
     else if (opmExp >= 1) quality += 5;
-    else if (opmExp <= -0.5) quality -= 8;   // explicit contraction penalty
-    else if (opmExp <= -2) quality -= 14;
+    else if (opmExp <= -2) quality -= 14;    // zzz387 — severe contraction checked FIRST (was shadowed by -0.5, so -14 never fired)
+    else if (opmExp <= -0.5) quality -= 8;   // mild contraction
   }
   quality = Math.max(0, Math.min(100, quality));
 

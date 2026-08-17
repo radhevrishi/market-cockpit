@@ -825,7 +825,12 @@ function extractThemes(text: string, schemes: SchemeRow[]): Theme[] {
 
 type FQPart = { label: string; value: number; pctDisplay: string; note?: string };
 function fiscalQualityScore(h: FiscalHeadline, gt: GrandTotal, d: DeficitBlock): { score: number; parts: FQPart[]; benchmark: string } {
-  const totalExp = h.totalExpBE ?? gt.beNew ?? 0;
+  // zzz389 — use the SAME denominator basis as buildAISummary (total outlay =
+  // max of headline total-expenditure and grand-total BE). Previously this used
+  // `totalExpBE ?? beNew` while the AI summary used `max(totalExpBE, beNew)`, so
+  // the capex-% / interest-% on this score card could disagree with the % quoted
+  // in the AI summary for the same budget. One denominator, one honest label.
+  const totalExp = Math.max(h.totalExpBE ?? 0, gt.beNew ?? 0);
   const parts: FQPart[] = [];
   let score = 30;
 
@@ -833,7 +838,7 @@ function fiscalQualityScore(h: FiscalHeadline, gt: GrandTotal, d: DeficitBlock):
     const capexShare = h.totalCapExBE / totalExp;
     const capexPts = Math.min(30, Math.round(capexShare * 120));
     score += capexPts;
-    parts.push({ label: 'CapEx share', value: capexPts, pctDisplay: `${(capexShare * 100).toFixed(1)}% of total exp` });
+    parts.push({ label: 'CapEx share', value: capexPts, pctDisplay: `${(capexShare * 100).toFixed(1)}% of total outlay` });
   }
   if (h.interestPayments != null && totalExp > 0) {
     const interestShare = h.interestPayments / totalExp;
@@ -844,7 +849,7 @@ function fiscalQualityScore(h: FiscalHeadline, gt: GrandTotal, d: DeficitBlock):
     else if (interestShare > 0.18) interestPts = 10;
     else interestPts = 20;
     score += interestPts;
-    parts.push({ label: 'Interest burden', value: interestPts, pctDisplay: `${(interestShare * 100).toFixed(1)}% of total exp`,
+    parts.push({ label: 'Interest burden', value: interestPts, pctDisplay: `${(interestShare * 100).toFixed(1)}% of total outlay`,
       note: interestShare > 0.25 ? 'Interest > 25% — heavy debt-service constraint' : undefined });
   }
   if (d.fiscalDeficitPctGDP != null) {
@@ -886,7 +891,7 @@ function buildAISummary(y: BudgetYearData): string {
   parts.push(`**Budget FY ${y.fiscalYear}** allocates **${fmtCr(totalBudget)}** across ${rankable.length} major ministries` +
     (growthVsRE != null ? `, ${growthVsRE >= 0 ? 'growing' : 'contracting'} **${Math.abs(growthVsRE).toFixed(1)}%** over prior FY Revised Estimates` : '') +
     (growthVsActual != null ? ` and **${growthVsActual >= 0 ? '+' : ''}${growthVsActual.toFixed(1)}%** over FY ${y.headline.yearActuals} Actuals` : '') + '.');
-  if (capexShare != null) parts.push(`Capital expenditure at **${fmtCr(y.headline.totalCapExBE)}** is **${capexShare.toFixed(1)}%** of total spend, ${capexShare >= 22 ? 'a strong public-investment tilt' : capexShare >= 18 ? 'a continued capex thrust' : 'a more revenue-heavy posture'}.`);
+  if (capexShare != null) parts.push(`Capital expenditure at **${fmtCr(y.headline.totalCapExBE)}** is **${capexShare.toFixed(1)}%** of total outlay, ${capexShare >= 22 ? 'a strong public-investment tilt' : capexShare >= 18 ? 'a continued capex thrust' : 'a more revenue-heavy posture'}.`);
   if (interestShare != null) parts.push(`Interest payments consume **${interestShare.toFixed(1)}%** of the budget, ${interestShare >= 25 ? 'heavily constraining discretionary spend' : interestShare >= 20 ? 'a structural burden but manageable' : 'leaving room for productive allocations'}.`);
   if (winners.length) parts.push(`**Largest allocation increases** go to ${winners.map(w => `**${w.ministry}** (${fmtDelta(w.absoluteDeltaRE)} / ${fmtPct(w.yoyVsRE)})`).join(', ')}.`);
   if (losers.length) parts.push(`**Notable cuts** hit ${losers.map(l => `**${l.ministry}** (${fmtDelta(l.absoluteDeltaRE)} / ${fmtPct(l.yoyVsRE)}${l.note ? ' — ' + l.note : ''})`).join(', ')}.`);

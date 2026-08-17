@@ -618,18 +618,18 @@ function gradeRow(row: any): ParsedEarning | null {
   };
   let quality = 100;
   for (const tag of caveat_tags) quality -= (caveatPenalty[tag] ?? 8);
-  // zzz386 — full margin ladder (mirror server graded/route.ts PATCH 1000): margin
-  // expansion bonus AND contraction penalty. Previously the client had only the
-  // single +8 expansion bonus, so contracting-margin rows were never docked and
-  // could over-grade to STRONG where the server said MIXED. Ordering mirrors the
-  // server exactly (‑0.5 before ‑2 — see note; the ‑2 branch is unreachable while
-  // both copies keep this order, kept only for parity so the two stay identical).
+  // zzz386/zzz387 — full margin ladder (mirror server graded/route.ts PATCH 1000):
+  // margin expansion bonus AND contraction penalty. The client previously had only
+  // the single +8 expansion bonus, so contracting-margin rows were never docked and
+  // could over-grade to STRONG where the server said MIXED. zzz387 reorders so severe
+  // contraction (≤ -2pp) is checked BEFORE mild (≤ -0.5pp) — the -14 branch was
+  // otherwise unreachable. Applied to BOTH copies so client == server.
   if (opmExp != null) {
     if (opmExp >= 5) quality += 14;
     else if (opmExp >= 3) quality += 10;
     else if (opmExp >= 1) quality += 5;
-    else if (opmExp <= -0.5) quality -= 8;
-    else if (opmExp <= -2) quality -= 14;
+    else if (opmExp <= -2) quality -= 14;    // severe contraction (check first)
+    else if (opmExp <= -0.5) quality -= 8;   // mild contraction
   }
   quality = Math.max(0, Math.min(100, quality));
 
