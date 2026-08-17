@@ -752,16 +752,54 @@ function gradeRow(row: any): ParsedEarning | null {
   // (suppress unused variable warning for chartHealthy — reserved for future tier-bonus)
   void chartHealthy;
 
-  if (broken && composite < 70) {
-    tier = 'AVOID';
-  } else if (blockbusterGate) {
-    tier = 'BLOCKBUSTER';
-  } else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) {
-    tier = 'STRONG';
-  } else if (composite >= 35) {
-    tier = 'MIXED';
-  } else {
-    tier = 'AVOID';
+  // zzz384 — DUAL-COPY RECONCILE: port the server's (graded/route.ts) tier
+  // downgrades that this client copy lacked, so force-included / client-joined
+  // cards can't be over-graded relative to the server. Loss-makers, turnaround
+  // bases (prior period negative → YoY% meaningless), and margin contraction
+  // must not carry a BLOCKBUSTER/STRONG label even on huge headline growth.
+  const stillLossMaking = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);  // PATCH 1001
+  if (stillLossMaking && !caveat_tags.includes('low quality')) caveat_tags.push('low quality');
+  const turnaroundBase = (row?.pat_prev_cr != null && row.pat_prev_cr < 0) || (row?.eps_prev != null && row.eps_prev < 0);  // PATCH 1008
+  if (turnaroundBase && !caveat_tags.includes('low quality')) caveat_tags.push('low quality');
+  const marginContracting = opmExp != null && opmExp <= -0.5;        // PATCH 1000
+  const marginSevereContraction = opmExp != null && opmExp <= -1.5;  // PATCH 1020
+
+  if (broken && composite < 70) tier = 'AVOID';
+  else if (stillLossMaking && blockbusterGate) tier = 'MIXED';
+  else if (turnaroundBase && blockbusterGate) tier = 'MIXED';
+  else if (blockbusterGate && marginSevereContraction) tier = 'MIXED';
+  else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
+  else if (blockbusterGate && marginContracting) tier = 'STRONG';
+  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase && !marginSevereContraction) tier = 'STRONG';
+  // PATCH 1022 — QUALITY STRONG: double-digit sales + strong PAT + genuinely
+  // EXPANDING margins can be STRONG a point or two under the 68 floor.
+  else if (
+    composite >= 60 &&
+    salesY != null && salesY >= 10 &&
+    patY != null && patY >= 25 &&
+    epsY != null && epsY >= 15 &&
+    opmExp != null && opmExp >= 0.5 &&
+    !stillLossMaking && !turnaroundBase &&
+    caveat_tags.length <= 3 && stage !== 4
+  ) tier = 'STRONG';
+  else if (composite >= 35) tier = 'MIXED';
+  else tier = 'AVOID';
+
+  // PATCH 0938 — Market-reaction gate (one-way, only downgrades). A print the
+  // market sold off on Day-1 loses its top-tier label regardless of headline beat.
+  const d1Reaction = typeof row?.d1_pct === 'number' ? row.d1_pct : null;
+  const gapReaction = typeof row?.gap_pct === 'number' ? row.gap_pct : null;
+  if (d1Reaction !== null) {
+    if (d1Reaction <= -7) {
+      if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
+      if (!caveat_tags.includes('sold off post-results')) caveat_tags.push('sold off post-results');
+    } else if (d1Reaction <= -3) {
+      if (tier === 'BLOCKBUSTER') tier = 'STRONG';
+      if (!caveat_tags.includes('market rejected print')) caveat_tags.push('market rejected print');
+    }
+    if (gapReaction !== null && gapReaction >= 3 && d1Reaction <= -2 && !caveat_tags.includes('intraday reversal · distribution')) {
+      caveat_tags.push('intraday reversal · distribution');
+    }
   }
 
   // ── Narrative ──────────────────────────────────────────────────────────
