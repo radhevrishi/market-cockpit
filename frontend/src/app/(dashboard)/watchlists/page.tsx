@@ -2197,11 +2197,14 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       if (manual) { setFillProgress('⏳ A fill pass is already running — watch the counter, or try again once it finishes.'); setTimeout(() => setFillProgress(null), 6000); }
       return;
     }
-    if (manual) setFillProgress('Scanning bench for missing data…');
+    setFillProgress(manual ? 'Scanning bench for missing data…' : 'Auto-filling missing data…');
     fillRunningRef.current = true;
     const list = getConvictionList();
     let done = 0, total = 0;
-    const report = (msg: string) => { if (manual) setFillProgress(msg); };
+    // zzz375 — report for BOTH manual and the mount auto-walk so a background
+    // fill is visible (the user pressed nothing but sees "Auto-filling 8/40…"
+    // rather than a dead page). Background runs clear their own status when done.
+    const report = (msg: string) => setFillProgress(manual ? msg : `⟳ ${msg}`);
     // zzz244/248/255 — broaden auto-enrich gate. Fire whenever ANY expected field
     // is missing (move_pct, d2, pe, close_30d, roce). This includes new institutional
     // fields added in zzz254 so existing entries backfill on next page load.
@@ -2223,12 +2226,12 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
-        || (e as any).cb_enrich_v !== 371  // zzz372 (was 369) — one-time re-enrich so zzz371 CFO/PAT value fixes propagate. zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
+        || (e as any).cb_enrich_v !== 375  // zzz375 (was 371) — re-enrich once so the Screener standalone-page fallback fills names that only had /consolidated/ misses. zzz372 (was 369) — one-time re-enrich so zzz371 CFO/PAT value fixes propagate. zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
         || needsTrends(e)  // zzz369 — keep retrying until the trend series lands
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
-    if (stale.length === 0) { fillRunningRef.current = false; if (manual) { setFillProgress('✓ Nothing missing — every card already has trends / P/E / DRIFT (or is a financial).'); setTimeout(() => setFillProgress(null), 8000); } return; }
+    if (stale.length === 0) { fillRunningRef.current = false; if (manual) { setFillProgress('✓ Nothing missing — every card already has trends / P/E / DRIFT (or is a financial).'); setTimeout(() => setFillProgress(null), 8000); } else { setFillProgress(null); } return; }
     total = stale.length;
     report(`Filling 0/${total}…`);
     // zzz370 — walk is a reusable pass so we can run a RETRY SWEEP after the first
@@ -2342,7 +2345,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // zzz363 — one-off / exceptional-item fields (v9 cache)
               exceptional_curr_cr: typeof enr.exceptional_curr_cr === 'number' ? enr.exceptional_curr_cr : (existing as any).exceptional_curr_cr,
               exceptional_pct_pbt: typeof enr.exceptional_pct_pbt === 'number' ? enr.exceptional_pct_pbt : (existing as any).exceptional_pct_pbt,
-              cb_enrich_v: 371,  // zzz372 — bump (was 369) so re-enrich fires once for the v13 cache. zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
+              cb_enrich_v: 375,  // zzz375 — bump (was 371) so re-enrich fires once for the v13 cache. zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
               // zzz369 — count trend-fetch attempts so needsTrends() retry is bounded.
               cb_trend_attempts: ((existing as any).cb_trend_attempts || 0) + 1,
             });
@@ -2397,6 +2400,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           ? `✓ Done — all ${stale.length} entries filled.`
           : `✓ Done — ${stale.length - stillMissing} filled · ${stillMissing} still without trends (Screener has no parsable quarterly table for them, or it is a financial). Re-run later to retry.`);
         setTimeout(() => setFillProgress(null), 15_000);
+      } else {
+        // Background walk finished — clear the "Auto-filling…" indicator.
+        setFillProgress(null);
       }
     } finally { fillRunningRef.current = false; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5237,6 +5243,23 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
               </div>
             )}
           </>
+        );
+      })()}
+      {/* zzz375 — HONEST "no trends" hint. When a NON-financial card has been through
+          enrichment (cb_enrich_v current) but Screener still yields no quarterly table,
+          show a muted note so the empty gap reads as "Screener can't parse this one",
+          NOT "the Fill button is broken / data is missing". */}
+      {density !== 'ultra' && !cbIsFinancial(entry) && (() => {
+        const e: any = entry;
+        const hasTrend = Array.isArray(e.quarters_opm) || Array.isArray(e.quarters_tax_pct)
+          || Array.isArray(e.quarters_other_income_pct) || Array.isArray(e.annual_cfo_pat);
+        const tried = ((e.cb_enrich_v || 0) >= 375) || ((e.cb_trend_attempts || 0) >= 3);
+        if (hasTrend || !tried) return null;
+        return (
+          <div style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontStyle: 'italic', paddingTop: 2 }}
+            title="Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT-annual) come from Screener's quarterly table. Screener has no parsable quarterly section for this ticker right now, so the pills can't be computed. The ⟳ Fill missing button will keep retrying; the header stats (OPM, ROCE, CFO/PAT) are unaffected.">
+            Q-TRENDS n/a — Screener has no quarterly table for this ticker
+          </div>
         );
       })()}
       {/* zzz354 — RED FLAGS row: quality-of-earnings warning badges computed from

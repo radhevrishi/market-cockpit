@@ -1206,7 +1206,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz367 — v10->v11: v10 cached the field-less payloads (fetchScreenerForSymbol
   // was null in prod, so no trends). v11 forces a clean re-fetch that now carries the
   // trends via the proven fetchScreenerCFO path (extractScreenerTrends).
-  const cacheKey = filedHint ? `enrich:v13:${symbol}:${filedHint}` : `enrich:v13:${symbol}`;  // zzz372 v12->v13: flush entries computed before the zzz371 CFO/PAT alignment fix. zzz369 v11->v12: flush trend-less poisoned entries
+  const cacheKey = filedHint ? `enrich:v14:${symbol}:${filedHint}` : `enrich:v14:${symbol}`;  // zzz375 v13->v14: flush entries missing trends before the standalone-page fallback. zzz372 v12->v13. zzz369 v11->v12
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1247,7 +1247,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // cfo payload (that KV read was silently defeating zzz370's retry). Also: a cached
     // payload that has NO trends is never a valid hit for the trend consumers — fall
     // through and re-scrape so a transient miss self-heals.
-    const kvKey = `cfo:v4:${sym}`;
+    const kvKey = `cfo:v5:${sym}`;
     if (!bypassCache) {
       try {
         const cached = await kvGet<any>(kvKey);
@@ -1255,8 +1255,25 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       } catch {}
     }
     // zzz322 — reuse fetchScreenerHtml (3-attempt retry with backoff)
-    const url = `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`;
-    const html = await fetchScreenerHtml(url);
+    // zzz375 — MANY mid/large caps (NAVINFLUOR, NEULANDLAB, LLOYDSME, IOLCP,
+    // LUMAXTECH, SHILPAMED …) returned NO trends because this only ever hit
+    // /consolidated/ — companies with no consolidated statements 404 there, or
+    // their consolidated page lacks the quarters table. fetchScreenerForSymbol
+    // already tries both; mirror that here. Take whichever URL yields the
+    // quarters/trend data (prefer consolidated, fall back to standalone).
+    const urls = [
+      `https://www.screener.in/company/${encodeURIComponent(sym)}/consolidated/`,
+      `https://www.screener.in/company/${encodeURIComponent(sym)}/`,
+    ];
+    let html: string | null = null;
+    for (const u of urls) {
+      const h = await fetchScreenerHtml(u);
+      if (!h) continue;
+      html = h;
+      // If this page already has a parsable quarters section, use it; else keep
+      // it as a fallback but try the next URL for a richer page.
+      if (Object.keys(extractScreenerTrends(h)).length > 0) break;
+    }
     if (!html) return null;
     // Strip tags helper local (top-level stripTags exists elsewhere).
     const strip = (s: string) => String(s).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/,/g, '').trim();
@@ -1329,7 +1346,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // a trend-less CFO payload for 24h and starving the enrich hoist.
     const cfoTtl = result._trends ? 24 * 3600 : 30 * 60;
     if (typeof ocf === 'number' || typeof netProfit === 'number' || result._trends) {
-      try { await kvSet(`cfo:v4:${sym}`, result, cfoTtl); } catch {}
+      try { await kvSet(`cfo:v5:${sym}`, result, cfoTtl); } catch {}
     }
     return result;
   };
