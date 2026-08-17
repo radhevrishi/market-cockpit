@@ -1875,6 +1875,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       {/* zzz214 — score movers since the previous upload/refresh */}
       <ScoreMoversStrip rows={rows} prevKey="mb_india_prev_scores_v1" />
+      {/* THESIS DRIFT — current re-score vs Decision Logbook (REOPEN / BREAK) */}
+      <ThesisDriftStrip rows={rows} />
 
       {/* PATCH 1101qqq — Auto-sync status chip + manual refresh button.
           Shows last-sync date, lets user pull fresh CSVs without leaving tab. */}
@@ -2858,6 +2860,23 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             }
                             return null;
                           })()}
+                          {/* Feature 2 — Incremental ROIC chip. Surfaces the
+                              already-computed roceExpansion (= roce − roce3yr)
+                              alongside Q50/ROCE/CFO economics so the user can
+                              see whether new capital is compounding or diluting
+                              returns without expanding the row. */}
+                          {(() => {
+                            const rx = (r as any).roceExpansion as number | undefined;
+                            const ox = (r as any).opmExpansion as number | undefined;
+                            if (rx === undefined) return null;
+                            const col = rx >= 3 ? GREEN : rx >= 0 ? YELLOW : RED;
+                            return (
+                              <span title={`Incremental ROIC = current ROCE − ROCE 3yr ago. ${rx >= 0 ? '+' : ''}${rx.toFixed(1)}pp${ox !== undefined ? ` · OPM Δ ${ox >= 0 ? '+' : ''}${ox.toFixed(1)}pp` : ''}. Positive = new capital earns ≥ legacy returns (Fisher's reinvestment test); negative = growth diluting returns.`}
+                                style={{fontSize:9, color: col, fontWeight: 700}}>
+                                Inc ROIC {rx >= 0 ? '+' : ''}{rx.toFixed(1)}pp
+                              </span>
+                            );
+                          })()}
                           {/* VALUATION-B — Inline fair-value strip from 10 valuation models.
                               Shows FV, MoS%, and how many models agree. Click → /valuations?symbol=X */}
                           <div style={{ marginTop: 3, paddingTop: 3, borderTop: '1px dashed rgba(255,255,255,0.06)' }}>
@@ -3542,7 +3561,46 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 // CHECKLIST TAB — 37 criteria, institutional scale, auto-checks from Excel data
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Feature 2 — surface auto-computed incremental economics on the checklist.
+// The scorer already computes roceExpansion (= roce − roce3yr) and opmExpansion
+// and feeds them into the rerating bonus, but the `incremental_roic` and
+// `cap_5yr` CHECKLIST items shipped as manual human-judgment rows (no autoField).
+// CHECKLIST lives in the read-only scoring lib, so we overlay the auto wiring
+// locally here — mirroring the exact autoField/autoPass/autoFormat pattern the
+// other auto-populated items (e.g. 'roce', 'op_leverage') already use. Rows
+// where roceExpansion is absent from the CSV simply stay manual (the auto loop
+// skips undefined fields). Additive — the rerating bonus math is untouched.
+const CHECKLIST_AUTO: typeof CHECKLIST = CHECKLIST.map(it => {
+  if (it.id === 'incremental_roic') {
+    return {
+      ...it,
+      autoField: 'roceExpansion' as keyof ExcelRow,
+      autoPass: (_v: number, row?: ExcelRow) => (row?.roceExpansion ?? -999) > 0,
+      autoFormat: (_v: number, row?: ExcelRow) => {
+        const rx = row?.roceExpansion; const ox = row?.opmExpansion;
+        if (rx === undefined) return '';
+        return `Incremental ROCE ${rx >= 0 ? '+' : ''}${rx.toFixed(1)}pp${ox !== undefined ? ` · OPM ${ox >= 0 ? '+' : ''}${ox.toFixed(1)}pp` : ''} — ${rx > 0 ? '✓ new capital productive' : '× returns diluting on growth'}`;
+      },
+    };
+  }
+  if (it.id === 'cap_5yr') {
+    return {
+      ...it,
+      autoField: 'roceExpansion' as keyof ExcelRow,
+      autoPass: (_v: number, row?: ExcelRow) => (row?.roce ?? 0) >= 18 && (row?.roceExpansion ?? -999) >= -3,
+      autoFormat: (_v: number, row?: ExcelRow) => {
+        const rx = row?.roceExpansion; const rc = row?.roce;
+        if (rx === undefined || rc === undefined) return '';
+        return `CAP proxy: ROCE ${rc.toFixed(0)}% ${rx >= 0 ? 'expanding' : rx >= -3 ? 'stable' : 'reverting'} (${rx >= 0 ? '+' : ''}${rx.toFixed(1)}pp/3yr)`;
+      },
+    };
+  }
+  return it;
+});
+
 function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
+  // Feature 2 — use the auto-wired overlay in place of the raw imported CHECKLIST.
+  const CHECKLIST = CHECKLIST_AUTO;
   const [symbol,setSymbol]=useState('');
   const [activeSymbol,setActiveSymbol]=useState('');
   const [savedSymbols,setSavedSymbols]=useState<string[]>([]);
@@ -4892,6 +4950,8 @@ function USACompare() {
 
       {/* zzz214 — score movers since the previous upload/refresh */}
       <ScoreMoversStrip rows={rows} prevKey="mb_usa_prev_scores_v1" />
+      {/* THESIS DRIFT — current re-score vs Decision Logbook (REOPEN / BREAK) */}
+      <ThesisDriftStrip rows={rows} />
       {/* Header */}
       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
         <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
@@ -6363,6 +6423,128 @@ function ScoreMoversStrip({ rows, prevKey }: { rows: any[]; prevKey: string }) {
             <span style={{ color: m.d > 0 ? '#10B981' : '#EF4444', fontWeight: 800 }}>{m.d > 0 ? '+' : ''}{m.d}</span>
           </span>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── THESIS DRIFT detector (current re-score vs Decision Logbook) ─────────
+// For every scored row that carries a logged Decision, compare the CURRENT
+// score/grade to what was logged and classify divergence:
+//   REOPEN (green) — a REJECTED name that now grades high (grade A/A+ OR
+//                    composite ≥ 80). "Your best-researched buy pipeline
+//                    just improved."
+//   BREAK  (red)   — a BUY/WATCH name that decayed: grade C/D OR composite
+//                    ≤ 55 OR a CRITICAL/HIGH STRUCTURAL red flag OR pump ≥ 2.
+//                    "A name you own/watch deteriorated."
+// The `score` field IS the composite. redFlags/pumpScore are India-only and
+// simply never fire on USA rows (which carry no redFlags). Reuses the
+// ScoreMoversStrip render pattern and arms Book Watch flags so the drift
+// surfaces in the alert feed (armBookFlag self-dedups by kind+ticker+day).
+type DriftKind = 'REOPEN' | 'BREAK';
+interface DriftItem {
+  ticker: string; company?: string; kind: DriftKind;
+  decisionStatus: DecisionStatus;
+  oldGrade?: string; oldScore?: number;
+  grade: string; score: number;
+  reason: string; flagNote: string;
+}
+function computeThesisDrift(rows: any[]): DriftItem[] {
+  const out: DriftItem[] = [];
+  for (const r of rows || []) {
+    if (!r || typeof r.symbol !== 'string') continue;
+    const d = getDecision(r.symbol);
+    if (!d) continue; // only rows with a logged decision, never the whole universe
+    const ticker = r.symbol.toUpperCase();
+    const grade = String(r.grade ?? '');
+    const score = typeof r.score === 'number' ? r.score : NaN;
+    if (!Number.isFinite(score)) continue;
+    const flags = Array.isArray(r.redFlags) ? r.redFlags : [];
+    const structuralSevere = flags.some((f: any) =>
+      (f?.severity === 'CRITICAL' || f?.severity === 'HIGH') &&
+      ((f?.kind ?? 'STRUCTURAL') === 'STRUCTURAL'));
+    const pumpScore = typeof (r as any).pumpScore === 'number' ? (r as any).pumpScore : 0;
+    const gradesHigh = grade === 'A' || grade === 'A+' || score >= 80;
+    const gradesLow = grade === 'C' || grade === 'D' || score <= 55;
+    if (d.status === 'REJECTED' && gradesHigh) {
+      out.push({
+        ticker, company: r.company, kind: 'REOPEN', decisionStatus: d.status,
+        oldGrade: d.gradeAtDecision, oldScore: d.scoreAtDecision, grade, score,
+        reason: `was REJECTED, now grades ${grade} (${Math.round(score)})`, flagNote: '',
+      });
+    } else if ((d.status === 'BUY' || d.status === 'WATCH') &&
+               (gradesLow || structuralSevere || pumpScore >= 2)) {
+      const parts: string[] = [];
+      if (structuralSevere) parts.push('structural red flag');
+      if (pumpScore >= 2) parts.push(`pump ${pumpScore}`);
+      const flagNote = parts.length ? ` + ${parts.join(' + ')}` : '';
+      const reason = gradesLow
+        ? `${d.status} decayed to ${grade} (${Math.round(score)})${flagNote}`
+        : `${d.status} now carries ${parts.join(' + ')} (${grade} ${Math.round(score)})`;
+      out.push({
+        ticker, company: r.company, kind: 'BREAK', decisionStatus: d.status,
+        oldGrade: d.gradeAtDecision, oldScore: d.scoreAtDecision, grade, score,
+        reason, flagNote,
+      });
+    }
+  }
+  return out;
+}
+function ThesisDriftStrip({ rows }: { rows: any[] }) {
+  const drift = React.useMemo(() => computeThesisDrift(rows), [rows]);
+  // Arm Book Watch flags for each drift. Guarded + self-deduping, so re-running
+  // on every scored-rows change is safe. Only rows with a logged decision that
+  // meet the criteria reach here — never the whole universe.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    for (const item of drift) {
+      if (item.kind === 'REOPEN') {
+        armBookFlag({
+          kind: 'THESIS_DRIFT_REOPEN', ticker: item.ticker, company: item.company, severity: 'warning',
+          message: `${item.ticker} was REJECTED, now grades ${item.grade} (${Math.round(item.score)}) — reopen the buy case`,
+          detail: 'multibagger re-score',
+        });
+      } else {
+        armBookFlag({
+          kind: 'THESIS_BREAK', ticker: item.ticker, company: item.company, severity: 'critical',
+          message: `${item.ticker} (${item.decisionStatus}) decayed to ${item.grade} (${Math.round(item.score)})${item.flagNote} — recheck the thesis`,
+          detail: 'multibagger re-score',
+        });
+      }
+    }
+  }, [drift]);
+  if (drift.length === 0) return null;
+  const reopens = drift.filter(d => d.kind === 'REOPEN').length;
+  const breaks = drift.length - reopens;
+  const fmtOldNew = (item: DriftItem) => {
+    const og = item.oldGrade ?? '?';
+    const os = typeof item.oldScore === 'number' ? Math.round(item.oldScore) : '?';
+    return `${og}·${os} → ${item.grade}·${Math.round(item.score)}`;
+  };
+  return (
+    <div style={{ marginBottom: 14, padding: '12px 16px', background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.35)', borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 900, color: '#A855F7' }}>🎯 THESIS DRIFT vs Decision Logbook</span>
+        <span style={{ fontSize: 11.5, color: '#7B8898' }}>
+          {reopens > 0 && <>🟢 {reopens} reopen{reopens > 1 ? 's' : ''} · </>}
+          {breaks > 0 && <>🔴 {breaks} break{breaks > 1 ? 's' : ''} · </>}
+          current re-score vs your logged decision
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {drift.map(item => {
+          const isReopen = item.kind === 'REOPEN';
+          const col = isReopen ? '#10B981' : '#EF4444';
+          return (
+            <div key={`${item.kind}-${item.ticker}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.04)', border: `1px solid ${col}55`, padding: '4px 10px', borderRadius: 7, fontSize: 12, flexWrap: 'wrap' }}>
+              <span style={{ color: col, fontWeight: 900, letterSpacing: 0.3 }}>{isReopen ? '↑ REOPEN' : '↓ BREAK'}</span>
+              <b style={{ color: '#E5ECF4' }}>{item.ticker}</b>
+              <span style={{ color: '#7B8898', fontVariantNumeric: 'tabular-nums' }}>{fmtOldNew(item)}</span>
+              <span style={{ color: col }}>{item.reason}</span>
+              <span style={{ color: '#7B8898', fontStyle: 'italic' }}>· {isReopen ? 'buy pipeline improved' : 'owned/watched deteriorated'}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

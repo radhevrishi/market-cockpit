@@ -49,6 +49,26 @@ const CHAT_ID =
 const API_BASE = 'https://market-cockpit-production.up.railway.app';
 const DEDUP_TTL_S = 48 * 60 * 60; // 48h — covers all 3 daily cron firings + next day
 
+// Tier ranking for UPGRADE detection. The per-ticker dedup value stores the
+// last-alerted tier; a subsequent pass re-fires ONLY when the current tier
+// out-ranks what was last sent (e.g. STRONG → BLOCKBUSTER confirm). Equal or
+// lower tiers stay suppressed inside the 48h window (no spam).
+const TIER_RANK: Record<string, number> = {
+  BLOCKBUSTER: 4,
+  STRONG: 3,
+  MIXED: 2,
+  AVOID: 1,
+};
+function tierRank(t: string | null | undefined): number {
+  return (t && TIER_RANK[t.toUpperCase()]) || 0;
+}
+
+// Shape of the per-ticker dedup value persisted in KV.
+interface DedupValue {
+  sent_at?: string;
+  tier?: string;
+}
+
 // ─── Types (mirror /api/v1/earnings/graded shape) ──────────────────────────
 
 interface GradedCard {
@@ -840,16 +860,31 @@ export async function GET(req: Request) {
     } catch {}
   }
 
-  // Dedup against KV — skip cards already sent within DEDUP_TTL_S
+  // Dedup against KV — skip cards already sent within DEDUP_TTL_S UNLESS the
+  // current tier is a strict UPGRADE over the last-alerted tier for this
+  // ticker (e.g. an earlier STRONG preview now CONFIRMED as BLOCKBUSTER).
+  // An upgrade is the day's most actionable event, so it must not be
+  // suppressed as a duplicate. Equal/lower tiers stay deduped (no spam).
   const toSend: GradedCard[] = [];
   const skipped: string[] = [];
+  // Track which cards are re-fired upgrades so the send loop can label them.
+  const upgradeInfo = new Map<GradedCard, { priorTier: string }>();
   for (const card of allCards) {
     if (!card.ticker || !card.filing_date) continue;
     const dedupKey = `tg:sent:eo:${card.ticker}:${card.filing_date}`;
     if (!force && isRedisAvailable()) {
       try {
-        const seen = await kvGet(dedupKey);
-        if (seen) { skipped.push(card.ticker); continue; }
+        const seen = await kvGet<DedupValue>(dedupKey);
+        if (seen) {
+          // Already alerted. Only re-send on a genuine tier upgrade.
+          if (tierRank(card.tier) > tierRank(seen.tier)) {
+            upgradeInfo.set(card, { priorTier: (seen.tier || 'unknown').toUpperCase() });
+            // fall through to toSend below
+          } else {
+            skipped.push(card.ticker);
+            continue;
+          }
+        }
       } catch {}
     }
     toSend.push(card);
@@ -960,7 +995,14 @@ export async function GET(req: Request) {
 
     for (let i = 0; i < toSend.length; i++) {
       const card = toSend[i];
-      const text = formatCard(card, i + 1, toSend.length);
+      const upg = upgradeInfo.get(card);
+      let text = formatCard(card, i + 1, toSend.length);
+      // Label re-fired upgrades so the message reads as a confirm, not a repeat.
+      if (upg) {
+        text =
+          `⬆ <b>UPGRADE</b> — ${escHtml(card.ticker)} raised ${escHtml(upg.priorTier)} → <b>${escHtml(card.tier)}</b>\n` +
+          text;
+      }
       const result = await sendTelegram(text, targetChatId);
       if (result.ok) {
         sentCount++;
@@ -1024,6 +1066,7 @@ export async function GET(req: Request) {
     cards_found: allCards.length,
     cards_to_send: toSend.length,
     cards_skipped: skipped.length,
+    cards_upgraded: upgradeInfo.size,
     cards_sent: sentCount,
     sent_tickers: sentTickers,
     failures: failed,

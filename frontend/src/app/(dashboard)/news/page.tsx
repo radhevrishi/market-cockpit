@@ -17,6 +17,7 @@ import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL 
 import { detectAllTheWrap } from '@/lib/thewrap-detectors';
 // PATCH 0455 CLEANUP-3 — Centralized vocab.
 import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
+import { getConvictionTickers } from '@/lib/conviction-beats';
 import { isInReadingList, toggleReadingList } from '@/lib/reading-list';
 // PATCH 0545 — AUDIT #95 debounced LS writes for thesis-notebook autosave.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
@@ -67,7 +68,17 @@ interface NewsArticle {
   __orderQuality?: any;
   __noise?: { isListicle: boolean; isSpeculation: boolean; qualityMultiplier: number };
   __expectation?: any;
+  // Book/bench-aware priority boost — stamped when the article touches a name
+  // the user holds / benches / watches (see BOOK_PRIORITY_BOOST).
+  __inBook?: boolean;
+  __bookMatch?: string;
 }
+
+// Additive priority bump applied when an article's tickers intersect the
+// user's "book" (held ∪ conviction bench ∪ watchlist). Bounded so it lifts a
+// book name above equal-importance strangers without swamping the importance
+// signal (a materially higher-importance non-book story can still outrank it).
+const BOOK_PRIORITY_BOOST = 6;
 
 // Bottleneck dashboard types
 interface BnSignalArticle {
@@ -1034,6 +1045,20 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                 </span>
               );
             })()}
+            {/* Book/bench-aware chip — fires when the article touches a name the
+                user holds / benches / watches. The card's priority already
+                carries a +BOOK_PRIORITY_BOOST bump so it ranks above equal-
+                importance strangers. */}
+            {article.__inBook && (
+              <span title={`In your book${article.__bookMatch ? ` — ${article.__bookMatch}` : ''} · +${BOOK_PRIORITY_BOOST} priority boost`} style={{
+                fontSize: '9px', fontWeight: '800', padding: '3px 7px', borderRadius: '5px',
+                backgroundColor: 'color-mix(in srgb, var(--mc-accent) 14%, transparent)', color: 'var(--mc-accent)',
+                border: '1px solid color-mix(in srgb, var(--mc-accent) 38%, transparent)', letterSpacing: '0.3px',
+                cursor: 'help',
+              }}>
+                💼 IN YOUR BOOK{article.__bookMatch ? ` · ${article.__bookMatch}` : ''}
+              </span>
+            )}
             {sentiment && (
               <span style={{
                 fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
@@ -2372,6 +2397,53 @@ export default function NewsFeedPage() {
       router.replace(newUrl, { scroll: false });
     }
   }, [region, articleType, sourceName, signalFilter, sortBy, lifecycleFilter, search, bottleneckLevel, bottleneckCategory, structuralOnly, pathname, router]);
+
+  // ── Book/bench-aware ranking overlay ───────────────────────────────────────
+  // Build the uppercased union of names the user actually holds / benches /
+  // watches so their filings rank above equal-importance strangers. Mirrors the
+  // conviction-overlay pattern used across the app: derive once, then refresh on
+  // the same cross-tab events the writers fire ('storage', 'conviction-beats:
+  // updated', 'mc:watchlist:updated'). Three separate sets are kept so the card
+  // chip can note WHICH bucket matched.
+  const [book, setBook] = useState<{ held: Set<string>; bench: Set<string>; watch: Set<string>; all: Set<string> }>(
+    () => ({ held: new Set(), bench: new Set(), watch: new Set(), all: new Set() })
+  );
+  useEffect(() => {
+    const build = () => {
+      const held = new Set<string>();
+      const bench = new Set<string>();
+      const watch = new Set<string>();
+      const addUpper = (set: Set<string>, raw: unknown) => {
+        const sym = (raw ?? '').toString().trim().toUpperCase();
+        if (sym) set.add(sym);
+      };
+      // Held — localStorage 'mc_portfolio_holdings' → array of { symbol }
+      try {
+        const arr = JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]');
+        if (Array.isArray(arr)) for (const h of arr) addUpper(held, h?.symbol);
+      } catch {}
+      // Bench — conviction beats (getConvictionTickers self-invalidates its
+      // module cache on the same events, so we always read fresh here).
+      try { for (const t of getConvictionTickers()) addUpper(bench, t); } catch {}
+      // Watchlist — localStorage 'mc_watchlist_tickers' → string[]
+      try {
+        const arr = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]');
+        if (Array.isArray(arr)) for (const t of arr) addUpper(watch, t);
+      } catch {}
+      const all = new Set<string>([...held, ...bench, ...watch]);
+      setBook({ held, bench, watch, all });
+    };
+    build();
+    window.addEventListener('storage', build);
+    window.addEventListener('conviction-beats:updated', build);
+    window.addEventListener('mc:watchlist:updated', build);
+    return () => {
+      window.removeEventListener('storage', build);
+      window.removeEventListener('conviction-beats:updated', build);
+      window.removeEventListener('mc:watchlist:updated', build);
+    };
+  }, []);
+
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
   // PATCH 0121 — IMP-08: Q4 FY26 earnings season quick-filter.
@@ -2640,8 +2712,27 @@ export default function NewsFeedPage() {
       // truly old non-structural items still fall off.
       const ageDecay = isStructuralOrPersistent ? 1 : Math.exp(-ageHours / 36);
       const adjusted = total * srcW * noise.qualityMultiplier * ageDecay;
-      (a as any).__priority = Math.round(adjusted * 10) / 10;
-      (a as any).__priorityParts = { ...parts, source_weight: srcW, noise_mult: noise.qualityMultiplier, age_decay: Math.round(ageDecay * 100) / 100 };
+      // Book/bench-aware boost: additive on the FINAL priority (after the
+      // multiplicative source/noise/age chain) so it participates directly in
+      // the sort below and can't be decayed away for an older filing on a name
+      // the user actually holds. Bounded by BOOK_PRIORITY_BOOST.
+      let matchHeld = false, matchBench = false, matchWatch = false;
+      if (book.all.size) {
+        for (const sym of getTickerSymbols(a)) {
+          const u = sym.toUpperCase();
+          if (book.held.has(u)) matchHeld = true;
+          if (book.bench.has(u)) matchBench = true;
+          if (book.watch.has(u)) matchWatch = true;
+        }
+      }
+      const inBook = matchHeld || matchBench || matchWatch;
+      const bookBoost = inBook ? BOOK_PRIORITY_BOOST : 0;
+      (a as any).__inBook = inBook;
+      (a as any).__bookMatch = inBook
+        ? [matchHeld && 'Held', matchBench && 'Bench', matchWatch && 'Watchlist'].filter(Boolean).join(' · ')
+        : '';
+      (a as any).__priority = Math.round((adjusted + bookBoost) * 10) / 10;
+      (a as any).__priorityParts = { ...parts, source_weight: srcW, noise_mult: noise.qualityMultiplier, age_decay: Math.round(ageDecay * 100) / 100, book_boost: bookBoost };
       (a as any).__sourceWeight = srcW;
       (a as any).__isListicle = noise.isListicle;
       (a as any).__isSpeculation = noise.isSpeculation;
@@ -2700,6 +2791,7 @@ export default function NewsFeedPage() {
     structuralOnly,
     sortBy,
     lifecycleFilter,  // PATCH 0213
+    book,             // book/bench-aware boost recomputes when holdings change
   ]);
 
   // PATCH 0226 — Count how many STALE items are being hidden by the

@@ -23,6 +23,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 const C = {
   bg: 'var(--mc-bg-0)', card: 'var(--mc-bg-1)', card2: 'var(--mc-bg-2)',
@@ -372,20 +373,139 @@ function PreCrashTab() {
   );
 }
 
+// ── Live NIFTY position → armed deployment rung (breadth-driven) ────────────
+// Additive overlay: pulls GET /api/v1/breadth, extracts NIFTY pctOf52wHigh
+// (fraction 0..1 of the 52-week high), converts to drawdown-from-high, and
+// snaps it onto the static staircase below. Fully defensive — the staircase
+// always renders its static rungs; the live marker only appears when the
+// breadth payload actually carries the NIFTY 52w-high reading. If it doesn't
+// (or the fetch fails), we say so honestly and never guess a rung.
+type NiftyPos = { pct52: number; drawdown: number };
+type BreadthCtx = { composite?: number; regime?: string; scope?: string };
+
+function extractNiftyPct52(j: any): number | null {
+  if (!j || typeof j !== 'object') return null;
+  const candidates = [
+    j?.['^NSEI']?.pctOf52wHigh,
+    j?.byName?.['^NSEI']?.pctOf52wHigh,
+    j?.indices?.['^NSEI']?.pctOf52wHigh,
+    j?.nifty?.pctOf52wHigh,
+    j?.pillars?.trend?.nifty?.pctOf52wHigh,
+    j?.pctOf52wHigh,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+      // Normalize: accept either a fraction (0.94) or a percent (94).
+      const frac = c > 1.5 ? c / 100 : c;
+      if (frac > 0 && frac <= 1.2) return Math.min(frac, 1);
+    }
+  }
+  return null;
+}
+
 function DeploymentTab() {
   const stair = [
-    { trig: '-10%', tranche: '10%', cum: '10%', tag: 'Routine pullback. Resist temptation to lumpsum.', color: C.green },
-    { trig: '-15%', tranche: '+15%', cum: '25%', tag: 'Real correction. First serious deploy.', color: C.green },
-    { trig: '-20%', tranche: '+20%', cum: '45%', tag: 'Mid-cycle bear. Asymmetry building.', color: C.amber },
-    { trig: '-25%', tranche: '+15%', cum: '60%', tag: 'Late-cycle bear. Press but reserve.', color: C.amber },
-    { trig: '-30%', tranche: '+20%', cum: '80%', tag: 'Generational entry begins.', color: C.red },
-    { trig: '-40%+', tranche: '+20%', cum: '100%', tag: 'Maximum aggression. Druckenmiller "press the bet".', color: C.red },
+    { trig: '-10%', dd: 10, tranche: '10%', cum: '10%', tag: 'Routine pullback. Resist temptation to lumpsum.', color: C.green },
+    { trig: '-15%', dd: 15, tranche: '+15%', cum: '25%', tag: 'Real correction. First serious deploy.', color: C.green },
+    { trig: '-20%', dd: 20, tranche: '+20%', cum: '45%', tag: 'Mid-cycle bear. Asymmetry building.', color: C.amber },
+    { trig: '-25%', dd: 25, tranche: '+15%', cum: '60%', tag: 'Late-cycle bear. Press but reserve.', color: C.amber },
+    { trig: '-30%', dd: 30, tranche: '+20%', cum: '80%', tag: 'Generational entry begins.', color: C.red },
+    { trig: '-40%+', dd: 40, tranche: '+20%', cum: '100%', tag: 'Maximum aggression. Druckenmiller "press the bet".', color: C.red },
   ];
+
+  // 'loading' | 'ok' (have NIFTY pos) | 'nopos' (breadth ok but no 52w reading) | 'error'
+  const [state, setState] = useState<'loading' | 'ok' | 'nopos' | 'error'>('loading');
+  const [pos, setPos] = useState<NiftyPos | null>(null);
+  const [ctx, setCtx] = useState<BreadthCtx | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number>(0);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`breadth ${res.status}`);
+        const j = await res.json();
+        if (!alive) return;
+        const breadthCtx: BreadthCtx = {
+          composite: typeof j?.composite === 'number' ? j.composite : undefined,
+          regime: typeof j?.regime === 'string' ? j.regime : undefined,
+          scope: typeof j?.scope === 'string' ? j.scope : undefined,
+        };
+        setCtx(breadthCtx);
+        setFetchedAt(Date.now());
+        const pct52 = extractNiftyPct52(j);
+        if (pct52 == null) { setState('nopos'); return; }
+        setPos({ pct52, drawdown: Math.max(0, (1 - pct52) * 100) });
+        setState('ok');
+      } catch {
+        if (!alive) return;
+        setState('error');
+        setFetchedAt(Date.now());
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Snap the live drawdown onto the staircase. armedIdx:
+  //   -2 = position unknown, -1 = above the first rung (near highs), >=0 = rung index.
+  const armedIdx = useMemo(() => {
+    if (state !== 'ok' || !pos) return -2;
+    let idx = -1;
+    for (let i = 0; i < stair.length; i++) if (pos.drawdown >= stair[i].dd) idx = i;
+    return idx;
+  }, [state, pos]);
+
+  const armed = armedIdx >= 0 ? stair[armedIdx] : null;
+  const armAccent = armed ? armed.color : C.cyan;
+
+  // One-line live readout of the armed rung.
+  const readout = (() => {
+    if (state === 'loading') return { color: C.muted, text: 'Reading live NIFTY position from /api/v1/breadth…' };
+    if (state === 'error')
+      return { color: C.amber, text: '⚠ Breadth feed unavailable — live rung unknown. Static protocol below still applies.' };
+    if (state === 'nopos') {
+      const ctxNote = ctx?.composite != null
+        ? ` (breadth composite ${ctx.composite}${ctx.regime ? ` · ${ctx.regime}` : ''})`
+        : '';
+      return {
+        color: C.amber,
+        text: `⚠ NIFTY 52-week-high reading not present in breadth payload${ctxNote} — not guessing a rung. Static protocol below still applies.`,
+      };
+    }
+    // state === 'ok'
+    const pctStr = `${Math.round(pos!.pct52 * 100)}% of 52w high`;
+    const ddStr = `−${pos!.drawdown.toFixed(1)}% from high`;
+    if (!armed)
+      return {
+        color: C.green,
+        text: `NIFTY at ${pctStr} (${ddStr}) → near highs · defensive rung: staircase not yet armed, hold the deployable-cash reserve.`,
+      };
+    return {
+      color: armed.color,
+      text: `NIFTY at ${pctStr} (${ddStr}) → ARMED rung ${armed.trig}: deploy this tranche (${armed.tranche}), cumulative ${armed.cum} of the bucket.`,
+    };
+  })();
 
   return (
     <>
       <Card title="🪜 The Staircase Deployment Protocol (§7.7)" accent={C.cyan}>
         <div style={{ fontSize: 12, color: C.text2, marginBottom: 10 }}>The deployable cash bucket is the cash you have set aside <strong>specifically for buying corrections</strong> — distinct from emergency fund, operational cash, short-term goals. Reference for all triggers: % drop from 52-week high. The bucket does not reset until the index makes a new 52-week high.</div>
+
+        {/* ── LIVE armed-rung readout (breadth-driven, additive) ── */}
+        <div style={{ background: C.card2, border: `1px solid ${readout.color}40`, borderLeft: `3px solid ${readout.color}`, borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: readout.color, textTransform: 'uppercase' }}>◉ Live Deployment Position</span>
+            {fetchedAt > 0 && <PanelFreshness dataUpdatedAt={fetchedAt} staleAfterMs={5 * 60_000} label="breadth" />}
+          </div>
+          <div style={{ fontSize: 12.5, color: C.text, fontWeight: 600, lineHeight: 1.5 }}>{readout.text}</div>
+          {state === 'ok' && (
+            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>
+              Source: GET /api/v1/breadth → NIFTY <code style={{ ...MONO }}>^NSEI.pctOf52wHigh</code>
+              {ctx?.scope ? ` · scope: ${ctx.scope}` : ''}
+            </div>
+          )}
+        </div>
 
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -398,14 +518,20 @@ function DeploymentTab() {
               </tr>
             </thead>
             <tbody>
-              {stair.map((s, i) => (
-                <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
-                  <td style={{ padding: '8px', color: s.color, fontWeight: 800, ...MONO }}>{s.trig}</td>
-                  <td style={{ padding: '8px', textAlign: 'right', color: C.text, fontWeight: 700, ...MONO }}>{s.tranche}</td>
-                  <td style={{ padding: '8px', textAlign: 'right', color: C.cyan, fontWeight: 800, ...MONO }}>{s.cum}</td>
-                  <td style={{ padding: '8px', color: C.text2, fontSize: 12 }}>{s.tag}</td>
-                </tr>
-              ))}
+              {stair.map((s, i) => {
+                const isArmed = i === armedIdx;
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${C.border}`, background: isArmed ? `${armAccent}18` : 'transparent' }}>
+                    <td style={{ padding: '8px', color: s.color, fontWeight: 800, borderLeft: isArmed ? `3px solid ${armAccent}` : '3px solid transparent', ...MONO }}>
+                      {s.trig}
+                      {isArmed && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: armAccent }}>◄ YOU ARE HERE</span>}
+                    </td>
+                    <td style={{ padding: '8px', textAlign: 'right', color: C.text, fontWeight: 700, ...MONO }}>{s.tranche}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', color: C.cyan, fontWeight: 800, ...MONO }}>{s.cum}</td>
+                    <td style={{ padding: '8px', color: C.text2, fontSize: 12 }}>{s.tag}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

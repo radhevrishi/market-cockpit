@@ -8,6 +8,25 @@ import { PanelFreshness } from '@/components/PanelFreshness';
 import { isIndianMarketOpen } from '@/lib/market-hours';
 // PATCH 0544 — AUDIT #76 shared quote fetch (dedupe + 60s module cache).
 import { fetchQuotesShared } from '@/lib/hooks/useMarketQuotes';
+// Institutional event-attribution engine (same one that powers the home page
+// Top Movers). Wired into the Movers tab so the tab named after attribution
+// actually shows attribution — "why it moved" + confidence + scope + circuit /
+// tier / anomaly badges.
+import {
+  attributeMovers,
+  moverTier,
+  isCircuitMove,
+  anomalyTag,
+  ANOMALY_COLOR,
+  CONFIDENCE_COLOR,
+  CATALYST_GLYPH,
+  cleanMoverLabel,
+  type MoverAttribution,
+  type Confidence,
+  type Scope,
+} from '@/lib/movers-attribution';
+// User's "book" — conviction bench. Held + watchlist come from localStorage.
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 interface Stock {
   ticker: string;
@@ -132,6 +151,29 @@ export default function MoversPage() {
   // symbols in earningsTickers (recent reporters), which is the highest-
   // signal subset most users want to watch on result days.
   const [earningsOnly, setEarningsOnly] = useState<boolean>(false);
+
+  // ── "My Book" — union of held (localStorage 'mc_portfolio_holdings'),
+  // bench (getConvictionTickers), and watchlist (localStorage
+  // 'mc_watchlist_tickers'). Client-only: loaded post-mount to avoid an
+  // SSR/hydration mismatch, refreshed on cross-tab storage + CB events.
+  const [bookSet, setBookSet] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const up = (t: string) => (t || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+    const load = () => {
+      const s = new Set<string>();
+      try { (JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]') || []).forEach((h: any) => { if (h?.symbol) s.add(up(h.symbol)); }); } catch { /* ignore */ }
+      try { getConvictionTickers().forEach((t) => s.add(up(t))); } catch { /* ignore */ }
+      try { (JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []).forEach((t: string) => s.add(up(t))); } catch { /* ignore */ }
+      setBookSet(s);
+    };
+    load();
+    window.addEventListener('storage', load);
+    window.addEventListener('conviction-beats:updated', load);
+    return () => {
+      window.removeEventListener('storage', load);
+      window.removeEventListener('conviction-beats:updated', load);
+    };
+  }, []);
 
   const windowWidth = useWindowWidth();
   const isMobile = windowWidth < 640;
@@ -317,6 +359,81 @@ export default function MoversPage() {
     return sortStocks(base, loserSort).slice(0, 30);
   }, [filtered, loserSort, sortStocks]);
 
+  // ── My Book Movers — book names that moved today, computed off the FULL
+  // universe (allStocks) so they bypass the volume floor and the top-N slice.
+  // A big move on a name you actually hold is never dropped by the ≥5L-volume
+  // filter or drowned in the 60-row list.
+  const bookMovers = useMemo(() => {
+    if (bookSet.size === 0) return [] as Stock[];
+    return allStocks
+      .filter(s => bookSet.has(s.ticker.toUpperCase()) && Math.abs(s.changePercent) > 0)
+      .sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
+      .slice(0, 20);
+  }, [allStocks, bookSet]);
+
+  // ── Attribution — run the institutional engine over the rows we actually
+  // render (gainers + losers + book movers, deduped). Sector aggregates +
+  // index avg come from the FULL universe so SECTOR_WIDE detection is honest.
+  // The page doesn't fetch filings/news, so those indices are empty and the
+  // engine falls through to its lower-confidence sector / momentum tiers —
+  // which is the honest behaviour per the engine's design.
+  const attribution = useMemo(() => {
+    const byTicker: Record<string, Stock> = {};
+    for (const s of [...gainers, ...losers, ...bookMovers]) byTicker[s.ticker.toUpperCase()] = s;
+    const rows = Object.values(byTicker);
+    if (rows.length === 0) return {} as Record<string, MoverAttribution>;
+
+    const secAgg: Record<string, { sum: number; count: number }> = {};
+    let idxSum = 0, idxCount = 0;
+    for (const s of allStocks) {
+      const cp = s.changePercent;
+      if (!Number.isFinite(cp)) continue;
+      const sec = s.sector || 'Other';
+      (secAgg[sec] ||= { sum: 0, count: 0 });
+      secAgg[sec].sum += cp; secAgg[sec].count += 1;
+      idxSum += cp; idxCount += 1;
+    }
+    const sectorAggregates: Record<string, { avgChangePct: number; stockCount: number }> = {};
+    for (const [sec, a] of Object.entries(secAgg)) {
+      if (a.count >= 2) sectorAggregates[sec] = { avgChangePct: a.sum / a.count, stockCount: a.count };
+    }
+    const indexAvgChangePct = idxCount > 0 ? idxSum / idxCount : undefined;
+
+    // Partial earnings index from the recent-reporters map the page already
+    // fetches. It carries no filing_date / YoY metrics, so the engine's 7-day
+    // EARNINGS tier won't fire on it — it's passed for completeness and the
+    // engine gracefully ignores what it can't use.
+    const earningsByTicker: Record<string, { ticker: string; tier: string; quarter?: string }> = {};
+    earningsTickers.forEach((info, tk) => {
+      earningsByTicker[tk.toUpperCase()] = { ticker: tk, tier: info.quality, quarter: info.quarter };
+    });
+
+    return attributeMovers({
+      movers: rows.map(s => ({
+        ticker: s.ticker,
+        sector: s.sector,
+        changePercent: s.changePercent,
+        indexGroup: s.cap,
+        marketCap: s.marketCap,
+        volume: s.volume,
+        previousClose: s.previousClose,
+        price: s.price,
+      })),
+      filingsBySymbol: {},
+      newsByTicker: {},
+      earningsByTicker,
+      sectorAggregates,
+      indexAvgChangePct,
+      filingsFeedHealthy: false,
+      newsFeedHealthy: false,
+    });
+  }, [gainers, losers, bookMovers, allStocks, earningsTickers]);
+
+  const attrFor = useCallback(
+    (ticker: string) => attribution[(ticker || '').toUpperCase()],
+    [attribution],
+  );
+
   const sectors = useMemo(() => {
     const sectorSet = new Set(allStocks.map(s => s.sector));
     return ['All', ...[...sectorSet].sort()];
@@ -406,13 +523,105 @@ export default function MoversPage() {
     );
   };
 
+  // ── Attribution + circuit/tier/anomaly badge helpers ──────────────────────
+  const confChipStyle = (conf: Confidence): React.CSSProperties => ({
+    fontSize: '8px', fontWeight: 800, padding: '1px 4px', borderRadius: '3px',
+    backgroundColor: `${CONFIDENCE_COLOR[conf]}22`, color: CONFIDENCE_COLOR[conf],
+    letterSpacing: '0.3px', whiteSpace: 'nowrap',
+  });
+  const scopeChipStyle = (scope: Scope): React.CSSProperties => {
+    const isStock = scope === 'STOCK_SPECIFIC';
+    const col = isStock ? '#818CF8' : '#22D3EE';
+    return {
+      fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+      backgroundColor: `${col}18`, color: col, whiteSpace: 'nowrap',
+    };
+  };
+  const scopeLabel = (scope: Scope) =>
+    scope === 'STOCK_SPECIFIC' ? 'STOCK-SPECIFIC' : scope === 'SECTOR_WIDE' ? 'SECTOR-WIDE' : 'INDEX-WIDE';
+
+  // "Why it moved" line: engine label + HIGH/MEDIUM/LOW confidence chip +
+  // STOCK_SPECIFIC vs SECTOR_WIDE scope badge (mirrors the home page).
+  const AttributionLine = ({ stock, compact }: { stock: Stock; compact?: boolean }) => {
+    const attr = attrFor(stock.ticker);
+    if (!attr) return null;
+    const label = cleanMoverLabel(attr) || attr.catalyst;
+    if (!label) return null;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', flexWrap: 'wrap' }}>
+        <span title={attr.detail || label} style={{
+          fontSize: compact ? '9px' : '10px', color: TEXT2, fontWeight: 500,
+          maxWidth: compact ? '150px' : '230px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {CATALYST_GLYPH[attr.catalystType]} {label}
+        </span>
+        <span style={confChipStyle(attr.confidence)}>{attr.confidence}</span>
+        <span style={scopeChipStyle(attr.scope)}>{scopeLabel(attr.scope)}</span>
+      </div>
+    );
+  };
+
+  // Circuit / tier / anomaly badges. A circuit-locked move (e.g. +9.98% upper
+  // circuit) gets a distinct red 🔒 badge so it never looks like a genuine
+  // re-rate; the anomaly badge intentionally skips CIRCUIT (already surfaced).
+  const RowBadges = ({ stock }: { stock: Stock }) => {
+    const attr = attrFor(stock.ticker);
+    const pct = stock.changePercent;
+    const tier = moverTier(pct);
+    const circuit = isCircuitMove(pct);
+    const anom = anomalyTag({ changePercent: pct, attribution: attr, tier });
+    return (
+      <>
+        {circuit && (
+          <span title="Within 0.15% of an NSE circuit limit (±5/10/20%) — likely circuit-locked, not free price discovery. Not tradeable like a genuine re-rate."
+            style={{ fontSize: '8px', fontWeight: 800, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.18)', color: RED, whiteSpace: 'nowrap' }}>
+            🔒 circuit
+          </span>
+        )}
+        {tier !== 'MINOR' && (
+          <span title={`${tier} move (|Δ| ${tier === 'EXTREME' ? '≥10%' : '5–10%'})`}
+            style={{
+              fontSize: '8px', fontWeight: 800, padding: '1px 4px', borderRadius: '3px',
+              backgroundColor: tier === 'EXTREME' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
+              color: tier === 'EXTREME' ? RED : 'var(--mc-warn)', whiteSpace: 'nowrap',
+            }}>
+            {tier}
+          </span>
+        )}
+        {anom && anom !== 'CIRCUIT' && (
+          <span title={`Anomaly: ${anom}`} style={{
+            fontSize: '8px', fontWeight: 800, padding: '1px 4px', borderRadius: '3px',
+            backgroundColor: `${ANOMALY_COLOR[anom]}22`, color: ANOMALY_COLOR[anom], whiteSpace: 'nowrap',
+          }}>
+            {anom === 'NEWS_GAP' ? '📰 gap' : anom === 'UNEXPLAINED' ? '⚠ unexplained' : anom}
+          </span>
+        )}
+      </>
+    );
+  };
+
+  const BookChip = () => (
+    <span title="In your book — held, conviction bench, or watchlist" style={{
+      fontSize: '8px', fontWeight: 800, padding: '1px 5px', borderRadius: '3px',
+      backgroundColor: 'rgba(16,185,129,0.16)', color: GREEN, whiteSpace: 'nowrap', letterSpacing: '0.3px',
+    }}>
+      💼 IN YOUR BOOK
+    </span>
+  );
+
   // Mobile card row — compact, no Sector/Vol columns
-  const MobileRow = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
+  const MobileRow = ({ stock, rank, up, inBook }: { stock: Stock; rank: number; up: boolean; inBook?: boolean }) => (
     <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
       <td style={{ padding: '8px 6px', color: TEXT3, fontSize: '11px', width: '24px' }}>{rank}</td>
       <td style={{ padding: '8px 4px' }}>
-        <div style={{ fontWeight: '700', fontSize: '12px', color: ACCENT }}>{stock.ticker}<EarningsBadge ticker={stock.ticker} /></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: '700', fontSize: '12px', color: ACCENT }}>{stock.ticker}</span>
+          <EarningsBadge ticker={stock.ticker} />
+          {inBook && <BookChip />}
+          <RowBadges stock={stock} />
+        </div>
         <div style={{ fontSize: '9px', color: TEXT3, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
+        <AttributionLine stock={stock} compact />
       </td>
       <td style={{ padding: '8px 4px', textAlign: 'right', fontSize: '12px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
         ₹{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
@@ -434,15 +643,17 @@ export default function MoversPage() {
   );
 
   // Desktop full row
-  const Row = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
+  const Row = ({ stock, rank, up, inBook }: { stock: Stock; rank: number; up: boolean; inBook?: boolean }) => (
     <tr style={{ borderBottom: `1px solid ${BORDER}`, cursor: 'pointer' }}
       onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#111B35')}
       onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
       <td style={{ padding: '10px 12px', color: TEXT3, fontSize: '12px', width: '36px' }}>{rank}</td>
       <td style={{ padding: '10px 8px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}</span>
           <EarningsBadge ticker={stock.ticker} />
+          {inBook && <BookChip />}
+          <RowBadges stock={stock} />
           {/* PATCH 0291 — 'Why moving?' shortcut. Opens /news with this
               ticker pre-filtered so the analyst can see what's driving the move. */}
           <a
@@ -456,6 +667,7 @@ export default function MoversPage() {
           >📰</a>
         </div>
         <div style={{ fontSize: '10px', color: TEXT3, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
+        <AttributionLine stock={stock} />
       </td>
       {!isTablet && <td style={{ padding: '10px 8px', fontSize: '12px', color: TEXT2 }}>{stock.sector}</td>}
       <td style={{ padding: '10px 8px', textAlign: 'center' }}>
@@ -749,6 +961,52 @@ export default function MoversPage() {
           <div style={{ fontSize: '32px', marginBottom: '12px' }}>📊</div>
           <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--mc-text-0)', margin: '0 0 6px' }}>No market data available</p>
           <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: '0 0 16px' }}>NSE data may be unavailable outside market hours or the backend is not running.</p>
+        </div>
+      )}
+
+      {/* My Book Movers — pinned above the main list, computed off the FULL
+          universe so book names bypass the volume floor + top-N slice. */}
+      {!loading && allStocks.length > 0 && (
+        <div style={{ marginBottom: '14px', backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '700' }}>💼 In Your Book</span>
+            {bookMovers.length > 0 && (
+              <span style={{ fontSize: '10px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{bookMovers.length}</span>
+            )}
+            {!isMobile && (
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: TEXT3 }}>held · bench · watchlist — bypasses the volume floor</span>
+            )}
+          </div>
+          {bookMovers.length === 0 ? (
+            <div style={{ padding: '10px 14px', fontSize: '11px', color: TEXT3 }}>
+              {bookSet.size === 0
+                ? 'No book yet — add holdings, conviction bench, or watchlist names to pin their moves here.'
+                : 'No book names moving today.'}
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto', maxHeight: isMobile ? '340px' : '420px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ backgroundColor: BG }}>
+                    {columns.map(col => (
+                      <th key={col.label} style={{
+                        padding: isMobile ? '6px 4px' : '8px', textAlign: col.align,
+                        fontSize: isMobile ? '9px' : '10px', color: TEXT3, fontWeight: 500,
+                        textTransform: 'uppercase', letterSpacing: '0.5px',
+                        position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1, whiteSpace: 'nowrap',
+                      }}>{col.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {bookMovers.map((s, i) => isMobile
+                    ? <MobileRow key={s.ticker} stock={s} rank={i + 1} up={s.changePercent >= 0} inBook />
+                    : <Row key={s.ticker} stock={s} rank={i + 1} up={s.changePercent >= 0} inBook />
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
