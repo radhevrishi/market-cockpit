@@ -24,7 +24,7 @@ export default function InvestingPlaybookPage() {
   const [activePart, setActivePart] = useState<number>(0);
   const [activeSub, setActiveSub] = useState<number>(-1);
   const [q, setQ] = useState<string>('');
-  const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set([0]));
+  const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set()); // zzz401 — all collapsed by default
   const mainRef = useRef<HTMLDivElement>(null);
 
   const totalLines = useMemo(() => BOOK.reduce((n, p) => n + partLines(p), 0), []);
@@ -61,12 +61,26 @@ export default function InvestingPlaybookPage() {
 
   const currentPart = BOOK[activePart];
   const displayedSubs = activeSub >= 0 ? [currentPart.subs[activeSub]] : currentPart.subs;
-  const go = (pi: number, si: number = -1) => { setActivePart(pi); setActiveSub(si); if (!expandedParts.has(pi)) { const e = new Set(expandedParts); e.add(pi); setExpandedParts(e); } };
+  const go = (pi: number, si: number = -1) => {
+    setActivePart(pi); setActiveSub(si);
+    setExpandedParts(prev => { if (prev.has(pi)) return prev; const e = new Set(prev); e.add(pi); return e; });
+  };
+  const toggleExpand = (pi: number) => setExpandedParts(prev => { const e = new Set(prev); if (e.has(pi)) e.delete(pi); else e.add(pi); return e; });
+  const anyExpanded = expandedParts.size > 0;
+  const collapseAll = () => setExpandedParts(new Set());
+  const expandAll = () => setExpandedParts(new Set(BOOK.map((_, i) => i).filter(i => BOOK[i].subs.length > 0)));
 
   let lastBook = -1;
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.text, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', display: 'flex' }}>
+      <style>{`
+        .lp-row:not(.lp-active):hover { background: ${C.panel2}; }
+        .lp-chev:hover span { color: ${C.cyan}; }
+        .lp-title:hover > span:first-child { color: ${C.cyan}; }
+        .lp-sub:hover { background: ${C.cyan}12; color: ${C.text}; }
+        .lp-ctrl:hover { border-color: ${C.cyan}; color: ${C.cyan}; }
+      `}</style>
       <aside style={{ width: 360, minWidth: 360, background: C.panel, borderRight: '1px solid ' + C.border, height: '100vh', overflowY: 'auto', position: 'sticky', top: 0 }}>
         <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid ' + C.border }}>
           <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 4 }}>INVESTING PLAYBOOK</div>
@@ -75,6 +89,12 @@ export default function InvestingPlaybookPage() {
         </div>
         <div style={{ padding: '12px 14px' }}>
           <input type="text" placeholder="🔍 Search entire book…" value={q} onChange={e => setQ(e.target.value)} style={{ width: '100%', padding: '8px 12px', background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text, fontSize: 13, outline: 'none' }} />
+        </div>
+        <div style={{ padding: '0 14px 10px', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+          <button onClick={anyExpanded ? collapseAll : expandAll} className="lp-ctrl" style={{ background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text2, fontSize: 11.5, fontWeight: 700, padding: '6px 10px', cursor: 'pointer' }}>
+            {anyExpanded ? '⊟ Collapse all' : '⊞ Expand all'}
+          </button>
+          <span style={{ fontSize: 10.5, color: C.text3 }}>{expandedParts.size} of {BOOK.length} open</span>
         </div>
         <nav style={{ paddingBottom: 40 }}>
           {BOOK.map((p, pi) => {
@@ -89,17 +109,24 @@ export default function InvestingPlaybookPage() {
                     ▸ Book {p.book}
                   </div>
                 )}
-                <button
-                  onClick={() => { go(pi, -1); const e = new Set(expandedParts); if (e.has(pi)) e.delete(pi); else e.add(pi); setExpandedParts(e); }}
-                  style={{ width: '100%', textAlign: 'left', padding: '9px 16px', background: active ? C.cyan + '15' : 'transparent', border: 'none', borderLeft: active ? '3px solid ' + C.cyan : '3px solid transparent', color: active ? C.cyan : C.text, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.subs.length > 0 ? (expanded ? '▼' : '▶') : '·'} {p.title}</span>
-                  <span style={{ fontSize: 10, color: C.text3, fontWeight: 500 }}>{partLines(p)}</span>
-                </button>
+                <div className={'lp-row' + (active ? ' lp-active' : '')} style={{ display: 'flex', alignItems: 'stretch', background: active ? C.cyan + '15' : 'transparent', borderLeft: active ? '3px solid ' + C.cyan : '3px solid transparent' }}>
+                  {p.subs.length > 0 ? (
+                    <button aria-label="toggle section" onClick={() => toggleExpand(pi)} className="lp-chev" style={{ flex: '0 0 30px', background: 'transparent', border: 'none', color: C.text3, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ display: 'inline-block', fontSize: 9, transition: 'transform .15s ease', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                    </button>
+                  ) : (
+                    <span style={{ flex: '0 0 30px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.text3, fontSize: 9 }}>·</span>
+                  )}
+                  <button onClick={() => go(pi, -1)} className="lp-title" style={{ flex: 1, minWidth: 0, textAlign: 'left', padding: '9px 14px 9px 2px', background: 'transparent', border: 'none', color: active ? C.cyan : C.text, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.title}</span>
+                    {p.subs.length > 0 && <span style={{ fontSize: 10, color: C.text3, fontWeight: 600, background: C.panel2, borderRadius: 10, padding: '1px 7px', flex: '0 0 auto' }} title={`${p.subs.length} sub-sections`}>{p.subs.length}</span>}
+                  </button>
+                </div>
                 {expanded && p.subs.length > 0 && (
                   <div style={{ background: C.panel2, borderLeft: '3px solid ' + C.border }}>
-                    <button onClick={() => go(pi, -1)} style={{ width: '100%', textAlign: 'left', padding: '6px 20px', background: activeSub === -1 && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === -1 && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', fontStyle: 'italic' }}>⇢ Read full section</button>
+                    <button onClick={() => go(pi, -1)} className="lp-sub" style={{ width: '100%', textAlign: 'left', padding: '6px 20px', background: activeSub === -1 && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === -1 && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', fontStyle: 'italic' }}>⇢ Read full section</button>
                     {p.subs.map((s, si) => (
-                      <button key={si} onClick={() => go(pi, si)} style={{ width: '100%', textAlign: 'left', padding: '5px 20px', background: activeSub === si && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === si && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title.slice(0, 48)}</button>
+                      <button key={si} onClick={() => go(pi, si)} className="lp-sub" style={{ width: '100%', textAlign: 'left', padding: '5px 20px', background: activeSub === si && activePart === pi ? C.cyan + '11' : 'transparent', border: 'none', color: activeSub === si && activePart === pi ? C.cyan : C.text2, fontSize: 11.5, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title.slice(0, 48)}</button>
                     ))}
                   </div>
                 )}
