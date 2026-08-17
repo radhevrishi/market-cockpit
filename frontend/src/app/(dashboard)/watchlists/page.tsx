@@ -2188,7 +2188,16 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   const fillRunningRef = useRef(false);
   const runEnrichWalk = useCallback(async (manual: boolean) => {
     if (typeof window === 'undefined') return;
-    if (fillRunningRef.current) return;
+    // zzz374 — a manual click must ALWAYS give feedback. Previously, if the
+    // mount auto-walk was still in flight (fillRunningRef true), the click
+    // returned silently and the user saw "nothing happened". Now: manual
+    // clicks show an immediate status, and if a walk is already running they
+    // say so instead of no-op'ing.
+    if (fillRunningRef.current) {
+      if (manual) { setFillProgress('⏳ A fill pass is already running — watch the counter, or try again once it finishes.'); setTimeout(() => setFillProgress(null), 6000); }
+      return;
+    }
+    if (manual) setFillProgress('Scanning bench for missing data…');
     fillRunningRef.current = true;
     const list = getConvictionList();
     let done = 0, total = 0;
@@ -2918,11 +2927,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               style={{ ...chipBase, border: '1px solid #22D3EE', color: '#22D3EE', fontWeight: 800 }}>
               🔄 Refresh Prices
             </button>
-            <button onClick={() => runEnrichWalk(true)} disabled={!!fillProgress && !fillProgress.startsWith('✓')}
-              title="Fill whatever is missing on the cards — Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT annual), QoQ ACCEL, P/E, DRIFT, ROCE. Only touches entries that lack data; entries that already have it are left alone. Forces a fresh Screener scrape (bypasses cache)."
-              style={{ ...chipBase, border: '1px solid #A78BFA', color: '#A78BFA', fontWeight: 700 }}>
-              ⟳ Fill missing (trends · P/E · DRIFT)
-            </button>
+            {(() => {
+              const busy = !!fillProgress && !fillProgress.startsWith('✓') && !fillProgress.startsWith('⏳');
+              return (
+                <button onClick={() => runEnrichWalk(true)}
+                  title="Fill whatever is missing on the cards — Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT annual), QoQ ACCEL, P/E, DRIFT, ROCE. Only touches entries that lack data; entries that already have it are left alone. Forces a fresh Screener scrape (bypasses cache)."
+                  style={busy
+                    ? { ...chipActive('#A78BFA'), fontWeight: 800 }
+                    : { ...chipBase, border: '1px solid #A78BFA', color: '#A78BFA', fontWeight: 700 }}>
+                  {busy ? '⟳ Filling…' : '⟳ Fill missing (trends · P/E · DRIFT)'}
+                </button>
+              );
+            })()}
             {/* zzz254 — density toggle */}
             <button onClick={cycleDensity} title="Cycle card density: Comfy (default) → Compact → Ultra-compact. Persists across visits."
               style={{ ...chipBase, border: '1px solid #A78BFA', color: '#A78BFA', fontWeight: 800 }}>
@@ -4647,8 +4663,22 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
                 quarter check on the specific earnings event that triggered the
                 BLOCKBUSTER/STRONG grade. Label + tooltip make the annual scope
                 explicit so it isn't misread against quarterly PAT growth. */}
-            {typeof (entry as any).cfo_to_pat_ratio === 'number' && (() => {
-              const r = (entry as any).cfo_to_pat_ratio as number;
+            {(() => {
+              // zzz374 — reconcile the header "CFO/PAT FY" with the Q-TRENDS
+              // "CFO/PAT (annual)" pill. They used two different sources:
+              //   header  = cfo_to_pat_ratio (a single graded/enrich number, often
+              //             a year older than the fresh Screener series)
+              //   pill    = latest of annual_cfo_pat[] (zzz371-aligned by FY label)
+              // That's why KMEW showed header 1.17 next to pill 0.94. Prefer the
+              // annual-series latest value (the accurate one) for the header too;
+              // fall back to cfo_to_pat_ratio only when the series is absent.
+              const arr = Array.isArray((entry as any).annual_cfo_pat)
+                ? (entry as any).annual_cfo_pat.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= 5)
+                : null;
+              const seriesLatest = arr && arr.length >= 1 ? arr[arr.length - 1] as number : null;
+              const rSrc = seriesLatest != null ? seriesLatest : (entry as any).cfo_to_pat_ratio;
+              if (typeof rSrc !== 'number') return null;
+              const r = rSrc as number;
               // zzz364 (BUG 2c) — financials: CFO/PAT is not meaningful for lenders/NBFCs.
               if (cbIsFinancial(entry)) {
                 return (
@@ -5030,7 +5060,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           last two entries finite) and every scalar via typeof===number &&
           Number.isFinite. Institutional color semantics per metric. Renders
           nothing when no series/scalar is present. */}
-      {density !== 'ultra' && (() => {
+      {density !== 'ultra' && !cbIsFinancial(entry) /* zzz374 — investment/holding/NBFC OPM+CFO trends are noise (DHUNINV showed OPM ▲+222, OTHER-INC ▼-139) */ && (() => {
         const e: any = entry;
         // zzz371 (audit) — NEU must be a real hex, not a CSS var(): the pill style
         // appends a hex-alpha suffix (col + '14' / col + '40'), and 'var(--x)14' is
@@ -5044,6 +5074,14 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           if (typeof prev !== 'number' || !Number.isFinite(prev)) return null;
           return { latest, prev };
         };
+        // zzz374 — drop implausible values (a quarter with ~0 sales makes % ratios
+        // explode: DHUNINV OPM prev -178% → delta +222). Filter to [lo,hi] FIRST,
+        // then take the last two survivors so the pill reflects real quarters.
+        const lastTwoBounded = (v: any, lo: number, hi: number): { latest: number; prev: number } | null => {
+          if (!Array.isArray(v)) return null;
+          const clean = v.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi);
+          return lastTwo(clean);
+        };
         const seriesStr = (v: any): string => Array.isArray(v)
           ? v.slice(-5).map((x: any) => (typeof x === 'number' && Number.isFinite(x)) ? x.toFixed(1) : '—').join(' → ')
           : '';
@@ -5052,7 +5090,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
         const tps: TP[] = [];
 
         // OPM % — rising = good (green), falling = amber/red.
-        const opm = lastTwo(e.quarters_opm);
+        const opm = lastTwoBounded(e.quarters_opm, -50, 100);
         if (opm) {
           const d = opm.latest - opm.prev;
           const col = d >= 0.1 ? GREEN : d <= -1.5 ? RED : d < 0 ? AMBER : NEU;
@@ -5068,7 +5106,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
             tip: `Material cost % of sales by quarter: ${seriesStr(e.quarters_material_cost_pct)}. FALLING = margin tailwind (good); rising = input-cost pressure (red).` });
         }
         // Other Income % — FALLING = good/cleaner (green), rising = amber (quality watch).
-        const oi = lastTwo(e.quarters_other_income_pct);
+        const oi = lastTwoBounded(e.quarters_other_income_pct, -60, 100);
         if (oi) {
           const d = oi.latest - oi.prev;
           const col = d < 0 ? GREEN : d > 0 ? AMBER : NEU;
