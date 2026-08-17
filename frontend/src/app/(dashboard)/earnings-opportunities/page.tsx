@@ -774,7 +774,10 @@ function gradeRow(row: any): ParsedEarning | null {
     if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
     if (!caveat_tags.includes('thin float')) caveat_tags.push('thin float');
   }
-  const fmtP = (lbl: string, v: number | null) => v == null ? '' : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`;
+  // zzz383 — clamp base-effect blow-ups: a near-zero/negative prior base makes YoY %
+  // explode (e.g. +5000% on a ₹0.5 Cr → ₹50 Cr PAT). Exact precision is meaningless
+  // and reads as fabricated, so show '>500% (low base)' above the threshold.
+  const fmtP = (lbl: string, v: number | null) => v == null ? '' : (v >= 500 ? `${lbl} >500% YoY (low base)` : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`);
   const head =
     tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${q}` :
     tier === 'STRONG'      ? `${co} delivers strong ${q}` :
