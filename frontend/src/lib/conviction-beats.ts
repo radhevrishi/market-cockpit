@@ -121,6 +121,7 @@ export interface ConvictionEntry {
   // onto the bench, so the one-time client re-enrich fires exactly once.
   cb_enrich_v?: number | null;                     // zzz361
   cb_trend_attempts?: number | null;               // zzz369 — bounded trend re-fetch counter
+  _trends_status?: string | null;                  // zzz376 — 'ok' | 'no-table' | 'fetch-failed'
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -354,6 +355,7 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           forceRefresh('pledged_pct' as any);
           forceRefresh('exceptional_curr_cr' as any); forceRefresh('exceptional_pct_pbt' as any);
           forceRefresh('cb_trend_attempts' as any); // zzz369 — bounded retry counter must advance
+          forceRefresh('_trends_status' as any); // zzz376 — reason for missing trends must update each pass
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {

@@ -1266,15 +1266,24 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       `https://www.screener.in/company/${encodeURIComponent(sym)}/`,
     ];
     let html: string | null = null;
+    let anyPageLoaded = false;  // zzz376 — did EITHER URL actually return HTML?
     for (const u of urls) {
       const h = await fetchScreenerHtml(u);
       if (!h) continue;
+      anyPageLoaded = true;
       html = h;
       // If this page already has a parsable quarters section, use it; else keep
       // it as a fallback but try the next URL for a richer page.
       if (Object.keys(extractScreenerTrends(h)).length > 0) break;
     }
-    if (!html) return null;
+    // zzz376 — DISTINGUISH the two failure modes for the UI:
+    //   fetch-failed = both URLs failed to load (403/429/timeout/proxy) — TRANSIENT,
+    //                  data may well exist; worth retrying. NOT cached so it retries.
+    //   no-table     = a page DID load but has no quarterly section — GENUINELY absent
+    //                  for this ticker. Cached briefly so we don't hammer Screener.
+    if (!html) {
+      return { _trends_status: 'fetch-failed' };
+    }
     // Strip tags helper local (top-level stripTags exists elsewhere).
     const strip = (s: string) => String(s).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/,/g, '').trim();
     const toNum = (s: string) => { const n = parseFloat(strip(s)); return Number.isFinite(n) ? n : null; };
@@ -1341,6 +1350,8 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     const trends = extractScreenerTrends(html);
     const result: any = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio, ...trends };
     if (Object.keys(trends).length > 0) result._trends = true;
+    // zzz376 — a page loaded (anyPageLoaded) but no quarters table → GENUINELY absent.
+    result._trends_status = result._trends ? 'ok' : (anyPageLoaded ? 'no-table' : 'fetch-failed');
     // zzz369 — short-TTL when the trend extraction came back empty (transient
     // Screener miss) so the next fetch retries and self-heals, instead of pinning
     // a trend-less CFO payload for 24h and starving the enrich hoist.
@@ -1502,6 +1513,9 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       if ((out as any)[f] == null && co[f] != null) (out as any)[f] = co[f];
     }
     if (co._trends && out._screener_overlay == null) out._screener_overlay = 'zzz367-cfo-path';
+    // zzz376 — carry WHY the trends are (or aren't) here so the UI can tell the
+    // user "genuinely absent" vs "Screener fetch failed — transient".
+    if (typeof co._trends_status === 'string') out._trends_status = co._trends_status;
   }
 
   // zzz366 — CRITICAL FIX (root cause of "I still don't see Other Income / Tax /

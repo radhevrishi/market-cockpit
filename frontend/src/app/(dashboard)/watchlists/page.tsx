@@ -2348,6 +2348,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               cb_enrich_v: 375,  // zzz375 — bump (was 371) so re-enrich fires once for the v13 cache. zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
               // zzz369 — count trend-fetch attempts so needsTrends() retry is bounded.
               cb_trend_attempts: ((existing as any).cb_trend_attempts || 0) + 1,
+              // zzz376 — carry the server's reason so the card can say "genuinely
+              // absent" vs "fetch failed (transient)". Overwrite each pass.
+              _trends_status: typeof enr._trends_status === 'string' ? enr._trends_status : (existing as any)._trends_status,
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
@@ -5249,16 +5252,50 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           enrichment (cb_enrich_v current) but Screener still yields no quarterly table,
           show a muted note so the empty gap reads as "Screener can't parse this one",
           NOT "the Fill button is broken / data is missing". */}
-      {density !== 'ultra' && !cbIsFinancial(entry) && (() => {
+      {density !== 'ultra' && (() => {
         const e: any = entry;
         const hasTrend = Array.isArray(e.quarters_opm) || Array.isArray(e.quarters_tax_pct)
           || Array.isArray(e.quarters_other_income_pct) || Array.isArray(e.annual_cfo_pat);
-        const tried = ((e.cb_enrich_v || 0) >= 375) || ((e.cb_trend_attempts || 0) >= 3);
-        if (hasTrend || !tried) return null;
+        if (hasTrend) return null; // real Q-TRENDS pills already rendered above
+        // zzz376 — ALWAYS say WHY the Q-TRENDS strip is absent instead of leaving a
+        // blank gap the user reads as a bug. Three honest states:
+        const base = { fontSize: 8.5, color: 'var(--mc-text-4)', fontStyle: 'italic' as const, paddingTop: 2 };
+        if (cbIsFinancial(entry)) {
+          return (
+            <div style={base} title="Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT-annual) measure operating-margin & cash quality. For banks / NBFCs / holding & investment companies those aren't meaningful (their 'operating margin' and 'cash from operations' mix financing flows), so the strip is intentionally omitted — same reason CFO/PAT shows n/m.">
+              Q-TRENDS n/a — financial company (margin/tax trends not meaningful)
+            </div>
+          );
+        }
+        const status = e._trends_status as string | undefined;
+        const tried = ((e.cb_enrich_v || 0) >= 375) || ((e.cb_trend_attempts || 0) >= 2);
+        // zzz376 — three distinct, honest states, colour-coded so GENUINELY-ABSENT
+        // (grey) is visually different from a FETCH BUG (amber) the user can retry.
+        if (status === 'no-table') {
+          return (
+            <div style={base} title="A Screener page DID load for this ticker but it has no quarterly results table — so the trend data is GENUINELY absent, not a fetch error. Nothing to retry. (Header stats like OPM / ROCE / CFO-PAT come from a different source and are unaffected.)">
+              Q-TRENDS n/a — genuinely absent (Screener has no quarterly table)
+            </div>
+          );
+        }
+        if (status === 'fetch-failed') {
+          return (
+            <div style={{ ...base, color: '#F59E0B', fontStyle: 'normal' }} title="Screener could NOT be reached for this ticker (403 / rate-limit / timeout) — so we don't yet know if trends exist. This is a TRANSIENT fetch failure, not missing data. Click ⟳ Fill missing to retry, or reload in a minute.">
+              ⚠ Q-TRENDS unavailable — Screener fetch failed (transient · click ⟳ Fill missing to retry)
+            </div>
+          );
+        }
+        if (!tried) {
+          return (
+            <div style={base} title="Q-TRENDS come from Screener's quarterly table and are still being fetched. If they don't appear after a moment, click ⟳ Fill missing to force a fresh scrape.">
+              ⟳ Q-TRENDS loading… (auto-filling from Screener)
+            </div>
+          );
+        }
+        // Tried, but the server never told us why (older cached entry). Neutral wording.
         return (
-          <div style={{ fontSize: 8.5, color: 'var(--mc-text-4)', fontStyle: 'italic', paddingTop: 2 }}
-            title="Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT-annual) come from Screener's quarterly table. Screener has no parsable quarterly section for this ticker right now, so the pills can't be computed. The ⟳ Fill missing button will keep retrying; the header stats (OPM, ROCE, CFO/PAT) are unaffected.">
-            Q-TRENDS n/a — Screener has no quarterly table for this ticker
+          <div style={base} title="Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT-annual) come from Screener's quarterly table and haven't been captured for this ticker yet. Click ⟳ Fill missing to force a fresh scrape; if it still doesn't appear, Screener likely has no quarterly table for it.">
+            Q-TRENDS not captured yet — click ⟳ Fill missing to retry
           </div>
         );
       })()}
