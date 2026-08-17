@@ -365,6 +365,8 @@ export default function SmallcapSimulatorPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <a href="/historical-returns?m=india" style={chipBtn(false, C.blue)}>📈 History</a>
+            <a href="/qqq-simulator" style={chipBtn(false, C.cyan)}>🇺🇸 QQQ</a>
             <button onClick={save} style={chipBtn(false, C.green)}>💾 Save</button>
             <button onClick={copyLink} style={chipBtn(false, C.cyan)}>🔗 Share</button>
           </div>
