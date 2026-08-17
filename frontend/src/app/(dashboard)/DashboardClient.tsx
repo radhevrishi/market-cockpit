@@ -94,6 +94,8 @@ const NAV_GROUPS: NavGroup[] = [
       // PATCH 0773 — Order Book Intel + Rating Actions nav entries DELETED.
       // User feedback: empty data, distracting from real workflow.
       // Pages also removed from the route table.
+      // zzz400 — Book Watch alert feed (holdings/bench radar).
+      { href: '/book-watch', label: 'Book Watch', icon: <Compass className="w-4 h-4" /> },
       // zzz399 — TheWrap alternate-data trackers (Modules 3/4/5).
       { href: '/strategic-hires', label: 'Strategic Hires', icon: <Compass className="w-4 h-4" /> },
       { href: '/marquee-capital', label: 'Marquee Capital', icon: <Compass className="w-4 h-4" /> },

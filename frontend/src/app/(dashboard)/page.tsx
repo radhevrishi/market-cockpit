@@ -2623,6 +2623,8 @@ export default function HomeDashboard() {
               <Link href="/journey"                       style={navChip('#22D3EE')}>🚀 The Journey</Link>
               <Link href="/multibagger/screens"           style={navChip('#F59E0B')}>🔍 Auto Screens</Link>
               <Link href="/learn"                          style={navChip('#A78BFA')}>📚 Learn</Link>
+              {/* zzz400 — Book Watch alert feed */}
+              <Link href="/book-watch"                     style={navChip('#EF4444')}>🔔 Book Watch</Link>
               {/* zzz399 — TheWrap alternate-data trackers (Modules 3/4/5) */}
               <Link href="/strategic-hires"                style={navChip('#38BDF8')}>🧑‍💼 Strategic Hires</Link>
               <Link href="/marquee-capital"                style={navChip('#34D399')}>💰 Marquee Capital</Link>

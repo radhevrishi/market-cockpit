@@ -7,10 +7,20 @@
 //
 //   1. News stream       — GET /api/v1/news?limit=300
 //                          (articles with title/headline, url, ticker_symbols[],
-//                           published_at, source/source_name, summary, impact)
-//   2. Concall-intel      — GET /api/v1/concall-intel/live-feed?days=14&cacheOnly=1
+//                           published_at, source/source_name, summary, impact).
+//                          The TOP items are SYNTHETIC structural alerts
+//                          (is_synthetic / article_type==='BOTTLENECK' /
+//                          '[STRUCTURAL …' titles) — those are EXCLUDED so they
+//                          don't pollute the detector input.
+//   2. Concall-intel      — GET /api/v1/concall-intel/live-feed?days=30&cacheOnly=1
 //      live-feed            (NSE/BSE Reg-30 filings indexed by symbol; cacheOnly=1
-//                           so the page never blocks on the 60s cold-start path)
+//                           so the page never blocks on the 60s cold-start path).
+//                           Detector text now folds in filing_type + tags so a
+//                           "Change in Directors" / "Acquisition" subject fires.
+//   3. Special-situations  — GET /api/v1/special-situations/feed  (OPT-IN, used by
+//      events               marquee-capital only). Corporate-action events carry
+//                           acquirer/target text (KKR/Blackstone/Temasek/…) that
+//                           the news + filings streams often miss.
 //
 // This module owns the fetch, normalization, dedup and detector-run so the
 // three pages don't each re-implement the pipeline. Pages keep only their own
@@ -37,7 +47,7 @@ export interface WrapFeedItem {
   /** Publish/filing time as epoch ms (0 when unparseable). */
   publishedAt: number;
   /** Where the item came from — for a small provenance badge. */
-  origin: 'news' | 'filing';
+  origin: 'news' | 'filing' | 'specsit';
 }
 
 /** A WrapFeedItem whose detector fired, carrying the resulting signal. */
@@ -52,6 +62,23 @@ export interface WrapFeedResult {
   newsOk: boolean;
   /** True when the live-feed returned successfully (may still be cache-warming). */
   filingsOk: boolean;
+  /**
+   * True when the special-situations feed returned successfully. Only fetched
+   * when `opts.includeSpecialSit` is set (marquee-capital). `null` when the
+   * source wasn't requested.
+   */
+  specSitOk: boolean | null;
+}
+
+export interface WrapFeedOpts {
+  timeoutMs?: number;
+  /**
+   * Also pull /api/v1/special-situations/feed and fold its corporate-action
+   * events into the item stream. Used by marquee-capital so marquee-PE
+   * acquirers (KKR/Blackstone/Temasek/ChrysCapital/…) surface even when the
+   * news + filings streams miss them.
+   */
+  includeSpecialSit?: boolean;
 }
 
 // ── Fetch helpers ────────────────────────────────────────────────────────────
@@ -80,6 +107,22 @@ function firstTicker(syms: unknown): string {
   return '';
 }
 
+/**
+ * The top of /api/v1/news is a band of SYNTHETIC structural alerts
+ * (is_synthetic / article_type==='BOTTLENECK' / '[STRUCTURAL …' titles). They
+ * are not corporate-announcement news and only pollute the detector input, so
+ * they're dropped before normalization.
+ */
+function isSyntheticNews(article: any): boolean {
+  if (!article) return true;
+  if (article.is_synthetic === true) return true;
+  const type = String(article.article_type || '').toUpperCase();
+  if (type === 'BOTTLENECK') return true;
+  const title = String(article.headline || article.title || '').trim();
+  if (/^\[STRUCTURAL/i.test(title)) return true;
+  return false;
+}
+
 function normalizeNews(article: any): WrapFeedItem {
   const title: string = article?.headline || article?.title || '';
   const summary: string = article?.summary || '';
@@ -88,7 +131,8 @@ function normalizeNews(article: any): WrapFeedItem {
     ticker: firstTicker(article?.ticker_symbols),
     company: '',
     title,
-    text: `${title} ${article?.title || ''} ${summary} ${impact}`.trim(),
+    // Richest available text: headline/title + summary + impact statement.
+    text: `${title} ${summary} ${impact}`.replace(/\s+/g, ' ').trim(),
     source: article?.source_name || article?.source || 'News',
     url: article?.url || article?.source_url || '',
     publishedAt: parseTime(article?.published_at),
@@ -99,15 +143,21 @@ function normalizeNews(article: any): WrapFeedItem {
 function normalizeFiling(filing: any): WrapFeedItem {
   const subject: string = filing?.subject || '';
   const company: string = filing?.company_name || '';
+  const filingType: string = filing?.filing_type || '';
   const phrases: string[] = Array.isArray(filing?.bullish?.bullish_phrases)
     ? filing.bullish.bullish_phrases
     : [];
+  const tags: string[] = Array.isArray(filing?.bullish?.tags) ? filing.bullish.tags : [];
   const exchange: string = filing?.exchange === 'BSE' ? 'BSE' : 'NSE';
   return {
     ticker: typeof filing?.symbol === 'string' ? filing.symbol.toUpperCase().trim() : '',
     company,
     title: subject,
-    text: `${subject} ${company} ${phrases.join(' ')}`.trim(),
+    // Fold in filing_type + tags so a "Change in Directors" / "Acquisition"
+    // subject (if present) is caught by the hire / marquee detectors.
+    text: `${subject} ${company} ${phrases.join(' ')} ${filingType} ${tags.join(' ')}`
+      .replace(/\s+/g, ' ')
+      .trim(),
     source: `${exchange} filing`,
     url: filing?.source_url || (Array.isArray(filing?.attachment_urls) ? filing.attachment_urls[0] : '') || '',
     publishedAt: parseTime(filing?.filing_datetime),
@@ -116,32 +166,74 @@ function normalizeFiling(filing: any): WrapFeedItem {
 }
 
 /**
+ * Normalize a special-situations CanonicalEvent into a WrapFeedItem. The
+ * detector text combines the target name, every filing's title + description,
+ * and the event_type so acquirer names (KKR/Blackstone/Temasek/…) buried in
+ * the RSS headline are visible to detectMarqueeCapital.
+ */
+function normalizeSpecSitEvent(event: any): WrapFeedItem {
+  const tickers: string[] = Array.isArray(event?.tickers) ? event.tickers : [];
+  const target: string = event?.target_name || '';
+  const eventType: string = String(event?.event_type || '').replace(/_/g, ' ');
+  const filings: any[] = Array.isArray(event?.filings) ? event.filings : [];
+  const primary = event?.primary_filing || filings[0] || {};
+  const title: string = primary?.title || target || eventType || 'Special situation';
+  const filingText = filings
+    .map((f) => `${f?.title || ''} ${f?.description || ''}`)
+    .join(' ');
+  const ticker =
+    (typeof tickers[0] === 'string' && tickers[0].toUpperCase().trim()) ||
+    (target ? target.toUpperCase().trim().slice(0, 12) : '');
+  return {
+    ticker,
+    company: target,
+    title,
+    text: `${target} ${title} ${filingText} ${eventType}`.replace(/\s+/g, ' ').trim(),
+    source: primary?.source ? `SpecSit · ${primary.source}` : 'Special situations',
+    url: primary?.link || '',
+    publishedAt: parseTime(primary?.pub_date),
+    origin: 'specsit',
+  };
+}
+
+/**
  * Fetch BOTH upstream streams in parallel with a bounded client timeout, then
  * dedup by ticker+title. One stream failing does not fail the whole call.
  */
-export async function fetchWrapFeed(opts?: { timeoutMs?: number }): Promise<WrapFeedResult> {
+export async function fetchWrapFeed(opts?: WrapFeedOpts): Promise<WrapFeedResult> {
   const timeoutMs = opts?.timeoutMs ?? 12_000;
+  const includeSpecialSit = opts?.includeSpecialSit === true;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const [newsRaw, feedRaw] = await Promise.all([
+    const [newsRaw, feedRaw, specSitRaw] = await Promise.all([
       safeJson(`/api/v1/news?limit=300`, controller.signal),
-      safeJson(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1`, controller.signal),
+      safeJson(`/api/v1/concall-intel/live-feed?days=30&bullishOnly=false&cacheOnly=1`, controller.signal),
+      includeSpecialSit
+        ? safeJson(`/api/v1/special-situations/feed`, controller.signal)
+        : Promise.resolve(null),
     ]);
 
     const newsOk = newsRaw != null;
     const filingsOk = feedRaw != null;
+    const specSitOk = includeSpecialSit ? specSitRaw != null : null;
 
+    // News — drop synthetic/structural alerts before normalizing.
     const newsItems: WrapFeedItem[] = Array.isArray(newsRaw)
-      ? newsRaw.map(normalizeNews)
+      ? newsRaw.filter((a) => !isSyntheticNews(a)).map(normalizeNews)
       : [];
+
     const filings: any[] = Array.isArray(feedRaw?.filings) ? feedRaw.filings : [];
     const filingItems: WrapFeedItem[] = filings.map(normalizeFiling);
 
+    const specSitEvents: any[] = Array.isArray(specSitRaw?.events) ? specSitRaw.events : [];
+    const specSitItems: WrapFeedItem[] = specSitEvents.map(normalizeSpecSitEvent);
+
     // Dedup by ticker + normalized title. Filings win over news when both
-    // describe the same event (filings carry the company name + primary link).
-    const merged = [...filingItems, ...newsItems];
+    // describe the same event (filings carry the company name + primary link);
+    // special-situations events come last so a matching news/filing wins.
+    const merged = [...filingItems, ...newsItems, ...specSitItems];
     const seen = new Set<string>();
     const items: WrapFeedItem[] = [];
     for (const it of merged) {
@@ -152,7 +244,7 @@ export async function fetchWrapFeed(opts?: { timeoutMs?: number }): Promise<Wrap
       items.push(it);
     }
 
-    return { items, fetchedAt: Date.now(), newsOk, filingsOk };
+    return { items, fetchedAt: Date.now(), newsOk, filingsOk, specSitOk };
   } finally {
     clearTimeout(timer);
   }

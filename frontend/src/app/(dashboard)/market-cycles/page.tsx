@@ -381,7 +381,7 @@ function PreCrashTab() {
 // breadth payload actually carries the NIFTY 52w-high reading. If it doesn't
 // (or the fetch fails), we say so honestly and never guess a rung.
 type NiftyPos = { pct52: number; drawdown: number };
-type BreadthCtx = { composite?: number; regime?: string; scope?: string };
+type BreadthCtx = { composite?: number; regime?: string; regimeColor?: string; cash?: number; scope?: string };
 
 function extractNiftyPct52(j: any): number | null {
   if (!j || typeof j !== 'object') return null;
@@ -403,14 +403,39 @@ function extractNiftyPct52(j: any): number | null {
   return null;
 }
 
+// ── Breadth suggested_cash_pct → armed staircase rung (PRIMARY driver) ──────
+// The breadth engine's `suggested_cash_pct` (0..100) is the recommended cash
+// RESERVE for the current regime: Expansion 0 · Healthy Bull 10 · Transitional
+// 25 · Risk-Off 45. As breadth deteriorates the market is falling, so more of
+// the pre-committed correction bucket should already be deployed — i.e. a
+// deeper rung. Each rung carries `cumN` = cumulative % of the deployable-cash
+// bucket deployed (10/25/45/60/80/100). We map suggested cash straight onto
+// that cumulative scale (nearest rung by `cumN`) — the interpretation that is
+// consistent with how the rungs are defined. Near-zero suggested cash means
+// broad participation / near highs, so no rung is armed.
+//   returns: -2 = unknown · -1 = near highs (not armed) · >=0 = rung index
+function armRungFromCash(cashPct: number | undefined, stair: { cumN: number }[]): number {
+  if (typeof cashPct !== 'number' || !Number.isFinite(cashPct)) return -2;
+  if (stair.length === 0) return -2;
+  // Below half the first rung's cumulative level = strong breadth, near highs.
+  if (cashPct < stair[0].cumN / 2) return -1;
+  let best = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < stair.length; i++) {
+    const d = Math.abs(stair[i].cumN - cashPct);
+    if (d < bestDiff) { bestDiff = d; best = i; }
+  }
+  return best;
+}
+
 function DeploymentTab() {
   const stair = [
-    { trig: '-10%', dd: 10, tranche: '10%', cum: '10%', tag: 'Routine pullback. Resist temptation to lumpsum.', color: C.green },
-    { trig: '-15%', dd: 15, tranche: '+15%', cum: '25%', tag: 'Real correction. First serious deploy.', color: C.green },
-    { trig: '-20%', dd: 20, tranche: '+20%', cum: '45%', tag: 'Mid-cycle bear. Asymmetry building.', color: C.amber },
-    { trig: '-25%', dd: 25, tranche: '+15%', cum: '60%', tag: 'Late-cycle bear. Press but reserve.', color: C.amber },
-    { trig: '-30%', dd: 30, tranche: '+20%', cum: '80%', tag: 'Generational entry begins.', color: C.red },
-    { trig: '-40%+', dd: 40, tranche: '+20%', cum: '100%', tag: 'Maximum aggression. Druckenmiller "press the bet".', color: C.red },
+    { trig: '-10%', dd: 10, tranche: '10%', cum: '10%', cumN: 10, tag: 'Routine pullback. Resist temptation to lumpsum.', color: C.green },
+    { trig: '-15%', dd: 15, tranche: '+15%', cum: '25%', cumN: 25, tag: 'Real correction. First serious deploy.', color: C.green },
+    { trig: '-20%', dd: 20, tranche: '+20%', cum: '45%', cumN: 45, tag: 'Mid-cycle bear. Asymmetry building.', color: C.amber },
+    { trig: '-25%', dd: 25, tranche: '+15%', cum: '60%', cumN: 60, tag: 'Late-cycle bear. Press but reserve.', color: C.amber },
+    { trig: '-30%', dd: 30, tranche: '+20%', cum: '80%', cumN: 80, tag: 'Generational entry begins.', color: C.red },
+    { trig: '-40%+', dd: 40, tranche: '+20%', cum: '100%', cumN: 100, tag: 'Maximum aggression. Druckenmiller "press the bet".', color: C.red },
   ];
 
   // 'loading' | 'ok' (have NIFTY pos) | 'nopos' (breadth ok but no 52w reading) | 'error'
@@ -430,14 +455,19 @@ function DeploymentTab() {
         const breadthCtx: BreadthCtx = {
           composite: typeof j?.composite === 'number' ? j.composite : undefined,
           regime: typeof j?.regime === 'string' ? j.regime : undefined,
+          regimeColor: typeof j?.regime_color === 'string' ? j.regime_color : undefined,
+          cash: typeof j?.suggested_cash_pct === 'number' ? j.suggested_cash_pct : undefined,
           scope: typeof j?.scope === 'string' ? j.scope : undefined,
         };
         setCtx(breadthCtx);
         setFetchedAt(Date.now());
         const pct52 = extractNiftyPct52(j);
-        if (pct52 == null) { setState('nopos'); return; }
-        setPos({ pct52, drawdown: Math.max(0, (1 - pct52) * 100) });
-        setState('ok');
+        if (pct52 != null) setPos({ pct52, drawdown: Math.max(0, (1 - pct52) * 100) });
+        // Normal case: breadth returned. If it carries suggested_cash_pct (or a
+        // 52w-high reading), the rung lights up from it. Only fall to the honest
+        // 'nopos' path when the payload has neither signal.
+        if (breadthCtx.cash != null || pct52 != null) setState('ok');
+        else setState('nopos');
       } catch {
         if (!alive) return;
         setState('error');
@@ -450,11 +480,20 @@ function DeploymentTab() {
   // Snap the live drawdown onto the staircase. armedIdx:
   //   -2 = position unknown, -1 = above the first rung (near highs), >=0 = rung index.
   const armedIdx = useMemo(() => {
-    if (state !== 'ok' || !pos) return -2;
-    let idx = -1;
-    for (let i = 0; i < stair.length; i++) if (pos.drawdown >= stair[i].dd) idx = i;
+    if (state !== 'ok') return -2;
+    // PRIMARY driver: breadth's suggested_cash_pct → cumulative-deployment rung.
+    // This is what makes the staircase light up in the normal case.
+    let idx = armRungFromCash(ctx?.cash, stair);
+    // SECONDARY refinement: if a genuine NIFTY 52w-high drawdown is ever present
+    // in the payload, take the deeper of the two rungs (a real drawdown reading
+    // shouldn't under-arm what breadth already implies).
+    if (pos) {
+      let ddIdx = -1;
+      for (let i = 0; i < stair.length; i++) if (pos.drawdown >= stair[i].dd) ddIdx = i;
+      if (ddIdx > idx) idx = ddIdx;
+    }
     return idx;
-  }, [state, pos]);
+  }, [state, pos, ctx]);
 
   const armed = armedIdx >= 0 ? stair[armedIdx] : null;
   const armAccent = armed ? armed.color : C.cyan;
@@ -473,17 +512,20 @@ function DeploymentTab() {
         text: `⚠ NIFTY 52-week-high reading not present in breadth payload${ctxNote} — not guessing a rung. Static protocol below still applies.`,
       };
     }
-    // state === 'ok'
-    const pctStr = `${Math.round(pos!.pct52 * 100)}% of 52w high`;
-    const ddStr = `−${pos!.drawdown.toFixed(1)}% from high`;
+    // state === 'ok' — breadth returned; rung lights up from suggested_cash_pct.
+    const compStr = ctx?.composite != null ? `Breadth composite ${ctx.composite}` : 'Breadth';
+    const regimeStr = ctx?.regime ? ` (${ctx.regime})` : '';
+    const cashStr = ctx?.cash != null ? ` → suggested cash ${ctx.cash}%` : '';
+    // Optional secondary context: a live NIFTY 52w-high drawdown, if present.
+    const posStr = pos ? ` · NIFTY ${Math.round(pos.pct52 * 100)}% of 52w high (−${pos.drawdown.toFixed(1)}%)` : '';
     if (!armed)
       return {
-        color: C.green,
-        text: `NIFTY at ${pctStr} (${ddStr}) → near highs · defensive rung: staircase not yet armed, hold the deployable-cash reserve.`,
+        color: ctx?.regimeColor || C.green,
+        text: `${compStr}${regimeStr}${cashStr} → near highs · staircase not yet armed, hold the deployable-cash reserve.${posStr}`,
       };
     return {
       color: armed.color,
-      text: `NIFTY at ${pctStr} (${ddStr}) → ARMED rung ${armed.trig}: deploy this tranche (${armed.tranche}), cumulative ${armed.cum} of the bucket.`,
+      text: `${compStr}${regimeStr}${cashStr} → ARMED rung ${armed.trig}: deploy this tranche (${armed.tranche}), cumulative ${armed.cum} of the bucket.${posStr}`,
     };
   })();
 
@@ -501,7 +543,8 @@ function DeploymentTab() {
           <div style={{ fontSize: 12.5, color: C.text, fontWeight: 600, lineHeight: 1.5 }}>{readout.text}</div>
           {state === 'ok' && (
             <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>
-              Source: GET /api/v1/breadth → NIFTY <code style={{ ...MONO }}>^NSEI.pctOf52wHigh</code>
+              Source: GET /api/v1/breadth → <code style={{ ...MONO }}>suggested_cash_pct</code>
+              {pos ? <> + <code style={{ ...MONO }}>^NSEI.pctOf52wHigh</code></> : null}
               {ctx?.scope ? ` · scope: ${ctx.scope}` : ''}
             </div>
           )}

@@ -43,7 +43,10 @@ export default function MarqueeCapitalPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWrapFeed({ timeoutMs: 12_000 });
+      // Marquee capital also pulls the special-situations pipeline (SAST /
+      // open-offer / acquisition events with acquirer info) so marquee-PE
+      // entries surface even when news + filings miss them.
+      const res = await fetchWrapFeed({ timeoutMs: 12_000, includeSpecialSit: true });
       const found = runDetector(res.items, detectMarqueeCapital);
       setMatches(found);
       setFetchedAt(res.fetchedAt);

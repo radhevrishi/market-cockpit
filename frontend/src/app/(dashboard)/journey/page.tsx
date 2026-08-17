@@ -13,6 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { readDecisions, DECISION_META, type Decision, type DecisionStatus } from '@/lib/decisions';
 
 const C = {
   bg: 'var(--mc-bg-0)', card: 'var(--mc-bg-1)', card2: 'var(--mc-bg-2)',
@@ -41,6 +42,36 @@ function fmtCr(v: number): string {
   if (v >= 100) return `₹${(v).toFixed(0)} cr`;
   if (v >= 10) return `₹${v.toFixed(1)} cr`;
   return `₹${v.toFixed(2)} cr`;
+}
+
+// ─── "YOUR RECORD" HELPERS (PATCH — realized-performance scorecard) ─────────
+// Formats a fractional return (0.12 → "+12.0%").
+function fmtPct(v: number | null | undefined): string {
+  if (v == null || !isFinite(v)) return '—';
+  const p = v * 100;
+  return `${p >= 0 ? '+' : ''}${p.toFixed(1)}%`;
+}
+
+// A single decision that has BOTH a logged price AND a live price, with its
+// realized return already computed.
+interface RecordRow {
+  symbol: string;
+  company?: string;
+  status: DecisionStatus;
+  priceAt: number;
+  live: number;
+  ret: number; // fractional (live − priceAt) / priceAt
+  reason: string;
+  bullCase?: string;
+}
+
+// Light thesis-word scan for the (nice-to-have) contradiction chip. Cheap
+// substring match against a small lexicon — no external data required.
+const THESIS_WORDS = ['margin', 'order book', 'capacity', 'guidance', 'demand', 'pricing power', 'deleverag', 'market share', 'turnaround', 'capex', 'export', 'moat'];
+function thesisWord(...texts: (string | undefined)[]): string | null {
+  const hay = texts.filter(Boolean).join(' ').toLowerCase();
+  for (const w of THESIS_WORDS) if (hay.includes(w)) return w;
+  return null;
 }
 
 const QUOTES: { text: string; who: string; color: string }[] = [
@@ -75,6 +106,41 @@ export default function JourneyPage() {
   const [startYear, setStartYear] = useState<number>(new Date().getFullYear());
   const [todayQuoteIdx, setTodayQuoteIdx] = useState<number>(0);
 
+  // ─── YOUR RECORD state — Decision Logbook realized performance ───────────
+  const [decisions, setDecisions] = useState<Record<string, Decision>>({});
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+
+  // On mount: read the logbook once + fetch live prices once. India always;
+  // US only when at least one decision is a US name. try/catch, never throws.
+  useEffect(() => {
+    const d = readDecisions();
+    setDecisions(d);
+    const needUS = Object.values(d).some((x) => x.market === 'US');
+    let cancelled = false;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 18_000);
+    (async () => {
+      const map: Record<string, number> = {};
+      const markets = needUS ? ['india', 'us'] : ['india'];
+      for (const mkt of markets) {
+        try {
+          const r = await fetch(`/api/market/quotes?market=${mkt}`, { cache: 'no-store', signal: ctl.signal });
+          if (!r.ok) continue;
+          const j = await r.json();
+          for (const s of (j?.stocks || [])) {
+            if (s?.ticker && s?.price) map[String(s.ticker).toUpperCase()] = Number(s.price);
+          }
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
+          if (process.env.NODE_ENV !== 'production') console.warn('[journey] quotes fetch failed:', err);
+        }
+      }
+      if (!cancelled) setLivePrices(map);
+      clearTimeout(timer);
+    })();
+    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
+  }, []);
+
   // Hydrate from localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -106,6 +172,68 @@ export default function JourneyPage() {
       return { year, yearsIn: i, target };
     });
   }, [startCr, targetCagr, horizonY, startYear]);
+
+  // ─── YOUR RECORD — realized performance of logged decisions ──────────────
+  // BUY = return as-is (positive is a win). REJECTED = "avoided" return, where
+  // a name that FELL is a good call (dodged a loss) and one that ROSE is a
+  // miss. WATCH/NEUTRAL are informational only — shown but never scored.
+  const rec = useMemo(() => {
+    const all = Object.values(decisions);
+    const totalDecisions = all.length;
+    const rows: RecordRow[] = [];
+    for (const d of all) {
+      const priceAt = d.priceAtDecision;
+      if (!priceAt || priceAt <= 0) continue;
+      const live = livePrices[String(d.symbol).toUpperCase()];
+      if (!live || live <= 0) continue;
+      rows.push({
+        symbol: d.symbol,
+        company: d.company,
+        status: d.status,
+        priceAt,
+        live,
+        ret: (live - priceAt) / priceAt,
+        reason: d.reason || '',
+        bullCase: d.bullCase,
+      });
+    }
+    const withData = rows.length;
+
+    // BUY scoring
+    const buys = rows.filter((r) => r.status === 'BUY');
+    const buyWins = buys.filter((r) => r.ret > 0);
+    const buyLosses = buys.filter((r) => r.ret < 0);
+    const buyBattingAvg = buys.length ? (buyWins.length / buys.length) * 100 : null;
+    const avgWin = buyWins.length ? buyWins.reduce((s, r) => s + r.ret, 0) / buyWins.length : null;
+    const avgLoss = buyLosses.length ? buyLosses.reduce((s, r) => s + r.ret, 0) / buyLosses.length : null;
+    const bestBuy = buys.length ? buys.reduce((a, b) => (b.ret > a.ret ? b : a)) : null;
+    const worstBuy = buys.length ? buys.reduce((a, b) => (b.ret < a.ret ? b : a)) : null;
+
+    // REJECTED scoring (accuracy = % that fell since the call)
+    const rejects = rows.filter((r) => r.status === 'REJECTED');
+    const rejectGood = rejects.filter((r) => r.ret < 0);
+    const rejectAccuracy = rejects.length ? (rejectGood.length / rejects.length) * 100 : null;
+    const bestAvoided = rejects.length ? rejects.reduce((a, b) => (b.ret < a.ret ? b : a)) : null; // most negative
+    const worstMissed = rejects.length ? rejects.reduce((a, b) => (b.ret > a.ret ? b : a)) : null; // most positive
+
+    // WATCH / NEUTRAL — informational
+    const watchNeutral = rows.filter((r) => r.status === 'WATCH' || r.status === 'NEUTRAL');
+
+    return {
+      totalDecisions, withData, buys, buyWins, buyLosses, buyBattingAvg, avgWin, avgLoss,
+      bestBuy, worstBuy, rejects, rejectGood, rejectAccuracy, bestAvoided, worstMissed, watchNeutral,
+    };
+  }, [decisions, livePrices]);
+
+  // Instructive rows — the four most-teachable outcomes.
+  const instructive = useMemo(() => {
+    const out: { label: string; row: RecordRow; tone: string }[] = [];
+    if (rec.bestBuy && rec.bestBuy.ret > 0) out.push({ label: 'Biggest win', row: rec.bestBuy, tone: C.green });
+    if (rec.worstBuy && rec.worstBuy.ret < 0) out.push({ label: 'Biggest loss', row: rec.worstBuy, tone: C.red });
+    if (rec.bestAvoided && rec.bestAvoided.ret < 0) out.push({ label: 'Best avoided', row: rec.bestAvoided, tone: C.green });
+    if (rec.worstMissed && rec.worstMissed.ret > 0) out.push({ label: 'Worst missed', row: rec.worstMissed, tone: C.amber });
+    return out;
+  }, [rec]);
 
   // Where are we vs target right now (assumes a constant CAGR path)
   const yearsSinceStart = new Date().getFullYear() - startYear;
@@ -303,6 +431,135 @@ export default function JourneyPage() {
           </div>
         </div>
 
+        {/* ─── YOUR RECORD — realized performance of logged decisions ── */}
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.green, letterSpacing: 0.3 }}>📊 YOUR RECORD</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                Your own batting average IS your edge &middot; realized returns on decisions you logged with a price
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, ...MONO }}>
+              coverage: <strong style={{ color: rec.withData > 0 ? C.cyan : C.dim }}>{rec.withData}</strong> of {rec.totalDecisions} decision{rec.totalDecisions === 1 ? '' : 's'} priced
+            </div>
+          </div>
+
+          {rec.withData === 0 ? (
+            /* ── Honest empty / low-coverage state ── */
+            <div style={{ padding: '18px 16px', background: C.bg, border: '1px dashed ' + C.borderStrong, borderRadius: 6, fontSize: 12.5, color: C.muted, lineHeight: 1.6 }}>
+              Your record fills in as you log BUY / REJECT decisions with a price &mdash; captured automatically when
+              you decide from Multibagger.
+              {rec.totalDecisions > 0 && (
+                <div style={{ marginTop: 6, fontSize: 11, color: C.dim }}>
+                  You have {rec.totalDecisions} logged decision{rec.totalDecisions === 1 ? '' : 's'}, but none carry a captured price yet
+                  (older entries pre-date price capture, or the ticker has no live quote right now).
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* ── STAT TILES ── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 14 }}>
+                <StatTile
+                  label="BUY BATTING AVG"
+                  value={rec.buyBattingAvg == null ? '—' : `${rec.buyBattingAvg.toFixed(0)}%`}
+                  sub={rec.buys.length ? `${rec.buyWins.length}/${rec.buys.length} in the green` : 'no priced BUYs'}
+                  color={rec.buyBattingAvg == null ? C.dim : rec.buyBattingAvg >= 50 ? C.green : C.amber}
+                />
+                <StatTile
+                  label="AVG WIN"
+                  value={fmtPct(rec.avgWin)}
+                  sub={`across ${rec.buyWins.length} winner${rec.buyWins.length === 1 ? '' : 's'}`}
+                  color={C.green}
+                />
+                <StatTile
+                  label="AVG LOSS"
+                  value={fmtPct(rec.avgLoss)}
+                  sub={`across ${rec.buyLosses.length} loser${rec.buyLosses.length === 1 ? '' : 's'}`}
+                  color={C.red}
+                />
+                <StatTile
+                  label="REJECT ACCURACY"
+                  value={rec.rejectAccuracy == null ? '—' : `${rec.rejectAccuracy.toFixed(0)}%`}
+                  sub={rec.rejects.length ? `${rec.rejectGood.length}/${rec.rejects.length} fell as called` : 'no priced rejects'}
+                  color={rec.rejectAccuracy == null ? C.dim : rec.rejectAccuracy >= 50 ? C.green : C.amber}
+                />
+                <StatTile
+                  label="PRICED DECISIONS"
+                  value={`${rec.withData}`}
+                  sub={`of ${rec.totalDecisions} logged`}
+                  color={C.cyan}
+                />
+              </div>
+
+              {/* ── INSTRUCTIVE ROWS TABLE ── */}
+              {instructive.length > 0 && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', ...MONO, fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid ' + C.borderStrong }}>
+                        <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: 10, color: C.muted, fontWeight: 800 }}>TAKEAWAY</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: 10, color: C.muted, fontWeight: 800 }}>TICKER</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: 10, color: C.muted, fontWeight: 800 }}>CALL</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'right', fontSize: 10, color: C.muted, fontWeight: 800 }}>RETURN SINCE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {instructive.map((it) => {
+                        const meta = DECISION_META[it.row.status];
+                        // Contradiction chip (nice-to-have): a BUY that is down
+                        // whose thesis note names a driver that clearly isn't playing out.
+                        const tw = (it.row.status === 'BUY' && it.row.ret < 0)
+                          ? thesisWord(it.row.reason, it.row.bullCase) : null;
+                        return (
+                          <tr key={it.label} style={{ borderBottom: '1px solid ' + C.border }}>
+                            <td style={{ padding: '8px 10px', color: it.tone, fontWeight: 700 }}>{it.label}</td>
+                            <td style={{ padding: '8px 10px' }}>
+                              <span style={{ fontWeight: 800, color: C.text }}>{it.row.symbol}</span>
+                              {it.row.company && (
+                                <span style={{ fontSize: 10, color: C.dim, marginLeft: 6 }}>{it.row.company}</span>
+                              )}
+                              {tw && (
+                                <span title={`Thesis mentioned "${tw}" but the position is down since the call`} style={{ marginLeft: 8, fontSize: 9, fontWeight: 800, color: C.amber, background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', border: '1px solid ' + C.amber + '66', borderRadius: 4, padding: '1px 5px' }}>
+                                  ⚑ thesis: {tw}
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ padding: '8px 10px', color: meta.color, fontWeight: 700 }}>{meta.emoji} {meta.label}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 800, color: it.tone }}>{fmtPct(it.row.ret)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* ── INFORMATIONAL: WATCH / NEUTRAL (not scored) ── */}
+              {rec.watchNeutral.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 11, color: C.dim, lineHeight: 1.6 }}>
+                  <strong style={{ color: C.muted }}>Informational:</strong> {rec.watchNeutral.length} priced WATCH/NEUTRAL name
+                  {rec.watchNeutral.length === 1 ? ' is' : 's are'} tracked but not scored as win/loss &mdash;{' '}
+                  {rec.watchNeutral
+                    .slice()
+                    .sort((a, b) => b.ret - a.ret)
+                    .slice(0, 4)
+                    .map((r) => `${r.symbol} ${fmtPct(r.ret)}`)
+                    .join(' · ')}
+                  {rec.watchNeutral.length > 4 ? ' …' : ''}
+                </div>
+              )}
+
+              <div style={{ marginTop: 10, fontSize: 11, color: C.dim, lineHeight: 1.6 }}>
+                <strong style={{ color: C.amber }}>Honesty note:</strong> only decisions with a captured price AND a live quote
+                are scored ({rec.withData} of {rec.totalDecisions}). A REJECTED name that fell is a good call (you dodged a loss);
+                one that rose is a miss. Returns are point-in-time vs the price logged at decision, not annualized.
+              </div>
+            </>
+          )}
+        </div>
+
         {/* ─── QUOTES WALL ─────────────────────────────────────────── */}
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.purple, marginBottom: 12, letterSpacing: 0.3 }}>🧠 WISDOM WALL &middot; the voices that compound your mind</div>
@@ -339,6 +596,18 @@ export default function JourneyPage() {
           &ldquo;The journey of a thousand crores begins with a single conviction held with patience.&rdquo;
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, sub, color }: {
+  label: string; value: string; sub?: string; color: string;
+}) {
+  return (
+    <div style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ fontSize: 9, color: C.muted, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 900, color, ...MONO }}>{value}</div>
+      {sub && <div style={{ fontSize: 10, color: C.dim }}>{sub}</div>}
     </div>
   );
 }

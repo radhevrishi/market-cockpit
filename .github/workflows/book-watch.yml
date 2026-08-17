@@ -1,0 +1,121 @@
+name: Book Watch
+
+# ----------
+# zzz397/zzz398 — Market Cockpit push crons (book-aware alerting).
+#
+# One workflow, three scheduled purposes, routed by cron expression:
+#   • book-watch   — evaluate the synced book (holdings + bench + watchlist +
+#                    decisions) against earnings-tier downgrades / weak prints /
+#                    bench drift / holding drawdowns + relay client-armed flags,
+#                    and push the NEW ones via the alert dispatcher. Each
+#                    book-watch tick pre-warms refresh-bench first so the
+#                    server-authoritative bench stays fresh.
+#   • refresh-bench — rebuild the server-authoritative Conviction bench in KV
+#                     from the last ~10 days of graded payloads (so the bench
+#                     no longer drifts stale between browser sessions).
+#   • eo-blockbuster-alert (evening) — extra evening pass so a BLOCKBUSTER that
+#                     prints ~16:00–19:00 IST reaches you the same evening
+#                     instead of waiting for the next morning run.
+#
+# Endpoints are secret-gated; the secret is passed as a ?secret= URL param.
+# Required secret: CRON_SECRET (same value as the Railway env var).
+# Optional secret: CRON_BASE_URL (defaults to the live Railway deployment).
+# Push delivery (Slack/SMTP/webhook/Telegram) lights up when those env vars are
+# set on Railway; until then alerts still land in the in-app Book Watch feed.
+# ----------
+
+on:
+  schedule:
+    # Times in UTC. IST = UTC + 5:30.
+    - cron: '0 3 * * *'        # 08:30 IST daily    -> refresh-bench (pre-market)
+    - cron: '30 5 * * 1-5'     # 11:00 IST Mon-Fri  -> book-watch (morning)
+    - cron: '0 12 * * 1-5'     # 17:30 IST Mon-Fri  -> book-watch (post-close)
+    - cron: '30 13 * * *'      # 19:00 IST daily    -> eo-blockbuster-alert (evening filings)
+    - cron: '0 15 * * 1-6'     # 20:30 IST Mon-Sat  -> book-watch (evening + Sat catch)
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Endpoint to hit (manual override)'
+        required: false
+        type: choice
+        options:
+          - book-watch
+          - refresh-bench
+          - eo-blockbuster-alert
+
+concurrency:
+  group: book-watch-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Resolve target from schedule
+        id: route
+        run: |
+          SCHEDULE="${{ github.event.schedule }}"
+          INPUT="${{ github.event.inputs.endpoint }}"
+          PREWARM="no"
+          case "$SCHEDULE" in
+            "0 3 * * *")
+              echo "path=/api/v1/cron/refresh-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-bench" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+            "30 13 * * *")
+              echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-bb-evening" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+            "30 5 * * 1-5"|"0 12 * * 1-5"|"0 15 * * 1-6")
+              echo "path=/api/v1/cron/book-watch" >> "$GITHUB_OUTPUT"; echo "label=book-watch" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT"; PREWARM="yes" ;;
+            *)
+              case "$INPUT" in
+                refresh-bench)         echo "path=/api/v1/cron/refresh-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-bench" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+                eo-blockbuster-alert)  echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-bb-manual" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+                *)                     echo "path=/api/v1/cron/book-watch" >> "$GITHUB_OUTPUT"; echo "label=book-watch" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT"; PREWARM="yes" ;;
+              esac ;;
+          esac
+          echo "prewarm=$PREWARM" >> "$GITHUB_OUTPUT"
+
+      - name: Hit endpoint
+        id: hit
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          # Pre-warm the server bench before a book-watch evaluation so it reads fresh.
+          if [ "${{ steps.route.outputs.prewarm }}" = "yes" ]; then
+            curl -s -o /dev/null -w "prewarm refresh-bench %{http_code}\n" --max-time 60 \
+              -X GET "$BASE/api/v1/cron/refresh-bench?secret=$CRON_SECRET" || true
+          fi
+          PATH_PART="${{ steps.route.outputs.path }}"
+          METHOD="${{ steps.route.outputs.method }}"
+          LABEL="${{ steps.route.outputs.label }}"
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          URL="$BASE$PATH_PART?secret=$CRON_SECRET"
+          echo "> $METHOD $BASE$PATH_PART  (label=$LABEL)"
+          STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X "$METHOD" \
+            -H 'Content-Type: application/json' --max-time 90 "$URL" || echo "000")
+          echo "- HTTP $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          head -c 800 /tmp/response.json || true
+          echo
+          if [ "$STATUS" != "200" ]; then
+            echo "::warning title=$LABEL::endpoint returned HTTP $STATUS"
+            if [[ "$STATUS" == 5* && "${STRICT_CRON_FAIL:-0}" == "1" ]]; then exit 1; fi
+            exit 0
+          fi
+          echo "::notice title=$LABEL::responded $STATUS"
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          LABEL="${{ steps.hit.outputs.label }}"
+          STATUS="${{ steps.hit.outputs.status }}"
+          if [ -z "$LABEL" ]; then LABEL="book-watch"; fi
+          OK="false"; if [[ "$STATUS" == 2* ]]; then OK="true"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"$LABEL\",\"phase\":\"end\",\"ok\":$OK,\"exit_code\":$STATUS,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
