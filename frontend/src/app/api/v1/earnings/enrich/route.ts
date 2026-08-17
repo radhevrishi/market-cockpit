@@ -1184,7 +1184,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz367 — v10->v11: v10 cached the field-less payloads (fetchScreenerForSymbol
   // was null in prod, so no trends). v11 forces a clean re-fetch that now carries the
   // trends via the proven fetchScreenerCFO path (extractScreenerTrends).
-  const cacheKey = filedHint ? `enrich:v11:${symbol}:${filedHint}` : `enrich:v11:${symbol}`;
+  const cacheKey = filedHint ? `enrich:v12:${symbol}:${filedHint}` : `enrich:v12:${symbol}`;  // zzz369 v11->v12: flush trend-less poisoned entries
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1220,7 +1220,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // returns null on the proxied prod HTML. Cache bumped v1->v2 to include the trends.
   const fetchScreenerCFO = async (sym: string): Promise<any | null> => {
     // zzz322 — KV cache first (24h TTL)
-    const kvKey = `cfo:v2:${sym}`;
+    const kvKey = `cfo:v3:${sym}`;
     try {
       const cached = await kvGet<any>(kvKey);
       if (cached && typeof cached === 'object' && (typeof cached.ocf_annual_cr === 'number' || typeof cached.pat_annual_cr === 'number' || typeof cached.ocf_to_pat_ratio === 'number' || cached._trends)) return cached;
@@ -1274,8 +1274,12 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     const trends = extractScreenerTrends(html);
     const result: any = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio, ...trends };
     if (Object.keys(trends).length > 0) result._trends = true;
+    // zzz369 — short-TTL when the trend extraction came back empty (transient
+    // Screener miss) so the next fetch retries and self-heals, instead of pinning
+    // a trend-less CFO payload for 24h and starving the enrich hoist.
+    const cfoTtl = result._trends ? 24 * 3600 : 30 * 60;
     if (typeof ocf === 'number' || typeof netProfit === 'number' || result._trends) {
-      try { await kvSet(`cfo:v2:${sym}`, result, 24 * 3600); } catch {}
+      try { await kvSet(`cfo:v3:${sym}`, result, cfoTtl); } catch {}
     }
     return result;
   };
@@ -1654,7 +1658,18 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   const hasFinancials = (out as any).sales_curr_cr != null ||
                         (out as any).pat_curr_cr != null ||
                         (out as any).eps_curr != null;
-  const ttl = hasFinancials ? ENRICH_TTL_S : 5 * 60;  // 6h vs 5min
+  // zzz369 — TREND-AWARE TTL (the fix for "some cards show trends, others don't").
+  // A symbol can have financials (from the Cloudflare Worker) yet LACK the Screener
+  // trend series when that symbol's Screener scrape transiently fails/returns a
+  // challenge page. Caching that trend-less payload for the full 6h poisons the card
+  // (no Q-TRENDS / one-off / CFO-PAT-annual) until expiry. So: full 6h ONLY when the
+  // trend series actually made it in; otherwise a 30-min retry TTL so the next fetch
+  // re-scrapes Screener and self-heals once it responds cleanly.
+  const hasTrends = Array.isArray((out as any).quarters_tax_pct)
+    || Array.isArray((out as any).quarters_opm)
+    || Array.isArray((out as any).quarters_other_income_pct)
+    || Array.isArray((out as any).annual_cfo_pat);
+  const ttl = !hasFinancials ? 5 * 60 : (hasTrends ? ENRICH_TTL_S : 30 * 60);  // 5min / 6h / 30min-retry
 
   // PATCH 0404 — Last-good fallback. When the fresh fetch returns NO
   // financials (Cloudflare blocked Screener AND NSE cookie expired AND

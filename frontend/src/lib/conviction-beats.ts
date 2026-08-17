@@ -120,6 +120,7 @@ export interface ConvictionEntry {
   // zzz361 — version marker stamped when the full enrich field set is merged
   // onto the bench, so the one-time client re-enrich fires exactly once.
   cb_enrich_v?: number | null;                     // zzz361
+  cb_trend_attempts?: number | null;               // zzz369 — bounded trend re-fetch counter
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -349,8 +350,10 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           forceRefresh('cb_enrich_v' as any);
           forceRefresh('quarters_material_cost_pct' as any); forceRefresh('quarters_other_income_pct' as any);
           forceRefresh('quarters_tax_pct' as any); forceRefresh('annual_cfo_pat' as any);
+          forceRefresh('quarters_opm' as any); forceRefresh('quarters_sales' as any); forceRefresh('quarters_eps' as any); // zzz369
           forceRefresh('pledged_pct' as any);
           forceRefresh('exceptional_curr_cr' as any); forceRefresh('exceptional_pct_pbt' as any);
+          forceRefresh('cb_trend_attempts' as any); // zzz369 — bounded retry counter must advance
           if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
           if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
           if (Object.keys(patch).length > 0) {

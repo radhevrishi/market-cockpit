@@ -2181,13 +2181,26 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     // zzz244/248/255 — broaden auto-enrich gate. Fire whenever ANY expected field
     // is missing (move_pct, d2, pe, close_30d, roce). This includes new institutional
     // fields added in zzz254 so existing entries backfill on next page load.
+    // zzz369 — a bench entry can be stamped cb_enrich_v=367 yet still lack the
+    // quarterly trend series, because on the fetch that stamped it the server had a
+    // transient Screener miss for that symbol (cache poisoning). Keep re-enriching
+    // such entries (non-financial, bounded to 6 attempts so we never loop forever on
+    // symbols Screener genuinely can't parse) until the trends actually arrive. The
+    // server now short-TTLs the trend-less cache, so each retry has a fresh chance.
+    const needsTrends = (e: any): boolean => {
+      if (cbIsFinancial(e)) return false; // financials: OPM/tax trends not meaningful
+      const hasTrend = Array.isArray(e.quarters_opm) || Array.isArray(e.quarters_tax_pct)
+        || Array.isArray(e.quarters_other_income_pct) || Array.isArray(e.annual_cfo_pat);
+      return !hasTrend && ((e.cb_trend_attempts || 0) < 6);
+    };
     const stale = list.filter(e =>
       e.ticker && e.filing_date &&
       (typeof (e as any).move_pct !== 'number'
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
         || typeof (e as any).roce !== 'number'  // zzz255
-        || (e as any).cb_enrich_v !== 367  // zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
+        || (e as any).cb_enrich_v !== 369  // zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
+        || needsTrends(e)  // zzz369 — keep retrying until the trend series lands
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
@@ -2201,14 +2214,22 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         byDate.set(e.filing_date!, arr);
       }
       for (const [dt, tickers] of byDate) {
-        try {
-          const url = `/api/v1/earnings/enrich?symbols=${tickers.slice(0, 30).join(',')}&filed=${dt}`;
+        // zzz369 — chunk into small batches of 8 so the server can live-scrape
+        // Screener for each symbol WITHIN its function timeout. A 30-symbol batch was
+        // timing out server-side and returning nothing, so the trend series never got
+        // persisted onto the bench (the real reason cards showed no Q-TRENDS even when
+        // the single-symbol API had them). Also processes EVERY ticker for the date
+        // instead of silently dropping everything past the first 30.
+        for (let ci = 0; ci < tickers.length; ci += 8) {
+          const chunk = tickers.slice(ci, ci + 8);
+          try {
+          const url = `/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${dt}`;
           const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) continue;
+          if (!res.ok) { await new Promise(r => setTimeout(r, 300)); continue; }
           const j = await res.json();
           const data = j?.data || {};
           const syncEntries: any[] = [];
-          for (const sym of tickers) {
+          for (const sym of chunk) {
             const enr = data[sym];
             if (!enr) continue;
             const existing = list.find(e => e.ticker === sym);
@@ -2270,13 +2291,16 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               // zzz363 — one-off / exceptional-item fields (v9 cache)
               exceptional_curr_cr: typeof enr.exceptional_curr_cr === 'number' ? enr.exceptional_curr_cr : (existing as any).exceptional_curr_cr,
               exceptional_pct_pbt: typeof enr.exceptional_pct_pbt === 'number' ? enr.exceptional_pct_pbt : (existing as any).exceptional_pct_pbt,
-              cb_enrich_v: 367,  // zzz367 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
+              cb_enrich_v: 369,  // zzz369 — bump so re-enrich fires once for v11 cache (trends on proven CFO path)
+              // zzz369 — count trend-fetch attempts so needsTrends() retry is bounded.
+              cb_trend_attempts: ((existing as any).cb_trend_attempts || 0) + 1,
             });
           }
           if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
-        } catch {}
-        // Throttle between filing dates
-        await new Promise(r => setTimeout(r, 400));
+          } catch {}
+          // Throttle between chunks
+          await new Promise(r => setTimeout(r, 300));
+        }
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
