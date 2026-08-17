@@ -1575,6 +1575,8 @@ export default function AutoValuationPage() {
     return listAutoValuations();
   });
   const refreshSaved = useCallback(() => setSavedList(listAutoValuations()), []);
+  // zzz391 — transient per-ticker feedback for the "↻ sector" recompute button.
+  const [secNote, setSecNote] = useState<Record<string, string>>({});
   // PATCH 0855 — Live data overlays for saved bench + active report.
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const [smartMoneyByTicker, setSmartMoneyByTicker] = useState<Record<string, any>>({});
@@ -1915,6 +1917,23 @@ export default function AutoValuationPage() {
                       <span style={{ fontSize: 9, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>
                         {s.sector}
                       </span>
+                    )}
+                    {/* zzz391 — recompute the sector from the saved guidance with the
+                        current classifier, fixing stale labels from older saves. */}
+                    <button
+                      title="Recompute sector from saved guidance using the current classifier — fixes stale sector labels from older saves. No re-upload needed."
+                      onClick={() => {
+                        const text = [s.company || '', ...(s.guidance || []).map((g) => g.rawPhrase || ''), ...(s.rationale || [])].join(' ');
+                        const next = inferSector(text, s.company);
+                        const changed = !!next && next !== s.sector;
+                        if (changed) { saveAutoValuation({ ...s, sector: next }); refreshSaved(); }
+                        setSecNote((m) => ({ ...m, [s.ticker]: changed ? `→ ${next}` : (next ? 'up to date' : 'no match') }));
+                        setTimeout(() => setSecNote((m) => { const n = { ...m }; delete n[s.ticker]; return n; }), 2600);
+                      }}
+                      style={{ fontSize: 9, padding: '3px 7px', background: 'transparent', border: `1px solid ${DIM}66`, color: DIM, borderRadius: 3, cursor: 'pointer', fontWeight: 800, whiteSpace: 'nowrap' }}
+                    >↻ sector</button>
+                    {secNote[s.ticker] && (
+                      <span style={{ fontSize: 9, color: secNote[s.ticker].startsWith('→') ? '#10B981' : DIM, fontWeight: 700, whiteSpace: 'nowrap' }}>{secNote[s.ticker]}</span>
                     )}
                     {s.forwardYear && (
                       <span style={{ fontSize: 9, color: 'var(--mc-state-persistent)', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
