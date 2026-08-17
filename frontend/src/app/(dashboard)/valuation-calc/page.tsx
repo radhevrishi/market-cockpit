@@ -20,6 +20,13 @@ import {
   WORKED_EXAMPLES, SECTOR_CALCULATOR_MAP,
   type CalculatorResult, type QuoteAutoFill, type SavedValuation, type TickerHit,
 } from '@/lib/valuation-calculators';
+import { armBookFlag } from '@/lib/book-flags-client';
+
+// PATCH 0858 — BUY-zone upside threshold (percent). Reuses the same 25%
+// "buy-ready" bar the Analytics tab already applies (ValuationAnalyticsPanel
+// buyReady = base upside >= 25). A saved valuation whose LIVE upside crosses
+// from below this to at/above it is a fresh WATCH→BUY signal.
+const BUY_UPSIDE = 25;
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -283,14 +290,103 @@ function ValuationAnalyticsPanel() {
   );
 }
 
+// PATCH 0858 — recompute a saved valuation's BASE fair value + upside from its
+// frozen inputs (same technique the Analytics tab uses). fairValue is the BASE
+// target stock price (independent of current price), priceAtSave is the price
+// captured in inputs.currentPrice at save time, savedUpside is the frozen
+// (fairValue − priceAtSave)/priceAtSave the row was saved with.
+type EnrichedSaved = {
+  v: SavedValuation;
+  fairValue?: number;
+  priceAtSave?: number;
+  savedUpside?: number;
+  currency: '₹' | '$';
+  isUS: boolean;
+};
+function enrichSaved(v: SavedValuation): EnrichedSaved {
+  let result: CalculatorResult | null = null;
+  try {
+    if (v.calcKind === 'PS') result = calculatePS(v.inputs);
+    else if (v.calcKind === 'PE') result = calculatePE(v.inputs);
+    else result = calculateEvEbitda(v.inputs);
+  } catch { /* keep result null; row still renders without live chip */ }
+  const base = result?.cases.find(c => c.label === 'BASE');
+  const currency: '₹' | '$' = (v.inputs as any)?.currency === '$' ? '$' : '₹';
+  return {
+    v,
+    fairValue: base?.targetPrice,
+    priceAtSave: typeof (v.inputs as any)?.currentPrice === 'number' ? (v.inputs as any).currentPrice : undefined,
+    savedUpside: base?.upsidePct,
+    currency,
+    isUS: currency === '$',
+  };
+}
+
 function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void }) {
   const [tick, setTick] = useState(0);
+  // PATCH 0858 — ticker→live-price map fetched once on mount (and on save).
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   useEffect(() => {
     const h = () => setTick(t => t + 1);
     window.addEventListener('mc:valuations-updated', h);
     return () => window.removeEventListener('mc:valuations-updated', h);
   }, []);
   const saved = loadSavedValuations();
+  const enriched = useMemo(() => saved.map(enrichSaved), [saved]);
+
+  // PATCH 0858 — fetch live prices via the canonical quotes endpoint. India
+  // always; US too if any saved entry is a $-denominated valuation. Never throws.
+  useEffect(() => {
+    let cancelled = false;
+    const needsUS = enriched.some(e => e.isUS);
+    const run = async () => {
+      const markets: Array<'india' | 'us'> = needsUS ? ['india', 'us'] : ['india'];
+      const map: Record<string, number> = {};
+      for (const m of markets) {
+        try {
+          const res = await fetch(`/api/market/quotes?market=${m}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const j = await res.json();
+          const stocks = Array.isArray(j?.stocks) ? j.stocks : [];
+          for (const s of stocks) {
+            const t = String(s?.ticker || '').toUpperCase().trim();
+            const p = Number(s?.price);
+            if (t && Number.isFinite(p) && p > 0) map[t] = p;
+          }
+        } catch { /* ignore this market, never throw */ }
+      }
+      if (!cancelled) setLivePrices(map);
+    };
+    run();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick]);
+
+  // PATCH 0858 — arm a Book Watch flag on a FRESH WATCH→BUY crossing:
+  // saved upside was below the BUY bar, live upside is now at/above it.
+  // armBookFlag self-dedups by kind+ticker+day, so this is safe to re-run.
+  useEffect(() => {
+    if (Object.keys(livePrices).length === 0) return;
+    for (const e of enriched) {
+      const sym = String(e.v.ticker || '').toUpperCase().trim();
+      if (!sym) continue;
+      const live = livePrices[sym];
+      const fair = e.fairValue;
+      if (!live || !fair) continue;
+      const liveUpside = ((fair - live) / live) * 100;
+      const savedUpside = e.savedUpside;
+      if (savedUpside === undefined) continue;
+      if (savedUpside < BUY_UPSIDE && liveUpside >= BUY_UPSIDE) {
+        armBookFlag({
+          kind: 'THESIS_DRIFT_REOPEN', ticker: sym, company: e.v.company, severity: 'warning',
+          message: `${sym} valuation crossed into BUY zone — live upside +${Math.round(liveUpside)}% (fair ₹${Math.round(fair)} vs ₹${Math.round(live)})`,
+          detail: 'saved valuation',
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePrices]);
+
   if (saved.length === 0) {
     return (
       <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '14px 16px', fontSize: 12, color: DIM, fontStyle: 'italic' }}>
@@ -305,7 +401,25 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
         <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>persists in your browser</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {saved.slice(0, 30).map((v) => {
+        {enriched.slice(0, 30).map(({ v, fairValue, priceAtSave, savedUpside, currency }) => {
+          // PATCH 0858 — live upside recomputed against the live price.
+          const sym = String(v.ticker || '').toUpperCase().trim();
+          const live = sym ? livePrices[sym] : undefined;
+          const hasLive = !!(live && fairValue);
+          const liveUpside = hasLive ? ((fairValue! - live!) / live!) * 100 : undefined;
+          const crossed = savedUpside !== undefined && liveUpside !== undefined
+            && savedUpside < BUY_UPSIDE && liveUpside >= BUY_UPSIDE;
+          const upColor = liveUpside === undefined ? DIM
+            : liveUpside >= BUY_UPSIDE ? 'var(--mc-bullish)'
+            : liveUpside >= 0 ? 'var(--mc-warn)' : 'var(--mc-bearish)';
+          const arrow = (liveUpside !== undefined && savedUpside !== undefined)
+            ? (liveUpside >= savedUpside ? '▲' : '▼') : '▲';
+          const chipTitle = [
+            `Saved upside: ${savedUpside !== undefined ? (savedUpside >= 0 ? '+' : '') + Math.round(savedUpside) + '%' : 'n/a'}`,
+            priceAtSave ? `Price at save: ${currency}${Math.round(priceAtSave).toLocaleString('en-IN')}` : '',
+            (hasLive) ? `Live price: ${currency}${Math.round(live!).toLocaleString('en-IN')}` : '',
+            fairValue ? `Fair value (base): ${currency}${Math.round(fairValue).toLocaleString('en-IN')}` : '',
+          ].filter(Boolean).join(' · ');
           /*
            * PATCH 0965 UX — Saved-valuation row label.
            * Root cause: when neither ticker nor company was populated at
@@ -339,6 +453,36 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
             {v.notes && (
               <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }} title={v.notes}>
                 📝 {v.notes.slice(0, 40)}{v.notes.length > 40 ? '…' : ''}
+              </span>
+            )}
+            {/* PATCH 0858 — live-upside chip (saved upside on hover) + WATCH→BUY crossing chip */}
+            {liveUpside !== undefined && (
+              <span
+                title={chipTitle}
+                style={{
+                  fontSize: 10, padding: '2px 7px', borderRadius: 3, fontWeight: 800,
+                  fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap', cursor: 'help',
+                  color: upColor,
+                  background: `color-mix(in srgb, ${upColor} 10%, transparent)`,
+                  border: `1px solid color-mix(in srgb, ${upColor} 30%, transparent)`,
+                }}
+              >
+                {arrow} upside now {liveUpside >= 0 ? '+' : ''}{Math.round(liveUpside)}%
+                {savedUpside !== undefined ? ` (was ${savedUpside >= 0 ? '+' : ''}${Math.round(savedUpside)}%)` : ''}
+              </span>
+            )}
+            {crossed && (
+              <span
+                title={`Live upside +${Math.round(liveUpside!)}% ≥ BUY bar ${BUY_UPSIDE}% (saved ${Math.round(savedUpside!)}%)`}
+                style={{
+                  fontSize: 10, padding: '2px 7px', borderRadius: 3, fontWeight: 800,
+                  whiteSpace: 'nowrap',
+                  color: 'var(--mc-bullish)',
+                  background: 'color-mix(in srgb, var(--mc-bullish) 14%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--mc-bullish) 45%, transparent)',
+                }}
+              >
+                🎯 crossed into BUY zone
               </span>
             )}
             <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace' }}>

@@ -325,11 +325,13 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     window.addEventListener('conviction-beats:updated', onChange);
     window.addEventListener('mc:decisions:updated', onChange);
     window.addEventListener('mc:watchlist:updated', onChange);
+    window.addEventListener('mc:book-flags:updated', onChange);
     return () => {
       window.removeEventListener('storage', onChange);
       window.removeEventListener('conviction-beats:updated', onChange);
       window.removeEventListener('mc:decisions:updated', onChange);
       window.removeEventListener('mc:watchlist:updated', onChange);
+      window.removeEventListener('mc:book-flags:updated', onChange);
     };
   }, [pathname]);
 

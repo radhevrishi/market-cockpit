@@ -11,6 +11,7 @@
 import { CHAT_ID } from '@/lib/config';
 import { readDecisions } from '@/lib/decisions';
 import { readConvictionBeats } from '@/lib/conviction-beats';
+import { readArmedBookFlags, type ClientBookFlag } from '@/lib/book-flags-client';
 
 const PORTFOLIO_KEY = 'mc_portfolio_holdings';
 const WATCHLIST_KEY = 'mc_watchlist_tickers';
@@ -45,7 +46,7 @@ function readJSON<T>(key: string, fallback: T): T {
 }
 
 /** Build the book payload from localStorage. Returns null when the book is empty. */
-export function buildBookPayload(): { chatId: string; tickers: BookTickerPayload[] } | null {
+export function buildBookPayload(): { chatId: string; tickers: BookTickerPayload[]; clientFlags: ClientBookFlag[] } | null {
   if (typeof window === 'undefined') return null;
   const map = new Map<string, BookTickerPayload>();
   const upsert = (ticker: string): BookTickerPayload => {
@@ -112,8 +113,9 @@ export function buildBookPayload(): { chatId: string; tickers: BookTickerPayload
   } catch { /* ignore */ }
 
   const tickers = Array.from(map.values());
-  if (!tickers.length) return null;
-  return { chatId: CHAT_ID, tickers };
+  const clientFlags = readArmedBookFlags();
+  if (!tickers.length && !clientFlags.length) return null;
+  return { chatId: CHAT_ID, tickers, clientFlags };
 }
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
@@ -125,7 +127,7 @@ export async function syncBookNow(): Promise<void> {
     const payload = buildBookPayload();
     if (!payload) return;
     // skip a no-op resend if nothing changed since last sync
-    const hash = JSON.stringify(payload.tickers);
+    const hash = JSON.stringify([payload.tickers, payload.clientFlags]);
     if (hash === _lastHash) return;
     _lastHash = hash;
     await fetch('/api/v1/book/sync', {

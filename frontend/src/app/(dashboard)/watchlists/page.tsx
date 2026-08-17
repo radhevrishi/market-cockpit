@@ -16,6 +16,7 @@ import {
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
+import { armBookFlag } from '@/lib/book-flags-client';
 
 // zzz253 — hardcoded sector map for known NSE tickers. Backend enrichment
 // often returns null sector; this fallback ensures peer comparison + sector-
@@ -2145,6 +2146,20 @@ function passesHubFilter(c: EarningsScanCard, f: HubFilters, watchlist: Set<stri
   return true;
 }
 
+// DRIFT — always-visible thesis-break tell. A BLOCKBUSTER/STRONG bench name
+// whose post-print cumulative move (move_pct, already on the entry — no fetch
+// needed) has faded materially (<= -12%) is the market flagging a low-quality
+// beat: the earliest sell signal. Computed the same way for the row chip, the
+// tab-header summary, and the Book Watch arming effect so they never disagree.
+// move_pct is the primary field; it is server-computed from the filing anchor
+// to the most-recent close, so no live-price fetch or reference is required.
+function cbDriftState(e: ConvictionEntry): { drifting: boolean; movePct: number | null } {
+  const tier = String(e?.tier || '').toUpperCase();
+  const tierMatch = tier === 'BLOCKBUSTER' || tier === 'STRONG';
+  const m = typeof e?.move_pct === 'number' && Number.isFinite(e.move_pct) ? (e.move_pct as number) : null;
+  return { drifting: tierMatch && m != null && m <= -12, movePct: m };
+}
+
 function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void }) {
   // PATCH zzz99 — bulk Clear All button for Conviction Beats.
   // User flow: starting fresh for next earnings cycle, drain the entire
@@ -2793,6 +2808,27 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     c => passesHubFilter(c, hubFilters, watchlistSet, portfolioSet)),
     [enrichedList, hubFilters, watchlistSet, portfolioSet]);
 
+  // DRIFT → Book Watch. For every BLOCKBUSTER/STRONG bench name that has faded
+  // materially since its print (cbDriftState), arm a BENCH_DRIFT flag so the
+  // signal is pushed into Book Watch / the alert feed instead of only living on
+  // this page. armBookFlag() self-dedups by kind+ticker+day and is a no-op
+  // server-side, so this is safe to run on every bench/price change. Only
+  // drifting BLOCKBUSTER/STRONG rows are armed — never every row.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    for (const e of entries) {
+      const { drifting, movePct } = cbDriftState(e);
+      if (!drifting || movePct == null) continue;
+      const sym = e.ticker;
+      armBookFlag({
+        kind: 'BENCH_DRIFT', ticker: sym, company: e.company,
+        severity: movePct <= -20 ? 'critical' : 'warning',
+        message: `${sym} (${e.tier} bench) fading ${movePct.toFixed(1)}% since its print — the market is questioning the beat`,
+        detail: 'conviction bench',
+      });
+    }
+  }, [entries]);
+
   // PATCH 0540 — empty-state render AFTER all hooks (fixes Rules-of-Hooks
   // landmine if the bench transitions from empty → populated mid-render).
   if (entries.length === 0) {
@@ -2907,6 +2943,22 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', letterSpacing: '0.4px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span>FILTERS</span>
             <span style={{ color: 'var(--mc-text-4)', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
+            {/* Always-visible DRIFT summary — count of BLOCKBUSTER/STRONG bench
+                names fading <= -12% since their print. Independent of any filter
+                toggle; also armed to Book Watch as BENCH_DRIFT. */}
+            {(() => {
+              const n = entries.filter((e) => cbDriftState(e).drifting).length;
+              if (n === 0) return null;
+              return (
+                <span
+                  title="BLOCKBUSTER/STRONG bench names fading ≤ -12% since their print — the earliest sell tell. Each is armed to Book Watch as a BENCH_DRIFT flag."
+                  style={{
+                    fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 12, cursor: 'help',
+                    background: 'rgba(239,68,68,0.12)', color: '#F87171', border: '1px solid rgba(239,68,68,0.4)',
+                  }}
+                >⚠ {n} bench drifting</span>
+              );
+            })()}
             {/* PATCH 0919 — Safety-net "0 results" hint. When the bench is
                 non-empty but no entries pass the filter, surface a prominent
                 Reset button so the user isn't stuck wondering which chip is
@@ -4610,6 +4662,28 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
           </div>
         </div>
       </div>
+      {/* Always-visible DRIFT chip. A BLOCKBUSTER/STRONG bench name fading
+          <= -12% since its print is the market fading the beat — the earliest
+          sell tell. Renders without any filter toggle and is also armed to
+          Book Watch (BENCH_DRIFT). Uses move_pct (no fetch needed). */}
+      {(() => {
+        const { drifting, movePct } = cbDriftState(entry);
+        if (!drifting || movePct == null) return null;
+        const critical = movePct <= -20;
+        const col = critical ? '#EF4444' : '#F59E0B';
+        return (
+          <div>
+            <span
+              title={`DRIFT: ${entry.tier} bench name is ${movePct.toFixed(1)}% below its filing-day price. The market is fading the beat — the earliest sell tell. Armed to Book Watch as BENCH_DRIFT (${critical ? 'critical' : 'warning'}).`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 4, cursor: 'help',
+                background: `${col}1A`, color: col, border: `1px solid ${col}66`, letterSpacing: '0.3px',
+              }}
+            >⚠ DRIFT {movePct.toFixed(1)}%</span>
+          </div>
+        );
+      })()}
       {/*
        * PATCH 0965 BUG #9 — "Results Pending" badge for unfiled stocks.
        *

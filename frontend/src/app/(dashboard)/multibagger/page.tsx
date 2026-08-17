@@ -16,6 +16,8 @@ import {
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getDecision, setDecision, clearDecision, subscribeDecisions, readDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
+// zzz412 — Book Watch flag store (Stage-4 breakdown arming for held/bench names).
+import { armBookFlag } from '@/lib/book-flags-client';
 // PATCH 0367 — Export toolbar (TradingView + Screener.in) reused from earnings Scan
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 // PATCH 0370 — Turnaround scoring engine
@@ -7217,6 +7219,57 @@ function SepaChecklistPanel({ techRows, onBest, onOpen }: { techRows: any[]; onB
   );
 }
 
+// zzz412 — Weinstein 4-stage classification (ADDITIVE — sits alongside the
+// existing binary `stage2` used elsewhere; does not replace it). Pure helper,
+// module-scope, NOT exported (this is a Next.js page file). Guards against
+// missing fields and never throws — returns Stage 1 (basing) as the safe
+// default when the moving averages are absent.
+//   Stage 2 (advancing): price>200DMA AND 50DMA>200DMA AND 3m perf up
+//   Stage 4 (declining):  price<200DMA AND 50DMA<200DMA AND 3m perf down
+//   Stage 3 (topping):    near/just-below the 200DMA with rolled-over 3m perf
+//                         and elevated distance from a recent high, else the
+//                         "above 200 but momentum broken / recently strong" bucket
+//   Stage 1 (basing):     everything else (below/around 200, not breaking down)
+function classifyStage(r: any): 1 | 2 | 3 | 4 {
+  if (!r) return 1;
+  const price = typeof r.price === 'number' && Number.isFinite(r.price) ? r.price : null;
+  const sma50 = typeof r.sma50 === 'number' && Number.isFinite(r.sma50) ? r.sma50 : null;
+  const sma200raw = typeof r.sma200 === 'number' && Number.isFinite(r.sma200) ? r.sma200
+    : (typeof r.sma150 === 'number' && Number.isFinite(r.sma150) ? r.sma150 : null);
+  // Missing moving averages → can't classify a trend; safe default is Stage 1.
+  if (price == null || sma50 == null || sma200raw == null) return 1;
+  const sma200 = sma200raw;
+  const p3 = typeof r.perf3m === 'number' && Number.isFinite(r.perf3m) ? r.perf3m : 0;
+  const dist = typeof r.distFromHigh === 'number' && Number.isFinite(r.distFromHigh) ? r.distFromHigh : null;
+  const relVol = typeof r.relVol1w === 'number' && Number.isFinite(r.relVol1w) ? r.relVol1w : null;
+
+  // Stage 2 — advancing
+  if (price > sma200 && sma50 > sma200 && p3 > 0) return 2;
+  // Stage 4 — declining (the critical exit signal)
+  if (price < sma200 && sma50 < sma200 && p3 < 0) return 4;
+  // Stage 3 — topping: near/just-below the 200DMA with a negative-ish 3m perf
+  // and elevated distance from a recent high (or a heavy-volume slip below 50DMA).
+  const nearBelow200 = price <= sma200 * 1.05 && price >= sma200 * 0.90;
+  if ((nearBelow200 && p3 <= 0)
+      || (p3 < 0 && dist != null && dist <= -12)
+      || (p3 <= 0 && relVol != null && relVol >= 1.5 && price < sma50)) {
+    return 3;
+  }
+  // "not clearly 2 or 4 but was recently strong": above the 200 yet momentum
+  // has rolled over → still a topping pattern.
+  if (price > sma200 && p3 <= 0) return 3;
+  // Stage 1 — basing.
+  return 1;
+}
+
+// zzz412 — presentation metadata for the per-row stage badge.
+const STAGE_META: Record<1 | 2 | 3 | 4, { label: string; color: string; bg: string; title: string }> = {
+  2: { label: 'St2',   color: '#10B981', bg: 'rgba(16,185,129,0.14)',  title: 'Weinstein Stage 2 · advancing (price>200DMA · 50>200DMA · 3m up)' },
+  3: { label: 'St3',   color: '#F59E0B', bg: 'rgba(245,158,11,0.14)',  title: 'Weinstein Stage 3 · topping (momentum rolled over near/below the 200DMA)' },
+  4: { label: 'St4 ⚠', color: '#EF4444', bg: 'rgba(239,68,68,0.16)',   title: 'Weinstein Stage 4 · declining (price<200DMA · 50<200DMA · 3m down) — technical EXIT signal' },
+  1: { label: 'St1',   color: '#94A3B8', bg: 'rgba(148,163,184,0.14)', title: 'Weinstein Stage 1 · basing (below/around the 200DMA, not clearly breaking down)' },
+};
+
 function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // zzz149 — Tab is parameterized by market. All localStorage keys are scoped
   // per market so USA + India tabs are fully independent. Uploads in either
@@ -8700,6 +8753,35 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // zzz135 — Click-to-detail modal state
   const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
   const expandedRow = React.useMemo(() => expandedSymbol ? techRows.find(r => r.symbol === expandedSymbol) : null, [techRows, expandedSymbol]);
+
+  // zzz412 — Weinstein Stage-4 breakdown bucket (the single most important
+  // EXIT signal). Grouped + scannable so held names rolling into Stage 4 are
+  // never buried among the bullish buckets.
+  const stage4Rows = React.useMemo(() => techRows.filter(r => classifyStage(r) === 4), [techRows]);
+
+  // zzz412 — Arm a Book Watch flag for HELD / BENCHED names that have rolled
+  // into Stage 4. Only conviction-bench tickers or explicit BUY decisions are
+  // armed (not the whole universe) to keep the alert feed noise-free.
+  // armBookFlag self-dedups by kind+ticker+day and is a no-op on the server,
+  // so re-running on every scored-rows change is safe.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let convSet: Set<string>;
+    try { convSet = new Set(Array.from(getConvictionTickers()).map((t: string) => String(t).toUpperCase())); }
+    catch { convSet = new Set<string>(); }
+    for (const r of stage4Rows) {
+      const sym = String(r.symbol || '').toUpperCase();
+      if (!sym) continue;
+      const held = convSet.has(sym) || getDecision(sym)?.status === 'BUY';
+      if (!held) continue;
+      armBookFlag({
+        kind: 'STAGE4_BREAKDOWN', ticker: sym, company: r.company, severity: 'critical',
+        message: `${sym} broke into Stage 4 (price<200DMA, 50<200DMA, 3m<0) — technical exit signal`,
+        detail: 'held/bench position',
+      });
+    }
+  }, [stage4Rows]);
+
   // Lock body scroll when modal open
   React.useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -9471,6 +9553,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                       <span style={{ color: r.eligible ? '#10B981' : '#EF4444', marginRight: 5 }} title={r.eligible ? 'Eligible' : r.eligibilityFailures.join(' · ')}>{r.eligible ? '✓' : '✗'}</span>
                       {r.symbol}
                       {r.qualityFlags && r.qualityFlags.length > 0 ? <span title={r.qualityFlags.join(' · ')} style={{ color: '#EF4444', marginLeft: 4 }}>⚠</span> : null}
+                      {(() => { const m = STAGE_META[classifyStage(r)]; return <span title={m.title} style={{ marginLeft: 5, fontSize: 9.5, fontWeight: 800, padding: '1px 5px', borderRadius: 5, color: m.color, background: m.bg, fontFamily: 'system-ui, sans-serif' }}>{m.label}</span>; })()}
                     </td>
                     <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</td>
                     <td style={{ padding: '6px 8px', color: TXT, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
@@ -9499,6 +9582,30 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           </table>
         </div>
       </div>
+
+      {/* zzz412 — STAGE 4 / BREAKDOWN bucket — the single most important EXIT
+          signal. Rendered prominently (not collapsed) so held names rolling
+          into Stage 4 are grouped + scannable. */}
+      {stage4Rows.length > 0 && (
+        <div style={{ ...cardStyle, background: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.35)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: '#EF4444', marginBottom: 6 }}>⚠ Stage 4 / breakdown ({stage4Rows.length})</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>
+            Weinstein Stage 4: price below the 200DMA, 50DMA below the 200DMA, and 3-month performance negative — the classic sell-side / technical-exit pattern. Held or bench names here are auto-flagged to Book Watch.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+            {stage4Rows.slice(0, 40).map(r => (
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: 10, cursor: 'pointer' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 900, color: '#EF4444', fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', color: MUTED, fontSize: 11 }}>3M {fmtPct(r.perf3m)} · %SMA50 {typeof r.pctVsSma50 === 'number' ? fmtPct(r.pctVsSma50) : '—'}</span>
+                </div>
+                <div style={{ fontSize: 11, color: TXT, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* zzz133 — REJECTED bucket — collapsible diagnostic */}
       {rejected.length > 0 && (

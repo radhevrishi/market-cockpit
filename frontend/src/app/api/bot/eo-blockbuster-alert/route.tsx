@@ -27,6 +27,7 @@ import { ImageResponse } from 'next/og';
 import React from 'react';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
+import { dispatchAlert } from '@/lib/alert-dispatcher'; // route BLOCKBUSTER prints through shared dispatcher
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -964,6 +965,25 @@ export async function GET(req: Request) {
       if (result.ok) {
         sentCount++;
         sentTickers.push(card.ticker);
+        // Route BLOCKBUSTER prints through the shared alert dispatcher so
+        // SLACK_WEBHOOK_URL / SMTP_* / GENERIC_WEBHOOK_URL channels light up
+        // too. Best-effort: dispatcher never throws, but wrap anyway so a
+        // dispatch failure can never break the existing Telegram flow.
+        if (card.tier === 'BLOCKBUSTER') {
+          try {
+            await dispatchAlert({
+              rule: { id: 'eo-blockbuster', name: 'BLOCKBUSTER earnings print' },
+              article: {
+                title: `${card.ticker} — BLOCKBUSTER (composite ${Math.round(card.composite_score)})${card.company ? ' · ' + card.company : ''}`,
+                source: 'Earnings Opportunities',
+                published_at: new Date().toISOString(),
+                ticker_symbols: [card.ticker],
+                importance_score: 95,
+              },
+              triggeredAt: new Date().toISOString(),
+            });
+          } catch {}
+        }
         // Mark as sent in KV — only for default broadcast channel, not
         // on-demand pulls (those shouldn't burn the dedup budget).
         if (!overrideChatId && isRedisAvailable()) {

@@ -26,6 +26,9 @@ interface AlertCondition {
   ticker?: string;
   theme_substring?: string;
   headline_substring?: string;
+  // PATCH: preset keyword field — `|`-separated alternatives, matched
+  // case-insensitively as substrings (any term present ⇒ pass).
+  headline_contains?: string;
 }
 interface AlertRule {
   id: string;
@@ -52,20 +55,63 @@ function saveRules(rules: AlertRule[]) {
   if (typeof window === 'undefined') return;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(rules)); } catch {}
 }
+// Split a `|`-separated keyword field ("AI|HBM|GPU") into trimmed, non-empty
+// terms. An empty / whitespace-only field yields [] so it becomes a no-op
+// constraint rather than an always-true `includes('')` match.
+function splitKeywordTerms(raw?: string): string[] {
+  if (!raw) return [];
+  return raw.split('|').map(t => t.trim()).filter(Boolean);
+}
+
+// Evaluate whether an article satisfies a rule.
+//
+// Semantics (fixes the "preset fires on EVERY article" bug):
+//   - Each present criterion is an AND constraint; all must hold.
+//   - An empty / undefined / whitespace-only criterion is skipped (no
+//     constraint) rather than treated as "match all".
+//   - `headline_contains` is the preset keyword field: `|`-separated
+//     alternatives, matched case-insensitively as substrings — the rule
+//     passes this criterion if ANY non-empty term appears in the headline.
+//   - A rule with NO effective constraints is INERT (matches nothing),
+//     so an all-empty rule can never fire on every article.
 function matches(article: any, c: AlertCondition): boolean {
-  if (c.article_type && article.article_type !== c.article_type) return false;
-  if (c.region && c.region !== 'ALL' && article.region !== c.region) return false;
-  if (c.min_importance && (article.importance_score || 0) < c.min_importance) return false;
-  if (c.ticker) {
+  let hasConstraint = false;
+
+  if (c.article_type) {
+    hasConstraint = true;
+    if (article.article_type !== c.article_type) return false;
+  }
+  if (c.region && c.region !== 'ALL') {
+    hasConstraint = true;
+    if (article.region !== c.region) return false;
+  }
+  if (typeof c.min_importance === 'number' && c.min_importance > 0) {
+    hasConstraint = true;
+    if ((article.importance_score || 0) < c.min_importance) return false;
+  }
+  if (c.ticker && c.ticker.trim()) {
+    hasConstraint = true;
     const haystack = (article.ticker_symbols || []).map((t: any) => (typeof t === 'string' ? t : t?.ticker || '')).join(' ').toUpperCase();
-    if (!haystack.includes(c.ticker.toUpperCase())) return false;
+    if (!haystack.includes(c.ticker.trim().toUpperCase())) return false;
   }
-  if (c.theme_substring && !((article.bottleneck_sub_tag || '').toLowerCase().includes(c.theme_substring.toLowerCase()))) return false;
-  if (c.headline_substring) {
+  if (c.theme_substring && c.theme_substring.trim()) {
+    hasConstraint = true;
+    if (!((article.bottleneck_sub_tag || '').toLowerCase().includes(c.theme_substring.trim().toLowerCase()))) return false;
+  }
+  if (c.headline_substring && c.headline_substring.trim()) {
+    hasConstraint = true;
     const h = (article.headline || article.title || '').toLowerCase();
-    if (!h.includes(c.headline_substring.toLowerCase())) return false;
+    if (!h.includes(c.headline_substring.trim().toLowerCase())) return false;
   }
-  return true;
+  const kwTerms = splitKeywordTerms(c.headline_contains);
+  if (kwTerms.length > 0) {
+    hasConstraint = true;
+    const h = (article.headline || article.title || '').toLowerCase();
+    if (!kwTerms.some(term => h.includes(term.toLowerCase()))) return false;
+  }
+
+  // No effective constraint ⇒ inert rule ⇒ matches nothing.
+  return hasConstraint;
 }
 
 function useNewsStream() {
@@ -326,7 +372,8 @@ export default function NewsAlertsPage() {
           (c.min_importance === undefined || typeof c.min_importance === 'number') &&
           isStrOpt(c.ticker) &&
           isStrOpt(c.theme_substring) &&
-          isStrOpt(c.headline_substring);
+          isStrOpt(c.headline_substring) &&
+          isStrOpt(c.headline_contains);
         const valid = parsed.filter((r) =>
           r && typeof r === 'object' &&
           typeof r.id === 'string' &&

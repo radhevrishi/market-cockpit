@@ -4,18 +4,51 @@
 // Reads /data/screener/*.csv. Uses actual CSV column names + NSE Code for ticker matching.
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { PanelFreshness } from '@/components/PanelFreshness';
 
-type ScreenDef = { slug: string; label: string; short: string; emoji: string; url: string };
-const SCREENS: ScreenDef[] = [
-  { slug: 'stocks-like-bajaj-consumer', label: 'Stocks like Bajaj Consumer', short: 'Bajaj Consumer', emoji: '🧴', url: 'https://www.screener.in/screens/3549314/stocks-like-bajaj-consumer/' },
-  { slug: 'rajeev-thakkar-ppfas-screener', label: 'Rajeev Thakkar PPFAS', short: 'PPFAS', emoji: '💎', url: 'https://www.screener.in/screens/3565418/rajeev-thakkar-ppfas-screener/' },
-  { slug: 'pead-master-screener-rishi-framework', label: 'PEAD Master (Rishi Framework)', short: 'PEAD Master', emoji: '🎯', url: 'https://www.screener.in/screens/3612486/pead-master-screener-rishi-framework/' },
-  { slug: 'multibagger-like-acutaasatlantadee-dev', label: 'Multibagger: Acutaas/Atlanta/Dee-Dev', short: 'Multibagger 1', emoji: '🚀', url: 'https://www.screener.in/screens/3601571/multibagger-like-acutaasatlantadee-dev/' },
-  { slug: 'multibagger2-ignoring-trend', label: 'Multibagger 2 (Ignoring Trend)', short: 'Multibagger 2', emoji: '💥', url: 'https://www.screener.in/screens/3545352/multibagger2-ignoring-trend/' },
-  { slug: 'fii', label: 'FII Screener', short: 'FII', emoji: '🏦', url: 'https://www.screener.in/screens/3443614/fii/' },
-  { slug: 'future-leaders', label: 'Future Leaders', short: 'Future Leaders', emoji: '👑', url: 'https://www.screener.in/screens/3470949/future-leaders/' },
-  { slug: 'great-results-and-pullback', label: 'Great Results + Pullback', short: 'Great Results', emoji: '📉', url: 'https://www.screener.in/screens/3658091/great-results-and-pullback/' },
-];
+type ScreenDef = { slug: string; label: string; short: string; emoji: string; url?: string };
+type ManifestFile = { name: string; size?: number; displayName?: string };
+type Manifest = { lastSync?: string; ok?: number; fail?: number; files: ManifestFile[] };
+
+// zzz-manifest — The screen list is now DATA-DRIVEN off
+// /data/screener/manifest.json (synced daily). This map only carries the
+// per-screen presentation metadata (emoji, short label, and the original
+// Screener.in source URL where we know it) keyed by slug. Any screen the
+// manifest lists that ISN'T here still renders — it just gets a default
+// emoji, a truncated short label, and no "Open on Screener" link.
+const SCREEN_META: Record<string, { short?: string; emoji?: string; url?: string }> = {
+  'stocks-like-bajaj-consumer': { short: 'Bajaj Consumer', emoji: '🧴', url: 'https://www.screener.in/screens/3549314/stocks-like-bajaj-consumer/' },
+  'rajeev-thakkar-ppfas-screener': { short: 'PPFAS', emoji: '💎', url: 'https://www.screener.in/screens/3565418/rajeev-thakkar-ppfas-screener/' },
+  'pead-master-screener-rishi-framework': { short: 'PEAD Master', emoji: '🎯', url: 'https://www.screener.in/screens/3612486/pead-master-screener-rishi-framework/' },
+  'multibagger-like-acutaasatlantadee-dev': { short: 'Multibagger 1', emoji: '🚀', url: 'https://www.screener.in/screens/3601571/multibagger-like-acutaasatlantadee-dev/' },
+  'multibagger2-ignoring-trend': { short: 'Multibagger 2', emoji: '💥', url: 'https://www.screener.in/screens/3545352/multibagger2-ignoring-trend/' },
+  'fii': { short: 'FII', emoji: '🏦', url: 'https://www.screener.in/screens/3443614/fii/' },
+  'future-leaders': { short: 'Future Leaders', emoji: '👑', url: 'https://www.screener.in/screens/3470949/future-leaders/' },
+  'great-results-and-pullback': { short: 'Great Results', emoji: '📉', url: 'https://www.screener.in/screens/3658091/great-results-and-pullback/' },
+  '100-baggers-sales-and-eps-growth': { short: '100-Baggers', emoji: '💯' },
+  'capex': { short: 'Capex', emoji: '🏗️' },
+  'debt-reduction': { short: 'Debt Reduction', emoji: '💳' },
+  'ipobases': { short: 'IPO Bases', emoji: '🆕' },
+  'lowequitycapital': { short: 'Low Equity Cap', emoji: '🪙' },
+  'monthly-volume-pockets': { short: 'Monthly Vol', emoji: '📊' },
+  'turnarounds': { short: 'Turnarounds', emoji: '🔄' },
+  'watchlist-10432429': { short: 'Latest Portfolio', emoji: '📁' },
+  'watchlist-10432585': { short: 'TAR Earnings', emoji: '📋' },
+  'watchlist-8105148': { short: 'Working WL', emoji: '🗂️' },
+  'weekly-volume-pockets': { short: 'Weekly Vol', emoji: '📈' },
+};
+
+// Build the full ScreenDef list from the manifest's files array. slug is the
+// filename minus .csv (which is exactly what the CSV fetch path expects).
+function buildScreens(files: ManifestFile[]): ScreenDef[] {
+  return files.map(f => {
+    const slug = f.name.replace(/\.csv$/i, '');
+    const meta = SCREEN_META[slug] || {};
+    const label = f.displayName || slug;
+    const short = meta.short || (label.length > 16 ? label.slice(0, 15) + '…' : label);
+    return { slug, label, short, emoji: meta.emoji || '📈', url: meta.url };
+  });
+}
 
 const C = { bg: '#0B0E14', panel: '#11151F', panel2: '#161B27', border: '#1F2937', text: '#E5E7EB', text2: '#94A3B8', text3: '#64748B', green: '#22C55E', red: '#EF4444', cyan: '#06B6D4', gold: '#FBBF24', amber: '#F59E0B', purple: '#A78BFA' };
 
@@ -93,10 +126,10 @@ function parseCsv(csv: string): ScreenData {
 }
 
 // ── ANALYTICS TAB ────────────────────────────────────────────────
-function AnalyticsView({ allData, benchTickers }: { allData: Record<string, ScreenData>; benchTickers: Set<string> }) {
+function AnalyticsView({ allData, benchTickers, screens }: { allData: Record<string, ScreenData>; benchTickers: Set<string>; screens: ScreenDef[] }) {
   const analysis = useMemo(() => {
     const tickerToScreens: Record<string, { slugs: string[]; row: Row; name: string }> = {};
-    for (const s of SCREENS) {
+    for (const s of screens) {
       const d = allData[s.slug];
       if (!d?.rows) continue;
       for (const r of d.rows) {
@@ -110,7 +143,7 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
     const entries = Object.entries(tickerToScreens).map(([t, v]) => ({ t, ...v, count: v.slugs.length }));
     entries.sort((a, b) => b.count - a.count);
     return entries;
-  }, [allData]);
+  }, [allData, screens]);
 
   const multiScreen = analysis.filter(e => e.count >= 2);
   const inBench = analysis.filter(e => benchTickers.has(e.t));
@@ -118,19 +151,19 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
 
   const matrix = useMemo(() => {
     const m: number[][] = [];
-    for (let i = 0; i < SCREENS.length; i++) {
+    for (let i = 0; i < screens.length; i++) {
       m[i] = [];
-      const si = new Set((allData[SCREENS[i].slug]?.rows || []).map(r => String(r.__ticker || '').toUpperCase()).filter(Boolean));
-      for (let j = 0; j < SCREENS.length; j++) {
+      const si = new Set((allData[screens[i].slug]?.rows || []).map(r => String(r.__ticker || '').toUpperCase()).filter(Boolean));
+      for (let j = 0; j < screens.length; j++) {
         if (i === j) { m[i][j] = si.size; continue; }
-        const sj = allData[SCREENS[j].slug]?.rows || [];
+        const sj = allData[screens[j].slug]?.rows || [];
         let overlap = 0;
         for (const r of sj) if (si.has(String(r.__ticker || '').toUpperCase())) overlap++;
         m[i][j] = overlap;
       }
     }
     return m;
-  }, [allData]);
+  }, [allData, screens]);
 
   const sectorDist = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -156,11 +189,13 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
   }, [analysis]);
 
   const metricLeaders = useMemo(() => {
-    const flat = analysis.map(e => ({ ...e.row, __t: e.t, __name: e.name }));
+    // Spreading a Record<string,…>&{…} drops the string index signature, so
+    // annotate to keep dynamic `r[col]` indexing type-safe.
+    const flat: Array<Record<string, string | number>> = analysis.map(e => ({ ...e.row, __t: e.t, __name: e.name } as Record<string, string | number>));
     const top = (col: string, n = 5, asc = false) => {
       const withVal = flat.filter(r => typeof r[col] === 'number' && (col === 'Price to Earning' ? (r[col] as number) > 0 : true));
       withVal.sort((a, b) => asc ? (a[col] as number) - (b[col] as number) : (b[col] as number) - (a[col] as number));
-      return withVal.slice(0, n).map(r => ({ t: r.__t, name: r.__name, v: r[col] as number }));
+      return withVal.slice(0, n).map(r => ({ t: String(r.__t), name: r.__name, v: r[col] as number }));
     };
     return {
       roce: top('Return on capital employed', 5),
@@ -172,21 +207,22 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
     };
   }, [analysis]);
 
-  const loaded = SCREENS.filter(s => allData[s.slug]?.rows?.length).length;
+  const loaded = screens.filter(s => allData[s.slug]?.rows?.length).length;
   const totalStocks = Object.values(allData).reduce((sum, d) => sum + (d?.rows?.length || 0), 0);
   // zzz382 — an entry exists once a slug's fetch has SETTLED (success sets rows,
   // failure sets {rows:[], err}). Distinguish "still loading" from "all failed" so a
   // 404/500 on every CSV shows an error instead of a perpetual "Loading…" spinner.
-  const attempted = SCREENS.filter(s => allData[s.slug] !== undefined).length;
-  const failed = SCREENS.filter(s => allData[s.slug]?.err).length;
+  const attempted = screens.filter(s => allData[s.slug] !== undefined).length;
+  const failed = screens.filter(s => allData[s.slug]?.err).length;
 
-  if (loaded === 0 && attempted < SCREENS.length) return <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>Loading all {SCREENS.length} CSVs… ({attempted}/{SCREENS.length})</div>;
-  if (loaded === 0 && attempted >= SCREENS.length) return <div style={{ padding: 40, textAlign: 'center', color: C.red || '#EF4444' }}>⚠ Could not load any screen data ({failed}/{SCREENS.length} failed). The daily screener CSVs may not be published yet, or a slug was renamed. Reload in a bit, or check /data/screener/*.csv.</div>;
+  if (screens.length === 0) return <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>Loading screen manifest…</div>;
+  if (loaded === 0 && attempted < screens.length) return <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>Loading all {screens.length} CSVs… ({attempted}/{screens.length})</div>;
+  if (loaded === 0 && attempted >= screens.length) return <div style={{ padding: 40, textAlign: 'center', color: C.red || '#EF4444' }}>⚠ Could not load any screen data ({failed}/{screens.length} failed). The daily screener CSVs may not be published yet, or a slug was renamed. Reload in a bit, or check /data/screener/*.csv.</div>;
 
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-        <StatCard label="Screens loaded" value={`${loaded}/8`} color={C.cyan} />
+        <StatCard label="Screens loaded" value={`${loaded}/${screens.length}`} color={C.cyan} />
         <StatCard label="Total picks" value={String(totalStocks)} color={C.text} />
         <StatCard label="Unique tickers" value={String(analysis.length)} color={C.text} />
         <StatCard label="In 2+ screens" value={String(multiScreen.length)} color={C.gold} sub="high-conviction overlap" />
@@ -214,7 +250,7 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
                       <td style={tdStyle}><span style={{ color: cb ? C.gold : C.cyan, fontWeight: 600 }}>{cb && '⭐ '}{e.name}</span></td>
                       <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11, color: C.text2 }}>{e.t}</td>
                       <td style={tdStyle}><span style={{ background: C.gold + '22', color: C.gold, padding: '2px 8px', borderRadius: 4, fontWeight: 800 }}>{e.count}</span></td>
-                      <td style={{ ...tdStyle, fontSize: 11 }}>{e.slugs.map(sl => SCREENS.find(s => s.slug === sl)?.emoji).join(' ')}</td>
+                      <td style={{ ...tdStyle, fontSize: 11 }}>{e.slugs.map(sl => screens.find(s => s.slug === sl)?.emoji).join(' ')}</td>
                       <td style={tdStyle}>{cb ? '✓' : '—'}</td>
                       <td style={tdStyle}>{fmt(e.row['Current Price'])}</td>
                       <td style={tdStyle}>{fmt(e.row['Market Capitalization'])}</td>
@@ -269,13 +305,13 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead><tr>
               <th style={{ ...thStyle, position: 'sticky', left: 0, background: C.panel2 }}></th>
-              {SCREENS.map(s => <th key={s.slug} style={{ ...thStyle, textAlign: 'center', minWidth: 55 }} title={s.label}>{s.emoji}</th>)}
+              {screens.map(s => <th key={s.slug} style={{ ...thStyle, textAlign: 'center', minWidth: 55 }} title={s.label}>{s.emoji}</th>)}
             </tr></thead>
             <tbody>
-              {SCREENS.map((s, i) => (
+              {screens.map((s, i) => (
                 <tr key={s.slug}>
                   <td style={{ ...tdStyle, fontWeight: 700, position: 'sticky', left: 0, background: C.panel2, whiteSpace: 'nowrap' }} title={s.label}>{s.emoji} {s.short}</td>
-                  {SCREENS.map((_, j) => {
+                  {screens.map((_, j) => {
                     const v = matrix[i]?.[j] ?? 0;
                     const isDiag = i === j;
                     const bg = isDiag ? C.cyan + '22' : v > 0 ? `rgba(251,191,36,${Math.min(v / 8, 0.6)})` : 'transparent';
@@ -303,8 +339,17 @@ function AnalyticsView({ allData, benchTickers }: { allData: Record<string, Scre
 }
 
 // ── COMBINED TAB (filterable) ─────────────────────────────────────
-function CombinedView({ allData, benchTickers }: { allData: Record<string, ScreenData>; benchTickers: Set<string> }) {
-  const [enabled, setEnabled] = useState<Set<string>>(new Set(SCREENS.map(s => s.slug)));
+function CombinedView({ allData, benchTickers, screens }: { allData: Record<string, ScreenData>; benchTickers: Set<string>; screens: ScreenDef[] }) {
+  const [enabled, setEnabled] = useState<Set<string>>(new Set());
+  // Keep the enabled-set in sync as the manifest-driven screen list arrives:
+  // default every screen ON, but preserve any user toggles once made.
+  const seededRef = React.useRef(false);
+  useEffect(() => {
+    if (!seededRef.current && screens.length) {
+      seededRef.current = true;
+      setEnabled(new Set(screens.map(s => s.slug)));
+    }
+  }, [screens]);
   const [q, setQ] = useState<string>('');
   const [sortCol, setSortCol] = useState<string>('__count');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -313,7 +358,7 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
 
   const merged = useMemo(() => {
     const m: Record<string, { row: Row; slugs: string[]; name: string }> = {};
-    for (const s of SCREENS) {
+    for (const s of screens) {
       if (!enabled.has(s.slug)) continue;
       const d = allData[s.slug];
       if (!d?.rows) continue;
@@ -339,7 +384,7 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
       return sortDir === 'asc' ? an - bn : bn - an;
     });
     return rows;
-  }, [allData, enabled, q, sortCol, sortDir, onlyBench, onlyMulti, benchTickers]);
+  }, [allData, enabled, q, sortCol, sortDir, onlyBench, onlyMulti, benchTickers, screens]);
 
   const tickersCsv = merged.map(r => r.__ticker).join(',');
   const copyTickers = () => { navigator.clipboard?.writeText(tickersCsv); };
@@ -350,7 +395,7 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
     <div>
       <Panel title="🔀 Combined View — Toggle Screens On/Off" subtitle="Merged view across selected screens. Same ticker in multiple screens = 1 row with combined count.">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
-          {SCREENS.map(s => {
+          {screens.map(s => {
             const on = enabled.has(s.slug);
             return (
               <label key={s.slug} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: on ? C.cyan + '22' : C.panel2, border: `1px solid ${on ? C.cyan : C.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700, color: on ? C.cyan : C.text2 }}>
@@ -368,7 +413,7 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: onlyMulti ? C.gold : C.text2 }}>
             <input type="checkbox" checked={onlyMulti} onChange={e => setOnlyMulti(e.target.checked)} /> In 2+ screens
           </label>
-          <span style={{ fontSize: 12, color: C.text2 }}>· {merged.length} tickers · {enabled.size}/8 screens</span>
+          <span style={{ fontSize: 12, color: C.text2 }}>· {merged.length} tickers · {enabled.size}/{screens.length} screens</span>
           <button onClick={copyTickers} style={{ marginLeft: 'auto', padding: '6px 12px', background: C.cyan + '22', border: `1px solid ${C.cyan}`, borderRadius: 6, color: C.cyan, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>📋 Copy tickers (TradingView)</button>
         </div>
         <div style={{ overflow: 'auto', maxHeight: '70vh', border: `1px solid ${C.border}`, borderRadius: 8 }}>
@@ -395,7 +440,7 @@ function CombinedView({ allData, benchTickers }: { allData: Record<string, Scree
                     <td style={tdStyle}><span style={{ color: cb ? C.gold : C.cyan, fontWeight: 600 }}>{cb && '⭐ '}{r.__name}</span></td>
                     <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11, color: C.text2 }}>{r.__ticker}</td>
                     <td style={tdStyle}><span style={{ background: r.__count >= 2 ? C.gold + '22' : 'transparent', color: r.__count >= 2 ? C.gold : C.text2, padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>{r.__count}</span></td>
-                    <td style={{ ...tdStyle, fontSize: 11 }}>{r.__slugs.map((sl: string) => SCREENS.find(s => s.slug === sl)?.emoji).join(' ')}</td>
+                    <td style={{ ...tdStyle, fontSize: 11 }}>{r.__slugs.map((sl: string) => screens.find(s => s.slug === sl)?.emoji).join(' ')}</td>
                     <td style={tdStyle}>{cb ? '✓' : '—'}</td>
                     {cols.slice(1).map(col => {
                       const val = r[col];
@@ -435,7 +480,13 @@ function goodBadColor(v: any, good: number, bad: number): string { if (typeof v 
 // ── MAIN ─────────────────────────────────────────────────────────
 export default function MultibaggerScreensPage() {
   const [view, setView] = useState<'analytics' | 'combined' | 'per-screener'>('analytics');
-  const [activeSlug, setActiveSlug] = useState<string>(SCREENS[0].slug);
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const screens = useMemo(() => buildScreens(manifest?.files || []), [manifest]);
+  const lastSyncMs = useMemo(() => {
+    const t = manifest?.lastSync ? Date.parse(manifest.lastSync) : NaN;
+    return Number.isFinite(t) ? t : 0;
+  }, [manifest]);
+  const [activeSlug, setActiveSlug] = useState<string>('');
   const [data, setData] = useState<Record<string, ScreenData>>({});
   const [benchTickers, setBenchTickers] = useState<Set<string>>(new Set());
   const [sortCol, setSortCol] = useState<string>('');
@@ -455,18 +506,33 @@ export default function MultibaggerScreensPage() {
     } catch {}
   }, []);
 
+  // zzz-manifest — load the daily-synced screen manifest, then data-drive the
+  // whole page off it (all ~19 screens, not a hardcoded 8).
   useEffect(() => {
-    for (const s of SCREENS) {
+    fetch('/data/screener/manifest.json', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((m: Manifest) => setManifest(m && Array.isArray(m.files) ? m : { files: [] }))
+      .catch(() => setManifest({ files: [] }));
+  }, []);
+
+  // Default the active per-screener tab to the first manifest screen once loaded.
+  useEffect(() => {
+    if (!activeSlug && screens.length) setActiveSlug(screens[0].slug);
+  }, [screens, activeSlug]);
+
+  useEffect(() => {
+    for (const s of screens) {
       if (data[s.slug]) continue;
       fetch(`/data/screener/${s.slug}.csv`, { cache: 'no-store' })
         .then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
         .then(csv => setData(prev => ({ ...prev, [s.slug]: parseCsv(csv) })))
         .catch(e => setData(prev => ({ ...prev, [s.slug]: { columns: [], rows: [], err: String(e) } })));
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screens]);
 
-  const activeScreen = SCREENS.find(s => s.slug === activeSlug)!;
-  const activeData = data[activeSlug];
+  const activeScreen = screens.find(s => s.slug === activeSlug);
+  const activeData: ScreenData | undefined = data[activeSlug];
 
   const orderedCols = useMemo(() => {
     if (!activeData?.columns?.length) return [];
@@ -503,7 +569,12 @@ export default function MultibaggerScreensPage() {
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 11, color: C.text3, marginBottom: 4, letterSpacing: '0.5px' }}>MULTIBAGGER · CSV-BACKED</div>
         <h1 style={{ fontSize: 26, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.4px' }}>🔍 Per-Screener Breakdown</h1>
-        <div style={{ fontSize: 13, color: C.text2 }}>8 screens · /data/screener/ (synced daily) · CB bench overlap in gold</div>
+        <div style={{ fontSize: 13, color: C.text2, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>{screens.length || '…'} screens · /data/screener/ (synced daily) · CB bench overlap in gold</span>
+          {lastSyncMs > 0
+            ? <PanelFreshness dataUpdatedAt={lastSyncMs} label="synced" staleAfterMs={26 * 60 * 60_000} />
+            : null}
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, borderBottom: `1px solid ${C.border}`, paddingBottom: 12 }}>
@@ -514,17 +585,21 @@ export default function MultibaggerScreensPage() {
         })}
       </div>
 
-      {view === 'analytics' && <AnalyticsView allData={data} benchTickers={benchTickers} />}
-      {view === 'combined' && <CombinedView allData={data} benchTickers={benchTickers} />}
+      {view === 'analytics' && <AnalyticsView allData={data} benchTickers={benchTickers} screens={screens} />}
+      {view === 'combined' && <CombinedView allData={data} benchTickers={benchTickers} screens={screens} />}
       {view === 'per-screener' && (
         <>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
-            {SCREENS.map(s => {
+            {screens.map(s => {
               const active = s.slug === activeSlug;
               const rows = data[s.slug]?.rows?.length ?? null;
               return <button key={s.slug} onClick={() => setActiveSlug(s.slug)} style={{ padding: '9px 16px', background: active ? C.cyan + '22' : C.panel, border: `1px solid ${active ? C.cyan : C.border}`, borderRadius: 8, color: active ? C.cyan : C.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{s.emoji} {s.label}{rows !== null && <span style={{ marginLeft: 8, color: active ? C.cyan : C.text3, fontWeight: 600 }}>({rows})</span>}</button>;
             })}
           </div>
+          {!activeScreen ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>{screens.length ? 'Select a screen above.' : 'Loading screen manifest…'}</div>
+          ) : (
+          <>
           <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: '14px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 700 }}>{activeScreen.emoji} {activeScreen.label}</div>
@@ -532,10 +607,18 @@ export default function MultibaggerScreensPage() {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="text" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} style={{ padding: '7px 12px', background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: 13, width: 200, outline: 'none' }} />
-              <a href={activeScreen.url} target="_blank" rel="noreferrer" style={{ padding: '7px 12px', background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 6, color: C.text2, fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>🔗 Open on Screener</a>
+              {activeScreen.url && <a href={activeScreen.url} target="_blank" rel="noreferrer" style={{ padding: '7px 12px', background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 6, color: C.text2, fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>🔗 Open on Screener</a>}
             </div>
           </div>
           {activeData?.err && <div style={{ padding: 20, background: C.red + '11', border: `1px solid ${C.red}44`, borderRadius: 8, color: C.red }}>Load failed: {activeData.err}</div>}
+          {/* zzz-manifest — a screen the manifest lists but whose CSV is missing/
+              empty renders an honest empty state rather than getting dropped. */}
+          {!activeData && <div style={{ padding: 20, color: C.text2, textAlign: 'center' }}>Loading {activeScreen.label}…</div>}
+          {activeData && !activeData.err && orderedCols.length === 0 && (
+            <div style={{ padding: 24, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text2, textAlign: 'center' }}>
+              No matches in this screen yet — the daily-synced CSV is empty or not yet published.
+            </div>
+          )}
           {activeData && !activeData.err && orderedCols.length > 0 && (
             <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'auto', maxHeight: '75vh' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1200 }}>
@@ -543,6 +626,8 @@ export default function MultibaggerScreensPage() {
                 <tbody>{filteredRows.map((r, i) => { const t = String(r.__ticker || '').toUpperCase(); const inB = t && benchTickers.has(t); return <tr key={i} style={{ background: inB ? C.gold + '11' : (i % 2 ? C.panel2 : 'transparent'), borderLeft: inB ? `3px solid ${C.gold}` : '3px solid transparent' }}>{orderedCols.map(col => { const val = r[col]; const isName = col === 'Name'; return <td key={col} style={{ ...tdStyle, color: C.text }}>{isName && val ? <span style={{ color: inB ? C.gold : C.cyan, fontWeight: 600 }}>{inB && '⭐ '}{String(val)}</span> : (typeof val === 'number' ? val.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : String(val || ''))}</td>; })}</tr>; })}</tbody>
               </table>
             </div>
+          )}
+          </>
           )}
         </>
       )}
