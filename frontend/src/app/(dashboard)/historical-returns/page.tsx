@@ -176,7 +176,7 @@ function MarketPanel({ m }: { m: Market }) {
       {/* decade breakdown */}
       <div style={sub}>Decade breakdown</div>
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', ...mono, fontSize: 11.5 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', ...mono, fontSize: 12.5 }}>
           <thead>
             <tr style={{ color: C.text3, textAlign: 'right' }}>
               <th style={{ textAlign: 'left', padding: '5px 8px', fontWeight: 600 }}>Decade</th>
@@ -201,7 +201,26 @@ function MarketPanel({ m }: { m: Market }) {
           </tbody>
         </table>
       </div>
-      <div style={{ ...mono, fontSize: 10, color: C.text4, marginTop: 10 }}>{m.note}</div>
+
+      {/* every-year table — collapsed by default */}
+      <details style={{ marginTop: 14 }}>
+        <summary style={{ ...mono, fontSize: 12, color: m.accent, cursor: 'pointer', fontWeight: 700, listStyle: 'none', padding: '8px 0' }}>
+          ▸ Show all {s.n} yearly returns
+        </summary>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 6, marginTop: 10 }}>
+          {m.series.map(y => {
+            const isPos = y.ret >= 0; const col = isPos ? C.green : C.red;
+            return (
+              <div key={y.year} style={{ background: `${col}0e`, border: `1px solid ${col}30`, borderRadius: 7, padding: '7px 6px', textAlign: 'center' }}>
+                <div style={{ ...mono, fontSize: 11, color: C.text3 }}>{y.year}</div>
+                <div style={{ ...mono, fontSize: 14, fontWeight: 800, color: col }}>{isPos ? '+' : ''}{y.ret.toFixed(1)}%</div>
+              </div>
+            );
+          })}
+        </div>
+      </details>
+
+      <div style={{ ...mono, fontSize: 11, color: C.text4, marginTop: 12 }}>{m.note}</div>
     </div>
   );
 }
@@ -263,11 +282,11 @@ export default function HistoricalReturnsPage() {
   });
 
   return (
-    <div style={{ background: C.bg, color: C.text, minHeight: '100vh', padding: '28px 20px' }}>
-      <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-        <div style={{ marginBottom: 20, padding: '16px 20px', background: `linear-gradient(135deg, ${C.gold}14 0%, ${C.panel} 100%)`, border: `1px solid ${C.gold}33`, borderRadius: 14 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.4px', margin: 0 }}>Historical Returns — QQQ vs India Smallcap</h1>
-          <div style={{ ...mono, fontSize: 12, color: C.text3, marginTop: 5 }}>
+    <div style={{ background: C.bg, color: C.text, minHeight: '100vh', padding: '26px 24px' }}>
+      <div style={{ maxWidth: 1360, margin: '0 auto' }}>
+        <div style={{ marginBottom: 18, padding: '18px 22px', background: `linear-gradient(135deg, ${C.gold}14 0%, ${C.panel} 100%)`, border: `1px solid ${C.gold}33`, borderRadius: 14 }}>
+          <h1 style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-0.4px', margin: 0 }}>Historical Returns — QQQ vs India Smallcap</h1>
+          <div style={{ ...mono, fontSize: 13, color: C.text3, marginTop: 6 }}>
             Every calendar year of real returns — the empirical foundation both scenario simulators are calibrated from.
           </div>
         </div>

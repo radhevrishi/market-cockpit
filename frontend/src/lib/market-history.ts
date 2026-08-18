@@ -137,12 +137,19 @@ export function freqProbs(buckets: Bucket[]): number[] {
 
 /**
  * Data-driven cascade: for each bucket, average the actual t+1..t+horizon
- * returns that historically followed years in that bucket. Falls back to the
- * series mean when a bucket has no forward observations.
+ * returns that historically followed years in that bucket.
+ *
+ * `priorK` applies James-Stein–style shrinkage toward the unconditional mean:
+ *   shrunk = (count·sampleMean + priorK·globalMean) / (count + priorK)
+ * This is essential because some buckets have very few forward observations
+ * (e.g. a "bad year" bucket with a single member) — without shrinkage a lone
+ * lucky follow-year (1990 → 1991 +65%) would dominate the whole projection.
+ * With priorK≈4, thin buckets are pulled firmly toward the mean; well-sampled
+ * buckets barely move. priorK=0 reproduces the raw historical average.
  */
-export function conditionalPaths(series: YearReturn[], buckets: Bucket[], horizon = 4): Record<string, number[]> {
+export function conditionalPaths(series: YearReturn[], buckets: Bucket[], horizon = 4, priorK = 0): Record<string, number[]> {
   const byYear = new Map(series.map(s => [s.year, s.ret]));
-  const mean = series.reduce((a, s) => a + s.ret, 0) / series.length;
+  const globalMean = series.reduce((a, s) => a + s.ret, 0) / series.length;
   const out: Record<string, number[]> = {};
   for (const b of buckets) {
     const sums = new Array(horizon).fill(0);
@@ -153,7 +160,12 @@ export function conditionalPaths(series: YearReturn[], buckets: Bucket[], horizo
         if (r !== undefined) { sums[h - 1] += r; counts[h - 1]++; }
       }
     }
-    out[b.id] = sums.map((s, i) => (counts[i] ? s / counts[i] : mean));
+    out[b.id] = sums.map((s, i) => {
+      const c = counts[i];
+      const sampleMean = c ? s / c : globalMean;
+      if (priorK <= 0) return sampleMean;
+      return (c * sampleMean + priorK * globalMean) / (c + priorK);
+    });
   }
   return out;
 }
