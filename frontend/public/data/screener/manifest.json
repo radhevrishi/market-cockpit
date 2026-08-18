@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-18T05:52:52Z",
+  "lastSync": "2026-08-18T08:28:57Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9833,
+      "size": 9411,
       "displayName": "CAPEX"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 6918,
+      "size": 7901,
       "displayName": "IPOBASES"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 5024,
+      "size": 5431,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -80,7 +80,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23810,
+      "size": 23812,
       "displayName": "Latest Portfolio"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65663,
+      "size": 65664,
       "displayName": "Working watchlist"
     },
     {
