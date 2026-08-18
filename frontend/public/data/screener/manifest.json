@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-18T08:28:57Z",
+  "lastSync": "2026-08-18T12:20:19Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10933,
+      "size": 10932,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,37 +25,37 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 4441,
+      "size": 4867,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 9659,
+      "size": 8398,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 7901,
+      "size": 7428,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4453,
+      "size": 4454,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 9303,
+      "size": 9228,
       "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 3242,
+      "size": 3665,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3690,
+      "size": 4113,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -90,12 +90,12 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65664,
+      "size": 65665,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 4957,
+      "size": 5776,
       "displayName": "Weekly Volume Pockets"
     }
   ]
