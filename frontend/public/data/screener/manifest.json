@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-19T05:54:25Z",
+  "lastSync": "2026-08-19T08:30:19Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9409,
+      "size": 9848,
       "displayName": "CAPEX"
     },
     {
@@ -35,12 +35,12 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 6756,
+      "size": 7405,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 5283,
+      "size": 4463,
       "displayName": "Lowequitycapital"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 5593,
+      "size": 5592,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65663,
+      "size": 65669,
       "displayName": "Working watchlist"
     },
     {
