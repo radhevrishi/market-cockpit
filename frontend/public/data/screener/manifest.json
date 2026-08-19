@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-19T08:30:19Z",
+  "lastSync": "2026-08-19T12:19:49Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10942,
+      "size": 10941,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,27 +30,27 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 5835,
+      "size": 7545,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 7405,
+      "size": 7176,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4463,
+      "size": 4878,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 9248,
+      "size": 8379,
       "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 3242,
+      "size": 3243,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 5592,
+      "size": 5593,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19258,
+      "size": 19257,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23809,
+      "size": 23810,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63482,
+      "size": 63483,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65669,
+      "size": 65672,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 7077,
+      "size": 6317,
       "displayName": "Weekly Volume Pockets"
     }
   ]
