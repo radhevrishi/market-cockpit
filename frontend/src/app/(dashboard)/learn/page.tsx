@@ -9,6 +9,15 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { BOOK, type Part } from './book-data';
+import { FIRST_PRINCIPLES, FP_INTRO, FP_TAG_META } from './learn-intro';
+import { LEARN_EXAMPLES, type LearnExample } from './learn-examples';
+
+// zzz407 — real-world example callouts, colored by teaching intent.
+const EX_TAG_META: Record<LearnExample['tag'], { label: string; color: string; icon: string }> = {
+  worked: { label: 'WORKED EXAMPLE', color: '#22C55E', icon: '🧮' },
+  scenario: { label: 'REAL SCENARIO', color: '#06B6D4', icon: '🎯' },
+  pitfall: { label: 'COMMON PITFALL', color: '#F59E0B', icon: '⚠' },
+};
 
 const C = {
   bg: '#0B0E14', panel: '#11151F', panel2: '#161B27', border: '#1F2937',
@@ -29,6 +38,7 @@ export default function InvestingPlaybookPage() {
   const [q, setQ] = useState<string>('');
   const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set()); // zzz401 — PART-XX sub-list collapsed by default
   const [collapsedBooks, setCollapsedBooks] = useState<Set<number>>(new Set(ALL_BOOKS)); // zzz402 — all Books collapsed by default
+  const [view, setView] = useState<'intro' | 'book'>('intro'); // zzz407 — First Principles is the default landing page
   const mainRef = useRef<HTMLDivElement>(null);
 
   const totalLines = useMemo(() => BOOK.reduce((n, p) => n + partLines(p), 0), []);
@@ -66,6 +76,7 @@ export default function InvestingPlaybookPage() {
   const currentPart = BOOK[activePart];
   const displayedSubs = activeSub >= 0 ? [currentPart.subs[activeSub]] : currentPart.subs;
   const go = (pi: number, si: number = -1) => {
+    setView('book');
     setActivePart(pi); setActiveSub(si);
     setExpandedParts(prev => { if (prev.has(pi)) return prev; const e = new Set(prev); e.add(pi); return e; });
     // reveal the containing Book so search / prev-next navigation isn't hidden
@@ -105,6 +116,10 @@ export default function InvestingPlaybookPage() {
           <span style={{ fontSize: 10.5, color: C.text3 }}>{ALL_BOOKS.length - collapsedBooks.size} of {ALL_BOOKS.length} books open</span>
         </div>
         <nav style={{ paddingBottom: 40 }}>
+          {/* zzz407 — pinned flagship lesson */}
+          <button onClick={() => { setView('intro'); setQ(''); }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '11px 16px', background: view === 'intro' ? C.gold + '15' : 'transparent', borderLeft: view === 'intro' ? '3px solid ' + C.gold : '3px solid transparent', borderTop: 'none', borderRight: 'none', borderBottom: '1px solid ' + C.border, color: view === 'intro' ? C.gold : C.text, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', textAlign: 'left' }}>
+            ⭐ First Principles <span style={{ fontSize: 9.5, color: C.text3, fontWeight: 600 }}>· start here</span>
+          </button>
           {BOOK.map((p, pi) => {
             const active = pi === activePart;
             const expanded = expandedParts.has(pi);
@@ -158,6 +173,37 @@ export default function InvestingPlaybookPage() {
               </div>
             ))}
           </div>
+        ) : view === 'intro' ? (
+          <article style={{ maxWidth: 880, margin: '0 auto' }}>
+            <div style={{ fontSize: 11, color: C.gold, letterSpacing: '0.5px', marginBottom: 6, fontWeight: 800 }}>⭐ START HERE · THE OPERATING RULES</div>
+            <h1 style={{ fontSize: 32, fontWeight: 800, marginTop: 0, marginBottom: 14, letterSpacing: '-0.5px', lineHeight: 1.12 }}>First Principles</h1>
+            <div style={{ background: C.gold + '12', border: '1px solid ' + C.gold + '33', borderRadius: 10, padding: '14px 18px', marginBottom: 28, fontSize: 15, lineHeight: 1.65, color: C.text }}>{FP_INTRO}</div>
+            {FIRST_PRINCIPLES.map((g, gi) => (
+              <section key={gi} style={{ marginBottom: 34 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 800, color: C.cyan, marginBottom: 4 }}>{g.heading}</h2>
+                <div style={{ fontSize: 13.5, color: C.text2, marginBottom: 16, lineHeight: 1.6 }}>{g.blurb}</div>
+                {g.cards.map((c) => {
+                  const meta = FP_TAG_META[c.tag];
+                  return (
+                    <div key={c.n} style={{ background: C.panel, border: '1px solid ' + C.border, borderLeft: '3px solid ' + meta.color, borderRadius: 10, padding: '16px 18px', marginBottom: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: C.text3 }}>{c.n}.</span>
+                        <span style={{ fontSize: 16.5, fontWeight: 800, color: C.text }}>{c.title}</span>
+                        <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.5px', color: meta.color, background: meta.color + '18', border: '1px solid ' + meta.color + '40', borderRadius: 5, padding: '2px 7px' }}>{meta.label}</span>
+                      </div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: meta.color, lineHeight: 1.5, marginBottom: 10 }}>▶ {c.rule}</div>
+                      <div style={{ fontSize: 14, color: C.text, lineHeight: 1.7, marginBottom: 8 }}><span style={{ color: C.text3, fontWeight: 700 }}>Why it works. </span>{c.why}</div>
+                      <div style={{ fontSize: 14, color: C.text, lineHeight: 1.7, marginBottom: c.pitfall ? 8 : 0, background: C.green + '0c', border: '1px solid ' + C.green + '22', borderRadius: 8, padding: '9px 12px' }}><span style={{ color: C.green, fontWeight: 700 }}>🎯 Example. </span>{c.example}</div>
+                      {c.pitfall && <div style={{ fontSize: 14, color: C.text, lineHeight: 1.7, background: C.amber + '0c', border: '1px solid ' + C.amber + '22', borderRadius: 8, padding: '9px 12px' }}><span style={{ color: C.amber, fontWeight: 700 }}>⚠ Common mistake. </span>{c.pitfall}</div>}
+                    </div>
+                  );
+                })}
+              </section>
+            ))}
+            <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid ' + C.border }}>
+              <button onClick={() => go(0, -1)} style={{ padding: '12px 18px', background: C.cyan + '15', border: '1px solid ' + C.cyan + '40', borderRadius: 8, color: C.cyan, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Start the full playbook → {BOOK[0].title}</button>
+            </div>
+          </article>
         ) : (
           <article style={{ maxWidth: 820, margin: '0 auto' }}>
             <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 6 }}>
@@ -194,6 +240,41 @@ export default function InvestingPlaybookPage() {
                 {s.paras.map((p, j) => renderPara(p, j))}
               </section>
             ))}
+            {/* zzz407 — real-world examples for this section (full-section view only) */}
+            {activeSub === -1 && (LEARN_EXAMPLES[activePart]?.length ?? 0) > 0 && (
+              <section style={{ marginTop: 34, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, paddingBottom: 10, borderBottom: '2px solid ' + C.gold + '33' }}>
+                  <span style={{ fontSize: 20 }}>🎯</span>
+                  <h2 style={{ fontSize: 20, fontWeight: 800, color: C.gold, margin: 0 }}>Real-World Examples</h2>
+                  <span style={{ fontSize: 10.5, color: C.text3, fontWeight: 600, background: C.panel2, borderRadius: 10, padding: '2px 8px' }}>{LEARN_EXAMPLES[activePart].length}</span>
+                </div>
+                {LEARN_EXAMPLES[activePart].map((ex, ei) => {
+                  const meta = EX_TAG_META[ex.tag] || EX_TAG_META.scenario;
+                  return (
+                    <div key={ei} style={{ background: C.panel, border: '1px solid ' + C.border, borderLeft: '3px solid ' + meta.color, borderRadius: 10, padding: '16px 18px', marginBottom: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.5px', color: meta.color, background: meta.color + '18', border: '1px solid ' + meta.color + '40', borderRadius: 5, padding: '2px 7px' }}>{meta.icon} {meta.label}</span>
+                        {ex.company && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.text2, background: C.panel2, border: '1px solid ' + C.border, borderRadius: 5, padding: '2px 8px' }}>{ex.company}</span>}
+                      </div>
+                      <div style={{ fontSize: 16.5, fontWeight: 800, color: C.text, lineHeight: 1.4, marginBottom: 10 }}>{ex.title}</div>
+                      {ex.body.map((para, pj) => (
+                        <p key={pj} style={{ fontSize: 14.5, lineHeight: 1.75, color: C.text, margin: '0 0 9px' }}>{para}</p>
+                      ))}
+                      {ex.numbers && ex.numbers.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                          {ex.numbers.map((n, ni) => (
+                            <div key={ni} style={{ background: meta.color + '0d', border: '1px solid ' + meta.color + '2a', borderRadius: 8, padding: '7px 12px', minWidth: 90 }}>
+                              <div style={{ fontSize: 9.5, color: C.text3, fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase', marginBottom: 2 }}>{n.label}</div>
+                              <div style={{ fontSize: 15, color: meta.color, fontWeight: 800, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{n.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </section>
+            )}
             {/* Prev / Next navigation */}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 40, paddingTop: 20, borderTop: '1px solid ' + C.border }}>
               <button disabled={activePart === 0} onClick={() => go(activePart - 1, -1)} style={{ flex: 1, textAlign: 'left', padding: '12px 16px', background: activePart === 0 ? 'transparent' : C.panel, border: '1px solid ' + C.border, borderRadius: 8, color: activePart === 0 ? C.text3 : C.text, cursor: activePart === 0 ? 'default' : 'pointer', opacity: activePart === 0 ? 0.4 : 1 }}>
