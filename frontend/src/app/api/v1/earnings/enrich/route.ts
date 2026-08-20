@@ -1195,6 +1195,59 @@ async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<str
   }
 }
 
+// zzz408 — GitHub-Actions-scraped fundamentals fallback (Cloudflare-immune).
+//
+// Root cause this rescues: the indiaearninghub Worker (our only reliably
+// Cloudflare-immune live source from Railway's datacenter IP) fetches Screener's
+// /consolidated/ page and, for standalone-only businesses whose consolidated
+// page is an EMPTY shell (DIVGIITTS, GRSE, DATAPATTNS, HOMEFIRST, UJJIVANSFB …),
+// returns an all-null payload and never falls back to the populated standalone
+// page. Direct Screener + Yahoo are both blocked/crumb-gated from Railway, so
+// those cards showed "Financial detail awaiting enrichment".
+//
+// The GitHub Actions scraper (scrape-screener-fundamentals.mjs) runs from
+// GitHub's IPs — NOT Cloudflare-blocked — and now (zzz408) correctly falls back
+// to the standalone page, writing `fundamentals:v1:<TICKER>` to KV. We read that
+// blob here as a LAST-RESORT source (after all live sources miss) and map its
+// pre-computed YoY into the fields gradeRow reads directly, so the card grades
+// fully instead of rendering the awaiting-enrichment placeholder.
+async function fetchGhFundamentals(sym: string): Promise<any | null> {
+  if (!isRedisAvailable()) return null;
+  try {
+    const f: any = await kvGet(`fundamentals:v1:${sym}`);
+    if (!f || typeof f !== 'object') return null;
+    const salesYoY = typeof f.salesQtrYoY === 'number' && Number.isFinite(f.salesQtrYoY) ? f.salesQtrYoY : null;
+    const patYoY = typeof f.patQtrYoY === 'number' && Number.isFinite(f.patQtrYoY) ? f.patQtrYoY : null;
+    const opm = typeof f.opmLatestQ === 'number' && Number.isFinite(f.opmLatestQ) ? f.opmLatestQ : null;
+    // Require at least one real financial signal — otherwise this blob is as
+    // empty as the sources we're rescuing and should not win the merge.
+    if (salesYoY == null && patYoY == null && opm == null) return null;
+    const mcap = typeof f.mcapCr === 'number' && Number.isFinite(f.mcapCr) ? f.mcapCr : null;
+    return {
+      sector: f.sector || null,
+      pe: typeof f.pe === 'number' && Number.isFinite(f.pe) ? f.pe : null,
+      roce: typeof f.roce === 'number' && Number.isFinite(f.roce) ? f.roce : null,
+      roe: typeof f.roe === 'number' && Number.isFinite(f.roe) ? f.roe : null,
+      debtToEquity: typeof f.debtToEquity === 'number' && Number.isFinite(f.debtToEquity) ? f.debtToEquity : null,
+      market_cap_cr: mcap,
+      market_cap_bucket: mcap == null ? null : mcap >= 200_000 ? 'MEGA' : mcap >= 20_000 ? 'LARGE' : mcap >= 5_000 ? 'MID' : mcap >= 500 ? 'SMALL' : 'MICRO',
+      // YoY consumed directly by gradeRow (graded/route.ts lines 118-121).
+      sales_yoy_pct: salesYoY,
+      pat_yoy_pct: patYoY,
+      opm_pct: opm,
+      // TTM absolutes (quarterly not published by the GH blob) — surface for context.
+      sales_ttm_cr: typeof f.salesTtmCr === 'number' ? f.salesTtmCr : null,
+      pat_ttm_cr: typeof f.patTtmCr === 'number' ? f.patTtmCr : null,
+      company: f.company || null,
+      company_name: f.company || null,
+      financials_source: 'screener-gh',
+      _gh_fetched_at: f.fetchedAt || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   // PATCH 1013 — bumped v5 → v6 to invalidate stale entries lacking opm_pct.
@@ -1363,37 +1416,38 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   };
 
   const tryVariant = async (sym: string, filedHint?: string) => {  // PATCH 0986
-    const [worker, nse, screener, yahoo, yahooFund, cfoOnly] = await Promise.all([
+    const [worker, nse, screener, yahoo, yahooFund, cfoOnly, ghFund] = await Promise.all([
       fetchWorkerStock(sym),
       fetchNseFinancials(sym),
       fetchScreenerForSymbol(sym),
       fetchYahooForSymbol(sym, filedHint),  // PATCH 0986
       fetchYahooFundamentals(sym),
       fetchScreenerCFO(sym), // zzz320 — dedicated CFO row extractor (Cloudflare-proxied)
+      fetchGhFundamentals(sym), // zzz408 — Cloudflare-immune KV backfill (last resort)
     ]);
-    const anyHit = worker || nse || screener || yahoo || yahooFund;
-    return { sym, worker, nse, screener, yahoo, yahooFund, cfoOnly, anyHit };
+    const anyHit = worker || nse || screener || yahoo || yahooFund || ghFund;
+    return { sym, worker, nse, screener, yahoo, yahooFund, cfoOnly, ghFund, anyHit };
   };
 
   // Run all variants in parallel; keep the first variant that actually
   // produced ANY data. Variant order matters: original first, then
   // sanitized forms.
-  let worker: any = null, nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null, cfoOnly: any = null;
+  let worker: any = null, nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null, cfoOnly: any = null, ghFund: any = null;
   if (symVariants.length === 1) {
     // Fast path — no special chars in symbol, no variant fan-out needed
     const r = await tryVariant(symbol, filedHint);  // PATCH 0986
-    worker = r.worker; nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund; cfoOnly = r.cfoOnly;
+    worker = r.worker; nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund; cfoOnly = r.cfoOnly; ghFund = r.ghFund;
   } else {
     // Slow path — fan-out to variants in parallel, pick the most-populated.
     const results = await Promise.all(symVariants.map((v) => tryVariant(v, filedHint)));  // PATCH 0986
     // Score each result by how many sources returned non-null (Worker counts double — it's pre-parsed)
     const scored = results.map(r => ({
       ...r,
-      score: (r.worker ? 2 : 0) + (r.nse ? 1 : 0) + (r.screener ? 1 : 0) + (r.yahoo ? 1 : 0) + (r.yahooFund ? 1 : 0),
+      score: (r.worker ? 2 : 0) + (r.nse ? 1 : 0) + (r.screener ? 1 : 0) + (r.yahoo ? 1 : 0) + (r.yahooFund ? 1 : 0) + (r.ghFund ? 1 : 0),
     }));
     scored.sort((a, b) => b.score - a.score);
     const best = scored[0];
-    worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund; cfoOnly = best.cfoOnly;
+    worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund; cfoOnly = best.cfoOnly; ghFund = best.ghFund;
   }
   // Merge priority (most reliable first):
   //   1. Cloudflare Worker  — pre-parsed, Cloudflare-immune (Patch 0519)
@@ -1401,7 +1455,11 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   //   3. Screener direct    — fallback for tickers not on Worker
   //   4. Yahoo fundamentals — Cloudflare-blocked Screener bypass
   //   Always overlay: Yahoo price / RS / Stage / 52w (separate concerns).
-  const fin = worker || nse || screener || yahooFund || {};
+  // zzz408 — ghFund is the LAST-RESORT source: only wins when every live source
+  // (worker/nse/screener/yahooFund) missed. That is exactly the empty-consolidated
+  // Worker-blind case (DIVGIITTS-class) this rescue targets, so it never overrides
+  // fresher live data.
+  const fin = worker || nse || screener || yahooFund || ghFund || {};
   // Sector/market_cap_bucket from Worker / Screener if available
   const meta = worker ? {
     sector: worker.sector,
@@ -1412,7 +1470,12 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     market_cap_bucket: screener.market_cap_bucket,
     market_cap_cr: screener.market_cap_cr,
     pe: screener.pe,
-  } : (yahooFund && yahooFund.pe ? { pe: yahooFund.pe } : {});
+  } : (yahooFund && yahooFund.pe ? { pe: yahooFund.pe } : (ghFund ? {
+    sector: ghFund.sector,
+    market_cap_bucket: ghFund.market_cap_bucket,
+    market_cap_cr: ghFund.market_cap_cr,
+    pe: ghFund.pe,
+  } : {}));
   const out: any = {
     ...fin,
     ...meta,
@@ -1422,6 +1485,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       nse ? 'nse' :
       screener ? 'screener' :
       yahooFund ? 'yahoo-fundamentals' :
+      ghFund ? 'screener-gh' :
       null,
     _enriched_at: new Date().toISOString(),
   };
