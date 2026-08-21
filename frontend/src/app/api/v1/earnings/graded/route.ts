@@ -48,12 +48,42 @@ function deriveQuarterLabel(filingDate?: string | null): string {
 // using its own public URL. On Railway these fail like the hub fetch
 // because the edge layer rejects self-loops. Retry via 127.0.0.1:$PORT.
 async function _doEnrichSelfFetch(url: string, init?: RequestInit): Promise<Response> {
+  const port = process.env.PORT;
+  const loop = (port && /^https?:\/\/[^/]+\//.test(url))
+    ? url.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`)
+    : null;
+  // zzz411 — ROOT CAUSE of the persistent "screener gap" / "0/N updated" bug.
+  // On Railway the container frequently cannot reach its OWN public URL: the
+  // edge rejects the self-loop with a NON-OK status (404/421/5xx) — or worse,
+  // a 200 with an error body — instead of throwing a network error. The old
+  // catch-only fallback never triggered for those cases, so the caller's
+  // `r.ok ? r.json() : {data:{}}` silently returned an EMPTY enrich body and
+  // every card stayed a preview ("0/42 updated" on Refresh) even though /enrich
+  // returns full data in ~6s when reached directly. On Railway the reliable
+  // path is the in-container loopback, so try it FIRST there and only fall back
+  // to the public URL. On Vercel (no RAILWAY_* env) keep public-first.
+  // "Self-hosted node server with a loopback port, and NOT Vercel serverless"
+  // — i.e. Railway (or any long-running container). Vercel sets VERCEL=1 and its
+  // functions can't loopback to 127.0.0.1, so there we keep public-first.
+  const onRailway = !!loop && !process.env.VERCEL;
+  if (loop && onRailway) {
+    try {
+      const rl = await fetch(loop, init);
+      if (rl.ok) return rl;
+      console.log(`[graded/enrich] loopback returned ${rl.status}, falling back to public URL`);
+    } catch (e: any) {
+      console.log(`[graded/enrich] loopback failed (${e?.message}), falling back to public URL`);
+    }
+  }
   try {
-    return await fetch(url, init);
+    const r = await fetch(url, init);
+    if (!r.ok && loop && !onRailway) {
+      // Vercel-side safety: non-OK public self-loop → try loopback once.
+      try { const rl = await fetch(loop, init); if (rl.ok) return rl; } catch {}
+    }
+    return r;
   } catch (err: any) {
-    const port = process.env.PORT;
-    if (port && /^https?:\/\/[^/]+\//.test(url)) {
-      const loop = url.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+    if (loop) {
       console.log(`[graded/enrich] public-URL fetch failed (${err?.message}), retrying via loopback`);
       return await fetch(loop, init);
     }
@@ -701,13 +731,18 @@ export async function GET(req: Request) {
             continue;
           }
           const e = enrich[c.ticker];
-          // PATCH 0360 — enrich-success criterion also uses YoY presence.
-          const enrichHasYoY = !!e && (
-            e.sales_yoy_pct != null ||
-            e.pat_yoy_pct != null ||
-            e.eps_yoy_pct != null
+          // PATCH 0360 — enrich-success criterion used YoY presence.
+          // zzz411 — ALSO accept absolute current-quarter financials. Recent
+          // IPOs and names Screener has no year-ago quarter for (CAMPUS, CRIZAC,
+          // AWFIS, PATELRMART …) return sales_curr/pat_curr/eps/opm with NO YoY.
+          // gradeRow's `hasAnyAbsolute` branch renders those perfectly, but this
+          // gate was discarding them as "no useful data" → permanent screener-gap.
+          const enrichHasData = !!e && (
+            e.sales_yoy_pct != null || e.pat_yoy_pct != null || e.eps_yoy_pct != null ||
+            e.sales_curr_cr != null || e.pat_curr_cr != null || e.eps_curr != null ||
+            e.opm_pct != null || e.market_cap_cr != null || e.pe != null
           );
-          if (!enrichHasYoY) {
+          if (!enrichHasData) {
             updatedCards.push(c);  // still no useful data → keep preview
             continue;
           }
@@ -749,7 +784,11 @@ export async function GET(req: Request) {
           // the message but renders identical to the preview card on screen.
           // The user sees "Updated 11/11" while staring at preview cards.
           const hasRealFinancials = !!g && (
-            g.sales_yoy_pct != null || g.net_profit_yoy_pct != null || g.eps_yoy_pct != null
+            g.sales_yoy_pct != null || g.net_profit_yoy_pct != null || g.eps_yoy_pct != null ||
+            // zzz411 — an absolute-financials card (Rev/PAT/EPS present, no YoY)
+            // is a real, informative card, not a preview. Count it as updated so
+            // Refresh stops falsely reporting "0/N updated" for these names.
+            g.sales_curr_cr != null || g.pat_curr_cr != null || g.eps_curr != null
           );
           if (g && hasRealFinancials) {
             updatedCards.push(g);
