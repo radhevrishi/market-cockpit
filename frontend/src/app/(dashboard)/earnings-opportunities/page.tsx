@@ -1614,9 +1614,18 @@ export default function EarningsOpportunitiesPage() {
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []) as ParsedEarning[];
     if (allCards.length < 20) return;  // only worth it on heavy days
-    const missing = allCards.filter((c) =>
-      c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null
-    ).length;
+    // zzz415 — same convergent criterion as the Refresh button (see below):
+    // absolute-only cards (YoY impossible — no year-ago quarter) must not be
+    // counted as forever-missing, or this auto-converge loop reads "no
+    // progress" every round and bails while real gaps remain.
+    const missing = allCards.filter((c) => {
+      const noYoY = c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null;
+      const noAbs = c.sales_curr_cr == null && c.pat_curr_cr == null && (c as any).eps_curr == null;
+      const opmCur = (c as any).opm_pct, opmPrev = (c as any).opm_prev_pct, salesCur = (c as any).sales_curr_cr;
+      const opmStaleZero = (opmCur === 0 || opmPrev === 0) && salesCur != null && Number(salesCur) >= 100;
+      const noMargin = (opmCur == null && opmPrev == null) || opmStaleZero;
+      return (noYoY && noAbs) || noMargin;
+    }).length;
 
     // Reset per-date counters when the viewed date changes.
     if (convergeRef.current.date !== resolvedDateForGrading) {
@@ -2776,11 +2785,27 @@ export default function EarningsOpportunitiesPage() {
           })()}
           {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
           {resolvedDateForGrading && (() => {
+            // zzz415 — count with the SAME criterion the server's refreshMissing
+            // uses, so the button label matches what a refresh will attempt.
+            // Old rule (no absolutes at all) under-counted: a card with raw
+            // Rev/PAT but no OPM (VIKRAN-class) was invisible here ("Refresh 1
+            // missing" while 2 cards showed screener-gap) yet the server
+            // attempted it. New rule: missing = (no YoY AND no absolutes) OR
+            // margin missing/stale-zero. Absolute-only names (recent IPOs with
+            // no year-ago quarter) clear once their OPM lands, so the counter
+            // converges instead of sticking forever.
             const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
               .concat(view.by_tier?.STRONG ?? [])
               .concat(view.by_tier?.MIXED ?? [])
               .concat(view.by_tier?.AVOID ?? [])
-              .filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).length;
+              .filter((c) => {
+                const noYoY = c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null;
+                const noAbs = c.sales_curr_cr == null && c.pat_curr_cr == null && (c as any).eps_curr == null;
+                const opmCur = (c as any).opm_pct, opmPrev = (c as any).opm_prev_pct, salesCur = (c as any).sales_curr_cr;
+                const opmStaleZero = (opmCur === 0 || opmPrev === 0) && salesCur != null && Number(salesCur) >= 100;
+                const noMargin = (opmCur == null && opmPrev == null) || opmStaleZero;
+                return (noYoY && noAbs) || noMargin;
+              }).length;
             // Show button if missing > 0 OR a feedback message is currently displayed.
             // Don't hide button just because data isn't there to fetch.
             if (missing === 0 && !refreshFeedback) return null;
