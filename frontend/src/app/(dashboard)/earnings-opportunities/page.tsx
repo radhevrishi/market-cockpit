@@ -1109,13 +1109,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v13:';  // zzz189 — bumped v12→v13 to invalidate stale payloads that lost enrich metadata under zzz187 fix
+  const LS_PREFIX = 'mc:graded:v14:';  // zzz417 — bumped v13→v14 to flush undercounted (1-of-N) stale client snapshots; zzz189 — v12→v13
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:')) localStorage.removeItem(k);  // zzz189 — v12 added
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:')) localStorage.removeItem(k);  // zzz417 — v13 added
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
@@ -1176,6 +1176,15 @@ export default function EarningsOpportunitiesPage() {
       const hadHubFail = !!parsed?._hub_fail;
       if (hadHubFail || (totalGraded === 0 && candTotal === 0)) {
         return undefined;  // force refetch from server
+      }
+      // zzz417 — reject UNDERCOUNTED snapshots. A payload saved before the
+      // day's filings propagated holds far fewer graded cards than the day
+      // actually filed (the 1-of-89 bug). Refetch so the now-healed server
+      // payload (self-healed by the graded route + prewarm cron) replaces it.
+      const rawItems = parsed?.raw_items_total || 0;
+      const bestCount = Math.max(totalGraded, candTotal);
+      if (rawItems >= 8 && bestCount < 0.6 * rawItems) {
+        return undefined;  // undercounted cache — force refetch
       }
       return parsed;
     } catch { return undefined; }
