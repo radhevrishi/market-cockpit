@@ -133,6 +133,17 @@ interface ParsedEarning {
   source: string;
 }
 
+// zzz414 — "Jun 2026" → "2026-06-30" (last day of the labelled month).
+// Screener's quarterly-table column label, converted to the quarter-end ISO
+// used by the corroboration guards. Null-safe: returns null on any mismatch.
+function _isoFromQuarterLabel(label: any): string | null {
+  const m = String(label || '').match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
+  if (!m) return null;
+  const mi: Record<string, number> = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+  const d = new Date(Date.UTC(parseInt(m[2],10), (mi[m[1].toUpperCase().slice(0,3)] ?? 0) + 1, 0));
+  return d.toISOString().slice(0, 10);
+}
+
 // ─── gradeRow (server-side, mirrors page.tsx PATCH 0158) ───────────────────
 function parseTrendlynePeriodEnd(s: string): string | null {
   if (!s) return null;
@@ -235,7 +246,24 @@ function gradeRow(row: any): ParsedEarning | null {
     if (!isNaN(filingD.getTime())) {
       const ageDays = (todayD.getTime() - filingD.getTime()) / 86_400_000;
       const hubConfirmed = row?.hub_quality && row.hub_quality !== 'Upcoming';
-      if (ageDays > 7 && !hubConfirmed) return null;
+      // zzz414 — quarter-corroborated escape for hub-'Upcoming' rows.
+      // The hub scheduled a RESULTS board meeting for exactly this date
+      // (that's what an 'Upcoming' row IS), and Screener's quarterly table
+      // now shows a quarter-end 0–95 days before the filing date — i.e. the
+      // company's expected new quarter has appeared, which Screener only
+      // renders after the results are actually filed. Together those two
+      // signals confirm the filing happened as scheduled (DIVGIITTS Aug-11:
+      // Jun-2026 quarter, 42 days). The GARUDA-class ghosts this guard
+      // exists for serve a months-old quarter and still fail the window.
+      let quarterCorroborated = false;
+      if (row?.hub_quality === 'Upcoming' && row?.latest_quarter_end_iso) {
+        const qe = new Date(row.latest_quarter_end_iso).getTime();
+        if (!isNaN(qe)) {
+          const qDays = (filingD.getTime() - qe) / 86_400_000;
+          quarterCorroborated = qDays >= 0 && qDays <= 95;
+        }
+      }
+      if (ageDays > 7 && !hubConfirmed && !quarterCorroborated) return null;
     }
   }
 
@@ -748,7 +776,18 @@ export async function GET(req: Request) {
           }
           // Re-grade with new enrichment data
           const row = {
-            hub_quality: undefined,                    // we have financials now, no preview path
+            // zzz414 — was `hub_quality: undefined`, which made gradeRow's
+            // preview path return NULL for absolute-only enrichments (recent
+            // IPOs like CMRGREEN: full Rev/PAT/EPS/OPM but no year-ago
+            // quarter → all YoY null → !hasFin → preview branch → no
+            // hubQuality → dropped). The card being IN the cached payload
+            // means the filing was already confirmed once, so reconstruct
+            // the quality from its existing tier — the absolutes branch then
+            // renders Rev/PAT/EPS instead of "awaiting enrichment".
+            hub_quality: ((): any => {
+              const t = (c as any)?.tier;
+              return t === 'BLOCKBUSTER' ? 'Excellent' : t === 'STRONG' ? 'Great' : t === 'AVOID' ? 'Weak' : 'Good';
+            })(),
             // PATCH 0369 — prefer enrich's resolved company name (it now
             // queries Screener.in search when NSE name was missing/junk).
             // Falls back to the cached card name if enrich didn't resolve.
@@ -772,7 +811,7 @@ export async function GET(req: Request) {
             rs_rating: e.rs_rating ?? c.rs_rating, stage: e.stage ?? c.stage,
             trend_template_passes: e.trend_template_passes,
             ocf_annual_cr: e.ocf_annual_cr, pat_annual_cr: e.pat_annual_cr, ocf_to_pat_ratio: e.ocf_to_pat_ratio,
-            period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso,
+            period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso ?? _isoFromQuarterLabel(e.latest_quarter_label),  // zzz414
             announce_date_iso: e.announce_date_iso,
             financials_source: e.financials_source,
           };
@@ -1330,7 +1369,11 @@ export async function GET(req: Request) {
       rs_rating: e.rs_rating ?? null, stage: e.stage ?? null,
       trend_template_passes: e.trend_template_passes ?? false,
       ocf_annual_cr: e.ocf_annual_cr ?? null, pat_annual_cr: e.pat_annual_cr ?? null, ocf_to_pat_ratio: e.ocf_to_pat_ratio ?? null,
-      period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso,
+      period_ended: e.period_ended,
+      // zzz414 — fall back to deriving the quarter-end from the Screener
+      // quarter label when the enrich payload predates the enrich-side fix
+      // (cached entries) or came from a source that only sets the label.
+      latest_quarter_end_iso: e.latest_quarter_end_iso ?? _isoFromQuarterLabel(e.latest_quarter_label),
             announce_date_iso: e.announce_date_iso,
       financials_source: e.financials_source,
     };

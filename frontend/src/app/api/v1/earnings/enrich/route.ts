@@ -435,6 +435,18 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
       pat_yoy_pct: pct(patCurr, patPrev),
       eps_yoy_pct: pct(epsCurr, epsPrev),
       latest_quarter_label: q.labels[latestIdx],
+      // zzz414 — derive the quarter-end ISO from the label ("Jun 2026" →
+      // "2026-06-30"). The direct-Screener path never set this, so downstream
+      // corroboration (gradeRow zzz72 guard, dropGhosts, freshness checks) had
+      // nothing to verify against for screener-sourced rows — hub-'Upcoming'
+      // names like DIVGIITTS were dropped even with fresh, correct financials.
+      latest_quarter_end_iso: (() => {
+        const m = String(q.labels[latestIdx] || '').match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
+        if (!m) return null;
+        const mi: Record<string, number> = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+        const d = new Date(Date.UTC(parseInt(m[2],10), (mi[m[1].toUpperCase().slice(0,3)] ?? 0) + 1, 0));
+        return d.toISOString().slice(0, 10);
+      })(),
       financials_source: 'screener',
       // zzz356 — 4-quarter history (Sales/EPS/OPM) + EBITDA margin + Receivables/
       // Inventory YoY. All parsed from the same Screener HTML we already have,
