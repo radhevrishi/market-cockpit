@@ -382,7 +382,20 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     const sector = parseSector(html);
     const N = q.labels.length;
     const latestIdx = N - 1;
-    const priorIdx = N - 5;
+    // zzz416 — YoY lookup was purely POSITIONAL (4 columns back). Recent IPOs
+    // carry a SPARSE quarterly table on Screener (only the RHP-disclosed
+    // quarters — INDOMIM shows just [Jun 2025, Mar 2026, Jun 2026]), so
+    // N-5 lands out of bounds and YoY silently nulls even though the exact
+    // year-ago quarter is sitting in column 0. Fall back to a MONTH-MATCHED
+    // lookup: same month, year − 1.
+    let priorIdx = N - 5;
+    if (priorIdx < 0) {
+      const lm = String(q.labels[latestIdx] || '').match(/([A-Za-z]{3})\s+(\d{4})/);
+      if (lm) {
+        const want = `${lm[1]} ${parseInt(lm[2], 10) - 1}`;
+        priorIdx = q.labels.findIndex((l: any) => String(l).trim().toLowerCase() === want.toLowerCase());
+      }
+    }
     const get = (kw: string, idx: number) => {
       const k = Object.keys(q.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
       return k ? (q.rows[k]?.[idx] ?? null) : null;
@@ -1521,6 +1534,27 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       out.roe = sc.roe;
       out._roe_source = 'screener';
     }
+    // zzz416 — YoY cherry-pick. For recent IPOs with sparse quarter tables the
+    // Worker computes YoY positionally and returns null, and since the Worker
+    // wins the primary merge, the direct-Screener month-matched YoY (see the
+    // priorIdx fallback in fetchScreenerForSymbol) never surfaced. Fill the
+    // whole prev/yoy family from the direct scrape when the primary left it
+    // null — never overwrites a populated primary value.
+    if (out.sales_yoy_pct == null && sc.sales_yoy_pct != null) {
+      out.sales_yoy_pct = sc.sales_yoy_pct;
+      if (out.sales_prev_cr == null) out.sales_prev_cr = sc.sales_prev_cr ?? null;
+      out._yoy_source = 'screener';
+    }
+    if (out.pat_yoy_pct == null && sc.pat_yoy_pct != null) {
+      out.pat_yoy_pct = sc.pat_yoy_pct;
+      if (out.pat_prev_cr == null) out.pat_prev_cr = sc.pat_prev_cr ?? null;
+    }
+    if (out.eps_yoy_pct == null && sc.eps_yoy_pct != null) {
+      out.eps_yoy_pct = sc.eps_yoy_pct;
+      if (out.eps_prev == null) out.eps_prev = sc.eps_prev ?? null;
+    }
+    if (out.opm_prev_pct == null && sc.opm_prev_pct != null) out.opm_prev_pct = sc.opm_prev_pct;
+    if (out.op_profit_yoy_pct == null && sc.op_profit_yoy_pct != null) out.op_profit_yoy_pct = sc.op_profit_yoy_pct;
   }
   if (yahooFund) {
     const yf = yahooFund as any;
