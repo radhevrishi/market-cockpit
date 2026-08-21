@@ -1675,6 +1675,34 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     if (out._screener_overlay == null) out._screener_overlay = 'zzz366';
   }
 
+  // zzz419 — derive YoY from the quarterly series when the primary sources left
+  // it null but the array carries a year-ago quarter (>=5 contiguous quarters,
+  // oldest-first tail). Fixes recent-IPO cards (VIKRAN etc.) where the Worker
+  // supplies quarters_sales/eps/opm but no prev/YoY, and the direct-Screener
+  // month-match path (zzz416) was bypassed because the Worker won the merge.
+  {
+    const _yoyFromSeries = (arr: any): { curr: number; prev: number } | null => {
+      if (!Array.isArray(arr) || arr.length < 5) return null;
+      const curr = Number(arr[arr.length - 1]);
+      const prev = Number(arr[arr.length - 5]);  // 4 quarters back = year-ago
+      if (!Number.isFinite(curr) || !Number.isFinite(prev) || prev === 0) return null;
+      return { curr, prev };
+    };
+    const _pctChg = (c: number, p: number) => Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
+    if (out.sales_yoy_pct == null) {
+      const r = _yoyFromSeries((out as any).quarters_sales);
+      if (r) { out.sales_yoy_pct = _pctChg(r.curr, r.prev); if (out.sales_prev_cr == null) out.sales_prev_cr = r.prev; out._yoy_source = (out as any)._yoy_source || 'quarters-series'; }
+    }
+    if (out.eps_yoy_pct == null) {
+      const r = _yoyFromSeries((out as any).quarters_eps);
+      if (r) { out.eps_yoy_pct = _pctChg(r.curr, r.prev); if ((out as any).eps_prev == null) (out as any).eps_prev = r.prev; }
+    }
+    if (out.opm_prev_pct == null) {
+      const r = _yoyFromSeries((out as any).quarters_opm);
+      if (r) { out.opm_prev_pct = r.prev; }
+    }
+  }
+
   // PATCH 1016 — NSE Bhavcopy overlay for D1/Gap price reaction.
   // Yahoo blocks Railway IPs often → D1/Gap missing for most tickers, blocking
   // ELITE qualification. NSE archives bhavcopy is a static CSV that never

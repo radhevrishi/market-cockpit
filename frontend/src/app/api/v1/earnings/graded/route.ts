@@ -639,7 +639,7 @@ export async function GET(req: Request) {
         ));
         const isRecentPast = isPast && dateAgeDaysForCache <= 14;
         const isEmptyCache = totalCards === 0;
-        const bypassEmptyCache = isRecentPast && isEmptyCache && !recentlyHealed;
+        const bypassEmptyCache = isPast && isEmptyCache && !recentlyHealed;  // zzz419 — heal empty caches on ANY past date (calendar-fallback recovers hub-missing dates like Jul 24), not just <=14d
         // zzz417 — UNDERCOUNT heal. A cache written before the day's filings
         // propagated holds far fewer graded cards than the day actually filed.
         // raw_items_total records how many filings existed at write time; when
