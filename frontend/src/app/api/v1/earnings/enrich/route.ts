@@ -377,7 +377,13 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     const html = await fetchScreenerHtml(url);
     if (!html) continue;
     const q = parseQuartersTable(html);
-    if (!q || q.labels.length < 5) continue;
+    // zzz416b — was `q.labels.length < 5`, which rejected recent IPOs outright:
+    // their Screener quarterly table only carries the RHP-disclosed quarters
+    // (INDOMIM: 3 columns incl. the exact year-ago quarter), so the whole
+    // direct-Screener result was discarded before the month-matched YoY
+    // fallback below could ever run. Two columns is enough for latest-quarter
+    // absolutes; YoY fills in whenever the year-ago column exists.
+    if (!q || q.labels.length < 2) continue;
     const ratios = parseTopRatios(html);
     const sector = parseSector(html);
     const N = q.labels.length;
