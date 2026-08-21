@@ -812,6 +812,32 @@ export async function GET(request: Request) {
       if (rf && withinWindow(rf._filingDate)) return true;
       return false;
     };
+    // zzz412 — like isConfirmedNear but RETURNS the actual confirming
+    // filing/outcome Date (or null). Used so a confirmed board meeting is
+    // dated to when the results were ACTUALLY announced, not the board-MEETING
+    // date. Real-world: Divgi (DIVGIITTS) Q4 FY26 board meeting was 25 May but
+    // the results + earnings call were 27 May — the card was landing on 25 May
+    // (a date on which no financials existed yet), which then never enriched.
+    const confirmingDateNear = (ticker: string, meetingDate: Date): Date | null => {
+      const t = meetingDate.getTime();
+      const pick = (d: any): Date | null => {
+        if (!d) return null;
+        const dt = d instanceof Date ? d : new Date(d);
+        if (isNaN(dt.getTime())) return null;
+        return Math.abs(dt.getTime() - t) <= CONFIRM_WINDOW_MS ? dt : null;
+      };
+      const co = confirmedOutcomes.get(ticker);
+      const coD = co ? pick(co._annDate) : null;
+      if (coD) return coD;
+      const fr = frResultsByTicker.get(ticker);
+      const frD = fr ? pick(fr._filingDate) : null;
+      if (frD) return frD;
+      const rf = resultsFilingsByTicker.get(ticker);
+      const rfD = rf ? pick(rf._filingDate) : null;
+      if (rfD) return rfD;
+      return null;
+    };
+
     // Backward-compat: some downstream code (Section C standalone events)
     // still only cares "has ANY confirmation for this ticker" without a
     // specific meeting date. Keep the old broad form available for that use.
@@ -846,7 +872,12 @@ export async function GET(request: Request) {
       // For older meetings (>14 days), still drop entirely.
       const ageDays = Math.floor((today.getTime() - meetingDate.getTime()) / (24 * 3600_000));
       // zzz232 — date-proximity confirmation. See isConfirmedNear() comment.
-      const confirmed = isConfirmedNear(ticker, meetingDate);
+      // zzz412 — capture the ACTUAL confirming filing/outcome date so the card
+      // is dated to when the results were really announced (e.g. Divgi 27 May),
+      // not the board-MEETING date (25 May). Falls back to the meeting date
+      // when no confirming filing is found (still Upcoming in that case).
+      const confirmDate = confirmingDateNear(ticker, meetingDate);
+      const confirmed = confirmDate != null;
       if (isPast && !confirmed && ageDays > 14) continue;
 
       const stockInfo = priceLookup[ticker];
@@ -859,7 +890,9 @@ export async function GET(request: Request) {
       eventsMap.set(ticker, {
         ticker,
         company: meeting.bm_companyName || meeting.sm_name || ticker,
-        resultDate: meetingDate.toISOString().split('T')[0],
+        // zzz412 — date to the ACTUAL result announcement when confirmed,
+        // else the board-meeting date (which stays quality='Upcoming').
+        resultDate: (confirmDate || meetingDate).toISOString().split('T')[0],
         quarter,
         // CRITICAL FIX: only grade as filed (quality != Upcoming) when we
         // have explicit confirmation (outcomeAnn / financialResults / sub_cat
