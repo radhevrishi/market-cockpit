@@ -33,7 +33,7 @@
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;  // PATCH 0993 — Railway has no hard ceiling; dense dates need 60s+ enrichment
+export const maxDuration = 300;  // PATCH 0993 — Railway has no hard ceiling; dense dates need 60s+ enrichment
 
 // PATCH 0361 — reduced from 6 → 2. A graded?refreshMissing=1 call can
 // take 12-20s per date (30 tickers × ~500ms enrich). 6 dates = 90s, way
@@ -45,7 +45,7 @@ const MAX_DAYS_PER_CALL = 1;  // PATCH 0993 — single date per call gives dense
 // Per-date timeout for the internal graded fetch. If a single date hangs,
 // we skip it (return 'error') and the next iteration moves on rather than
 // blocking the whole batch.
-const PER_DATE_TIMEOUT_MS = 60_000;  // PATCH 0993 — was 22s (Vercel budget); Railway allows 60s, dense dates need it
+const PER_DATE_TIMEOUT_MS = 280_000;  // zzz417 — was 60s; force rebuild of a dense date needs the full budget  // PATCH 0993 — was 22s (Vercel budget); Railway allows 60s, dense dates need it
 
 function isoNDaysAgo(n: number): string {
   const d = new Date();
@@ -127,7 +127,7 @@ export async function GET(req: Request) {
       // and enriches all preview-shape cards into real graded ones.
       // PATCH 0361 — per-date AbortSignal timeout. If one date hangs we
       // skip it instead of letting it eat the whole 55s function budget.
-      const url = `${origin}/api/v1/earnings/graded?date=${date}&refreshMissing=1`;
+      const url = `${origin}/api/v1/earnings/graded?date=${date}&force=1`;  // zzz417 — force (adds missing tickers), was refreshMissing=1 (only polished existing)
       // PATCH 0982-backfill — Railway self-fetch loopback fallback
       const _doBackfillFetch = async (u: string, init: RequestInit) => {
         try {

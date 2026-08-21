@@ -92,7 +92,7 @@ async function _doEnrichSelfFetch(url: string, init?: RequestInit): Promise<Resp
 }
 
 export const runtime = 'nodejs';
-export const maxDuration = 90;  // PATCH 0993 — was 30s; dense dates need ~60s enrichment // PATCH 0818
+export const maxDuration = 300;  // PATCH 0993 — was 30s; dense dates need ~60s enrichment // PATCH 0818
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 
 // ─── Types (mirror frontend) ───────────────────────────────────────────────
@@ -640,11 +640,19 @@ export async function GET(req: Request) {
         const isRecentPast = isPast && dateAgeDaysForCache <= 14;
         const isEmptyCache = totalCards === 0;
         const bypassEmptyCache = isRecentPast && isEmptyCache && !recentlyHealed;
-        if (isPast && totalCards >= 3 && previewRatio >= 0.40 && !recentlyHealed) {
+        // zzz417 — UNDERCOUNT heal. A cache written before the day's filings
+        // propagated holds far fewer graded cards than the day actually filed.
+        // raw_items_total records how many filings existed at write time; when
+        // candidates are a small fraction of that, the cache is stale-undercounted.
+        // refreshMissing can't fix this (it only re-enriches EXISTING cards, never
+        // ADDS missing tickers) — only a full rebuild does. This is the 1-of-89 bug.
+        const cachedRaw = Number((cached as any)?.raw_items_total) || 0;
+        const isUndercounted = isPast && cachedRaw >= 8 && totalCards < 0.6 * cachedRaw;
+        if (isPast && totalCards >= 3 && previewRatio >= 0.40 && !recentlyHealed && !isUndercounted) {
           autoPromoteToRefreshMissing = true;
           // Set the lockout immediately so other concurrent requests skip.
           try { await kvSet(lockoutKey, Date.now(), HEAL_LOCKOUT_S); } catch {}
-        } else if (bypassEmptyCache) {
+        } else if (bypassEmptyCache || (isUndercounted && !recentlyHealed)) {
           // Empty payload for a recent date — try a full rebuild so the
           // new live-NSE augmentation can fire. Set lockout to throttle.
           try { await kvSet(lockoutKey, Date.now(), HEAL_LOCKOUT_S); } catch {}
@@ -667,7 +675,11 @@ export async function GET(req: Request) {
   // tickers need re-enrichment; deleting it first makes that block fall
   // through to full rebuild, which returns no `_refresh` field and
   // produces a meaningless "0/0 updated" message on the client.
-  if (force && !refreshMissing && isRedisAvailable()) {
+  // zzz417 — no longer pre-delete on force by default. The full-rebuild path
+  // overwrites KV on success and PATCH 1002 preserves the prior payload when a
+  // rebuild yields zero. Pre-deleting first meant a timed-out rebuild left the
+  // date EMPTY (worse than a stale count). Only wipe when explicitly asked.
+  if (force && !refreshMissing && searchParams.get('wipe') === '1' && isRedisAvailable()) {
     try { await kvSet(cacheKey, null, 1); } catch {}  // null + 1s TTL = effective delete
   }
 

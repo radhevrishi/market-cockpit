@@ -1,89 +1,121 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// CRON: PRE-WARM EARNINGS PIPELINE (PATCH 0504)
+// CRON: EARNINGS SELF-HEALING SWEEP  (zzz417 — rebuilt from PATCH 0504 prewarm)
 //
-// Runs hourly during India market hours via Vercel Cron. For each of the
-// last 7 calendar days (incl weekends), forces a fresh fetch of the
-// graded payload and today-live multi-source filings. Result: KV is
-// always within an hour of the upstream NSE+BSE corp-announcements feed,
-// so user visits to EO are instant cache hits with maximum coverage.
+// Runs 4×/day via the GitHub Actions cron bridge (03:00 / 06:00 / 11:00 /
+// 14:00 UTC). Goal: the Earnings Opportunities page is ALWAYS a complete,
+// warm cache hit — no Hard Refresh, no Backfill, no manual anything — for
+// years, unattended.
 //
-// Rationale: previously, the only background refresh was the daily 06:30 IST
-// calendar cron. If a user opened EO at 3pm and a new BSE filing had
-// arrived at 2pm, they'd need to manually click Force Re-scan. With this
-// cron firing hourly, the freshest data is always pre-warmed.
+// How it permanently kills the "1-of-89" bug:
+//   • RECENT dates (<= RECENT_DAYS old): force a fresh today-live + graded
+//     rebuild so intraday NSE+BSE filings are always reflected.
+//   • OLDER dates (up to WINDOW_DAYS back): a CHEAP health check — read the
+//     cached graded payload and compare candidates_total vs raw_items_total.
+//     If undercounted (far fewer graded cards than the day actually filed) or
+//     empty, force a full rebuild to recover the missing companies. Healthy
+//     dates are instant cache hits and cost nothing.
 //
-// Cost: 7 dates × 2 endpoints = 14 fetches per hour × 24 hours = 336
-// fetches/day. Well under Vercel function quotas.
+// Budget: heavy rebuilds are capped per run (HEAL_BUDGET) and the sweep stops
+// starting new work at DEADLINE_MS, so the job always finishes inside its
+// 5-min window. Past filing days are immutable, so once a date is healed it
+// stays healed and is skipped forever after — the window converges in a day
+// or two and then just maintains itself.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
+import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;  // 5 min — Pro plan
+export const maxDuration = 300;  // 5 min
+
+const WINDOW_DAYS = 45;       // how far back to keep healthy
+const RECENT_DAYS = 2;        // <= this many days old = always force-refresh (intraday)
+const HEAL_BUDGET = 6;        // max heavy force-rebuilds of OLDER dates per run
+const DEADLINE_MS = 250_000;  // stop starting new work after ~4m10s (under the 5-min cap)
+const UNDERCOUNT_RATIO = 0.6; // candidates < 60% of raw filings = undercounted cache
+const MIN_RAW = 8;            // ignore genuinely-light days
+
+function tierTotal(g: any): number {
+  return Object.values(g?.by_tier || {}).reduce<number>(
+    (acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0);
+}
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const provided = searchParams.get('secret') || '';
   const expected = process.env.CRON_SECRET || '';
   const vercelHeader = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature') || '';
-
-  // PATCH 1041 — CRON_SECRET is unset on this deploy and the GitHub Actions
-  // bridge can't send the Vercel header, so the old code 503'd every cron and
-  // the calendar never got warmed (dates rolled off before being saved). Only
-  // enforce the secret when one is actually configured; otherwise let the cron
-  // run so daily warming works and the durable snapshot keeps accumulating.
+  // Only enforce the secret when one is actually configured (GitHub bridge
+  // can't send the Vercel header). Same policy as PATCH 1041.
   if (!vercelHeader && expected && provided !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const origin = new URL(req.url).origin;
+  const windowDays = Math.min(120, Math.max(1, parseInt(searchParams.get('days') || String(WINDOW_DAYS), 10) || WINDOW_DAYS));
+  const healBudgetMax = Math.max(1, parseInt(searchParams.get('heal') || String(HEAL_BUDGET), 10) || HEAL_BUDGET);
+  const start = Date.now();
   const today = new Date();
-  const dates: string[] = [];
-  for (let i = 0; i <= 7; i++) {
+
+  const results: any[] = [];
+  let healsUsed = 0, healed = 0, skipped = 0, refreshed = 0;
+  let budgetStopped = false;
+
+  for (let i = 0; i <= windowDays; i++) {
+    if (Date.now() - start > DEADLINE_MS) { budgetStopped = true; break; }
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    dates.push(d.toISOString().slice(0, 10));
-  }
-
-  const results: Array<{
-    date: string;
-    today_live_status?: number;
-    today_live_count?: number;
-    graded_status?: number;
-    graded_total?: number;
-    error?: string;
-  }> = [];
-
-  // Process dates serially to avoid hammering upstream sources.
-  // Each pair (today-live + graded) gets ~15s budget.
-  for (const date of dates) {
+    const date = d.toISOString().slice(0, 10);
     const entry: any = { date };
-    try {
-      // Step 1: pre-warm today-live (NSE+BSE multi-source)
-      const liveRes = await railwaySelfFetch(`${origin}/api/v1/earnings/today-live?date=${date}&force=1`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(20_000),
-      });
-      entry.today_live_status = liveRes.status;
-      if (liveRes.ok) {
-        const liveData = await liveRes.json();
-        entry.today_live_count = liveData?.count || 0;
-      }
 
-      // Step 2: pre-warm graded payload
-      const gradedRes = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(45_000),
-      });
-      entry.graded_status = gradedRes.status;
-      if (gradedRes.ok) {
-        const gradedData = await gradedRes.json();
-        const tot = Object.values(gradedData?.by_tier || {}).reduce<number>(
-          (acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0
-        );
-        entry.graded_total = tot;
+    try {
+      if (i <= RECENT_DAYS) {
+        // Freshest intraday view: warm today-live + force a graded rebuild.
+        try {
+          const liveRes = await railwaySelfFetch(`${origin}/api/v1/earnings/today-live?date=${date}&force=1`, {
+            cache: 'no-store', signal: AbortSignal.timeout(20_000),
+          });
+          entry.today_live_status = liveRes.status;
+          if (liveRes.ok) entry.today_live_count = (await liveRes.json())?.count || 0;
+        } catch (e: any) { entry.today_live_error = e?.message || String(e); }
+
+        const gRes = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
+          cache: 'no-store', signal: AbortSignal.timeout(150_000),
+        });
+        entry.graded_status = gRes.status;
+        if (gRes.ok) entry.graded_total = tierTotal(await gRes.json());
+        entry.action = 'refreshed';
+        refreshed++;
+      } else {
+        // Cheap health check (normal cache hit) — only heal if undercounted.
+        const chk = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}`, {
+          cache: 'no-store', signal: AbortSignal.timeout(30_000),
+        });
+        entry.graded_status = chk.status;
+        let cand = 0, raw = 0;
+        if (chk.ok) {
+          const j = await chk.json();
+          cand = Number(j?.candidates_total) || tierTotal(j);
+          raw = Number(j?.raw_items_total) || 0;
+          entry.graded_total = cand; entry.raw_items_total = raw;
+        }
+        const undercounted = (raw >= MIN_RAW && cand < UNDERCOUNT_RATIO * raw) || (cand === 0 && raw >= MIN_RAW);
+        if (undercounted && healsUsed < healBudgetMax) {
+          const fRes = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
+            cache: 'no-store', signal: AbortSignal.timeout(150_000),
+          });
+          entry.heal_status = fRes.status;
+          if (fRes.ok) entry.graded_total_after = tierTotal(await fRes.json());
+          entry.action = 'healed';
+          healsUsed++; healed++;
+        } else if (undercounted) {
+          entry.action = 'heal-deferred (budget)';
+          budgetStopped = true;
+        } else {
+          entry.action = 'healthy';
+          skipped++;
+        }
       }
     } catch (e: any) {
       entry.error = e?.message || String(e);
@@ -93,11 +125,16 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     status: 'ok',
-    dates_warmed: results.length,
+    window_days: windowDays,
+    scanned: results.length,
+    refreshed, healed, skipped,
+    heals_used: healsUsed,
+    budget_stopped: budgetStopped,
+    elapsed_ms: Date.now() - start,
     results,
     completed_at: new Date().toISOString(),
   });
 }
 
-// PATCH 1031 — accept POST too (the GitHub cron bridge POSTs). Delegates to GET.
+// The GitHub cron bridge POSTs; delegate to GET.
 export async function POST(req: Request) { return GET(req); }
