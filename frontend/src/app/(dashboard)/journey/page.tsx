@@ -30,7 +30,7 @@ const MONO: CSSProperties = { fontFamily: 'ui-monospace, "SF Mono", Menlo, monos
 // fund) rows above the target band (20/25/30/40) for educational reference.
 // User's actual targets remain 20–40%; 10/15 just frame the opportunity cost
 // of staying in low-return vehicles. The flagship highlight stays at 25%.
-const CAGRS = [10, 15, 20, 25, 30, 35, 40] as const;
+const CAGRS = [10, 15, 20, 22, 25, 30, 35, 40] as const;
 const HORIZONS = [5, 10, 15, 20, 25] as const; // zzz308 — added 5Y, removed 30Y
 
 function compound(start: number, cagrPct: number, years: number): number {
@@ -100,7 +100,7 @@ const QUOTES: { text: string; who: string; color: string }[] = [
 export default function JourneyPage() {
   // Personal target setter (persisted in localStorage)
   const [startCr, setStartCr] = useState<number>(1);
-  const [targetCagr, setTargetCagr] = useState<number>(25);
+  const [targetCagr, setTargetCagr] = useState<number>(22); // zzz410 — 22% is Rishi's target
   const [horizonY, setHorizonY] = useState<number>(20);
   const [currentCr, setCurrentCr] = useState<number>(1);
   const [startYear, setStartYear] = useState<number>(new Date().getFullYear());
