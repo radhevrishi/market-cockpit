@@ -886,23 +886,44 @@ export async function GET(req: Request) {
       clearTimeout(timer);
     }
   };
-  try {
-    hubRes = await _doHubFetch(hubUrl);
-  } catch (e: any) {
-    const firstFail = e?.name === 'AbortError' ? 'hub_timeout_25s' : `hub_throw_${e?.message || 'unknown'}`;
-    const port = process.env.PORT;
-    if (port && /^https?:\/\/[^/]+\//.test(hubUrl)) {
-      const loopbackUrl = hubUrl.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
-      try {
-        hubRes = await _doHubFetch(loopbackUrl);
-        console.log(`[graded] hub public-URL failed (${firstFail}), recovered via loopback`);
-      } catch (e2: any) {
-        hubFailReason = `${firstFail},loopback_also_failed_${e2?.message || 'unknown'}`;
+  // zzz411b — same root cause as _doEnrichSelfFetch: on Railway the container
+  // often cannot reach its own PUBLIC URL (edge rejects self-loops with a
+  // non-OK response OR a throw). The old code only fell back to loopback on
+  // THROW, so a non-OK public response left hubRes=!ok → fallback chain →
+  // "0 graded / sources have no Q-data" even when the hub was healthy.
+  // On a long-running node server (PORT set, not Vercel), go LOOPBACK-FIRST.
+  const _hubPort = process.env.PORT;
+  const _hubLoop = (_hubPort && /^https?:\/\/[^/]+\//.test(hubUrl))
+    ? hubUrl.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${_hubPort}`)
+    : null;
+  const _hubOnRailway = !!_hubLoop && !process.env.VERCEL;
+  if (_hubOnRailway) {
+    try {
+      const rl = await _doHubFetch(_hubLoop!);
+      if (rl.ok) hubRes = rl;
+      else console.log(`[graded] hub loopback returned ${rl.status}, falling back to public URL`);
+    } catch (e: any) {
+      console.log(`[graded] hub loopback failed (${e?.message}), falling back to public URL`);
+    }
+  }
+  if (!hubRes) {
+    try {
+      hubRes = await _doHubFetch(hubUrl);
+    } catch (e: any) {
+      const firstFail = e?.name === 'AbortError' ? 'hub_timeout_25s' : `hub_throw_${e?.message || 'unknown'}`;
+      if (_hubLoop && !_hubOnRailway) {
+        // Vercel-side throw → try loopback once (legacy path).
+        try {
+          hubRes = await _doHubFetch(_hubLoop);
+          console.log(`[graded] hub public-URL failed (${firstFail}), recovered via loopback`);
+        } catch (e2: any) {
+          hubFailReason = `${firstFail},loopback_also_failed_${e2?.message || 'unknown'}`;
+          hubRes = null;
+        }
+      } else {
+        hubFailReason = firstFail;
         hubRes = null;
       }
-    } else {
-      hubFailReason = firstFail;
-      hubRes = null;
     }
   }
   if (hubRes && !hubRes.ok) {
