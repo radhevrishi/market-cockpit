@@ -1880,21 +1880,36 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       {/* PATCH 1101qqq — Auto-sync status chip + manual refresh button.
           Shows last-sync date, lets user pull fresh CSVs without leaving tab. */}
-      {syncStatus && syncStatus.hasManifest && (
-        <div style={{marginBottom:8,padding:'6px 12px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',backgroundColor:syncStatus.isStale?`${RED}10`:`${PURPLE}08`,border:`1px solid ${syncStatus.isStale?RED:PURPLE}30`,borderRadius:8}}>
-          <span style={{fontSize:F.xs,color:syncStatus.isStale?RED:MUTED}}>
-            🔄 Auto-sync from screener.in · last run {syncStatus.lastSync?.toLocaleString()} ({syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) : '?'}h ago)
-            {syncStatus.isStale && ' · STALE'}
+      {syncStatus && syncStatus.hasManifest && (() => {
+        // zzz409 — the banner used to collapse two very different states into a
+        // single red "STALE": (a) the background screener.in auto-sync PIPELINE
+        // failed to fetch anything (ok=0, fail>0 — almost always an expired
+        // SCREENER_SESSION cookie), which shows a contradictory "0h ago · STALE",
+        // and (b) the pre-baked screens are genuinely old (>36h). Neither has
+        // anything to do with a CSV the user uploaded by hand — that data is
+        // always fresh. Split the copy so the message is accurate and actionable.
+        const broken = syncStatus.syncBroken;                 // auth/pipeline failure
+        const staleByAge = !broken && (syncStatus.hoursOld ?? 0) > 36;
+        const accent = broken ? ORANGE : staleByAge ? RED : PURPLE;
+        const lastRun = syncStatus.lastSync?.toLocaleString();
+        const hrs = syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) : '?';
+        return (
+        <div style={{marginBottom:8,padding:'6px 12px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',backgroundColor:`${accent}10`,border:`1px solid ${accent}30`,borderRadius:8}}>
+          <span style={{fontSize:F.xs,color:(broken||staleByAge)?accent:MUTED}}>
+            {broken
+              ? <>⚠ screener.in auto-sync couldn't refresh — last attempt {lastRun} fetched <b>0 of {syncStatus.failCount}</b> screens (screener.in session likely expired). <b>Any CSV you uploaded is unaffected</b>; the built-in screens are serving the last good copy. Fix: refresh the <code>SCREENER_SESSION</code> GitHub secret, then re-run the sync.</>
+              : <>🔄 Auto-sync from screener.in · last run {lastRun} ({hrs}h ago){staleByAge && ' · built-in screens may be stale (>36h)'}</>}
           </span>
           <button
             onClick={() => { resetAutoLoadFlag('multibagger-india'); runAutoSync(true); }}
             disabled={syncLoading}
-            style={{marginLeft:'auto',padding:'4px 10px',backgroundColor:PURPLE,color:'#fff',border:'none',borderRadius:6,fontSize:F.xs,fontWeight:700,cursor:syncLoading?'wait':'pointer'}}
+            style={{marginLeft:'auto',padding:'4px 10px',backgroundColor:accent,color:'#fff',border:'none',borderRadius:6,fontSize:F.xs,fontWeight:700,cursor:syncLoading?'wait':'pointer'}}
           >
             {syncLoading ? 'Loading...' : 'Refresh now'}
           </button>
         </div>
-      )}
+        );
+      })()}
 
       {/* Upload zone */}
       <div

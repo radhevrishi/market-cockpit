@@ -575,22 +575,41 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
             </div>
             {fname ? <span style={chip}>Loaded: <b style={{ color: COL.txt }}>{fname}</b></span> : null}
             {data.length ? <span style={chip}><b style={{ color: COL.txt }}>{data.length}</b> stocks</span> : null}
-            {/* PATCH 1101qqq — Auto-sync status + manual refresh */}
-            {autoLoadScope && syncStatus && syncStatus.hasManifest ? (
-              <span style={{ ...chip, borderColor: syncStatus.isStale ? COL.red : COL.violet, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: syncStatus.isStale ? COL.red : COL.muted }}>
-                  🔄 auto-sync · {syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : '?'}
-                  {syncStatus.isStale && ' · STALE'}
+            {/* PATCH 1101qqq — Auto-sync status + manual refresh.
+                zzz409 — the chip used to read a contradictory "0h ago · STALE"
+                and turn red because getSyncStatus().isStale is TRUE whenever the
+                background screener.in sync ran but fetched 0 files (ok=0/fail>0,
+                an expired SCREENER_SESSION cookie), OR the built-in screens are
+                >36h old. Neither concerns a CSV the user uploaded by hand — that
+                is always fresh. Split the two states so the label is accurate:
+                broken → amber "sync failed" (actionable, with a tooltip), old →
+                red "STALE", otherwise a plain age. */}
+            {autoLoadScope && syncStatus && syncStatus.hasManifest ? (() => {
+              const broken = syncStatus.syncBroken;
+              const staleByAge = !broken && (syncStatus.hoursOld ?? 0) > 36;
+              const accent = broken ? COL.amber : staleByAge ? COL.red : COL.violet;
+              const tip = broken
+                ? `screener.in auto-sync ran ${syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : ''} but fetched 0 of ${syncStatus.failCount} screens — the screener.in session cookie has likely expired. Any CSV you uploaded by hand is unaffected and fully current; only the built-in auto-synced screens are affected. Fix: refresh the SCREENER_SESSION GitHub secret, then re-run the sync workflow.`
+                : staleByAge
+                ? 'The built-in auto-synced screener.in screens are more than 36h old. A CSV you uploaded by hand is unaffected.'
+                : 'Built-in screener.in screens are up to date.';
+              return (
+              <span title={tip} style={{ ...chip, borderColor: accent, display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
+                <span style={{ color: (broken || staleByAge) ? accent : COL.muted }}>
+                  {broken
+                    ? `⚠ auto-sync failed · 0/${syncStatus.failCount} screens (session expired)`
+                    : `🔄 auto-sync · ${syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : '?'}${staleByAge ? ' · STALE' : ''}`}
                 </span>
                 <button
                   onClick={() => { resetAutoLoadFlag(autoLoadScope); runAutoSync(true); }}
                   disabled={syncLoading}
-                  style={{ padding: '2px 8px', background: COL.violet, color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: syncLoading ? 'wait' : 'pointer' }}
+                  style={{ padding: '2px 8px', background: accent, color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: syncLoading ? 'wait' : 'pointer' }}
                 >
                   {syncLoading ? '...' : 'Refresh'}
                 </button>
               </span>
-            ) : null}
+              );
+            })() : null}
             {data.length ? (
               <button
                 onClick={clearAll}
