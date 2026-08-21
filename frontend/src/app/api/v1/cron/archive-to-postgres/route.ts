@@ -115,9 +115,16 @@ export async function GET(req: Request) {
       const evMap = new Map<string, any[]>();
       for (const r of evRows) evMap.set(`${r[0]}|${r[2]}|${r[3]}`, r);
       const evDedup = [...evMap.values()];
-      // Dedupe raw rows by checksum too (cosmetic; DO NOTHING already tolerates dups).
+      // zzz413 — dedupe raw rows by (source, source_filing_ref) — the STRICTER
+      // unique key. raw_filings has TWO unique constraints: checksum AND the
+      // partial index raw_filings_src_ref_idx (source, source_filing_ref). The
+      // checksum includes fy/fq, so a re-archived filing whose quarter was
+      // re-derived produces a NEW checksum for the SAME (source, symbol:date)
+      // ref → the old `ON CONFLICT (checksum)` didn't arbitrate the src_ref
+      // collision and the whole archive aborted with "duplicate key value
+      // violates unique constraint raw_filings_src_ref_idx". Keep last (newest).
       const rawMap = new Map<string, any[]>();
-      for (const r of rawRows) rawMap.set(r[7], r);
+      for (const r of rawRows) rawMap.set(`${r[0]}|${r[1]}`, r);
       const rawDedup = [...rawMap.values()];
 
       let rawInserted = 0, evUpserted = 0;
@@ -130,7 +137,7 @@ export async function GET(req: Request) {
           }
           return {
             sql: `INSERT INTO raw_filings (source, source_filing_ref, symbol, company_name, filing_category, filing_date, raw_json, checksum)
-                  VALUES ${vals.join(',')} ON CONFLICT (checksum) DO NOTHING`,
+                  VALUES ${vals.join(',')} ON CONFLICT DO NOTHING`,
             flat,
           };
         });
