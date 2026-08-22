@@ -313,6 +313,12 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
             if ((cur as any)[k] == null && (e as any)[k] != null) (patch as any)[k] = (e as any)[k];
           };
           fill('opm_pct'); fill('opm_prev_pct');
+          // zzz428 — the three YoY growth fields drive the "Results Pending" badge
+          // (all-null → badge). They were NEVER in this backfill list, so a lean
+          // bench entry added with null YoY (server-bench merge) could never light
+          // up even after a later enrich delivered the numbers: the card showed
+          // "Results Pending" forever. Backfill them like every other optional field.
+          fill('sales_yoy_pct' as any); fill('net_profit_yoy_pct' as any); fill('eps_yoy_pct' as any);
           fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct' as any);   // zzz230/231
           fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
           fill('cfo_to_pat_ratio' as any);  // zzz306 — earnings quality (CFO/PAT ratio)
