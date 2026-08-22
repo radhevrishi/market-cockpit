@@ -699,6 +699,45 @@ export default function WatchlistsPage() {
     const interval = setInterval(scan, 10 * 60 * 1000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
+
+  // zzz422 — merge the SERVER-authoritative Conviction bench (/api/v1/bench).
+  // The client self-scan above only catches dates THIS browser happened to
+  // open while they were healthy; the server bench is cron-maintained over 60
+  // days (refresh-bench) and holds every BLOCKBUSTER/STRONG the pipeline graded.
+  // Reading it here makes the tab complete regardless of local scan history
+  // (this is why RUBICON etc. were missing). Detail fields backfill from the
+  // graded self-scan on the same filing_date.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/bench', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j: any = await r.json();
+        const ents: any[] = Array.isArray(j?.entries) ? j.entries : [];
+        if (cancelled || ents.length === 0) return;
+        const mapped = ents
+          .filter((e: any) => e && e.ticker && (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG'))
+          .map((e: any) => {
+            let qParsed: 'Q1'|'Q2'|'Q3'|'Q4'|undefined; let fyParsed: number|undefined;
+            if (typeof e.quarter === 'string') {
+              const qm = e.quarter.match(/Q([1-4])/i); if (qm) qParsed = ('Q'+qm[1]) as any;
+              const fm = e.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1],10); fyParsed = yy<50?2000+yy:1900+yy; }
+            }
+            return {
+              ticker: e.ticker, company: e.company || e.ticker, tier: e.tier,
+              composite_score: e.composite_score ?? 0,
+              sales_yoy_pct: null, net_profit_yoy_pct: null, eps_yoy_pct: null,
+              filing_date: e.filing_date, sector: e.sector ?? null,
+              market_cap_cr: e.market_cap_cr ?? null, move_pct: e.move_pct ?? null,
+              ...(qParsed ? { quarter: qParsed } : {}), ...(fyParsed ? { fiscal_year: fyParsed } : {}),
+            };
+          });
+        if (!cancelled && mapped.length) { try { syncFromEarningsOps(mapped as any); } catch {} }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const convictionCount = convictionEntries.length;
 
   // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
