@@ -73,7 +73,7 @@ export async function GET(req: Request) {
 
   // Iterate newest date first so first-write-wins yields the newest filing
   // per ticker.
-  const byTicker = new Map<string, BenchEntry>();
+  const byTicker = new Map<string, any>();  // zzz427 — carry full graded card
   let blockbuster = 0;
   let strong = 0;
   let scannedDays = 0;
@@ -98,18 +98,9 @@ export async function GET(req: Request) {
       if (!row || !row.ticker) continue;
       const key = row.ticker;
       if (byTicker.has(key)) continue; // newest date already won (first-write-wins)
-      byTicker.set(key, {
-        ticker: row.ticker,
-        company: row.company,
-        tier: row.tier,
-        composite_score: row.composite_score,
-        filing_date: row.filing_date,
-        quarter: row.quarter,
-        move_pct: row.move_pct ?? null,
-        sector: row.sector,
-        market_cap_cr: row.market_cap_cr ?? null,
-        seen_date: dateStr,
-      });
+      // zzz427 — store the FULL graded card so bench cards render complete
+      // (financials, OPM, PE, drift, quality flags) without any client rebuild.
+      byTicker.set(key, { ...(row as any), seen_date: dateStr });
     }
   }
 

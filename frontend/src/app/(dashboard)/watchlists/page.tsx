@@ -646,13 +646,12 @@ export default function WatchlistsPage() {
               const qm = e.quarter.match(/Q([1-4])/i); if (qm) q = 'Q' + qm[1];
               const fm = e.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1], 10); fy = yy < 50 ? 2000 + yy : 1900 + yy; }
             }
+            // zzz427 — spread the full bench card (financials/OPM/PE/drift/flags)
+            // so the rendered card is complete, not a lean 'Results Pending' stub.
             return {
-              ticker: String(e.ticker).toUpperCase(), company: e.company || e.ticker, tier: e.tier,
-              composite_score: e.composite_score ?? 0,
-              sales_yoy_pct: null, net_profit_yoy_pct: null, eps_yoy_pct: null,
-              filing_date: e.filing_date, sector: e.sector ?? undefined,
-              market_cap_cr: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
-              move_pct: typeof e.move_pct === 'number' ? e.move_pct : null,
+              ...(e as any),
+              ticker: String(e.ticker).toUpperCase(),
+              company: e.company || e.ticker,
               added_at: new Date().toISOString(),
               ...(q ? { quarter: q } : {}), ...(fy ? { fiscal_year: fy } : {}),
             } as ConvictionEntry;
