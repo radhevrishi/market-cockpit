@@ -1058,7 +1058,7 @@ export async function GET(req: Request) {
   // board-meeting forecasts but misses the actual filings.
   const dateAgeDays = Math.max(0, Math.floor((new Date(todayIso).getTime() - new Date(date).getTime()) / 86_400_000));
   const isHubSparse = dayList.length < 10;
-  const shouldLiveAugment = dateAgeDays <= 14 && (dateAgeDays <= 1 || isHubSparse);
+  const shouldLiveAugment = dateAgeDays <= 14;  // zzz425 — fire for ALL recent dates, not just sparse ones: the hub misses recent real filers (IPOs like RUBICON) even when the day is otherwise populated
   if (shouldLiveAugment) {
     try {
       const liveUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}${force ? '&force=1' : ''}`;
@@ -1298,8 +1298,20 @@ export async function GET(req: Request) {
     // corroboration from enrich, drop.
     const tickerUpper = String(m.ticker || '').toUpperCase();
     const hubKnowsTicker = _monthlyHubTickers.has(tickerUpper);
+    // zzz425 — a FRESH quarter-end matching the filing window is strong evidence
+    // of a REAL result. Recent IPOs (RUBICON etc.) aren't in the EarningsPulse hub
+    // and often lack an announce_date, yet have valid Screener quarter data. Check
+    // that BEFORE the strict hub+announce drop so we don't discard them. Ghost
+    // "Outcome of Board Meeting" filings fail this — Screener serves their STALE
+    // prior quarter (daysSince > 95) — so they still get dropped just below.
+    if (e.latest_quarter_end_iso) {
+      const _q = new Date(e.latest_quarter_end_iso).getTime();
+      const _f = new Date(m.resultDate).getTime();
+      const _ds = (_f - _q) / 86_400_000;
+      if (_ds >= 0 && _ds <= 95) return false;
+    }
     if (!hubKnowsTicker && !e.announce_date_iso) {
-      return true;  // not on hub + no announce date = noise
+      return true;  // not on hub + no announce date + no fresh quarter = noise
     }
 
     // Has announce_date and matches → OK
