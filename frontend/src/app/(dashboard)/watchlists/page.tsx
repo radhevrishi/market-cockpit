@@ -648,7 +648,7 @@ export default function WatchlistsPage() {
     const scan = async () => {
       const today = new Date();
       const dates: string[] = [];
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < 45; i++) {  // zzz421 — was 14; scan the full season so older BLOCKBUSTER/STRONG (RUBICON etc.) auto-populate
         const d = new Date(today.getTime() - i * 86400_000);
         dates.push(d.toISOString().slice(0, 10));
       }

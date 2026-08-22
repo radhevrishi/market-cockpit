@@ -137,8 +137,20 @@ export async function GET(req: Request) {
     results.push(entry);
   }
 
+  // zzz421 — rebuild the server Conviction Beats bench from the now-healed
+  // graded data so /watchlists?tab=conviction is complete without the user
+  // visiting each date. Secret-gated; pass our own CRON_SECRET.
+  let benchRefreshed: any = null;
+  try {
+    const bs = expected ? `?secret=${encodeURIComponent(expected)}` : '';
+    const br = await railwaySelfFetch(`${origin}/api/v1/cron/refresh-bench${bs}`, { cache: 'no-store', signal: AbortSignal.timeout(90_000) });
+    if (br.ok) { const bj = await br.json(); benchRefreshed = { count: bj?.count, blockbuster: bj?.blockbuster, strong: bj?.strong }; }
+    else benchRefreshed = { status: br.status };
+  } catch (e: any) { benchRefreshed = { error: e?.message || String(e) }; }
+
   return NextResponse.json({
     status: 'ok',
+    bench: benchRefreshed,
     window_days: windowDays,
     scanned: results.length,
     refreshed, healed, filled, healthy,

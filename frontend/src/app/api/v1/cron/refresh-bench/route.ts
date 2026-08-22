@@ -17,11 +17,11 @@ import { verifyCronSecret } from '@/lib/verifyAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;  // zzz421 — 60-day scan needs a little more headroom
 
 const BENCH_KEY = 'bench:server:v1';
 const BENCH_TTL_S = 60 * 60 * 24 * 7; // ~7 days
-const SCAN_DAYS = 10;
+const SCAN_DAYS = 60;  // zzz421 — was 10; hold the whole earnings season, not just last 10 days
 
 type Tier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 
