@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-22T08:55:09.515Z",
+  "lastSync": "2026-08-22T13:12:06.909Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 10,
@@ -11,7 +11,7 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 52675,
+      "size": 52607,
       "rowCount": 47,
       "error": null
     },
@@ -21,7 +21,7 @@
       "screenerId": "WJDx6FZ9",
       "kind": "screener",
       "ok": true,
-      "size": 20410,
+      "size": 20330,
       "rowCount": 16,
       "error": null
     },
@@ -31,7 +31,7 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 44893,
+      "size": 44799,
       "rowCount": 39,
       "error": null
     },
@@ -41,7 +41,7 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 62481,
+      "size": 62406,
       "rowCount": 57,
       "error": null
     },
@@ -51,7 +51,7 @@
       "screenerId": "Neuim2Bm",
       "kind": "screener",
       "ok": true,
-      "size": 72176,
+      "size": 72080,
       "rowCount": 67,
       "error": null
     },
@@ -61,7 +61,7 @@
       "screenerId": "RtSuWTgK",
       "kind": "screener",
       "ok": true,
-      "size": 57523,
+      "size": 57293,
       "rowCount": 49,
       "error": null
     },
@@ -71,7 +71,7 @@
       "screenerId": "5gzenlmQ",
       "kind": "screener",
       "ok": true,
-      "size": 22541,
+      "size": 22472,
       "rowCount": 18,
       "error": null
     },
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106727,
+      "size": 105756,
       "rowCount": 100,
       "error": null
     },
@@ -91,7 +91,7 @@
       "screenerId": "oRvEFfVY",
       "kind": "screener",
       "ok": true,
-      "size": 109991,
+      "size": 109472,
       "rowCount": 99,
       "error": null
     },
@@ -101,7 +101,7 @@
       "screenerId": "339270482",
       "kind": "watchlist",
       "ok": true,
-      "size": 51768,
+      "size": 51554,
       "rowCount": 44,
       "error": null
     }
