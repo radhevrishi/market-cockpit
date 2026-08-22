@@ -19,6 +19,71 @@
 
 const DEFAULT_WORKER_URL = 'https://indiaearninghub.radhev-232.workers.dev';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz423 — GLOBAL UPSTREAM CONCURRENCY GATE + RETRY/BACKOFF.
+//
+// Enrichment used to fan out ~40 symbols × 7 sources at once during a rebuild
+// (~300-600 concurrent upstream fetches). That burst overwhelmed the Cloudflare
+// worker + Screener proxy, so many calls timed out and returned null — the
+// stubborn "N missing" tail on heavy days. Two durable fixes, applied at the
+// single choke point every upstream fetch passes through:
+//
+//   • A process-wide semaphore caps concurrent upstream requests, so the server
+//     self-paces under the limit no matter how big the fan-out. Railway runs a
+//     single Node instance so an in-memory gate governs the whole app.
+//   • gatedRetryFetch retries 429/5xx/timeout with jittered exponential backoff,
+//     so a transient failure during load self-heals instead of nulling a ticker.
+//
+// Tunable via env UPSTREAM_CONCURRENCY (default 24).
+// ═══════════════════════════════════════════════════════════════════════════
+const MAX_UPSTREAM = Number(process.env.UPSTREAM_CONCURRENCY) || 24;
+let _active = 0;
+const _waiters: Array<() => void> = [];
+function _acquire(): Promise<void> {
+  if (_active < MAX_UPSTREAM) { _active++; return Promise.resolve(); }
+  return new Promise<void>((resolve) => _waiters.push(resolve));
+}
+function _release(): void {
+  _active = Math.max(0, _active - 1);
+  const next = _waiters.shift();
+  if (next) { _active++; next(); }
+}
+/** Run fn while holding an upstream concurrency slot (always released). */
+export async function gate<T>(fn: () => Promise<T>): Promise<T> {
+  await _acquire();
+  try { return await fn(); } finally { _release(); }
+}
+const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Gated fetch with retry+backoff on 429/5xx/timeout. Each attempt gets a
+ *  fresh AbortController so a per-attempt timeout can't wedge the retry. */
+export async function gatedRetryFetch(
+  url: string,
+  opts: { headers?: Record<string, string>; timeoutMs?: number; retries?: number } = {},
+): Promise<Response> {
+  const { headers, timeoutMs = 10000, retries = 2 } = opts;
+  return gate(async () => {
+    let lastErr: any;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { signal: ctrl.signal, headers });
+        clearTimeout(tm);
+        if ((res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503) && attempt < retries) {
+          await _sleep(400 * Math.pow(2, attempt) + Math.floor(Math.random() * 300));
+          continue;
+        }
+        return res;
+      } catch (e) {
+        clearTimeout(tm);
+        lastErr = e;
+        if (attempt < retries) await _sleep(400 * Math.pow(2, attempt) + Math.floor(Math.random() * 300));
+      }
+    }
+    throw lastErr;
+  });
+}
+
 /**
  * Pre-parsed financials from the Cloudflare Worker. Maps the Worker's
  * /stock response into our internal financial-data shape so it slots
@@ -103,14 +168,13 @@ function yoyPct(curr: number | null | undefined, prev: number | null | undefined
  */
 export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promise<WorkerStockData | null> {
   const url = `${workerUrl()}/stock?symbol=${encodeURIComponent(symbol)}`;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   const headers: Record<string, string> = {};
   const token = process.env.WORKER_TOKEN;
   if (token) headers['X-MC-Token'] = token;
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers });
-    clearTimeout(t);
+    // zzz423 — gated + retried. The worker is the reliable, Cloudflare-immune
+    // source; a single burst-timeout used to null a ticker permanently.
+    const res = await gatedRetryFetch(url, { headers, timeoutMs, retries: 2 });
     if (!res.ok) return null;
     const j: any = await res.json();
     if (!j || !j.symbol || !j.latest) return null;
@@ -210,7 +274,6 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
       financials_source: 'screener-worker',
     };
   } catch {
-    clearTimeout(t);
     return null;
   }
 }
@@ -259,11 +322,11 @@ export async function proxiedFetch(input: string | URL | Request, init?: Request
                     input.url;
 
   if (!shouldProxy(targetUrl)) {
-    return fetch(input, init);
+    return gate(() => fetch(input, init));  // zzz423 — gate direct fetches too
   }
 
   const proxyUrl = buildProxyUrl(targetUrl);
-  return fetch(proxyUrl, init);
+  return gate(() => fetch(proxyUrl, init));  // zzz423 — cap proxy burst
 }
 
 /**
