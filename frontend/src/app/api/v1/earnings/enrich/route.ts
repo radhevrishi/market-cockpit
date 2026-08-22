@@ -1947,7 +1947,13 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     }
   }
 
-  if (isRedisAvailable()) {
+  // zzz424 — do NOT cache no-financials results. Caching a null (old 5min TTL)
+  // short-circuited the last-good rescue AND stopped the next rebuild from
+  // re-fetching, so a single burst-timeout stayed missing. With zzz423's gated +
+  // retried fetch, re-fetching missing tickers is now reliable, so leave them
+  // uncached → every pass retries until they fill (or surfaces last-good). Only
+  // genuine no-data tickers stay '—', and they're re-tried cheaply under the gate.
+  if (isRedisAvailable() && hasFinancials) {
     try { await kvSet(cacheKey, out, ttl); } catch {}
   }
   return out;
