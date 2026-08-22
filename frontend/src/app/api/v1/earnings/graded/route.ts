@@ -727,13 +727,21 @@ export async function GET(req: Request) {
           return NextResponse.json({ ...existing, _cache: 'hit', _refresh: 'no-op (all populated)' }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
         }
         const base = new URL(req.url);
+        // zzz420 — small SERIAL batches with a pause. Screener rate-limits big
+        // bursts (40-at-once filled only 1-3 per pass); batches of 8 with a short
+        // delay reliably fill the tail. Symbols are URL-encoded so tickers that
+        // contain '&' (S&SPOWER, GMRP&UI, GVT&D) no longer break the query string.
+        const RM_CHUNK = 8;
         const chunks: string[][] = [];
-        for (let i = 0; i < needTickers.length; i += 40) chunks.push(needTickers.slice(i, i + 40));
-        const responses = await Promise.all(chunks.map((ch) =>
-          _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${ch.join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
-            .then((r) => r.ok ? r.json() : { data: {} })
-            .catch(() => ({ data: {} }))
-        ));
+        for (let i = 0; i < needTickers.length; i += RM_CHUNK) chunks.push(needTickers.slice(i, i + RM_CHUNK));
+        const responses: any[] = [];
+        for (const ch of chunks) {
+          const r = await _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${ch.map(encodeURIComponent).join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
+            .then((rr: Response) => rr.ok ? rr.json() : { data: {} })
+            .catch(() => ({ data: {} }));
+          responses.push(r);
+          await new Promise((res) => setTimeout(res, 1000));
+        }
         const enrich: Record<string, any> = {};
         for (const r of responses) Object.assign(enrich, r.data || {});
 
@@ -1259,7 +1267,7 @@ export async function GET(req: Request) {
   // KV cache here for speed. The refreshMissing path (line ~601) keeps
   // nocache=1 for targeted, user-triggered re-fetches.
   const enrichResponses = await Promise.all(chunks.map((chunk) =>
-    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}`, { cache: 'no-store' })
+    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.map(encodeURIComponent).join(',')}&filed=${date}`, { cache: 'no-store' })
       .then((r) => r.ok ? r.json() : { data: {} })
       .catch(() => ({ data: {} }))
   ));
