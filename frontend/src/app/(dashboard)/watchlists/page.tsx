@@ -624,6 +624,44 @@ export default function WatchlistsPage() {
   // hydration mismatch on the conviction count and chip rail. The
   // existing useEffect below already hydrates from LS on mount.
   const [convictionEntries, setConvictionEntries] = useState<ConvictionEntry[]>([]);
+  // zzz426 — hold the SERVER bench in state and merge it at render time so the
+  // tab ALWAYS shows every server-confirmed BLOCKBUSTER/STRONG (e.g. RUBICON),
+  // regardless of local scan history, prune bin, or sync quirks. The cron-
+  // maintained 60-day server bench is authoritative for membership.
+  const [serverBench, setServerBench] = useState<ConvictionEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/bench', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j: any = await r.json();
+        const ents: any[] = Array.isArray(j?.entries) ? j.entries : [];
+        if (cancelled) return;
+        const mapped: ConvictionEntry[] = ents
+          .filter((e: any) => e && e.ticker && (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG'))
+          .map((e: any) => {
+            let q: any, fy: any;
+            if (typeof e.quarter === 'string') {
+              const qm = e.quarter.match(/Q([1-4])/i); if (qm) q = 'Q' + qm[1];
+              const fm = e.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1], 10); fy = yy < 50 ? 2000 + yy : 1900 + yy; }
+            }
+            return {
+              ticker: String(e.ticker).toUpperCase(), company: e.company || e.ticker, tier: e.tier,
+              composite_score: e.composite_score ?? 0,
+              sales_yoy_pct: null, net_profit_yoy_pct: null, eps_yoy_pct: null,
+              filing_date: e.filing_date, sector: e.sector ?? undefined,
+              market_cap_cr: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
+              move_pct: typeof e.move_pct === 'number' ? e.move_pct : null,
+              added_at: new Date().toISOString(),
+              ...(q ? { quarter: q } : {}), ...(fy ? { fiscal_year: fy } : {}),
+            } as ConvictionEntry;
+          });
+        if (!cancelled) setServerBench(mapped);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   // Re-read on mount + listen for cross-tab updates
   useEffect(() => {
     setConvictionEntries(getConvictionList());
@@ -738,7 +776,12 @@ export default function WatchlistsPage() {
     })();
     return () => { cancelled = true; };
   }, []);
-  const convictionCount = convictionEntries.length;
+  const convictionCount = (() => {
+    const set = new Set<string>();
+    for (const e of convictionEntries) { const t = String(e.ticker || '').toUpperCase(); if (t) set.add(t); }
+    for (const e of serverBench) { const t = String(e.ticker || '').toUpperCase(); if (t) set.add(t); }
+    return set.size;
+  })();  // zzz426 — count includes server-bench members
 
   // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
   // PATCH 0297 — Functional setState so rapid double-clicks always read the
@@ -1257,7 +1300,7 @@ export default function WatchlistsPage() {
 
       {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <ConvictionBeatsPanel
-          entries={(() => { const map = new Map<string, any>(); for (const e of convictionEntries) { const t = String(e.ticker || '').toUpperCase(); if (!t) continue; const cur = map.get(t); if (!cur) { map.set(t, e); continue; } const eDate = String((e as any).filing_date || ''); const cDate = String((cur as any).filing_date || ''); if (eDate > cDate) { map.set(t, e); continue; } if (eDate < cDate) continue; const eScore = (e as any).composite_score ?? -1; const cScore = (cur as any).composite_score ?? -1; if (eScore > cScore) map.set(t, e); } return Array.from(map.values()); })()}
+          entries={(() => { const map = new Map<string, any>(); for (const e of [...convictionEntries, ...serverBench]) { /* zzz426 merge server bench */ const t = String(e.ticker || '').toUpperCase(); if (!t) continue; const cur = map.get(t); if (!cur) { map.set(t, e); continue; } const eDate = String((e as any).filing_date || ''); const cDate = String((cur as any).filing_date || ''); if (eDate > cDate) { map.set(t, e); continue; } if (eDate < cDate) continue; const eScore = (e as any).composite_score ?? -1; const cScore = (cur as any).composite_score ?? -1; if (eScore > cScore) map.set(t, e); } return Array.from(map.values()); })()}
           onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
           /* PATCH zzz99 — bulk Clear All for Conviction Beats. Iterates the
              current list and removes each ticker via the same per-entry API
