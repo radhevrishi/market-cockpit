@@ -63,6 +63,21 @@ export async function GET(req: Request) {
   let healsUsed = 0, fillsUsed = 0, healed = 0, filled = 0, refreshed = 0, healthy = 0;
   let budgetStopped = false;
 
+  // zzz429 — rebuild the server Conviction Beats bench FIRST, before the heal/fill
+  // loop. Previously this ran AFTER the loop, but the loop runs to DEADLINE_MS
+  // (~4m10s) and the bench call's 90s timeout then overran the 300s function cap on
+  // later runs — so the bench blob went stale (stuck at the first run of the day and
+  // never picking up zzz427's full-card format). Running it first guarantees it
+  // executes every run. It reads current graded KV; that day's own heal improves the
+  // NEXT run's bench, which is fine — the window converges either way.
+  let benchRefreshed: any = null;
+  try {
+    const bs = expected ? `?secret=${encodeURIComponent(expected)}` : '';
+    const br = await railwaySelfFetch(`${origin}/api/v1/cron/refresh-bench${bs}`, { cache: 'no-store', signal: AbortSignal.timeout(110_000) });
+    if (br.ok) { const bj = await br.json(); benchRefreshed = { count: bj?.count, blockbuster: bj?.blockbuster, strong: bj?.strong }; }
+    else benchRefreshed = { status: br.status };
+  } catch (e: any) { benchRefreshed = { error: e?.message || String(e) }; }
+
   const forceGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
       cache: 'no-store', signal: AbortSignal.timeout(180_000),
@@ -136,17 +151,6 @@ export async function GET(req: Request) {
     }
     results.push(entry);
   }
-
-  // zzz421 — rebuild the server Conviction Beats bench from the now-healed
-  // graded data so /watchlists?tab=conviction is complete without the user
-  // visiting each date. Secret-gated; pass our own CRON_SECRET.
-  let benchRefreshed: any = null;
-  try {
-    const bs = expected ? `?secret=${encodeURIComponent(expected)}` : '';
-    const br = await railwaySelfFetch(`${origin}/api/v1/cron/refresh-bench${bs}`, { cache: 'no-store', signal: AbortSignal.timeout(90_000) });
-    if (br.ok) { const bj = await br.json(); benchRefreshed = { count: bj?.count, blockbuster: bj?.blockbuster, strong: bj?.strong }; }
-    else benchRefreshed = { status: br.status };
-  } catch (e: any) { benchRefreshed = { error: e?.message || String(e) }; }
 
   return NextResponse.json({
     status: 'ok',

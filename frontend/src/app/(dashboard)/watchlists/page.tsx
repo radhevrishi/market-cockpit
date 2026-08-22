@@ -2515,117 +2515,101 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   }, []);
   useEffect(() => { runEnrichWalk(false); }, [runEnrichWalk]);
 
-  // zzz428 — DURABLE bench-card completion (self-healing, no manual click).
+  // zzz429 — DURABLE bench-card completion (self-healing, no manual click).
   // Root cause of the "⏳ Results Pending / QUALITY 0 / ROCE —" cards (RUBICON,
   // CMRGREEN, INNOVACAP, DIACABS, KINGFA …): these BLOCKBUSTER/STRONG names reach
-  // the tab ONLY through the async server-bench merge (/api/v1/bench), which can
-  // resolve AFTER the one-shot mount enrich walk (runEnrichWalk) has already run —
-  // so the walk never sees them and they sit lean forever. The server-bench blob
-  // itself is also only as rich as the last cron rebuild, so we must not depend on
-  // it carrying financials.
+  // the tab ONLY through the async server-bench merge (/api/v1/bench), which loads
+  // AFTER the one-shot mount enrich walk ran and carries no financials — so they
+  // sit lean forever (no OPM / P/E / ROCE / YoY).
   //
-  // This effect makes the tab self-complete regardless of scan timing or bench-blob
-  // freshness: it watches the merged `entries`, finds any member that is rendering
-  // lean (all three YoY null AND no OPM / no quarterly series), and fetches its FULL
-  // card straight from the per-ticker enrich API (proven to return sales/PAT/EPS YoY,
-  // OPM, P/E, ROCE and the quarterly trend series independent of the graded-date
-  // cache). Results are persisted via syncFromEarningsOps, so the card completes AND
-  // stays complete across reloads. Bounded by benchHealRef so a genuine no-data
-  // micro-cap is attempted once per session, never in a loop.
-  const benchHealRef = useRef<Set<string>>(new Set());
+  // zzz428 tried to heal each one with a PER-TICKER Screener enrich call, but on a
+  // page already firing a ~168-entry retry sweep those 30+ extra calls queued behind
+  // the storm and timed out — then a permanent "attempted" set meant they never
+  // retried. This version fixes both:
+  //   • It reads the GRADED-DATE payload (/api/v1/earnings/graded?date=…), which is
+  //     server-cached and already contains the full card (sales/PAT/EPS YoY, OPM,
+  //     P/E, quality flags) for EVERY ticker filed that day — RUBICON included. One
+  //     cached request per unique filing_date covers all the lean names for that day,
+  //     so there is no per-ticker Screener burst and nothing to rate-limit.
+  //   • A ticker is marked done only on SUCCESS; a transient miss is retried (bounded
+  //     to 3 attempts each) instead of being abandoned. An in-flight guard means only
+  //     one heal pass runs at a time, so the effect can safely watch `entries`.
+  const benchHealDoneRef = useRef<Set<string>>(new Set());
+  const benchHealTriesRef = useRef<Map<string, number>>(new Map());
+  const benchHealInflightRef = useRef(false);
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (benchHealInflightRef.current) return;
     let cancelled = false;
+    const isLean = (e: any) => {
+      const noYoY = (e.sales_yoy_pct == null) && (e.net_profit_yoy_pct == null) && (e.eps_yoy_pct == null);
+      const noFin = (e.opm_pct == null) && !Array.isArray(e.quarters_sales);
+      return noYoY && noFin;
+    };
+    // Which members are still rendering lean, have a filing_date, and haven't been
+    // healed or exhausted their retry budget?
+    const byDate = new Map<string, string[]>();
+    for (const e of entries as any[]) {
+      const t = String(e?.ticker || '').toUpperCase();
+      if (!t || !e?.filing_date) continue;
+      if (benchHealDoneRef.current.has(t)) continue;
+      if ((benchHealTriesRef.current.get(t) || 0) >= 3) continue;
+      if (!isLean(e)) { benchHealDoneRef.current.add(t); continue; }
+      const arr = byDate.get(e.filing_date) || [];
+      arr.push(t);
+      byDate.set(e.filing_date, arr);
+    }
+    if (byDate.size === 0) return;
+    benchHealInflightRef.current = true;
     (async () => {
-      if (typeof window === 'undefined') return;
-      const lean = entries.filter((e: any) => {
-        const t = String(e?.ticker || '').toUpperCase();
-        if (!t || !e?.filing_date) return false;
-        if (benchHealRef.current.has(t)) return false;
-        const noYoY = (e.sales_yoy_pct == null) && (e.net_profit_yoy_pct == null) && (e.eps_yoy_pct == null);
-        const noFin = (e.opm_pct == null) && !Array.isArray(e.quarters_sales);
-        return noYoY && noFin;
-      });
-      if (lean.length === 0) return;
-      // Group by filing_date so we can pass the correct `filed` hint per batch.
-      const byDate = new Map<string, string[]>();
-      for (const e of lean) {
-        const t = String((e as any).ticker).toUpperCase();
-        benchHealRef.current.add(t);  // mark attempted up-front so re-renders don't re-queue
-        const arr = byDate.get((e as any).filing_date) || [];
-        arr.push(t);
-        byDate.set((e as any).filing_date, arr);
-      }
       for (const [dt, tickers] of byDate) {
-        for (let ci = 0; ci < tickers.length; ci += 8) {  // small batches — Screener rate-limits big bursts
-          if (cancelled) return;
-          const chunk = tickers.slice(ci, ci + 8);
-          let data: Record<string, any> = {};
-          try {
-            const res = await fetch(`/api/v1/earnings/enrich?symbols=${chunk.map(encodeURIComponent).join(',')}&filed=${dt}`, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
-            if (res.ok) { const j = await res.json(); data = j?.data || {}; }
-          } catch {}
-          // Per-symbol fallback so one slow scrape can't blank the whole chunk.
-          if (chunk.some(sym => !data[sym])) {
-            for (const sym of chunk) {
-              if (cancelled) return;
-              if (data[sym]) continue;
-              try {
-                const r1 = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(sym)}&filed=${dt}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
-                if (r1.ok) { const j1 = await r1.json(); if (j1?.data?.[sym]) data[sym] = j1.data[sym]; }
-              } catch {}
-              await new Promise(r => setTimeout(r, 150));
+        if (cancelled) break;
+        const want = new Set(tickers);
+        for (const t of tickers) benchHealTriesRef.current.set(t, (benchHealTriesRef.current.get(t) || 0) + 1);
+        // One cached graded-date fetch returns the full card for every ticker filed
+        // that day. No Screener burst; independent of the /api/v1/bench blob.
+        let cards: any[] = [];
+        try {
+          const res = await fetch(`/api/v1/earnings/graded?date=${dt}`, { cache: 'no-store', signal: AbortSignal.timeout(60_000) });
+          if (res.ok) {
+            const j = await res.json();
+            const bt = j?.by_tier || {};
+            for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
+              for (const c of (bt[tier] || [])) cards.push(c);
             }
           }
-          const syncEntries: any[] = [];
-          for (const sym of chunk) {
-            const enr = data[sym];
-            if (!enr) continue;
-            const src: any = entries.find((e: any) => String(e?.ticker || '').toUpperCase() === sym) || {};
-            syncEntries.push({
-              ticker: sym,
-              company: src.company || sym,
-              tier: src.tier,
-              filing_date: src.filing_date,
-              ...(src.quarter ? { quarter: src.quarter } : {}),
-              ...(src.fiscal_year ? { fiscal_year: src.fiscal_year } : {}),
-              composite_score: src.composite_score,
-              sector: src.sector ?? null,
-              market_cap_cr: src.market_cap_cr ?? null,
-              // financials from enrich (pat_yoy_pct maps to the card's net_profit_yoy_pct)
-              sales_yoy_pct: typeof enr.sales_yoy_pct === 'number' ? enr.sales_yoy_pct : null,
-              net_profit_yoy_pct: typeof enr.pat_yoy_pct === 'number' ? enr.pat_yoy_pct : null,
-              eps_yoy_pct: typeof enr.eps_yoy_pct === 'number' ? enr.eps_yoy_pct : null,
-              opm_pct: typeof enr.opm_pct === 'number' ? enr.opm_pct : null,
-              opm_prev_pct: typeof enr.opm_prev_pct === 'number' ? enr.opm_prev_pct : null,
-              pe: typeof enr.pe === 'number' ? enr.pe : (typeof enr.stockPE === 'number' ? enr.stockPE : null),
-              roce: typeof enr.roce === 'number' ? enr.roce : null,
-              roe: typeof enr.roe === 'number' ? enr.roe : null,
-              debtToEquity: typeof enr.debtToEquity === 'number' ? enr.debtToEquity : null,
-              d1_pct: typeof enr.d1_pct === 'number' ? enr.d1_pct : null,
-              gap_pct: typeof enr.gap_pct === 'number' ? enr.gap_pct : null,
-              d2_pct: typeof enr.d2_pct === 'number' ? enr.d2_pct : null,
-              move_pct: typeof enr.move_pct === 'number' ? enr.move_pct : (typeof src.move_pct === 'number' ? src.move_pct : null),
-              close_30d: Array.isArray(enr.close_30d) && enr.close_30d.length >= 2 ? enr.close_30d : undefined,
-              quarters_sales: Array.isArray(enr.quarters_sales) ? enr.quarters_sales : undefined,
-              quarters_eps: Array.isArray(enr.quarters_eps) ? enr.quarters_eps : undefined,
-              quarters_opm: Array.isArray(enr.quarters_opm) ? enr.quarters_opm : undefined,
-              quarters_material_cost_pct: Array.isArray(enr.quarters_material_cost_pct) ? enr.quarters_material_cost_pct : undefined,
-              quarters_other_income_pct: Array.isArray(enr.quarters_other_income_pct) ? enr.quarters_other_income_pct : undefined,
-              quarters_tax_pct: Array.isArray(enr.quarters_tax_pct) ? enr.quarters_tax_pct : undefined,
-              annual_cfo_pat: Array.isArray(enr.annual_cfo_pat) ? enr.annual_cfo_pat : undefined,
-              cfo_to_pat_ratio: typeof enr.cfo_to_pat_ratio === 'number' ? enr.cfo_to_pat_ratio : (typeof enr.ocf_to_pat_ratio === 'number' ? enr.ocf_to_pat_ratio : null),
-              pledged_pct: typeof enr.pledged_pct === 'number' ? enr.pledged_pct : null,
-              cb_enrich_v: 377,  // stamp so the standard fill walk treats it as fresh
-            });
+        } catch {}
+        if (cancelled) break;
+        const syncEntries: any[] = [];
+        for (const c of cards) {
+          const sym = String(c?.ticker || '').toUpperCase();
+          if (!want.has(sym)) continue;
+          // Ignore a card that is itself still lean (nothing gained) so we retry later.
+          if (isLean(c)) continue;
+          let qParsed: any, fyParsed: any;
+          if (typeof c.quarter === 'string') {
+            const qm = c.quarter.match(/Q([1-4])/i); if (qm) qParsed = 'Q' + qm[1];
+            const fm = c.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1], 10); fyParsed = yy < 50 ? 2000 + yy : 1900 + yy; }
           }
-          if (!cancelled && syncEntries.length) {
-            try { syncFromEarningsOps(syncEntries as any); } catch {}
-          }
-          await new Promise(r => setTimeout(r, 300));
+          syncEntries.push({
+            ...(c as any),
+            ticker: sym,
+            company: c.company || sym,
+            filing_date: c.filing_date || dt,
+            source_url: c.filing_url || (c as any).source_url,  // match rich cards' NSE hyperlink
+            ...(qParsed ? { quarter: qParsed } : {}),
+            ...(fyParsed ? { fiscal_year: fyParsed } : {}),
+          });
+          benchHealDoneRef.current.add(sym);
         }
+        if (!cancelled && syncEntries.length) {
+          try { syncFromEarningsOps(syncEntries as any); } catch {}
+        }
+        await new Promise(r => setTimeout(r, 250));
       }
+      benchHealInflightRef.current = false;
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; benchHealInflightRef.current = false; };
   }, [entries]);
 
   const [revalProgress, setRevalProgress] = useState<string | null>(null);
