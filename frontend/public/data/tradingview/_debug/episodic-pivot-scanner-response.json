@@ -1,7 +1,7 @@
 [
   {
     "url": "https://scanner.tradingview.com/global/scan?label-product=screener-stock",
-    "request": "{\"columns\":[\"ticker-view\",\"market_cap_basic\",\"type\",\"typespecs\",\"fundamental_currency_code\",\"close\",\"pricescale\",\"minmov\",\"fractional\",\"minmove2\",\"currency\",\"sector.tr\",\"market\",\"sector\",\"gross_profit_yoy_growth_fq\",\"total_revenue_yoy_growth_fq\",\"gross_margin_ttm\",\"free_cash_flow_margin_fy\",\"total_revenue_yoy_growth_fy\",\"price_earnings_ttm\",\"non_gaap_price_to_earnings_per_share_forecast_next_fy\",\"net_debt_fy\",\"enterprise_value_ebitda_ttm\",\"enterprise_value_to_revenue_ttm\",\"price_sales_current\",\"operating_margin_ttm\",\"price_book_fq\",\"price_to_cash_ratio\",\"return_on_equity_fq\",\"exchange.tr\",\"source-logoid\",\"earnings_release_next_trading_date_fq\",\"cash_n_equivalents_fy\",\"long_term_debt_fy\",\"earnings_per_share_diluted_yoy_growth_ttm\",\"return_on_invested_capital_fy\",\"debt_to_equity_fq\",\"Perf.Y\",\"net_margin_ttm\",\"total_revenue_cagr_5y\",\"price_earnings_growth_ttm\",\"AnalystRating\",\"AnalystRating.tr\",\"piotroski_f_score_ttm\",\"altman_z_score_ttm\",\"share_buyback_ratio_fy\",\"interst_cover_fy\",\"return_on_capital_employed_fy\",\"sloan_ratio_fy\",\"buyback_yield\",\"research_and_dev_ratio_fy\",\"net_debt_to_ebitda_fy\",\"revenue_per_employee_fy\",\"sustainable_growth_rate_fy\",\"float_shares_percent_current\",\"free_cash_flow_per_share_ttm\",\"EMA50\",\"EMA200\",\"cash_n_short_term_invest_fy\",\"Perf.3M\",\"Perf.6M\",\"earnings_per_share_forecast_next_fy\",\"beta_5_year\",\"ebitda_margin_ttm\",\"capex_per_share_ttm\",\"earnings_per_share_diluted_yoy_growth_fq\",\"price_target_1y\",\"average_volume_30d_calc\",\"RSI\",\"total_shares_outstanding_current\",\"number_of_employees_fy\",\"free_cash_flow_fy\",\"free_cash_flow_ttm\",\"price_52_week_high\",\"Perf.W\",\"Perf.1M\",\"ATR\",\"SMA50\",\"SMA150\",\"SMA200\",\"Volatility.M\",\"Volatility.W\",\"price_52_week_low\",\"relative_volume_10d_calc|1W\",\"volume\",\"EMA21\",\"industry.tr\",\"industry\",\"gap\"],\"filter\":[{\"left\":\"market_cap_basic\",\"operation\":\"in_range\",\"right\":[300000000,500000000000]},{\"left\":\"average_volume_60d_calc\",\"operation\":\"greater\",\"right\":500000},{\"left\":\"total_revenue_yoy_growth_fq\",\"operation\":\"greater\",\"right\":0},{\"left\":\"SMA50\",\"operation\":\"greater\",\"right\":\"SMA200\"},{\"left\":\"sector\",\"operation\":\"in_range\",\"right\":[\"Commercial Services\",\"Communications\",\"Consumer Durables\",\"Consumer Non-Durables\",\"Consumer Services\",\"Distribution Services\",\"Electronic Technology\",\"Government\",\"Miscellaneous\",\"Process Industries\",\"Producer Manufacturing\",\"Retail Trade\",\"Technology Services\",\"Transportation\",\"Utilities\"]},{\"left\":\"close\",\"operation\":\"egreater\",\"right\":5},{\"left\":\"close\",\"operation\":\"egreater\",\"right\":\"SMA50\"},{\"left\":\"volume\",\"operation\":\"greater\",\"right\":\"average_volume_10d_calc\"},{\"left\":\"change\",\"operation\":\"greater\",\"right\":3},{\"left\":\"is_primary\",\"operation\":\"equal\",\"right\":true}],\"ignore_unknown_fields\":false,\"options\":{\"lang\":\"en\"},\"price_conversion\":{\"to_currency\":\"usd\"},\"range\":[0,100],\"sort\":{\"sortBy\":\"market_cap_basic\",\"sortOrder\":\"desc\"},\"markets\":[\"america\",\"india\"],\"filter2\":{\"operator\":\"and\",\"operands\":[{\"operation\":{\"operator\":\"or\",\"operands\":[{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"stock\"}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has\",\"right\":[\"common\"]}}]}},{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"stock\"}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has\",\"right\":[\"preferred\"]}}]}},{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"dr\"}}]}},{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"fund\"}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has_none_of\",\"right\":[\"etf\",\"mutual\"]}}]}}]}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has_none_of\",\"right\":[\"pre-ipo\"]}}]}}",
+    "request": "{\"columns\":[\"ticker-view\",\"market_cap_basic\",\"type\",\"typespecs\",\"fundamental_currency_code\",\"close\",\"pricescale\",\"minmov\",\"fractional\",\"minmove2\",\"currency\",\"sector.tr\",\"market\",\"sector\",\"gross_profit_yoy_growth_fq\",\"total_revenue_yoy_growth_fq\",\"gross_margin_ttm\",\"free_cash_flow_margin_fy\",\"total_revenue_yoy_growth_fy\",\"price_earnings_ttm\",\"non_gaap_price_to_earnings_per_share_forecast_next_fy\",\"net_debt_fy\",\"enterprise_value_ebitda_ttm\",\"enterprise_value_to_revenue_ttm\",\"price_sales_current\",\"operating_margin_ttm\",\"price_book_fq\",\"price_to_cash_ratio\",\"return_on_equity_fq\",\"exchange.tr\",\"source-logoid\",\"earnings_release_next_trading_date_fq\",\"cash_n_equivalents_fy\",\"long_term_debt_fy\",\"earnings_per_share_diluted_yoy_growth_ttm\",\"return_on_invested_capital_fy\",\"debt_to_equity_fq\",\"Perf.Y\",\"net_margin_ttm\",\"total_revenue_cagr_5y\",\"price_earnings_growth_ttm\",\"AnalystRating\",\"AnalystRating.tr\",\"piotroski_f_score_ttm\",\"altman_z_score_ttm\",\"share_buyback_ratio_fy\",\"interst_cover_fy\",\"return_on_capital_employed_fy\",\"sloan_ratio_fy\",\"buyback_yield\",\"research_and_dev_ratio_fy\",\"net_debt_to_ebitda_fy\",\"revenue_per_employee_fy\",\"sustainable_growth_rate_fy\",\"float_shares_percent_current\",\"free_cash_flow_per_share_ttm\",\"EMA50\",\"EMA200\",\"cash_n_short_term_invest_fy\",\"Perf.3M\",\"Perf.6M\",\"earnings_per_share_forecast_next_fy\",\"beta_5_year\",\"ebitda_margin_ttm\",\"capex_per_share_ttm\",\"earnings_per_share_diluted_yoy_growth_fq\",\"price_target_1y\",\"average_volume_30d_calc\",\"RSI\",\"total_shares_outstanding_current\",\"number_of_employees_fy\",\"free_cash_flow_fy\",\"free_cash_flow_ttm\",\"price_52_week_high\",\"Perf.W\",\"Perf.1M\",\"ATR\",\"SMA50\",\"SMA150\",\"SMA200\",\"Volatility.M\",\"Volatility.W\",\"price_52_week_low\",\"relative_volume_10d_calc|1W\",\"volume\",\"EMA21\",\"industry.tr\",\"industry\",\"gap\"],\"filter\":[{\"left\":\"close\",\"operation\":\"egreater\",\"right\":\"SMA50\"},{\"left\":\"change\",\"operation\":\"greater\",\"right\":3},{\"left\":\"average_volume_60d_calc\",\"operation\":\"greater\",\"right\":500000},{\"left\":\"close\",\"operation\":\"egreater\",\"right\":5},{\"left\":\"sector\",\"operation\":\"in_range\",\"right\":[\"Commercial Services\",\"Communications\",\"Consumer Durables\",\"Consumer Non-Durables\",\"Consumer Services\",\"Distribution Services\",\"Electronic Technology\",\"Government\",\"Miscellaneous\",\"Process Industries\",\"Producer Manufacturing\",\"Retail Trade\",\"Technology Services\",\"Transportation\",\"Utilities\"]},{\"left\":\"market_cap_basic\",\"operation\":\"in_range\",\"right\":[300000000,500000000000]},{\"left\":\"volume\",\"operation\":\"greater\",\"right\":\"average_volume_10d_calc\"},{\"left\":\"SMA50\",\"operation\":\"greater\",\"right\":\"SMA200\"},{\"left\":\"total_revenue_yoy_growth_fq\",\"operation\":\"greater\",\"right\":0},{\"left\":\"is_primary\",\"operation\":\"equal\",\"right\":true}],\"ignore_unknown_fields\":false,\"options\":{\"lang\":\"en\"},\"price_conversion\":{\"to_currency\":\"usd\"},\"range\":[0,100],\"sort\":{\"sortBy\":\"market_cap_basic\",\"sortOrder\":\"desc\"},\"markets\":[\"america\",\"india\"],\"filter2\":{\"operator\":\"and\",\"operands\":[{\"operation\":{\"operator\":\"or\",\"operands\":[{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"stock\"}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has\",\"right\":[\"common\"]}}]}},{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"stock\"}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has\",\"right\":[\"preferred\"]}}]}},{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"dr\"}}]}},{\"operation\":{\"operator\":\"and\",\"operands\":[{\"expression\":{\"left\":\"type\",\"operation\":\"equal\",\"right\":\"fund\"}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has_none_of\",\"right\":[\"etf\",\"mutual\"]}}]}}]}},{\"expression\":{\"left\":\"typespecs\",\"operation\":\"has_none_of\",\"right\":[\"pre-ipo\"]}}]}}",
     "response": {
       "totalCount": 39,
       "data": [
@@ -358479,508 +358479,505 @@
       "financial_currency": "USD",
       "fields": [
         {
-          "n": "cfi_code",
-          "t": "text",
-          "r": [
-            "CICJLU",
-            "EFVXCR",
-            "CICIES",
-            "EPNRAR",
-            "EFVXFR",
-            "EPRRAR",
-            "EPNCQR",
-            "EPVXFR",
-            "CIOILS",
-            "ESVTFN",
-            "EPNCCR",
-            "EPVXUR",
-            "CIOXXX",
-            "EPNNCR",
-            "CIOJMS",
-            "EFNRCX",
-            "EPNTFR",
-            "CICGXS",
-            "ESXXXX",
-            "CICJBS",
-            "CIOIXX",
-            "EPRRCR",
-            "EPVRFR",
-            "CICJLS",
-            "CIOJLS",
-            "EPVXCR",
-            "ESXTFX",
-            "EPVCFR",
-            "EPVRCR",
-            "EFNNFR",
-            "EPNTCR",
-            "EPVNFR",
-            "ESVTFM",
-            "CIOJRS",
-            "EPVNAR",
-            "ESVXXX",
-            "CICJXS",
-            "ESVTFR",
-            "EPNXAR",
-            "CIOIES",
-            "EPVCCR",
-            "EFVCFR",
-            "ESVXFX",
-            "ESNUFB",
-            "ESVUXR",
-            "EPNXUR",
-            "ESXXXN",
-            "CICIRX",
-            "ESVUFR",
-            "CICJMS",
-            "ESNUFN",
-            "EFVRCR",
-            "CIXXFX",
-            "CICJCS",
-            "ESRTFR",
-            "CICXXX",
-            "ESXXXB",
-            "EPVCQR",
-            "CICXLS",
-            "EPNRFR",
-            "ESVUPR",
-            "EPNNAR",
-            "CICGXX",
-            "CEOJLS",
-            "EPNNFR",
-            "EPXXXX",
-            "ESVXFR",
-            "ESVXFN",
-            "CIXXXS",
-            "CICILS",
-            "CICIBS",
-            "ESRUFR",
-            "ESEUFN",
-            "ESNUOR",
-            "ESVTXR",
-            "ESVUXN",
-            "EFNCCR",
-            "CICJMU",
-            "CIOGXX",
-            "CIOGLX",
-            "ESXUFX",
-            "EFNXCR",
-            "EPNRCR",
-            "ESXXXR",
-            "CIOJLU",
-            "CICJLQ",
-            "ESVUFX",
-            "CICXMX",
-            "CICIMX",
-            "CICIRS",
-            "ESVUFM",
-            "CICIXX",
-            "ESNUFR",
-            "EPNXXB",
-            "EFVRFR",
-            "ESNUPR",
-            "ESXUXR",
-            "EPVNCR",
-            "CICGLS",
-            "CICIMS",
-            "ESVUOR",
-            "EPNXFR",
-            "CIXXXX",
-            "CIOXMX",
-            "EPVRAR",
-            "ESVUFN",
-            "EPVTFR",
-            "EPVGFR",
-            "ESVUFB",
-            "ESVUXX",
-            "EPNCFR",
-            "CICIBX",
-            "ESVXXR",
-            "ESEUFR",
-            "EPNAFR",
-            "EPNXCR",
-            "CIMJLS",
-            "EPXNFR",
-            "ESNTFR",
-            "EPRNFR",
-            "ESXXFX",
-            "EFNXFR",
-            "ESNUFX",
-            "EPNCAR",
-            "ESVUPN",
-            "CICIBU",
-            "ESRUFN",
-            "CMXXXU"
-          ]
-        },
-        {
           "n": "country",
           "t": "text",
           "r": [
-            "Faroe Islands",
-            "Cambodia",
-            "Monaco",
-            "Jordan",
-            "Peru",
-            "Liechtenstein",
-            "Tanzania",
-            "Mexico",
-            "United Kingdom",
-            "Israel",
-            "Mauritius",
-            "Switzerland",
-            "Singapore",
-            "United Arab Emirates",
-            "Luxembourg",
-            "Puerto Rico",
-            "Macedonia",
-            "Brazil",
-            "Belgium",
-            "Uruguay",
-            "Chile",
-            "Vietnam",
-            "China",
-            "Mongolia",
-            "Ireland",
-            "Russian Federation",
-            "Kazakhstan",
-            "Greece",
-            "Macau",
-            "Panama",
-            "Egypt",
-            "Costa Rica",
-            "Norway",
-            "Denmark",
             "Dominican Republic",
-            "Australia",
-            "Malaysia",
-            "New Zealand",
-            "Bahamas",
-            "Finland",
-            "France",
+            "Switzerland",
+            "Belgium",
             "South Africa",
-            "Spain",
-            "Argentina",
-            "Portugal",
-            "India",
-            "Canada",
-            "Sweden",
-            "Cyprus",
-            "Barbados",
-            "Philippines",
-            "Austria",
-            "Poland",
-            "Taiwan",
-            "Indonesia",
-            "Gibraltar",
-            "Thailand",
-            "British Virgin Islands",
-            "United States",
-            "Cayman Islands",
-            "Italy",
-            "Malta",
-            "El Salvador",
-            "Germany",
-            "Netherlands",
-            "Colombia",
-            "Czech Republic",
-            "Japan",
-            "Hong Kong",
+            "Monaco",
+            "Egypt",
+            "Russian Federation",
             "Turkey",
-            "Bermuda",
+            "Brazil",
+            "Taiwan",
+            "Barbados",
+            "Netherlands",
+            "Malaysia",
+            "Argentina",
+            "Tanzania",
+            "Colombia",
+            "China",
+            "Mauritius",
+            "Vietnam",
+            "El Salvador",
+            "United Arab Emirates",
+            "Hong Kong",
+            "Philippines",
+            "Kazakhstan",
+            "Macedonia",
+            "Czech Republic",
+            "Uruguay",
+            "United Kingdom",
+            "France",
+            "Puerto Rico",
+            "Canada",
+            "Germany",
+            "Singapore",
+            "Hungary",
+            "Portugal",
+            "Israel",
+            "Gibraltar",
+            "Poland",
+            "Italy",
+            "Jordan",
+            "Austria",
             "South Korea",
-            "Hungary"
+            "Cyprus",
+            "Bahamas",
+            "Ireland",
+            "Thailand",
+            "Panama",
+            "Chile",
+            "Luxembourg",
+            "Finland",
+            "Mongolia",
+            "Sweden",
+            "Australia",
+            "Bermuda",
+            "Cambodia",
+            "Peru",
+            "Cayman Islands",
+            "Costa Rica",
+            "British Virgin Islands",
+            "Greece",
+            "Mexico",
+            "India",
+            "Japan",
+            "Spain",
+            "Indonesia",
+            "Malta",
+            "United States",
+            "Denmark",
+            "New Zealand",
+            "Norway",
+            "Macau",
+            "Faroe Islands",
+            "Liechtenstein"
           ]
         },
         {
-          "n": "top_revenue_country_code",
+          "n": "cfi_code",
           "t": "text",
           "r": [
-            "SA",
-            "DK",
-            "IN",
-            "HU",
-            "MY",
-            "GR",
-            "FI",
-            "LU",
-            "CZ",
-            "CM",
-            "AU",
-            "CA",
-            "KR",
-            "ID",
-            "ES",
-            "PL",
-            "PR",
-            "HT",
-            "ZM",
-            "GT",
-            "IM",
-            "EC",
-            "IL",
-            "CO",
-            "AE",
-            "TZ",
-            "MX",
-            "TH",
-            "PG",
-            "ML",
-            "BF",
-            "GH",
-            "IQ",
-            "RU",
-            "MG",
-            "TR",
-            "MT",
-            "CG",
-            "GL",
-            "BW",
-            "FJ",
-            "GB",
-            "NA",
-            "TW",
-            "LT",
-            "US",
-            "CH",
-            "MO",
-            "BM",
-            "NI",
-            "PT",
-            "NG",
-            "BG",
-            "CN",
-            "PH",
-            "MC",
-            "IE",
-            "KZ",
-            "CI",
-            "BO",
-            "CR",
-            "HK",
-            "SE",
-            "VG",
-            "GA",
-            "QA",
-            "TT",
-            "KH",
-            "FR",
-            "IS",
-            "BE",
-            "MN",
-            "NZ",
-            "DZ",
-            "MM",
-            "JP",
-            "GY",
-            "KG",
-            "MH",
-            "EG",
-            "PK",
-            "LK",
-            "BD",
-            "IT",
-            "CD",
-            "NL",
-            "AT",
-            "GE",
-            "UA",
-            "CY",
-            "UZ",
-            "ZA",
-            "SG",
-            "DE",
-            "BR",
-            "NO",
-            "PE",
-            "CL",
-            "ZW",
-            "KY",
-            "MA",
-            "LI",
-            "DO",
-            "AR",
-            "VN",
-            "VE",
-            "ET",
-            "MU",
-            "UG",
-            "KE"
+            "EPNCFR",
+            "EPVCFR",
+            "ESRTFR",
+            "EPNRCR",
+            "EPVRFR",
+            "EPVTFR",
+            "ESEUFR",
+            "ESNUPR",
+            "CIOXMX",
+            "CICJXS",
+            "CICIES",
+            "ESVTFR",
+            "EPNAFR",
+            "EPNXAR",
+            "EPNNFR",
+            "ESXTFX",
+            "ESNUFN",
+            "CIOJLS",
+            "CIOILS",
+            "CICGXS",
+            "CICIMX",
+            "EPVNFR",
+            "EPNCQR",
+            "ESXUFX",
+            "CICILS",
+            "EFNRCX",
+            "ESVXFN",
+            "EPRRCR",
+            "CICGLS",
+            "CIOIES",
+            "EPRRAR",
+            "ESVUFR",
+            "ESNUFR",
+            "CICIRS",
+            "EFVRFR",
+            "ESVUXN",
+            "CIXXFX",
+            "ESVUXR",
+            "CIXXXX",
+            "ESVTFN",
+            "ESVTXR",
+            "CICIBX",
+            "CIOGXX",
+            "EFNCCR",
+            "EPXXXX",
+            "ESVUXX",
+            "EFNNFR",
+            "EPXNFR",
+            "EPNXFR",
+            "EPNNCR",
+            "EPNCAR",
+            "ESNTFR",
+            "CIOIXX",
+            "CIOXXX",
+            "EPVRCR",
+            "EFVRCR",
+            "ESVUFX",
+            "ESXXXB",
+            "ESVUFM",
+            "CICIMS",
+            "ESVXXR",
+            "CIMJLS",
+            "EPNRFR",
+            "ESVXXX",
+            "CICJLS",
+            "CEOJLS",
+            "ESEUFN",
+            "ESVXFR",
+            "EPVNCR",
+            "CICJCS",
+            "EFVXCR",
+            "CICIRX",
+            "CIOGLX",
+            "CICXMX",
+            "ESXXXR",
+            "CICJMU",
+            "ESXUXR",
+            "CICJBS",
+            "EFNXFR",
+            "ESVUFB",
+            "EPNNAR",
+            "CIOJLU",
+            "EFVCFR",
+            "EPVCQR",
+            "EPVGFR",
+            "ESVXFX",
+            "EFVXFR",
+            "CICXLS",
+            "EPVXUR",
+            "EPNTCR",
+            "CICJLQ",
+            "ESXXXX",
+            "ESNUFX",
+            "EPNXXB",
+            "CICJLU",
+            "EPNRAR",
+            "CICIXX",
+            "ESXXXN",
+            "ESNUOR",
+            "EFNXCR",
+            "CIOJRS",
+            "EPVXFR",
+            "EPVRAR",
+            "ESXXFX",
+            "ESVUPR",
+            "EPNXUR",
+            "CIOJMS",
+            "ESNUFB",
+            "EPVCCR",
+            "EPNXCR",
+            "ESVUFN",
+            "CICXXX",
+            "CICGXX",
+            "CICJMS",
+            "ESRUFR",
+            "ESVUOR",
+            "CICIBS",
+            "ESVTFM",
+            "EPRNFR",
+            "EPNTFR",
+            "CIXXXS",
+            "EPNCCR",
+            "EPVNAR",
+            "EPVXCR",
+            "CICIBU",
+            "ESVUPN",
+            "ESRUFN",
+            "CMXXXU"
           ]
         },
         {
           "n": "sector",
           "t": "text",
           "r": [
-            "Finance",
-            "Process Industries",
-            "Electronic Technology",
-            "Health Technology",
-            "Retail Trade",
-            "Distribution Services",
-            "Commercial Services",
-            "Energy Minerals",
-            "Consumer Durables",
-            "Government",
-            "Producer Manufacturing",
-            "Transportation",
-            "Non-Energy Minerals",
-            "Technology Services",
-            "Communications",
-            "Utilities",
-            "Consumer Non-Durables",
             "Miscellaneous",
-            "Consumer Services",
+            "Transportation",
+            "Producer Manufacturing",
+            "Process Industries",
+            "Government",
+            "Distribution Services",
+            "Technology Services",
+            "Retail Trade",
+            "Health Services",
+            "Electronic Technology",
             "Industrial Services",
-            "Health Services"
+            "Consumer Durables",
+            "Utilities",
+            "Commercial Services",
+            "Communications",
+            "Finance",
+            "Consumer Services",
+            "Non-Energy Minerals",
+            "Health Technology",
+            "Energy Minerals",
+            "Consumer Non-Durables"
+          ]
+        },
+        {
+          "n": "top_revenue_country_code",
+          "t": "text",
+          "r": [
+            "CN",
+            "ES",
+            "SG",
+            "VG",
+            "PK",
+            "LI",
+            "CG",
+            "DE",
+            "GB",
+            "LT",
+            "PG",
+            "KG",
+            "CR",
+            "KY",
+            "NL",
+            "PE",
+            "MO",
+            "AT",
+            "MG",
+            "US",
+            "BR",
+            "DZ",
+            "BE",
+            "GH",
+            "MM",
+            "CI",
+            "VN",
+            "AU",
+            "IE",
+            "NI",
+            "HU",
+            "BF",
+            "CY",
+            "ZW",
+            "GE",
+            "TW",
+            "NO",
+            "NG",
+            "MC",
+            "KH",
+            "TR",
+            "GR",
+            "AR",
+            "CO",
+            "CZ",
+            "EC",
+            "DO",
+            "GL",
+            "SA",
+            "CD",
+            "ML",
+            "IL",
+            "FR",
+            "MH",
+            "MT",
+            "LK",
+            "MX",
+            "KR",
+            "FI",
+            "NA",
+            "GA",
+            "TZ",
+            "IM",
+            "CA",
+            "JP",
+            "ZA",
+            "EG",
+            "HK",
+            "NZ",
+            "TT",
+            "QA",
+            "UA",
+            "SE",
+            "CH",
+            "DK",
+            "BG",
+            "GT",
+            "IQ",
+            "AE",
+            "MY",
+            "PH",
+            "TH",
+            "BW",
+            "MA",
+            "RU",
+            "IS",
+            "HT",
+            "CL",
+            "UZ",
+            "KZ",
+            "BO",
+            "PT",
+            "FJ",
+            "LU",
+            "CM",
+            "GY",
+            "BM",
+            "ID",
+            "PR",
+            "PL",
+            "MN",
+            "BD",
+            "ZM",
+            "IT",
+            "IN",
+            "UG",
+            "KE",
+            "MU",
+            "VE",
+            "ET"
           ]
         },
         {
           "n": "industry",
           "t": "text",
           "r": [
-            "Data Processing Services",
-            "Home Improvement Chains",
-            "Investment Managers",
-            "Auto Parts: OEM",
-            "Medical/Nursing Services",
-            "Electric Utilities",
-            "Hotels/Resorts/Cruise lines",
-            "Chemicals: Specialty",
-            "Oilfield Services/Equipment",
-            "Biotechnology",
-            "Homebuilding",
-            "Major Telecommunications",
-            "Alternative Power Generation",
-            "Advertising/Marketing Services",
-            "Agricultural Commodities/Milling",
-            "Forest Products",
-            "Containers/Packaging",
-            "Electronic Production Equipment",
-            "Drugstore Chains",
-            "Precious Metals",
-            "Real Estate Investment Trusts",
-            "Industrial Specialties",
-            "Aerospace & Defense",
-            "Electronic Equipment/Instruments",
-            "Miscellaneous",
-            "Finance/Rental/Leasing",
-            "Food Retail",
-            "Miscellaneous Commercial Services",
-            "Specialty Telecommunications",
-            "Department Stores",
-            "Food: Specialty/Candy",
-            "Automotive Aftermarket",
-            "Pulp & Paper",
-            "Medical Distributors",
-            "Information Technology Services",
-            "Other Consumer Specialties",
-            "Electronics/Appliances",
-            "Specialty Stores",
-            "Trucking",
-            "Internet Software/Services",
-            "Restaurants",
-            "Insurance Brokers/Services",
-            "Services to the Health Industry",
-            "Office Equipment/Supplies",
-            "Wireless Telecommunications",
-            "Other Consumer Services",
-            "Computer Peripherals",
-            "Gas Distributors",
-            "Personnel Services",
-            "Tools & Hardware",
-            "Regional Banks",
-            "Food: Major Diversified",
-            "Semiconductors",
-            "Apparel/Footwear",
-            "Property/Casualty Insurance",
-            "Oil & Gas Pipelines",
-            "Broadcasting",
-            "Other Transportation",
-            "Industrial Conglomerates",
-            "Multi-Line Insurance",
-            "Internet Retail",
-            "Building Products",
-            "Railroads",
-            "Food: Meat/Fish/Dairy",
-            "Publishing: Books/Magazines",
-            "Miscellaneous Manufacturing",
-            "Other Metals/Minerals",
-            "Commercial Printing/Forms",
-            "Industrial Machinery",
-            "Aluminum",
-            "Medical Specialties",
-            "Electrical Products",
-            "Food Distributors",
-            "Integrated Oil",
-            "Apparel/Footwear Retail",
-            "Pharmaceuticals: Generic",
-            "Airlines",
-            "Investment Trusts/Mutual Funds",
-            "Media Conglomerates",
-            "Oil Refining/Marketing",
-            "Investment Banks/Brokers",
-            "Life/Health Insurance",
-            "Chemicals: Major Diversified",
-            "Financial Publishing/Services",
-            "Pharmaceuticals: Major",
-            "Contract Drilling",
-            "Computer Processing Hardware",
-            "Household/Personal Care",
-            "Coal",
-            "Trucks/Construction/Farm Machinery",
-            "Engineering & Construction",
-            "Electronics Distributors",
-            "Metal Fabrication",
-            "General Government",
-            "Catalog/Specialty Distribution",
-            "Wholesale Distributors",
-            "Pharmaceuticals: Other",
-            "Specialty Insurance",
-            "Home Furnishings",
-            "Beverages: Alcoholic",
-            "Oil & Gas Production",
-            "Water Utilities",
-            "Consumer Sundries",
-            "Savings Banks",
-            "Beverages: Non-Alcoholic",
-            "Packaged Software",
-            "Telecommunications Equipment",
-            "Motor Vehicles",
-            "Computer Communications",
-            "Marine Shipping",
-            "Tobacco",
-            "Air Freight/Couriers",
-            "Steel",
             "Cable/Satellite TV",
-            "Hospital/Nursing Management",
-            "Financial Conglomerates",
-            "Environmental Services",
-            "Recreational Products",
-            "Managed Health Care",
-            "Major Banks",
-            "Real Estate Development",
-            "Chemicals: Agricultural",
-            "Textiles",
-            "Discount Stores",
-            "Publishing: Newspapers",
+            "Multi-Line Insurance",
             "Casinos/Gaming",
-            "Electronic Components",
-            "Movies/Entertainment",
+            "Office Equipment/Supplies",
+            "Discount Stores",
+            "Home Improvement Chains",
+            "Water Utilities",
+            "Oil Refining/Marketing",
+            "Specialty Stores",
+            "Major Banks",
+            "Wireless Telecommunications",
+            "Homebuilding",
+            "Trucking",
+            "Telecommunications Equipment",
+            "Tobacco",
+            "Pharmaceuticals: Major",
+            "Metal Fabrication",
+            "Apparel/Footwear",
+            "Marine Shipping",
+            "Electric Utilities",
+            "Other Consumer Services",
+            "Commercial Printing/Forms",
+            "Services to the Health Industry",
+            "Media Conglomerates",
+            "Life/Health Insurance",
+            "Engineering & Construction",
+            "Textiles",
+            "Oil & Gas Pipelines",
+            "Electronics Distributors",
+            "Real Estate Investment Trusts",
+            "Household/Personal Care",
+            "Miscellaneous Manufacturing",
+            "Electronics/Appliance Stores",
+            "Medical Distributors",
+            "Real Estate Development",
+            "Chemicals: Specialty",
+            "Finance/Rental/Leasing",
             "Construction Materials",
-            "Electronics/Appliance Stores"
+            "Investment Banks/Brokers",
+            "Environmental Services",
+            "Industrial Specialties",
+            "Publishing: Newspapers",
+            "Managed Health Care",
+            "Catalog/Specialty Distribution",
+            "Agricultural Commodities/Milling",
+            "Hotels/Resorts/Cruise lines",
+            "Gas Distributors",
+            "Food Distributors",
+            "Electronics/Appliances",
+            "Chemicals: Agricultural",
+            "Computer Communications",
+            "Coal",
+            "Other Transportation",
+            "Financial Publishing/Services",
+            "Home Furnishings",
+            "Medical Specialties",
+            "Drugstore Chains",
+            "Industrial Machinery",
+            "Medical/Nursing Services",
+            "Major Telecommunications",
+            "Electronic Equipment/Instruments",
+            "Publishing: Books/Magazines",
+            "Insurance Brokers/Services",
+            "Alternative Power Generation",
+            "Regional Banks",
+            "Electrical Products",
+            "Electronic Components",
+            "Building Products",
+            "Savings Banks",
+            "Recreational Products",
+            "Forest Products",
+            "Aerospace & Defense",
+            "Semiconductors",
+            "General Government",
+            "Hospital/Nursing Management",
+            "Advertising/Marketing Services",
+            "Investment Trusts/Mutual Funds",
+            "Integrated Oil",
+            "Internet Software/Services",
+            "Food Retail",
+            "Computer Peripherals",
+            "Property/Casualty Insurance",
+            "Containers/Packaging",
+            "Pulp & Paper",
+            "Automotive Aftermarket",
+            "Internet Retail",
+            "Contract Drilling",
+            "Department Stores",
+            "Railroads",
+            "Specialty Telecommunications",
+            "Industrial Conglomerates",
+            "Tools & Hardware",
+            "Aluminum",
+            "Pharmaceuticals: Other",
+            "Biotechnology",
+            "Chemicals: Major Diversified",
+            "Trucks/Construction/Farm Machinery",
+            "Electronic Production Equipment",
+            "Personnel Services",
+            "Packaged Software",
+            "Oil & Gas Production",
+            "Steel",
+            "Motor Vehicles",
+            "Apparel/Footwear Retail",
+            "Miscellaneous",
+            "Consumer Sundries",
+            "Investment Managers",
+            "Financial Conglomerates",
+            "Miscellaneous Commercial Services",
+            "Data Processing Services",
+            "Beverages: Alcoholic",
+            "Beverages: Non-Alcoholic",
+            "Pharmaceuticals: Generic",
+            "Wholesale Distributors",
+            "Air Freight/Couriers",
+            "Airlines",
+            "Auto Parts: OEM",
+            "Movies/Entertainment",
+            "Broadcasting",
+            "Restaurants",
+            "Precious Metals",
+            "Food: Specialty/Candy",
+            "Computer Processing Hardware",
+            "Food: Major Diversified",
+            "Information Technology Services",
+            "Other Metals/Minerals",
+            "Oilfield Services/Equipment",
+            "Food: Meat/Fish/Dairy",
+            "Other Consumer Specialties",
+            "Specialty Insurance"
           ]
         },
         {
-          "n": "exchange",
+          "n": "submarket",
           "t": "text",
           "r": [
-            "OTC",
-            "NASDAQ",
-            "NYSE",
-            "AMEX",
-            "CBOE",
-            "NSE",
-            "BSE"
+            "OTCQX",
+            "",
+            "PINK",
+            "OTCQB"
           ]
         },
         {
@@ -358992,13 +358989,16 @@
           ]
         },
         {
-          "n": "submarket",
+          "n": "exchange",
           "t": "text",
           "r": [
-            "PINK",
-            "",
-            "OTCQX",
-            "OTCQB"
+            "AMEX",
+            "CBOE",
+            "NYSE",
+            "OTC",
+            "NASDAQ",
+            "BSE",
+            "NSE"
           ]
         },
         {
@@ -359231,32 +359231,431 @@
     }
   },
   {
-    "url": "https://scanner.tradingview.com/symbol?symbol=NASDAQ%3ASRTA&fields=price_52_week_high%2Cprice_52_week_low%2Csector%2Ccountry%2Cmarket%2CLow.1M%2CHigh.1M%2CPerf.W%2CPerf.1M%2CPerf.3M%2CPerf.6M%2CPerf.Y%2CPerf.YTD%2CRecommend.All%2Caverage_volume_10d_calc%2Caverage_volume_30d_calc%2Cnav_discount_premium%2Copen_interest%2Ccountry_code_fund%2Civ%2Cunderlying_symbol%2Cdelta%2Cgamma%2Crho%2Ctheta%2Cvega%2CtheoPrice&no_404=true&label-product=right-details",
+    "url": "https://scanner.tradingview.com/presets/BSE_percent_gap_gainers?label-product=right-hotlists",
     "request": null,
     "response": {
-      "High.1M": 6.29,
-      "Low.1M": 4.855,
-      "Perf.1M": 21.637426900584803,
-      "Perf.3M": 7.401032702237532,
-      "Perf.6M": 36.84210526315791,
-      "Perf.W": 4.522613065326641,
-      "Perf.Y": 51.45631067961165,
-      "Perf.YTD": 28.659793814433005,
-      "Recommend.All": 0.6484848484848484,
-      "average_volume_10d_calc": 911465.3,
-      "average_volume_30d_calc": 1053775.9666666666,
-      "country": "United States",
-      "country_code_fund": "US",
+      "totalCount": 63,
+      "fields": [
+        "gap_up"
+      ],
+      "symbols": [
+        {
+          "s": "BSE:URSUGAR",
+          "f": [
+            8.761329305135952
+          ]
+        },
+        {
+          "s": "BSE:MINALIND",
+          "f": [
+            6.439393939393937
+          ]
+        },
+        {
+          "s": "BSE:WELCORP",
+          "f": [
+            5.697143990479962
+          ]
+        },
+        {
+          "s": "BSE:SWASTIKAAL",
+          "f": [
+            4.996776273372009
+          ]
+        },
+        {
+          "s": "BSE:INDAG",
+          "f": [
+            4.995111545640379
+          ]
+        },
+        {
+          "s": "BSE:ADVANCETL",
+          "f": [
+            4.994281357224561
+          ]
+        },
+        {
+          "s": "BSE:EBIX",
+          "f": [
+            4.989495798319324
+          ]
+        },
+        {
+          "s": "BSE:ABRFL",
+          "f": [
+            4.9793601651186785
+          ]
+        },
+        {
+          "s": "BSE:KUBERJI",
+          "f": [
+            4.97624406101524
+          ]
+        },
+        {
+          "s": "BSE:KOBO",
+          "f": [
+            4.967602591792666
+          ]
+        },
+        {
+          "s": "BSE:OMEGAIN",
+          "f": [
+            4.94354592615196
+          ]
+        },
+        {
+          "s": "BSE:ACIIN",
+          "f": [
+            4.910714285714279
+          ]
+        },
+        {
+          "s": "BSE:GUJWIND",
+          "f": [
+            4.8292108362779755
+          ]
+        },
+        {
+          "s": "BSE:MAL",
+          "f": [
+            4.700854700854714
+          ]
+        },
+        {
+          "s": "BSE:HEALTHYLIFE",
+          "f": [
+            4.692556634304208
+          ]
+        },
+        {
+          "s": "BSE:BCCL",
+          "f": [
+            4.659793814432986
+          ]
+        },
+        {
+          "s": "BSE:KJMCFIN",
+          "f": [
+            4.486554270586595
+          ]
+        },
+        {
+          "s": "BSE:SIMBHALS",
+          "f": [
+            4.402515723270447
+          ]
+        },
+        {
+          "s": "BSE:ADISHAKTI",
+          "f": [
+            4.1055718475073215
+          ]
+        },
+        {
+          "s": "BSE:AUREATE",
+          "f": [
+            3.999999999999996
+          ]
+        }
+      ],
+      "time": "2026-08-23T05:03:56Z"
+    }
+  },
+  {
+    "url": "https://scanner.tradingview.com/presets/BSE_percent_gap_gainers?label-product=right-hotlists",
+    "request": null,
+    "response": {
+      "totalCount": 63,
+      "fields": [
+        "gap_up"
+      ],
+      "symbols": [
+        {
+          "s": "BSE:URSUGAR",
+          "f": [
+            8.761329305135952
+          ]
+        },
+        {
+          "s": "BSE:MINALIND",
+          "f": [
+            6.439393939393937
+          ]
+        },
+        {
+          "s": "BSE:WELCORP",
+          "f": [
+            5.697143990479962
+          ]
+        },
+        {
+          "s": "BSE:SWASTIKAAL",
+          "f": [
+            4.996776273372009
+          ]
+        },
+        {
+          "s": "BSE:INDAG",
+          "f": [
+            4.995111545640379
+          ]
+        },
+        {
+          "s": "BSE:ADVANCETL",
+          "f": [
+            4.994281357224561
+          ]
+        },
+        {
+          "s": "BSE:EBIX",
+          "f": [
+            4.989495798319324
+          ]
+        },
+        {
+          "s": "BSE:ABRFL",
+          "f": [
+            4.9793601651186785
+          ]
+        },
+        {
+          "s": "BSE:KUBERJI",
+          "f": [
+            4.97624406101524
+          ]
+        },
+        {
+          "s": "BSE:KOBO",
+          "f": [
+            4.967602591792666
+          ]
+        },
+        {
+          "s": "BSE:OMEGAIN",
+          "f": [
+            4.94354592615196
+          ]
+        },
+        {
+          "s": "BSE:ACIIN",
+          "f": [
+            4.910714285714279
+          ]
+        },
+        {
+          "s": "BSE:GUJWIND",
+          "f": [
+            4.8292108362779755
+          ]
+        },
+        {
+          "s": "BSE:MAL",
+          "f": [
+            4.700854700854714
+          ]
+        },
+        {
+          "s": "BSE:HEALTHYLIFE",
+          "f": [
+            4.692556634304208
+          ]
+        },
+        {
+          "s": "BSE:BCCL",
+          "f": [
+            4.659793814432986
+          ]
+        },
+        {
+          "s": "BSE:KJMCFIN",
+          "f": [
+            4.486554270586595
+          ]
+        },
+        {
+          "s": "BSE:SIMBHALS",
+          "f": [
+            4.402515723270447
+          ]
+        },
+        {
+          "s": "BSE:ADISHAKTI",
+          "f": [
+            4.1055718475073215
+          ]
+        },
+        {
+          "s": "BSE:AUREATE",
+          "f": [
+            3.999999999999996
+          ]
+        }
+      ],
+      "time": "2026-08-23T05:03:56Z"
+    }
+  },
+  {
+    "url": "https://scanner.tradingview.com/presets/BSE_percent_gap_gainers?label-product=right-hotlists",
+    "request": null,
+    "response": {
+      "totalCount": 63,
+      "fields": [
+        "gap_up"
+      ],
+      "symbols": [
+        {
+          "s": "BSE:URSUGAR",
+          "f": [
+            8.761329305135952
+          ]
+        },
+        {
+          "s": "BSE:MINALIND",
+          "f": [
+            6.439393939393937
+          ]
+        },
+        {
+          "s": "BSE:WELCORP",
+          "f": [
+            5.697143990479962
+          ]
+        },
+        {
+          "s": "BSE:SWASTIKAAL",
+          "f": [
+            4.996776273372009
+          ]
+        },
+        {
+          "s": "BSE:INDAG",
+          "f": [
+            4.995111545640379
+          ]
+        },
+        {
+          "s": "BSE:ADVANCETL",
+          "f": [
+            4.994281357224561
+          ]
+        },
+        {
+          "s": "BSE:EBIX",
+          "f": [
+            4.989495798319324
+          ]
+        },
+        {
+          "s": "BSE:ABRFL",
+          "f": [
+            4.9793601651186785
+          ]
+        },
+        {
+          "s": "BSE:KUBERJI",
+          "f": [
+            4.97624406101524
+          ]
+        },
+        {
+          "s": "BSE:KOBO",
+          "f": [
+            4.967602591792666
+          ]
+        },
+        {
+          "s": "BSE:OMEGAIN",
+          "f": [
+            4.94354592615196
+          ]
+        },
+        {
+          "s": "BSE:ACIIN",
+          "f": [
+            4.910714285714279
+          ]
+        },
+        {
+          "s": "BSE:GUJWIND",
+          "f": [
+            4.8292108362779755
+          ]
+        },
+        {
+          "s": "BSE:MAL",
+          "f": [
+            4.700854700854714
+          ]
+        },
+        {
+          "s": "BSE:HEALTHYLIFE",
+          "f": [
+            4.692556634304208
+          ]
+        },
+        {
+          "s": "BSE:BCCL",
+          "f": [
+            4.659793814432986
+          ]
+        },
+        {
+          "s": "BSE:KJMCFIN",
+          "f": [
+            4.486554270586595
+          ]
+        },
+        {
+          "s": "BSE:SIMBHALS",
+          "f": [
+            4.402515723270447
+          ]
+        },
+        {
+          "s": "BSE:ADISHAKTI",
+          "f": [
+            4.1055718475073215
+          ]
+        },
+        {
+          "s": "BSE:AUREATE",
+          "f": [
+            3.999999999999996
+          ]
+        }
+      ],
+      "time": "2026-08-23T05:03:56Z"
+    }
+  },
+  {
+    "url": "https://scanner.tradingview.com/symbol?symbol=NSE%3ASOLARA&fields=price_52_week_high%2Cprice_52_week_low%2Csector%2Ccountry%2Cmarket%2CLow.1M%2CHigh.1M%2CPerf.W%2CPerf.1M%2CPerf.3M%2CPerf.6M%2CPerf.Y%2CPerf.YTD%2CRecommend.All%2Caverage_volume_10d_calc%2Caverage_volume_30d_calc%2Cnav_discount_premium%2Copen_interest%2Ccountry_code_fund%2Civ%2Cunderlying_symbol%2Cdelta%2Cgamma%2Crho%2Ctheta%2Cvega%2CtheoPrice&no_404=true&label-product=right-details",
+    "request": null,
+    "response": {
+      "High.1M": 654.4,
+      "Low.1M": 471.55,
+      "Perf.1M": 9.768683274021349,
+      "Perf.3M": 9.070014144271562,
+      "Perf.6M": 29.873684210526314,
+      "Perf.W": 19.61221522055259,
+      "Perf.Y": -2.0638196539133196,
+      "Perf.YTD": 9.195504026905022,
+      "Recommend.All": 0.4212121212121212,
+      "average_volume_10d_calc": 911238.6,
+      "average_volume_30d_calc": 481548.0333333333,
+      "country": "India",
+      "country_code_fund": "IN",
       "delta": null,
       "gamma": null,
       "iv": null,
-      "market": "america",
+      "market": "india",
       "nav_discount_premium": null,
       "open_interest": null,
-      "price_52_week_high": 6.5,
-      "price_52_week_low": 3.85,
+      "price_52_week_high": 712,
+      "price_52_week_low": 422,
       "rho": null,
-      "sector": "Health Services",
+      "sector": "Health Technology",
       "theoPrice": null,
       "theta": null,
       "underlying_symbol": null,
