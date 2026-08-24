@@ -36,10 +36,11 @@ const C = {
 
 const MONO: CSSProperties = { fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' };
 
-type TabId = 'overview' | 'cycles' | 'crashbook' | 'precrash' | 'deployment' | 'rotation' | 'psychology' | 'elite' | 'checklist';
+type TabId = 'overview' | 'regime' | 'cycles' | 'crashbook' | 'precrash' | 'deployment' | 'rotation' | 'psychology' | 'elite' | 'checklist';
 
 const TABS: { id: TabId; label: string; emoji: string; sub: string }[] = [
   { id: 'overview',   emoji: '🧭', label: 'Overview',        sub: 'Six Truths + framework' },
+  { id: 'regime',     emoji: '🌀', label: 'Regime Rotation', sub: 'Shock → stagflation → recovery' },
   { id: 'cycles',     emoji: '🔄', label: '8 Cycles',         sub: 'Liquidity → Sentiment' },
   { id: 'crashbook',  emoji: '📉', label: 'Crashbook',        sub: '1992-2026 India + global' },
   { id: 'precrash',   emoji: '⚠️', label: 'Pre-Crash',        sub: '15 signatures · 12 weekly' },
@@ -1802,6 +1803,508 @@ function ChecklistTab() {
 }
 
 
+// ════════════════════════════════════════════════════════════════════════════
+// REGIME ROTATION TAB — the stagflation → recovery playbook (zzz430)
+// Shock → transmission → broadening → tightening → earnings recession →
+// recession bottom → recovery. What drives each phase, what to own, what to
+// avoid, seven historical templates, and a live stagflation scoreboard.
+// ════════════════════════════════════════════════════════════════════════════
+const RG = {
+  expansion: C.green, commodity: C.amber, broaden: '#e0a72a', stag: '#ef7d34',
+  tighten: '#d1603a', recession: C.red, easing: C.cyan, quality: C.cyan, defensive: C.purple,
+};
+
+function RgSection({ n, title, lede, children }: { n: string; title: string; lede?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 30 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: lede ? 5 : 12, borderTop: `1px solid ${C.border}`, paddingTop: 18 }}>
+        <span style={{ ...MONO, fontSize: 11, color: C.saffron, fontWeight: 700 }}>{n}</span>
+        <h3 style={{ fontSize: 17, fontWeight: 900, color: C.text, margin: 0 }}>{title}</h3>
+      </div>
+      {lede && <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.55, marginBottom: 14, maxWidth: 860 }}>{lede}</div>}
+      {children}
+    </div>
+  );
+}
+function RgChip({ children, tone }: { children: React.ReactNode; tone?: string }) {
+  return <span style={{ ...MONO, fontSize: 11, padding: '4px 8px', borderRadius: 5, background: C.card2, border: `1px solid ${tone || C.border}`, color: C.text, display: 'inline-block' }}>{children}</span>;
+}
+
+const RG_PHASES = [
+  { n: 'Phase 0', name: 'Expansion', c: RG.expansion,
+    macro: ['Inflation contained · central bank neutral/easing', 'Credit available · earnings estimates rising', 'Consumers healthy · capex increasing'],
+    own: ['Growth', 'Industrials', 'Small/mid caps', 'Cyclicals', 'AI infra', 'Semis', 'Capital goods', 'Defence', 'Financials'],
+    ownNote: 'Where 10-bagger hunting works best — liquidity and earnings expectations reinforce each other.',
+    avoid: ['Poor balance sheets'], avoidNote: 'Structurally little to avoid; still shun weak balance sheets.' },
+  { n: 'Phase 1', name: 'Commodity Shock', c: RG.commodity,
+    macro: ['Wheat / rice / edible oil / fertilizer / crude spike', 'Core inflation has NOT yet reacted', 'Do NOT call this stagflation — it is a relative-price shock'],
+    own: ['Energy', 'Fertilizer', 'Agri inputs', 'Metals', 'Commodity chemicals', 'Inventory-rich food producers'],
+    ownNote: 'Buy the supply-constrained producer EARLY — by the time the story is obvious, peak earnings may be priced in.',
+    avoid: ['Airlines', 'Restaurants', 'Transport', 'Chemicals', 'Packaging', 'Low-margin mfg', 'Discretionary'],
+    avoidNote: 'Companies where food/energy is a large share of cost.' },
+  { n: 'Phase 2', name: 'Inflation Broadens', c: RG.broaden,
+    macro: ['Shock spreads into wages, rents, transport, services, business costs', 'Core CPI / core PCE begin accelerating', 'The critical transition — watch confirmation signals'],
+    own: ['Pricing-power names', 'Branded staples', 'Healthcare', 'Essential infra', 'Exporters', 'Net-cash businesses'],
+    ownNote: 'Rotate from pure commodity beta toward businesses that raise price without losing volume.',
+    avoid: ['Cost-taker manufacturers', 'Thin-margin discretionary', 'Early-cycle high-beta'],
+    avoidNote: 'Anyone absorbing input costs without pass-through.' },
+  { n: 'Phase 3', name: 'Stagflation', c: RG.stag,
+    macro: ['High inflation + weak growth simultaneously', 'Central-bank dilemma: cut → inflation; hike → growth collapses', 'Policy is trapped — the regime can persist'],
+    own: ['Pricing power (branded staples · healthcare · essential infra · mission-critical software · monopolies)', 'Strong balance sheets (net cash · low debt · high ROCE · high FCF conv · low WC)', 'Real assets (low-cost energy/power/commodities · gold · infra · land)'],
+    ownNote: 'Metric that matters: revenue growth WITH stable/improving margins despite inflation — plus FCF, low debt, high ROCE, governance.',
+    avoid: ['Entry-level consumption', 'Leverage', 'Rate-sensitive real estate', 'Low-margin mfg', 'Expensive thematics'],
+    avoidNote: 'High-cost producer + heavy debt + peak commodity price is the TRAP version of a "real asset".' },
+  { n: 'Phase 4', name: 'Monetary Tightening', c: RG.tighten,
+    macro: ['Central bank: "inflation is persistent" — rates high or rising', 'Discount rate rises → value of DISTANT cash flow falls', 'The portfolio changes dramatically here'],
+    own: ['Value', 'Cash', 'Short-duration', 'Profitable businesses', 'Quality with near-term FCF'],
+    ownNote: 'Earnings quality now beats headline growth. Own cash flows that arrive soon.',
+    avoid: ['Long-duration tech', 'Unprofitable growth', 'High-P/E stocks', 'Leveraged small caps', 'Speculative themes', 'Long Treasuries'],
+    avoidNote: 'A rising discount rate collapses the multiple even while earnings rise.' },
+  { n: 'Phase 5', name: 'Earnings Recession', c: RG.recession,
+    macro: ['Revenue + margin estimates falling · order delays · inventory build', 'Working capital & CFO deteriorate · credit stress · hiring freezes', 'Capex postponed · small caps underperform'],
+    own: ['Cash', 'Government bonds', 'Only the highest-quality survivors on deep dislocations'],
+    ownNote: 'Don’t confuse a −30% tag with "cheap". Diagnose: valuation vs earnings vs balance-sheet vs permanent impairment. Get aggressive LATER.',
+    avoid: ['Leverage', 'Cyclicals with peak-cycle debt', 'Anything you can’t underwrite through the trough'],
+    avoidNote: 'Balance-sheet impairment and permanent business impairment are not opportunities.' },
+  { n: 'Phase 6', name: 'Recession Bottom', c: RG.easing,
+    macro: ['Data looks terrible: recession · unemployment · bankruptcies', 'Market looks forward: inflation ↓ → CB less restrictive → yields peak → revisions stabilise → stocks bottom', 'Buying only after data turns good is too late'],
+    own: ['1 · Quality growth (survivors · share-gainers · intact demand)', '2 · Financials (after credit stress peaks)', '3 · Industrials (orders stabilise · PMI turns up)', '4 · Small/mid caps — the next multibagger generation'],
+    ownNote: 'The market prices "earnings recovery + operating leverage + multiple expansion" at once — extraordinarily powerful.',
+    avoid: ['Waiting for the all-clear', 'Chasing after the base already broke out'],
+    avoidNote: 'The most important multibaggers are born when headlines are worst.' },
+];
+
+const RG_HIST = [
+  { k: '1970s US', sub: 'The Great Inflation', c: C.red, era: '1965 – 1982',
+    intro: 'The archetypal stagflation — oil shocks, wage pressure, weak productivity, policy mistakes and multiple recessions; inflation and unemployment high together.',
+    chain: ['1973 oil embargo — crude quadruples', 'Production costs rise', 'Consumer prices rise', 'Wage expectations rise', 'Inflation expectations un-anchor', 'Monetary tightening', 'Recession'],
+    stats: [['~12%', 'CPI inflation by 1974'], ['>7%', 'unemployment, 1974'], ['~14.5%', 'inflation approached, 1980'], ['>7.5%', 'unemployment, 1980']],
+    lesson: 'The mistake was calling the oil shock "temporary". Once inflation feeds wages and expectations it becomes embedded — and the cure is far more painful than the disease looked.' },
+  { k: 'Volcker', sub: 'Breaking inflation', c: C.cyan, era: '1979 – 1982',
+    intro: 'The sequel that matters more than the oil price: the Fed finally prioritised killing inflation — at the cost of a severe recession — setting up one of history’s great disinflation trades.',
+    chain: ['Volcker prioritises inflation over growth', 'Fed funds ~11% → 19% by 1981', 'Monetary contraction bites', 'Severe recession', 'Inflation ~15% → ~4% by end-1982', 'Disinflation trade begins'],
+    stats: [['19%', 'peak fed funds, 1981'], ['15%→4%', 'inflation, to end-1982'], ['2', 'trades: inflation, then disinflation'], ['1982', 'the great bull begins']],
+    lesson: 'There are TWO distinct trades — the inflation trade (commodities, energy, real assets) and the disinflation/recession trade (bonds, quality growth, beaten-down equities). The transition between them is where huge returns are made.' },
+  { k: 'India 2010–13', sub: 'Persistent inflation', c: RG.stag, era: '2010 – 2014',
+    intro: 'Not merely "food inflation" — it broadened and stuck, dragging growth and the currency with it. Directly relevant to a small/mid-cap book.',
+    chain: ['Food + fuel pressure', 'Inflation broadens into core', 'Tight financial conditions', 'Weaker investment', 'Currency pressure (2013 taper tantrum)', 'Slower growth'],
+    stats: [['~10.4%', 'CPI 2010–11'], ['~8.4%', 'CPI 2011–12'], ['~10.4%', 'CPI 2012–13'], ['~8.8%', '10Y G-sec yield 2013–14']],
+    lesson: 'Persistent inflation can coexist with deteriorating growth and elevated bond yields for years. When it broadens, high-beta small caps and leverage are punished longest — the barbell toward FCF and low debt is not optional.' },
+  { k: 'India 2022', sub: 'The modern template', c: C.amber, era: '2022 – 2023',
+    intro: 'The best modern study of a supply shock turning into broad inflation — and then reversing. The Russia–Ukraine war drove a global commodity shock into Indian CPI.',
+    chain: ['2021 recovery / demand', '2022 oil + food + commodities explode', 'Inflation broadens (food, fuel, core)', 'Above tolerance 10 months straight', 'RBI hikes repo +250 bps', '2023 commodities fall, inflation eases'],
+    stats: [['+250 bps', 'RBI repo, May’22–Feb’23'], ['10', 'months above upper tolerance'], ['↑↓', 'commodities: spike then correct'], ['2023', 'rate-cut expectations improve']],
+    lesson: 'A major commodity shock can reverse without a permanent stagflation regime once supply normalises and policy works. The first food spike is not the trade — persistence and transmission are.' },
+  { k: '2008 GFC', sub: 'Credit shock → deflation scare', c: C.red, era: '2007 – 2009',
+    intro: 'A different beast — a credit shock, not an inflation shock. Oil actually spiked to ~$147 in mid-2008 before the demand collapse crushed it. Shows how fast the machine jumps from "inflation" to "deflation scare".',
+    chain: ['Housing + credit bubble', 'Oil spikes to ~$147 (Jul 2008)', 'Lehman fails — funding disappears', 'Forced deleveraging · demand collapse', 'Oil crashes to ~$30s', 'Fed to zero + QE → recovery'],
+    stats: [['$147→$30s', 'crude, 2008'], ['−57%', 'S&P 500 peak-to-trough'], ['0%', 'Fed funds by Dec 2008'], ['Mar’09', 'equity bottom']],
+    lesson: 'When the shock is CREDIT, cash-rich survives and leverage dies — the opposite reflex to an inflation shock. The commodity "winner" (oil) became the biggest loser within months. The bottom formed on the worst headlines, while the Fed was still easing.' },
+  { k: '2020 COVID', sub: 'Shock → stimulus → inflation', c: C.cyan, era: '2020 – 2022',
+    intro: 'A whole compressed cycle in 24 months: crash, stimulus, everything-rally, then the supply-chain + stimulus inflation that set up the 2022 tightening.',
+    chain: ['Feb–Mar 2020 crash (−34% in 33 days)', 'Massive fiscal + monetary stimulus', 'Liquidity-driven everything-rally', 'Supply chains break + demand surges', '2021–22 inflation broadens', '2022 Fed/RBI tighten hard'],
+    stats: [['−34%', 'S&P, 33 days'], ['0%', 'policy rates, 2020'], ['~9%', 'US CPI peak, Jun 2022'], ['dur.', 'spec growth led, then broke']],
+    lesson: 'Stimulus into a supply-constrained economy is an inflation engine. The exact assets that led the liquidity phase (long-duration growth, speculative tech) were first to break when tightening arrived — a Phase-0 → Phase-4 rotation in fast-forward.' },
+  { k: '2000 Dotcom', sub: 'Valuation, not inflation', c: RG.stag, era: '2000 – 2002',
+    intro: 'Proof you don’t need high inflation to get a brutal bear market — you need collapsing earnings expectations and absurd valuations meeting a rising discount rate.',
+    chain: ['Late-90s mania · IPOs · no earnings', 'Fed hikes into the froth', 'Multiples meet reality', 'Earnings estimates collapse', 'Nasdaq −78% peak-to-trough', 'Survivors compound for a decade'],
+    stats: [['−78%', 'Nasdaq, 2000–02'], ['100×+', 'P/S on no-profit names'], ['~3 yrs', 'to the bottom'], ['AMZN', '−90%, then 100×+']],
+    lesson: 'A valuation-led crash punishes duration and unprofitability regardless of inflation — but births the next cycle’s champions (Amazon fell ~90% then compounded enormously). The crash-ladder question, valuation vs permanent impairment, separated the survivors from the zeros.' },
+];
+
+const RG_INDS = [
+  { c: 'Inflation', n: 'Food CPI', s: 1 }, { c: 'Inflation', n: 'Core CPI', s: 1 }, { c: 'Inflation', n: 'Energy', s: 1 }, { c: 'Inflation', n: 'Wage inflation', s: 1 },
+  { c: 'Growth', n: 'PMI', s: 1 }, { c: 'Growth', n: 'Industrial prod.', s: 0 }, { c: 'Growth', n: 'Retail volumes', s: 1 }, { c: 'Growth', n: 'Employment', s: 0 },
+  { c: 'Financial', n: '10Y yield', s: 1 }, { c: 'Financial', n: 'Credit spreads', s: 0 }, { c: 'Financial', n: 'Currency', s: 1 }, { c: 'Earnings', n: 'Earnings revisions', s: 1 },
+];
+const RG_ROT = [
+  ['A', 'Commodity producers', 'Supply-constrained · disciplined · strong B/S', RG.commodity],
+  ['B', 'Pricing-power companies', 'Raise price without losing volume', RG.broaden],
+  ['C', 'Defensives', 'Staples · healthcare · utilities', RG.defensive],
+  ['D', 'Cash', 'Optionality while discount rate rises', C.muted],
+  ['E', 'Long-duration bonds', 'When inflation finally breaks', C.cyan],
+  ['F', 'Quality growth', 'Survivors · share-gainers · durable FCF', RG.quality],
+  ['G', 'Small / mid-cap cyclicals', 'Operating leverage into recovery', RG.expansion],
+  ['H', 'Speculative growth', 'Late-cycle risk appetite returns', '#7bd88f'],
+  ['I', '…back to Commodities', 'The wheel turns again', RG.commodity],
+];
+
+function RegimeTab() {
+  const [ph, setPh] = useState(0);
+  const [hc, setHc] = useState(0);
+  const [sev, setSev] = useState<number[]>(RG_INDS.map((x) => x.s));
+  const P = RG_PHASES[ph];
+  const H = RG_HIST[hc];
+  const total = sev.reduce((a, b) => a + b, 0);
+  const regime = total <= 5 ? ['NORMAL EXPANSION', C.green]
+    : total <= 9 ? ['INFLATION WARNING', '#e0c02a']
+    : total <= 14 ? ['INFLATIONARY SLOWDOWN', C.amber]
+    : total <= 18 ? ['STAGFLATION', RG.stag]
+    : ['STAGFLATIONARY RECESSION', C.red];
+  const sevCol = (s: number) => (s === 0 ? C.green : s === 1 ? C.amber : C.red);
+
+  return (
+    <div>
+      {/* hero line */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px 20px', marginBottom: 20, backgroundImage: 'linear-gradient(90deg, rgba(245,166,35,.06), transparent 70%)' }}>
+        <div style={{ ...MONO, fontSize: 10, letterSpacing: 1.5, color: C.saffron, textTransform: 'uppercase', marginBottom: 8 }}>The stagflation → recovery playbook</div>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text, lineHeight: 1.25, marginBottom: 8 }}>Position for the <span style={{ color: C.saffron }}>transition</span>, not the event.</div>
+        <div style={{ fontSize: 13, color: C.text2, lineHeight: 1.55, maxWidth: 860 }}>Money isn’t made predicting "inflation" or "recession" as a binary — it’s made by identifying which <em>phase</em> you’re in, because the winners of Phase&nbsp;1 become the losers of Phase&nbsp;3. A food-price spike is not the trade; <strong style={{ color: C.text }}>its persistence and transmission are the trade.</strong></div>
+      </div>
+
+      {/* 01 machine */}
+      <RgSection n="01" title="First, understand the machine" lede={<>Investors blur four different shocks into one word. They have different winners — and the dangerous regime is when they <strong style={{ color: C.text }}>stack</strong>.</>}>
+        <div style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 620 }}>
+            <thead><tr>{['Shock', 'First-order effect', 'Beneficiaries', 'Victims'].map((h) => <th key={h} style={{ ...MONO, textAlign: 'left', padding: '10px 12px', fontSize: 10, letterSpacing: 0.6, textTransform: 'uppercase', color: C.dim, borderBottom: `1px solid ${C.border}`, background: C.card2 }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {[['Food shock', 'Household purchasing power falls', 'Agri inputs · select food producers', 'Discretionary consumption'],
+                ['Oil / energy', 'Input + transport costs rise', 'Energy producers', 'Airlines · chemicals · transport'],
+                ['Demand inflation', 'Economy overheating', 'Cyclicals (initially)', 'Eventually bonds & growth'],
+                ['Credit shock', 'Financing disappears', 'Cash-rich companies', 'Leveraged companies']].map((r, i) => (
+                <tr key={i} style={{ borderBottom: i < 3 ? `1px solid ${C.border}` : 'none' }}>
+                  <td style={{ padding: '10px 12px', fontWeight: 800, color: C.text, whiteSpace: 'nowrap' }}>{r[0]}</td>
+                  <td style={{ padding: '10px 12px', color: C.text2 }}>{r[1]}</td>
+                  <td style={{ padding: '10px 12px', color: C.green }}>{r[2]}</td>
+                  <td style={{ padding: '10px 12px', color: C.red }}>{r[3]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 12, background: C.card2, borderLeft: `3px solid ${C.red}`, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: C.text2, lineHeight: 1.55 }}>
+          When they stack — <strong style={{ color: C.red }}>Food ↑ + Oil ↑ + wages ↑ + services ↑ + credit tightens</strong> — a relative-price shock becomes genuine stagflation. US runs <span style={MONO}>energy/imports → services inflation → Fed stays tight → demand slows</span>; India runs through <span style={MONO}>food · fuel · weather · rural purchasing power · supply bottlenecks</span>.
+        </div>
+      </RgSection>
+
+      {/* 02 phases */}
+      <RgSection n="02" title="The seven-phase cycle" lede={<>The core engine. Each phase has a distinct macro state, assets that lead, and assets that bleed. <strong style={{ color: C.text }}>Select a phase.</strong></>}>
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8, marginBottom: 14 }}>
+          {RG_PHASES.map((p, i) => {
+            const on = i === ph;
+            return (
+              <button key={i} onClick={() => setPh(i)} style={{ flexShrink: 0, cursor: 'pointer', borderRadius: 7, padding: '8px 12px', border: `1px solid ${on ? p.c : C.border}`, background: on ? p.c : C.card, color: on ? '#0a0d12' : C.text2, fontWeight: 700, ...MONO, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 18, height: 18, borderRadius: 4, display: 'grid', placeItems: 'center', fontSize: 10, background: on ? 'rgba(0,0,0,.2)' : C.card2, color: on ? '#0a0d12' : C.dim }}>{i}</span>{p.name}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr)', gap: 12 }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `3px solid ${P.c}`, borderRadius: 8, padding: 16 }}>
+            <div style={{ ...MONO, fontSize: 10.5, letterSpacing: 1, textTransform: 'uppercase', color: P.c }}>{P.n}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, margin: '4px 0 10px' }}>{P.name}</div>
+            {P.macro.map((m, i) => <div key={i} style={{ fontSize: 12.5, color: C.text2, lineHeight: 1.5, paddingLeft: 14, position: 'relative', marginBottom: 4 }}><span style={{ position: 'absolute', left: 0, color: P.c }}>›</span>{m}</div>)}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ ...MONO, fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase', color: C.green, marginBottom: 9 }}>▲ Own / overweight</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{P.own.map((o, i) => <RgChip key={i} tone={`${C.green}55`}>{o}</RgChip>)}</div>
+              <div style={{ fontSize: 11.5, color: C.muted, marginTop: 10, lineHeight: 1.5 }}>{P.ownNote}</div>
+            </div>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ ...MONO, fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase', color: C.red, marginBottom: 9 }}>▼ Avoid / reduce</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{P.avoid.map((o, i) => <RgChip key={i} tone={`${C.red}44`}>{o}</RgChip>)}</div>
+              <div style={{ fontSize: 11.5, color: C.muted, marginTop: 10, lineHeight: 1.5 }}>{P.avoidNote}</div>
+            </div>
+          </div>
+        </div>
+      </RgSection>
+
+      {/* 03 confirmation */}
+      <RgSection n="03" title="The three-confirmation rule" lede="Never call stagflation early. Escalate the regime only as signals actually confirm — the single discipline that prevents buying 'inflation' when it is still just a commodity blip.">
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+          {[['01', 'Food / energy rises alone', 'Core has not reacted — a relative-price shock.', '🟢 COMMODITY SHOCK', RG.commodity],
+            ['02', 'Food ↑ + core ↑', 'The shock is propagating into goods & services.', '🟡 BROADENING', RG.broaden],
+            ['03', 'Food ↑ + core ↑ + growth ↓', 'High inflation now coincides with weak growth.', '🔴 STAGFLATION', RG.stag],
+            ['04', '+ employment ↓ + earnings ↓', 'Demand and labour roll over. Protect capital.', '🔴🔴 STAGFLATIONARY RECESSION', C.red]].map((r, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14, alignItems: 'center', padding: '13px 16px', background: C.card, borderBottom: i < 3 ? `1px solid ${C.border}` : 'none', borderLeft: `4px solid ${r[4]}` }}>
+              <div style={{ ...MONO, fontSize: 18, color: r[4] as string, fontWeight: 600 }}>{r[0]}</div>
+              <div><div style={{ fontWeight: 800, color: C.text, fontSize: 13.5 }}>{r[1]}</div><div style={{ fontSize: 12, color: C.muted }}>{r[2]}</div></div>
+              <div style={{ ...MONO, fontSize: 10.5, color: r[4] as string, fontWeight: 700, textAlign: 'right' }}>{r[3]}</div>
+            </div>
+          ))}
+        </div>
+        <Card accent={C.saffron}><strong style={{ color: C.text }}>What to watch — </strong> India: food CPI, core CPI, rural wages, FMCG volumes, wheat/rice/edible-oil, crude, rupee, rural consumption. US: core CPI, core PCE, wages, rent, insurance, healthcare, gasoline, consumer credit, employment.</Card>
+      </RgSection>
+
+      {/* 04 valuation */}
+      <RgSection n="04" title="The valuation rotation" lede={<>When the central bank tightens, the discount rate rises and the value of <strong style={{ color: C.text }}>distant</strong> cash flow falls hardest. Earnings can keep rising while the multiple collapses — which is why, in tightening, earnings quality beats headline growth.</>}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
+          {[{ t: 'Company A — long-duration growth', tag: 'P/E 100×', tagc: C.red, bars: [100, 60, 40], labs: ['100×', '60×', '40×'], col: C.red, out: <>EPS rises ₹1 → ₹1.5 → ₹2 → ₹3, yet the multiple re-rates <strong style={{ color: C.text }}>100× → 40×</strong>. The stock can <strong style={{ color: C.text }}>fall</strong> while earnings grow.</> },
+            { t: 'Company B — profitable value', tag: 'P/E 10×', tagc: C.green, bars: [100, 95, 90], labs: ['10×', '9.5×', '9×'], col: C.green, out: <>EPS ₹10 → ₹11 → ₹12 and the multiple barely moves <strong style={{ color: C.text }}>10× → 9×</strong>. Short-duration earnings are defended.</> }].map((v, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13.5, fontWeight: 800, color: C.text }}>{v.t}<span style={{ ...MONO, fontSize: 10, padding: '3px 7px', borderRadius: 5, background: `${v.tagc}22`, color: v.tagc }}>{v.tag}</span></div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 96, margin: '16px 0 4px' }}>
+                {v.bars.map((b, j) => <div key={j} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 5, height: '100%' }}><div style={{ width: '100%', height: `${b}%`, background: `linear-gradient(180deg, ${v.col}, ${v.col}55)`, borderRadius: '5px 5px 0 0' }} /><span style={{ ...MONO, fontSize: 10, color: C.dim }}>{v.labs[j]}</span></div>)}
+              </div>
+              <div style={{ ...MONO, fontSize: 11.5, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 8, lineHeight: 1.6 }}>{v.out}</div>
+            </div>
+          ))}
+        </div>
+      </RgSection>
+
+      {/* 05 crash ladder */}
+      <RgSection n="05" title="The crash-buying ladder" lede={<>A −30% tag is not automatically "cheap". First decide which drawdown it is: <strong style={{ color: C.text }}>valuation compression · earnings impairment · balance-sheet impairment · permanent business impairment</strong>. Only the first two are opportunities.</>}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
+          {[['−20%', 'Start investigating', 'Open the file. Re-underwrite. No action yet.', '#e0c02a', 25],
+            ['−30%', 'Buy if intact', 'Thesis + earnings intact · strong B/S · valuation materially improved.', RG.stag, 50],
+            ['−40%', 'Get aggressive', 'Only if the recession is cyclical, not structural.', '#e5624d', 75],
+            ['−50%+', 'Extraordinary', 'Hunt the exceptional — but verify the balance sheet FIRST.', C.red, 100]].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 15 }}>
+              <div style={{ fontSize: 26, fontWeight: 900, color: r[3] as string, letterSpacing: -0.5 }}>{r[0]}</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.text, margin: '3px 0 6px' }}>{r[1]}</div>
+              <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>{r[2]}</div>
+              <div style={{ height: 4, background: C.card2, borderRadius: 3, marginTop: 11, overflow: 'hidden' }}><div style={{ height: '100%', width: `${r[4]}%`, background: r[3] as string }} /></div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 14, textAlign: 'center', fontSize: 14, fontWeight: 800, color: C.text, padding: 16, background: C.card, border: `1px dashed ${C.borderStrong}`, borderRadius: 8 }}>Never buy because of the % decline. Buy the gap between <span style={{ color: C.saffron }}>price decline</span> and <span style={{ color: C.saffron }}>intrinsic-value decline</span>.</div>
+      </RgSection>
+
+      {/* 06 history */}
+      <RgSection n="06" title="Historical templates" lede={<>Every regime rhymes. Seven case studies — the transmission chain, the numbers, and the one lesson each burns in. <strong style={{ color: C.text }}>Pick a case.</strong></>}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          {RG_HIST.map((h, i) => {
+            const on = i === hc;
+            return <button key={i} onClick={() => setHc(i)} style={{ cursor: 'pointer', textAlign: 'left', borderRadius: 7, padding: '8px 12px', border: `1px solid ${on ? h.c : C.border}`, background: on ? `${h.c}18` : C.card, color: on ? h.c : C.text2, ...MONO, fontSize: 11.5, fontWeight: 700 }}>{h.k}<span style={{ display: 'block', fontSize: 9.5, color: on ? h.c : C.dim, fontWeight: 400, marginTop: 2 }}>{h.sub}</span></button>;
+          })}
+        </div>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ padding: '16px 18px', borderBottom: `1px solid ${C.border}`, backgroundImage: `linear-gradient(90deg, ${H.c}14, transparent 70%)` }}>
+            <div style={{ ...MONO, fontSize: 10.5, letterSpacing: 1, textTransform: 'uppercase', color: H.c }}>{H.era}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, margin: '5px 0 6px' }}>{H.k} · {H.sub}</div>
+            <div style={{ fontSize: 12.5, color: C.text2, lineHeight: 1.55 }}>{H.intro}</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr)' }}>
+            <div style={{ padding: '16px 18px' }}>
+              <div style={{ ...MONO, fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase', color: C.dim, marginBottom: 10 }}>Transmission chain</div>
+              {H.chain.map((c, i) => (
+                <div key={i}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: C.text }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: H.c, flexShrink: 0 }} />{c}</div>
+                  {i < H.chain.length - 1 && <div style={{ width: 7, height: 12, borderLeft: `1px solid ${C.borderStrong}`, marginLeft: 3 }} />}
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: '16px 18px', borderLeft: `1px solid ${C.border}`, background: C.card2 }}>
+              <div style={{ ...MONO, fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase', color: C.dim, marginBottom: 10 }}>By the numbers</div>
+              {H.stats.map((s, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '6px 0', borderBottom: i < H.stats.length - 1 ? `1px dotted ${C.border}` : 'none' }}><span style={{ fontSize: 12, color: C.muted }}>{s[1]}</span><span style={{ ...MONO, fontWeight: 600, color: H.c }}>{s[0]}</span></div>)}
+            </div>
+          </div>
+          <div style={{ padding: '14px 18px', borderTop: `1px solid ${C.border}`, backgroundImage: `linear-gradient(90deg, ${H.c}14, transparent 70%)` }}>
+            <div style={{ ...MONO, fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase', color: C.dim, marginBottom: 6 }}>The lesson</div>
+            <div style={{ fontSize: 13, color: C.text, lineHeight: 1.55 }}>{H.lesson}</div>
+          </div>
+        </div>
+      </RgSection>
+
+      {/* 07 commodity cure */}
+      <RgSection n="07" title="Inflation cures itself — eventually" lede="The reason commodity trades are rentals, not marriages. A high price is its own antidote.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
+          {[['Trigger', 'Price spikes', 'Oil $70→$100→$130. Energy & commodity producers win first; estimates race up.', C.amber],
+            ['Response', 'Supply wakes up', 'High prices make new production & alternatives economic. Idle capacity restarts. Inventories build.', C.text2],
+            ['Response', 'Demand destructs', 'Consumers drive less; industry substitutes and conserves. Volume quietly falls.', C.text2],
+            ['Result', 'Price reverts', 'Supply up + demand down ⇒ the commodity — and the trade — rolls over. The late buyer holds peak-earnings valuation.', C.cyan]].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `2px solid ${r[3]}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ ...MONO, fontSize: 9.5, letterSpacing: 0.8, textTransform: 'uppercase', color: C.dim, marginBottom: 7 }}>{r[0]}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 6 }}>{r[1]}</div>
+              <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>{r[2]}</div>
+            </div>
+          ))}
+        </div>
+        <Card accent={C.amber}><strong style={{ color: C.text }}>India 2022–23 is the live proof:</strong> after the war-driven peak, global energy, food and metals corrected as supply normalised and demand pressures eased — inflation moderated without a permanent stagflation regime.</Card>
+      </RgSection>
+
+      {/* 08 sectors */}
+      <RgSection n="08" title="Sector playbook" lede="Where to lean by phase and market. India is food/fuel/rural-sensitive; the US transmits through services, wages, housing, insurance and imports.">
+        <div style={{ ...MONO, fontSize: 12, color: C.amber, letterSpacing: 0.5, margin: '2px 0 10px', fontWeight: 700 }}>🇮🇳 INDIA · EARLY INFLATION — overweight</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: 10 }}>
+          {[['Fertilizer', 'Demand structurally essential even as input prices rise. Watch subsidy policy, gas/feedstock cost, realization, government pricing.'],
+            ['Agri inputs', 'Seeds, crop protection, irrigation, farm equipment. But high FOOD prices ≠ automatically higher FARMER profitability.'],
+            ['Energy & select commodities', 'Strong early-cycle — only when price ↑ AND supply-constrained AND capacity-disciplined AND balance sheet strong.']].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.amber}`, borderRadius: 8, padding: 14 }}><div style={{ fontSize: 13, fontWeight: 800, color: C.text, marginBottom: 6 }}>{r[0]}</div><div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>{r[1]}</div></div>
+          ))}
+        </div>
+        <div style={{ ...MONO, fontSize: 12, color: C.purple, letterSpacing: 0.5, margin: '20px 0 10px', fontWeight: 700 }}>🇮🇳 INDIA · INFLATION BROADENS — defensive</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{['FMCG', 'Healthcare', 'Utilities', 'Essential infra', 'High-quality banks', 'Exporters', 'Net-cash compounders'].map((x) => <RgChip key={x}>{x}</RgChip>)}</div>
+        <div style={{ ...MONO, fontSize: 12, color: C.red, letterSpacing: 0.5, margin: '20px 0 10px', fontWeight: 700 }}>🇮🇳 INDIA · SEVERE STAGFLATION — avoid</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10 }}>
+          {[['Entry-level consumption', 'Lower-income households feel food inflation first and hardest.', C.red],
+            ['Highly leveraged businesses', 'Interest cost ↑ + weak demand = double damage.', C.red],
+            ['Rate-sensitive real estate', 'Expensive financing throttles demand.', C.red],
+            ['Low-margin manufacturers', 'Raw material ↑ but no pricing power ⇒ margin collapse.', C.red],
+            ['Expensive thematics', 'P/E 80× + growth fading 30%→10% ⇒ brutal multiple compression.', C.red],
+            ['✓ Prefer: inflation-resistant compounders', 'Price ↑ · volume stable · margins stable · FCF ↑ · ROCE ↑. You don’t need the commodity cycle to stay favourable.', C.cyan]].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${r[2]}`, borderRadius: 8, padding: 14 }}><div style={{ fontSize: 12.5, fontWeight: 800, color: C.text, marginBottom: 5 }}>{r[0]}</div><div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>{r[1]}</div></div>
+          ))}
+        </div>
+        <div style={{ ...MONO, fontSize: 12, color: C.saffron, letterSpacing: 0.5, margin: '20px 0 10px', fontWeight: 700 }}>🇺🇸 US · POSITIONING</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.green}`, borderRadius: 8, padding: 14 }}><div style={{ ...MONO, fontSize: 10, color: C.green, marginBottom: 9, letterSpacing: 0.6 }}>EARLY INFLATION · PREFER</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{['Energy', 'Infrastructure', 'Healthcare', 'Staples', 'Value', 'Select financials'].map((x) => <RgChip key={x} tone={`${C.green}44`}>{x}</RgChip>)}</div></div>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.red}`, borderRadius: 8, padding: 14 }}><div style={{ ...MONO, fontSize: 10, color: C.red, marginBottom: 9, letterSpacing: 0.6 }}>AVOID</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{['Unprofitable AI', 'Speculative SaaS', 'Long-duration growth', 'Expensive small caps', 'Leverage'].map((x) => <RgChip key={x} tone={`${C.red}44`}>{x}</RgChip>)}</div></div>
+        </div>
+        <div style={{ ...MONO, fontSize: 12, color: C.cyan, letterSpacing: 0.5, margin: '20px 0 10px', fontWeight: 700 }}>◆ THE AI QUESTION — don’t sell indiscriminately</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10 }}>
+          {[['Type A · resilient', 'Current cash generators', 'Strong FCF + pricing power + dominant position. Short duration — can hold up.', C.green],
+            ['Type B · sticky capex', 'Infrastructure bottlenecks', 'Power, grid, cooling, networking, semis, data-center. Capex continues even as consumer demand weakens.', C.amber],
+            ['Type C · vulnerable', 'Speculative future AI', 'High valuation + negative FCF + distant earnings. First to break.', C.red]].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `2px solid ${r[3]}`, borderRadius: 8, padding: 14 }}><div style={{ ...MONO, fontSize: 9.5, color: C.dim, marginBottom: 6, letterSpacing: 0.6 }}>{r[0]}</div><div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, marginBottom: 6 }}>{r[1]}</div><div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>{r[2]}</div></div>
+          ))}
+        </div>
+        <div style={{ marginTop: 14, textAlign: 'center', fontSize: 14, fontWeight: 800, color: C.text, padding: 14, background: C.card, border: `1px dashed ${C.borderStrong}`, borderRadius: 8 }}>In stagflation, don’t sell AI — <span style={{ color: C.saffron }}>sell duration and weak balance sheets.</span></div>
+      </RgSection>
+
+      {/* 09 matrix */}
+      <RgSection n="09" title="The regime matrix" lede={<>Two axes decide almost everything: is <strong style={{ color: C.text }}>inflation</strong> rising or falling, and are <strong style={{ color: C.text }}>earnings</strong> rising or falling?</>}>
+        <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 8, maxWidth: 720 }}>
+          <div />
+          <div style={{ ...MONO, fontSize: 11, color: C.text2, textAlign: 'center', alignSelf: 'center' }}>Earnings rising →</div>
+          <div style={{ ...MONO, fontSize: 11, color: C.text2, textAlign: 'center', alignSelf: 'center' }}>Earnings falling →</div>
+          <div style={{ ...MONO, fontSize: 11, color: C.text2, alignSelf: 'center', textAlign: 'center' }}>Inflation<br />falling ↓</div>
+          {[['🟢 Best', 'Multibagger hunting', 'Risk-on. Growth, cyclicals, small/mid-cap inflections.', C.green],
+            ['🔵 Recovery watch', 'Begin accumulating', 'Inflation breaking + easing ahead. Bonds, then quality growth.', C.cyan]].map((m, i) => (
+            <div key={i} style={{ borderRadius: 8, padding: 14, minHeight: 110, background: `${m[3]}12`, border: `1px solid ${m[3]}44` }}><div style={{ ...MONO, fontSize: 9.5, letterSpacing: 0.6, textTransform: 'uppercase', fontWeight: 700, color: m[3] as string }}>{m[0]}</div><div style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: '5px 0 4px' }}>{m[1]}</div><div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{m[2]}</div></div>
+          ))}
+          <div style={{ ...MONO, fontSize: 11, color: C.text2, alignSelf: 'center', textAlign: 'center' }}>Inflation<br />rising ↑</div>
+          {[['🟡 Cyclical', 'Commodities & pricing power', 'Overheating but earnings still up. Energy, real assets, pricing power.', C.amber],
+            ['🔴 Stagflation', 'Protect capital', 'Defensives, staples, low-debt / high-FCF, real assets. Raise cash for Phase 5/6.', C.red]].map((m, i) => (
+            <div key={i} style={{ borderRadius: 8, padding: 14, minHeight: 110, background: `${m[3]}12`, border: `1px solid ${m[3]}44` }}><div style={{ ...MONO, fontSize: 9.5, letterSpacing: 0.6, textTransform: 'uppercase', fontWeight: 700, color: m[3] as string }}>{m[0]}</div><div style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: '5px 0 4px' }}>{m[1]}</div><div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{m[2]}</div></div>
+          ))}
+        </div>
+        <Card accent={C.saffron}><strong style={{ color: C.text }}>Add the third dimension — growth & credit</strong> — and the four boxes fan into a spectrum: 🟢 risk-on → 🟡 cyclicals → 🟠 defensives/pricing-power → 🔴 stagflation → 🔴 recession (credit stress) → 🔵 begin accumulating (easing) → 🟢 multibagger hunting. That last transition generates the largest returns.</Card>
+      </RgSection>
+
+      {/* 10 indicators */}
+      <RgSection n="10" title="The three indicators that beat a headline">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10 }}>
+          {[['01 · direction', 'Acceleration, not level', 'Inflation 6% FALLING 5.5→5→4.5 is 🟢 bullish. Inflation 4% RISING 4→4.5→5 is 🔴 dangerous. Direction > level.', C.saffron],
+            ['02 · real yields', 'Nominal yield − inflation exp.', 'Rising real yields punish speculative growth, long duration, gold, expensive tech. When they PEAK & FALL, quality growth gets interesting.', C.cyan],
+            ['03 · revisions', 'Earnings revision score', '+2 rising sharply · +1 stable · 0 mixed · −1 falling · −2 collapsing. The single most important signal — combine with inflation direction.', C.green]].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `2px solid ${r[3]}`, borderRadius: 8, padding: 14 }}><div style={{ ...MONO, fontSize: 9.5, color: C.dim, marginBottom: 6, letterSpacing: 0.5 }}>{r[0]}</div><div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, marginBottom: 6 }}>{r[1]}</div><div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>{r[2]}</div></div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 10, marginTop: 12 }}>
+          <Card title="Buy levels — signals, not dates" accent={C.green}>
+            {[['L1 · Early shock', 'commodity supply beneficiaries — shortage confirmed, estimates rising, valuation reasonable, B/S strong', C.amber],
+              ['L2 · Stagflation', 'pricing power + essential demand — margins stable, FCF positive, debt low, demand resilient', RG.stag],
+              ['L3 · Recession', 'quality names whose price fell far faster than intrinsic value; earnings visibility + moat', C.cyan],
+              ['L4 · Recession bottom', 'the aggressive multibagger zone — revisions stop falling, PMI bottoms, credit eases, bases form', C.green]].map((r, i) => (
+              <div key={i} style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, marginBottom: 6, paddingLeft: 12, position: 'relative' }}><span style={{ position: 'absolute', left: 0, color: r[2] as string }}>›</span><strong style={{ color: r[2] as string }}>{r[0]}</strong> — {r[1]}</div>
+            ))}
+          </Card>
+          <Card title="Technical confirmation — don't catch the exact bottom" accent={C.cyan}>
+            {['Weekly — Stage-2 transition, 30/40-week MA flattening then rising, relative strength improving', 'Daily — higher lows, accumulation volume, breakout from base, an earnings catalyst', 'Let price CONFIRM the macro thesis. Miss the first 10% to avoid the last 30%.'].map((t, i) => (
+              <div key={i} style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, marginBottom: 6, paddingLeft: 12, position: 'relative' }}><span style={{ position: 'absolute', left: 0, color: C.saffron }}>›</span>{t}</div>
+            ))}
+          </Card>
+        </div>
+      </RgSection>
+
+      {/* 11 scoreboard */}
+      <RgSection n="11" title="The stagflation scoreboard" lede={<>Twelve indicators, each <strong style={{ color: C.text }}>0 benign · 1 warning · 2 severe</strong> — max 24. Converts "does this feel like stagflation?" into a number and a regime band. <strong style={{ color: C.text }}>Click any indicator</strong> to cycle its severity. <span style={{ color: C.dim }}>(framework, not an official classification)</span></>}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><span style={{ fontSize: 40, fontWeight: 900, color: regime[1] as string, letterSpacing: -1 }}>{total}</span><span style={{ ...MONO, color: C.dim, fontSize: 14 }}>/ 24</span></div>
+            <div style={{ ...MONO, fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 7, color: regime[1] as string, background: `${regime[1]}18`, letterSpacing: 0.4 }}>{regime[0]}</div>
+          </div>
+          <div style={{ height: 9, borderRadius: 5, background: `linear-gradient(90deg, ${C.green}, ${C.amber} 40%, ${RG.stag} 66%, ${C.red})`, position: 'relative', marginBottom: 6 }}>
+            <div style={{ position: 'absolute', top: -5, left: `${total / 24 * 100}%`, width: 3, height: 19, background: '#fff', borderRadius: 2, boxShadow: '0 0 8px rgba(255,255,255,.5)', transition: 'left .25s' }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', ...MONO, fontSize: 9, color: C.dim, marginBottom: 18 }}><span>0 normal</span><span>6 warning</span><span>10 slowdown</span><span>15 stagflation</span><span>19–24 recession</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
+            {RG_INDS.map((x, i) => (
+              <div key={i} onClick={() => setSev((prev) => prev.map((v, j) => (j === i ? (v + 1) % 3 : v)))} style={{ cursor: 'pointer', userSelect: 'none', background: C.card2, border: `1px solid ${C.border}`, borderRadius: 7, padding: '10px 11px' }}>
+                <div style={{ ...MONO, fontSize: 8.5, letterSpacing: 0.6, textTransform: 'uppercase', color: C.dim, marginBottom: 5 }}>{x.c}</div>
+                <div style={{ fontSize: 12, color: C.text, fontWeight: 500, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>{x.n}<span style={{ ...MONO, fontSize: 10, color: sevCol(sev[i]) }}>{sev[i]}</span></div>
+                <div style={{ height: 5, borderRadius: 3, background: C.card, marginTop: 8, overflow: 'hidden' }}><div style={{ height: '100%', width: sev[i] === 0 ? '14%' : sev[i] === 1 ? '55%' : '100%', background: sevCol(sev[i]), transition: '.2s' }} /></div>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...MONO, fontSize: 10.5, color: C.dim, marginTop: 14, textAlign: 'center' }}>tap to cycle severity · benign → warning → severe</div>
+        </div>
+      </RgSection>
+
+      {/* 12 rotation */}
+      <RgSection n="12" title="The master rotation wheel" lede="One turn of the machine. Money migrates through these seats in order — being one seat early is the entire game.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 9 }}>
+          {RG_ROT.map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${r[3]}`, borderRadius: 8, padding: '12px 14px' }}><div style={{ ...MONO, fontSize: 9.5, color: C.dim }}>STAGE {r[0]}</div><div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, margin: '2px 0 3px' }}>{r[1]}</div><div style={{ fontSize: 11.5, color: C.muted }}>{r[2]}</div></div>
+          ))}
+        </div>
+      </RgSection>
+
+      {/* 13 decision tree + questions */}
+      <RgSection n="13" title="The decision tree & the ten questions" lede="Walk the branches instead of reacting to the headline. Then locate yourself with ten questions that beat any recession call.">
+        <div style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, background: C.card, padding: 8 }}>
+          <pre style={{ ...MONO, fontSize: 11.5, lineHeight: 1.85, color: C.muted, padding: 14, margin: 0, minWidth: 520, whiteSpace: 'pre' }}>{`             FOOD / OIL SHOCK
+                    │
+             Is it temporary?
+              /            \\
+           YES              NO
+            │                │
+     Keep growth       Core inflation?
+                          /        \\
+                        NO          YES
+                         │           │
+                  `}<span style={{ color: C.amber }}>COMMODITY</span>{`   Growth slowing?
+                    `}<span style={{ color: C.amber }}>trade</span>{`         /        \\
+                                NO         YES
+                                 │          │
+                          `}<span style={{ color: C.amber }}>INFLATION</span>{`  `}<span style={{ color: C.red }}>STAGFLATION</span>{`
+                                            │
+                              `}<span style={{ color: RG.stag }}>Pricing power · staples</span>{`
+                              `}<span style={{ color: RG.stag }}>Energy · real assets · low debt</span>{`
+                                            │
+                                   `}<span style={{ color: C.red }}>RECESSION RISK</span>{`
+                                → sell weak businesses
+                                            │
+                                 `}<span style={{ color: C.cyan }}>Inflation ↓ · CB easing</span>{`
+                                            │
+                              `}<span style={{ color: C.green }}>BUY QUALITY GROWTH</span>{`
+                              `}<span style={{ color: C.green }}>→ INDUSTRIALS · FINANCIALS</span>{`
+                              `}<span style={{ color: C.green }}>→ SMALL / MID-CAP INFLECTIONS</span>{`
+                                            │
+                                   NEW BULL CYCLE`}</pre>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 10, marginTop: 12 }}>
+          <Card title="The ten questions that locate you" accent={C.saffron}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 18px' }}>
+              {['Is inflation accelerating?', 'Is inflation broadening?', 'Is the central bank tightening?', 'Are financial conditions tightening?', 'Are earnings estimates falling?', 'Is credit deteriorating?', 'Has inflation peaked?', 'Has revision pressure peaked?', 'Has the central bank turned?', 'Are leading indicators recovering?'].map((q, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: `1px solid ${C.border}`, fontSize: 12 }}><span style={{ ...MONO, color: C.saffron, fontWeight: 600 }}>{i + 1}</span><span style={{ color: C.text }}>{q}</span></div>
+              ))}
+            </div>
+          </Card>
+          <Card title="Why you should WANT a recession — if your names survive it" accent={C.green}>
+            <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.55, marginBottom: 10 }}>A recession manufactures the setup: <strong style={{ color: C.text }}>lower valuation + temporary earnings depression + forced selling</strong> over an intact structural story.</div>
+            <div style={{ ...MONO, fontSize: 11.5, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 10, lineHeight: 1.9 }}>
+              Pre-recession &nbsp;₹800 · EPS ₹20 · 40×<br />Trough &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;₹300 · EPS ₹12 · 25×<br />Recovery + re-rate &nbsp;EPS ₹40 · 35× = <strong style={{ color: C.green }}>₹1,400</strong><br /><span style={{ color: C.saffron }}>₹300 → ₹1,400 = 4.7× — next cycle can make it a 10-bagger.</span>
+            </div>
+          </Card>
+        </div>
+      </RgSection>
+
+      {/* 14 now */}
+      <RgSection n="14" title="Reading the current tape" lede={<>Best treated as an <strong style={{ color: C.text }}>inflationary-slowdown / stagflation-watch</strong> regime — US growth cooling with inflation above target; India still more food-sensitive. Not a confirmed recession. So: don’t make a full recessionary shift yet — run a <strong style={{ color: C.text }}>barbell</strong>, and keep a cash reserve for Phase 5/6.</>}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 10 }}>
+          {[['Core · high', 'Quality compounders', ['Strong FCF', 'Low / no debt', 'Pricing power', 'High ROCE'], C.cyan],
+            ['Tactical · moderate', 'Real-asset sleeve', ['Energy · power', 'Select commodities', 'Agri inputs', 'Low-cost producers only'], C.amber],
+            ['Optionality · moderate', 'Structural capex', ['AI infrastructure', 'Defence', 'Industrial / capex cycle', 'Sticky order books'], C.saffron],
+            ['Reduce · low', 'Fragile exposure', ['Leveraged small caps', 'Discretionary consumption', 'Extreme valuations', 'Weak FCF'], C.red]].map((r, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `3px solid ${r[3]}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ ...MONO, fontSize: 9.5, letterSpacing: 0.6, textTransform: 'uppercase', color: r[3] as string, fontWeight: 700 }}>{r[0]}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: '5px 0 8px' }}>{r[1]}</div>
+              {(r[2] as string[]).map((x, j) => <div key={j} style={{ fontSize: 12, color: C.muted, padding: '2px 0 2px 12px', position: 'relative' }}><span style={{ position: 'absolute', left: 0, color: r[3] as string }}>–</span>{x}</div>)}
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 14, textAlign: 'center', fontSize: 13.5, fontWeight: 700, color: C.text, padding: 16, background: C.card, border: `1px dashed ${C.borderStrong}`, borderRadius: 8, lineHeight: 1.7 }}>
+          Early shock → <strong style={{ color: C.saffron }}>commodities.</strong> Broadening → <strong style={{ color: C.saffron }}>pricing power.</strong> Tightening → <strong style={{ color: C.saffron }}>quality / value / cash.</strong> Earnings recession → <strong style={{ color: C.saffron }}>protect.</strong> Disinflation → <strong style={{ color: C.saffron }}>bonds & quality growth.</strong> Recovery → <strong style={{ color: C.saffron }}>cyclicals.</strong> Early bull → <strong style={{ color: C.saffron }}>small/mid-cap multibaggers.</strong>
+        </div>
+        <div style={{ marginTop: 14, fontSize: 11, color: C.dim, lineHeight: 1.6, ...MONO }}>Educational framework for macro-regime rotation — not investment advice. Historical figures (1970s US, India 2010–14 & 2022–23, 2008, 2020, 2000) are drawn from central-bank/public records and are approximate, for teaching the mechanism. The scoreboard is a proposed portfolio framework, not an official classification.</div>
+      </RgSection>
+    </div>
+  );
+}
+
 // ── Page shell ──────────────────────────────────────────────────────────────
 export default function MarketCyclesPage() {
   const [active, setActive] = useState<TabId>('overview');
@@ -1854,6 +2357,7 @@ export default function MarketCyclesPage() {
       {/* Body */}
       <div style={{ padding: '20px 24px', maxWidth: 1200, margin: '0 auto' }}>
         {active === 'overview'   && <OverviewTab />}
+        {active === 'regime'     && <RegimeTab />}
         {active === 'cycles'     && <CyclesTab />}
         {active === 'crashbook'  && <CrashbookTab />}
         {active === 'precrash'   && <PreCrashTab />}
