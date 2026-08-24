@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-24T06:01:09Z",
+  "lastSync": "2026-08-24T08:41:20Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9412,
+      "size": 9410,
       "displayName": "CAPEX"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 7336,
+      "size": 6668,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 9846,
+      "size": 9847,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,12 +55,12 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3690,
+      "size": 3256,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 5171,
+      "size": 5592,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -75,22 +75,22 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19270,
+      "size": 19269,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 26904,
+      "size": 26902,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63484,
+      "size": 63483,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65679,
+      "size": 65678,
       "displayName": "Working watchlist"
     },
     {
