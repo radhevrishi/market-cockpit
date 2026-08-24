@@ -11,11 +11,24 @@
 // Plus the original manual transcript-paste analyser below.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 // PATCH 0437 BUG-026 — decode HTML entities in concall subjects (extends BUG-008)
 import { decodeHTMLEntities } from '@/lib/html-decode';
 // PATCH 0490 QA-#14 — resolve raw BSE codes (e.g. 526612) to NSE symbols
 import { resolveTicker } from '@/lib/bse-nse-mapping';
+
+// zzz432 — automatic multibagger transformation radar block
+interface TransformationRadarData {
+  patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
+  events: Array<{ kw: string; hits: number }>;
+  evidence_score: number;
+  evidence_label: string;
+  stage: number;
+  stage_sweet_spot: boolean;
+  velocity: string;
+  pattern_count: number;
+  triple: { industry: boolean; company: boolean; financial: boolean; count: number };
+}
 
 interface Analysis {
   ticker: string;
@@ -25,6 +38,7 @@ interface Analysis {
   numbers:  Array<{ metric: string; value: string; snippet: string }>;
   themes:   Array<{ theme: string; mentions: number }>;
   red_flags: string[];
+  transformation?: TransformationRadarData;
   generated_at: string;
 }
 
@@ -124,7 +138,7 @@ export default function ConcallIntelPage() {
   // surface untouched; Analytics tab mounts a brand-new component that
   // fetches all 4 endpoints and renders an institutional-format
   // consolidated dashboard.
-  const [tab, setTab] = useState<'live' | 'analytics'>('live');
+  const [tab, setTab] = useState<'live' | 'analytics' | 'transform'>('live');
 
   return (
     <div style={{ padding: '20px 24px', backgroundColor: 'var(--mc-bg-0)', minHeight: '100%', color: 'var(--mc-text-1)' }}>
@@ -194,6 +208,7 @@ export default function ConcallIntelPage() {
         {([
           { id: 'live',      label: '🔥 Live Feeds',  hint: 'Warrant / Movers / Bullish / Keyword + Manual Analyser' },
           { id: 'analytics', label: '📊 Analytics',   hint: 'Institutional-format consolidated dashboard' },
+          { id: 'transform', label: '🚀 Transformation', hint: 'Multibagger transformation-hunting framework — auto-radar runs on any analysed transcript' },
         ] as const).map((t) => {
           const isActive = tab === t.id;
           return (
@@ -216,7 +231,9 @@ export default function ConcallIntelPage() {
         })}
       </div>
 
-      {tab === 'analytics' ? (
+      {tab === 'transform' ? (
+        <TransformationFrameworkTab lastRadar={result?.transformation ?? null} lastTicker={result?.ticker ?? ''} />
+      ) : tab === 'analytics' ? (
         <ConcallAnalyticsTab />
       ) : (
         <>
@@ -285,6 +302,8 @@ export default function ConcallIntelPage() {
       {/* ── Result ──────────────────────────────────────────────────── */}
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* zzz432 — automatic Multibagger Transformation Radar */}
+          {result.transformation && <TransformationRadar t={result.transformation} ticker={result.ticker} />}
           {/* Tone Score */}
           <div style={{ backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${toneColor(result.tone.score)}40`, borderLeft: `4px solid ${toneColor(result.tone.score)}`, borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 24 }}>
             <div>
@@ -3508,6 +3527,280 @@ function ConcallBottleneckPanel() {
           Showing top 18 of {sorted.length}. Open <a href="/bottleneck-intel" style={{ color: 'var(--mc-cyan)' }}>/bottleneck-intel</a> for the full rotation tracker.
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz432 — MULTIBAGGER TRANSFORMATION FRAMEWORK (Concall AI)
+// "Find the company before the earnings fully reveal what it is becoming."
+// The auto-radar (TransformationRadar) runs on every analysed transcript; the
+// TransformationFrameworkTab is the full hunting playbook + case studies.
+// ═══════════════════════════════════════════════════════════════════════════
+const TF = {
+  card: 'var(--mc-bg-1)', card2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
+  text: 'var(--mc-text-1)', text2: 'var(--mc-text-2)', muted: 'var(--mc-text-3)', dim: 'var(--mc-text-4)',
+  green: 'var(--mc-bullish)', amber: 'var(--mc-warn)', red: 'var(--mc-bearish)', cyan: 'var(--mc-cyan)', purple: '#A78BFA', saffron: '#F0883E',
+};
+const TFM = { fontFamily: 'ui-monospace,"SF Mono",Menlo,monospace' } as const;
+
+function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: lede ? 5 : 12, borderTop: `1px solid ${TF.border}`, paddingTop: 16 }}>
+        <span style={{ ...TFM, fontSize: 11, color: TF.saffron, fontWeight: 700 }}>{n}</span>
+        <h3 style={{ fontSize: 16, fontWeight: 900, color: TF.text, margin: 0 }}>{title}</h3>
+      </div>
+      {lede && <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.55, marginBottom: 12, maxWidth: 900 }}>{lede}</div>}
+      {children}
+    </div>
+  );
+}
+function TfChip({ children, tone }: { children: ReactNode; tone?: string }) {
+  return <span style={{ ...TFM, fontSize: 11, padding: '4px 8px', borderRadius: 5, background: TF.card2, border: `1px solid ${tone || TF.border}`, color: TF.text, display: 'inline-block' }}>{children}</span>;
+}
+function TfCard({ title, accent, children }: { title?: string; accent?: string; children: ReactNode }) {
+  return (
+    <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderLeft: accent ? `3px solid ${accent}` : `1px solid ${TF.border}`, borderRadius: 8, padding: '13px 15px', marginBottom: 10 }}>
+      {title && <div style={{ ...TFM, fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, color: accent || TF.cyan, textTransform: 'uppercase', marginBottom: 8 }}>{title}</div>}
+      <div style={{ fontSize: 12.5, color: TF.text2, lineHeight: 1.55 }}>{children}</div>
+    </div>
+  );
+}
+function TfTable({ head, rows, firstAccent }: { head: string[]; rows: (string | number)[][]; firstAccent?: boolean }) {
+  return (
+    <div style={{ overflowX: 'auto', border: `1px solid ${TF.border}`, borderRadius: 8 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: Math.max(480, head.length * 120) }}>
+        <thead><tr>{head.map((h, i) => <th key={i} style={{ ...TFM, textAlign: 'left', padding: '9px 11px', fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim, borderBottom: `1px solid ${TF.border}`, background: TF.card2, whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${TF.border}` : 'none' }}>
+              {r.map((c, ci) => <td key={ci} style={{ padding: '9px 11px', color: ci === 0 ? TF.text : TF.text2, fontWeight: ci === 0 ? 700 : 400, whiteSpace: ci === 0 ? 'nowrap' : 'normal', borderLeft: ci === 0 && firstAccent ? `3px solid ${TF.saffron}` : undefined }}>{c}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---- AUTOMATIC RADAR — renders on every analysed transcript ----
+function TransformationRadar({ t, ticker }: { t: TransformationRadarData; ticker: string }) {
+  const stagePct = Math.round((t.stage / 10) * 100);
+  const sweet = t.stage_sweet_spot;
+  const evCol = t.evidence_score >= 8 ? TF.green : t.evidence_score >= 5 ? TF.amber : t.evidence_score >= 1 ? TF.saffron : TF.dim;
+  return (
+    <div style={{ background: TF.card, border: `1px solid ${sweet ? TF.green : TF.border}`, borderLeft: `4px solid ${sweet ? TF.green : TF.cyan}`, borderRadius: 10, padding: '14px 18px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: TF.text }}>🚀 Multibagger Transformation Radar <span style={{ ...TFM, fontSize: 10, color: TF.dim, fontWeight: 600 }}>· auto-detected{ticker ? ` · ${ticker}` : ''}</span></div>
+        <div style={{ ...TFM, fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 6, color: sweet ? TF.green : TF.cyan, background: `color-mix(in srgb, ${sweet ? TF.green : TF.cyan} 13%, transparent)` }}>{sweet ? '✅ SWEET SPOT · stage 3–7' : 'stage-based read'}</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 10, marginBottom: 12 }}>
+        {[['Inflection stage', `${t.stage}/10`, sweet ? TF.green : TF.text], ['Evidence score', `${t.evidence_score}/11`, evCol], ['Patterns detected', String(t.pattern_count), t.pattern_count >= 3 ? TF.green : TF.text], ['Velocity', t.velocity, /fast/i.test(t.velocity) ? TF.green : TF.text]].map((s, i) => (
+          <div key={i} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ ...TFM, fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim }}>{s[0]}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: s[2] as string, marginTop: 3 }}>{s[1]}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ height: 7, borderRadius: 4, background: TF.card2, position: 'relative', marginBottom: 4, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${stagePct}%`, background: `linear-gradient(90deg, ${TF.red}, ${TF.amber} 50%, ${TF.green})` }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', ...TFM, fontSize: 8.5, color: TF.dim, marginBottom: 12 }}><span>0 talk</span><span>3 facility</span><span>5 first order</span><span>7 accelerates</span><span>10 re-expand</span></div>
+      <div style={{ fontSize: 11.5, color: TF.muted, marginBottom: 10 }}>Strongest evidence: <strong style={{ color: evCol }}>{t.evidence_label}</strong></div>
+      {t.patterns.length > 0 && (
+        <>
+          <div style={{ ...TFM, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim, marginBottom: 7 }}>Transformation patterns detected</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>{t.patterns.map((p, i) => <TfChip key={i} tone={`${TF.green}55`}>{p.emoji} {p.label} <span style={{ color: TF.dim }}>×{p.hits}</span></TfChip>)}</div>
+        </>
+      )}
+      <div style={{ ...TFM, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim, marginBottom: 7 }}>Triple inflection ({t.triple.count}/3)</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        {([['① Industry', t.triple.industry], ['② Company', t.triple.company], ['③ Financial', t.triple.financial]] as Array<[string, boolean]>).map(([lab, on], i) => (
+          <span key={i} style={{ ...TFM, fontSize: 11, padding: '5px 10px', borderRadius: 6, border: `1px solid ${on ? TF.green : TF.border}`, background: on ? `color-mix(in srgb, ${TF.green} 12%, transparent)` : 'transparent', color: on ? TF.green : TF.dim, fontWeight: 700 }}>{on ? '✓' : '○'} {lab}</span>
+        ))}
+      </div>
+      {t.events.length > 0 && (
+        <>
+          <div style={{ ...TFM, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim, marginBottom: 7 }}>Event keywords in transcript</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{t.events.map((e, i) => <span key={i} style={{ ...TFM, fontSize: 10, padding: '3px 7px', borderRadius: 4, background: TF.card2, border: `1px solid ${TF.border}`, color: TF.text2 }}>{e.kw} <span style={{ color: TF.saffron }}>{e.hits}</span></span>)}</div>
+        </>
+      )}
+      <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, marginTop: 12, lineHeight: 1.6 }}>Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING → MULTIBAGGER · deterministic keyword + evidence read of one transcript, not a recommendation. Open the 🚀 Transformation tab for the full framework.</div>
+    </div>
+  );
+}
+
+// ---- FULL FRAMEWORK TAB ----
+function TransformationFrameworkTab({ lastRadar, lastTicker }: { lastRadar: TransformationRadarData | null; lastTicker: string }) {
+  return (
+    <div>
+      <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px', marginBottom: 18, backgroundImage: `linear-gradient(90deg, color-mix(in srgb, ${TF.saffron} 8%, transparent), transparent 70%)` }}>
+        <div style={{ ...TFM, fontSize: 10, letterSpacing: 1.4, color: TF.saffron, textTransform: 'uppercase', marginBottom: 8 }}>Multibagger transformation hunting</div>
+        <div style={{ fontSize: 18, fontWeight: 900, color: TF.text, lineHeight: 1.25, marginBottom: 8 }}>Find the company <span style={{ color: TF.saffron }}>before</span> the earnings reveal what it is becoming.</div>
+        <div style={{ fontSize: 12.5, color: TF.text2, lineHeight: 1.55, maxWidth: 900 }}>The best multibaggers are rarely the companies with the best numbers <em>today</em> — they are companies where future earnings power is changing <strong style={{ color: TF.text }}>faster than the market’s perception of it</strong>. The master chain: <span style={{ ...TFM, color: TF.text }}>TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING → MULTIBAGGER</span>.</div>
+      </div>
+
+      {lastRadar
+        ? (<div style={{ marginBottom: 20 }}><div style={{ ...TFM, fontSize: 10, letterSpacing: 0.6, textTransform: 'uppercase', color: TF.dim, marginBottom: 8 }}>▶ Auto-radar · last analysed transcript</div><TransformationRadar t={lastRadar} ticker={lastTicker} /></div>)
+        : (<div style={{ background: TF.card2, border: `1px dashed ${TF.border}`, borderRadius: 8, padding: 14, marginBottom: 20, fontSize: 12.5, color: TF.muted }}>💡 Paste a transcript / PDF in the <strong style={{ color: TF.text }}>🔥 Live Feeds → Manual Analyser</strong> and the <strong style={{ color: TF.saffron }}>Transformation Radar</strong> auto-runs on it — detecting patterns, event keywords, evidence stage and velocity. The framework below is the manual it scores against.</div>)}
+
+      {/* 1 — 15 patterns */}
+      <TfSection n="01" title="The 15 transformation patterns" lede={<>Don’t look for one pattern — look for <strong style={{ color: TF.text }}>3–5 occurring simultaneously</strong>. Each is a keyword the auto-radar scans for.</>}>
+        <TfTable firstAccent head={['#', 'Pattern', 'What you hunt', 'Why it can explode']} rows={[
+          [1, '🟢 Low → High Margin', 'Commodity → premium / value-added', 'Margin × revenue'],
+          [2, '🔵 Commodity → CDMO', 'API → contract manufacturing', 'Recurring + higher valuation'],
+          [3, '🟠 Debt → Growth', 'Debt falling while revenue rises', 'Interest ↓ + PAT ↑'],
+          [4, '🟣 Traditional → Technology', 'Industrial → semiconductor / EV / AI', 'TAM + multiple expansion'],
+          [5, '🟡 Capacity Inflection', 'Large new plant', 'Revenue operating leverage'],
+          [6, '🔴 Customer Inflection', 'Qualification → commercial order', 'Validates capability'],
+          [7, '🟦 Parent Transformation', 'Global parent enters / expands', 'Technology + customers + capital'],
+          [8, '🟩 Acquisition Transformation', 'Weak company buys a capability', 'New business economics'],
+          [9, '🟪 Product-Mix Shift', 'Low-value → high-value products', 'Same revenue, higher EBITDA'],
+          [10, '🟧 TAM Expansion', 'Small market → huge new market', 'Revenue multiplies w/o share gain'],
+          [11, '🟨 Export Inflection', 'Domestic → global supply', 'Larger TAM + FX advantage'],
+          [12, '🟥 Utilisation Inflection', 'Underutilised → full utilisation', 'Massive operating leverage'],
+          [13, '🔷 Recurring Revenue', 'Project/order → repeat programs', 'Visibility + higher multiple'],
+          [14, '🔶 Consolidation Winner', 'Fragmented → share gains', 'Scale + pricing power'],
+          [15, '⚫ Perception Transformation', '“Boring” → “quality growth”', 'P/E re-rating'],
+        ]} />
+      </TfSection>
+
+      {/* 2 — inflection ladder */}
+      <TfSection n="02" title="The 10-stage inflection ladder" lede={<>Where a story sits on this ladder decides risk vs reward. <strong style={{ color: TF.text }}>Sweet spot = stages 3–7</strong> — too early is execution risk, too late is already priced. The auto-radar estimates this stage from the transcript.</>}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
+          {[['0', 'Opportunity talk', '🔴 Very low', TF.red], ['1', 'Strategy announced', '🟠 Low', TF.saffron], ['2', 'Partnership / capex', '🟡', TF.amber], ['3', 'Facility ready', '🟡🟢', TF.amber], ['4', 'Customer qualification', '🟢', TF.green], ['5', 'First commercial order', '🟢🟢', TF.green], ['6', 'First revenue', '🔥', TF.green], ['7', 'Revenue accelerates', '🔥🔥', TF.green], ['8', 'Margin expands', '🔥🔥🔥', TF.green], ['9', 'Second/third customer', '🔥🔥🔥🔥', TF.green], ['10', 'Capacity expanded again', '🚀', TF.cyan]].map((r, i) => {
+            const sweet = i >= 3 && i <= 7;
+            return (
+              <div key={i} style={{ background: TF.card, border: `1px solid ${sweet ? TF.green : TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ ...TFM, fontSize: 9, color: TF.dim }}>STAGE {r[0]}{sweet ? ' · sweet spot' : ''}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: TF.text, margin: '2px 0 3px' }}>{r[1]}</div>
+                <div style={{ fontSize: 12 }}>{r[2]}</div>
+              </div>
+            );
+          })}
+        </div>
+      </TfSection>
+
+      {/* 3 — story to evidence */}
+      <TfSection n="03" title="Story → Evidence score" lede={<>Management story = <strong style={{ color: TF.text }}>hypothesis</strong>. Customer + revenue + margin + cash = <strong style={{ color: TF.text }}>evidence</strong>. Score the strength of what was actually said (1 weakest → 11 strongest) — this is exactly what the radar computes.</>}>
+        <TfTable head={['Score', 'Evidence']} rows={[[1, 'Management statement'], [2, 'Investor presentation / guidance'], [3, 'Capex approved · partnership signed'], [4, 'Facility ready'], [5, 'Customer qualification'], [6, 'Order received'], [7, 'Commercial production'], [8, 'Revenue visible'], [9, 'Margin improvement'], [10, 'FCF improvement'], [11, 'Second customer / product']]} />
+      </TfSection>
+
+      {/* 4 — event scanner keywords */}
+      <TfSection n="04" title="The event scanner — every keyword" lede="The radar scans filings/transcripts for these words, then scores the evidence rather than merely counting. All keywords are live in the auto-detector.">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          {['ACQUISITION', 'CAPACITY', 'COMMERCIAL PRODUCTION', 'QUALIFICATION', 'CUSTOMER APPROVAL', 'NEW PRODUCT', 'PREMIUM', 'VALUE ADDED', 'PRODUCT MIX', 'EXPORT', 'TECHNOLOGY', 'PARTNERSHIP', 'JOINT VENTURE', 'CDMO', 'CONTRACT MANUFACTURING', 'SEMICONDUCTOR', 'DEFENCE', 'AEROSPACE', 'EV', 'AI', 'DATA CENTRE', 'TRANSFORMER', 'GRID', 'DEBT REDUCTION', 'CAPEX', 'ORDER BOOK', 'BATTERY', 'USFDA', 'PLI', 'OPERATING LEVERAGE', 'UTILISATION', 'MARGIN EXPANSION', 'RECURRING', 'FORWARD INTEGRATION', 'DESIGN WIN', 'TAM', 'GREENFIELD', 'BROWNFIELD', 'DELEVERAGING', 'FREE CASH FLOW'].map((k) => <TfChip key={k}>{k}</TfChip>)}
+        </div>
+      </TfSection>
+
+      {/* 5 — equation + future PE */}
+      <TfSection n="05" title="The multibagger equation & the future-P/E trick" lede={<>Future Market Cap = <strong style={{ color: TF.text }}>Future Revenue × Future Net Margin × Future P/E</strong>. Never judge on today’s P/E — a 50× today can be 10× on FY31 earnings if the transformation is real.</>}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 10 }}>
+          <TfCard title="Worked example" accent={TF.green}>
+            <div style={{ ...TFM, fontSize: 12, lineHeight: 1.9 }}>
+              Revenue &nbsp;₹1,000 Cr → ₹3,000 Cr &nbsp;<span style={{ color: TF.green }}>(3×)</span><br />
+              PAT margin &nbsp;5% → 10% &nbsp;<span style={{ color: TF.green }}>(2×)</span><br />
+              P/E &nbsp;25× → 30× &nbsp;<span style={{ color: TF.green }}>(1.2×)</span><br />
+              Market cap &nbsp;₹1,250 Cr → <strong style={{ color: TF.green }}>₹9,000 Cr</strong><br />
+              <span style={{ color: TF.saffron }}>= 3 × 2 × 1.2 = 7.2×</span>
+            </div>
+          </TfCard>
+          <TfCard title="The future-P/E flip" accent={TF.cyan}>
+            <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6 }}>Market cap ₹5,000 Cr · PAT ₹100 Cr = <strong style={{ color: TF.text }}>50× (looks expensive)</strong>. But if research supports FY31 PAT ₹500 Cr → that’s <strong style={{ color: TF.green }}>10× forward</strong>. The question flips from “is 50× expensive?” to <strong style={{ color: TF.text }}>“can ₹500 Cr PAT actually happen?”</strong> — which is the right question.</div>
+          </TfCard>
+        </div>
+      </TfSection>
+
+      {/* 6 — earnings bridge */}
+      <TfSection n="06" title="The earnings bridge — where does the 5× come from?" lede="For every candidate, force yourself to build the driver-by-driver bridge. If you cannot name where the 5× earnings come from, it is not a multibagger thesis.">
+        <TfTable head={['Earnings driver', 'FY26', 'FY27E', 'FY28E', 'FY29E', 'FY30E']} rows={[['Existing business', '—', '—', '—', '—', '—'], ['New product', '—', '—', '—', '—', '—'], ['New plant', '—', '—', '—', '—', '—'], ['New customer', '—', '—', '—', '—', '—'], ['Export', '—', '—', '—', '—', '—'], ['CDMO', '—', '—', '—', '—', '—'], ['Acquisition', '—', '—', '—', '—', '—'], ['→ Total revenue', '—', '—', '—', '—', '—'], ['→ EBITDA', '—', '—', '—', '—', '—'], ['→ PAT', '—', '—', '—', '—', '—'], ['→ FCF', '—', '—', '—', '—', '—']]} />
+      </TfSection>
+
+      {/* 7 — revenue quality */}
+      <TfSection n="07" title="The revenue-quality test" lede="Two companies can both grow 25% — but one deserves double the multiple. Track revenue QUALITY, not just revenue growth.">
+        <TfTable head={['Dimension', 'Company A', 'Company B (worth more)']} rows={[['Type', 'Commodity', 'Specialty'], ['Orders', 'One-off', 'Recurring'], ['Geography', 'Domestic', 'Global'], ['Margin', 'Low', 'High'], ['Switching cost', 'Low', 'High'], ['Cash conversion', 'WC-heavy', 'Better'], ['Customers', '5 spot', '2 sticky Tier-1']]} />
+      </TfSection>
+
+      {/* 8 — management credibility */}
+      <TfSection n="08" title="Management credibility score" lede="Management can manufacture narratives. Score behaviour, not adjectives.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+          <TfCard title="Credibility ↑" accent={TF.green}>{[['Meets guidance', '+5'], ['Beats conservative guidance', '+5'], ['Gives measurable KPIs', '+3'], ['Gives customer milestones', '+3'], ['Reports capex honestly', '+3'], ['Transparent cash flow', '+3']].map((r, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 }}><span style={{ color: TF.muted }}>{r[0]}</span><span style={{ ...TFM, color: TF.green, fontWeight: 700 }}>{r[1]}</span></div>)}</TfCard>
+          <TfCard title="Credibility ↓" accent={TF.red}>{[['Repeatedly misses guidance', '−5'], ['Constant narrative changes', '−5'], ['Promotional language', '−5'], ['Aggressive accounting', '−10'], ['Excessive dilution', '−5'], ['Related-party concerns', '−10']].map((r, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 }}><span style={{ color: TF.muted }}>{r[0]}</span><span style={{ ...TFM, color: TF.red, fontWeight: 700 }}>{r[1]}</span></div>)}</TfCard>
+        </div>
+      </TfSection>
+
+      {/* 9 — cash / capex / order book */}
+      <TfSection n="09" title="The three validation tests — cash, capex, order book" lede="A transformation that never generates cash is dangerous. Interrogate each claim.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: 10 }}>
+          <TfCard title="Cash-flow validation" accent={TF.green}>Don’t trust PAT ↑ if CFO ↓ and receivables ↑↑. Check <strong style={{ color: TF.text }}>CFO/PAT</strong>, receivables-growth vs revenue-growth, <strong style={{ color: TF.text }}>FCF = CFO − Capex</strong>, and <strong style={{ color: TF.text }}>FCF/EBITDA</strong> conversion.</TfCard>
+          <TfCard title="The capex test" accent={TF.amber}>Best: <span style={{ color: TF.green }}>capex → customer → utilisation → FCF</span>. Worst: <span style={{ color: TF.red }}>capex → debt → no customer → idle plant</span>. Demand confirmed? Customer identified? Completion date? Funding controlled? ROCE attractive?</TfCard>
+          <TfCard title="The order-book test" accent={TF.cyan}>Coverage = order book / annual revenue — but <strong style={{ color: TF.text }}>quality &gt; size</strong>. ₹3,000 Cr at 3% margin is worthless; ₹1,000 Cr at 20%+ (repeat OEM / multi-year / Tier-1 / reserved capacity) is transformational.</TfCard>
+        </div>
+      </TfSection>
+
+      {/* 10 — fundamental x technical */}
+      <TfSection n="10" title="Fundamental × technical matrix" lede="Fundamentals identify the company; price tells you whether the market is beginning to recognise it. The sweet spot: fundamentals improving + price beginning to confirm.">
+        <TfTable head={['', 'Price weak', 'Price strong']} rows={[['Fundamentals weak', '🔴 Avoid', '🔴 Speculation'], ['Fundamentals improving', '🟡 Early research', '🟢 Best setup'], ['Fundamentals strong', '🟡 Valuation opportunity', '🔥 Momentum'], ['Fundamentals exceptional', '🟢 Accumulation', '🔥🔥 Highest conviction']]} />
+      </TfSection>
+
+      {/* 11 — scorecard + velocity + consensus */}
+      <TfSection n="11" title="The 150-point scorecard (+ velocity + distance from consensus)" lede={<>Fifteen factors × 10. <span style={{ ...TFM, color: TF.green }}>125–150 exceptional</span> · <span style={{ ...TFM, color: TF.green }}>115–124 high conviction</span> · <span style={{ ...TFM, color: TF.amber }}>100–114 strong</span> · <span style={{ ...TFM, color: TF.amber }}>85–99 watch</span> · <span style={{ ...TFM, color: TF.saffron }}>70–84 speculative</span> · <span style={{ ...TFM, color: TF.red }}>&lt;70 reject</span>.</>}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 12 }}>{['Industry tailwind', 'TAM expansion', 'Revenue acceleration', 'Margin expansion', 'Product mix', 'New business', 'Capacity', 'Customer validation', 'Debt reduction', 'Cash conversion', 'Management credibility', 'Competitive advantage', 'Valuation', 'Operating leverage', 'Recognition gap'].map((f) => <TfChip key={f}>{f} <span style={{ color: TF.dim }}>/10</span></TfChip>)}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+          <TfCard title="+ Transformation velocity" accent={TF.saffron}>How fast is it changing? <span style={{ color: TF.dim }}>Slow</span> (5-yr product) · <span style={{ color: TF.amber }}>Medium</span> (product + capacity 2–3 yr) · <span style={{ color: TF.green }}>Fast</span> (customer + capacity + revenue + margin in 12–18m) · <span style={{ color: TF.green }}>Very fast</span> (multiple transformations at once). The radar reports this automatically.</TfCard>
+          <TfCard title="+ Distance from consensus (asymmetry)" accent={TF.cyan}>Market doesn’t understand it <span style={{ ...TFM, color: TF.green }}>+10</span> · only specialists see it <span style={{ ...TFM, color: TF.green }}>+8</span> · revenue beginning <span style={{ ...TFM }}>+6</span> · earnings beginning <span style={{ ...TFM }}>+4</span> · analysts modelling <span style={{ ...TFM }}>+2</span> · consensus fully understands <span style={{ ...TFM }}>0</span> · extreme consensus <span style={{ ...TFM, color: TF.red }}>−5</span>. Ideal: <strong style={{ color: TF.text }}>strong transformation + weak recognition</strong>.</TfCard>
+        </div>
+      </TfSection>
+
+      {/* 12 — what must go right / what can kill it */}
+      <TfSection n="12" title="What must go right? · What can kill it?" lede="If only one thing must go right, risk is high. If five independent things can each create growth, the thesis is robust. And a professional always writes the kill-list.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+          <TfCard title="5-year — what must go right (e.g. Morepen)" accent={TF.green}>{['₹825 Cr CDMO ramps', 'Additional customers arrive', 'CDMO margins hold', 'Capacity expands', 'API stays healthy', 'FCF improves', 'Market re-rates the multiple'].map((x, i) => <div key={i} style={{ fontSize: 12, color: TF.muted, padding: '2px 0 2px 14px', position: 'relative' }}><span style={{ position: 'absolute', left: 0, color: TF.green }}>✓</span>{x}</div>)}</TfCard>
+          <TfCard title="What can kill the thesis" accent={TF.red}>{['New product fails', 'Customer cancels', 'Capex delay', 'Debt rises', 'Margin disappoints', 'Regulation', 'Commodity price', 'Promoter issue', 'Working capital', 'Valuation compression'].map((x, i) => <div key={i} style={{ fontSize: 12, color: TF.muted, padding: '2px 0 2px 14px', position: 'relative' }}><span style={{ position: 'absolute', left: 0, color: TF.red }}>✕</span>{x}</div>)}</TfCard>
+        </div>
+      </TfSection>
+
+      {/* 13 — two universes */}
+      <TfSection n="13" title="Two universes — why the screener is only the start" lede="A future multibagger can have temporarily poor margins, recent capex/acquisition, a new product not yet contributing, or debt currently high but falling. The classic screen misses exactly these.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+          <TfCard title="Universe A — financially proven" accent={TF.cyan}>Good numbers today: Sales &amp; profit 3Y &gt;15% · ROCE &gt;15% · D/E &lt;0.75 or falling · CFO positive · promoter &gt;40%. Safe, but the market often already sees it.</TfCard>
+          <TfCard title="Universe B — transformation early" accent={TF.saffron}>Numbers not yet fully good, but evidence of future earnings power is rising. <strong style={{ color: TF.text }}>This is where the biggest discoveries live</strong> — and where the auto-radar earns its keep by scoring evidence the screener can’t see.</TfCard>
+        </div>
+      </TfSection>
+
+      {/* 14 — case studies */}
+      <TfSection n="14" title="Live case-study map" lede={<>Where real transformations currently sit on the ladder. <em>Case studies, not buy recommendations; the stage is an analytical estimate.</em></>}>
+        <TfTable head={['Company', 'Transformation', 'Evidence now', 'Stage']} rows={[
+          ['Bosch Home Comfort', 'Parent + premium + export + capacity', '€80m India investment; export plan; Q1 sales +28.5%, PAT +49.4%', '5–7'],
+          ['Morepen Labs', 'API → CDMO', '₹825 Cr mandate; commercial dispatches; Q1 EBITDA +207%, PAT +394%', '6–8'],
+          ['Dhoot Transmission', 'Harness → EV components', 'Non-harness 23%; battery/DC-DC/OBC/charging guns; ₹10bn capex', '3–6'],
+          ['Gujarat Themis Biosyn', 'API → forward integration', 'Sanofi anti-TB portfolio (13 brands, 55+ countries) acquisition', '2–4'],
+          ['Laurus Labs', 'API → CDMO platform', 'Large active CDMO pipeline + commercial capacity', '6–8'],
+        ]} />
+      </TfSection>
+
+      {/* 15 — decision tree */}
+      <TfSection n="15" title="The final decision tree" lede="Every gate must be YES. One NO and it is not (yet) a future-multibagger candidate.">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {['Structural tailwind?', 'Business transformation?', 'Customer / capex / product validation?', 'Revenue inflection?', 'Margin inflection?', 'Cash-flow validation?', 'Management credible?', 'Future earnings 3–5× possible?', 'Market not fully pricing it?', 'Valuation + price structure acceptable?'].map((g, i) => (
+            <span key={i} style={{ ...TFM, fontSize: 11, padding: '6px 10px', borderRadius: 6, background: TF.card2, border: `1px solid ${TF.border}`, color: TF.text }}><span style={{ color: TF.green, fontWeight: 700 }}>✓</span> {g}</span>
+          ))}
+          <span style={{ ...TFM, fontSize: 11, padding: '6px 12px', borderRadius: 6, background: `color-mix(in srgb, ${TF.green} 14%, transparent)`, border: `1px solid ${TF.green}`, color: TF.green, fontWeight: 800 }}>🔥 FUTURE MULTIBAGGER CANDIDATE</span>
+        </div>
+      </TfSection>
+
+      {/* 16 — one page + the difference */}
+      <TfSection n="16" title="The one-page version + the real skill" lede="Memorise the chain; internalise the difference.">
+        <div style={{ ...TFM, fontSize: 12, color: TF.text2, lineHeight: 1.9, background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 8, padding: 14, marginBottom: 12 }}>
+          HOT INDUSTRY → SMALL/MID COMPANY → BUSINESS-MODEL CHANGE → NEW HIGH-MARGIN PRODUCT → CUSTOMER VALIDATION → CAPACITY → DEBT REDUCTION → REVENUE ACCELERATION → MARGIN EXPANSION → FCF INFLECTION → LOW MARKET RECOGNITION → REASONABLE FUTURE VALUATION = <span style={{ color: TF.green, fontWeight: 700 }}>🚀 MULTIBAGGER CANDIDATE</span>
+        </div>
+        <TfCard title="The most important difference" accent={TF.saffron}>
+          A normal investor says: “Sales grew 20%, ROCE is 20%, debt is low.” <br />The framework says: <strong style={{ color: TF.text }}>“The company is moving from a ₹1,000 Cr low-margin business toward a ₹3,000 Cr higher-margin business because a structural market is opening, a Tier-1 customer validated the technology, capacity is being added, and debt is falling — so FY30 earnings are materially higher than today implies, and the market is still valuing the old business.”</strong> You are no longer screening stocks; you are underwriting a company’s future identity. Don’t search for the next Morepen — search for companies at the stage Morepen was <em>before</em> the ₹825 Cr story became commercial revenue.
+        </TfCard>
+        <TfCard title="Weekly routine">Mon — corporate actions + acquisitions (30m) · Tue — new products / capex / orders (30m) · Wed — earnings + transcripts (60m) · Thu — debt + cash-flow changes (30m) · Fri — price / relative strength (30m) · Weekend — deep-dive top 5 (3–4h). Re-score every candidate monthly.</TfCard>
+        <div style={{ ...TFM, fontSize: 10, color: TF.dim, marginTop: 10, lineHeight: 1.6 }}>Educational framework — not investment advice. Case-study figures are approximate and drawn from public disclosures; stage classifications are analytical estimates, not published ratings. The radar is a deterministic keyword + evidence read of a single transcript.</div>
+      </TfSection>
     </div>
   );
 }
