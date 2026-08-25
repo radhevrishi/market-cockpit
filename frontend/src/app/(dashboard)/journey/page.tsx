@@ -630,7 +630,7 @@ function StatTile({ label, value, sub, color }: {
 const JOURNEY_PATH: { y: number; r: number }[] = [
   { y: 2025, r: 0 },   { y: 2026, r: 110 }, { y: 2027, r: -20 }, { y: 2028, r: 5 },
   { y: 2029, r: 200 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 20 },
-  { y: 2033, r: 5 },   { y: 2034, r: 120 },
+  { y: 2033, r: 5 },   { y: 2034, r: 120 }, { y: 2035, r: 15 },
 ];
 
 // Personal starting capital — ₹43 lakhs (my actual 2025 seed), fixed here so
@@ -692,11 +692,11 @@ function ReturnJourneyTarget() {
   return (
     <div style={{ background: 'linear-gradient(135deg, var(--mc-bg-1), var(--mc-bg-2))', border: '1px solid ' + C.saffron + '55', borderLeft: '4px solid ' + C.saffron, borderRadius: 8, padding: '18px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: C.saffron, letterSpacing: 0.3 }}>🚀 THE 10-YEAR JOURNEY &middot; the shape of a multibagger decade</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.saffron, letterSpacing: 0.3 }}>🚀 THE {n}-YEAR JOURNEY &middot; the shape of a multibagger run</div>
         <div style={{ fontSize: 10, color: C.dim, ...MONO }}>illustrative path · not a forecast</div>
       </div>
       <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55, marginBottom: 16, maxWidth: 780 }}>
-        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole decade; the rest are flat, tiny, or red. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>{fmtMoney(JOURNEY_CONTRIB[2028] || 0)}</strong> at the end of 2028 — <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital in total — and living the path turns it into <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.
+        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole run; the rest are flat, tiny, or red. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>{fmtMoney(JOURNEY_CONTRIB[2028] || 0)}</strong> at the end of 2028 — <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital in total — and living the path turns it into <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.
       </div>
 
       {/* hero tiles */}
@@ -716,7 +716,7 @@ function ReturnJourneyTarget() {
 
       {/* the path — bar chart with a zero axis */}
       <div style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'flex', gap: 6, minWidth: 620, alignItems: 'stretch' }}>
+        <div style={{ display: 'flex', gap: 6, minWidth: 700, alignItems: 'stretch' }}>
           {rows.map((r) => {
             const up = r.r > 0;
             const flat = r.r === 0;
