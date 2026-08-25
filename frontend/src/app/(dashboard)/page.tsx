@@ -5177,73 +5177,119 @@ function HomeValuationQuickCheck() {
 // endpoints; degrades gracefully if any feed is cold.
 // ═══════════════════════════════════════════════════════════════════════════
 interface InboxSignal {
-  lane: 'MOMENTUM' | 'WARRANT' | 'TRANSFORM';
+  lane: 'MOMENTUM' | 'WARRANT' | 'TRANSFORM' | 'BENCH';
   symbol: string;
   company: string;
   headline: string;
   detail: string;
   score: number;        // for sorting within lane
   href: string;
+  soft?: boolean;       // zzz435 — a "watch"/fallback item, not a fired event
 }
+
+type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
 
 function DailySignalInbox() {
   const [signals, setSignals] = useState<InboxSignal[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
-  const [laneStatus, setLaneStatus] = useState<{ momentum: boolean; warrant: boolean; transform: boolean }>({ momentum: false, warrant: false, transform: false });
+  const [laneStatus, setLaneStatus] = useState<Record<LaneKey, boolean>>({ momentum: false, warrant: false, transform: false, bench: false });
 
   const load = useCallback(async () => {
     setLoading(true);
     const out: InboxSignal[] = [];
-    const status = { momentum: false, warrant: false, transform: false };
+    const status: Record<LaneKey, boolean> = { momentum: false, warrant: false, transform: false, bench: false };
     const j = async (url: string): Promise<any | null> => {
       try { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
       catch { return null; }
     };
     const [movers, warrant, transform] = await Promise.all([
       j('/api/v1/concall-intel/movers'),
-      j('/api/v1/concall-intel/warrant-feed?days=7&passingOnly=1'),
+      j('/api/v1/concall-intel/warrant-feed?days=30'),           // zzz435 — no passingOnly; we fall back to top setups
       j('/api/v1/concall-intel/transformation-screener?days=60&limit=24'),
     ]);
 
-    // Lane 1 — MOMENTUM (movers)
+    // ── Lane 1 — MOMENTUM (movers) ────────────────────────────────────────
     if (movers && !movers.error) {
       status.momentum = true;
-      (movers.new_entries || []).slice(0, 5).forEach((m: any) => out.push({
+      const seen = new Set<string>();
+      (movers.new_entries || []).slice(0, 4).forEach((m: any) => { seen.add(m.symbol); out.push({
         lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
         headline: 'New to concall top-30', detail: `${(m.tier || '').replace('_', ' ')} · rank #${m.rank_today}`,
-        score: (m.composite_today || 0) + 5, href: '/concall-intel',
-      }));
-      (movers.big_jumps || []).slice(0, 5).forEach((m: any) => out.push({
+        score: (m.composite_today || 0) + 100, href: '/concall-intel',
+      }); });
+      (movers.big_jumps || []).slice(0, 4).forEach((m: any) => { if (seen.has(m.symbol)) return; seen.add(m.symbol); out.push({
         lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
         headline: `Score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
-        score: (m.delta || 0), href: '/concall-intel',
-      }));
+        score: (m.delta || 0) + 50, href: '/concall-intel',
+      }); });
+      // FALLBACK — quiet day: fill from today's top-ranked concall names so the lane always shows the leaders.
+      if (out.filter((s) => s.lane === 'MOMENTUM').length < 4) {
+        (movers.ranking_today || []).forEach((m: any) => {
+          if (seen.has(m.symbol) || out.filter((s) => s.lane === 'MOMENTUM').length >= 6) return;
+          seen.add(m.symbol);
+          out.push({ lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
+            headline: `Top concall · #${m.rank_today}`, detail: `${(m.tier || '').replace('_', ' ')} · score ${(m.composite_today ?? 0).toFixed(0)}`,
+            score: (m.composite_today || 0), href: '/concall-intel', soft: true });
+        });
+      }
     }
 
-    // Lane 2 — WARRANT (qualified setups)
+    // ── Lane 2 — WARRANT (qualified setups, else best watch) ──────────────
     if (warrant && !warrant.error) {
       status.warrant = true;
-      const passing = (warrant.filings || []).slice(0, 6);
-      passing.forEach((f: any) => out.push({
+      const all = (warrant.ranked_all && warrant.ranked_all.length ? warrant.ranked_all : warrant.filings) || [];
+      const passing = all.filter((f: any) => f?.conviction?.passes_gate);
+      const rest = all.filter((f: any) => !f?.conviction?.passes_gate);
+      passing.slice(0, 5).forEach((f: any) => out.push({
         lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
-        headline: 'Warrant setup qualified', detail: f.subject ? String(f.subject).slice(0, 60) : 'promoter warrant / breakout',
-        score: f.warrant?.score ?? f.score ?? 1, href: '/concall-intel',
+        headline: `Warrant qualified · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
+        detail: f.conviction?.tier ? `${f.conviction.tier} · ${String(f.subject || '').slice(0, 40)}` : String(f.subject || '').slice(0, 50),
+        score: (f.conviction?.conviction || 0) + 100, href: '/concall-intel',
       }));
+      // FALLBACK — none passed the strict gate: show the best watch-list setups.
+      if (passing.length === 0) {
+        rest.slice(0, 5).forEach((f: any) => out.push({
+          lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
+          headline: `Warrant watch · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
+          detail: f.conviction?.tier ? `${f.conviction.tier} · below strict gate` : String(f.subject || '').slice(0, 50),
+          score: (f.conviction?.conviction || 0), href: '/concall-intel', soft: true }));
+      }
     }
 
-    // Lane 3 — TRANSFORM (batch radar sweet-spot)
+    // ── Lane 3 — TRANSFORM (sweet-spot, else top-scored) ──────────────────
     if (transform && !transform.error) {
       status.transform = true;
-      (transform.entries || []).filter((e: any) => e.stage_sweet_spot).slice(0, 6).forEach((e: any) => out.push({
+      const entries = transform.entries || [];
+      const sweet = entries.filter((e: any) => e.stage_sweet_spot);
+      (sweet.length ? sweet : entries).slice(0, 6).forEach((e: any, i: number) => out.push({
         lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
         headline: `${e.velocity} transformation · T-${e.transformation_score}`,
         detail: `${e.pattern_count} vectors · stage ${e.stage}/10 · ${e.evidence_label}`,
-        score: e.transformation_score || 0, href: '/concall-intel?tab=radar',
-      }));
+        score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: sweet.length === 0 }));
       setGeneratedAt(transform.generated_at || null);
     }
+
+    // ── Lane 4 — BENCH (recent Conviction Beats — client-side, always available) ──
+    try {
+      const bench = getConvictionList().filter((b) => b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG');
+      if (bench.length) {
+        status.bench = true;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        bench.slice(0, 6).forEach((b) => {
+          const isToday = b.filing_date === todayStr;
+          const parts: string[] = [];
+          if (b.sales_yoy_pct != null) parts.push(`sales ${b.sales_yoy_pct >= 0 ? '+' : ''}${Math.round(b.sales_yoy_pct)}%`);
+          if (b.net_profit_yoy_pct != null) parts.push(`PAT ${b.net_profit_yoy_pct >= 0 ? '+' : ''}${Math.round(b.net_profit_yoy_pct)}%`);
+          if (b.move_pct != null) parts.push(`${b.move_pct >= 0 ? '+' : ''}${Math.round(b.move_pct)}% since`);
+          out.push({ lane: 'BENCH', symbol: b.ticker, company: b.company || '',
+            headline: `${b.tier}${isToday ? ' · NEW today' : ''}`,
+            detail: parts.join(' · ') || `score ${b.composite_score}`,
+            score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/conviction-beats', soft: !isToday });
+        });
+      }
+    } catch { /* localStorage unavailable */ }
 
     setLaneStatus(status);
     setSignals(out);
@@ -5256,19 +5302,21 @@ function DailySignalInbox() {
     MOMENTUM:  { c: '#60A5FA', emoji: '📈', label: 'Momentum' },
     WARRANT:   { c: '#F59E0B', emoji: '🎯', label: 'Warrant' },
     TRANSFORM: { c: '#10B981', emoji: '🚀', label: 'Transform' },
+    BENCH:     { c: '#F59E0B', emoji: '🏆', label: 'Bench' },
   };
-  const lanes: InboxSignal['lane'][] = ['MOMENTUM', 'WARRANT', 'TRANSFORM'];
+  const lanes: InboxSignal['lane'][] = ['MOMENTUM', 'WARRANT', 'TRANSFORM', 'BENCH'];
   const total = signals.length;
+  const activeLaneCount = (Object.values(laneStatus) as boolean[]).filter(Boolean).length;
 
   return (
     <div style={{ background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.20)', borderRadius: 12, padding: '14px 16px', marginBottom: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, fontWeight: 900, color: '#60A5FA', letterSpacing: '0.5px' }}>⭐ DAILY SIGNAL INBOX</span>
-          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${total} live signal${total === 1 ? '' : 's'} across 3 lanes`}</span>
+          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${total} signal${total === 1 ? '' : 's'} across ${activeLaneCount} live lane${activeLaneCount === 1 ? '' : 's'}`}</span>
           {!loading && (
             <span style={{ fontSize: 9.5, color: DIM }}>
-              {(['momentum', 'warrant', 'transform'] as const).map((k) => (
+              {(['momentum', 'warrant', 'transform', 'bench'] as const).map((k) => (
                 <span key={k} title={`${k} feed ${laneStatus[k] ? 'live' : 'cold'}`} style={{ color: laneStatus[k] ? '#10B981' : '#64748B', marginLeft: 6 }}>●{k[0].toUpperCase()}</span>
               ))}
             </span>
@@ -5282,7 +5330,7 @@ function DailySignalInbox() {
 
       {!collapsed && !loading && total === 0 && (
         <div style={{ fontSize: 11.5, color: DIM, marginTop: 10, lineHeight: 1.6 }}>
-          No fresh signals right now — the concall feeds may be between refreshes. This inbox lights up as movers shift, warrant setups qualify, and the transformation radar finds inflections. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link>.
+          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar, and your bench. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link> / <Link href="/conviction-beats" style={{ color: '#F59E0B' }}>Conviction Beats</Link>.
         </div>
       )}
 
@@ -5298,14 +5346,15 @@ function DailySignalInbox() {
                   <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{laneSignals.length}</span>
                 </div>
                 {laneSignals.length === 0 ? (
-                  <div style={{ fontSize: 10.5, color: DIM }}>{laneStatus[lane.toLowerCase() as 'momentum' | 'warrant' | 'transform'] ? 'quiet — nothing new' : 'feed warming up'}</div>
+                  <div style={{ fontSize: 10.5, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                     {laneSignals.slice(0, 6).map((s, i) => (
-                      <Link key={`${s.symbol}-${i}`} href={s.href} style={{ textDecoration: 'none', display: 'block', padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <Link key={`${s.symbol}-${i}`} href={s.href} style={{ textDecoration: 'none', display: 'block', padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${meta.c}22`}`, opacity: s.soft ? 0.82 : 1 }}>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                           <span style={{ fontSize: 12.5, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
                           <span style={{ fontSize: 9.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
+                          {s.soft && <span style={{ fontSize: 8, color: DIM, marginLeft: 'auto', flexShrink: 0 }}>watch</span>}
                         </div>
                         <div style={{ fontSize: 10.5, fontWeight: 700, color: meta.c, marginTop: 1 }}>{s.headline}</div>
                         <div style={{ fontSize: 9.5, color: DIM, marginTop: 1, lineHeight: 1.4 }}>{s.detail}</div>
@@ -5319,9 +5368,9 @@ function DailySignalInbox() {
         </div>
       )}
 
-      {!collapsed && generatedAt && total > 0 && (
-        <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic' }}>
-          Aggregated from Movers, Warrant, and Transformation Radar feeds · radar generated {new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}. Signals are deterministic feed reads, not recommendations.
+      {!collapsed && total > 0 && (
+        <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
+          Aggregated from Movers, Warrant, Transformation Radar, and your Conviction Bench{generatedAt ? ` · radar generated ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. Items marked <b>watch</b> are the best available when no hard event fired (top-ranked mover, sub-gate warrant, non-sweet-spot transformation, or an older bench name). Deterministic feed reads, not recommendations.
         </div>
       )}
     </div>

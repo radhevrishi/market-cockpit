@@ -362,6 +362,9 @@ export default function JourneyPage() {
           </div>
         </div>
 
+        {/* ─── zzz435 — THE 10-YEAR JOURNEY (motivational lumpy-path target) ─── */}
+        <ReturnJourneyTarget startCr={startCr} />
+
         {/* ─── PERSONAL TARGET SETTER ──────────────────────────────── */}
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.saffron, marginBottom: 10, letterSpacing: 0.3 }}>📐 MY PLAN</div>
@@ -608,6 +611,125 @@ function StatTile({ label, value, sub, color }: {
       <div style={{ fontSize: 9, color: C.muted, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase' }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 900, color, ...MONO }}>{value}</div>
       {sub && <div style={{ fontSize: 10, color: C.dim }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// zzz435 — THE 10-YEAR JOURNEY (motivational lumpy-path target)
+//
+// A deliberately UN-smooth return path — the way a real multibagger decade
+// actually feels. A couple of monster years carry everything; most years are
+// flat, small, or red. The point is emotional: it shows the shape you're
+// signing up for so you HOLD through the boring/bear years instead of
+// overtrading and missing the +200% print. Scales with the seed selector above.
+// ════════════════════════════════════════════════════════════════════════════
+const JOURNEY_PATH: { y: number; r: number }[] = [
+  { y: 2025, r: 0 },   { y: 2026, r: 110 }, { y: 2027, r: -20 }, { y: 2028, r: 5 },
+  { y: 2029, r: 200 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 5 },
+  { y: 2033, r: 5 },   { y: 2034, r: 120 },
+];
+
+function ReturnJourneyTarget({ startCr }: { startCr: number }) {
+  const rows = useMemo(() => {
+    let mult = 1;
+    return JOURNEY_PATH.map((p) => {
+      const startMult = mult;
+      mult = mult * (1 + p.r / 100);
+      return { ...p, startMult, endMult: mult, value: startCr * mult };
+    });
+  }, [startCr]);
+
+  const n = rows.length;
+  const finalMult = rows[n - 1].endMult;
+  const cagr = (Math.pow(finalMult, 1 / n) - 1) * 100;
+  const endValue = startCr * finalMult;
+  const totalRet = (finalMult - 1) * 100;
+  const maxAbs = Math.max(...JOURNEY_PATH.map((p) => Math.abs(p.r)), 1);
+  const logTotal = Math.log(finalMult);
+
+  // the years that did the heavy lifting (share of total log-growth)
+  const heavy = rows
+    .map((r) => ({ y: r.y, r: r.r, share: logTotal > 0 ? Math.log(1 + r.r / 100) / logTotal * 100 : 0 }))
+    .filter((x) => x.r > 0)
+    .sort((a, b) => b.share - a.share);
+  const topThreeShare = heavy.slice(0, 3).reduce((a, b) => a + b.share, 0);
+
+  const barMax = 78; // px
+  const retCol = (r: number) => (r > 0 ? C.green : r < 0 ? C.red : C.dim);
+
+  return (
+    <div style={{ background: 'linear-gradient(135deg, var(--mc-bg-1), var(--mc-bg-2))', border: '1px solid ' + C.saffron + '55', borderLeft: '4px solid ' + C.saffron, borderRadius: 8, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.saffron, letterSpacing: 0.3 }}>🚀 THE 10-YEAR JOURNEY &middot; the shape of a multibagger decade</div>
+        <div style={{ fontSize: 10, color: C.dim, ...MONO }}>illustrative path · not a forecast</div>
+      </div>
+      <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55, marginBottom: 16, maxWidth: 760 }}>
+        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole decade; the rest are flat, tiny, or red. Live the path and ₹{startCr < 1 ? (startCr * 100).toFixed(0) + ' L' : startCr + ' cr'} becomes <strong style={{ color: C.green }}>{fmtCr(endValue)}</strong>.
+      </div>
+
+      {/* hero tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
+        {[
+          { label: 'CUMULATIVE CAGR', val: `${cagr.toFixed(1)}%`, c: C.green },
+          { label: 'FINAL MULTIPLE', val: `${finalMult.toFixed(1)}×`, c: C.saffron },
+          { label: 'TOTAL RETURN', val: `+${totalRet.toFixed(0)}%`, c: C.cyan },
+          { label: `₹${startCr < 1 ? (startCr * 100).toFixed(0) + 'L' : startCr + 'cr'} BECOMES`, val: fmtCr(endValue), c: C.text },
+        ].map((t) => (
+          <div key={t.label} style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '10px 12px' }}>
+            <div style={{ fontSize: 22, fontWeight: 900, color: t.c, ...MONO }}>{t.val}</div>
+            <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 0.4, marginTop: 2 }}>{t.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* the path — bar chart with a zero axis */}
+      <div style={{ overflowX: 'auto' }}>
+        <div style={{ display: 'flex', gap: 6, minWidth: 620, alignItems: 'stretch' }}>
+          {rows.map((r) => {
+            const up = r.r > 0;
+            const flat = r.r === 0;
+            const h = (Math.abs(r.r) / maxAbs) * barMax;
+            const big = r.r >= 100;
+            return (
+              <div key={r.y} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                {/* value on top */}
+                <div style={{ fontSize: 9.5, color: C.dim, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtCr(r.value)}</div>
+                {/* positive zone */}
+                <div style={{ height: barMax, width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  {up && (
+                    <div title={`${r.y}: +${r.r}%`} style={{ width: '72%', height: Math.max(3, h), borderRadius: '3px 3px 0 0', background: big ? C.green : 'color-mix(in srgb, var(--mc-bullish) 65%, transparent)', boxShadow: big ? '0 0 12px color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : 'none' }} />
+                  )}
+                </div>
+                {/* zero axis */}
+                <div style={{ height: 2, width: '100%', background: C.borderStrong }} />
+                {/* negative zone */}
+                <div style={{ height: barMax * 0.55, width: '100%', display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
+                  {!up && !flat && (
+                    <div title={`${r.y}: ${r.r}%`} style={{ width: '72%', height: Math.max(3, h), borderRadius: '0 0 3px 3px', background: 'color-mix(in srgb, var(--mc-bearish) 70%, transparent)' }} />
+                  )}
+                </div>
+                {/* labels */}
+                <div style={{ marginTop: 4, textAlign: 'center' }}>
+                  <div style={{ fontSize: 11, fontWeight: 900, color: retCol(r.r), ...MONO }}>{r.r > 0 ? '+' : ''}{r.r}%</div>
+                  <div style={{ fontSize: 9, color: C.muted, ...MONO }}>{r.y}</div>
+                  <div style={{ fontSize: 9, color: C.dim, ...MONO }}>{r.endMult.toFixed(1)}×</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* the lesson */}
+      <div style={{ marginTop: 16, background: 'color-mix(in srgb, var(--mc-warn) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 32%, transparent)', borderLeft: '3px solid ' + C.amber, borderRadius: 6, padding: '13px 15px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.amber, marginBottom: 6 }}>⚡ The discipline this path demands</div>
+        <div style={{ fontSize: 12, color: C.text, lineHeight: 1.65 }}>
+          Just <strong style={{ color: C.green }}>3 years</strong> ({heavy.slice(0, 3).map((h) => `${h.y} +${JOURNEY_PATH.find((p) => p.y === h.y)?.r}%`).join(', ')}) did <strong style={{ color: C.green }}>{topThreeShare.toFixed(0)}%</strong> of the work. The other seven were flat, tiny, or red — and in <em>those</em> years the winning move was to <strong style={{ color: C.text }}>do nothing</strong>. The money is made in the holding, not the trading.
+          <br /><br />
+          <strong style={{ color: C.amber }}>The rule:</strong> in a flat or bear market, take <strong style={{ color: C.text }}>fewer</strong> trades, not more. Overtrade the boring years — chase, churn, get shaken out — and you won't be holding when the <strong style={{ color: C.green }}>+200%</strong> year prints. Patience through the red is the entire edge.
+        </div>
+      </div>
     </div>
   );
 }
