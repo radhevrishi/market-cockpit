@@ -5293,7 +5293,8 @@ function DailySignalInbox() {
           out.push({ lane: 'BENCH', symbol: b.ticker, company: b.company || '',
             headline: `${b.tier}${isToday ? ' · NEW today' : ''}`,
             detail: parts.join(' · ') || `score ${b.composite_score}`,
-            score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/conviction-beats', soft: !isToday });
+            // Bench names are your standing conviction — not tentative "watch" items.
+            score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/conviction-beats', soft: false });
         });
       }
     } catch { /* localStorage unavailable */ }

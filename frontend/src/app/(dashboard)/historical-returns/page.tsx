@@ -48,7 +48,17 @@ function MarketPanel({ m }: { m: Market }) {
   const s = useMemo(() => computeStats(m.series), [m]);
   const growth = useMemo(() => growthOf(m.series, 1), [m]);
   const roll = useMemo(() => rollingCagr(m.series, 5), [m]);
+  const roll10 = useMemo(() => rollingCagr(m.series, 10), [m]); // rolling 10Y CAGR strip
   const finalMult = growth[growth.length - 1].value;
+
+  // ── custom "what ₹X at start of year Y becomes today" (uses existing series only) ──
+  const [startYear, setStartYear] = useState<number>(m.series[0].year);
+  const [amount, setAmount] = useState<number>(m.ccy === '₹' ? 100000 : 10000);
+  const sliced = useMemo(() => m.series.filter(y => y.year >= startYear), [m, startYear]);
+  const customGrowth = useMemo(() => (sliced.length ? growthOf(sliced, amount) : []), [sliced, amount]);
+  const customTerminal = customGrowth.length ? customGrowth[customGrowth.length - 1].value : amount;
+  const customStats = useMemo(() => (sliced.length ? computeStats(sliced) : null), [sliced]);
+  const customMult = customTerminal / Math.max(amount, 1);
 
   // decade breakdown
   const decades = useMemo(() => {
@@ -154,6 +164,29 @@ function MarketPanel({ m }: { m: Market }) {
         <polyline points={gLine} fill="none" stroke={m.accent} strokeWidth={2} />
       </svg>
 
+      {/* custom: what X invested at start of year Y becomes by end of series */}
+      <div style={sub}>What {m.ccy}X invested at the start of a year became — pick a start year</div>
+      <div style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 10 }}>
+          <label style={{ ...mono, fontSize: 11, color: C.text3 }}>Amount ({m.ccy})
+            <input type="number" min={1} step={m.ccy === '₹' ? 10000 : 1000} value={amount} onChange={e => setAmount(Math.max(0, parseInt(e.target.value, 10) || 0))} style={{ display: 'block', marginTop: 4, width: 150, background: C.bg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: '7px 10px', ...mono, fontSize: 13 }} /></label>
+          <label style={{ ...mono, fontSize: 11, color: C.text3 }}>Start of year
+            <select value={startYear} onChange={e => setStartYear(parseInt(e.target.value, 10))} style={{ display: 'block', marginTop: 4, width: 120, background: C.bg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: '7px 10px', ...mono, fontSize: 13, cursor: 'pointer' }}>
+              {m.series.map(y => <option key={y.year} value={y.year}>{y.year}</option>)}
+            </select></label>
+        </div>
+        {customStats ? (
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'baseline' }}>
+            <div><span style={{ fontSize: 11, color: C.text3 }}>Worth today </span><span style={{ ...mono, fontSize: 22, fontWeight: 800, color: C.gold }}>{fmtMoney(m.ccy, customTerminal)}</span></div>
+            <div><span style={{ fontSize: 11, color: C.text3 }}>Multiple </span><span style={{ ...mono, fontSize: 16, fontWeight: 800, color: C.gold }}>{customMult.toFixed(1)}×</span></div>
+            <div><span style={{ fontSize: 11, color: C.text3 }}>CAGR since {startYear} </span><span style={{ ...mono, fontSize: 16, fontWeight: 800, color: customStats.cagr >= 0 ? C.green : C.red }}>{customStats.cagr >= 0 ? '+' : ''}{customStats.cagr.toFixed(1)}%</span></div>
+            <div style={{ ...mono, fontSize: 11, color: C.text4 }}>{sliced.length} yrs · {startYear}–{m.series[m.series.length - 1].year}</div>
+          </div>
+        ) : (
+          <div style={{ ...mono, fontSize: 12, color: C.text3 }}>No data from that year.</div>
+        )}
+      </div>
+
       {/* rolling 5Y CAGR */}
       {roll.length > 0 && (
         <>
@@ -163,6 +196,25 @@ function MarketPanel({ m }: { m: Market }) {
               const col = r.cagr >= 15 ? C.green : r.cagr >= 0 ? C.amber : C.red;
               return (
                 <div key={r.endYear} title={`5Y to ${r.endYear}: ${r.cagr >= 0 ? '+' : ''}${r.cagr.toFixed(1)}% CAGR`} style={{ textAlign: 'center', flex: '1 0 34px' }}>
+                  <div style={{ ...mono, fontSize: 9, color: col, fontWeight: 700 }}>{r.cagr >= 0 ? '+' : ''}{r.cagr.toFixed(0)}</div>
+                  <div style={{ height: 6, background: col, opacity: 0.55, borderRadius: 3, marginTop: 2 }} />
+                  <div style={{ ...mono, fontSize: 8, color: C.text4, marginTop: 2 }}>{`'${String(r.endYear).slice(2)}`}</div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* rolling 10Y CAGR */}
+      {roll10.length > 0 && (
+        <>
+          <div style={sub}>Rolling 10-year CAGR — the long-horizon compounding rate</div>
+          <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
+            {roll10.map(r => {
+              const col = r.cagr >= 15 ? C.green : r.cagr >= 0 ? C.amber : C.red;
+              return (
+                <div key={r.endYear} title={`10Y to ${r.endYear}: ${r.cagr >= 0 ? '+' : ''}${r.cagr.toFixed(1)}% CAGR`} style={{ textAlign: 'center', flex: '1 0 34px' }}>
                   <div style={{ ...mono, fontSize: 9, color: col, fontWeight: 700 }}>{r.cagr >= 0 ? '+' : ''}{r.cagr.toFixed(0)}</div>
                   <div style={{ height: 6, background: col, opacity: 0.55, borderRadius: 3, marginTop: 2 }} />
                   <div style={{ ...mono, fontSize: 8, color: C.text4, marginTop: 2 }}>{`'${String(r.endYear).slice(2)}`}</div>

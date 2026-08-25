@@ -148,6 +148,9 @@ function AnalyticsView({ allData, benchTickers, screens }: { allData: Record<str
   const multiScreen = analysis.filter(e => e.count >= 2);
   const inBench = analysis.filter(e => benchTickers.has(e.t));
   const inBenchAndMulti = multiScreen.filter(e => benchTickers.has(e.t));
+  // ADDITIVE — one-click "Bench only" filter for the conviction-leaders table.
+  const [benchOnly, setBenchOnly] = useState(false);
+  const multiScreenView = benchOnly ? multiScreen.filter(e => benchTickers.has(e.t)) : multiScreen;
 
   const matrix = useMemo(() => {
     const m: number[][] = [];
@@ -230,7 +233,14 @@ function AnalyticsView({ allData, benchTickers, screens }: { allData: Record<str
       </div>
 
       <Panel title="🏆 Multi-Screen Conviction Leaders" subtitle="Tickers appearing in 2+ screens ranked by count. More appearances = higher institutional conviction.">
-        {multiScreen.length === 0 ? <Empty /> : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <button
+            onClick={() => setBenchOnly(v => !v)}
+            style={{ padding: '6px 12px', background: benchOnly ? C.gold + '22' : C.panel2, border: `1px solid ${benchOnly ? C.gold : C.border}`, borderRadius: 6, color: benchOnly ? C.gold : C.text2, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+          >🏆 Bench only</button>
+          <span style={{ fontSize: 12, color: C.text2 }}>· {multiScreenView.length}{benchOnly ? ` / ${multiScreen.length}` : ''} tickers</span>
+        </div>
+        {multiScreenView.length === 0 ? <Empty /> : (
           <div style={{ overflow: 'auto', maxHeight: 500 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead style={{ position: 'sticky', top: 0, background: C.panel2, zIndex: 1 }}>
@@ -242,7 +252,7 @@ function AnalyticsView({ allData, benchTickers, screens }: { allData: Record<str
                 </tr>
               </thead>
               <tbody>
-                {multiScreen.map((e, i) => {
+                {multiScreenView.map((e, i) => {
                   const cb = benchTickers.has(e.t);
                   return (
                     <tr key={e.t} style={{ background: cb ? C.gold + '11' : (i % 2 ? C.panel2 : 'transparent'), borderLeft: cb ? `3px solid ${C.gold}` : '3px solid transparent' }}>

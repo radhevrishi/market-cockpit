@@ -2276,6 +2276,56 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // zzz226 — detail filter chips are hidden by default; the ⚡ preset button
   // applies the user's standard screen without opening them.
   const [showAdvFilters, setShowAdvFilters] = useState(false);
+  // ── ADDITIVE zzzUP1 — Transformation-radar overlay. On mount, fetch the
+  // concall-intel transformation screener and index it by upper-cased symbol.
+  // Cards whose ticker is on the radar get a 🚀 badge; the "On Radar" toggle
+  // narrows the bench to radar names. Tolerant of fetch failure (empty map).
+  const [radarMap, setRadarMap] = useState<Map<string, any>>(new Map());
+  const [onRadarOnly, setOnRadarOnly] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/concall-intel/transformation-screener?days=60&limit=24', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data?.entries) ? data.entries : [];
+        const m = new Map<string, any>();
+        for (const it of list) {
+          const sym = String(it?.symbol || '').toUpperCase();
+          if (sym) m.set(sym, it);
+        }
+        if (!cancelled) setRadarMap(m);
+      } catch { /* radar overlay is best-effort */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  // ── ADDITIVE zzzUP2 — Cheap-BLOCKBUSTER valuation view. Client-only toggle;
+  // shows BLOCKBUSTER/STRONG names with trailing_pe in (0, 35], cheapest first.
+  const [cheapStrong, setCheapStrong] = useState(false);
+  // ── ADDITIVE zzzUP3 — Regime strip. On mount, fetch market breadth. The thin
+  // banner at the top of the tab frames how aggressively to add. Fetch failure
+  // hides the strip (regime stays null).
+  const [regime, setRegime] = useState<{ composite: number; regime: string; regime_color: string; regime_desc?: string; suggested_cash_pct: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (cancelled || !d || typeof d.composite !== 'number') return;
+        setRegime({
+          composite: d.composite,
+          regime: String(d.regime ?? ''),
+          regime_color: String(d.regime_color ?? 'var(--mc-text-2)'),
+          regime_desc: d.regime_desc != null ? String(d.regime_desc) : undefined,
+          suggested_cash_pct: typeof d.suggested_cash_pct === 'number' ? d.suggested_cash_pct : 0,
+        });
+      } catch { /* regime strip is best-effort */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   // PATCH 1019 — Re-validate bench. Re-fetches graded for every unique
   // filing date on the bench and re-syncs (all tiers) so any stock that
   // dropped out of BLOCKBUSTER/STRONG under the current grading logic
@@ -2964,6 +3014,23 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   if (filters.sortByPead) {
     filteredEntries = [...filteredEntries].sort((a, b) => peadScore(b).score - peadScore(a).score);
   }
+  // ── ADDITIVE zzzUP1 — "On Radar" narrows to transformation-screener names.
+  if (onRadarOnly) {
+    filteredEntries = filteredEntries.filter((e) => radarMap.has(String(e.ticker || '').toUpperCase()));
+  }
+  // ── ADDITIVE zzzUP2 — "Cheap + Strong": BLOCKBUSTER/STRONG with 0 < P/E ≤ 35,
+  // cheapest first. Uses trailing_pe already on the entry (fallback to .pe which
+  // enrich populates from the same trailing multiple). No new deps.
+  if (cheapStrong) {
+    const cbPeOf = (e: any): number => {
+      const v = e?.trailing_pe ?? e?.pe;
+      return typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+    };
+    filteredEntries = filteredEntries
+      .filter((e) => e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG')
+      .filter((e) => { const p = cbPeOf(e); return p > 0 && p <= 35; })
+      .sort((a, b) => cbPeOf(a) - cbPeOf(b));
+  }
   const blockbusters = filteredEntries.filter((e) => e.tier === 'BLOCKBUSTER');
   const strongs = filteredEntries.filter((e) => e.tier === 'STRONG');
   const allTickers = filteredEntries.map((e) => e.ticker);
@@ -3110,6 +3177,31 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* ── ADDITIVE zzzUP3 — Regime strip. Thin market-breadth banner. Frames
+          how aggressively to add given current breadth. Hidden on fetch fail. */}
+      {regime && (() => {
+        const c = regime.composite;
+        const framing = c >= 60 ? 'aggressive add' : c >= 40 ? 'selective' : 'defensive — trim weak names';
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 12px',
+            padding: '6px 12px', fontSize: 11.5, lineHeight: 1.4,
+            backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)',
+            borderLeft: `3px solid ${regime.regime_color}`, borderRadius: 8,
+          }}
+            title={regime.regime_desc || `Market breadth composite ${c}/100`}>
+            <span style={{ fontWeight: 800, color: regime.regime_color, letterSpacing: '0.3px' }}>
+              {regime.regime || 'REGIME'}
+            </span>
+            <span style={{ color: 'var(--mc-text-4)' }}>·</span>
+            <span style={{ color: 'var(--mc-text-2)' }}>breadth <strong style={{ color: 'var(--mc-text-1)' }}>{c}</strong>/100</span>
+            <span style={{ color: 'var(--mc-text-4)' }}>·</span>
+            <span style={{ color: 'var(--mc-text-2)' }}>suggested cash <strong style={{ color: 'var(--mc-text-1)' }}>{regime.suggested_cash_pct}%</strong></span>
+            <span style={{ color: 'var(--mc-text-4)' }}>·</span>
+            <span style={{ fontWeight: 700, color: regime.regime_color }}>{framing}</span>
+          </div>
+        );
+      })()}
       {/* USER-REQ — composable filter chips (Op-leverage / Sales / PAT / EPS YoY)
           + PEAD sort toggle. Renders at TOP of the Conviction Beats tab. */}
       <div style={{
@@ -3198,6 +3290,19 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <button onClick={() => setFilters((f) => ({ ...f, multibagger: !f.multibagger }))}
               style={filters.multibagger ? chipActive('#67E8F9') : chipBase}>
               💎 MULTIBAGGER only {filters.multibagger ? '✓' : ''}
+            </button>
+            {/* ── ADDITIVE zzzUP1 — On Radar toggle (transformation screener overlay) */}
+            <button onClick={() => setOnRadarOnly((v) => !v)}
+              title="Show only bench names that also appear on the concall transformation screener (last 60 days). These carry a 🚀 Radar badge on their card."
+              style={onRadarOnly ? chipActive('#10B981') : chipBase}>
+              🚀 On Radar {onRadarOnly ? '✓' : ''}
+              {radarMap.size > 0 && <span style={{ color: onRadarOnly ? '#10B981' : 'var(--mc-text-4)', marginLeft: 3 }}>({radarMap.size})</span>}
+            </button>
+            {/* ── ADDITIVE zzzUP2 — Cheap + Strong valuation view */}
+            <button onClick={() => setCheapStrong((v) => !v)}
+              title="Show BLOCKBUSTER/STRONG names with a positive trailing P/E ≤ 35, sorted cheapest-first. Uses the trailing P/E already on each card."
+              style={cheapStrong ? chipActive('#FBBF24') : chipBase}>
+              💰 Cheap + Strong {cheapStrong ? '✓' : ''}
             </button>
             {/* PATCH 1022 — market-cap range filter */}
             <select
@@ -3992,7 +4097,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                   ⭐ BLOCKBUSTER · {blockbusters.length}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
-                  {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} />)}
+                  {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />)}
                 </div>
               </div>
             )}
@@ -4006,7 +4111,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                   🟢 STRONG · {strongs.length}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
-                  {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} />)}
+                  {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />)}
                 </div>
               </div>
             )}
@@ -4765,7 +4870,7 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
   );
 }
 
-function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: ConvictionEntry; onRemove: (t: string) => void; density?: 'comfy'|'compact'|'ultra' }) {
+function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { entry: ConvictionEntry; onRemove: (t: string) => void; density?: 'comfy'|'compact'|'ultra'; radarEntry?: any }) {
   const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
   const pct = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
   // USER-REQ — PEAD score chip (formula from PEAD_Strategy_vF + checklists).
@@ -4859,6 +4964,31 @@ function ConvictionRow({ entry, onRemove, density = 'comfy' }: { entry: Convicti
                 background: `${col}1A`, color: col, border: `1px solid ${col}66`, letterSpacing: '0.3px',
               }}
             >⚠ DRIFT {movePct.toFixed(1)}%</span>
+          </div>
+        );
+      })()}
+      {/* ── ADDITIVE zzzUP1 — Transformation-radar badge. Rendered when this
+          bench name is also on the concall transformation screener. Styled like
+          the existing chips (green). */}
+      {radarEntry && (() => {
+        const tscore = radarEntry.transformation_score;
+        const stage = radarEntry.stage != null ? String(radarEntry.stage) : '';
+        const label = radarEntry.evidence_label != null ? String(radarEntry.evidence_label) : '';
+        const col = '#10B981';
+        const tip = `On the concall transformation screener${stage ? ` · stage: ${stage}` : ''}`
+          + (radarEntry.stage_sweet_spot ? ' (sweet spot)' : '')
+          + (typeof radarEntry.pattern_count === 'number' ? ` · ${radarEntry.pattern_count} patterns` : '')
+          + (radarEntry.velocity != null ? ` · velocity ${radarEntry.velocity}` : '')
+          + (label ? ` · ${label}` : '');
+        return (
+          <div>
+            <span title={tip}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 4, cursor: 'help',
+                background: `${col}1A`, color: col, border: `1px solid ${col}66`, letterSpacing: '0.3px',
+              }}
+            >🚀 Radar{typeof tscore === 'number' ? ` · T-${tscore}` : ''}</span>
           </div>
         );
       })()}

@@ -1053,6 +1053,29 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     try { localStorage.setItem('mc:multibagger:ai-guidance:v1', JSON.stringify(aiGuidanceMap)); } catch {}
   }, [aiGuidanceMap]);
 
+  // ADDITIVE — Transformation-radar overlay. Best-effort fetch of the concall
+  // transformation-screener; builds an upper(symbol)->entry map used to render a
+  // small "🚀 T-{score}" badge next to on-radar tickers. Non-invasive; hides on failure.
+  const [transformMap, setTransformMap] = useState<Map<string, { symbol: string; transformation_score: number; stage_sweet_spot?: any; velocity?: any }>>(new Map());
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/concall-intel/transformation-screener?days=60&limit=24', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const entries: any[] = Array.isArray(data?.entries) ? data.entries : [];
+        const m = new Map<string, { symbol: string; transformation_score: number; stage_sweet_spot?: any; velocity?: any }>();
+        for (const e of entries) {
+          const sym = String(e?.symbol || '').toUpperCase().replace(/\.NS$|\.BO$/i, '');
+          if (sym) m.set(sym, e);
+        }
+        if (alive) setTransformMap(m);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // Soft fetch: only fetch tickers with no cache OR cache > 100 days old. Hard refresh: bypass cache, re-fetch all.
   async function fetchAIGuidance(hardRefresh: boolean) {
     const STALE_MS = 100 * 86_400_000; // 100 days
@@ -2695,6 +2718,23 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             }}
                           >🏆 CB</span>
                         )}
+                        {/* ADDITIVE — Transformation-radar badge. Shows when this
+                            ticker is on the concall transformation-screener radar. */}
+                        {(() => {
+                          const te = transformMap.get((r.symbol || '').toUpperCase().replace(/\.NS$|\.BO$/i, ''));
+                          if (!te) return null;
+                          const sc = Math.round(Number(te.transformation_score) || 0);
+                          return (
+                            <span
+                              title={`On transformation radar — score ${sc}${te.stage_sweet_spot ? ` · ${te.stage_sweet_spot}` : ''}${te.velocity ? ` · velocity ${te.velocity}` : ''}`}
+                              style={{
+                                fontSize: 9, fontWeight: 800, color: 'var(--mc-cyan)',
+                                border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', backgroundColor: 'rgba(34,211,238,0.10)',
+                                padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+                              }}
+                            >🚀 T-{sc}</span>
+                          );
+                        })()}
                         {/* AUDIT_100 #52 — Portfolio attribution. If user already
                             holds this ticker show OWN/Δ chip so they don't double-buy
                             without seeing the existing position. */}
@@ -10098,6 +10138,22 @@ function MultibaggerAnalytics({
 }) {
   const [scope, setScope] = React.useState<MbMarketScope>(initialScope ?? 'INDIA');
 
+  // ADDITIVE — Market-breadth regime strip. Best-effort fetch of /api/v1/breadth,
+  // rendered as a one-line banner at the top of Analytics. Hides on failure.
+  const [regime, setRegime] = React.useState<{ composite: number; regime: string; regime_color?: string; regime_desc?: string; suggested_cash_pct?: number } | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (alive && data && typeof data.composite === 'number') setRegime(data);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // PATCH 0874 — USA rows + prev-score baselines now live in state with
   // a tick-bumping listener pair (storage + mb-upload:updated), so this
   // Analytics tab stays LIVE when the user uploads to the USA tab.
@@ -11038,6 +11094,22 @@ function MultibaggerAnalytics({
 
   return (
     <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* ADDITIVE — Market regime strip (breadth-driven). */}
+      {regime && (() => {
+        const rc = regime.regime_color || 'var(--mc-text-4)';
+        const comp = Math.round(Number(regime.composite) || 0);
+        const cash = typeof regime.suggested_cash_pct === 'number' ? Math.round(regime.suggested_cash_pct) : null;
+        const framing = comp >= 60 ? 'broad — press winners' : comp >= 40 ? 'selective' : 'defensive';
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 14px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-2)', fontSize: 12 }}>
+            <span style={{ fontWeight: 900, letterSpacing: '0.4px', color: rc }}>{String(regime.regime || '').toUpperCase()}</span>
+            <span style={{ color: 'var(--mc-text-2)', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{comp}/100</span>
+            {cash != null && <span style={{ color: 'var(--mc-text-4)' }}>suggested cash {cash}%</span>}
+            <span style={{ color: 'var(--mc-text-4)' }}>· {framing}</span>
+            {regime.regime_desc && <span style={{ color: 'var(--mc-text-4)', opacity: 0.85 }}>· {regime.regime_desc}</span>}
+          </div>
+        );
+      })()}
       {/* ── MARKET SCOPE TOGGLE ─────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>MARKET</span>

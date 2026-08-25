@@ -32,6 +32,28 @@ function partLines(p: Part): number {
 // zzz402 — the two Books (1, 2) the parts group under.
 const ALL_BOOKS = Array.from(new Set(BOOK.map(p => p.book)));
 
+// Persist reading position (active section + expanded sections) across visits.
+const LS_PROGRESS = 'mc:learn:progress:v1';
+
+// Map each real-world example to the most relevant live tool route.
+const TOOL_ROUTES = {
+  valuation: { href: '/valuation-calc', label: 'Valuation calculator' },
+  screener: { href: '/screener', label: 'Screener' },
+  multibagger: { href: '/multibagger', label: 'Multibagger finder' },
+  returns: { href: '/historical-returns', label: 'Historical returns' },
+  journey: { href: '/journey', label: 'Investor journey' },
+} as const;
+function pickToolRoute(ex: LearnExample): { href: string; label: string } {
+  const hay = (ex.title + ' ' + ex.body.join(' ') + ' ' + (ex.numbers?.map(n => n.label + ' ' + n.value).join(' ') || '')).toLowerCase();
+  const has = (kws: string[]) => kws.some(k => hay.includes(k));
+  if (has(['multibagger', 'multi-bagger', 'bagger', '10x', '100x', '10-bagger', 'hundred-bagger', 'tenbagger'])) return TOOL_ROUTES.multibagger;
+  if (has(['valuation', 'intrinsic', 'dcf', 'p/e', 'pe ratio', 'fair value', 'discount rate', 'multiple', 'ev/ebitda', 'price to', 'overvalu', 'undervalu', 'margin of safety'])) return TOOL_ROUTES.valuation;
+  if (has(['screen', 'filter', 'roe', 'roce', 'debt', 'balance sheet', 'ratio', 'cash flow', 'quality', 'red flag', 'promoter', 'pledge', 'metric', 'margin'])) return TOOL_ROUTES.screener;
+  if (has(['cagr', 'index', 'nifty', 'nasdaq', 'return', 'sip', 'historical', 'decade', 'rolling', 'compound'])) return TOOL_ROUTES.returns;
+  if (has(['portfolio', 'allocation', 'journey', 'goal', 'plan', 'diversif', 'position siz', 'rebalanc', 'asset'])) return TOOL_ROUTES.journey;
+  return TOOL_ROUTES.screener;
+}
+
 export default function InvestingPlaybookPage() {
   const [activePart, setActivePart] = useState<number>(0);
   const [activeSub, setActiveSub] = useState<number>(-1);
@@ -46,6 +68,22 @@ export default function InvestingPlaybookPage() {
 
   // Scroll content to top whenever the active section/sub changes.
   useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [activePart, activeSub]);
+
+  // Restore persisted reading position on mount.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_PROGRESS);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (typeof s.activePart === 'number' && s.activePart >= 0 && s.activePart < BOOK.length) setActivePart(s.activePart);
+      if (Array.isArray(s.expandedParts)) setExpandedParts(new Set(s.expandedParts.filter((n: unknown) => typeof n === 'number') as number[]));
+    } catch { /* ignore */ }
+  }, []);
+
+  // Persist reading position whenever it changes.
+  useEffect(() => {
+    try { localStorage.setItem(LS_PROGRESS, JSON.stringify({ activePart, expandedParts: Array.from(expandedParts) })); } catch { /* ignore */ }
+  }, [activePart, expandedParts]);
 
   const searchHits = useMemo(() => {
     if (!q.trim()) return null;
@@ -250,6 +288,7 @@ export default function InvestingPlaybookPage() {
                 </div>
                 {LEARN_EXAMPLES[activePart].map((ex, ei) => {
                   const meta = EX_TAG_META[ex.tag] || EX_TAG_META.scenario;
+                  const route = pickToolRoute(ex);
                   return (
                     <div key={ei} style={{ background: C.panel, border: '1px solid ' + C.border, borderLeft: '3px solid ' + meta.color, borderRadius: 10, padding: '16px 18px', marginBottom: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10, flexWrap: 'wrap' }}>
@@ -270,6 +309,7 @@ export default function InvestingPlaybookPage() {
                           ))}
                         </div>
                       )}
+                      <a href={route.href} style={{ display: 'inline-block', marginTop: 13, fontSize: 12.5, fontWeight: 700, color: meta.color, textDecoration: 'none', background: meta.color + '14', border: '1px solid ' + meta.color + '44', borderRadius: 6, padding: '6px 12px' }}>▶ Try it live · {route.label}</a>
                     </div>
                   );
                 })}

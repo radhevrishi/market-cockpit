@@ -26,7 +26,7 @@ import {
   type Scope,
 } from '@/lib/movers-attribution';
 // User's "book" — conviction bench. Held + watchlist come from localStorage.
-import { getConvictionTickers } from '@/lib/conviction-beats';
+import { getConvictionTickers, readConvictionBeats } from '@/lib/conviction-beats';
 
 interface Stock {
   ticker: string;
@@ -287,7 +287,98 @@ export default function MoversPage() {
     } catch { /* silent */ }
   }, []);
 
-  useEffect(() => { fetchData(); fetchEarnings(); }, [fetchData, fetchEarnings]);
+  // zzz443 — CATALYST FEEDS. The old code passed empty filings/news to the
+  // attribution engine (feeds "unhealthy"), so every mover fell through to the
+  // generic sector/liquidity tier ("liquidity expansion in thin-float …").
+  // We now feed the engine the SAME real data the home page uses so the
+  // earnings / news / peer-cluster tiers actually fire:
+  //   • earningsByTicker  ← the Conviction Bench (has filing_date + YoY + tier)
+  //   • filingsBySymbol   ← concall live-feed (last 7 days)
+  //   • newsByTicker      ← the news feed
+  // Plus a scraped-headline overlay (/api/market/mover-reasons) that gives a
+  // real public "why" for today's movers even off earnings season.
+  const [catalysts, setCatalysts] = useState<{
+    earningsByTicker: Record<string, any>;
+    filingsBySymbol: Record<string, any[]>;
+    newsByTicker: Record<string, any[]>;
+    filingsFeedHealthy: boolean;
+    newsFeedHealthy: boolean;
+  }>({ earningsByTicker: {}, filingsBySymbol: {}, newsByTicker: {}, filingsFeedHealthy: false, newsFeedHealthy: false });
+  const [moverReasons, setMoverReasons] = useState<Record<string, { headline?: string; category?: string; url?: string }>>({});
+
+  const fetchCatalysts = useCallback(async () => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20_000);
+    // Earnings from the bench — no fetch, always available, carries the exact
+    // fields the engine's EARNINGS tier needs (filing_date within 7d + YoY).
+    const earningsByTicker: Record<string, any> = {};
+    try {
+      const bench = readConvictionBeats();
+      for (const e of Object.values(bench) as any[]) {
+        const t = String(e?.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+        if (!t) continue;
+        earningsByTicker[t] = {
+          ticker: t, tier: e.tier, quarter: e.quarter, filing_date: e.filing_date,
+          sales_yoy_pct: e.sales_yoy_pct ?? undefined,
+          net_profit_yoy_pct: e.net_profit_yoy_pct ?? undefined,
+          eps_yoy_pct: e.eps_yoy_pct ?? undefined,
+        };
+      }
+    } catch { /* ignore */ }
+
+    const [lfRes, newsRes] = await Promise.all([
+      fetch('/api/v1/concall-intel/live-feed?days=7', { signal: ctl.signal, cache: 'no-store' }).catch(() => null),
+      fetch('/api/v1/news', { signal: ctl.signal, cache: 'no-store' }).catch(() => null),
+    ]);
+    clearTimeout(timer);
+
+    const filingsBySymbol: Record<string, any[]> = {};
+    let filingsHealthy = false;
+    try {
+      if (lfRes && lfRes.ok) {
+        const j = await lfRes.json();
+        filingsHealthy = true;
+        for (const f of (j.filings || [])) {
+          const t = String(f.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+          if (!t) continue;
+          (filingsBySymbol[t] ||= []).push({
+            symbol: t, subject: f.subject, filing_type: f.filing_type,
+            filing_datetime: f.filing_datetime, source_url: f.source_url, attachment_urls: f.attachment_urls,
+          });
+        }
+      }
+    } catch { /* ignore */ }
+
+    const newsByTicker: Record<string, any[]> = {};
+    let newsHealthy = false;
+    try {
+      if (newsRes && newsRes.ok) {
+        const j = await newsRes.json();
+        const items = Array.isArray(j) ? j : (j.articles || j.news || j.items || []);
+        if (Array.isArray(items)) {
+          newsHealthy = true;
+          for (const it of items) {
+            const raws: any[] = [];
+            if (it.primary_ticker) raws.push(it.primary_ticker);
+            if (Array.isArray(it.ticker_symbols)) raws.push(...it.ticker_symbols);
+            for (const r of raws) {
+              const t = String((typeof r === 'string' ? r : (r?.symbol || r?.ticker || '')) || '').toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+              if (!t) continue;
+              (newsByTicker[t] ||= []).push({
+                ticker: t, title: it.title || it.headline, headline: it.headline,
+                article_type: it.article_type, published_at: it.published_at,
+                url: it.url || it.source_url, source_url: it.source_url, importance_score: it.importance_score,
+              });
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
+    setCatalysts({ earningsByTicker, filingsBySymbol, newsByTicker, filingsFeedHealthy: filingsHealthy, newsFeedHealthy: newsHealthy });
+  }, []);
+
+  useEffect(() => { fetchData(); fetchEarnings(); fetchCatalysts(); }, [fetchData, fetchEarnings, fetchCatalysts]);
   // PATCH 0516 — Visibility-gated polling. Skip when tab hidden to save quota.
   useEffect(() => {
     const i = setInterval(() => {
@@ -419,20 +510,46 @@ export default function MoversPage() {
         previousClose: s.previousClose,
         price: s.price,
       })),
-      filingsBySymbol: {},
-      newsByTicker: {},
-      earningsByTicker,
+      // zzz443 — real catalyst feeds (was empty). Bench-based earnings override
+      // the partial recent-reporters map (bench carries filing_date + YoY).
+      filingsBySymbol: catalysts.filingsBySymbol,
+      newsByTicker: catalysts.newsByTicker,
+      earningsByTicker: { ...earningsByTicker, ...catalysts.earningsByTicker },
       sectorAggregates,
       indexAvgChangePct,
-      filingsFeedHealthy: false,
-      newsFeedHealthy: false,
+      filingsFeedHealthy: catalysts.filingsFeedHealthy,
+      newsFeedHealthy: catalysts.newsFeedHealthy,
     });
-  }, [gainers, losers, bookMovers, allStocks, earningsTickers]);
+  }, [gainers, losers, bookMovers, allStocks, earningsTickers, catalysts]);
 
   const attrFor = useCallback(
     (ticker: string) => attribution[(ticker || '').toUpperCase()],
     [attribution],
   );
+
+  // zzz443 — overlay real scraped headlines for the rendered movers. The
+  // /api/market/mover-reasons KV is populated by a GH Actions scraper; when it
+  // has a headline for a ticker we show that as the concrete "why" (same source
+  // the home Top Movers uses), regardless of earnings season.
+  useEffect(() => {
+    const tickers = Array.from(new Set([...gainers, ...losers].map(s => s.ticker.toUpperCase()))).slice(0, 50);
+    if (tickers.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/market/mover-reasons?tickers=${encodeURIComponent(tickers.join(','))}`, { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (cancelled || !j?.reasons) return;
+        const out: Record<string, { headline?: string; category?: string; url?: string }> = {};
+        for (const [t, v] of Object.entries(j.reasons as Record<string, any>)) {
+          if (v && (v.headline || v.title)) out[t.toUpperCase()] = { headline: v.headline || v.title, category: v.category || v.narrative, url: v.url || v.source_url };
+        }
+        setMoverReasons(out);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [gainers, losers]);
 
   const sectors = useMemo(() => {
     const sectorSet = new Set(allStocks.map(s => s.sector));
@@ -544,19 +661,34 @@ export default function MoversPage() {
   // STOCK_SPECIFIC vs SECTOR_WIDE scope badge (mirrors the home page).
   const AttributionLine = ({ stock, compact }: { stock: Stock; compact?: boolean }) => {
     const attr = attrFor(stock.ticker);
-    if (!attr) return null;
-    const label = cleanMoverLabel(attr) || attr.catalyst;
-    if (!label) return null;
+    // zzz443 — prefer a real scraped headline when we have one; it's the most
+    // concrete "why". Fall back to the engine's inferred label.
+    const scraped = moverReasons[stock.ticker.toUpperCase()];
+    if (!attr && !scraped) return null;
+    const label = attr ? (cleanMoverLabel(attr) || attr.catalyst) : null;
+    if (!label && !scraped?.headline) return null;
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', flexWrap: 'wrap' }}>
-        <span title={attr.detail || label} style={{
-          fontSize: compact ? '9px' : '10px', color: TEXT2, fontWeight: 500,
-          maxWidth: compact ? '150px' : '230px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          {CATALYST_GLYPH[attr.catalystType]} {label}
-        </span>
-        <span style={confChipStyle(attr.confidence)}>{attr.confidence}</span>
-        <span style={scopeChipStyle(attr.scope)}>{scopeLabel(attr.scope)}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '3px' }}>
+        {scraped?.headline && (
+          <a href={scraped.url || undefined} target={scraped.url ? '_blank' : undefined} rel="noopener noreferrer"
+            title={scraped.headline}
+            style={{ fontSize: compact ? '9px' : '10px', color: 'var(--mc-cyan)', fontWeight: 600, textDecoration: 'none',
+              maxWidth: compact ? '150px' : '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            📰 {scraped.headline}
+          </a>
+        )}
+        {label && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+            <span title={attr!.detail || label} style={{
+              fontSize: compact ? '9px' : '10px', color: TEXT2, fontWeight: 500,
+              maxWidth: compact ? '150px' : '230px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {CATALYST_GLYPH[attr!.catalystType]} {label}
+            </span>
+            <span style={confChipStyle(attr!.confidence)}>{attr!.confidence}</span>
+            <span style={scopeChipStyle(attr!.scope)}>{scopeLabel(attr!.scope)}</span>
+          </div>
+        )}
       </div>
     );
   };

@@ -125,7 +125,13 @@ function useMarketEarnings(months: string[]) {
       for (const r of responses) {
         for (const dd of ((r?.ingested_dates || []) as string[])) ingestedSet.add(dd);
         for (const e of (r?.results || []) as MarketEarningsResult[]) {
-          const k = `${e.ticker}|${e.resultDate}`;
+          // Dedup by ticker+company+date, NOT ticker+date alone. Two DIFFERENT
+          // companies reporting the same day can share a blank/colliding ticker
+          // (BSE-only filers, source rows without an NSE symbol); keying only on
+          // ticker|date silently collapsed them so a 4-company day showed 1.
+          // Including company keeps genuinely-identical rows deduped while never
+          // dropping a distinct company. Date-agnostic — works every year.
+          const k = `${e.ticker || ''}|${(e.company || '').toUpperCase()}|${e.resultDate}`;
           if (seen.has(k)) continue;
           seen.add(k);
           all.push(e);
@@ -958,6 +964,29 @@ export default function EarningsOpportunitiesPage() {
   const [eliteOnly, setEliteOnly] = useState(false);
   const [peadOnly, setPeadOnly] = useState(false);
   const [multibaggerOnly, setMultibaggerOnly] = useState(false);
+  // Transformation-radar overlay (concall-intel screener) — badge + filter, and
+  // "Beat + Cheap" valuation filter (good grade AND trailing PE not expensive).
+  type RadarEntry = { symbol: string; transformation_score: number; stage_sweet_spot?: any; velocity?: any };
+  const [radarMap, setRadarMap] = useState<Map<string, RadarEntry>>(new Map());
+  const [radarOnly, setRadarOnly] = useState(false);
+  const [beatCheapOnly, setBeatCheapOnly] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/concall-intel/transformation-screener?days=60&limit=24', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        const entries: RadarEntry[] = Array.isArray(json?.entries) ? json.entries : [];
+        const m = new Map<string, RadarEntry>();
+        for (const e of entries) {
+          if (e && typeof e.symbol === 'string' && e.symbol) m.set(e.symbol.toUpperCase(), e);
+        }
+        if (alive) setRadarMap(m);
+      } catch { /* radar overlay is best-effort */ }
+    })();
+    return () => { alive = false; };
+  }, []);
   // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr)
   const [capFilter, setCapFilter] = useState<'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
   // PATCH zzz75 — Always default to ONE day before today (previous weekday,
@@ -3279,6 +3308,8 @@ Source label: ${coverageStats.source}`}
             const eliteN = allC.filter((s) => s.is_elite).length;
             const peadN = allC.filter((s) => (s.pead_score ?? 0) >= 70).length;
             const mbN = allC.filter((s) => s.multibagger_setup).length;
+            const radarN = allC.filter((s) => radarMap.has(String(s.ticker || '').toUpperCase())).length;
+            const beatCheapN = allC.filter((s) => typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35).length;
             const chip = (active: boolean, color: string, label: string, n: number, onClick: () => void) => (
               <button onClick={onClick} style={{
                 fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
@@ -3290,9 +3321,11 @@ Source label: ${coverageStats.source}`}
             return (
               <>
                 <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
-                {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); })}
-                {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); })}
-                {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); })}
+                {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
+                {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
+                {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
+                {chip(radarOnly, '#34D399', '🚀 On Radar', radarN, () => { setRadarOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setBeatCheapOnly(false); })}
+                {chip(beatCheapOnly, '#A3E635', '💰 Beat + Cheap', beatCheapN, () => { setBeatCheapOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); })}
                 {/* PATCH 1022 — market-cap range selector */}
                 <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 <select
@@ -3783,8 +3816,8 @@ Source label: ${coverageStats.source}`}
                 </button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {pending.slice(0, 60).map((it) => (
-                  <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
+                {pending.slice(0, 60).map((it, i) => (
+                  <a key={`${filterDate}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     title={`${it.company || it.symbol} · click to open NSE filing page`}
                     style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
                     {it.symbol}
@@ -3805,6 +3838,13 @@ Source label: ${coverageStats.source}`}
           if (eliteOnly) stocks = stocks.filter((s: any) => s.is_elite);
           else if (peadOnly) stocks = stocks.filter((s: any) => (s.pead_score ?? 0) >= 70);
           else if (multibaggerOnly) stocks = stocks.filter((s: any) => s.multibagger_setup);
+          else if (radarOnly) stocks = stocks.filter((s: any) => radarMap.has(String(s.ticker || '').toUpperCase()));
+          else if (beatCheapOnly) {
+            stocks = stocks
+              .filter((s: any) => typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35)
+              .slice()
+              .sort((a: any, b: any) => (a.pe ?? 0) - (b.pe ?? 0));
+          }
           // PATCH 1022 — market-cap range filter (₹ Cr)
           if (capFilter !== 'all') {
             stocks = stocks.filter((s: any) => capInRange(s.market_cap_cr, capFilter));
@@ -3812,7 +3852,7 @@ Source label: ${coverageStats.source}`}
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
           // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
-          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || capFilter !== 'all';
+          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || radarOnly || beatCheapOnly || capFilter !== 'all';
           const isOpen = _filterActive ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
@@ -3825,7 +3865,7 @@ Source label: ${coverageStats.source}`}
               </button>
               {isOpen && (
                 <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
-                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} isFresh={freshTickers.has(s.ticker)} />)}
+                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />)}
                 </div>
               )}
             </div>
@@ -3865,7 +3905,7 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
   return `${r > 0 ? '+' : ''}${r.toFixed(digits)}%`;
 }
 
-function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: boolean }) {
+function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh?: boolean; radar?: { transformation_score: number } | null }) {
   const tierColor = TIER_META[stock.tier].color;
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
@@ -3905,6 +3945,12 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
         )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
+        {radar && typeof radar.transformation_score === 'number' && (
+          <span title="On the concall-intel transformation radar — turnaround/re-rating candidate from the transformation screener" style={{
+            padding: '1px 6px', borderRadius: 3,
+            border: '1px solid #34D399', background: '#064E3B', color: '#6EE7B7', fontWeight: 800, letterSpacing: '0.3px',
+          }}>🚀 Radar T-{Math.round(radar.transformation_score)}</span>
+        )}
         {stock.pe != null && (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)', fontWeight: 700 }}>
             PE {stock.pe.toFixed(1)}
@@ -4226,8 +4272,12 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                   ) : (
                     <span title="Data unavailable - this date was never ingested (outside NSE source window). Not zero." style={{ fontSize: 10.5, fontWeight: 700, color: '#B45309' }}>Data unavailable</span>
                   )
-                ) : (expandedDates[d] ? items : items.slice(0, 12)).map((it) => (
-                  <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
+                ) : (expandedDates[d] ? items : items.slice(0, 12)).map((it, i) => (
+                  // Stable UNIQUE key per company-in-day. Keying on it.symbol
+                  // alone made React collapse siblings whenever two rows shared
+                  // a symbol (or a blank symbol), silently dropping companies.
+                  // date+symbol+company+index is guaranteed unique and durable.
+                  <a key={`${d}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     title={`${it.company} · ${it.quarter || ''}`}
                     style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: '#38A9E8', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>

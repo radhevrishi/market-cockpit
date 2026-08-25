@@ -23,6 +23,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { readConvictionBeats } from '@/lib/conviction-beats';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 type MinistryRow = {
@@ -763,7 +764,7 @@ const THEME_PATTERNS: { theme: string; icon: string; patterns: RegExp[]; schemeK
   { theme: 'Infrastructure — Ports & Shipping', icon: '⚓', patterns: [/Sagarmala/i, /\bports?\b/i, /shipbuilding/i, /maritime/i], schemeKeywords: /Sagarmala|port|shipping/i, stockCue: ['ADANIPORTS', 'JSWINFRA', 'CDSL'] },
   { theme: 'PLI / Manufacturing', icon: '🏭', patterns: [/\bPLI\b/, /production.linked/i, /electronics\s+manufacturing/i, /\bEMS\b/], schemeKeywords: /PLI|Production Linked|electronics/i, stockCue: ['DIXON', 'AMBER', 'KAYNES', 'SYRMA', 'CYIENTDLM'] },
   { theme: 'Semiconductor Mission', icon: '🔬', patterns: [/semiconductor/i, /\bchip\b.*(?:manufactur|fab)/i, /\bISM\b/, /DLI\s+scheme/i, /\bOSAT\b/i], schemeKeywords: /Semiconductor|chip|ISM|OSAT/i, stockCue: ['KAYNES', 'CYIENTDLM', 'CDSL', 'SYRMA', 'CENTUM'] },
-  { theme: 'EV / E-Mobility', icon: '🔋', patterns: [/electric\s+vehicle/i, /\bEV\b/, /PM\s*E-?Drive/i, /\bFAME\b/i, /e-?bus/i, /battery\s+swap/i, /charging\s+infra/i], schemeKeywords: /electric|EV|PM E-Drive|FAME|e-bus/i, stockCue: ['TATAMOTORS', 'M&M', 'OLECTRA', 'JBM', 'EXIDEIND', 'AMARAJABAT'] },
+  { theme: 'EV / E-Mobility', icon: '🔋', patterns: [/electric\s+vehicle/i, /\bEV\b/, /PM\s*E-?Drive/i, /\bFAME\b/i, /e-?bus/i, /battery\s+swap/i, /charging\s+infra/i], schemeKeywords: /electric|EV|PM E-Drive|FAME|e-bus/i, stockCue: ['TATAMOTORS', 'M&M', 'OLECTRA', 'JBM', 'EXIDEIND', 'ARE&M'] },
   { theme: 'Renewables — Solar & Wind', icon: '☀', patterns: [/\bsolar\b/i, /renewable\s+energy/i, /PM\s+Surya\s+Ghar/i, /rooftop\s+solar/i, /\bwind\s+power\b/i, /Non-Fossil/i], schemeKeywords: /Solar|Surya|renewable|wind/i, stockCue: ['WAAREEENER', 'ADANIGREEN', 'SUZLON', 'INOXWIND', 'BOROSIL'] },
   { theme: 'Green Hydrogen', icon: '💨', patterns: [/green\s+hydrogen/i, /National\s+Green\s+Hydrogen/i, /electroly[sz]er/i], schemeKeywords: /Green Hydrogen|Hydrogen/i, stockCue: ['RELIANCE', 'ADANIGREEN', 'LT', 'NTPC'] },
   { theme: 'Nuclear', icon: '☢', patterns: [/nuclear\s+(?:energy|power|mission)/i, /Small\s+Modular/i, /\bSMR\b/], schemeKeywords: /nuclear|SMR/i, stockCue: ['NTPC', 'LT', 'HAL'] },
@@ -1182,6 +1183,26 @@ export default function BudgetIntelPage() {
   const [surpriseSort, setSurpriseSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'surprise', dir: 'desc' });
   const [multSort, setMultSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'gdpAdd', dir: 'desc' });
   const dropRef = useRef<HTMLDivElement>(null);
+
+  // Bench cross-ref — beneficiary tickers already on the conviction bench get a 🏆 flag.
+  const [benchSet, setBenchSet] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const refresh = () => {
+      try {
+        const map = readConvictionBeats();
+        const out = new Set<string>();
+        for (const k of Object.keys(map)) {
+          const at = k.indexOf('@');
+          out.add((at >= 0 ? k.slice(0, at) : k).toUpperCase());
+        }
+        setBenchSet(out);
+      } catch { /* localStorage unavailable — leave bench empty */ }
+    };
+    refresh();
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => window.removeEventListener('conviction-beats:updated', refresh);
+  }, []);
+  const onBench = useCallback((ticker: string) => benchSet.has((ticker || '').toUpperCase()), [benchSet]);
 
   useEffect(() => {
     const years = loadYearIndex();
@@ -2011,7 +2032,10 @@ export default function BudgetIntelPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {sp.stocks.slice(0, 9).map(s => (
                           <div key={s.ticker} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11.5 }}>
-                            <a href={`https://www.nseindia.com/get-quotes/equity?symbol=${s.ticker}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', fontWeight: 700, textDecoration: 'none', minWidth: 100 }}>{s.ticker}</a>
+                            <span style={{ minWidth: 100, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <a href={`/screener?q=${encodeURIComponent(s.ticker)}`} style={{ color: '#60A5FA', fontWeight: 700, textDecoration: 'none' }}>{s.ticker}</a>
+                              {onBench(s.ticker) && <span title="Conviction bench — you already hold conviction here">🏆</span>}
+                            </span>
                             <span style={{ color: DIM, flex: 1 }}>{s.rationale}</span>
                           </div>
                         ))}
@@ -2584,8 +2608,8 @@ export default function BudgetIntelPage() {
                     <div style={{ fontSize: 11, color: DIM, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.4px' }}>Linked listed names (rev/order-book exposure)</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                       {drillTheme.stockCue.map(t => (
-                        <a key={t} href={`https://www.nseindia.com/get-quotes/equity?symbol=${t}`} target="_blank" rel="noopener noreferrer"
-                          style={{ padding: '6px 12px', background: 'var(--mc-bg-2)', color: '#60A5FA', border: '1px solid var(--mc-bg-4)', borderRadius: 6, fontSize: 12, fontWeight: 800, textDecoration: 'none' }}>{t}</a>
+                        <a key={t} href={`/screener?q=${encodeURIComponent(t)}`}
+                          style={{ padding: '6px 12px', background: 'var(--mc-bg-2)', color: '#60A5FA', border: '1px solid var(--mc-bg-4)', borderRadius: 6, fontSize: 12, fontWeight: 800, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>{t}{onBench(t) && <span title="Conviction bench — you already hold conviction here">🏆</span>}</a>
                       ))}
                     </div>
                   </div>
@@ -2675,7 +2699,10 @@ export default function BudgetIntelPage() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
                       {SECTOR_MAP[drillMinistry.ministry].stocks.map(s => (
                         <div key={s.ticker} style={{ padding: 10, background: 'var(--mc-bg-2)', borderRadius: 8 }}>
-                          <a href={`https://www.nseindia.com/get-quotes/equity?symbol=${s.ticker}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', fontWeight: 800, textDecoration: 'none', fontSize: 13 }}>{s.ticker}</a>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <a href={`/screener?q=${encodeURIComponent(s.ticker)}`} style={{ color: '#60A5FA', fontWeight: 800, textDecoration: 'none', fontSize: 13 }}>{s.ticker}</a>
+                            {onBench(s.ticker) && <span title="Conviction bench — you already hold conviction here">🏆</span>}
+                          </span>
                           <div style={{ fontSize: 10.5, color: DIM, marginTop: 2 }}>{s.name}</div>
                           <div style={{ fontSize: 11, color: TEXT, marginTop: 4 }}>{s.rationale}</div>
                         </div>

@@ -46,6 +46,32 @@ const Tag = ({ kind, children }: { kind: 'long'|'short'|'sector'|'ignore'|'high'
   );
 };
 
+// ── Score log persistence ───────────────────────────────────────────────────
+// Completed scores are saved to localStorage so they survive navigation. Each
+// entry keeps a timestamp, the entered ticker, the 5 dimension values, the
+// total and the verdict label. All access is client-only + try/catch guarded.
+const TRIAGE_LOG_KEY = 'mc:news-triage:log:v1';
+type TriageScoreLog = {
+  id: string;
+  ts: string;             // ISO timestamp
+  ticker: string;
+  M: number; P: number; V: number; S: number; Vf: number;
+  total: number;
+  verdict: string;
+};
+function readTriageLog(): TriageScoreLog[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(TRIAGE_LOG_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function writeTriageLog(arr: TriageScoreLog[]) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(TRIAGE_LOG_KEY, JSON.stringify(arr.slice(0, 100))); } catch {}
+}
+
 // ── PATCH zzz116 — Interactive Score Calculator ─────────────────────────────
 // Auto-computes Magnitude from deal $ + market cap. Other 4 dims via dropdown.
 // User can manually override every score.
@@ -89,6 +115,19 @@ function ScoreCalculator() {
   const [S, setS] = React.useState<number>(0);
   const [Vf, setVf] = React.useState<number>(0);
 
+  // Ticker field + market-cap prefill. The quotes payload is fetched once and
+  // cached in a ref so repeated lookups don't re-hit the network.
+  const [ticker, setTicker] = React.useState<string>('');
+  const [lookupMsg, setLookupMsg] = React.useState<string>('');
+  const [looking, setLooking] = React.useState<boolean>(false);
+  const quotesCache = React.useRef<any[] | null>(null);
+
+  // Persisted score log (loaded on mount, updated on save/clear).
+  const [log, setLog] = React.useState<TriageScoreLog[]>([]);
+  const [saved, setSaved] = React.useState<boolean>(false);
+  const [benchMsg, setBenchMsg] = React.useState<string>('');
+  React.useEffect(() => { setLog(readTriageLog()); }, []);
+
   const total = M + P + V + S + Vf;
   const filled = !!autoM && P > 0 && V > 0 && S > 0 && Vf > 0;
 
@@ -100,6 +139,95 @@ function ScoreCalculator() {
     if (total >= 10) return { label: '👁 WATCH', color: '#F59E0B', detail: 'Track but do not trade.' };
     return { label: '🚫 IGNORE', color: '#EF4444', detail: 'Noise. Do not act.' };
   })();
+
+  // Fetch quotes once (India), find the row for the entered ticker, and prefill
+  // the market-cap input (₹Cr) so Magnitude auto-derives. Manual override still
+  // works because the user can edit the mcap input afterwards.
+  const prefillFromTicker = async () => {
+    const t = ticker.trim().toUpperCase();
+    if (!t) { setLookupMsg(''); return; }
+    setLooking(true);
+    setLookupMsg('Looking up…');
+    try {
+      if (!quotesCache.current) {
+        const res = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+        const data = await res.json();
+        quotesCache.current = Array.isArray(data?.stocks) ? data.stocks : [];
+      }
+      const rows = quotesCache.current || [];
+      const row = rows.find((r: any) => (r?.ticker || '').toString().toUpperCase() === t);
+      const cap = row ? (row.marketCap ?? row.mcap) : null;
+      if (row && cap != null && Number(cap) > 0) {
+        setMcapVal(String(cap));
+        setMcapUnit('Cr');
+        setMOverride(null);
+        setLookupMsg(`✓ ${t} · mcap ₹${Number(cap).toLocaleString('en-IN')} Cr prefilled`);
+      } else {
+        setLookupMsg(`No match for ${t} — enter market cap manually`);
+      }
+    } catch {
+      setLookupMsg('Lookup failed — enter market cap manually');
+    } finally {
+      setLooking(false);
+    }
+  };
+
+  // Save the current completed score to the persisted log.
+  const saveScore = () => {
+    if (!filled) return;
+    const entry: TriageScoreLog = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ts: new Date().toISOString(),
+      ticker: ticker.trim().toUpperCase(),
+      M, P, V, S, Vf, total,
+      verdict: verdict.label,
+    };
+    const next = [entry, ...readTriageLog()].slice(0, 100);
+    writeTriageLog(next);
+    setLog(next);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1600);
+  };
+
+  const clearLog = () => {
+    try { localStorage.removeItem(TRIAGE_LOG_KEY); } catch {}
+    setLog([]);
+  };
+
+  // Push a TOP-CONVICTION score to the Conviction Bench. Dynamically imported +
+  // try/catch so the calculator degrades gracefully if the lib is absent.
+  const pushToBench = async () => {
+    const t = ticker.trim().toUpperCase();
+    if (!t) { setBenchMsg('Enter a ticker first'); return; }
+    setBenchMsg('Adding…');
+    try {
+      const mod: any = await import('@/lib/conviction-beats');
+      if (typeof mod?.upsertConviction !== 'function') {
+        setBenchMsg('Bench unavailable');
+        return;
+      }
+      const capCr = (() => {
+        const v = parseFloat(mcapVal);
+        if (isNaN(v) || v <= 0) return null;
+        return toUsdMillions(v, mcapUnit) / 120 * 1000; // back to ₹Cr from USD-M
+      })();
+      const ok = mod.upsertConviction({
+        ticker: t,
+        company: t,
+        tier: 'BLOCKBUSTER',
+        composite_score: total,
+        sales_yoy_pct: null,
+        net_profit_yoy_pct: null,
+        eps_yoy_pct: null,
+        filing_date: new Date().toISOString().slice(0, 10),
+        market_cap_cr: mcapUnit === 'Cr' ? (parseFloat(mcapVal) || null) : (mcapUnit === 'KCr' ? (parseFloat(mcapVal) || 0) * 1000 || null : capCr),
+        added_at: new Date().toISOString(),
+      });
+      setBenchMsg(ok ? `✓ ${t} added to Conviction Bench` : `${t} already benched (kept newer)`);
+    } catch {
+      setBenchMsg('Could not add to bench');
+    }
+  };
 
   const F = { num: 17, label: 13, big: 56, hint: 13 };
   const rowStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: '140px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #1F2937' };
@@ -119,6 +247,29 @@ function ScoreCalculator() {
       <p style={{ margin: '0 0 16px', fontSize: 15, color: '#94A3B8' }}>
         Enter what you know. Override anything. Score updates live.
       </p>
+
+      {/* Ticker + market-cap prefill */}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Ticker</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center' }}>
+          <input
+            type="text"
+            placeholder="e.g. RELIANCE"
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            onKeyDown={(e) => { if (e.key === 'Enter') prefillFromTicker(); }}
+            style={{ ...inputStyle, textTransform: 'uppercase' }}
+          />
+          <button onClick={prefillFromTicker} disabled={looking || !ticker.trim()} style={{
+            background: '#161B27', border: '1px solid #06B6D455', borderRadius: 6, padding: '8px 14px',
+            color: '#06B6D4', fontSize: 13, fontWeight: 700, cursor: looking || !ticker.trim() ? 'default' : 'pointer', opacity: looking || !ticker.trim() ? 0.5 : 1, whiteSpace: 'nowrap',
+          }}>{looking ? '…' : 'Prefill mcap'}</button>
+        </div>
+        <div />
+      </div>
+      {lookupMsg && (
+        <div style={{ fontSize: F.hint, color: '#64748B', padding: '4px 0 8px 152px' }}>{lookupMsg}</div>
+      )}
 
       {/* Magnitude — auto from deal $ + mcap $ */}
       <div style={rowStyle}>
@@ -234,6 +385,49 @@ function ScoreCalculator() {
           color: '#94A3B8', fontSize: 14, fontWeight: 700, cursor: 'pointer',
         }}>↻ Reset</button>
       </div>
+
+      {/* Save + Push-to-bench actions */}
+      <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+        <button onClick={saveScore} disabled={!filled} style={{
+          background: filled ? 'rgba(6,182,212,0.15)' : '#161B27', border: `1px solid ${filled ? '#06B6D455' : '#1F2937'}`, borderRadius: 6,
+          padding: '9px 16px', color: filled ? '#06B6D4' : '#64748B', fontSize: 13, fontWeight: 800, cursor: filled ? 'pointer' : 'default',
+        }}>{saved ? '✓ Saved' : '💾 Save score'}</button>
+        {filled && total >= 22 && (
+          <button onClick={pushToBench} style={{
+            background: 'rgba(34,197,94,0.15)', border: '1px solid #22C55E55', borderRadius: 6,
+            padding: '9px 16px', color: '#22C55E', fontSize: 13, fontWeight: 800, cursor: 'pointer',
+          }}>➕ Add to Conviction Bench</button>
+        )}
+        {benchMsg && <span style={{ fontSize: 13, color: '#94A3B8' }}>{benchMsg}</span>}
+      </div>
+
+      {/* Recent scores (persisted) */}
+      {log.length > 0 && (
+        <div style={{ marginTop: 20, borderTop: '1px solid #1F2937', paddingTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <span style={{ fontSize: F.label, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Recent scores · {log.length}</span>
+            <button onClick={clearLog} style={{
+              background: 'none', border: '1px solid #1F2937', borderRadius: 5, padding: '4px 10px',
+              color: '#94A3B8', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            }}>Clear</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {log.map((e) => (
+              <div key={e.id} style={{
+                display: 'grid', gridTemplateColumns: '90px 1fr auto auto', gap: 12, alignItems: 'center',
+                background: '#0B0E14', border: '1px solid #1F2937', borderRadius: 6, padding: '8px 12px',
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: e.ticker ? '#E5E7EB' : '#64748B' }}>{e.ticker || '—'}</span>
+                <span style={{ fontSize: 12, color: '#64748B' }}>
+                  M{e.M} P{e.P} V{e.V} S{e.S} Vf{e.Vf}
+                </span>
+                <span style={{ fontSize: 12, color: '#94A3B8', textAlign: 'right' }}>{e.verdict}</span>
+                <span style={{ fontSize: 15, fontWeight: 800, color: e.total >= 22 ? '#22C55E' : e.total >= 15 ? '#06B6D4' : e.total >= 10 ? '#F59E0B' : '#EF4444', fontFamily: 'ui-monospace, SFMono-Regular, monospace', minWidth: 36, textAlign: 'right' }}>{e.total}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick examples to load */}
       <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>

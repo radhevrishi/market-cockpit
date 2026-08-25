@@ -16,6 +16,7 @@ import {
   fetchTradingviewCsvText, getTradingviewSyncStatus,
   shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
 } from '@/lib/screener-data-loader';
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 // PATCH 1101rrr — IndexedDB fallback for when localStorage hits its 5MB
 // quota. Same key namespace so loads/saves transparently move between the
@@ -1240,6 +1241,25 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   const name = (d: Row) => d['Name'] || '';
   const nse = (d: Row) => d['NSE Code'] || d['BSE Code'] || '';
 
+  // Conviction bench overlay — rows whose ticker is on the bench get a 🏆 chip.
+  const [benchSet, setBenchSet] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const refresh = () => {
+      try { setBenchSet(getConvictionTickers()); }
+      catch { setBenchSet(new Set()); }
+    };
+    refresh();
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => window.removeEventListener('conviction-beats:updated', refresh);
+  }, []);
+  const onBenchRow = useCallback((d: Row) => {
+    const t = (d['NSE Code'] || d['BSE Code'] || d['Symbol'] || d['Ticker'] || '').trim().toUpperCase();
+    return !!t && benchSet.has(t);
+  }, [benchSet]);
+  const BenchChip = ({ d }: { d: Row }) => onBenchRow(d)
+    ? <span title="On your conviction bench" style={{ marginLeft: 5, fontSize: 10.5 }}>🏆</span>
+    : null;
+
   // zzz107 — Live CMP overlay. Screener CSV "Current Price" is a daily
   // snapshot (whatever screener.in had when the GH Action ran). The DMA
   // tables below were therefore off by 0.5–3% vs the actual live print,
@@ -1414,6 +1434,14 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   };
   const holders = data.map((d) => ({ d, flags: holdFlags(d) })).filter((o) => o.flags.length >= 2).sort((a, b) => b.flags.length - a.flags.length);
 
+  // Must-hold ∩ flagged — the review queue. Names that clear the strength bar
+  // AND trip exit triggers: reuse the two arrays already computed above.
+  const holderByKey = new Map(holders.map((o) => [rowKey(o.d), o] as const));
+  const conflicts = flagged
+    .map((o) => ({ d: o.d, triggers: o.flags, strengths: holderByKey.get(rowKey(o.d))?.flags || [] }))
+    .filter((o) => o.strengths.length > 0)
+    .sort((a, b) => (b.strengths.length + b.triggers.length) - (a.strengths.length + a.triggers.length));
+
   // Margin movers — OPM latest quarter vs OPM last year (QoQ-style margin trend).
   const marginMovers = data.map((d) => ({ d, delta: num(d['OPM latest quarter']) - num(d['OPM last year']) })).filter((o) => !isNaN(o.delta));
   const marginUp = [...marginMovers].sort((a, b) => b.delta - a.delta).slice(0, 15);
@@ -1485,7 +1513,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
                   return (
                     <tr key={i}>
                       <td style={tdDim}>{i + 1}</td>
-                      <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+                      <td style={tdL}><b>{name(o.d)}</b><BenchChip d={o.d} /><span style={nseS}>{nse(o.d)}</span></td>
                       <td style={{ ...tdR, fontWeight: 700, color: o.flags.length >= 5 ? COL.green : o.flags.length >= 3 ? COL.cyan : COL.muted }}>{o.flags.length}</td>
                       <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -1529,7 +1557,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
                   return (
                     <tr key={i}>
                       <td style={tdDim}>{i + 1}</td>
-                      <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+                      <td style={tdL}><b>{name(o.d)}</b><BenchChip d={o.d} /><span style={nseS}>{nse(o.d)}</span></td>
                       <td style={{ ...tdR, fontWeight: 700, color: o.flags.length >= 4 ? COL.red : o.flags.length >= 2 ? COL.amber : COL.muted }}>{o.flags.length}</td>
                       <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -1550,6 +1578,52 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
             <div style={{ fontSize: 10.5, color: COL.dim, marginTop: 8, lineHeight: 1.5 }}>
               <span style={{ color: COL.red }}>■</span> fundamental triggers (profit/sales shrinking, margin squeeze, high debt, weak cash conversion, low ROCE, rich valuation, promoter selling, pledge) · <span style={{ color: COL.amber }}>■</span> technical triggers (below 50/200-DMA). Triggers flag names to <b>review</b> — not automatic sells.
             </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Must-hold ∩ flagged — conflict / review queue */}
+      {holders.length > 0 && flagged.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Must-hold ∩ flagged — review queue</div>
+            <div style={{ fontSize: 11, color: COL.dim }}>{conflicts.length} name{conflicts.length === 1 ? '' : 's'} clear the strength bar yet also trip exit triggers · reconcile before acting</div>
+          </div>
+          <Card title={`Conflicts — ${conflicts.length} on both lists`} dot={COL.amber} hint="strong fundamentals + active exit triggers = decide, don't drift">
+            {conflicts.length === 0 ? (
+              <div style={{ color: COL.green, fontSize: 12, fontWeight: 600, padding: '4px 2px' }}>No conflicts — clean book.</div>
+            ) : (
+              <table style={tbl}>
+                <thead><tr>
+                  <th style={thR}></th><th style={thL}>Company</th><th style={thL}>Strengths</th><th style={thL}>Triggers</th>
+                </tr></thead>
+                <tbody>
+                  {conflicts.slice(0, 25).map((o, i) => {
+                    const tech = (s: string) => s.indexOf('DMA') >= 0;
+                    return (
+                      <tr key={i}>
+                        <td style={tdDim}>{i + 1}</td>
+                        <td style={tdL}><b>{name(o.d)}</b><BenchChip d={o.d} /><span style={nseS}>{nse(o.d)}</span></td>
+                        <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {o.strengths.map((fl, k) => (
+                              <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {o.triggers.map((fl, k) => (
+                              <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.amber : COL.red, background: tech(fl) ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)', border: `1px solid ${tech(fl) ? 'rgba(210,153,34,.3)' : 'rgba(248,81,73,.3)'}` }}>{fl}</span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </Card>
         </div>
       )}

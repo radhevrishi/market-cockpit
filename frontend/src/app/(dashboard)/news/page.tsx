@@ -2455,6 +2455,10 @@ export default function NewsFeedPage() {
   // PATCH 0129 — IMP: strategy filter chips ([MB] / [BN] / [RR]) layered on
   // top of existing region/type/signal filters.  'ALL' shows everything.
   const [strategyFilter, setStrategyFilter] = useState<'ALL' | 'MB' | 'BN' | 'RR'>('ALL');
+  // "My Book only" — when on, restrict the feed to items whose ticker is in the
+  // book overlay Set (held ∪ bench ∪ watch) computed above. Reuses `book.all`;
+  // does not rebuild the set.
+  const [bookOnly, setBookOnly] = useState<boolean>(false);
   const [drilldownSubTag, setDrilldownSubTag] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
   const [groupByLayer,  setGroupByLayer]  = useState(true); // Group articles by layer
@@ -2610,6 +2614,12 @@ export default function NewsFeedPage() {
       // PATCH 0129 — strategy filter ([MB] / [BN] / [RR])
       if (strategyFilter !== 'ALL') {
         if (!articleMatchesStrategy(a as any, strategyFilter)) return false;
+      }
+      // "My Book only" — keep only items whose ticker is in the book overlay Set
+      // (held ∪ bench ∪ watch). Reuses the already-computed `book.all`.
+      if (bookOnly && book.all.size) {
+        const inBookNow = getTickerSymbols(a).some(sym => book.all.has(sym.toUpperCase()));
+        if (!inBookNow) return false;
       }
       // Bottleneck level sub-filter (only active when viewing BOTTLENECK)
       if (bottleneckLevel !== 'ALL' && articleType === 'BOTTLENECK') {
@@ -2792,6 +2802,7 @@ export default function NewsFeedPage() {
     sortBy,
     lifecycleFilter,  // PATCH 0213
     book,             // book/bench-aware boost recomputes when holdings change
+    bookOnly,         // "My Book only" filter
   ]);
 
   // PATCH 0226 — Count how many STALE items are being hidden by the
@@ -3553,6 +3564,15 @@ export default function NewsFeedPage() {
                   </button>
                 ))}
               </div>
+            </div>
+            {/* "My Book only" — filter to held ∪ bench ∪ watch (reuses book.all) */}
+            <div>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>MY BOOK</p>
+              <button onClick={() => setBookOnly(v => !v)}
+                style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${bookOnly ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: bookOnly ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent', color: bookOnly ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}
+                title={`Show only news for names you hold, bench, or watch (${book.all.size} tickers)`}>
+                📓 My Book only{bookOnly ? ' ✓' : ''}{book.all.size ? ` · ${book.all.size}` : ''}
+              </button>
             </div>
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>SIGNAL STRENGTH</p>

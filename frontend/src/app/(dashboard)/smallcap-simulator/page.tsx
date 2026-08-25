@@ -69,6 +69,7 @@ export default function SmallcapSimulatorPage() {
   const [vol, setVol] = useState<number>(42);
   const [haircut, setHaircut] = useState<number>(0);
   const [savedFlash, setSavedFlash] = useState<string>('');
+  const [goalTarget, setGoalTarget] = useState<number>(1000000); // 🎯 target corpus for "years to goal"
   // Monte-Carlo snapshot — only updates on Refresh.
   const [mcSnap, setMcSnap] = useState<MCInputs>({ probs: SCENARIOS.map(s => s.defaultPct), capital: 100000, mode: 'lumpsum', monthlySip: 10000, realReturns: false, vol: 42, haircut: 0 });
 
@@ -122,6 +123,12 @@ export default function SmallcapSimulatorPage() {
   const finalDet = wealthPath[wealthPath.length - 1].val;
   const detCagr = (Math.pow(finalDet / Math.max(invested, 1), 1 / 5) - 1) * 100;
   const detTotalRet = (finalDet / Math.max(invested, 1) - 1) * 100;
+  // 🎯 Years to reach a target corpus using the deterministic (lump-sum) CAGR.
+  const yearsToGoal = useMemo(() => {
+    const g = detCagr / 100;
+    if (g <= 0 || capital <= 0 || goalTarget <= capital) return null;
+    return Math.log(goalTarget / capital) / Math.log(1 + g);
+  }, [detCagr, capital, goalTarget]);
   const pNeg = (norm[0] + norm[1] + norm[2]) * 100;
   const pPos = (norm[3] + norm[4] + norm[5]) * 100;
   const pWorse2025 = (norm[0] + norm[1]) * 100;
@@ -250,7 +257,7 @@ export default function SmallcapSimulatorPage() {
                 <span style={{ ...mono, fontSize: 10.5, padding: '2px 8px', borderRadius: 5, background: `${s.color}15`, color: s.color, border: `1px solid ${s.color}30` }}>hist: {s.histPct}%</span>
               </div>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 12, minWidth: 240 }}>
-                <input type="range" min={0} max={80} value={probs[i]} onChange={e => setProb(i, parseInt(e.target.value, 10))} style={{ flex: 1, accentColor: s.color, cursor: 'pointer' }} />
+                <input type="range" min={0} max={90} value={probs[i]} onChange={e => setProb(i, parseInt(e.target.value, 10))} style={{ flex: 1, accentColor: s.color, cursor: 'pointer' }} />
                 <div style={{ ...mono, minWidth: 48, textAlign: 'right', color: s.color, fontWeight: 700, fontSize: 15 }}>{probs[i]}%</div>
               </div>
             </div>
@@ -311,8 +318,27 @@ export default function SmallcapSimulatorPage() {
           <div style={cardLabel}>{inrCompact(capital)}{mode === 'sip' ? ` + ${inrCompact(monthlySip)}/mo SIP` : ''} invested Dec 2025 → projected growth {realReturns ? '(real)' : '(nominal)'} · live</div>
           {wealthPath.map((v, i) => { const maxVal = Math.max(...wealthPath.map(p => p.val)); const pct = (v.val / maxVal) * 100; const up = v.val >= invested; const col = up ? C.green : C.red; return (<div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 7 }}><div style={{ ...mono, fontSize: 12, color: C.text3, minWidth: 74 }}>{v.yr}</div><div style={{ flex: 1, background: C.panel2, borderRadius: 6, height: 26, position: 'relative', overflow: 'hidden' }}><div style={{ width: `${pct}%`, height: '100%', background: `${col}25`, border: `1px solid ${col}45`, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 10, minWidth: 100 }}><span style={{ ...mono, fontSize: 12, color: col, fontWeight: 700 }}>{inr(v.val)}</span></div></div></div>); })}
           <div style={{ ...mono, fontSize: 13.5, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-            <span style={{ color: C.cyan, fontWeight: 700 }}>5Y CAGR (expected): {detCagr.toFixed(1)}%</span><span style={{ color: C.text3 }}> · Total return: {detTotalRet >= 0 ? '+' : ''}{detTotalRet.toFixed(0)}%</span><span style={{ color: C.text3 }}> · {inrCompact(invested)} → {inrCompact(finalDet)}</span>
+            <span style={{ color: C.cyan, fontWeight: 700 }}>{mode === 'sip' ? 'Simple growth (on contributions)' : '5Y CAGR (expected)'}: {detCagr.toFixed(1)}%</span><span style={{ color: C.text3 }}> · Total return: {detTotalRet >= 0 ? '+' : ''}{detTotalRet.toFixed(0)}%</span><span style={{ color: C.text3 }}> · {inrCompact(invested)} → {inrCompact(finalDet)}</span>
           </div>
+          {mode === 'sip' && <div style={{ ...mono, fontSize: 11, color: C.text4, marginTop: 6 }}>Note: for a SIP this is simple growth on total contributions (all money treated as invested at t0), not a true time-weighted CAGR — it understates the real per-rupee return.</div>}
+        </div>
+
+        {/* 🎯 Years to goal (deterministic, lump-sum CAGR) */}
+        <div style={{ ...card, background: `${C.gold}0c`, border: `1px solid ${C.gold}33` }}>
+          <div style={cardLabel}>🎯 Years to goal</div>
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
+            <label style={{ fontSize: 12.5, color: C.text3 }}>Target corpus (₹)
+              <input type="number" min={1000} step={100000} value={goalTarget} onChange={e => setGoalTarget(clamp(parseInt(e.target.value, 10) || 0, 0, 1e12))} style={{ display: 'block', marginTop: 5, width: 180, background: C.panel2, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '8px 11px', ...mono, fontSize: 14 }} /></label>
+            <div style={{ fontSize: 12.5, color: C.text3 }}>From {inrCompact(capital)} at <span style={{ ...mono, color: C.cyan, fontWeight: 700 }}>{detCagr.toFixed(1)}%</span> deterministic CAGR</div>
+          </div>
+          {yearsToGoal !== null ? (
+            <div style={{ fontSize: 15, color: C.text2, lineHeight: 1.6 }}>
+              At a steady <strong style={{ color: C.cyan }}>{detCagr.toFixed(1)}%</strong> CAGR, <strong style={{ color: C.gold }}>{inrCompact(capital)}</strong> compounds to <strong style={{ color: C.gold }}>{inrCompact(goalTarget)}</strong> in about <strong style={{ ...mono, color: C.green, fontSize: 20 }}>{yearsToGoal.toFixed(1)} years</strong> <span style={{ color: C.text3 }}>(≈ {Math.ceil(yearsToGoal)} full years — keep compounding).</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13.5, color: C.text3, lineHeight: 1.6 }}>{detCagr <= 0 ? 'Deterministic CAGR is not positive — no finite time-to-goal at these assumptions.' : goalTarget <= capital ? 'Target is at or below your starting capital — raise the target to see a time-to-goal.' : 'Enter a target above your starting capital.'}</div>
+          )}
+          <div style={{ ...mono, fontSize: 10.5, color: C.text4, marginTop: 10 }}>years = ln(target / capital) / ln(1 + CAGR) · uses the deterministic lump-sum CAGR, growth on the initial capital only.</div>
         </div>
 
         {/* Refresh + Monte-Carlo risk */}
@@ -327,7 +353,7 @@ export default function SmallcapSimulatorPage() {
             {[{ label: 'P10 · unlucky', val: inrCompact(mc.ending.p10), color: C.red }, { label: 'P25', val: inrCompact(mc.ending.p25), color: C.amber }, { label: 'P50 · median', val: inrCompact(mc.ending.p50), color: C.text }, { label: 'P75', val: inrCompact(mc.ending.p75), color: C.green }, { label: 'P90 · lucky', val: inrCompact(mc.ending.p90), color: C.green }].map(t => (<div key={t.label} style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '11px 12px', textAlign: 'center' }}><div style={{ fontSize: 10, color: C.text3, marginBottom: 4, ...mono }}>{t.label}</div><div style={{ ...mono, fontSize: 15, fontWeight: 800, color: t.color }}>{t.val}</div></div>))}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-            {[{ label: 'P(loses money)', val: `${mc.pLoss.toFixed(0)}%`, color: mc.pLoss > 25 ? C.red : C.amber }, { label: 'P(doubles+)', val: `${mc.pDouble.toFixed(0)}%`, color: C.green }, { label: 'P(halves)', val: `${mc.pHalf.toFixed(0)}%`, color: mc.pHalf > 10 ? C.red : C.text2 }, { label: 'CAGR P10 → P90', val: `${mc.cagr.p10.toFixed(0)}% → ${mc.cagr.p90.toFixed(0)}%`, color: C.cyan }, ...(showBench ? [{ label: 'Nifty 50 median end', val: inrCompact(mc.benchMedianEnd), color: C.blue }] : [])].map(t => (<div key={t.label} style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '11px 12px', textAlign: 'center' }}><div style={{ fontSize: 10, color: C.text3, marginBottom: 4, ...mono }}>{t.label}</div><div style={{ ...mono, fontSize: 14.5, fontWeight: 800, color: t.color }}>{t.val}</div></div>))}
+            {[{ label: 'P(loses money)', val: `${mc.pLoss.toFixed(0)}%`, color: mc.pLoss > 25 ? C.red : C.amber }, { label: 'P(doubles+)', val: `${mc.pDouble.toFixed(0)}%`, color: C.green }, { label: 'P(halves)', val: `${mc.pHalf.toFixed(0)}%`, color: mc.pHalf > 10 ? C.red : C.text2 }, { label: mcSnap.mode === 'sip' ? 'Simple growth P10 → P90' : 'CAGR P10 → P90', val: `${mc.cagr.p10.toFixed(0)}% → ${mc.cagr.p90.toFixed(0)}%`, color: C.cyan }, ...(showBench ? [{ label: 'Nifty 50 median end', val: inrCompact(mc.benchMedianEnd), color: C.blue }] : [])].map(t => (<div key={t.label} style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '11px 12px', textAlign: 'center' }}><div style={{ fontSize: 10, color: C.text3, marginBottom: 4, ...mono }}>{t.label}</div><div style={{ ...mono, fontSize: 14.5, fontWeight: 800, color: t.color }}>{t.val}</div></div>))}
           </div>
         </div>
 
@@ -352,7 +378,7 @@ export default function SmallcapSimulatorPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 6, marginTop: 10, ...mono, fontSize: 11 }}>
                 <div style={{ color: '#ff2040' }}>If crash → +85, +15, −25, +35</div><div style={{ color: '#ff4757' }}>If bad → +45, −8, +50, +7</div><div style={{ color: '#e07020' }}>If mild neg → +55, +8, +2, +50</div><div style={{ color: '#6c9a8b' }}>If modest → +45, −22, +35, +8</div><div style={{ color: '#00d4aa' }}>If good → +35, −18, +40, +5</div><div style={{ color: '#00ffcc' }}>If boom → −5, −25, +55, +20</div>
               </div>
-              <div style={{ marginTop: 10 }}>Expected 5Y CAGR of <strong style={{ color: C.cyan }}>{detCagr.toFixed(1)}%</strong> {Math.abs(detCagr - 14) < 4 ? 'sits near the long-run average (~14%).' : detCagr > 18 ? 'is above the long-run average — bullish or haircut too low.' : 'is below the long-run average — bearish or haircut-adjusted.'}</div>
+              <div style={{ marginTop: 10 }}>Expected 5Y {mode === 'sip' ? 'simple growth' : 'CAGR'} of <strong style={{ color: C.cyan }}>{detCagr.toFixed(1)}%</strong> {Math.abs(detCagr - 14) < 4 ? 'sits near the long-run average (~14%).' : detCagr > 18 ? 'is above the long-run average — bullish or haircut too low.' : 'is below the long-run average — bearish or haircut-adjusted.'}</div>
             </div>
           </div>
         </div>
