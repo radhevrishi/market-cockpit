@@ -363,7 +363,7 @@ export default function JourneyPage() {
         </div>
 
         {/* ─── zzz435 — THE 10-YEAR JOURNEY (motivational lumpy-path target) ─── */}
-        <ReturnJourneyTarget startCr={startCr} />
+        <ReturnJourneyTarget />
 
         {/* ─── PERSONAL TARGET SETTER ──────────────────────────────── */}
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
@@ -626,11 +626,25 @@ function StatTile({ label, value, sub, color }: {
 // ════════════════════════════════════════════════════════════════════════════
 const JOURNEY_PATH: { y: number; r: number }[] = [
   { y: 2025, r: 0 },   { y: 2026, r: 110 }, { y: 2027, r: -20 }, { y: 2028, r: 5 },
-  { y: 2029, r: 200 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 5 },
+  { y: 2029, r: 200 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 20 },
   { y: 2033, r: 5 },   { y: 2034, r: 120 },
 ];
 
-function ReturnJourneyTarget({ startCr }: { startCr: number }) {
+// Personal starting capital — ₹43 lakhs (my actual 2025 seed), fixed here so
+// the journey always tells MY story regardless of the wealth-targets seed picker.
+const JOURNEY_START_CR = 0.43;
+
+// Lakh-aware money formatter — sub-₹1cr values read as "₹72 L" not "₹0.72 cr".
+function fmtMoney(cr: number): string {
+  if (!isFinite(cr)) return '—';
+  if (cr < 1) return `₹${(cr * 100).toFixed(0)} L`;
+  if (cr >= 100) return `₹${cr.toFixed(0)} cr`;
+  if (cr >= 10) return `₹${cr.toFixed(1)} cr`;
+  return `₹${cr.toFixed(2)} cr`;
+}
+
+function ReturnJourneyTarget() {
+  const startCr = JOURNEY_START_CR;
   const rows = useMemo(() => {
     let mult = 1;
     return JOURNEY_PATH.map((p) => {
@@ -665,7 +679,7 @@ function ReturnJourneyTarget({ startCr }: { startCr: number }) {
         <div style={{ fontSize: 10, color: C.dim, ...MONO }}>illustrative path · not a forecast</div>
       </div>
       <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55, marginBottom: 16, maxWidth: 760 }}>
-        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole decade; the rest are flat, tiny, or red. Live the path and ₹{startCr < 1 ? (startCr * 100).toFixed(0) + ' L' : startCr + ' cr'} becomes <strong style={{ color: C.green }}>{fmtCr(endValue)}</strong>.
+        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole decade; the rest are flat, tiny, or red. Starting from my actual <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025, live the path and it becomes <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.
       </div>
 
       {/* hero tiles */}
@@ -674,7 +688,7 @@ function ReturnJourneyTarget({ startCr }: { startCr: number }) {
           { label: 'CUMULATIVE CAGR', val: `${cagr.toFixed(1)}%`, c: C.green },
           { label: 'FINAL MULTIPLE', val: `${finalMult.toFixed(1)}×`, c: C.saffron },
           { label: 'TOTAL RETURN', val: `+${totalRet.toFixed(0)}%`, c: C.cyan },
-          { label: `₹${startCr < 1 ? (startCr * 100).toFixed(0) + 'L' : startCr + 'cr'} BECOMES`, val: fmtCr(endValue), c: C.text },
+          { label: `${fmtMoney(startCr)} BECOMES`, val: fmtMoney(endValue), c: C.text },
         ].map((t) => (
           <div key={t.label} style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '10px 12px' }}>
             <div style={{ fontSize: 22, fontWeight: 900, color: t.c, ...MONO }}>{t.val}</div>
@@ -694,7 +708,7 @@ function ReturnJourneyTarget({ startCr }: { startCr: number }) {
             return (
               <div key={r.y} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 {/* value on top */}
-                <div style={{ fontSize: 9.5, color: C.dim, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtCr(r.value)}</div>
+                <div style={{ fontSize: 9.5, color: C.dim, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtMoney(r.value)}</div>
                 {/* positive zone */}
                 <div style={{ height: barMax, width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                   {up && (
