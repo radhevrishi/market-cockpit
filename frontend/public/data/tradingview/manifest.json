@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-25T05:09:11.290Z",
+  "lastSync": "2026-08-25T06:45:50.863Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 10,
@@ -11,8 +11,8 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 43200,
-      "rowCount": 38,
+      "size": 44298,
+      "rowCount": 39,
       "error": null
     },
     {
@@ -31,7 +31,7 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 26232,
+      "size": 26218,
       "rowCount": 22,
       "error": null
     },
@@ -41,8 +41,8 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 46709,
-      "rowCount": 42,
+      "size": 45682,
+      "rowCount": 41,
       "error": null
     },
     {
@@ -51,8 +51,8 @@
       "screenerId": "Neuim2Bm",
       "kind": "screener",
       "ok": true,
-      "size": 6376,
-      "rowCount": 4,
+      "size": 9347,
+      "rowCount": 7,
       "error": null
     },
     {
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106803,
+      "size": 106069,
       "rowCount": 100,
       "error": null
     },
