@@ -53,6 +53,20 @@ export interface TransformScreenEntry {
   scored_from: 'PDF' | 'SUBJECT';
 }
 
+// zzz434 — lightweight record of a filing we scanned that produced no
+// transformation signal, so the UI can show "scanned, nothing yet" instead of
+// a blank tab in a quiet (off-season) filing period.
+export interface ScannedNoSignal {
+  symbol: string;
+  company_name: string;
+  subject: string;
+  filing_datetime: string;
+  source_url: string;
+  attachment_url: string | null;
+  bullish_tier: string;
+  scored_from: 'PDF' | 'SUBJECT';
+}
+
 interface ScreenPayload {
   generated_at: string;
   window_days: number;
@@ -60,6 +74,7 @@ interface ScreenPayload {
   pdf_cache_hits: number;
   candidates_total: number;  // relevant filings in feed
   entries: TransformScreenEntry[];
+  scanned_no_signal: ScannedNoSignal[];  // zzz434 — analyzed but below the pattern floor
   error?: string;
 }
 
@@ -79,11 +94,12 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
   pdf_cache_hits: 0,
   candidates_total: 0,
   entries: [],
+  scanned_no_signal: [],
   ...(error ? { error } : {}),
 });
 
 export async function GET(req: NextRequest) {
-  const days = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 30));
+  const days = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 60));
   const limit = Math.min(40, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 24));
   const minPatterns = Math.max(0, Number(req.nextUrl.searchParams.get('minPatterns')) || 1);
   try {
@@ -173,6 +189,23 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
     .filter((e) => e.pattern_count >= minPatterns)
     .sort((a, b) => b.transformation_score - a.transformation_score);
 
+  // zzz434 — the rest were scanned but produced no signal. Surface a light
+  // record so the UI can show "we looked, nothing yet" in quiet periods.
+  const scannedNoSignal: ScannedNoSignal[] = entries
+    .filter((e) => e.pattern_count < minPatterns)
+    .sort((a, b) => new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime())
+    .slice(0, 20)
+    .map((e) => ({
+      symbol: e.symbol,
+      company_name: e.company_name,
+      subject: e.subject,
+      filing_datetime: e.filing_datetime,
+      source_url: e.source_url,
+      attachment_url: e.attachment_url,
+      bullish_tier: e.bullish_tier,
+      scored_from: e.scored_from,
+    }));
+
   const payload: ScreenPayload = {
     generated_at: new Date().toISOString(),
     window_days: days,
@@ -180,6 +213,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
     pdf_cache_hits: cacheHits,
     candidates_total: filings.length,
     entries: ranked,
+    scanned_no_signal: scannedNoSignal,
   };
 
   if (isRedisAvailable()) {

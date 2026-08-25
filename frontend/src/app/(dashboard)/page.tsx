@@ -5204,7 +5204,7 @@ function DailySignalInbox() {
     const [movers, warrant, transform] = await Promise.all([
       j('/api/v1/concall-intel/movers'),
       j('/api/v1/concall-intel/warrant-feed?days=7&passingOnly=1'),
-      j('/api/v1/concall-intel/transformation-screener?days=30&limit=24'),
+      j('/api/v1/concall-intel/transformation-screener?days=60&limit=24'),
     ]);
 
     // Lane 1 — MOMENTUM (movers)

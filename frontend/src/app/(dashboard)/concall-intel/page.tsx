@@ -3836,9 +3836,13 @@ interface TransformScreenEntry {
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';
 }
+interface ScannedNoSignal {
+  symbol: string; company_name: string; subject: string; filing_datetime: string;
+  source_url: string; attachment_url: string | null; bullish_tier: string; scored_from: 'PDF' | 'SUBJECT';
+}
 interface TransformScreenPayload {
   generated_at: string; window_days: number; analyzed: number; pdf_cache_hits: number;
-  candidates_total: number; entries: TransformScreenEntry[]; error?: string;
+  candidates_total: number; entries: TransformScreenEntry[]; scanned_no_signal?: ScannedNoSignal[]; error?: string;
 }
 
 const TIER_COLOR: Record<string, string> = {
@@ -3853,7 +3857,7 @@ function velocityColor(v: string): string {
 const CONV_TIER_COLOR: Record<string, string> = { BLOCKBUSTER: '#F59E0B', STRONG: '#10B981', MIXED: '#94A3B8', AVOID: '#EF4444' };
 
 function TransformationScreenerTab() {
-  const [days, setDays] = useState<number>(30);
+  const [days, setDays] = useState<number>(60);
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -3943,8 +3947,35 @@ function TransformationScreenerTab() {
       )}
 
       {data && !loading && entries.length === 0 && !err && (
-        <div style={{ padding: '30px 18px', textAlign: 'center', color: TF.muted, fontSize: 13, background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10 }}>
-          No transformation patterns detected in the last {days} days yet. The radar reads PDF transcripts as the feed parses them — widen the window or rescan after the next refresh.
+        <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '18px' }}>
+          <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6, textAlign: 'center' }}>
+            The radar scanned <b style={{ color: TF.text }}>{data.analyzed}</b> concall{data.analyzed === 1 ? '' : 's'} in the last {days} days and found <b style={{ color: TF.amber }}>no transformation signal yet</b>.
+            {(data.candidates_total ?? 0) <= 6 && <> This is normal off-season — few companies file transcripts between earnings waves. Widen the window or check back when Q2 results land.</>}
+          </div>
+          {data.scanned_no_signal && data.scanned_no_signal.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: TF.dim, letterSpacing: '0.5px', marginBottom: 8 }}>SCANNED · NO TRANSCRIPT SIGNAL</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {data.scanned_no_signal.map((s, i) => (
+                  <div key={`${s.symbol}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 12px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: TF.text2 }}>{s.symbol}</span>
+                      <span style={{ fontSize: 10.5, color: TF.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>{s.subject}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: `${TF.dim}18`, color: TF.dim }}>
+                        {s.scored_from === 'SUBJECT' ? '📄 announcement · no transcript yet' : 'transcript · no pattern'}
+                      </span>
+                      {s.attachment_url && <a href={s.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>open →</a>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: TF.dim, marginTop: 8, fontStyle: 'italic' }}>
+                Most of these are meeting intimations or routine notices, not full transcripts — the radar re-reads them automatically once the actual concall PDF is filed.
+              </div>
+            </div>
+          )}
         </div>
       )}
 
