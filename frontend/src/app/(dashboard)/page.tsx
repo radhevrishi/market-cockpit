@@ -5333,7 +5333,8 @@ function DailySignalInbox() {
         .filter(passesQualityPreset)
         .map((b: any) => {
           const has52 = typeof b.dist_52w_pct_yahoo === 'number';
-          // dist_52w_pct_yahoo is (close-52wHigh)/52wHigh*100 → negative below high
+          // dist_52w_pct_yahoo is (close-52wHigh)/52wHigh*100 → negative below high.
+          // correction is POSITIVE when the stock is DOWN (a pullback).
           const correction = has52 ? -b.dist_52w_pct_yahoo
             : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
           return {
@@ -5342,7 +5343,11 @@ function DailySignalInbox() {
             sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr,
           };
         })
-        .filter((p) => Number.isFinite(p.correction) && p.correction >= 5)   // meaningful pullback only
+        // Show the whole preset cohort that has price data, biggest pullback
+        // FIRST. No hard floor — a strict preset in a strong tape often leaves
+        // few names deeply corrected, so ranking (not filtering) keeps the list
+        // full and still puts the real dips on top.
+        .filter((p) => Number.isFinite(p.correction))
         .sort((a, b) => b.correction - a.correction)
         .slice(0, 10);
       setPullbacks(pb);
@@ -5395,13 +5400,13 @@ function DailySignalInbox() {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12, alignItems: 'flex-start' }}>
 
           {/* ── LEFT · the hero: Quality Pullbacks (great earnings on sale) ── */}
-          <div style={{ flex: '2 1 360px', minWidth: 0, background: 'linear-gradient(135deg, rgba(239,68,68,0.07), rgba(245,158,11,0.03) 60%, transparent)', border: '1px solid rgba(245,158,11,0.28)', borderRadius: 12, padding: '13px 15px' }}>
+          <div style={{ flex: '1.5 1 330px', minWidth: 0, background: 'linear-gradient(135deg, rgba(239,68,68,0.07), rgba(245,158,11,0.03) 60%, transparent)', border: '1px solid rgba(245,158,11,0.28)', borderRadius: 12, padding: '13px 15px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>💎 QUALITY PULLBACKS</span>
-              <span style={{ fontSize: 9.5, color: DIM }}>{pullbacks.length ? `${pullbacks.length} on sale` : ''}</span>
+              <span style={{ fontSize: 9.5, color: DIM }}>{pullbacks.length ? `top ${pullbacks.length}` : ''}</span>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginTop: 3, lineHeight: 1.5 }}>
-              Preset winners — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — ranked by how far they&rsquo;ve fallen from their 52-week high. Buy great earnings on the dip.
+              Your preset winners — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — ranked by pullback, biggest dip first. Red = on sale; green = still near its high. Buy great earnings on the dip.
             </div>
             {pullbacks.length === 0 ? (
               <div style={{ fontSize: 10.5, color: DIM, marginTop: 12, lineHeight: 1.55 }}>
@@ -5410,10 +5415,11 @@ function DailySignalInbox() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 11 }}>
                 {pullbacks.map((p, i) => {
-                  const col = p.correction >= 20 ? '#EF4444' : p.correction >= 12 ? '#F59E0B' : '#FBBF24';
-                  const depth = Math.max(3, Math.min(100, p.correction * 2));
+                  const down = p.correction > 0.5;                 // actually pulled back
+                  const col = !down ? '#10B981' : p.correction >= 20 ? '#EF4444' : p.correction >= 10 ? '#F59E0B' : '#FBBF24';
+                  const depth = Math.max(3, Math.min(100, Math.abs(p.correction) * 3));
                   return (
-                    <Link key={p.symbol} href="/conviction-beats" style={{ textDecoration: 'none', display: 'block', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 9, padding: '8px 11px' }}>
+                    <Link key={p.symbol} href="/conviction-beats" style={{ textDecoration: 'none', display: 'block', background: 'rgba(255,255,255,0.02)', border: `1px solid ${down ? `${col}33` : 'rgba(255,255,255,0.07)'}`, borderRadius: 9, padding: '8px 11px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                         <span style={{ fontSize: 11, fontWeight: 900, color: DIM, fontFamily: 'ui-monospace, monospace', width: 20, flexShrink: 0 }}>{i + 1}</span>
                         <div style={{ minWidth: 0, flex: 1 }}>
@@ -5424,12 +5430,12 @@ function DailySignalInbox() {
                           </div>
                         </div>
                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                          <div style={{ fontSize: 16, fontWeight: 900, color: col, fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>−{p.correction.toFixed(0)}%</div>
-                          <div style={{ fontSize: 8, color: DIM }}>off {p.basis}</div>
+                          <div style={{ fontSize: 16, fontWeight: 900, color: col, fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>{down ? '−' : '+'}{Math.abs(p.correction).toFixed(0)}%</div>
+                          <div style={{ fontSize: 8, color: DIM }}>{down ? `off ${p.basis}` : 'near high'}</div>
                         </div>
                       </div>
                       <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2, marginTop: 7, overflow: 'hidden' }}>
-                        <div style={{ width: `${depth}%`, height: '100%', background: col }} />
+                        <div style={{ width: `${depth}%`, height: '100%', background: col, opacity: down ? 1 : 0.5 }} />
                       </div>
                       <div style={{ fontSize: 9, color: DIM, marginTop: 5, fontFamily: 'ui-monospace, monospace' }}>
                         {p.sales != null && `sales +${Math.round(p.sales)}%`}{p.pat != null && ` · PAT ${p.pat >= 0 ? '+' : ''}${Math.round(p.pat)}%`}{p.pead != null && ` · PEAD ${Math.round(p.pead)}`}{p.mcap != null && ` · ₹${Math.round(p.mcap).toLocaleString('en-IN')} Cr`}
@@ -5441,8 +5447,8 @@ function DailySignalInbox() {
             )}
           </div>
 
-          {/* ── RIGHT · the live signal lanes, stacked ── */}
-          <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 9 }}>
+          {/* ── RIGHT · the live signal lanes, in a compact 2-up grid ── */}
+          <div style={{ flex: '1 1 300px', minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 9, alignContent: 'start' }}>
             {lanes.map((lane) => {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
