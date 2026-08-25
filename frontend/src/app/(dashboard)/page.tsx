@@ -2433,6 +2433,13 @@ export default function HomeDashboard() {
   const [posCalcCapital, setPosCalcCapital] = useState<number>(40000);
   useEffect(() => { try { const s = localStorage.getItem('mc:posCalc:capital'); if (s && Number(s) > 0) setPosCalcCapital(Number(s)); } catch {} }, []);
   useEffect(() => { try { localStorage.setItem('mc:posCalc:capital', String(posCalcCapital)); } catch {} }, [posCalcCapital]);
+  // PATCH 1102 — Volatility (risk-based) position sizing: size by the loss you'll
+  // eat if the stop trips, not by a flat % of capital. qty = riskBudget / (entry−stop).
+  const [posRiskPct, setPosRiskPct] = useState<number>(1);
+  const [posEntry, setPosEntry] = useState<number>(100);
+  const [posStop, setPosStop] = useState<number>(92);
+  useEffect(() => { try { const s = localStorage.getItem('mc:posCalc:riskPct'); if (s && Number(s) > 0) setPosRiskPct(Number(s)); } catch {} }, []);
+  useEffect(() => { try { localStorage.setItem('mc:posCalc:riskPct', String(posRiskPct)); } catch {} }, [posRiskPct]);
   useEffect(() => {
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 60_000);
@@ -2592,6 +2599,75 @@ export default function HomeDashboard() {
               })()}
             </div>
           </div>
+          {/* PATCH 1102 — Volatility / risk-based sizing: how many shares so a stop-out costs exactly your risk budget */}
+          {(() => {
+            let _ccy = '₹';
+            try { _ccy = (typeof window !== 'undefined' && localStorage.getItem('mc-default-currency')) || '₹'; } catch { _ccy = '₹'; }
+            const riskBudget = Math.round(posCalcCapital * posRiskPct / 100);
+            const perShareRisk = posEntry - posStop;
+            const valid = perShareRisk > 0 && posEntry > 0 && riskBudget > 0;
+            const qty = valid ? Math.floor(riskBudget / perShareRisk) : 0;
+            const posValue = qty * posEntry;
+            const posPctOfCap = posCalcCapital > 0 ? (posValue / posCalcCapital) * 100 : 0;
+            const stopPct = posEntry > 0 ? (perShareRisk / posEntry) * 100 : 0;
+            const overweight = posPctOfCap > 100;
+            const cell = { display:'flex',flexDirection:'column' as const,gap:2 };
+            const lab = { fontSize:10,color:DIM,fontWeight:700 };
+            const inp = { width:88,padding:'5px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,color:TEXT,fontSize:13,fontWeight:700,outline:'none' as const };
+            return (
+              <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(59,130,246,0.06)',border:'1px solid rgba(59,130,246,0.20)',borderRadius:10,marginTop:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                  <span style={{fontSize:12,fontWeight:800,color:'#60A5FA',letterSpacing:'0.5px'}}>🎯 RISK-BASED SIZE</span>
+                  <div style={cell}>
+                    <span style={lab}>Risk %</span>
+                    <div style={{display:'flex',gap:3}}>
+                      {[0.5,1,1.5,2].map(r => (
+                        <button key={r} onClick={()=>setPosRiskPct(r)} style={{
+                          fontSize:11,padding:'4px 8px',borderRadius:5,cursor:'pointer',fontWeight:800,
+                          background: posRiskPct===r ? 'rgba(96,165,250,0.18)' : 'transparent',
+                          border:`1px solid ${posRiskPct===r ? '#60A5FA' : 'rgba(255,255,255,0.12)'}`,
+                          color: posRiskPct===r ? '#60A5FA' : DIM,
+                        }}>{r}%</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={cell}>
+                    <span style={lab}>Entry {_ccy}</span>
+                    <input type="number" value={posEntry} onChange={(e)=>setPosEntry(Math.max(0,Number(e.target.value)||0))} style={inp} aria-label="Entry price" />
+                  </div>
+                  <div style={cell}>
+                    <span style={lab}>Stop {_ccy}</span>
+                    <input type="number" value={posStop} onChange={(e)=>setPosStop(Math.max(0,Number(e.target.value)||0))} style={inp} aria-label="Stop price" />
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:70}}>
+                    <span style={{fontSize:10,color:DIM,fontWeight:700}}>Risk budget</span>
+                    <span style={{fontSize:13,color:'#F59E0B',fontWeight:800}}>{_ccy}{riskBudget.toLocaleString('en-US')}</span>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:`1px solid ${overweight?'rgba(239,68,68,0.5)':'rgba(255,255,255,0.12)'}`,borderRadius:6,minWidth:70}}>
+                    <span style={{fontSize:10,color:DIM,fontWeight:700}}>Shares</span>
+                    <span style={{fontSize:13,color: valid ? 'var(--mc-bullish)' : DIM,fontWeight:800}}>{valid ? qty.toLocaleString('en-US') : '—'}</span>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:70}}>
+                    <span style={{fontSize:10,color:DIM,fontWeight:700}}>Position</span>
+                    <span style={{fontSize:13,color: overweight ? '#EF4444' : TEXT,fontWeight:800}}>{_ccy}{posValue.toLocaleString('en-US')}</span>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:70}}>
+                    <span style={{fontSize:10,color:DIM,fontWeight:700}}>% of cap</span>
+                    <span style={{fontSize:13,color: overweight ? '#EF4444' : '#60A5FA',fontWeight:800}}>{valid ? posPctOfCap.toFixed(0) : '—'}%</span>
+                  </div>
+                  <span style={{fontSize:10,color:DIM,maxWidth:180,lineHeight:1.4}}>
+                    {valid
+                      ? overweight
+                        ? `Stop is only ${stopPct.toFixed(1)}% away — sizing to ${posRiskPct}% risk needs >100% of capital. Widen the stop or accept smaller risk.`
+                        : `A ${stopPct.toFixed(1)}% stop-out loses exactly ${_ccy}${riskBudget.toLocaleString('en-US')} (${posRiskPct}% of book).`
+                      : 'Set entry above stop to size the trade.'}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ═══════════════ zzz239 — FAVOURITES ROW ═══════════════════════
               User-pinned quick-access shortcuts, sits right below "Good morning".
@@ -2629,6 +2705,12 @@ export default function HomeDashboard() {
               {/* zzz401 — Book Watch + TheWrap trackers removed from Favourites (still in Event-Driven nav) */}
             </div>
           </div>
+
+          {/* PATCH 1104 — Daily Signal Inbox (⭐): today's actionable signals across feeds */}
+          <DailySignalInbox />
+
+          {/* PATCH 1105 — Pipeline Health: freshness of every data feed at a glance */}
+          <PipelineHealth />
 
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
@@ -5078,6 +5160,307 @@ function HomeValuationQuickCheck() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 1104 — DAILY SIGNAL INBOX (⭐)
+//
+// One glanceable inbox of what's actionable RIGHT NOW, aggregated across the
+// intelligence feeds the terminal already runs — so the user doesn't have to
+// open five tabs to find the day's live setups. Three reliable lanes:
+//   • Momentum   — new entries + big score-jumps in the concall top-30 (movers)
+//   • Warrant    — promoter-warrant / breakout setups that just qualified
+//   • Transform  — early-inflection multibaggers from the batch radar (sweet spot)
+// Each row deep-links to the source tab. Pure client-side reads of existing
+// endpoints; degrades gracefully if any feed is cold.
+// ═══════════════════════════════════════════════════════════════════════════
+interface InboxSignal {
+  lane: 'MOMENTUM' | 'WARRANT' | 'TRANSFORM';
+  symbol: string;
+  company: string;
+  headline: string;
+  detail: string;
+  score: number;        // for sorting within lane
+  href: string;
+}
+
+function DailySignalInbox() {
+  const [signals, setSignals] = useState<InboxSignal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [laneStatus, setLaneStatus] = useState<{ momentum: boolean; warrant: boolean; transform: boolean }>({ momentum: false, warrant: false, transform: false });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const out: InboxSignal[] = [];
+    const status = { momentum: false, warrant: false, transform: false };
+    const j = async (url: string): Promise<any | null> => {
+      try { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
+      catch { return null; }
+    };
+    const [movers, warrant, transform] = await Promise.all([
+      j('/api/v1/concall-intel/movers'),
+      j('/api/v1/concall-intel/warrant-feed?days=7&passingOnly=1'),
+      j('/api/v1/concall-intel/transformation-screener?days=30&limit=24'),
+    ]);
+
+    // Lane 1 — MOMENTUM (movers)
+    if (movers && !movers.error) {
+      status.momentum = true;
+      (movers.new_entries || []).slice(0, 5).forEach((m: any) => out.push({
+        lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
+        headline: 'New to concall top-30', detail: `${(m.tier || '').replace('_', ' ')} · rank #${m.rank_today}`,
+        score: (m.composite_today || 0) + 5, href: '/concall-intel',
+      }));
+      (movers.big_jumps || []).slice(0, 5).forEach((m: any) => out.push({
+        lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
+        headline: `Score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
+        score: (m.delta || 0), href: '/concall-intel',
+      }));
+    }
+
+    // Lane 2 — WARRANT (qualified setups)
+    if (warrant && !warrant.error) {
+      status.warrant = true;
+      const passing = (warrant.filings || []).slice(0, 6);
+      passing.forEach((f: any) => out.push({
+        lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
+        headline: 'Warrant setup qualified', detail: f.subject ? String(f.subject).slice(0, 60) : 'promoter warrant / breakout',
+        score: f.warrant?.score ?? f.score ?? 1, href: '/concall-intel',
+      }));
+    }
+
+    // Lane 3 — TRANSFORM (batch radar sweet-spot)
+    if (transform && !transform.error) {
+      status.transform = true;
+      (transform.entries || []).filter((e: any) => e.stage_sweet_spot).slice(0, 6).forEach((e: any) => out.push({
+        lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
+        headline: `${e.velocity} transformation · T-${e.transformation_score}`,
+        detail: `${e.pattern_count} vectors · stage ${e.stage}/10 · ${e.evidence_label}`,
+        score: e.transformation_score || 0, href: '/concall-intel?tab=radar',
+      }));
+      setGeneratedAt(transform.generated_at || null);
+    }
+
+    setLaneStatus(status);
+    setSignals(out);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const LANE_META: Record<InboxSignal['lane'], { c: string; emoji: string; label: string }> = {
+    MOMENTUM:  { c: '#60A5FA', emoji: '📈', label: 'Momentum' },
+    WARRANT:   { c: '#F59E0B', emoji: '🎯', label: 'Warrant' },
+    TRANSFORM: { c: '#10B981', emoji: '🚀', label: 'Transform' },
+  };
+  const lanes: InboxSignal['lane'][] = ['MOMENTUM', 'WARRANT', 'TRANSFORM'];
+  const total = signals.length;
+
+  return (
+    <div style={{ background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.20)', borderRadius: 12, padding: '14px 16px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 900, color: '#60A5FA', letterSpacing: '0.5px' }}>⭐ DAILY SIGNAL INBOX</span>
+          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${total} live signal${total === 1 ? '' : 's'} across 3 lanes`}</span>
+          {!loading && (
+            <span style={{ fontSize: 9.5, color: DIM }}>
+              {(['momentum', 'warrant', 'transform'] as const).map((k) => (
+                <span key={k} title={`${k} feed ${laneStatus[k] ? 'live' : 'cold'}`} style={{ color: laneStatus[k] ? '#10B981' : '#64748B', marginLeft: 6 }}>●{k[0].toUpperCase()}</span>
+              ))}
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={load} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(96,165,250,0.4)', background: 'transparent', color: '#60A5FA' }}>{loading ? '⏳' : '↻ Refresh'}</button>
+          <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
+        </div>
+      </div>
+
+      {!collapsed && !loading && total === 0 && (
+        <div style={{ fontSize: 11.5, color: DIM, marginTop: 10, lineHeight: 1.6 }}>
+          No fresh signals right now — the concall feeds may be between refreshes. This inbox lights up as movers shift, warrant setups qualify, and the transformation radar finds inflections. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link>.
+        </div>
+      )}
+
+      {!collapsed && total > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginTop: 12 }}>
+          {lanes.map((lane) => {
+            const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
+            const meta = LANE_META[lane];
+            return (
+              <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderRadius: 10, padding: '10px 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
+                  <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{laneSignals.length}</span>
+                </div>
+                {laneSignals.length === 0 ? (
+                  <div style={{ fontSize: 10.5, color: DIM }}>{laneStatus[lane.toLowerCase() as 'momentum' | 'warrant' | 'transform'] ? 'quiet — nothing new' : 'feed warming up'}</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                    {laneSignals.slice(0, 6).map((s, i) => (
+                      <Link key={`${s.symbol}-${i}`} href={s.href} style={{ textDecoration: 'none', display: 'block', padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
+                          <span style={{ fontSize: 9.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
+                        </div>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: meta.c, marginTop: 1 }}>{s.headline}</div>
+                        <div style={{ fontSize: 9.5, color: DIM, marginTop: 1, lineHeight: 1.4 }}>{s.detail}</div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!collapsed && generatedAt && total > 0 && (
+        <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic' }}>
+          Aggregated from Movers, Warrant, and Transformation Radar feeds · radar generated {new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}. Signals are deterministic feed reads, not recommendations.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 1105 — PIPELINE HEALTH
+//
+// One row per data feed showing how fresh it is, so a stale scraper or a cold
+// cache is visible immediately instead of silently serving old data behind the
+// dashboards. Reads each feed's own timestamp (generated_at / updatedAt /
+// lastSync) and colour-codes by age. Collapsed by default — it's an ops panel,
+// not a daily-driver. Pure client-side; a feed that errors shows as DOWN.
+// ═══════════════════════════════════════════════════════════════════════════
+interface FeedHealth {
+  key: string;
+  label: string;
+  ts: number | null;        // epoch ms of last update, null = unknown/down
+  status: 'FRESH' | 'AGING' | 'STALE' | 'DOWN';
+  note: string;
+  freshH: number;           // hours under which = FRESH
+  ageH: number;             // hours under which = AGING (else STALE)
+}
+
+function PipelineHealth() {
+  const [feeds, setFeeds] = useState<FeedHealth[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [collapsed, setCollapsed] = useState(true);
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const now = Date.now();
+    const j = async (url: string): Promise<any | null> => {
+      try { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
+      catch { return null; }
+    };
+    const today = new Date().toISOString().slice(0, 10);
+    const [graded, bench, live, movers, warrant, keyword, tv, news] = await Promise.all([
+      j(`/api/v1/earnings/graded?date=${today}`),
+      j('/api/v1/bench'),
+      j('/api/v1/concall-intel/live-feed?days=2'),
+      j('/api/v1/concall-intel/movers'),
+      j('/api/v1/concall-intel/warrant-feed?days=7'),
+      j('/api/v1/concall-intel/keyword-watch?days=14'),
+      j('/data/tradingview/manifest.json'),
+      j('/api/v1/news'),
+    ]);
+
+    const parse = (v: any): number | null => {
+      if (!v) return null;
+      const t = new Date(v).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    const newsTs = Array.isArray(news)
+      ? news.reduce((mx: number, n: any) => { const t = parse(n?.published_at); return t && t > mx ? t : mx; }, 0) || null
+      : parse(news?.generated_at);
+
+    const raw: Array<Omit<FeedHealth, 'status'>> = [
+      { key: 'graded',  label: '📊 Earnings Graded',   ts: parse(graded?.generated_at), note: graded ? `${graded.candidates_total ?? '?'} candidates · ${(graded._failed_tickers?.length ?? 0)} failed` : 'no response', freshH: 12, ageH: 36 },
+      { key: 'bench',   label: '🏆 Conviction Bench',  ts: parse(bench?.updatedAt), note: bench?.updatedAt ? 'built' : 'not yet built', freshH: 24, ageH: 72 },
+      { key: 'live',    label: '🔥 Concall Live Feed', ts: parse(live?.generated_at), note: live ? `${live.count_relevant ?? '?'} relevant · ${live.count_high_bullish ?? '?'} high-bull` : 'no response', freshH: 6, ageH: 24 },
+      { key: 'movers',  label: '📈 Concall Movers',    ts: parse(movers?.generated_at), note: movers?.reference_date ? `vs ${movers.reference_date}` : 'no reference snapshot', freshH: 24, ageH: 48 },
+      { key: 'warrant', label: '🎯 Warrant Feed',      ts: parse(warrant?.generated_at), note: warrant ? `${warrant.count_passing ?? '?'} passing` : 'no response', freshH: 12, ageH: 48 },
+      { key: 'keyword', label: '🔑 Keyword Watch',     ts: parse(keyword?.generated_at), note: keyword ? 'ok' : 'no response', freshH: 24, ageH: 72 },
+      { key: 'tv',      label: '📉 TradingView Sync',  ts: parse(tv?.lastSync), note: tv?.lastSync ? 'manifest ok' : 'manifest missing', freshH: 24, ageH: 36 },
+      { key: 'news',    label: '📰 News Feed',         ts: newsTs, note: newsTs ? 'latest article' : 'no dated items', freshH: 6, ageH: 24 },
+    ];
+
+    const classify = (f: Omit<FeedHealth, 'status'>): FeedHealth => {
+      if (f.ts == null) return { ...f, status: 'DOWN' };
+      const hrs = (now - f.ts) / 3_600_000;
+      const status: FeedHealth['status'] = hrs <= f.freshH ? 'FRESH' : hrs <= f.ageH ? 'AGING' : 'STALE';
+      return { ...f, status };
+    };
+
+    setFeeds(raw.map(classify));
+    setCheckedAt(now);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const STATUS_META: Record<FeedHealth['status'], { c: string; dot: string; label: string }> = {
+    FRESH: { c: '#10B981', dot: '🟢', label: 'Fresh' },
+    AGING: { c: '#F59E0B', dot: '🟡', label: 'Aging' },
+    STALE: { c: '#EF4444', dot: '🔴', label: 'Stale' },
+    DOWN:  { c: '#64748B', dot: '⚫', label: 'Down' },
+  };
+  const agoStr = (ts: number | null): string => {
+    if (ts == null) return '—';
+    const h = (Date.now() - ts) / 3_600_000;
+    if (h < 1) return `${Math.round(h * 60)}m ago`;
+    if (h < 48) return `${h.toFixed(1)}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  };
+  const problems = feeds.filter((f) => f.status === 'STALE' || f.status === 'DOWN').length;
+  const summaryColor = problems === 0 ? '#10B981' : problems <= 2 ? '#F59E0B' : '#EF4444';
+
+  return (
+    <div style={{ background: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.18)', borderRadius: 12, padding: '12px 16px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 900, color: '#94A3B8', letterSpacing: '0.5px' }}>🩺 PIPELINE HEALTH</span>
+          {loading ? (
+            <span style={{ fontSize: 11, color: DIM }}>checking feeds…</span>
+          ) : (
+            <span style={{ fontSize: 11, fontWeight: 800, color: summaryColor }}>
+              {problems === 0 ? 'all feeds healthy' : `${problems} feed${problems === 1 ? '' : 's'} need attention`}
+            </span>
+          )}
+          {checkedAt && !loading && <span style={{ fontSize: 9.5, color: DIM }}>checked {agoStr(checkedAt)}</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={load} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(148,163,184,0.4)', background: 'transparent', color: '#94A3B8' }}>{loading ? '⏳' : '↻'}</button>
+          <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, marginTop: 12 }}>
+          {feeds.map((f) => {
+            const m = STATUS_META[f.status];
+            return (
+              <div key={f.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#0D1623', border: `1px solid ${m.c}33`, borderRadius: 8 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.label}</div>
+                  <div style={{ fontSize: 9.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.note}</div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: m.c }}>{m.dot} {m.label}</div>
+                  <div style={{ fontSize: 9.5, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{agoStr(f.ts)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

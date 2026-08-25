@@ -16,6 +16,8 @@ import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react
 import { decodeHTMLEntities } from '@/lib/html-decode';
 // PATCH 0490 QA-#14 — resolve raw BSE codes (e.g. 526612) to NSE symbols
 import { resolveTicker } from '@/lib/bse-nse-mapping';
+// zzz433 — Conviction × Transformation cross-link on the Radar tab
+import { readConvictionBeats, type ConvictionEntry } from '@/lib/conviction-beats';
 
 // zzz432 — automatic multibagger transformation radar block
 interface TransformationRadarData {
@@ -138,7 +140,14 @@ export default function ConcallIntelPage() {
   // surface untouched; Analytics tab mounts a brand-new component that
   // fetches all 4 endpoints and renders an institutional-format
   // consolidated dashboard.
-  const [tab, setTab] = useState<'live' | 'analytics' | 'transform'>('live');
+  const [tab, setTab] = useState<'live' | 'analytics' | 'transform' | 'radar'>('live');
+  // zzz433 — honor ?tab= deep-link (e.g. Daily Signal Inbox → /concall-intel?tab=radar)
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get('tab');
+      if (q === 'radar' || q === 'transform' || q === 'analytics' || q === 'live') setTab(q);
+    } catch { /* noop */ }
+  }, []);
 
   return (
     <div style={{ padding: '20px 24px', backgroundColor: 'var(--mc-bg-0)', minHeight: '100%', color: 'var(--mc-text-1)' }}>
@@ -209,6 +218,7 @@ export default function ConcallIntelPage() {
           { id: 'live',      label: '🔥 Live Feeds',  hint: 'Warrant / Movers / Bullish / Keyword + Manual Analyser' },
           { id: 'analytics', label: '📊 Analytics',   hint: 'Institutional-format consolidated dashboard' },
           { id: 'transform', label: '🚀 Transformation', hint: 'Multibagger transformation-hunting framework — auto-radar runs on any analysed transcript' },
+          { id: 'radar',     label: '🔭 Radar',          hint: 'Auto-scans EVERY concall in the live feed for transformation patterns — ranked leaderboard, no pasting' },
         ] as const).map((t) => {
           const isActive = tab === t.id;
           return (
@@ -231,7 +241,9 @@ export default function ConcallIntelPage() {
         })}
       </div>
 
-      {tab === 'transform' ? (
+      {tab === 'radar' ? (
+        <TransformationScreenerTab />
+      ) : tab === 'transform' ? (
         <TransformationFrameworkTab lastRadar={result?.transformation ?? null} lastTicker={result?.ticker ?? ''} />
       ) : tab === 'analytics' ? (
         <ConcallAnalyticsTab />
@@ -3801,6 +3813,218 @@ function TransformationFrameworkTab({ lastRadar, lastTicker }: { lastRadar: Tran
         <TfCard title="Weekly routine">Mon — corporate actions + acquisitions (30m) · Tue — new products / capex / orders (30m) · Wed — earnings + transcripts (60m) · Thu — debt + cash-flow changes (30m) · Fri — price / relative strength (30m) · Weekend — deep-dive top 5 (3–4h). Re-score every candidate monthly.</TfCard>
         <div style={{ ...TFM, fontSize: 10, color: TF.dim, marginTop: 10, lineHeight: 1.6 }}>Educational framework — not investment advice. Case-study figures are approximate and drawn from public disclosures; stage classifications are analytical estimates, not published ratings. The radar is a deterministic keyword + evidence read of a single transcript.</div>
       </TfSection>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz433 — TRANSFORMATION SCREENER TAB (🔭 Radar)
+//
+// Consumes GET /api/v1/concall-intel/transformation-screener, which runs the
+// same deterministic radar the single-paste flow runs — but over EVERY concall
+// in the live feed. Presents a ranked leaderboard so the terminal auto-surfaces
+// early-inflection multibaggers without the user pasting anything.
+// ═══════════════════════════════════════════════════════════════════════════
+interface TransformScreenEntry {
+  symbol: string; company_name: string; exchange: string; subject: string;
+  filing_datetime: string; source_url: string; attachment_url: string | null;
+  bullish_tier: string;
+  transformation_score: number; pattern_count: number;
+  patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
+  evidence_score: number; evidence_label: string;
+  stage: number; stage_sweet_spot: boolean; velocity: string;
+  triple: { industry: boolean; company: boolean; financial: boolean; count: number };
+  top_events: string[]; scored_from: 'PDF' | 'SUBJECT';
+}
+interface TransformScreenPayload {
+  generated_at: string; window_days: number; analyzed: number; pdf_cache_hits: number;
+  candidates_total: number; entries: TransformScreenEntry[]; error?: string;
+}
+
+const TIER_COLOR: Record<string, string> = {
+  ULTRA_BULLISH: '#F59E0B', BULLISH: '#10B981', MIXED_POSITIVE: '#60A5FA',
+  NEUTRAL: '#94A3B8', MIXED_NEGATIVE: '#F0883E', BEARISH: '#EF4444',
+};
+
+function velocityColor(v: string): string {
+  return v === 'Very fast' ? TF.green : v === 'Fast' ? '#34D399' : v === 'Medium' ? TF.amber : v === 'Slow' ? TF.saffron : TF.dim;
+}
+
+const CONV_TIER_COLOR: Record<string, string> = { BLOCKBUSTER: '#F59E0B', STRONG: '#10B981', MIXED: '#94A3B8', AVOID: '#EF4444' };
+
+function TransformationScreenerTab() {
+  const [days, setDays] = useState<number>(30);
+  const [data, setData] = useState<TransformScreenPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // zzz433 — Conviction × Transformation: which radar names are ALSO on the bench
+  const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
+  useEffect(() => { try { setBench(readConvictionBeats()); } catch { setBench({}); } }, []);
+
+  const load = useCallback(async (d: number) => {
+    setLoading(true); setErr(null);
+    try {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=28`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j: TransformScreenPayload = await r.json();
+      setData(j);
+      if (j.error) setErr(j.error);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'load failed');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(days); }, [days, load]);
+
+  const entries = data?.entries ?? [];
+  const sweetSpotCount = entries.filter((e) => e.stage_sweet_spot).length;
+  const tripleCount = entries.filter((e) => e.triple.count === 3).length;
+  const onBenchCount = entries.filter((e) => bench[e.symbol?.toUpperCase()]).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* header */}
+      <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — the whole feed, auto-scanned</div>
+        <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
+          Runs the exact multibagger-transformation radar from the 🚀 Transformation tab over <b style={{ color: TF.text2 }}>every concall in the live feed</b> — no pasting. Each company is scored on pattern breadth, evidence strength, inflection stage, and the industry/company/financial triple, then ranked. Deterministic keyword + evidence read, not a recommendation.
+        </div>
+        {/* controls */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: TF.dim, letterSpacing: '0.5px' }}>WINDOW</span>
+          {[7, 30, 60, 90].map((d) => (
+            <button key={d} onClick={() => setDays(d)} style={{
+              fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+              border: `1px solid ${days === d ? TF.cyan : TF.border}`,
+              background: days === d ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
+              color: days === d ? TF.cyan : TF.muted,
+            }}>{d}d</button>
+          ))}
+          <button onClick={() => load(days)} disabled={loading} style={{
+            fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+            border: `1px solid ${TF.green}`, background: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', color: TF.green,
+          }}>{loading ? '⏳ Scanning…' : '↻ Rescan'}</button>
+          {data && (
+            <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
+              {data.analyzed} concalls scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* summary tiles */}
+      {data && entries.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
+          {[
+            { label: 'Ranked names', v: entries.length, c: TF.cyan },
+            { label: 'In sweet spot (stage 3-7)', v: sweetSpotCount, c: TF.green },
+            { label: 'Full triple (ind+co+fin)', v: tripleCount, c: TF.amber },
+            { label: '🏆 Also on Conviction Bench', v: onBenchCount, c: TF.green },
+            { label: 'Top score', v: entries[0]?.transformation_score ?? 0, c: TF.purple },
+          ].map((t) => (
+            <div key={t.label} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 22, fontWeight: 900, color: t.c, ...TFM }}>{t.v}</div>
+              <div style={{ fontSize: 10, color: TF.dim, marginTop: 2 }}>{t.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {err && !loading && (
+        <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: TF.text }}>
+          ⚠ {err}. The feed may still be warming its PDF cache — try Rescan in a moment, or widen the window.
+        </div>
+      )}
+
+      {loading && !data && (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: TF.dim, fontSize: 13 }}>⏳ Scanning the live feed for transformation patterns…</div>
+      )}
+
+      {data && !loading && entries.length === 0 && !err && (
+        <div style={{ padding: '30px 18px', textAlign: 'center', color: TF.muted, fontSize: 13, background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10 }}>
+          No transformation patterns detected in the last {days} days yet. The radar reads PDF transcripts as the feed parses them — widen the window or rescan after the next refresh.
+        </div>
+      )}
+
+      {/* leaderboard */}
+      {entries.map((e, i) => (
+        <div key={`${e.symbol}-${e.filing_datetime}-${i}`} style={{
+          background: TF.card, border: `1px solid ${e.stage_sweet_spot ? 'color-mix(in srgb, var(--mc-bullish) 40%, transparent)' : TF.border}`,
+          borderLeft: `4px solid ${velocityColor(e.velocity)}`, borderRadius: 10, padding: '14px 16px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: TF.dim, ...TFM }}>#{i + 1}</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: TF.text }}>{e.symbol}</span>
+              <span style={{ fontSize: 11.5, color: TF.muted, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company_name}</span>
+              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: `${TIER_COLOR[e.bullish_tier] || TF.dim}22`, color: TIER_COLOR[e.bullish_tier] || TF.dim, letterSpacing: '0.4px' }}>{e.bullish_tier.replace('_', ' ')}</span>
+              {(() => {
+                const b = bench[e.symbol?.toUpperCase()];
+                if (!b) return null;
+                const c = CONV_TIER_COLOR[b.tier] || TF.green;
+                return (
+                  <a href="/conviction-beats" title={`On Conviction Bench · ${b.tier}${b.composite_score != null ? ` · score ${b.composite_score}` : ''}`} style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: `${c}22`, color: c, letterSpacing: '0.3px', textDecoration: 'none', border: `1px solid ${c}44` }}>
+                    🏆 On Bench · {b.tier}
+                  </a>
+                );
+              })()}
+              {e.scored_from === 'SUBJECT' && <span style={{ fontSize: 9, color: TF.dim, fontStyle: 'italic' }}>subject-only</span>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 22, fontWeight: 900, color: velocityColor(e.velocity), ...TFM, lineHeight: 1 }}>{e.transformation_score}</div>
+                <div style={{ fontSize: 8.5, color: TF.dim, letterSpacing: '0.5px' }}>T-SCORE</div>
+              </div>
+            </div>
+          </div>
+
+          {/* pattern chips */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
+            {e.patterns.slice(0, 10).map((p) => (
+              <span key={p.key} title={`${p.hits} mention${p.hits === 1 ? '' : 's'}`} style={{
+                fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 5,
+                background: TF.card2, border: `1px solid ${TF.border}`, color: TF.text2,
+              }}>{p.emoji} {p.label}{p.hits > 1 ? ` ·${p.hits}` : ''}</span>
+            ))}
+            {e.patterns.length === 0 && <span style={{ fontSize: 10.5, color: TF.dim }}>no patterns</span>}
+          </div>
+
+          {/* meta row */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11, color: TF.muted, alignItems: 'center' }}>
+            <span>📶 <b style={{ color: velocityColor(e.velocity) }}>{e.velocity}</b> velocity ({e.pattern_count} vectors)</span>
+            <span>🪜 Stage <b style={{ color: e.stage_sweet_spot ? TF.green : TF.text2 }}>{e.stage}/10</b>{e.stage_sweet_spot ? ' · sweet spot' : ''}</span>
+            <span>🎯 Evidence <b style={{ color: TF.text2 }}>{e.evidence_score}/11</b> — {e.evidence_label}</span>
+            <span title="Industry tailwind / company transformation / financial inflection">
+              {['industry', 'company', 'financial'].map((k) => (
+                <span key={k} style={{ color: (e.triple as any)[k] ? TF.green : TF.dim, fontWeight: 800, marginLeft: 4 }}>
+                  {(e.triple as any)[k] ? '●' : '○'}{k[0].toUpperCase()}
+                </span>
+              ))}
+            </span>
+          </div>
+
+          {/* events + link */}
+          {e.top_events.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 10, color: TF.dim, ...TFM }}>
+              EVENTS: {e.top_events.join(' · ')}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: TF.dim }}>{new Date(e.filing_datetime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · {e.exchange}</span>
+            {e.attachment_url && (
+              <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10.5, color: TF.cyan, fontWeight: 700 }}>📄 Open transcript →</a>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {data && entries.length > 0 && (
+        <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, lineHeight: 1.6 }}>
+          T-Score = pattern_count×3 + evidence_score + triple_count×2 + sweet-spot bonus. Ranks the strength of the transformation SIGNAL in the transcript, not the stock. Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING. Open any name in the 🚀 Transformation tab framework, or paste its transcript in 🔥 Live Feeds for the full analysis. Educational, not investment advice.
+        </div>
+      )}
     </div>
   );
 }

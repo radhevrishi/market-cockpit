@@ -187,7 +187,7 @@ const THEME = {
 const SORT_OPTIONS = ['Name', 'Change%', 'Price', 'Volume'];
 
 export default function ScreenerPage() {
-  const [market, setMarket] = useState<'india' | 'us'>('india');
+  const [market, setMarket] = useState<'india' | 'us' | 'both'>('india'); // zzz433 — 'both' = Two-Universe screen
   const [screenerMode, setScreenerMode] = useState<'stocks' | 'earnings'>('stocks');
   const [data, setData] = useState<QuotesData | null>(null);
   const [earningsData, setEarningsData] = useState<EarningsData | null>(null);
@@ -247,10 +247,26 @@ export default function ScreenerPage() {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037
     try {
-      const marketParam = market === 'us' ? 'us' : 'india';
-      const response = await fetch(`/api/market/quotes?market=${marketParam}`, { signal: ctl.signal });
-      if (!response.ok) throw new Error('Failed to fetch quotes');
-      const result: QuotesData = await response.json();
+      let result: QuotesData;
+      if (market === 'both') {
+        // zzz433 — Two-Universe: fetch India + US in parallel, tag + merge.
+        const [rIn, rUs] = await Promise.all([
+          fetch(`/api/market/quotes?market=india`, { signal: ctl.signal }),
+          fetch(`/api/market/quotes?market=us`, { signal: ctl.signal }),
+        ]);
+        if (!rIn.ok && !rUs.ok) throw new Error('Failed to fetch quotes');
+        const [dIn, dUs] = await Promise.all([
+          rIn.ok ? rIn.json() : Promise.resolve({ stocks: [] }),
+          rUs.ok ? rUs.json() : Promise.resolve({ stocks: [] }),
+        ]);
+        const tag = (arr: any[], mkt: 'india' | 'us') => (Array.isArray(arr) ? arr.map((s) => ({ ...s, _mkt: mkt })) : []);
+        result = { ...(dIn || {}), stocks: [...tag(dIn?.stocks, 'india'), ...tag(dUs?.stocks, 'us')] } as QuotesData;
+      } else {
+        const marketParam = market === 'us' ? 'us' : 'india';
+        const response = await fetch(`/api/market/quotes?market=${marketParam}`, { signal: ctl.signal });
+        if (!response.ok) throw new Error('Failed to fetch quotes');
+        result = await response.json();
+      }
       setData(result);
       setDataUpdatedAt(Date.now()); // PATCH 0275
 
@@ -611,10 +627,11 @@ export default function ScreenerPage() {
                   Market
                 </label>
                 <div style={{ display: 'flex', gap: '8px', background: THEME.background, padding: '6px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-                  {(['india', 'us'] as const).map((m) => (
+                  {(['india', 'us', 'both'] as const).map((m) => (
                     <button
                       key={m}
                       onClick={() => setMarket(m)}
+                      title={m === 'both' ? 'Two-Universe: screen India + US together in one ranked table' : undefined}
                       style={{
                         flex: 1,
                         padding: '8px 12px',
@@ -628,7 +645,7 @@ export default function ScreenerPage() {
                         transition: 'all 0.2s',
                       }}
                     >
-                      {m === 'us' ? 'US' : 'India'}
+                      {m === 'us' ? 'US' : m === 'both' ? '🌐 Both' : 'India'}
                     </button>
                   ))}
                 </div>
@@ -947,6 +964,12 @@ export default function ScreenerPage() {
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.accent, fontWeight: '600' }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                               {quote.ticker}
+                              {/* zzz433 — Two-Universe market badge (only in 'both' mode) */}
+                              {(quote as any)._mkt && (
+                                <span style={{ fontSize: 9, fontWeight: 800, color: (quote as any)._mkt === 'us' ? '#60A5FA' : 'var(--mc-saffron)', border: `1px solid ${(quote as any)._mkt === 'us' ? 'rgba(96,165,250,0.4)' : 'color-mix(in srgb, var(--mc-saffron) 40%, transparent)'}`, padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3 }}>
+                                  {(quote as any)._mkt === 'us' ? '🇺🇸 US' : '🇮🇳 IN'}
+                                </span>
+                              )}
                               {/* PATCH 0276 — Conviction Beats badge. */}
                               {isCb(quote.ticker) && (
                                 <span

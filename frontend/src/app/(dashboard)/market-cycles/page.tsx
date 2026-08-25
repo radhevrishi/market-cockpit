@@ -1929,6 +1929,118 @@ const RG_ROT = [
   ['I', '…back to Commodities', 'The wheel turns again', RG.commodity],
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz433 — LIVE MARKET-CYCLES SCOREBOARD (⭐)
+//
+// Reads the real composite breadth score (/api/v1/breadth — full NSE universe,
+// GH-Actions bhavcopy) and maps its four-state regime onto this page's 7-phase
+// framework, so the theory tab carries a live "you are here" read instead of
+// being purely static. Pillar bars show WHY (trend / sector / smallcap / flow /
+// momentum). Degrades to a quiet notice if the breadth blob is cold.
+// ═══════════════════════════════════════════════════════════════════════════
+interface BreadthPayload {
+  composite: number;
+  regime: string;
+  regime_color: string;
+  regime_desc: string;
+  suggested_cash_pct: number;
+  pillars?: Record<string, { score: number; weight: number }>;
+  universe_size?: number;
+  cohort_date?: string;
+  generated_at?: string;
+  scope_label?: string;
+}
+
+// Map the breadth 4-state regime onto the nearest framework phase index (0-6).
+function breadthToPhase(regime: string, composite: number): { idx: number; name: string } {
+  const r = (regime || '').toLowerCase();
+  if (r.includes('expansion')) return { idx: 0, name: 'Expansion' };
+  if (r.includes('healthy')) return { idx: 0, name: 'Expansion' };
+  if (r.includes('transition')) return composite >= 45 ? { idx: 2, name: 'Inflation Broadens' } : { idx: 4, name: 'Monetary Tightening' };
+  // risk-off
+  return composite <= 25 ? { idx: 5, name: 'Earnings Recession' } : { idx: 3, name: 'Stagflation' };
+}
+
+function RegimeLiveScoreboard({ onJumpPhase }: { onJumpPhase: (i: number) => void }) {
+  const [data, setData] = useState<BreadthPayload | null>(null);
+  const [state, setState] = useState<'load' | 'ok' | 'cold' | 'err'>('load');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        if (!r.ok) { if (!cancelled) setState('err'); return; }
+        const j = await r.json();
+        if (cancelled) return;
+        if (j && typeof j.composite === 'number' && j.regime) { setData(j); setState('ok'); }
+        else setState('cold');
+      } catch { if (!cancelled) setState('err'); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const mapped = data ? breadthToPhase(data.regime, data.composite) : null;
+  const PILLAR_LABELS: Record<string, string> = { trend: 'Trend', sector: 'Sector', smallcap: 'Small-cap', flow: 'Flow', momentum: 'Momentum' };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${data?.regime_color || C.borderStrong}`, borderRadius: 10, padding: '16px 18px', marginBottom: 16, backgroundImage: data ? `linear-gradient(90deg, ${data.regime_color}12, transparent 70%)` : undefined }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: state === 'ok' ? 12 : 0 }}>
+        <div style={{ ...MONO, fontSize: 10, letterSpacing: 1.2, color: C.cyan, textTransform: 'uppercase' }}>⭐ Live regime read · real NSE breadth</div>
+        {data?.generated_at && <div style={{ fontSize: 10, color: C.dim }}>{data.scope_label || 'full universe'} · {new Date(data.generated_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}</div>}
+      </div>
+
+      {state === 'load' && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>⏳ Reading live breadth…</div>}
+      {state === 'err' && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Live breadth unavailable right now — the framework below still applies. <a href="/breadth" style={{ color: C.cyan }}>Open Breadth →</a></div>}
+      {state === 'cold' && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Breadth blob still warming (built nightly from bhavcopy) — check back after the next sync. <a href="/breadth" style={{ color: C.cyan }}>Breadth page →</a></div>}
+
+      {state === 'ok' && data && mapped && (
+        <>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 34, fontWeight: 900, color: data.regime_color, ...MONO, lineHeight: 1 }}>{data.composite}<span style={{ fontSize: 14, color: C.dim }}>/100</span></div>
+              <div style={{ fontSize: 9, color: C.dim, letterSpacing: 0.5, marginTop: 2 }}>COMPOSITE BREADTH</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 17, fontWeight: 900, color: data.regime_color }}>{data.regime}</div>
+              <div style={{ fontSize: 12, color: C.text2, lineHeight: 1.5, marginTop: 2 }}>{data.regime_desc}</div>
+              <div style={{ fontSize: 11.5, color: C.text2, marginTop: 6 }}>
+                Suggested cash: <b style={{ color: data.regime_color }}>{data.suggested_cash_pct}%</b> · maps to framework{' '}
+                <button onClick={() => onJumpPhase(mapped.idx)} style={{ ...MONO, fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 5, cursor: 'pointer', border: `1px solid ${data.regime_color}`, background: `${data.regime_color}18`, color: data.regime_color }}>
+                  Phase {mapped.idx} · {mapped.name} →
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {data.pillars && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginTop: 14 }}>
+              {Object.entries(data.pillars).filter(([k]) => PILLAR_LABELS[k]).map(([k, v]) => {
+                const sc = Math.round((v as any).score ?? 0);
+                const col = sc >= 60 ? C.green : sc >= 40 ? C.amber : C.red;
+                return (
+                  <div key={k} style={{ background: C.card2, border: `1px solid ${C.border}`, borderRadius: 7, padding: '8px 10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>{PILLAR_LABELS[k]}</span>
+                      <span style={{ fontSize: 12, fontWeight: 900, color: col, ...MONO }}>{sc}</span>
+                    </div>
+                    <div style={{ height: 4, background: C.border, borderRadius: 2, marginTop: 5, overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.max(0, Math.min(100, sc))}%`, height: '100%', background: col }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: C.dim, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
+            Breadth is a participation gauge, not a macro-phase oracle — it tells you risk-on vs risk-off across the tape and is mapped to the nearest framework phase as a starting point. Confirm against the macro indicators below before rotating.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function RegimeTab() {
   const [ph, setPh] = useState(0);
   const [hc, setHc] = useState(0);
@@ -1945,6 +2057,9 @@ function RegimeTab() {
 
   return (
     <div>
+      {/* zzz433 — LIVE scoreboard: real NSE-breadth regime read, mapped onto the framework */}
+      <RegimeLiveScoreboard onJumpPhase={setPh} />
+
       {/* hero line */}
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px 20px', marginBottom: 20, backgroundImage: 'linear-gradient(90deg, rgba(245,166,35,.06), transparent 70%)' }}>
         <div style={{ ...MONO, fontSize: 10, letterSpacing: 1.5, color: C.saffron, textTransform: 'uppercase', marginBottom: 8 }}>The stagflation → recovery playbook</div>

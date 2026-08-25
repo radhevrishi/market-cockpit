@@ -34,7 +34,7 @@ const BORDER = '#1A2540';
 const TEXT = '#E6EDF3';
 const DIM = '#8A95A3';
 
-type CalcKind = 'PS' | 'PE' | 'EV_EBITDA' | 'MORE' | 'ANALYTICS' | 'LEARN';
+type CalcKind = 'PS' | 'PE' | 'EV_EBITDA' | 'REVERSE_DCF' | 'MORE' | 'ANALYTICS' | 'LEARN';
 
 // PATCH 0633 — save-valuation button shown above result cards
 function SaveValuationBar({ calcKind, result, onLoaded }: {
@@ -2933,6 +2933,407 @@ function LearnTab() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REVERSE-DCF / FUTURE-P/E CALCULATOR (PATCH 0701)
+//
+// Two lenses on the same question — "is today's price asking too much?"
+//   1. Reverse-DCF: hold the current market cap fixed, solve (bisection) for the
+//      FCF growth rate the market is IMPLYING. Compare to what you actually
+//      expect. Implied << expected  ⇒  cheap;  implied >> expected  ⇒  priced
+//      for perfection.
+//   2. Future P/E: project EPS forward at your growth, apply an exit multiple
+//      band (bear/base/bull), and see the CAGR — decomposed into how much comes
+//      from earnings vs re-rating. Kills the "great company, terrible entry"
+//      trap.
+// Fully client-side; auto-fill pulls live price + market cap like the others.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Two-stage DCF present value for a given high-growth rate g.
+function twoStageDcfValue(fcf0: number, g: number, r: number, gt: number, years: number): number {
+  if (r <= gt) return Infinity; // terminal formula degenerate
+  let pv = 0;
+  let fcf = fcf0;
+  for (let t = 1; t <= years; t++) {
+    fcf = fcf * (1 + g);
+    pv += fcf / Math.pow(1 + r, t);
+  }
+  // terminal value at end of year N, then discounted back
+  const terminalFcf = fcf * (1 + gt);
+  const terminalValue = terminalFcf / (r - gt);
+  pv += terminalValue / Math.pow(1 + r, years);
+  return pv;
+}
+
+// Solve for the implied high-growth rate that makes DCF value == target mcap.
+function solveImpliedGrowth(targetMcap: number, fcf0: number, r: number, gt: number, years: number): number | null {
+  if (fcf0 <= 0 || targetMcap <= 0) return null;
+  let lo = -0.5;  // -50%
+  let hi = 1.5;   // +150%
+  // Value is monotonic increasing in g; make sure target is bracketed.
+  const vLo = twoStageDcfValue(fcf0, lo, r, gt, years);
+  const vHi = twoStageDcfValue(fcf0, hi, r, gt, years);
+  if (targetMcap < vLo) return lo; // even -50% overshoots — market pricing < that
+  if (targetMcap > vHi) return hi; // needs > 150% — off the chart
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    const v = twoStageDcfValue(fcf0, mid, r, gt, years);
+    if (v > targetMcap) hi = mid; else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+function ReverseDcfCalculator() {
+  const [mode, setMode] = useState<'REVERSE' | 'FUTURE_PE' | 'RETURN_PATH'>('REVERSE');
+
+  // shared / reverse-dcf inputs
+  const [ticker, setTicker] = useState('');
+  const [market, setMarket] = useState<'india' | 'us'>('india');
+  const [notInUni, setNotInUni] = useState(false);
+  const [mcap, setMcap] = useState<number>(10000);     // ₹ Cr
+  const [fcf, setFcf] = useState<number>(400);         // ₹ Cr (current FCF or PAT proxy)
+  const [discount, setDiscount] = useState<number>(12);// %
+  const [terminal, setTerminal] = useState<number>(4); // %
+  const [years, setYears] = useState<number>(10);
+  const [expectedG, setExpectedG] = useState<number>(20); // % — what YOU expect
+
+  // future-p/e inputs
+  const [price, setPrice] = useState<number>(500);
+  const [eps, setEps] = useState<number>(20);
+  const [epsCagr, setEpsCagr] = useState<number>(20);
+  const [holdYears, setHoldYears] = useState<number>(5);
+  const [exitPeBase, setExitPeBase] = useState<number>(25);
+
+  const cur = market === 'us' ? '$' : '₹';
+
+  const impliedG = useMemo(
+    () => solveImpliedGrowth(mcap, fcf, discount / 100, terminal / 100, Math.max(1, Math.round(years))),
+    [mcap, fcf, discount, terminal, years],
+  );
+
+  // gap verdict
+  const gapVerdict = useMemo(() => {
+    if (impliedG === null) return null;
+    const impliedPct = impliedG * 100;
+    const gap = expectedG - impliedPct; // positive = you expect more than priced-in = cheap
+    let label: string, color: string, note: string;
+    if (impliedPct >= 1.45 * 100 - 5) { label = 'OFF THE CHART'; color = '#EF4444'; note = 'Market is pricing in >145% FCF CAGR — implausible; treat the model as saturated, not the stock as cheap.'; }
+    else if (gap >= 8) { label = 'CHEAP vs your view'; color = '#10B981'; note = `You expect ~${expectedG.toFixed(0)}% but the price only demands ~${impliedPct.toFixed(1)}%. If your growth is right, there's a valuation cushion.`; }
+    else if (gap >= -4) { label = 'FAIRLY PRICED'; color = '#F59E0B'; note = `The market is already discounting roughly what you expect (~${impliedPct.toFixed(1)}%). Returns will track earnings, not re-rating.`; }
+    else { label = 'PRICED FOR PERFECTION'; color = '#EF4444'; note = `Price demands ~${impliedPct.toFixed(1)}% FCF CAGR — more than your ~${expectedG.toFixed(0)}% expectation. Any stumble de-rates hard.`; }
+    return { impliedPct, gap, label, color, note };
+  }, [impliedG, expectedG]);
+
+  // future p/e result — three exit-multiple cases
+  const futureCases = useMemo(() => {
+    if (eps <= 0 || price <= 0 || holdYears <= 0) return null;
+    const futureEps = eps * Math.pow(1 + epsCagr / 100, holdYears);
+    const currentPe = price / eps;
+    const bands: { label: string; color: string; pe: number }[] = [
+      { label: 'BEAR', color: '#EF4444', pe: exitPeBase * 0.7 },
+      { label: 'BASE', color: '#F59E0B', pe: exitPeBase },
+      { label: 'BULL', color: '#10B981', pe: exitPeBase * 1.3 },
+    ];
+    return {
+      futureEps, currentPe,
+      cases: bands.map((b) => {
+        const futurePrice = futureEps * b.pe;
+        const totalRet = futurePrice / price - 1;
+        const cagr = Math.pow(futurePrice / price, 1 / holdYears) - 1;
+        // decomposition: earnings-driven vs multiple-driven
+        const earningsMult = futureEps / eps;         // from EPS growth
+        const reRating = b.pe / currentPe;            // from multiple change
+        return { ...b, futurePrice, totalRet, cagr, earningsMult, reRating };
+      }),
+    };
+  }, [eps, price, epsCagr, holdYears, exitPeBase]);
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: DIM, lineHeight: 1.6, marginBottom: 14 }}>
+        The other calculators ask <i>&ldquo;what could it be worth?&rdquo;</i> — this one asks{' '}
+        <b style={{ color: 'var(--mc-cyan)' }}>&ldquo;what is today&rsquo;s price already assuming?&rdquo;</b>{' '}
+        Reverse-DCF backs out the growth rate baked into the current market cap; Future-P/E projects earnings forward and shows how much of your return is real growth vs a multiple you&rsquo;re hoping for.
+      </div>
+
+      {/* mode toggle */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+        {([
+          { id: 'REVERSE', label: '🔎 Reverse-DCF (implied growth)' },
+          { id: 'FUTURE_PE', label: '📈 Future P/E (exit-multiple return)' },
+          { id: 'RETURN_PATH', label: '📅 10-Year Return Path → CAGR' },
+        ] as const).map((m) => (
+          <button key={m.id} onClick={() => setMode(m.id)} style={{
+            fontSize: 12, padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 800,
+            background: mode === m.id ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'transparent',
+            border: `1px solid ${mode === m.id ? 'var(--mc-cyan)' : BORDER}`,
+            color: mode === m.id ? 'var(--mc-cyan)' : DIM,
+          }}>{m.label}</button>
+        ))}
+      </div>
+
+      {mode === 'REVERSE' ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+              <span style={{ color: DIM, fontWeight: 700 }}>Ticker</span>
+              <input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="e.g. RUBICON"
+                style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 13, width: 150, fontWeight: 600 }} />
+            </label>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(['india', 'us'] as const).map((mk) => (
+                <button key={mk} onClick={() => setMarket(mk)} style={chipBtn(market === mk ? 'var(--mc-cyan)' : DIM)}>
+                  {mk === 'india' ? '🇮🇳 India' : '🇺🇸 US'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <AutoFillBtn ticker={ticker} market={market} onFill={(q) => {
+            if (q.currentMarketCapCr) setMcap(Math.round(q.currentMarketCapCr));
+            if (q.currentPrice) setPrice(q.currentPrice);
+          }} onNotInUniverse={setNotInUni} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginTop: 6 }}>
+            <NumberInput label="Current market cap" value={mcap} onChange={setMcap} suffix="Cr" highlight={notInUni} helper="Not in live feed — enter market cap from Screener.in" ticker={ticker} />
+            <NumberInput label="Current FCF (or PAT)" value={fcf} onChange={setFcf} suffix="Cr" />
+            <NumberInput label="Discount rate" value={discount} onChange={setDiscount} suffix="%" />
+            <NumberInput label="Terminal growth" value={terminal} onChange={setTerminal} suffix="%" />
+            <NumberInput label="High-growth years" value={years} onChange={setYears} suffix="yr" />
+            <NumberInput label="Growth YOU expect" value={expectedG} onChange={setExpectedG} suffix="%" />
+          </div>
+
+          {gapVerdict && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{
+                background: `color-mix(in srgb, ${gapVerdict.color} 9%, transparent)`,
+                border: `1px solid ${gapVerdict.color}55`, borderLeft: `4px solid ${gapVerdict.color}`,
+                borderRadius: 6, padding: '16px 18px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: DIM, letterSpacing: '1px' }}>MARKET-IMPLIED FCF CAGR (next {Math.round(years)}y)</div>
+                    <div style={{ fontSize: 34, fontWeight: 900, color: gapVerdict.color, fontVariantNumeric: 'tabular-nums' }}>
+                      {gapVerdict.impliedPct.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: gapVerdict.color, letterSpacing: '0.5px' }}>{gapVerdict.label}</div>
+                    <div style={{ fontSize: 12, color: DIM, marginTop: 3 }}>
+                      you expect <b style={{ color: TEXT }}>{expectedG.toFixed(0)}%</b> · gap{' '}
+                      <b style={{ color: gapVerdict.color }}>{gapVerdict.gap >= 0 ? '+' : ''}{gapVerdict.gap.toFixed(1)}pp</b>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 10, fontSize: 12.5, color: TEXT, lineHeight: 1.6 }}>{gapVerdict.note}</div>
+              </div>
+              <div style={{ marginTop: 10, fontSize: 11, color: DIM, lineHeight: 1.6, fontStyle: 'italic' }}>
+                Two-stage model: FCF grows at the implied rate for {Math.round(years)} years, then {terminal.toFixed(0)}% forever, discounted at {discount.toFixed(0)}%. FCF is the honest driver, but if you only have PAT, using it as a proxy is fine for a first read — just know rising capex makes real FCF lower, so the true implied growth is a touch higher than shown.
+              </div>
+            </div>
+          )}
+        </>
+      ) : mode === 'FUTURE_PE' ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+              <span style={{ color: DIM, fontWeight: 700 }}>Ticker</span>
+              <input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="e.g. RUBICON"
+                style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 13, width: 150, fontWeight: 600 }} />
+            </label>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(['india', 'us'] as const).map((mk) => (
+                <button key={mk} onClick={() => setMarket(mk)} style={chipBtn(market === mk ? 'var(--mc-cyan)' : DIM)}>
+                  {mk === 'india' ? '🇮🇳 India' : '🇺🇸 US'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <AutoFillBtn ticker={ticker} market={market} currentPrice={price} onFill={(q) => {
+            if (q.currentPrice) setPrice(q.currentPrice);
+          }} onNotInUniverse={setNotInUni} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginTop: 6 }}>
+            <NumberInput label="Current price" value={price} onChange={setPrice} suffix={cur} />
+            <NumberInput label="Current EPS (TTM)" value={eps} onChange={setEps} suffix={cur} />
+            <NumberInput label="EPS CAGR (your view)" value={epsCagr} onChange={setEpsCagr} suffix="%" />
+            <NumberInput label="Holding period" value={holdYears} onChange={setHoldYears} suffix="yr" />
+            <NumberInput label="Exit P/E (base)" value={exitPeBase} onChange={setExitPeBase} suffix="×" />
+          </div>
+
+          {futureCases && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{
+                background: 'color-mix(in srgb, var(--mc-cyan) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)',
+                borderRadius: 6, padding: '12px 14px', marginBottom: 12, fontSize: 13, color: TEXT, lineHeight: 1.6,
+              }}>
+                <b style={{ color: 'var(--mc-cyan)' }}>📊 Buying at {futureCases.currentPe.toFixed(1)}× today.</b>{' '}
+                EPS compounds to <b>{cur}{futureCases.futureEps.toFixed(1)}</b> in {holdYears}y at {epsCagr.toFixed(0)}%. The exit multiple you pay for on the way out decides the rest:
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                {futureCases.cases.map((c) => (
+                  <div key={c.label} style={{ background: CARD, border: `1px solid ${c.color}50`, borderLeft: `4px solid ${c.color}`, borderRadius: 6, padding: '14px 16px' }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: c.color, letterSpacing: '1px', marginBottom: 6 }}>{c.label} · {c.pe.toFixed(1)}× exit</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: TEXT, fontVariantNumeric: 'tabular-nums' }}>{cur}{c.futurePrice.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                    <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>target price in {holdYears}y</div>
+                    <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: DIM }}>Total return</span>
+                      <span style={{ color: c.color, fontWeight: 800 }}>{c.totalRet >= 0 ? '+' : ''}{(c.totalRet * 100).toFixed(0)}%</span>
+                    </div>
+                    <div style={{ marginTop: 4, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: DIM }}>CAGR</span>
+                      <span style={{ color: c.color, fontWeight: 800 }}>{c.cagr >= 0 ? '+' : ''}{(c.cagr * 100).toFixed(1)}%</span>
+                    </div>
+                    <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${c.color}30`, fontSize: 10, color: DIM, lineHeight: 1.5 }}>
+                      {c.earningsMult.toFixed(1)}× from earnings ·{' '}
+                      <span style={{ color: c.reRating >= 1 ? '#10B981' : '#EF4444' }}>{c.reRating >= 1 ? '+' : ''}{((c.reRating - 1) * 100).toFixed(0)}% re-rating</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, fontSize: 11, color: DIM, lineHeight: 1.6, fontStyle: 'italic' }}>
+                Bear/Bull exit multiples are the base ±30%. Watch the re-rating line: if a chunk of your bull-case CAGR comes from the multiple <i>expanding</i>, you&rsquo;re partly betting on sentiment, not the business. The durable returns are the ones the earnings column alone can carry.
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <ReturnPathTable />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0702 — 10-YEAR RETURN PATH → CAGR
+//
+// The lumpy truth of multibagger compounding: returns don't arrive smoothly.
+// A path with two monster years (+110%, +200%, +100%) and several flat/down
+// years still compounds to a large multiple — this table makes that visible
+// and computes the ONE number that matters, the overall CAGR, from whatever
+// yearly path you type. Seeded with an illustrative 2025→2034 path. Fully
+// editable; add/remove years; nothing here touches the other calculators.
+// ═══════════════════════════════════════════════════════════════════════════
+function ReturnPathTable() {
+  const START_YEAR = 2025;
+  const SEED = [0, 110, -20, 5, 5, 200, -10, 5, 10, 100];
+  const [rets, setRets] = useState<number[]>(SEED);
+  const [startCapital, setStartCapital] = useState<number>(100000);
+
+  // running value + cumulative multiple after each year
+  const rows = useMemo(() => {
+    let val = startCapital;
+    return rets.map((r, i) => {
+      const start = val;
+      val = val * (1 + r / 100);
+      return {
+        year: START_YEAR + i,
+        ret: r,
+        startVal: start,
+        endVal: val,
+        cumMultiple: val / startCapital,
+        cumReturnPct: (val / startCapital - 1) * 100,
+      };
+    });
+  }, [rets, startCapital]);
+
+  const n = rets.length;
+  const finalVal = rows.length ? rows[rows.length - 1].endVal : startCapital;
+  const finalMultiple = finalVal / startCapital;
+  const totalReturnPct = (finalMultiple - 1) * 100;
+  const cagr = n > 0 && finalMultiple > 0 ? (Math.pow(finalMultiple, 1 / n) - 1) * 100 : 0;
+  // how many years did the heavy lifting? share of total log-growth per year
+  const logTotal = finalMultiple > 0 ? Math.log(finalMultiple) : 0;
+  const contrib = rows.map((r) => (logTotal > 0 ? Math.log(1 + r.ret / 100) / logTotal * 100 : 0));
+
+  const setYear = (i: number, v: number) => setRets((prev) => prev.map((x, idx) => (idx === i ? v : x)));
+  const addYear = () => setRets((prev) => [...prev, 0]);
+  const removeYear = () => setRets((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
+  const reset = () => { setRets(SEED); setStartCapital(100000); };
+
+  const fmt = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
+  const retColor = (r: number) => (r > 0 ? '#10B981' : r < 0 ? '#EF4444' : DIM);
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: DIM, lineHeight: 1.6, marginBottom: 14 }}>
+        Type a return for each year and this computes the <b style={{ color: 'var(--mc-cyan)' }}>overall CAGR</b> the lumpy path actually delivers. Multibagger compounding is never smooth — a couple of explosive years carry a decade. The illustrative path below (2025→2034) ends at{' '}
+        <b style={{ color: '#10B981' }}>{finalMultiple.toFixed(2)}×</b> your capital ={' '}
+        <b style={{ color: '#10B981' }}>{cagr.toFixed(1)}% CAGR</b>.
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 14 }}>
+        <NumberInput label="Starting capital" value={startCapital} onChange={(v) => setStartCapital(Math.max(1, v))} suffix="₹" />
+        <button onClick={addYear} style={{ ...chipBtn('var(--mc-cyan)'), padding: '7px 12px' }}>+ Add year</button>
+        <button onClick={removeYear} style={{ ...chipBtn(DIM), padding: '7px 12px' }}>− Remove last</button>
+        <button onClick={reset} style={{ ...chipBtn('var(--mc-warn)'), padding: '7px 12px' }}>↺ Reset to example</button>
+      </div>
+
+      {/* headline result cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
+        {[
+          { label: `Overall CAGR (${n}y)`, val: `${cagr >= 0 ? '+' : ''}${cagr.toFixed(1)}%`, c: cagr >= 0 ? '#10B981' : '#EF4444' },
+          { label: 'Final multiple', val: `${finalMultiple.toFixed(2)}×`, c: '#F59E0B' },
+          { label: 'Total return', val: `${totalReturnPct >= 0 ? '+' : ''}${totalReturnPct.toFixed(0)}%`, c: totalReturnPct >= 0 ? '#10B981' : '#EF4444' },
+          { label: 'Ending value', val: fmt(finalVal), c: TEXT },
+        ].map((t) => (
+          <div key={t.label} style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: `4px solid ${t.c}`, borderRadius: 6, padding: '12px 14px' }}>
+            <div style={{ fontSize: 22, fontWeight: 900, color: t.c, fontVariantNumeric: 'tabular-nums' }}>{t.val}</div>
+            <div style={{ fontSize: 10.5, color: DIM, marginTop: 2 }}>{t.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* the path table */}
+      <div style={{ overflowX: 'auto', border: `1px solid ${BORDER}`, borderRadius: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 640 }}>
+          <thead>
+            <tr>
+              {['Year', 'Return %', 'Start value', 'End value', 'Cumulative', 'Cum. return', 'Share of gain'].map((h) => (
+                <th key={h} style={{ textAlign: h === 'Year' || h === 'Return %' ? 'left' : 'right', padding: '9px 12px', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase', color: DIM, borderBottom: `1px solid ${BORDER}`, background: 'var(--mc-bg-2)', fontFamily: 'ui-monospace, monospace' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.year} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${BORDER}` : 'none' }}>
+                <td style={{ padding: '8px 12px', fontWeight: 800, color: TEXT, fontFamily: 'ui-monospace, monospace' }}>Y{i + 1} · {r.year}</td>
+                <td style={{ padding: '8px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input type="number" value={r.ret} onChange={(e) => setYear(i, Number(e.target.value))}
+                      style={{ width: 74, background: 'var(--mc-bg-0)', color: retColor(r.ret), border: `1px solid ${BORDER}`, padding: '5px 8px', borderRadius: 4, fontSize: 13, fontWeight: 800, fontFamily: 'ui-monospace, monospace', textAlign: 'right' }} />
+                    <span style={{ fontSize: 11, color: DIM }}>%</span>
+                  </div>
+                </td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: DIM, fontVariantNumeric: 'tabular-nums' }}>{fmt(r.startVal)}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: TEXT, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmt(r.endVal)}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: '#F59E0B', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{r.cumMultiple.toFixed(2)}×</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: r.cumReturnPct >= 0 ? '#10B981' : '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{r.cumReturnPct >= 0 ? '+' : ''}{r.cumReturnPct.toFixed(0)}%</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: DIM, fontVariantNumeric: 'tabular-nums' }}>
+                  {contrib[i] > 0 ? `${contrib[i].toFixed(0)}%` : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{ background: 'var(--mc-bg-2)' }}>
+              <td style={{ padding: '10px 12px', fontWeight: 900, color: TEXT }}>TOTAL · {n}y</td>
+              <td style={{ padding: '10px 12px', fontWeight: 900, color: cagr >= 0 ? '#10B981' : '#EF4444', fontFamily: 'ui-monospace, monospace' }}>{cagr >= 0 ? '+' : ''}{cagr.toFixed(1)}% CAGR</td>
+              <td style={{ padding: '10px 12px', textAlign: 'right', color: DIM }}>{fmt(startCapital)}</td>
+              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 900, color: TEXT, fontVariantNumeric: 'tabular-nums' }}>{fmt(finalVal)}</td>
+              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 900, color: '#F59E0B' }}>{finalMultiple.toFixed(2)}×</td>
+              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 900, color: totalReturnPct >= 0 ? '#10B981' : '#EF4444' }}>{totalReturnPct >= 0 ? '+' : ''}{totalReturnPct.toFixed(0)}%</td>
+              <td style={{ padding: '10px 12px', textAlign: 'right', color: DIM }}>100%</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 12, fontSize: 11, color: DIM, lineHeight: 1.6, fontStyle: 'italic' }}>
+        CAGR = (final multiple)^(1/{n}) − 1 — the single smooth rate that reproduces the whole path. &ldquo;Share of gain&rdquo; is each year&rsquo;s slice of total log-growth: notice how two or three explosive years own most of the decade, while flat and down years barely dent the compounding. That is exactly why you hold the winners through the boring years — and why one big drawdown late in the path costs so much. Illustrative math, not a forecast.
+      </div>
+    </div>
+  );
+}
+
 export default function ValuationCalcPage() {
   const [tab, setTab] = useState<CalcKind>('PE');
   // PATCH 0636 — switch tab when EDIT is clicked on a saved valuation
@@ -2961,6 +3362,7 @@ export default function ValuationCalcPage() {
             { id: 'PE',         label: 'P/E Target',        emoji: '📈' },
             { id: 'PS',         label: 'P/S Target',        emoji: '💰' },
             { id: 'EV_EBITDA',  label: 'EV / EBITDA',       emoji: '🏭' },
+            { id: 'REVERSE_DCF', label: 'Reverse-DCF',      emoji: '🔎' },
             { id: 'MORE',       label: 'More Methods',      emoji: '🧬' },
             { id: 'ANALYTICS',  label: 'Analytics',         emoji: '📊' },
             { id: 'LEARN',      label: 'Learn',             emoji: '📚' },
@@ -2983,6 +3385,7 @@ export default function ValuationCalcPage() {
           {tab === 'PS' && <PSCalculator />}
           {tab === 'PE' && <PECalculator />}
           {tab === 'EV_EBITDA' && <EvEbitdaCalculator />}
+          {tab === 'REVERSE_DCF' && <ReverseDcfCalculator />}
           {tab === 'MORE' && <MoreMethodsTab />}
           {tab === 'ANALYTICS' && <ValuationAnalyticsPanel />}
           {tab === 'LEARN' && <LearnTab />}
