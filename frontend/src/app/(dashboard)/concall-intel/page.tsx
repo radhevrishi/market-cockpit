@@ -3868,7 +3868,7 @@ function TransformationScreenerTab() {
   const load = useCallback(async (d: number) => {
     setLoading(true); setErr(null);
     try {
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=28`, { cache: 'no-store' });
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80`, { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j: TransformScreenPayload = await r.json();
       setData(j);

@@ -13,7 +13,7 @@ import {
   type RoicWaccSpread, type MissingDimension,
 } from '@/lib/multibagger/framework-extensions';
 // PATCH 0272 — Conviction Beats overlay on Multibagger results.
-import { getConvictionTickers } from '@/lib/conviction-beats';
+import { getConvictionTickers, readConvictionBeats } from '@/lib/conviction-beats';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getDecision, setDecision, clearDecision, subscribeDecisions, readDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
 // zzz412 — Book Watch flag store (Stage-4 breakdown arming for held/bench names).
@@ -7567,6 +7567,85 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const [techUploadMsg, setTechUploadMsg] = React.useState<string>('');
   const [techLoading, setTechLoading] = React.useState<boolean>(false);
   const techFileRef = React.useRef<HTMLInputElement>(null);
+
+  // ADDITIVE (audit) — Cross-links so a technical breakout that is ALSO a
+  // fundamental conviction pick (🏆 bench) or an earnings/transformation
+  // inflection (🚀 radar) is obvious at a glance. Plus a market-breadth regime
+  // strip so setups are framed by risk-on/risk-off context. All best-effort:
+  // every fetch is in a try/catch, tolerates failure, and hides silently.
+  const [benchMap, setBenchMap] = React.useState<Record<string, { tier?: string; conviction_score?: number }>>({});
+  const [radarMap, setRadarMap] = React.useState<Map<string, { symbol: string; transformation_score?: number }>>(new Map());
+  const [techRegime, setTechRegime] = React.useState<{ composite: number; regime: string; regime_color?: string; regime_desc?: string; suggested_cash_pct?: number } | null>(null);
+  const [confluenceOnly, setConfluenceOnly] = React.useState<boolean>(false);
+  // Bench is client-side localStorage — read synchronously + refresh on focus/mount.
+  React.useEffect(() => {
+    const load = () => {
+      try {
+        const beats = readConvictionBeats();
+        const m: Record<string, { tier?: string; conviction_score?: number }> = {};
+        for (const [k, v] of Object.entries(beats || {})) {
+          const sym = String((v as any)?.ticker || k || '').toUpperCase().replace(/\.NS$|\.BO$/i, '').trim();
+          if (sym) m[sym] = { tier: (v as any)?.tier, conviction_score: (v as any)?.composite_score };
+        }
+        setBenchMap(m);
+      } catch {}
+    };
+    load();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', load);
+      return () => window.removeEventListener('focus', load);
+    }
+  }, []);
+  // Transformation radar (concall earnings-inflection screener) — India-centric API.
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/concall-intel/transformation-screener?days=60&limit=80', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const entries: any[] = Array.isArray(data?.entries) ? data.entries : [];
+        const m = new Map<string, { symbol: string; transformation_score?: number }>();
+        for (const e of entries) {
+          const sym = String(e?.symbol || '').toUpperCase().replace(/\.NS$|\.BO$/i, '').trim();
+          if (sym) m.set(sym, { symbol: sym, transformation_score: e?.transformation_score });
+        }
+        if (alive) setRadarMap(m);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+  // Market-breadth regime strip.
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (alive && data && typeof data.composite === 'number') setTechRegime(data);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+  // Per-row cross-link helpers + inline badge renderer, reused across every table.
+  const normSym = React.useCallback((s: any) => String(s || '').toUpperCase().replace(/\.NS$|\.BO$/i, '').trim(), []);
+  const onBench = React.useCallback((s: any) => !!benchMap[normSym(s)], [benchMap, normSym]);
+  const onRadar = React.useCallback((s: any) => radarMap.has(normSym(s)), [radarMap, normSym]);
+  const symBadges = React.useCallback((s: any) => {
+    const k = normSym(s);
+    const b = benchMap[k]; const r = radarMap.get(k);
+    if (!b && !r) return null;
+    return (
+      <>
+        {b && <span title={`On Conviction Bench${b.tier ? ' · ' + b.tier : ''}${typeof b.conviction_score === 'number' ? ' · score ' + b.conviction_score : ''}`}
+          style={{ marginLeft: 5, fontSize: 12, cursor: 'help' }}>🏆</span>}
+        {r && <span title={`On Transformation Radar${typeof r.transformation_score === 'number' ? ' · T-' + r.transformation_score : ''}`}
+          style={{ marginLeft: 3, fontSize: 12, cursor: 'help' }}>🚀</span>}
+      </>
+    );
+  }, [benchMap, radarMap, normSym]);
+
   // zzz149 — Fallback toggle removed entirely. Empty = empty, period.
   // Variables retained as constants so existing UI code referencing them still compiles.
   const techNoFallback = true;
@@ -8887,7 +8966,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const [sortField, setSortField] = React.useState<string>('totalScore');
   const [sortAsc, setSortAsc] = React.useState<boolean>(false);
   const sortedAll = React.useMemo(() => {
-    const arr = [...techRows];
+    let arr = [...techRows];
+    // ADDITIVE (audit) — optional confluence filter: only bench/radar-backed names.
+    if (confluenceOnly) arr = arr.filter(r => onBench(r.symbol) || onRadar(r.symbol));
     arr.sort((a: any, b: any) => {
       const va = a[sortField], vb = b[sortField];
       if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
@@ -8897,7 +8978,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       return 0;
     });
     return arr;
-  }, [techRows, sortField, sortAsc]);
+  }, [techRows, sortField, sortAsc, confluenceOnly, onBench, onRadar]);
   const handleSort = (field: string) => {
     if (sortField === field) setSortAsc(!sortAsc);
     else { setSortField(field); setSortAsc(field === 'symbol' || field === 'company'); }
@@ -9126,6 +9207,25 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       </div>
 
+      {/* ADDITIVE (audit) — Market-breadth REGIME STRIP. Technical breakouts work
+          best in risk-on regimes; this frames every setup below. Hides if breadth
+          API is unreachable. */}
+      {techRegime && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '9px 14px', borderRadius: 8, marginBottom: 14,
+          background: `color-mix(in srgb, ${techRegime.regime_color || '#22D3EE'} 12%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${techRegime.regime_color || '#22D3EE'} 45%, transparent)` }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: MUTED, letterSpacing: 0.6, textTransform: 'uppercase' }}>Market Regime</span>
+          <span style={{ fontSize: 15, fontWeight: 900, color: techRegime.regime_color || TXT }}>{techRegime.regime}</span>
+          <span style={{ fontSize: 12.5, color: TXT }}>Breadth composite <b style={{ color: techRegime.regime_color || TXT }}>{Math.round(techRegime.composite)}</b>/100</span>
+          {typeof techRegime.suggested_cash_pct === 'number' && (
+            <span style={{ fontSize: 12.5, color: MUTED }}>· suggested cash <b style={{ color: TXT }}>{Math.round(techRegime.suggested_cash_pct)}%</b></span>
+          )}
+          <span style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic', marginLeft: 'auto' }}>
+            {techRegime.composite >= 60 ? 'Risk-on — press breakouts.' : techRegime.composite >= 40 ? 'Neutral — be selective, tighten stops.' : 'Risk-off — technicals fail more; size down.'}
+          </span>
+        </div>
+      )}
+
       {/* zzz146 — INDEPENDENT FILE UPLOAD for Technicals tab (India / USA / mix) */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -9263,6 +9363,42 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       )}
 
+      {/* ADDITIVE (audit) — 🏆🚀 FUNDAMENTAL CONFLUENCE spotlight. Technical names
+          that ALSO sit on the Conviction Bench (🏆) or Transformation Radar (🚀) —
+          i.e. a chart breakout backed by an earnings/fundamental inflection. */}
+      {(() => {
+        const conf = techRows
+          .filter(r => onBench(r.symbol) || onRadar(r.symbol))
+          .map(r => ({ r, b: onBench(r.symbol), rad: onRadar(r.symbol) }))
+          .sort((a, z) => (Number(z.b) + Number(z.rad)) - (Number(a.b) + Number(a.rad)) || (z.r.totalScore || 0) - (a.r.totalScore || 0));
+        if (conf.length === 0) return null;
+        const both = conf.filter(c => c.b && c.rad).length;
+        return (
+          <div style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(139,92,246,0.06))', border: '1px solid rgba(16,185,129,0.45)', borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span style={{ fontSize: 16, fontWeight: 900, color: '#10B981' }}>🏆🚀 FUNDAMENTAL CONFLUENCE ({conf.length}{both > 0 ? ` · ${both} on both` : ''})</span>
+              <span style={{ fontSize: 12, color: MUTED }}>Technical setup + fundamental backing. 🏆 = Conviction Bench · 🚀 = Transformation Radar. These are the highest-quality breakouts. Click a chip for details.</span>
+              <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }}>
+                <input type="checkbox" checked={confluenceOnly} onChange={e => setConfluenceOnly(e.target.checked)} />
+                Filter master table to confluence only
+              </label>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {conf.slice(0, 60).map(c => (
+                <span key={c.r.symbol} onClick={() => setExpandedSymbol(c.r.symbol)}
+                  title={`Total ${c.r.totalScore} · Fund ${c.r.fundScore}${c.b && c.rad ? ' · bench + radar' : c.b ? ' · bench' : ' · radar'}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: PANEL2, border: `1px solid ${c.b && c.rad ? '#10B981' : LINE}`, padding: '6px 12px', borderRadius: 8, cursor: 'pointer' }}>
+                  <b style={{ color: TXT, fontSize: 13.5 }}>{c.r.symbol}</b>
+                  {c.b && <span style={{ fontSize: 12 }}>🏆</span>}
+                  {c.rad && <span style={{ fontSize: 12 }}>🚀</span>}
+                  <span style={{ color: MUTED, fontSize: 10.5 }}>{c.r.totalScore}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* zzz133/zzz208 — DATA QUALITY + ELIGIBILITY summary chips (cleaned) */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 16 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -9314,7 +9450,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                   <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
                   <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
                   <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
@@ -9388,7 +9524,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
             {buyZone.map(r => (
               <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
                   <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
                 </div>
@@ -9535,7 +9671,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
               const tierColor = p._tier === 'ELITE' ? '#10B981' : p._tier === 'STRONG' ? '#22D3EE' : p._tier === 'MOMENTUM' ? '#FBBF24' : '#84CC16';
               return (
                 <span key={p.symbol} onClick={() => setExpandedSymbol(p.symbol)} style={{ display: 'inline-block', marginRight: 8, padding: '2px 6px', background: 'rgba(255,255,255,0.04)', borderRadius: 4, borderLeft: `2px solid ${tierColor}`, cursor: 'pointer' }}>
-                  <b style={{ color: CYAN }}>{p.symbol}</b> <span style={{ color: tierColor, fontSize: 10 }}>{p._tier[0]}</span> <span style={{ color: MUTED, fontSize: 10 }}>{p.totalScore}/{p.fundScore}</span>
+                  <b style={{ color: CYAN }}>{p.symbol}</b>{symBadges(p.symbol)} <span style={{ color: tierColor, fontSize: 10 }}>{p._tier[0]}</span> <span style={{ color: MUTED, fontSize: 10 }}>{p.totalScore}/{p.fundScore}</span>
                 </span>
               );
             })}
@@ -9789,6 +9925,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                     <td style={{ padding: '6px 8px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>
                       <span style={{ color: r.eligible ? '#10B981' : '#EF4444', marginRight: 5 }} title={r.eligible ? 'Eligible' : r.eligibilityFailures.join(' · ')}>{r.eligible ? '✓' : '✗'}</span>
                       {r.symbol}
+                      {symBadges(r.symbol)}
                       {r.qualityFlags && r.qualityFlags.length > 0 ? <span title={r.qualityFlags.join(' · ')} style={{ color: '#EF4444', marginLeft: 4 }}>⚠</span> : null}
                       {(() => { const m = STAGE_META[classifyStage(r)]; return <span title={m.title} style={{ marginLeft: 5, fontSize: 9.5, fontWeight: 800, padding: '1px 5px', borderRadius: 5, color: m.color, background: m.bg, fontFamily: 'system-ui, sans-serif' }}>{m.label}</span>; })()}
                     </td>

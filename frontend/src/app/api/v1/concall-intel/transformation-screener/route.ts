@@ -100,7 +100,7 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
 
 export async function GET(req: NextRequest) {
   const days = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 60));
-  const limit = Math.min(40, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 24));
+  const limit = Math.min(120, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 60));
   const minPatterns = Math.max(0, Number(req.nextUrl.searchParams.get('minPatterns')) || 1);
   try {
     return await handle(req, days, limit, minPatterns);
@@ -124,13 +124,23 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const data = await r.json();
   const filings: any[] = Array.isArray(data.filings) ? data.filings : [];
 
-  // Prioritise: high-bullish first, then most recent. These are the ones the
-  // live-feed most likely already PDF-parsed (so cache hits), and the ones
-  // most worth reading. Only filings with an attachment can be text-analyzed.
+  // zzz444 — a real transcript / investor-presentation is where the signal
+  // lives; a "management change / AGM / record date" notice is pure noise that
+  // wastes the scan budget and pollutes the leaderboard. Detect both so we (a)
+  // spend the scan budget on transcripts FIRST and (b) keep obvious notices out
+  // of the ranked list.
+  const isTranscript = (f: any) => /transcript|earnings call|con\s?call|conference call|investor (?:presentation|meet|update)|analyst (?:meet|call)|results? (?:presentation|call)|q[1-4]\s?fy/i.test(`${f.subject || ''} ${(f.attachment_urls?.[0] || '')}`);
+  const isNoiseNotice = (f: any) => /management change|change in (?:management|director|kmp)|record date|book closure|board meeting|annual general meeting|\bAGM\b|postal ballot|voting result|scrutinizer|newspaper (?:publication|advertisement|clipping)|loss of (?:share|certificate)|duplicate (?:share|certificate)|sub[- ]division|stock split|dividend distribution|trading window|compliance certificate|reg\.?\s?74|reconciliation of share/i.test(f.subject || '');
+
+  // Prioritise: real transcripts first, then high-bullish, then most recent.
+  // Only filings with an attachment can be text-analyzed.
   const TIER_RANK: Record<string, number> = { ULTRA_BULLISH: 0, BULLISH: 1, MIXED_POSITIVE: 2, NEUTRAL: 3, MIXED_NEGATIVE: 4, BEARISH: 5 };
   const withPdf = filings
     .filter((f) => Array.isArray(f.attachment_urls) && f.attachment_urls.length > 0)
     .sort((a, b) => {
+      // transcripts up top so the scan budget covers the meaningful filings
+      const ta = isTranscript(a) ? 0 : 1, tb = isTranscript(b) ? 0 : 1;
+      if (ta !== tb) return ta - tb;
       const t = (TIER_RANK[a.bullish?.tier] ?? 9) - (TIER_RANK[b.bullish?.tier] ?? 9);
       if (t !== 0) return t;
       return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
@@ -140,10 +150,14 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   let cacheHits = 0;
   const entries: TransformScreenEntry[] = [];
 
-  // Bounded concurrency (6 at a time) so we stay under maxDuration even when
-  // some PDFs miss cache and must be fetched fresh.
-  const CONC = 6;
+  // Bounded concurrency (8 at a time). A soft time budget stops fresh PDF
+  // fetches before maxDuration so a big cold scan degrades gracefully (cached
+  // + already-scanned rows still return) instead of timing out.
+  const START = Date.now();
+  const TIME_BUDGET_MS = 48_000;
+  const CONC = 8;
   for (let i = 0; i < withPdf.length; i += CONC) {
+    if (Date.now() - START > TIME_BUDGET_MS) break;   // out of time — return what we have
     const batch = withPdf.slice(i, i + CONC);
     const results = await Promise.all(batch.map(async (f) => {
       let text = '';
@@ -184,15 +198,17 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
     entries.push(...results);
   }
 
-  // Keep the ones with real transformation signal, best first.
+  // Keep the ones with real transformation signal, best first. Obvious
+  // non-earnings notices (management change / AGM / record date …) are kept OUT
+  // of the ranking even if their notice text happens to hit a keyword.
   const ranked = entries
-    .filter((e) => e.pattern_count >= minPatterns)
+    .filter((e) => e.pattern_count >= minPatterns && !isNoiseNotice(e))
     .sort((a, b) => b.transformation_score - a.transformation_score);
 
-  // zzz434 — the rest were scanned but produced no signal. Surface a light
-  // record so the UI can show "we looked, nothing yet" in quiet periods.
+  // zzz434 — the rest were scanned but produced no signal (or were notices).
+  // Surface a light record so the UI can show "we looked, nothing yet".
   const scannedNoSignal: ScannedNoSignal[] = entries
-    .filter((e) => e.pattern_count < minPatterns)
+    .filter((e) => e.pattern_count < minPatterns || isNoiseNotice(e))
     .sort((a, b) => new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime())
     .slice(0, 20)
     .map((e) => ({

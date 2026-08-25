@@ -3282,8 +3282,26 @@ Source label: ${coverageStats.source}`}
             </span>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}
-            title="Graded = filings that have actually been published AND parsed. Calendar = SCHEDULED filings (some may not have filed yet, some filed too recently for our parser to pick up). Mismatch is expected near filing day.">
-            {view.candidates_total} graded · {view.raw_items_total} earnings articles found
+            title="A company can only be GRADED once it has actually FILED its results and our parser has read them. Companies that have only ANNOUNCED a board meeting for this date (results not filed yet) can't be graded — they show in the '📅 SCHEDULED TODAY' block below and move into a grade tier the moment their results are filed. So 'filed & graded' + 'results pending' = the full cohort for the day. A mismatch near filing day is expected, not a bug.">
+            {(() => {
+              // Durable, date-agnostic cohort line. The day's TRUE total =
+              // filed-&-graded + still-pending (board-meeting announced but not
+              // yet filed/parsed). Pending is computed from the SAME source the
+              // "SCHEDULED TODAY" block uses (calData hub minus graded tickers)
+              // so the two counts can never disagree.
+              const filed = view.candidates_total || 0;
+              const gset = new Set<string>(
+                TIER_ORDER.flatMap((t) => (view.by_tier?.[t] || []).map((s: any) => String(s.ticker || '').toUpperCase()))
+              );
+              const dayKey = (view.filing_date || filterDate) as string;
+              const sched = (dayKey && calData?.by_date?.[dayKey]) ? calData.by_date[dayKey] : [];
+              const pending = sched.filter((it: any) => !gset.has(String(it.symbol || '').toUpperCase())).length;
+              const total = filed + pending;
+              if (pending > 0) {
+                return `${total} ${total === 1 ? 'company' : 'companies'} today · ${filed} filed & graded · ${pending} results pending ↓`;
+              }
+              return `${filed} filed & graded · ${view.raw_items_total} scanned`;
+            })()}
           </span>
           {/* PATCH 0909 — Upstream hub-fail banner. When the graded API
               fell back to live-NSE only (or stale KV), let the user know
@@ -3787,12 +3805,22 @@ Source label: ${coverageStats.source}`}
             }
           };
           return (
-            <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '4px solid var(--mc-text-3)', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 12, padding: '14px 18px' }}>
+              {/* Cohort reconciliation banner: makes the day's TRUE total
+                  unmistakable so a "1 graded" header never looks like a bug.
+                  filed = graded tiers count; pending = this block. */}
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 8, letterSpacing: '0.2px' }}>
+                {(() => {
+                  const filed = view.candidates_total || 0;
+                  const total = filed + pending.length;
+                  return `📊 ${total} ${total === 1 ? 'company' : 'companies'} on the calendar for ${filterDate} — ${filed} filed & graded below · ${pending.length} results still pending (shown here).`;
+                })()}
+              </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-text-3)' }}>📅 SCHEDULED TODAY</span>
-                <span style={{ fontSize: 12, color: 'var(--mc-text-3)', fontWeight: 700 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
+                <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
                 <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
-                  · board meeting scheduled but financials not yet filed/parsed
+                  · board meeting announced — financials not filed/parsed YET (nothing dropped)
                 </span>
                 <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
                   <button
