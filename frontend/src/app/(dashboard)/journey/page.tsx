@@ -629,7 +629,7 @@ function StatTile({ label, value, sub, color }: {
 // ════════════════════════════════════════════════════════════════════════════
 const JOURNEY_PATH: { y: number; r: number }[] = [
   { y: 2025, r: 0 },   { y: 2026, r: 110 }, { y: 2027, r: -20 }, { y: 2028, r: 5 },
-  { y: 2029, r: 200 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 20 },
+  { y: 2029, r: 200 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 35 },
   { y: 2033, r: 5 },   { y: 2034, r: 120 }, { y: 2035, r: 15 },
 ];
 
@@ -640,6 +640,19 @@ const JOURNEY_START_CR = 0.43;
 // Fresh capital I plan to add mid-journey, in ₹ cr, applied at the END of the
 // named year (after that year's return). Extend this map to model more top-ups.
 const JOURNEY_CONTRIB: Record<number, number> = { 2028: 0.20 };
+
+// zzz439 — my rulebook. The behaviour that turns the path above into reality —
+// kept on-screen so the plan and the discipline live together.
+const JOURNEY_RULES: { icon: string; rule: string; detail: string }[] = [
+  { icon: '🎯', rule: 'Earnings, earnings, earnings', detail: 'Price follows profit. Owning the strongest earnings is the only durable engine of return — everything else is noise.' },
+  { icon: '🌊', rule: 'Ride the great theme', detail: 'The best earnings inside the strongest theme is where multibaggers are born. Theme and earnings, together — not one alone.' },
+  { icon: '📈', rule: 'Buy winners at the right level', detail: 'Enter great-earnings names only at real support or a rising moving average. A great company at a bad entry is still a bad trade.' },
+  { icon: '✂️', rule: 'Sell extended, add on weakness', detail: 'Trim into vertical, over-extended strength; add to conviction on the pullback to support. Chase nothing.' },
+  { icon: '🛑', rule: 'Hard 8% stop — no exceptions', detail: 'Never let a single loss run past 8%. The first stop is the cheapest one you will ever take.' },
+  { icon: '📉', rule: 'Respect the 50-day EMA', detail: 'A decisive close below the 50-day EMA is the trend pausing. Trim or exit — do not argue with the chart.' },
+  { icon: '⚖️', rule: 'Sell losers fast, hold winners long', detail: 'Be quick to cut losers, slow to sell winners. Cutting the flowers to water the weeds is how accounts die.' },
+  { icon: '🧘', rule: 'Not greedy, not fearful', detail: 'Act on the plan, not the emotion of the tape. Discipline is the edge that survives every regime.' },
+];
 
 // Lakh-aware money formatter — sub-₹1cr values read as "₹72 L" not "₹0.72 cr".
 function fmtMoney(cr: number): string {
@@ -768,6 +781,25 @@ function ReturnJourneyTarget() {
               <strong style={{ color: C.cyan }}>On the {fmtMoney(JOURNEY_CONTRIB[2028] || 0)} top-up:</strong> adding capital after the 2027 drawdown grows the pot, but it isn&rsquo;t <em>return</em> — so the headline is the <strong style={{ color: C.green }}>{(irr * 100).toFixed(1)}% IRR</strong> (money-weighted, counts when each rupee went in), not the raw {valueMultiple.toFixed(1)}× on capital. Adding into weakness and letting it ride is exactly the behaviour this path rewards.
             </>
           )}
+        </div>
+      </div>
+
+      {/* the rulebook */}
+      <div style={{ marginTop: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.saffron, letterSpacing: 0.4, marginBottom: 10 }}>📜 MY RULES &middot; the behaviour that earns the path</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10 }}>
+          {JOURNEY_RULES.map((r, i) => (
+            <div key={i} style={{ display: 'flex', gap: 10, background: C.bg, border: '1px solid ' + C.border, borderLeft: '3px solid ' + C.saffron, borderRadius: 6, padding: '11px 13px' }}>
+              <div style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{r.icon}</div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.text, marginBottom: 3 }}>{r.rule}</div>
+                <div style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.5 }}>{r.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: C.dim, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
+          Read these before every trade. The path above is the reward; these are the price of admission. Educational discipline — not investment advice.
         </div>
       </div>
     </div>
