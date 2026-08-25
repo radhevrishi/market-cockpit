@@ -5189,8 +5189,36 @@ interface InboxSignal {
 
 type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
 
+// zzz445 — QUALITY PULLBACKS. Great-earnings names (the institutional quality
+// preset) that are now DOWN the most from their 52-week high — i.e. the rule
+// "buy great earnings picks on the pullback." Everything is read from the
+// Conviction Bench, which already carries every preset field + the 52w-high
+// distance, so this is a pure client-side derivation, no new fetch.
+interface InboxPullback {
+  symbol: string; company: string; tier: string;
+  correction: number;               // % below its 52-week high (positive number)
+  basis: '52w high' | 'since filing';
+  sales?: number | null; pat?: number | null; pead?: number | null; mcap?: number | null;
+}
+// The preset the user runs on Conviction Beats. Core gates are hard; the
+// secondary gates (OPM Δ / CFO-PAT / pledge) only exclude when the datum
+// exists, so missing enrichment doesn't wipe the list.
+function passesQualityPreset(b: any): boolean {
+  if (!(b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG')) return false;      // Verdict: STRONG BUY / BUY
+  if (!(typeof b.sales_yoy_pct === 'number' && b.sales_yoy_pct >= 20)) return false;
+  if (!(typeof b.eps_yoy_pct === 'number' && b.eps_yoy_pct >= 25)) return false;
+  if (!(typeof b.pead_score === 'number' && b.pead_score >= 60)) return false;
+  if (!(typeof b.market_cap_cr === 'number' && b.market_cap_cr >= 3000)) return false;
+  if (typeof b.opm_pct === 'number' && typeof b.opm_prev_pct === 'number' && (b.opm_pct - b.opm_prev_pct) < 0) return false; // OPM Δ ≥ 0
+  const cfo = typeof b.cfo_to_pat_ratio === 'number' ? b.cfo_to_pat_ratio : (Array.isArray(b.annual_cfo_pat) && b.annual_cfo_pat.length ? b.annual_cfo_pat[b.annual_cfo_pat.length - 1] : null);
+  if (typeof cfo === 'number' && cfo < 0.5) return false;                    // CFO/PAT ≥ 0.5
+  if (typeof b.pledged_pct === 'number' && b.pledged_pct > 0) return false;  // Pledge 0%
+  return true;
+}
+
 function DailySignalInbox() {
   const [signals, setSignals] = useState<InboxSignal[]>([]);
+  const [pullbacks, setPullbacks] = useState<InboxPullback[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -5299,6 +5327,27 @@ function DailySignalInbox() {
       }
     } catch { /* localStorage unavailable */ }
 
+    // ── QUALITY PULLBACKS — preset winners now on sale (biggest correction) ──
+    try {
+      const pb: InboxPullback[] = getConvictionList()
+        .filter(passesQualityPreset)
+        .map((b: any) => {
+          const has52 = typeof b.dist_52w_pct_yahoo === 'number';
+          // dist_52w_pct_yahoo is (close-52wHigh)/52wHigh*100 → negative below high
+          const correction = has52 ? -b.dist_52w_pct_yahoo
+            : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
+          return {
+            symbol: b.ticker, company: b.company || '', tier: b.tier,
+            correction, basis: (has52 ? '52w high' : 'since filing') as InboxPullback['basis'],
+            sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr,
+          };
+        })
+        .filter((p) => Number.isFinite(p.correction) && p.correction >= 5)   // meaningful pullback only
+        .sort((a, b) => b.correction - a.correction)
+        .slice(0, 10);
+      setPullbacks(pb);
+    } catch { setPullbacks([]); }
+
     setLaneStatus(status);
     setSignals(out);
     setLoading(false);
@@ -5321,7 +5370,7 @@ function DailySignalInbox() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, fontWeight: 900, color: '#60A5FA', letterSpacing: '0.5px' }}>⭐ DAILY SIGNAL INBOX</span>
-          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${total} signal${total === 1 ? '' : 's'} across ${activeLaneCount} live lane${activeLaneCount === 1 ? '' : 's'}`}</span>
+          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${pullbacks.length ? `${pullbacks.length} quality pullback${pullbacks.length === 1 ? '' : 's'} · ` : ''}${total} signal${total === 1 ? '' : 's'} across ${activeLaneCount} lane${activeLaneCount === 1 ? '' : 's'}`}</span>
           {!loading && (
             <span style={{ fontSize: 9.5, color: DIM }}>
               {(['momentum', 'warrant', 'transform', 'bench'] as const).map((k) => (
@@ -5336,49 +5385,100 @@ function DailySignalInbox() {
         </div>
       </div>
 
-      {!collapsed && !loading && total === 0 && (
+      {!collapsed && !loading && total === 0 && pullbacks.length === 0 && (
         <div style={{ fontSize: 11.5, color: DIM, marginTop: 10, lineHeight: 1.6 }}>
-          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar, and your bench. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link> / <Link href="/conviction-beats" style={{ color: '#F59E0B' }}>Conviction Beats</Link>.
+          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar, your bench, and quality pullbacks. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link> / <Link href="/conviction-beats" style={{ color: '#F59E0B' }}>Conviction Beats</Link>.
         </div>
       )}
 
-      {!collapsed && total > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginTop: 12 }}>
-          {lanes.map((lane) => {
-            const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
-            const meta = LANE_META[lane];
-            return (
-              <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderRadius: 10, padding: '10px 12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
-                  <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{laneSignals.length}</span>
-                </div>
-                {laneSignals.length === 0 ? (
-                  <div style={{ fontSize: 10.5, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                    {laneSignals.slice(0, 6).map((s, i) => (
-                      <Link key={`${s.symbol}-${i}`} href={s.href} style={{ textDecoration: 'none', display: 'block', padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${meta.c}22`}`, opacity: s.soft ? 0.82 : 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
-                          <span style={{ fontSize: 9.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
-                          {s.soft && <span style={{ fontSize: 8, color: DIM, marginLeft: 'auto', flexShrink: 0 }}>watch</span>}
-                        </div>
-                        <div style={{ fontSize: 10.5, fontWeight: 700, color: meta.c, marginTop: 1 }}>{s.headline}</div>
-                        <div style={{ fontSize: 9.5, color: DIM, marginTop: 1, lineHeight: 1.4 }}>{s.detail}</div>
-                      </Link>
-                    ))}
-                  </div>
-                )}
+      {!collapsed && (total > 0 || pullbacks.length > 0) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12, alignItems: 'flex-start' }}>
+
+          {/* ── LEFT · the hero: Quality Pullbacks (great earnings on sale) ── */}
+          <div style={{ flex: '2 1 360px', minWidth: 0, background: 'linear-gradient(135deg, rgba(239,68,68,0.07), rgba(245,158,11,0.03) 60%, transparent)', border: '1px solid rgba(245,158,11,0.28)', borderRadius: 12, padding: '13px 15px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>💎 QUALITY PULLBACKS</span>
+              <span style={{ fontSize: 9.5, color: DIM }}>{pullbacks.length ? `${pullbacks.length} on sale` : ''}</span>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginTop: 3, lineHeight: 1.5 }}>
+              Preset winners — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — ranked by how far they&rsquo;ve fallen from their 52-week high. Buy great earnings on the dip.
+            </div>
+            {pullbacks.length === 0 ? (
+              <div style={{ fontSize: 10.5, color: DIM, marginTop: 12, lineHeight: 1.55 }}>
+                No preset winner is in a meaningful pullback right now — your quality names are near their highs, or the bench needs enriching (52-week distance comes from the enrich pass). This lights up the moment a great-earnings name sells off. <Link href="/conviction-beats" style={{ color: '#F59E0B' }}>Open the bench →</Link>
               </div>
-            );
-          })}
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 11 }}>
+                {pullbacks.map((p, i) => {
+                  const col = p.correction >= 20 ? '#EF4444' : p.correction >= 12 ? '#F59E0B' : '#FBBF24';
+                  const depth = Math.max(3, Math.min(100, p.correction * 2));
+                  return (
+                    <Link key={p.symbol} href="/conviction-beats" style={{ textDecoration: 'none', display: 'block', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 9, padding: '8px 11px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                        <span style={{ fontSize: 11, fontWeight: 900, color: DIM, fontFamily: 'ui-monospace, monospace', width: 20, flexShrink: 0 }}>{i + 1}</span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{ fontSize: 13.5, fontWeight: 900, color: TEXT }}>{p.symbol}</span>
+                            <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: p.tier === 'BLOCKBUSTER' ? 'rgba(245,158,11,0.18)' : 'rgba(16,185,129,0.18)', color: p.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981' }}>{p.tier === 'BLOCKBUSTER' ? 'BB' : 'STRONG'}</span>
+                            <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <div style={{ fontSize: 16, fontWeight: 900, color: col, fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>−{p.correction.toFixed(0)}%</div>
+                          <div style={{ fontSize: 8, color: DIM }}>off {p.basis}</div>
+                        </div>
+                      </div>
+                      <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2, marginTop: 7, overflow: 'hidden' }}>
+                        <div style={{ width: `${depth}%`, height: '100%', background: col }} />
+                      </div>
+                      <div style={{ fontSize: 9, color: DIM, marginTop: 5, fontFamily: 'ui-monospace, monospace' }}>
+                        {p.sales != null && `sales +${Math.round(p.sales)}%`}{p.pat != null && ` · PAT ${p.pat >= 0 ? '+' : ''}${Math.round(p.pat)}%`}{p.pead != null && ` · PEAD ${Math.round(p.pead)}`}{p.mcap != null && ` · ₹${Math.round(p.mcap).toLocaleString('en-IN')} Cr`}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── RIGHT · the live signal lanes, stacked ── */}
+          <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {lanes.map((lane) => {
+              const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
+              const meta = LANE_META[lane];
+              return (
+                <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
+                    <span style={{ fontSize: 9.5, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{laneSignals.length}</span>
+                  </div>
+                  {laneSignals.length === 0 ? (
+                    <div style={{ fontSize: 10, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {laneSignals.slice(0, 5).map((s, i) => (
+                        <Link key={`${s.symbol}-${i}`} href={s.href} style={{ textDecoration: 'none', display: 'block', padding: '5px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${meta.c}22`}`, opacity: s.soft ? 0.82 : 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
+                            <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
+                            {s.soft && <span style={{ fontSize: 7.5, color: DIM, marginLeft: 'auto', flexShrink: 0 }}>watch</span>}
+                          </div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: meta.c, marginTop: 1 }}>{s.headline}</div>
+                          <div style={{ fontSize: 9, color: DIM, marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {!collapsed && total > 0 && (
+      {!collapsed && (total > 0 || pullbacks.length > 0) && (
         <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
-          Aggregated from concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar, and your Conviction Bench{generatedAt ? ` · radar generated ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. Items marked <b>watch</b> are the best available when no hard event fired (sub-gate warrant, non-sweet-spot transformation, or an older bench name). Deterministic feed reads, not recommendations.
+          💎 Pullbacks are your quality-preset winners ranked by drop from the 52-week high (buy-the-dip). Lanes aggregate concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar, and your Conviction Bench{generatedAt ? ` · radar ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. <b>watch</b> = best available when no hard event fired. Deterministic reads, not recommendations.
         </div>
       )}
     </div>
