@@ -5204,56 +5204,63 @@ function DailySignalInbox() {
       try { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
       catch { return null; }
     };
-    const [movers, warrant, transform] = await Promise.all([
+    const [movers, warrant, transform, quotes] = await Promise.all([
       j('/api/v1/concall-intel/movers'),
-      j('/api/v1/concall-intel/warrant-feed?days=30'),           // zzz435 — no passingOnly; we fall back to top setups
+      j('/api/v1/concall-intel/warrant-feed?days=90'),           // zzz442 — wider window so setups actually surface
       j('/api/v1/concall-intel/transformation-screener?days=60&limit=24'),
+      j('/api/market/quotes?market=india&limit=40'),             // zzz442 — always-on price leaders for Momentum
     ]);
 
-    // ── Lane 1 — MOMENTUM (movers) ────────────────────────────────────────
+    // ── Lane 1 — MOMENTUM (concall score-movers + today's price leaders) ──
+    const momoSeen = new Set<string>();
     if (movers && !movers.error) {
       status.momentum = true;
-      const seen = new Set<string>();
-      (movers.new_entries || []).slice(0, 4).forEach((m: any) => { seen.add(m.symbol); out.push({
+      (movers.new_entries || []).slice(0, 3).forEach((m: any) => { momoSeen.add(m.symbol); out.push({
         lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
         headline: 'New to concall top-30', detail: `${(m.tier || '').replace('_', ' ')} · rank #${m.rank_today}`,
-        score: (m.composite_today || 0) + 100, href: '/concall-intel',
+        score: (m.composite_today || 0) + 1000, href: '/concall-intel',
       }); });
-      (movers.big_jumps || []).slice(0, 4).forEach((m: any) => { if (seen.has(m.symbol)) return; seen.add(m.symbol); out.push({
+      (movers.big_jumps || []).slice(0, 3).forEach((m: any) => { if (momoSeen.has(m.symbol)) return; momoSeen.add(m.symbol); out.push({
         lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
-        headline: `Score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
-        score: (m.delta || 0) + 50, href: '/concall-intel',
+        headline: `Concall score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
+        score: (m.delta || 0) + 500, href: '/concall-intel',
       }); });
-      // FALLBACK — quiet day: fill from today's top-ranked concall names so the lane always shows the leaders.
-      if (out.filter((s) => s.lane === 'MOMENTUM').length < 4) {
-        (movers.ranking_today || []).forEach((m: any) => {
-          if (seen.has(m.symbol) || out.filter((s) => s.lane === 'MOMENTUM').length >= 6) return;
-          seen.add(m.symbol);
-          out.push({ lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
-            headline: `Top concall · #${m.rank_today}`, detail: `${(m.tier || '').replace('_', ' ')} · score ${(m.composite_today ?? 0).toFixed(0)}`,
-            score: (m.composite_today || 0), href: '/concall-intel', soft: true });
+    }
+    // Price leaders — reliable every trading day. Meaningful moves (≥3%) on
+    // non-penny names only (price ≥ ₹50 filters out illiquid circuit-hitters).
+    if (quotes && Array.isArray(quotes.gainers)) {
+      const leaders = quotes.gainers.filter((g: any) => (g.changePercent || 0) >= 3 && (g.price || 0) >= 50);
+      if (leaders.length) {
+        status.momentum = true;
+        leaders.slice(0, 6).forEach((g: any) => {
+          if (momoSeen.has(g.ticker)) return; momoSeen.add(g.ticker);
+          out.push({ lane: 'MOMENTUM', symbol: g.ticker, company: g.company || '',
+            headline: `Price +${(g.changePercent || 0).toFixed(1)}% today`,
+            detail: `${g.sector || '—'} · ₹${(g.price || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })}`,
+            score: (g.changePercent || 0), href: '/screener' });
         });
       }
     }
 
-    // ── Lane 2 — WARRANT (qualified setups, else best watch) ──────────────
+    // ── Lane 2 — WARRANT (qualified setups, else best non-distress watch) ──
     if (warrant && !warrant.error) {
       status.warrant = true;
       const all = (warrant.ranked_all && warrant.ranked_all.length ? warrant.ranked_all : warrant.filings) || [];
+      const isDistress = (f: any) => /distress/i.test(f?.conviction?.tier || '') || (f?.conviction?.distress_probability ?? 0) >= 0.5;
       const passing = all.filter((f: any) => f?.conviction?.passes_gate);
-      const rest = all.filter((f: any) => !f?.conviction?.passes_gate);
+      // Only surface real watch-list quality — never a distress-tier name as a "signal".
+      const watch = all.filter((f: any) => !f?.conviction?.passes_gate && !isDistress(f) && (f?.conviction?.conviction ?? 0) >= 3);
       passing.slice(0, 5).forEach((f: any) => out.push({
         lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
         headline: `Warrant qualified · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
         detail: f.conviction?.tier ? `${f.conviction.tier} · ${String(f.subject || '').slice(0, 40)}` : String(f.subject || '').slice(0, 50),
         score: (f.conviction?.conviction || 0) + 100, href: '/concall-intel',
       }));
-      // FALLBACK — none passed the strict gate: show the best watch-list setups.
       if (passing.length === 0) {
-        rest.slice(0, 5).forEach((f: any) => out.push({
+        watch.slice(0, 5).forEach((f: any) => out.push({
           lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
           headline: `Warrant watch · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
-          detail: f.conviction?.tier ? `${f.conviction.tier} · below strict gate` : String(f.subject || '').slice(0, 50),
+          detail: `${f.conviction?.tier || 'watch'} · building, below strict gate`,
           score: (f.conviction?.conviction || 0), href: '/concall-intel', soft: true }));
       }
     }
@@ -5370,7 +5377,7 @@ function DailySignalInbox() {
 
       {!collapsed && total > 0 && (
         <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
-          Aggregated from Movers, Warrant, Transformation Radar, and your Conviction Bench{generatedAt ? ` · radar generated ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. Items marked <b>watch</b> are the best available when no hard event fired (top-ranked mover, sub-gate warrant, non-sweet-spot transformation, or an older bench name). Deterministic feed reads, not recommendations.
+          Aggregated from concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar, and your Conviction Bench{generatedAt ? ` · radar generated ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. Items marked <b>watch</b> are the best available when no hard event fired (sub-gate warrant, non-sweet-spot transformation, or an older bench name). Deterministic feed reads, not recommendations.
         </div>
       )}
     </div>
