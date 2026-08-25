@@ -616,13 +616,16 @@ function StatTile({ label, value, sub, color }: {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// zzz435 — THE 10-YEAR JOURNEY (motivational lumpy-path target)
+// zzz436 — THE 10-YEAR JOURNEY (motivational lumpy-path target)
 //
 // A deliberately UN-smooth return path — the way a real multibagger decade
 // actually feels. A couple of monster years carry everything; most years are
 // flat, small, or red. The point is emotional: it shows the shape you're
 // signing up for so you HOLD through the boring/bear years instead of
-// overtrading and missing the +200% print. Scales with the seed selector above.
+// overtrading and missing the +200% print. Models my real plan: ₹43 L seed in
+// 2025 plus a ₹20 L top-up at the end of 2028. Because fresh capital is added
+// mid-way, the honest annualised number is the money-weighted return (IRR),
+// not a naive value multiple.
 // ════════════════════════════════════════════════════════════════════════════
 const JOURNEY_PATH: { y: number; r: number }[] = [
   { y: 2025, r: 0 },   { y: 2026, r: 110 }, { y: 2027, r: -20 }, { y: 2028, r: 5 },
@@ -633,6 +636,10 @@ const JOURNEY_PATH: { y: number; r: number }[] = [
 // Personal starting capital — ₹43 lakhs (my actual 2025 seed), fixed here so
 // the journey always tells MY story regardless of the wealth-targets seed picker.
 const JOURNEY_START_CR = 0.43;
+
+// Fresh capital I plan to add mid-journey, in ₹ cr, applied at the END of the
+// named year (after that year's return). Extend this map to model more top-ups.
+const JOURNEY_CONTRIB: Record<number, number> = { 2028: 0.20 };
 
 // Lakh-aware money formatter — sub-₹1cr values read as "₹72 L" not "₹0.72 cr".
 function fmtMoney(cr: number): string {
@@ -645,26 +652,36 @@ function fmtMoney(cr: number): string {
 
 function ReturnJourneyTarget() {
   const startCr = JOURNEY_START_CR;
-  const rows = useMemo(() => {
-    let mult = 1;
-    return JOURNEY_PATH.map((p) => {
-      const startMult = mult;
-      mult = mult * (1 + p.r / 100);
-      return { ...p, startMult, endMult: mult, value: startCr * mult };
+  const { rows, endValue, totalInvested, irr, flows } = useMemo(() => {
+    let value = startCr;
+    const cfs: { t: number; cf: number }[] = [{ t: 0, cf: -startCr }];  // seed at t=0
+    let invested = startCr;
+    const rws = JOURNEY_PATH.map((p, i) => {
+      const startVal = value;
+      value = value * (1 + p.r / 100);
+      const contrib = JOURNEY_CONTRIB[p.y] || 0;
+      if (contrib) { value += contrib; invested += contrib; cfs.push({ t: i + 1, cf: -contrib }); }
+      return { ...p, startVal, value, contrib };
     });
+    const endVal = value;
+    cfs.push({ t: rws.length, cf: endVal });   // realise at end
+    // IRR via bisection on NPV(cash flows)
+    const npv = (r: number) => cfs.reduce((s, f) => s + f.cf / Math.pow(1 + r, f.t), 0);
+    let lo = -0.9, hi = 3;
+    for (let k = 0; k < 200; k++) { const m = (lo + hi) / 2; if (npv(m) > 0) lo = m; else hi = m; }
+    return { rows: rws, endValue: endVal, totalInvested: invested, irr: (lo + hi) / 2, flows: cfs };
   }, [startCr]);
 
   const n = rows.length;
-  const finalMult = rows[n - 1].endMult;
-  const cagr = (Math.pow(finalMult, 1 / n) - 1) * 100;
-  const endValue = startCr * finalMult;
-  const totalRet = (finalMult - 1) * 100;
+  const valueMultiple = totalInvested > 0 ? endValue / totalInvested : 0;  // ×on invested capital
+  const gainCr = endValue - totalInvested;
   const maxAbs = Math.max(...JOURNEY_PATH.map((p) => Math.abs(p.r)), 1);
-  const logTotal = Math.log(finalMult);
+  const hasContrib = flows.length > 2;
 
-  // the years that did the heavy lifting (share of total log-growth)
-  const heavy = rows
-    .map((r) => ({ y: r.y, r: r.r, share: logTotal > 0 ? Math.log(1 + r.r / 100) / logTotal * 100 : 0 }))
+  // the years that did the heavy lifting (share of pure return compounding)
+  const logReturns = JOURNEY_PATH.reduce((s, p) => s + Math.log(1 + p.r / 100), 0);
+  const heavy = JOURNEY_PATH
+    .map((p) => ({ y: p.y, r: p.r, share: logReturns > 0 ? Math.log(1 + p.r / 100) / logReturns * 100 : 0 }))
     .filter((x) => x.r > 0)
     .sort((a, b) => b.share - a.share);
   const topThreeShare = heavy.slice(0, 3).reduce((a, b) => a + b.share, 0);
@@ -678,17 +695,17 @@ function ReturnJourneyTarget() {
         <div style={{ fontSize: 14, fontWeight: 800, color: C.saffron, letterSpacing: 0.3 }}>🚀 THE 10-YEAR JOURNEY &middot; the shape of a multibagger decade</div>
         <div style={{ fontSize: 10, color: C.dim, ...MONO }}>illustrative path · not a forecast</div>
       </div>
-      <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55, marginBottom: 16, maxWidth: 760 }}>
-        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole decade; the rest are flat, tiny, or red. Starting from my actual <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025, live the path and it becomes <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.
+      <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55, marginBottom: 16, maxWidth: 780 }}>
+        This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole decade; the rest are flat, tiny, or red. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>{fmtMoney(JOURNEY_CONTRIB[2028] || 0)}</strong> at the end of 2028 — <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital in total — and living the path turns it into <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.
       </div>
 
       {/* hero tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
         {[
-          { label: 'CUMULATIVE CAGR', val: `${cagr.toFixed(1)}%`, c: C.green },
-          { label: 'FINAL MULTIPLE', val: `${finalMult.toFixed(1)}×`, c: C.saffron },
-          { label: 'TOTAL RETURN', val: `+${totalRet.toFixed(0)}%`, c: C.cyan },
-          { label: `${fmtMoney(startCr)} BECOMES`, val: fmtMoney(endValue), c: C.text },
+          { label: 'MONEY-WEIGHTED CAGR (IRR)', val: `${(irr * 100).toFixed(1)}%`, c: C.green },
+          { label: `${fmtMoney(totalInvested)} INVESTED BECOMES`, val: fmtMoney(endValue), c: C.text },
+          { label: 'GAIN (× ON CAPITAL)', val: `${valueMultiple.toFixed(1)}×`, c: C.saffron },
+          { label: 'NET GAIN', val: `+${fmtMoney(gainCr)}`, c: C.cyan },
         ].map((t) => (
           <div key={t.label} style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '10px 12px' }}>
             <div style={{ fontSize: 22, fontWeight: 900, color: t.c, ...MONO }}>{t.val}</div>
@@ -708,7 +725,11 @@ function ReturnJourneyTarget() {
             return (
               <div key={r.y} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 {/* value on top */}
-                <div style={{ fontSize: 9.5, color: C.dim, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtMoney(r.value)}</div>
+                <div style={{ fontSize: 9.5, color: r.contrib ? C.cyan : C.dim, fontWeight: r.contrib ? 800 : 400, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtMoney(r.value)}</div>
+                {/* injection badge */}
+                <div style={{ height: 14, marginBottom: 2 }}>
+                  {r.contrib > 0 && <span style={{ fontSize: 8, fontWeight: 800, color: C.cyan, background: 'color-mix(in srgb, var(--mc-cyan) 15%, transparent)', border: '1px solid ' + C.cyan + '66', borderRadius: 3, padding: '1px 4px', whiteSpace: 'nowrap' }}>+{fmtMoney(r.contrib)} in</span>}
+                </div>
                 {/* positive zone */}
                 <div style={{ height: barMax, width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                   {up && (
@@ -727,7 +748,6 @@ function ReturnJourneyTarget() {
                 <div style={{ marginTop: 4, textAlign: 'center' }}>
                   <div style={{ fontSize: 11, fontWeight: 900, color: retCol(r.r), ...MONO }}>{r.r > 0 ? '+' : ''}{r.r}%</div>
                   <div style={{ fontSize: 9, color: C.muted, ...MONO }}>{r.y}</div>
-                  <div style={{ fontSize: 9, color: C.dim, ...MONO }}>{r.endMult.toFixed(1)}×</div>
                 </div>
               </div>
             );
@@ -742,6 +762,12 @@ function ReturnJourneyTarget() {
           Just <strong style={{ color: C.green }}>3 years</strong> ({heavy.slice(0, 3).map((h) => `${h.y} +${JOURNEY_PATH.find((p) => p.y === h.y)?.r}%`).join(', ')}) did <strong style={{ color: C.green }}>{topThreeShare.toFixed(0)}%</strong> of the work. The other seven were flat, tiny, or red — and in <em>those</em> years the winning move was to <strong style={{ color: C.text }}>do nothing</strong>. The money is made in the holding, not the trading.
           <br /><br />
           <strong style={{ color: C.amber }}>The rule:</strong> in a flat or bear market, take <strong style={{ color: C.text }}>fewer</strong> trades, not more. Overtrade the boring years — chase, churn, get shaken out — and you won't be holding when the <strong style={{ color: C.green }}>+200%</strong> year prints. Patience through the red is the entire edge.
+          {hasContrib && (
+            <>
+              <br /><br />
+              <strong style={{ color: C.cyan }}>On the {fmtMoney(JOURNEY_CONTRIB[2028] || 0)} top-up:</strong> adding capital after the 2027 drawdown grows the pot, but it isn&rsquo;t <em>return</em> — so the headline is the <strong style={{ color: C.green }}>{(irr * 100).toFixed(1)}% IRR</strong> (money-weighted, counts when each rupee went in), not the raw {valueMultiple.toFixed(1)}× on capital. Adding into weakness and letting it ride is exactly the behaviour this path rewards.
+            </>
+          )}
         </div>
       </div>
     </div>
