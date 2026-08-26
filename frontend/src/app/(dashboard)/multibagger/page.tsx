@@ -7580,6 +7580,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // ADDITIVE (audit R3) — Buyable-only toggle + sector/group table filter.
   const [buyableOnly, setBuyableOnly] = React.useState<boolean>(false);
   const [groupFilter, setGroupFilter] = React.useState<string>('');
+  // ADDITIVE (earnings-risk guard) — hide names reporting within 7 days from
+  // the buy-side buckets (pros never buy a breakout into a binary earnings gap).
+  const [hideEarningsRisk, setHideEarningsRisk] = React.useState<boolean>(false);
   // ADDITIVE (audit R3) — EXTENDED vs BUYABLE classification. Qullamaggie/Minervini
   // buy AT the pivot (within ~5% of the 21-EMA), never chasing 10%+ extended.
   // Prefers the real 21-EMA distance; falls back to the SMA50/EMA50 rightEntry
@@ -7597,6 +7600,16 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     if (r?.rightEntry === 'EXTENDED') return { label: '⏳ Extended', buyable: false, color: '#FBBF24', title: r.rightEntryDetail || 'Extended — wait for pullback' };
     if (r?.rightEntry === 'CHASE') return { label: '🚫 Chasing', buyable: false, color: '#EF4444', title: r.rightEntryDetail || 'Chasing — high risk' };
     return null;
+  }, []);
+  // ADDITIVE (earnings-risk guard) — classify how close a name is to reporting.
+  // Returns null when there is no earnings date (many India / some USA rows) so
+  // those never get a badge and are never filtered out.
+  const earningsRisk = React.useCallback((r: any): { days: number; level: 'critical'|'high'|'watch'; color: string; label: string } | null => {
+    const d = r?.daysToEarnings;
+    if (typeof d !== 'number' || d < 0 || d > 14) return null;
+    if (d <= 3)  return { days: d, level: 'critical', color: '#EF4444', label: `⚠️ ERN ${d}d` };
+    if (d <= 7)  return { days: d, level: 'high',     color: '#F59E0B', label: `⚠️ ERN ${d}d` };
+    return { days: d, level: 'watch', color: '#FBBF24', label: `🗓 ERN ${d}d` };
   }, []);
   // Auto-sync freshness status (drives the hands-free banner). Best-effort.
   const [techSyncStatus, setTechSyncStatus] = React.useState<Awaited<ReturnType<typeof getTradingviewSyncStatus>> | null>(null);
@@ -9161,6 +9174,44 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // never buried among the bullish buckets.
   const stage4Rows = React.useMemo(() => techRows.filter(r => classifyStage(r) === 4), [techRows]);
 
+  // ADDITIVE (✂️ trim / take-profit watch) — the missing EXIT side for names you
+  // likely HOLD. Surfaces parabolic extension, climactic RSI, and heavy-volume
+  // breaks of the 50-DMA (distribution). Distinct from Stage 4 (names you'd never
+  // own) — this is position management on winners. Purely derived from TechRow.
+  const trimWatch = React.useMemo(() => {
+    const out: Array<{ symbol: string; company?: string; price?: number; sector?: string; over50?: number; rsi?: number; perf1m?: number; kind: 'parabolic'|'climax'|'distribution'; color: string; action: string; sev: number }> = [];
+    for (const r of techRows) {
+      const perf1m = typeof r.perf1m === 'number' ? r.perf1m : undefined;
+      const perf3m = typeof r.perf3m === 'number' ? r.perf3m : undefined;
+      // Only names that were in a real uptrend (avoid junk).
+      const inUptrend = (typeof perf1m === 'number' && perf1m > 0) || (typeof perf3m === 'number' && perf3m > 0) || r.eligible === true;
+      if (!inUptrend) continue;
+      const over50 = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : (typeof r.pctVsEma50 === 'number' ? r.pctVsEma50 : undefined);
+      const rsi = typeof r.rsi === 'number' ? r.rsi : undefined;
+      const relVol1w = typeof r.relVol1w === 'number' ? r.relVol1w : undefined;
+      let hit: { kind: 'parabolic'|'climax'|'distribution'; sev: number; color: string; action: string } | null = null;
+      const consider = (c: { kind: 'parabolic'|'climax'|'distribution'; sev: number; color: string; action: string }) => { if (!hit || c.sev > hit.sev) hit = c; };
+      // DISTRIBUTION (reduce/exit) — highest priority via +100 sev offset.
+      if (typeof over50 === 'number' && over50 < 0 && typeof relVol1w === 'number' && relVol1w >= 1.5 && typeof perf3m === 'number' && perf3m > 0) {
+        consider({ kind: 'distribution', sev: 100 + Math.abs(over50), color: '#EF4444', action: `Broke 50-DMA on ${relVol1w.toFixed(1)}× volume — distribution, reduce` });
+      }
+      // PARABOLIC (trim into strength).
+      if (typeof over50 === 'number' && over50 >= 25) {
+        consider({ kind: 'parabolic', sev: over50, color: '#F59E0B', action: `Parabolic +${over50.toFixed(0)}% over 50-DMA — trim into strength, trail a stop` });
+      }
+      // CLIMACTIC RSI.
+      if (typeof rsi === 'number' && rsi >= 85) {
+        consider({ kind: 'climax', sev: rsi, color: '#F59E0B', action: `RSI ${rsi.toFixed(0)} — climactic, tighten stop / take partial` });
+      }
+      if (hit) {
+        const h = hit as { kind: 'parabolic'|'climax'|'distribution'; sev: number; color: string; action: string };
+        out.push({ symbol: r.symbol, company: r.company, price: r.price, sector: r.sector, over50, rsi, perf1m, kind: h.kind, color: h.color, action: h.action, sev: h.sev });
+      }
+    }
+    out.sort((a, b) => b.sev - a.sev);
+    return out.slice(0, 12);
+  }, [techRows]);
+
   // zzz412 — Arm a Book Watch flag for HELD / BENCHED names that have rolled
   // into Stage 4. Only conviction-bench tickers or explicit BUY decisions are
   // armed (not the whole universe) to keep the alert feed noise-free.
@@ -9252,6 +9303,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
               </div>
               <div style={{ fontSize: 11, color: entryColor(r.rightEntry), fontWeight: 800, marginTop: 4 }}>
                 🎯 {r.rightEntry} · {r.rightEntryDetail}
+                {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', marginLeft: 6 }}>{er.label}</span> : null; })()}
               </div>
               {typeof r.stopLoss === 'number' ? (
                 <div style={{ fontSize: 10.5, color: '#F59E0B', marginTop: 3, fontWeight: 700 }}>
@@ -9469,6 +9521,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           ['#sec-momentum', '🚀 Momentum'],
           ['#sec-industry', '🏭 Industry RS'],
           ['#sec-playbooks', '📚 Playbooks'],
+          ['#sec-trim', '✂️ Trim'],
           ['#sec-watch', '🔥💰 Watch'],
           ['#sec-all', '🏁 All Tickers'],
         ] as [string, string][]).map(([href, label]) => (
@@ -9605,6 +9658,11 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
             <input type="checkbox" checked={buyableOnly} onChange={e => setBuyableOnly(e.target.checked)} />
             🎯 Buyable only <span style={{ color: MUTED }}>(hide extended)</span>
           </label>
+          {/* ADDITIVE (earnings-risk guard) — drop names reporting within 7 days. */}
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }}>
+            <input type="checkbox" checked={hideEarningsRisk} onChange={e => setHideEarningsRisk(e.target.checked)} />
+            🛡 Hide reporting ≤7d <span style={{ color: MUTED }}>(event risk)</span>
+          </label>
           <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic', flexBasis: '100%' }}>Eligible + BUY ZONE or EXTENDED (never CHASE) + tech ≥ 45 + fund ≥ 40 + positive 1M + no falling knife. 🎯 Buyable = within ~5% of 21-EMA pivot; ⏳/🚫 = extended, wait for pullback.</div>
         </div>
         {champions.length === 0 ? (
@@ -9613,7 +9671,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
-            {champions.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).map(r => (
+            {champions.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).filter(r => { const er = earningsRisk(r); return !hideEarningsRisk || !er || er.days > 7; }).map(r => (
               <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative' }}>
                 <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
                   <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
@@ -9622,6 +9680,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                   <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
                   {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 11, fontWeight: 800, color: bq.color, background: `color-mix(in srgb, ${bq.color} 15%, transparent)`, padding: '2px 7px', borderRadius: 5 }}>{bq.label}</span> : null; })()}
+                  {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', marginLeft: 6 }}>{er.label}</span> : null; })()}
                   <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
                   <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
                   <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
@@ -9695,12 +9754,13 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their SMA50.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
-            {buyZone.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).map(r => (
+            {buyZone.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).filter(r => { const er = earningsRisk(r); return !hideEarningsRisk || !er || er.days > 7; }).map(r => (
               <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
                   {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 10, fontWeight: 800, color: bq.color }}>{bq.label}</span> : null; })()}
+                  {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', marginLeft: 6 }}>{er.label}</span> : null; })()}
                   <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
                 </div>
                 <div style={{ fontSize: 11.5, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
@@ -9958,7 +10018,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                   <td style={{ padding: '7px 10px', textAlign: 'right', color: typeof r.adrPct === 'number' && r.adrPct >= 4 && r.adrPct <= 7 ? '#10B981' : TXT }}>{typeof r.adrPct === 'number' ? `${r.adrPct.toFixed(1)}%` : '—'}</td>
                   <td style={{ padding: '7px 10px', textAlign: 'right', color: r.volumeBurst === true ? '#10B981' : TXT, fontWeight: r.volumeBurst === true ? 700 : 400 }}>{typeof r.relVol1w === 'number' ? `${r.relVol1w.toFixed(1)}×` : '—'}</td>
                   <td style={{ padding: '7px 10px', textAlign: 'right', color: TXT }}>{typeof r.pctVsSma50 === 'number' ? fmtPct(r.pctVsSma50) : fmtPct(r.pctVsEma50)}</td>
-                  <td style={{ padding: '7px 10px', color: entryColor(r.rightEntry), fontWeight: 800, fontSize: 11 }}>{r.rightEntry}</td>
+                  <td style={{ padding: '7px 10px', color: entryColor(r.rightEntry), fontWeight: 800, fontSize: 11 }}>{r.rightEntry}{(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', marginLeft: 6, whiteSpace: 'nowrap' }}>{er.label}</span> : null; })()}</td>
                   <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 900, color: scoreColor(r.qullaScore) }}>{r.qullaScore}</td>
                 </tr>
               ))}
@@ -10130,6 +10190,38 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div id="sec-trim" style={{ scrollMarginTop: 80 }} />
+      {/* ADDITIVE (✂️ trim / take-profit watch) — the sell side of the book.
+          Names you likely HOLD that are showing exhaustion. Sits with the other
+          exit-side tooling, just above Stage 4. */}
+      <div style={{ ...cardStyle, background: 'rgba(245,158,11,0.05)', borderColor: 'rgba(245,158,11,0.35)' }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: '#F59E0B', marginBottom: 6 }}>✂️ TRIM / TAKE-PROFIT WATCH ({trimWatch.length})</div>
+        <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>
+          Names you likely HOLD that are showing exhaustion — parabolic extension, climactic RSI, or a heavy-volume break of the 50-DMA. Manage the position; this is the sell side of the book.
+        </div>
+        {trimWatch.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No held-style names showing exhaustion right now — let winners run.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+            {trimWatch.map(item => (
+              <div key={item.symbol} onClick={() => setExpandedSymbol(item.symbol)} style={{ background: PANEL2, border: `1px solid color-mix(in srgb, ${item.color} 30%, transparent)`, borderLeft: `4px solid ${item.color}`, borderRadius: 6, padding: 10, cursor: 'pointer' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{item.symbol}</span>
+                  <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(item.price)}</span>
+                  <span style={{ marginLeft: 'auto', color: item.color, fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase' }}>{item.kind}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: item.color, marginTop: 5, fontWeight: 700, lineHeight: 1.5 }}>{item.action}</div>
+                <div style={{ fontSize: 11, color: MUTED, marginTop: 5, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span>%50DMA {typeof item.over50 === 'number' ? fmtPct(item.over50) : '—'}</span>
+                  <span>RSI {typeof item.rsi === 'number' ? item.rsi.toFixed(0) : '—'}</span>
+                  <span>1M {typeof item.perf1m === 'number' ? fmtPct(item.perf1m) : '—'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* zzz412 — STAGE 4 / BREAKDOWN bucket — the single most important EXIT

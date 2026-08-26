@@ -5185,9 +5185,38 @@ interface InboxSignal {
   score: number;        // for sorting within lane
   href: string;
   soft?: boolean;       // zzz435 — a "watch"/fallback item, not a fired event
+  hColor?: string;      // zzz452 — headline colour override (e.g. transform stance)
+  note?: string;        // zzz452 — hover tooltip with the full plain-English read
 }
 
 type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
+
+// ── zzz452 — turn the transformation-radar jargon ("11 vectors · stage 4/10 ·
+// Customer qualification") into an actionable, plain-English read. This lane is
+// a BUY-SIDE radar: it surfaces companies at an EARLY INFLECTION — it never
+// emits a sell. Conviction is graded by how far up the evidence ladder (1–11)
+// the story has actually climbed: talk (1-2) → committed (3-4) → real
+// milestones (5-7) → showing in the numbers (8+). We say the stance, what is
+// actually changing (the pattern labels, not "vectors"), the proof reached so
+// far, and how broadly it's confirmed (industry / company / financials).
+function readTransform(e: any): { headline: string; detail: string; hColor: string; soft: boolean; note: string } {
+  const ev = Number(e.evidence_score) || 0;
+  const tc = Number(e.triple?.count) || 0;
+  const sweet = !!e.stage_sweet_spot;
+  const pats = (e.patterns || []).filter((p: any) => (p.hits || 0) > 0).sort((a: any, b: any) => (b.hits || 0) - (a.hits || 0));
+  const patTop = pats.slice(0, 2).map((p: any) => p.label).join(' + ') || 'transformation signals';
+  const patAll = pats.map((p: any) => p.label).join(', ') || '—';
+  const proof = (e.evidence_label && !/no transformation/i.test(e.evidence_label)) ? e.evidence_label : 'early narrative only';
+  let headline: string, hColor: string, soft: boolean, read: string;
+  if (ev >= 8)      { headline = '🟢 Accumulate · showing in the numbers'; hColor = '#10B981'; soft = false; read = 'accumulate — the inflection is already hitting revenue/margins/cash'; }
+  else if (ev >= 5) { headline = '🟢 Accumulate · real milestones hit';    hColor = '#10B981'; soft = false; read = 'accumulate on strength or pullbacks — the story is proving out with hard milestones'; }
+  else if (ev >= 3) { headline = '🟡 Starter · committed, unproven';       hColor = '#F59E0B'; soft = true;  read = 'starter position only — capex/partnership is committed but not yet earning it'; }
+  else              { headline = '👀 Watch · story only, no proof yet';    hColor = '#94A3B8'; soft = true;  read = 'watchlist — a narrative without evidence yet; wait for the first real milestone'; }
+  const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
+  const detail = `${patTop} · proof: ${proof}`;
+  const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11): ${proof}. Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}.`;
+  return { headline, detail, hColor, soft, note };
+}
 
 // zzz445 — QUALITY PULLBACKS. Great-earnings names (the institutional quality
 // preset) that are now DOWN the most from their 52-week high — i.e. the rule
@@ -5333,12 +5362,18 @@ function DailySignalInbox() {
       if (!transform || transform.error) return;
       const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
-      const sweet = entries.filter((e: any) => e.stage_sweet_spot);
-      (sweet.length ? sweet : entries).slice(0, 6).forEach((e: any) => rows.push({
-        lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
-        headline: `${e.velocity} transformation · T-${e.transformation_score}`,
-        detail: `${e.pattern_count} vectors · stage ${e.stage}/10 · ${e.evidence_label}`,
-        score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: sweet.length === 0 }));
+      // zzz452 — sort by evidence-ladder rung first (most proven at top), then
+      // composite score, so the actionable "accumulate" names lead the lane and
+      // the "watch, story-only" names fall to the bottom.
+      const ordered = [...entries].sort((a: any, b: any) =>
+        ((b.evidence_score || 0) - (a.evidence_score || 0)) || ((b.transformation_score || 0) - (a.transformation_score || 0)));
+      ordered.slice(0, 6).forEach((e: any) => {
+        const t = readTransform(e);
+        rows.push({
+          lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
+          headline: t.headline, detail: t.detail, hColor: t.hColor, note: t.note,
+          score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: t.soft });
+      });
       setGeneratedAt(transform.generated_at || null);
       mergeLane('TRANSFORM', rows, 'transform');
       setLaneStatus((prev) => ({ ...prev, transform: true }));
@@ -5451,13 +5486,13 @@ function DailySignalInbox() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                       {laneSignals.slice(0, 5).map((s, i) => (
-                        <Link key={`${s.symbol}-${i}`} href={s.href} style={{ textDecoration: 'none', display: 'block', padding: '5px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${meta.c}22`}`, opacity: s.soft ? 0.82 : 1 }}>
+                        <Link key={`${s.symbol}-${i}`} href={s.href} title={s.note || undefined} style={{ textDecoration: 'none', display: 'block', padding: '5px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${(s.hColor || meta.c)}22`}`, opacity: s.soft ? 0.82 : 1 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                             <span style={{ fontSize: 12, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
                             <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
                             {s.soft && <span style={{ fontSize: 7.5, color: DIM, marginLeft: 'auto', flexShrink: 0 }}>watch</span>}
                           </div>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: meta.c, marginTop: 1 }}>{s.headline}</div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: s.hColor || meta.c, marginTop: 1 }}>{s.headline}</div>
                           <div style={{ fontSize: 9, color: DIM, marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>
                         </Link>
                       ))}
