@@ -4112,6 +4112,9 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     ema200: n(row['Exponential moving average, 200, 1 day'] ?? row['EMA 200']),
     // zzz138 — EMA 21 is Qullamaggie's EXACT entry rule (not SMA50 proxy).
     ema21: n(row['Exponential moving average, 21, 1 day'] ?? row['EMA 21']),
+    // multi-pivot — EMA 89 (deeper trend pullback pivot). Optional; degrades to
+    // "unavailable" until the user adds this column to their TradingView export.
+    ema89: n(row['Exponential moving average, 89, 1 day'] ?? row['EMA 89']),
     // zzz130 — New technical fields user added to TradingView export for the
     // Technicals tab (Qulla/Zanger/Bonde/Minervini). All optional; the tab
     // gracefully falls back if any are missing.
@@ -7583,6 +7586,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // ADDITIVE (earnings-risk guard) — hide names reporting within 7 days from
   // the buy-side buckets (pros never buy a breakout into a binary earnings gap).
   const [hideEarningsRisk, setHideEarningsRisk] = React.useState<boolean>(false);
+  // MULTI-PIVOT — Prime Setups MA filter: ALL | 21-EMA | 50-DMA | 89-EMA | 200-DMA
+  const [pivotFilter, setPivotFilter] = React.useState<string>('ALL');
   // ADDITIVE (audit R3) — EXTENDED vs BUYABLE classification. Qullamaggie/Minervini
   // buy AT the pivot (within ~5% of the 21-EMA), never chasing 10%+ extended.
   // Prefers the real 21-EMA distance; falls back to the SMA50/EMA50 rightEntry
@@ -7610,6 +7615,24 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     if (d <= 3)  return { days: d, level: 'critical', color: '#EF4444', label: `⚠️ ERN ${d}d` };
     if (d <= 7)  return { days: d, level: 'high',     color: '#F59E0B', label: `⚠️ ERN ${d}d` };
     return { days: d, level: 'watch', color: '#FBBF24', label: `🗓 ERN ${d}d` };
+  }, []);
+  // MULTI-PIVOT — which MA is the price actually resting on (the buyable pivot).
+  // 21-EMA (tightest) · 50-DMA (standard) · 89-EMA (deeper) · 200-DMA (deep reclaim).
+  // Adaptive bands widen for deeper MAs and scale with ADR. Returns null if none.
+  const nearestPivot = React.useCallback((r: any): { ma: string; dist: number; band: number } | null => {
+    const adr = (typeof r?.adrPct === 'number' && r.adrPct > 0) ? r.adrPct : 0;
+    const cands = [
+      { ma: '21-EMA', dist: r?.pctVsEma21, band: Math.max(4, adr ? adr * 1.5 : 4) },
+      { ma: '50-DMA', dist: (typeof r?.pctVsSma50 === 'number' ? r.pctVsSma50 : r?.pctVsEma50), band: Math.max(7, adr ? adr * 2 : 7) },
+      { ma: '89-EMA', dist: r?.pctVsEma89, band: Math.max(9, adr ? adr * 2.5 : 9) },
+      { ma: '200-DMA', dist: (typeof r?.pctVsSma200 === 'number' ? r.pctVsSma200 : r?.pctVsEma200), band: Math.max(12, adr ? adr * 3 : 12) },
+    ].filter(c => typeof c.dist === 'number');
+    // "at" a pivot = from just below (reclaim, -2%) up to that MA's adaptive ceiling
+    const atPivots = cands.filter(c => c.dist >= -2 && c.dist <= c.band);
+    if (!atPivots.length) return null;
+    // the pivot the price is truly resting on = smallest absolute distance
+    atPivots.sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist));
+    return { ma: atPivots[0].ma, dist: atPivots[0].dist, band: atPivots[0].band };
   }, []);
   // Auto-sync freshness status (drives the hands-free banner). Best-effort.
   const [techSyncStatus, setTechSyncStatus] = React.useState<Awaited<ReturnType<typeof getTradingviewSyncStatus>> | null>(null);
@@ -8072,6 +8095,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     price?: number; mcapB?: number;
     ema50?: number; ema200?: number; rsi?: number;
     ema21?: number;              // zzz138 — Qullamaggie's actual entry rule
+    ema89?: number;              // multi-pivot — deeper trend pullback pivot
     pctVsEma21?: number;
     perf1y?: number; perf3m?: number; perf6m?: number;
     high52w?: number; beta?: number; avgVol30d?: number;
@@ -8084,6 +8108,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     relVol1w?: number; vol1d?: number;
     // Derived
     pctVsEma50?: number;
+    pctVsEma89?: number;
     pctVsEma200?: number;
     pctVsSma50?: number;
     pctVsSma150?: number;
@@ -8147,6 +8172,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       const ema50 = num(r.ema50);
       const ema200 = num(r.ema200);
       const ema21 = num(r.ema21);  // zzz138 — Qullamaggie's exact entry rule
+      const ema89 = num(r.ema89);  // multi-pivot — deeper trend pullback pivot
       const rsi = num(r.rsi);
       const perf1y = num(r.perf1y);
       const perf3m = num(r.perf3m);
@@ -8173,6 +8199,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       // zzz138 — % distance to 21-EMA (Qullamaggie's actual rule, not SMA50/EMA50 proxy)
       const pctVsEma21 = (price !== undefined && ema21 !== undefined && ema21 > 0)
         ? Math.round((price - ema21) / ema21 * 1000) / 10 : undefined;
+      const pctVsEma89 = (price !== undefined && ema89 !== undefined && ema89 > 0)
+        ? Math.round((price - ema89) / ema89 * 1000) / 10 : undefined;
       const pctVsEma200 = (price !== undefined && ema200 !== undefined && ema200 > 0)
         ? Math.round((price - ema200) / ema200 * 1000) / 10 : undefined;
       const pctVsSma50 = (price !== undefined && sma50 !== undefined && sma50 > 0)
@@ -8595,6 +8623,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         industry: (typeof r.industry === 'string' && r.industry) ? r.industry : undefined,  // zzz140
         price, mcapB: mcap, ema50, ema200, rsi,
         ema21, pctVsEma21,  // zzz138
+        ema89, pctVsEma89,  // multi-pivot
         perf1y, perf3m, perf6m, high52w, beta, avgVol30d,
         perf1w, perf1m, atr14, sma50, sma150, sma200, vol1m, vol1w, low52w, relVol1w, vol1d,
         pctVsEma50, pctVsEma200, pctVsSma50, pctVsSma150, pctVsSma200,
@@ -8959,10 +8988,12 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [champions, buyZone, bestPicks, bestTick]);
 
-  // ADDITIVE (🎯 prime setups) — the highest-conviction ELIGIBLE names sitting
-  // right AT the 50-DMA pivot (buyable, never extended), pulling the intersection
-  // of every screener. Mirrors confluence's system-tagging but keeps names even
-  // at n=1, then gates on closeness-to-50DMA and ranks by cross-screener agreement.
+  // ADDITIVE (🎯 prime setups) — the highest-conviction ELIGIBLE names resting AT
+  // a moving-average pivot (21-EMA / 50-DMA / 89-EMA / 200-DMA — the buyable spot,
+  // never extended), pulling the intersection of every screener. Mirrors
+  // confluence's system-tagging but keeps names even at n=1, then gates on
+  // resting-at-a-pivot and ranks by cross-screener agreement × proximity.
+  // Returns the FULL ranked list (capped ~24); render applies pivotFilter + slices.
   const primeSetups = React.useMemo(() => {
     const bare = (x: string) => (x.includes(':') ? (x.split(':').pop() || '') : x).toUpperCase();
     const sys = new Map<string, Set<string>>();
@@ -8973,28 +9004,26 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     pocketsBestRef.current.forEach(x => tag(x, 'Pocket'));
     bestPicks.filter(p => p._tier === 'MOMENTUM').forEach(p => tag(p.symbol, 'Momentum'));
     bestPicks.filter(p => p._tier === 'QUALITY').forEach(p => tag(p.symbol, 'Quality'));
-    const out: Array<{ r: TechRow; over50: number; ceiling: number; systems: string[]; onB: boolean; onR: boolean; prox: number; primeScore: number }> = [];
+    const out: Array<{ r: TechRow; piv: { ma: string; dist: number; band: number }; systems: string[]; onB: boolean; onR: boolean; prox: number; primeScore: number }> = [];
     for (const r of techRows) {
       if (!r.eligible) continue;
-      const over50 = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : (typeof r.pctVsEma50 === 'number' ? r.pctVsEma50 : undefined);
-      if (typeof over50 !== 'number') continue;
-      const adr = (typeof r.adrPct === 'number' && r.adrPct > 0) ? r.adrPct : undefined;
-      const ceiling = adr ? Math.max(7, adr * 2) : 7;
-      if (!(over50 >= -2 && over50 <= ceiling)) continue;             // close to the 50-DMA pivot
+      const piv = nearestPivot(r);
+      if (!piv) continue;                                             // resting at a MA pivot
       if (!(typeof r.perf1m === 'number' && r.perf1m >= 0)) continue;  // positive 1M
       if (typeof r.perf1w === 'number' && r.perf1w < -8) continue;     // no falling knife
       if (r.eligibilityTags.includes('EARNINGS_IMMINENT')) continue;   // no earnings <=3d
       const b = bare(r.symbol);
       const systems = sys.has(b) ? [...sys.get(b)!] : [];
       const onB = onBench(r.symbol), onR = onRadar(r.symbol);
-      const prox = 1 - Math.min(1, Math.abs(over50) / Math.max(ceiling, 1)); // 1 at the line, 0 at ceiling
-      const primeScore = systems.length * 14 + (onB ? 8 : 0) + (onR ? 8 : 0) + (r.totalScore || 0) * 0.5 + (r.fundScore || 0) * 0.3 + prox * 16;
-      out.push({ r, over50, ceiling, systems, onB, onR, prox, primeScore });
+      const prox = 1 - Math.min(1, Math.abs(piv.dist) / Math.max(piv.band, 1)); // 1 at the line, 0 at ceiling
+      const maBonus = piv.ma === '21-EMA' ? 4 : piv.ma === '50-DMA' ? 3 : piv.ma === '89-EMA' ? 1 : 0; // prefer tighter pivots
+      const primeScore = systems.length * 14 + (onB ? 8 : 0) + (onR ? 8 : 0) + (r.totalScore || 0) * 0.5 + (r.fundScore || 0) * 0.3 + prox * 16 + maBonus;
+      out.push({ r, piv, systems, onB, onR, prox, primeScore });
     }
     out.sort((a, b) => b.primeScore - a.primeScore);
-    return out.slice(0, 8);
+    return out.slice(0, 24);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [techRows, champions, buyZone, bestPicks, bestTick, onBench, onRadar]);
+  }, [techRows, champions, buyZone, bestPicks, bestTick, onBench, onRadar, nearestPivot]);
 
   const copyAllBest = () => {
     const seen = new Set<string>();
@@ -9323,11 +9352,11 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10 }}>
           {items.map(r => (
-            <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, borderLeft: `4px solid ${color}`, borderRadius: 8, padding: 12, cursor: 'pointer' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+            <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, borderLeft: `4px solid ${color}`, borderRadius: 8, padding: 12, cursor: 'pointer', overflow: 'hidden', minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, rowGap: 3, flexWrap: 'wrap', marginBottom: 4, minWidth: 0 }}>
                 <span style={{ fontSize: 17, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{r.symbol}</span>
                 <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r[scoreKey]) }}>{r[scoreKey]}<span style={{ fontSize: 10, color: MUTED }}>/100</span></span>
+                <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r[scoreKey]), flexShrink: 0 }}>{r[scoreKey]}<span style={{ fontSize: 10, color: MUTED }}>/100</span></span>
               </div>
               <div style={{ fontSize: 11.5, color: TXT, marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
                 <span style={{ color: MUTED, fontSize: 10 }}>{r.sector?.slice(0, 25) || ''}</span> · {r.company || r.symbol}
@@ -9572,18 +9601,35 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
 
       <div id="sec-prime" style={{ scrollMarginTop: 80 }} />
       {/* ADDITIVE (🎯 prime setups) — pinned hero panel: the best eligible names
-          sitting right AT the buyable 50-DMA pivot, intersection of every screener. */}
+          resting AT a moving-average pivot (21-EMA / 50-DMA / 89-EMA / 200-DMA),
+          intersection of every screener. */}
+      {(() => {
+        const shown = primeSetups.filter(x => pivotFilter === 'ALL' || x.piv.ma === pivotFilter).slice(0, 8);
+        const has89 = primeSetups.some(x => x.piv.ma === '89-EMA');
+        const pivotChips = ['ALL', '21-EMA', '50-DMA', '89-EMA', '200-DMA'];
+        return (
       <div style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.10), rgba(16,185,129,0.02) 60%, transparent)', border: '1px solid rgba(16,185,129,0.30)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 900, color: '#10B981', letterSpacing: '0.3px', marginBottom: 4 }}>🎯 PRIME SETUPS — best at the 50-DMA pivot ({primeSetups.length})</div>
-        <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, fontStyle: 'italic' }}>
-          The highest-conviction eligible names sitting right at the buyable 50-DMA pivot — ranked by how many independent screeners agree (Champion · Buy Zone · SEPA · Pocket · Momentum · Quality · 🏆 bench · 🚀 radar). Buy AT the line, not extended.
+        <div style={{ fontSize: 18, fontWeight: 900, color: '#10B981', letterSpacing: '0.3px', marginBottom: 4 }}>🎯 PRIME SETUPS — best at a moving-average pivot ({shown.length})</div>
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>
+          The highest-conviction eligible names resting AT a moving-average pivot — the buyable spot. 21-EMA = tightest (raging trend) · 50-DMA = standard swing · 89-EMA = deeper trend pullback · 200-DMA = deep reclaim. Ranked by how many screeners agree (Champion · Buy Zone · SEPA · Pocket · Momentum · Quality · 🏆 bench · 🚀 radar) × proximity to the line.
         </div>
-        {primeSetups.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No eligible name is at the 50-DMA pivot right now — the leaders are extended; wait for pullbacks.</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          {pivotChips.map(chip => {
+            const active = pivotFilter === chip;
+            const dim = chip === '89-EMA' && !has89;
+            return (
+              <button key={chip} onClick={() => setPivotFilter(chip)} title={dim ? "Add 'EMA 89' to your TradingView export columns to enable" : undefined} style={{ fontSize: 11.5, fontWeight: 800, cursor: 'pointer', padding: '4px 11px', borderRadius: 999, border: `1px solid ${active ? '#10B981' : 'rgba(16,185,129,0.35)'}`, background: active ? '#10B981' : 'transparent', color: active ? '#04120C' : '#10B981', opacity: dim ? 0.4 : 1 }}>
+                {chip === 'ALL' ? 'ALL' : chip}
+              </button>
+            );
+          })}
+        </div>
+        {shown.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No eligible name is resting at a moving-average pivot right now — the leaders are extended; wait for pullbacks.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-            {primeSetups.map((item, i) => {
-              const atPivot = Math.abs(item.over50) <= 3;
+            {shown.map((item, i) => {
+              const atPivot = Math.abs(item.piv.dist) <= 3;
               const distColor = atPivot ? '#10B981' : '#F59E0B';
               const bq = buyability(item.r);
               const er = earningsRisk(item.r);
@@ -9593,7 +9639,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                     <span style={{ fontSize: 12, fontWeight: 800, color: MUTED }}>#{i + 1}</span>
                     <span style={{ fontSize: 18, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{item.r.symbol}{item.onB ? ' 🏆' : ''}{item.onR ? ' 🚀' : ''}</span>
                     <span style={{ fontSize: 14, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(item.r.price)}</span>
-                    <span title="Distance from the 50-DMA pivot" style={{ fontSize: 11, fontWeight: 800, color: distColor, background: `color-mix(in srgb, ${distColor} 15%, transparent)`, padding: '2px 7px', borderRadius: 5 }}>{atPivot ? '🎯 ' : ''}{item.over50 >= 0 ? '+' : ''}{item.over50.toFixed(1)}% ⟂50DMA</span>
+                    <span title={`Distance from the ${item.piv.ma} pivot — the MA the price is resting on`} style={{ fontSize: 11, fontWeight: 800, color: distColor, background: `color-mix(in srgb, ${distColor} 15%, transparent)`, padding: '2px 7px', borderRadius: 5 }}>{atPivot ? '🎯 ' : ''}{item.piv.dist >= 0 ? '+' : ''}{item.piv.dist.toFixed(1)}% ⟂{item.piv.ma}</span>
                     {er ? <span title={`Reports in ${er.days} day(s)${item.r.nextEarnings ? ' ('+item.r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px' }}>{er.label}</span> : null}
                   </div>
                   <div style={{ fontSize: 12, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.r.company || ''}>
@@ -9623,6 +9669,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           </div>
         )}
       </div>
+        );
+      })()}
 
       {/* zzz214 — ⚡ CONFLUENCE strip: stocks flagged by 2+ independent systems */}
       {confluence.length > 0 && (
@@ -9765,19 +9813,21 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
             {champions.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).filter(r => { const er = earningsRisk(r); return !hideEarningsRisk || !er || er.days > 7; }).map(r => (
-              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative' }}>
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative', overflow: 'hidden', minWidth: 0 }}>
                 <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
                   <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, rowGap: 4, marginBottom: 6, flexWrap: 'wrap', paddingRight: 22, minWidth: 0 }}>
                   <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 11, fontWeight: 800, color: bq.color, background: `color-mix(in srgb, ${bq.color} 15%, transparent)`, padding: '2px 7px', borderRadius: 5 }}>{bq.label}</span> : null; })()}
-                  {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', marginLeft: 6 }}>{er.label}</span> : null; })()}
-                  <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
-                  <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
-                  <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
-                  <span style={{ fontSize: 22, fontWeight: 900, color: '#84CC16' }}>{r.fundScore}</span>
+                  {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 11, fontWeight: 800, color: bq.color, background: `color-mix(in srgb, ${bq.color} 15%, transparent)`, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap' }}>{bq.label}</span> : null; })()}
+                  {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' }}>{er.label}</span> : null; })()}
+                  <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, flexShrink: 0 }}>
+                    <span style={{ fontSize: 12, color: MUTED }}>TECH</span>
+                    <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
+                    <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
+                    <span style={{ fontSize: 22, fontWeight: 900, color: '#84CC16' }}>{r.fundScore}</span>
+                  </span>
                 </div>
                 <div style={{ fontSize: 13, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
                   {r.company || r.symbol} <span style={{ color: MUTED, fontSize: 11 }}>· {r.sector?.slice(0, 22) || ''}</span>
@@ -9848,13 +9898,13 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
             {buyZone.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).filter(r => { const er = earningsRisk(r); return !hideEarningsRisk || !er || er.days > 7; }).map(r => (
-              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer', overflow: 'hidden', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, rowGap: 3, flexWrap: 'wrap', minWidth: 0 }}>
                   <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 10, fontWeight: 800, color: bq.color }}>{bq.label}</span> : null; })()}
-                  {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', marginLeft: 6 }}>{er.label}</span> : null; })()}
-                  <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
+                  {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 10, fontWeight: 800, color: bq.color, whiteSpace: 'nowrap' }}>{bq.label}</span> : null; })()}
+                  {(() => { const er = earningsRisk(r); return er ? <span title={`Reports in ${er.days} day(s)${r.nextEarnings ? ' ('+r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' }}>{er.label}</span> : null; })()}
+                  <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore), flexShrink: 0 }}>{r.totalScore}</span>
                 </div>
                 <div style={{ fontSize: 11.5, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
                 <div style={{ fontSize: 11, color: MUTED, marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
