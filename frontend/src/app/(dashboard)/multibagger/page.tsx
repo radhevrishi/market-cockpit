@@ -8958,6 +8958,44 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       .slice(0, 14);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [champions, buyZone, bestPicks, bestTick]);
+
+  // ADDITIVE (🎯 prime setups) — the highest-conviction ELIGIBLE names sitting
+  // right AT the 50-DMA pivot (buyable, never extended), pulling the intersection
+  // of every screener. Mirrors confluence's system-tagging but keeps names even
+  // at n=1, then gates on closeness-to-50DMA and ranks by cross-screener agreement.
+  const primeSetups = React.useMemo(() => {
+    const bare = (x: string) => (x.includes(':') ? (x.split(':').pop() || '') : x).toUpperCase();
+    const sys = new Map<string, Set<string>>();
+    const tag = (sym: string | undefined, label: string) => { if (!sym) return; const b = bare(sym); if (!b) return; if (!sys.has(b)) sys.set(b, new Set()); sys.get(b)!.add(label); };
+    champions.forEach(r => tag(r.symbol, 'Champion'));
+    buyZone.forEach(r => tag(r.symbol, 'Buy Zone'));
+    sepaBestRef.current.forEach(x => tag(x, 'SEPA 7+'));
+    pocketsBestRef.current.forEach(x => tag(x, 'Pocket'));
+    bestPicks.filter(p => p._tier === 'MOMENTUM').forEach(p => tag(p.symbol, 'Momentum'));
+    bestPicks.filter(p => p._tier === 'QUALITY').forEach(p => tag(p.symbol, 'Quality'));
+    const out: Array<{ r: TechRow; over50: number; ceiling: number; systems: string[]; onB: boolean; onR: boolean; prox: number; primeScore: number }> = [];
+    for (const r of techRows) {
+      if (!r.eligible) continue;
+      const over50 = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : (typeof r.pctVsEma50 === 'number' ? r.pctVsEma50 : undefined);
+      if (typeof over50 !== 'number') continue;
+      const adr = (typeof r.adrPct === 'number' && r.adrPct > 0) ? r.adrPct : undefined;
+      const ceiling = adr ? Math.max(7, adr * 2) : 7;
+      if (!(over50 >= -2 && over50 <= ceiling)) continue;             // close to the 50-DMA pivot
+      if (!(typeof r.perf1m === 'number' && r.perf1m >= 0)) continue;  // positive 1M
+      if (typeof r.perf1w === 'number' && r.perf1w < -8) continue;     // no falling knife
+      if (r.eligibilityTags.includes('EARNINGS_IMMINENT')) continue;   // no earnings <=3d
+      const b = bare(r.symbol);
+      const systems = sys.has(b) ? [...sys.get(b)!] : [];
+      const onB = onBench(r.symbol), onR = onRadar(r.symbol);
+      const prox = 1 - Math.min(1, Math.abs(over50) / Math.max(ceiling, 1)); // 1 at the line, 0 at ceiling
+      const primeScore = systems.length * 14 + (onB ? 8 : 0) + (onR ? 8 : 0) + (r.totalScore || 0) * 0.5 + (r.fundScore || 0) * 0.3 + prox * 16;
+      out.push({ r, over50, ceiling, systems, onB, onR, prox, primeScore });
+    }
+    out.sort((a, b) => b.primeScore - a.primeScore);
+    return out.slice(0, 8);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [techRows, champions, buyZone, bestPicks, bestTick, onBench, onRadar]);
+
   const copyAllBest = () => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -9512,6 +9550,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center', margin: '2px 0 16px', padding: '10px 12px', background: '#121821', border: '1px solid #2A3444', borderRadius: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800, color: '#7B8898', letterSpacing: 0.6, textTransform: 'uppercase', marginRight: 2 }}>Jump to</span>
         {([
+          ['#sec-prime', '🎯 Prime'],
           ['#sec-champions', '🏆 Champions'],
           ['#sec-buyzone', '🟢 Buy Zone'],
           ['#sec-earnings', '🗓 Earnings'],
@@ -9529,6 +9568,60 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
             {label}
           </a>
         ))}
+      </div>
+
+      <div id="sec-prime" style={{ scrollMarginTop: 80 }} />
+      {/* ADDITIVE (🎯 prime setups) — pinned hero panel: the best eligible names
+          sitting right AT the buyable 50-DMA pivot, intersection of every screener. */}
+      <div style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.10), rgba(16,185,129,0.02) 60%, transparent)', border: '1px solid rgba(16,185,129,0.30)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 18, fontWeight: 900, color: '#10B981', letterSpacing: '0.3px', marginBottom: 4 }}>🎯 PRIME SETUPS — best at the 50-DMA pivot ({primeSetups.length})</div>
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, fontStyle: 'italic' }}>
+          The highest-conviction eligible names sitting right at the buyable 50-DMA pivot — ranked by how many independent screeners agree (Champion · Buy Zone · SEPA · Pocket · Momentum · Quality · 🏆 bench · 🚀 radar). Buy AT the line, not extended.
+        </div>
+        {primeSetups.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No eligible name is at the 50-DMA pivot right now — the leaders are extended; wait for pullbacks.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+            {primeSetups.map((item, i) => {
+              const atPivot = Math.abs(item.over50) <= 3;
+              const distColor = atPivot ? '#10B981' : '#F59E0B';
+              const bq = buyability(item.r);
+              const er = earningsRisk(item.r);
+              return (
+                <div key={item.r.symbol} onClick={() => setExpandedSymbol(item.r.symbol)} style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid color-mix(in srgb, #10B981 30%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 10, padding: 13, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: MUTED }}>#{i + 1}</span>
+                    <span style={{ fontSize: 18, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{item.r.symbol}{item.onB ? ' 🏆' : ''}{item.onR ? ' 🚀' : ''}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(item.r.price)}</span>
+                    <span title="Distance from the 50-DMA pivot" style={{ fontSize: 11, fontWeight: 800, color: distColor, background: `color-mix(in srgb, ${distColor} 15%, transparent)`, padding: '2px 7px', borderRadius: 5 }}>{atPivot ? '🎯 ' : ''}{item.over50 >= 0 ? '+' : ''}{item.over50.toFixed(1)}% ⟂50DMA</span>
+                    {er ? <span title={`Reports in ${er.days} day(s)${item.r.nextEarnings ? ' ('+item.r.nextEarnings+')' : ''} — event risk. Desks avoid new entries inside this window.`} style={{ fontSize: 10, fontWeight: 800, color: er.color, border: `1px solid ${er.color}55`, borderRadius: 4, padding: '1px 5px' }}>{er.label}</span> : null}
+                  </div>
+                  <div style={{ fontSize: 12, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.r.company || ''}>
+                    {item.r.company || item.r.symbol} <span style={{ color: MUTED, fontSize: 11 }}>· {item.r.sector?.slice(0, 22) || ''}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+                    {item.systems.length > 0 ? item.systems.map(s => (
+                      <span key={s} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.14)', padding: '2px 7px', borderRadius: 4 }}>{s}</span>
+                    )) : <span style={{ fontSize: 10.5, color: MUTED, fontStyle: 'italic' }}>single-system pivot</span>}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 11, marginBottom: 6, fontFamily: 'ui-monospace, monospace' }}>
+                    <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>TECH {item.r.totalScore}</span>
+                    <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>FUND {item.r.fundScore}</span>
+                    {typeof item.r.perf1w === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1W {fmtPct(item.r.perf1w)}</span> : null}
+                    {typeof item.r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1M {fmtPct(item.r.perf1m)}</span> : null}
+                    {typeof item.r.rsi === 'number' ? <span style={{ background: item.r.rsi > 85 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', color: item.r.rsi > 85 ? '#EF4444' : TXT, padding: '3px 7px', borderRadius: 4 }}>RSI {item.r.rsi.toFixed(0)}</span> : null}
+                  </div>
+                  {bq ? <div style={{ fontSize: 12, fontWeight: 800, color: bq.color, marginTop: 4 }} title={bq.title}>{bq.label}</div> : null}
+                  {typeof item.r.stopLoss === 'number' ? (
+                    <div style={{ fontSize: 11.5, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
+                      🛑 {fmtPrice(item.r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>(risk {typeof item.r.stopLossPct === 'number' ? `−${item.r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* zzz214 — ⚡ CONFLUENCE strip: stocks flagged by 2+ independent systems */}
