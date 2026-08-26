@@ -5203,15 +5203,19 @@ interface InboxPullback {
 // The preset the user runs on Conviction Beats. Core gates are hard; the
 // secondary gates (OPM Δ / CFO-PAT / pledge) only exclude when the datum
 // exists, so missing enrichment doesn't wipe the list.
+// STRICT — every gate must be present AND pass, so the panel shows only names
+// that genuinely clear the full preset (no lenient null-passes that let
+// off-preset names slip in). Mirrors the ⚡ QUALITY PRESET on Conviction Beats.
 function passesQualityPreset(b: any): boolean {
-  if (!(b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG')) return false;      // Verdict: STRONG BUY / BUY
+  if (!(b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG')) return false;      // Verdict: STRONG BUY / BUY / WATCH
   if (!(typeof b.sales_yoy_pct === 'number' && b.sales_yoy_pct >= 20)) return false;
   if (!(typeof b.eps_yoy_pct === 'number' && b.eps_yoy_pct >= 25)) return false;
+  if (!(typeof b.pead_score === 'number' && b.pead_score >= 60)) return false;              // PEAD ≥ 60
   if (!(typeof b.market_cap_cr === 'number' && b.market_cap_cr >= 3000)) return false;
-  if (typeof b.opm_pct === 'number' && typeof b.opm_prev_pct === 'number' && (b.opm_pct - b.opm_prev_pct) < 0) return false; // OPM Δ ≥ 0
+  if (!(typeof b.opm_pct === 'number' && typeof b.opm_prev_pct === 'number' && (b.opm_pct - b.opm_prev_pct) >= 0)) return false; // OPM Δ ≥ 0
   const cfo = typeof b.cfo_to_pat_ratio === 'number' ? b.cfo_to_pat_ratio : (Array.isArray(b.annual_cfo_pat) && b.annual_cfo_pat.length ? b.annual_cfo_pat[b.annual_cfo_pat.length - 1] : null);
-  if (typeof cfo === 'number' && cfo < 0.5) return false;                    // CFO/PAT ≥ 0.5
-  if (typeof b.pledged_pct === 'number' && b.pledged_pct > 0) return false;  // Pledge 0%
+  if (!(typeof cfo === 'number' && cfo >= 0.5)) return false;                                // CFO/PAT ≥ 0.5 (n/m fails)
+  if (typeof b.pledged_pct === 'number' && b.pledged_pct > 0) return false;                  // Pledge 0%
   return true;
 }
 
@@ -5225,136 +5229,120 @@ function DailySignalInbox() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const out: InboxSignal[] = [];
-    const status: Record<LaneKey, boolean> = { momentum: false, warrant: false, transform: false, bench: false };
-    const j = async (url: string): Promise<any | null> => {
-      try { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
+    // Per-fetch timeout so one slow feed (e.g. a cold PDF-scanning warrant feed)
+    // can NEVER stall the whole inbox the way the old Promise.all did.
+    const j = async (url: string, ms = 12000): Promise<any | null> => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), ms);
+      try { const r = await fetch(url, { cache: 'no-store', signal: ctl.signal }); if (!r.ok) return null; return await r.json(); }
       catch { return null; }
+      finally { clearTimeout(t); }
     };
-    const [movers, warrant, transform, quotes] = await Promise.all([
-      j('/api/v1/concall-intel/movers'),
-      j('/api/v1/concall-intel/warrant-feed?days=90'),           // zzz442 — wider window so setups actually surface
-      j('/api/v1/concall-intel/transformation-screener?days=60&limit=24'),
-      j('/api/market/quotes?market=india&limit=40'),             // zzz442 — always-on price leaders for Momentum
-    ]);
+    const mergeLane = (lane: InboxSignal['lane'], rows: InboxSignal[], key: LaneKey) => {
+      setSignals((prev) => [...prev.filter((s) => s.lane !== lane), ...rows]);
+      setLaneStatus((prev) => ({ ...prev, [key]: rows.length > 0 || prev[key] }));
+    };
 
-    // ── Lane 1 — MOMENTUM (concall score-movers + today's price leaders) ──
-    const momoSeen = new Set<string>();
-    if (movers && !movers.error) {
-      status.momentum = true;
-      (movers.new_entries || []).slice(0, 3).forEach((m: any) => { momoSeen.add(m.symbol); out.push({
-        lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
-        headline: 'New to concall top-30', detail: `${(m.tier || '').replace('_', ' ')} · rank #${m.rank_today}`,
-        score: (m.composite_today || 0) + 1000, href: '/concall-intel',
-      }); });
-      (movers.big_jumps || []).slice(0, 3).forEach((m: any) => { if (momoSeen.has(m.symbol)) return; momoSeen.add(m.symbol); out.push({
-        lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
-        headline: `Concall score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
-        score: (m.delta || 0) + 500, href: '/concall-intel',
-      }); });
-    }
-    // Price leaders — reliable every trading day. Meaningful moves (≥3%) on
-    // non-penny names only (price ≥ ₹50 filters out illiquid circuit-hitters).
-    if (quotes && Array.isArray(quotes.gainers)) {
-      const leaders = quotes.gainers.filter((g: any) => (g.changePercent || 0) >= 3 && (g.price || 0) >= 50);
-      if (leaders.length) {
-        status.momentum = true;
-        leaders.slice(0, 6).forEach((g: any) => {
-          if (momoSeen.has(g.ticker)) return; momoSeen.add(g.ticker);
-          out.push({ lane: 'MOMENTUM', symbol: g.ticker, company: g.company || '',
+    // ══ PHASE 1 · INSTANT (localStorage only) — bench + pullbacks show at once ══
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const benchRows: InboxSignal[] = [];
+      getConvictionList().filter((b) => b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG').slice(0, 6).forEach((b) => {
+        const isToday = b.filing_date === todayStr;
+        const parts: string[] = [];
+        if (b.sales_yoy_pct != null) parts.push(`sales ${b.sales_yoy_pct >= 0 ? '+' : ''}${Math.round(b.sales_yoy_pct)}%`);
+        if (b.net_profit_yoy_pct != null) parts.push(`PAT ${b.net_profit_yoy_pct >= 0 ? '+' : ''}${Math.round(b.net_profit_yoy_pct)}%`);
+        if (b.move_pct != null) parts.push(`${b.move_pct >= 0 ? '+' : ''}${Math.round(b.move_pct)}% since`);
+        benchRows.push({ lane: 'BENCH', symbol: b.ticker, company: b.company || '',
+          headline: `${b.tier}${isToday ? ' · NEW today' : ''}`,
+          detail: parts.join(' · ') || `score ${b.composite_score}`,
+          score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/conviction-beats', soft: false });
+      });
+      setSignals(benchRows);
+      setLaneStatus({ momentum: false, warrant: false, transform: false, bench: benchRows.length > 0 });
+
+      const pb: InboxPullback[] = getConvictionList()
+        .filter(passesQualityPreset)
+        .map((b: any) => {
+          const has52 = typeof b.dist_52w_pct_yahoo === 'number';
+          const correction = has52 ? -b.dist_52w_pct_yahoo : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
+          return { symbol: b.ticker, company: b.company || '', tier: b.tier,
+            correction, basis: (has52 ? '52w high' : 'since filing') as InboxPullback['basis'],
+            sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr };
+        })
+        .filter((p) => Number.isFinite(p.correction) && p.correction <= 60)
+        .sort((a, b) => b.correction - a.correction)
+        .slice(0, 10);
+      setPullbacks(pb);
+    } catch { setPullbacks([]); }
+    setLoading(false);   // instant content is up — stop the "scanning feeds…" spinner
+
+    // ══ PHASE 2 · NETWORK — each lane fills in independently as it returns ══
+    // MOMENTUM = concall score-movers + today's price leaders (needs both).
+    Promise.all([
+      j('/api/market/quotes?market=india&limit=40', 9000),
+      j('/api/v1/concall-intel/movers', 10000),
+    ]).then(([quotes, movers]) => {
+      const rows: InboxSignal[] = []; const seen = new Set<string>();
+      if (movers && !movers.error) {
+        (movers.new_entries || []).slice(0, 3).forEach((m: any) => { seen.add(m.symbol); rows.push({
+          lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
+          headline: 'New to concall top-30', detail: `${(m.tier || '').replace('_', ' ')} · rank #${m.rank_today}`,
+          score: (m.composite_today || 0) + 1000, href: '/concall-intel' }); });
+        (movers.big_jumps || []).slice(0, 3).forEach((m: any) => { if (seen.has(m.symbol)) return; seen.add(m.symbol); rows.push({
+          lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
+          headline: `Concall score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
+          score: (m.delta || 0) + 500, href: '/concall-intel' }); });
+      }
+      if (quotes && Array.isArray(quotes.gainers)) {
+        quotes.gainers.filter((g: any) => (g.changePercent || 0) >= 3 && (g.price || 0) >= 50).slice(0, 6).forEach((g: any) => {
+          if (seen.has(g.ticker)) return; seen.add(g.ticker);
+          rows.push({ lane: 'MOMENTUM', symbol: g.ticker, company: g.company || '',
             headline: `Price +${(g.changePercent || 0).toFixed(1)}% today`,
             detail: `${g.sector || '—'} · ₹${(g.price || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })}`,
             score: (g.changePercent || 0), href: '/screener' });
         });
       }
-    }
+      mergeLane('MOMENTUM', rows, 'momentum');
+    });
 
-    // ── Lane 2 — WARRANT (qualified setups, else best non-distress watch) ──
-    if (warrant && !warrant.error) {
-      status.warrant = true;
+    // WARRANT — 45d window (was 90d, which cold-scanned too many PDFs and stalled).
+    j('/api/v1/concall-intel/warrant-feed?days=45', 16000).then((warrant) => {
+      if (!warrant || warrant.error) return;
+      const rows: InboxSignal[] = [];
       const all = (warrant.ranked_all && warrant.ranked_all.length ? warrant.ranked_all : warrant.filings) || [];
       const isDistress = (f: any) => /distress/i.test(f?.conviction?.tier || '') || (f?.conviction?.distress_probability ?? 0) >= 0.5;
       const passing = all.filter((f: any) => f?.conviction?.passes_gate);
-      // Only surface real watch-list quality — never a distress-tier name as a "signal".
       const watch = all.filter((f: any) => !f?.conviction?.passes_gate && !isDistress(f) && (f?.conviction?.conviction ?? 0) >= 3);
-      passing.slice(0, 5).forEach((f: any) => out.push({
+      passing.slice(0, 5).forEach((f: any) => rows.push({
         lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
         headline: `Warrant qualified · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
         detail: f.conviction?.tier ? `${f.conviction.tier} · ${String(f.subject || '').slice(0, 40)}` : String(f.subject || '').slice(0, 50),
-        score: (f.conviction?.conviction || 0) + 100, href: '/concall-intel',
-      }));
-      if (passing.length === 0) {
-        watch.slice(0, 5).forEach((f: any) => out.push({
-          lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
-          headline: `Warrant watch · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
-          detail: `${f.conviction?.tier || 'watch'} · building, below strict gate`,
-          score: (f.conviction?.conviction || 0), href: '/concall-intel', soft: true }));
-      }
-    }
+        score: (f.conviction?.conviction || 0) + 100, href: '/concall-intel' }));
+      if (passing.length === 0) watch.slice(0, 5).forEach((f: any) => rows.push({
+        lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
+        headline: `Warrant watch · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
+        detail: `${f.conviction?.tier || 'watch'} · building, below strict gate`,
+        score: (f.conviction?.conviction || 0), href: '/concall-intel', soft: true }));
+      mergeLane('WARRANT', rows, 'warrant');
+      setLaneStatus((prev) => ({ ...prev, warrant: true }));
+    });
 
-    // ── Lane 3 — TRANSFORM (sweet-spot, else top-scored) ──────────────────
-    if (transform && !transform.error) {
-      status.transform = true;
+    // TRANSFORM — batch radar.
+    j('/api/v1/concall-intel/transformation-screener?days=60&limit=24', 16000).then((transform) => {
+      if (!transform || transform.error) return;
+      const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
       const sweet = entries.filter((e: any) => e.stage_sweet_spot);
-      (sweet.length ? sweet : entries).slice(0, 6).forEach((e: any, i: number) => out.push({
+      (sweet.length ? sweet : entries).slice(0, 6).forEach((e: any) => rows.push({
         lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
         headline: `${e.velocity} transformation · T-${e.transformation_score}`,
         detail: `${e.pattern_count} vectors · stage ${e.stage}/10 · ${e.evidence_label}`,
         score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: sweet.length === 0 }));
       setGeneratedAt(transform.generated_at || null);
-    }
-
-    // ── Lane 4 — BENCH (recent Conviction Beats — client-side, always available) ──
-    try {
-      const bench = getConvictionList().filter((b) => b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG');
-      if (bench.length) {
-        status.bench = true;
-        const todayStr = new Date().toISOString().slice(0, 10);
-        bench.slice(0, 6).forEach((b) => {
-          const isToday = b.filing_date === todayStr;
-          const parts: string[] = [];
-          if (b.sales_yoy_pct != null) parts.push(`sales ${b.sales_yoy_pct >= 0 ? '+' : ''}${Math.round(b.sales_yoy_pct)}%`);
-          if (b.net_profit_yoy_pct != null) parts.push(`PAT ${b.net_profit_yoy_pct >= 0 ? '+' : ''}${Math.round(b.net_profit_yoy_pct)}%`);
-          if (b.move_pct != null) parts.push(`${b.move_pct >= 0 ? '+' : ''}${Math.round(b.move_pct)}% since`);
-          out.push({ lane: 'BENCH', symbol: b.ticker, company: b.company || '',
-            headline: `${b.tier}${isToday ? ' · NEW today' : ''}`,
-            detail: parts.join(' · ') || `score ${b.composite_score}`,
-            // Bench names are your standing conviction — not tentative "watch" items.
-            score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/conviction-beats', soft: false });
-        });
-      }
-    } catch { /* localStorage unavailable */ }
-
-    // ── QUALITY PULLBACKS — preset winners now on sale (biggest correction) ──
-    try {
-      const pb: InboxPullback[] = getConvictionList()
-        .filter(passesQualityPreset)
-        .map((b: any) => {
-          const has52 = typeof b.dist_52w_pct_yahoo === 'number';
-          // dist_52w_pct_yahoo is (close-52wHigh)/52wHigh*100 → negative below high.
-          // correction is POSITIVE when the stock is DOWN (a pullback).
-          const correction = has52 ? -b.dist_52w_pct_yahoo
-            : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
-          return {
-            symbol: b.ticker, company: b.company || '', tier: b.tier,
-            correction, basis: (has52 ? '52w high' : 'since filing') as InboxPullback['basis'],
-            sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr,
-          };
-        })
-        // Show the whole preset cohort that has price data, biggest pullback
-        // FIRST. No hard floor — a strict preset in a strong tape often leaves
-        // few names deeply corrected, so ranking (not filtering) keeps the list
-        // full and still puts the real dips on top.
-        .filter((p) => Number.isFinite(p.correction))
-        .sort((a, b) => b.correction - a.correction)
-        .slice(0, 10);
-      setPullbacks(pb);
-    } catch { setPullbacks([]); }
-
-    setLaneStatus(status);
-    setSignals(out);
-    setLoading(false);
+      mergeLane('TRANSFORM', rows, 'transform');
+      setLaneStatus((prev) => ({ ...prev, transform: true }));
+    });
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -5405,7 +5393,7 @@ function DailySignalInbox() {
               <span style={{ fontSize: 9.5, color: DIM }}>{pullbacks.length ? `top ${pullbacks.length}` : ''}</span>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginTop: 3, lineHeight: 1.5 }}>
-              Your preset winners — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — ranked by pullback, biggest dip first. Red = on sale; green = still near its high. Buy great earnings on the dip.
+              Your full preset — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — every gate strict, ranked by pullback, biggest dip first. Red = on sale; green = still near its high. Buy great earnings on the dip.
             </div>
             {pullbacks.length === 0 ? (
               <div style={{ fontSize: 10.5, color: DIM, marginTop: 12, lineHeight: 1.55 }}>
