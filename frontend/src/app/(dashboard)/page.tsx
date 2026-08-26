@@ -5434,16 +5434,17 @@ function DailySignalInbox() {
             )}
           </div>
 
-          {/* ── RIGHT · the live signal lanes, in a compact 2-up grid ── */}
-          <div style={{ flex: '1 1 300px', minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 9, alignContent: 'start' }}>
+          {/* ── RIGHT · the live signal lanes, always a clean 2×2 (2 up / 2 down) ── */}
+          <div style={{ flex: '1.15 1 320px', minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridAutoRows: '1fr', gap: 9, alignContent: 'start' }}>
             {lanes.map((lane) => {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
+              const laneCount = laneSignals.length;
               return (
-                <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px' }}>
+                <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px', minHeight: 108, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <span style={{ fontSize: 10.5, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
-                    <span style={{ fontSize: 9.5, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{laneSignals.length}</span>
+                    <span style={{ fontSize: 9, fontWeight: 800, color: laneCount ? meta.c : DIM, fontFamily: 'ui-monospace, monospace', background: laneCount ? `${meta.c}1f` : 'transparent', borderRadius: 20, padding: laneCount ? '1px 7px' : 0, minWidth: 16, textAlign: 'center' }}>{laneCount}</span>
                   </div>
                   {laneSignals.length === 0 ? (
                     <div style={{ fontSize: 10, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
