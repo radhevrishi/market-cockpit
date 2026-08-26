@@ -7577,6 +7577,41 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const [radarMap, setRadarMap] = React.useState<Map<string, { symbol: string; transformation_score?: number }>>(new Map());
   const [techRegime, setTechRegime] = React.useState<{ composite: number; regime: string; regime_color?: string; regime_desc?: string; suggested_cash_pct?: number } | null>(null);
   const [confluenceOnly, setConfluenceOnly] = React.useState<boolean>(false);
+  // ADDITIVE (audit R3) — Buyable-only toggle + sector/group table filter.
+  const [buyableOnly, setBuyableOnly] = React.useState<boolean>(false);
+  const [groupFilter, setGroupFilter] = React.useState<string>('');
+  // ADDITIVE (audit R3) — EXTENDED vs BUYABLE classification. Qullamaggie/Minervini
+  // buy AT the pivot (within ~5% of the 21-EMA), never chasing 10%+ extended.
+  // Prefers the real 21-EMA distance; falls back to the SMA50/EMA50 rightEntry
+  // model when 21-EMA data is absent. Returns null when there's no distance data.
+  const buyability = React.useCallback((r: any): { label: string; buyable: boolean; color: string; title: string } | null => {
+    const e = typeof r?.pctVsEma21 === 'number' ? r.pctVsEma21 : undefined;
+    if (typeof e === 'number') {
+      if (e < -3) return { label: `${e.toFixed(1)}% ↓21EMA`, buyable: false, color: '#94A3B8', title: 'Below 21-EMA — wait for reclaim' };
+      if (e <= 5) return { label: '🎯 Buyable', buyable: true, color: '#10B981', title: `+${e.toFixed(1)}% over 21-EMA — low-risk pivot entry` };
+      if (e <= 12) return { label: `⏳ +${e.toFixed(0)}% ext`, buyable: false, color: '#FBBF24', title: `+${e.toFixed(1)}% over 21-EMA — mildly extended; prefer pullback` };
+      return { label: `🚫 +${e.toFixed(0)}% ext`, buyable: false, color: '#EF4444', title: `+${e.toFixed(1)}% over 21-EMA — extended, chasing = poor R/R` };
+    }
+    // Fallback: reuse the existing rightEntry model.
+    if (r?.rightEntry === 'BUY ZONE') return { label: '🎯 Buyable', buyable: true, color: '#10B981', title: r.rightEntryDetail || 'In buy zone' };
+    if (r?.rightEntry === 'EXTENDED') return { label: '⏳ Extended', buyable: false, color: '#FBBF24', title: r.rightEntryDetail || 'Extended — wait for pullback' };
+    if (r?.rightEntry === 'CHASE') return { label: '🚫 Chasing', buyable: false, color: '#EF4444', title: r.rightEntryDetail || 'Chasing — high risk' };
+    return null;
+  }, []);
+  // Auto-sync freshness status (drives the hands-free banner). Best-effort.
+  const [techSyncStatus, setTechSyncStatus] = React.useState<Awaited<ReturnType<typeof getTradingviewSyncStatus>> | null>(null);
+  const refreshSyncStatus = React.useCallback(() => {
+    getTradingviewSyncStatus().then(setTechSyncStatus).catch(() => {});
+  }, []);
+  React.useEffect(() => { refreshSyncStatus(); }, [refreshSyncStatus]);
+  const agoLabel = React.useCallback((d: Date | null | undefined) => {
+    if (!d) return '?';
+    const mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 48) return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+  }, []);
   // Bench is client-side localStorage — read synchronously + refresh on focus/mount.
   React.useEffect(() => {
     const load = () => {
@@ -8213,6 +8248,18 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       // Trend gate — must be above SMA50 (no falling knives)
       const pctMA50Chk = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
       if (typeof pctMA50Chk === 'number' && pctMA50Chk < -3) eligibilityFailures.push(`below SMA50 (${pctMA50Chk.toFixed(1)}%)`);
+      // ADDITIVE (audit R2) — Minervini Trend-Template stage-2 gate. A momentum
+      // leader must trade ABOVE its 200-DMA, with the 150-DMA above the 200-DMA
+      // (i.e. the long-term trend is up). Only enforced when the MA data exists,
+      // so thin CSVs aren't over-filtered. This is the single most important
+      // filter O'Neil/Minervini/Weinstein all agree on.
+      if (typeof price === 'number' && typeof sma200 === 'number' && sma200 > 0 && price < sma200)
+        eligibilityFailures.push(`below 200-DMA (stage-2 fail)`);
+      if (typeof sma150 === 'number' && typeof sma200 === 'number' && sma150 > 0 && sma200 > 0 && sma150 < sma200)
+        eligibilityFailures.push(`150-DMA below 200-DMA (downtrend)`);
+      // Minervini: price must be at least 30% above the 52-week low.
+      if (typeof pctAboveLow52w === 'number' && pctAboveLow52w < 30)
+        eligibilityFailures.push(`only +${pctAboveLow52w.toFixed(0)}% off 52W low (<30%)`);
       // Data sufficiency
       if (typeof perf1m !== 'number' && typeof perf3m !== 'number') eligibilityFailures.push('no momentum data');
       // Parabolic exclusion
@@ -8658,6 +8705,31 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     return out.sort((a, b) => b.medianRs - a.medianRs);
   }, [techRows]);
 
+  // ADDITIVE (audit R3) — O'Neil "leaders in leading groups". Aggregate ELIGIBLE
+  // leaders by sector (fall back to industry) so concentration of leadership is
+  // visible: buying a leader in a leading group is the highest-odds play.
+  const groupKeyOf = React.useCallback((r: any): string => {
+    const s = typeof r?.sector === 'string' ? r.sector.trim() : '';
+    if (s) return s;
+    const i = typeof r?.industry === 'string' ? r.industry.trim() : '';
+    return i;
+  }, []);
+  const leadingGroups = React.useMemo(() => {
+    const by: Record<string, { count: number; rsSum: number; rsN: number }> = {};
+    techRows.forEach(r => {
+      if (!r.eligible) return;
+      const k = groupKeyOf(r);
+      if (!k) return;
+      if (!by[k]) by[k] = { count: 0, rsSum: 0, rsN: 0 };
+      by[k].count++;
+      if (typeof r.compositeRs === 'number') { by[k].rsSum += r.compositeRs; by[k].rsN++; }
+    });
+    return Object.entries(by)
+      .map(([name, v]) => ({ name, count: v.count, avgRs: v.rsN > 0 ? Math.round(v.rsSum / v.rsN) : null }))
+      .sort((a, b) => b.count - a.count || (b.avgRs ?? 0) - (a.avgRs ?? 0))
+      .slice(0, 5);
+  }, [techRows, groupKeyOf]);
+
   // zzz133 — playbook tops restricted to ELIGIBLE stocks (hard filters first)
   const qullaTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 55).slice(0, 12), [techRows]);
   const zangerTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 45).slice(0, 12), [techRows]);
@@ -8969,16 +9041,28 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     let arr = [...techRows];
     // ADDITIVE (audit) — optional confluence filter: only bench/radar-backed names.
     if (confluenceOnly) arr = arr.filter(r => onBench(r.symbol) || onRadar(r.symbol));
+    // ADDITIVE (audit R3) — sector/group leadership filter (from the leading-groups strip).
+    if (groupFilter) arr = arr.filter(r => groupKeyOf(r) === groupFilter);
+    // ADDITIVE (audit R2) — when ranking by a score column (the default view),
+    // float fundamentally-backed names (🏆 bench / 🚀 radar) upward with a small
+    // effective boost. Technical setup + fundamental backing = higher conviction.
+    // Display-order only — the printed scores stay honest.
+    const SCORE_FIELDS = new Set(['totalScore', 'qullaScore', 'zangerScore', 'bondeScore', 'minerviniScore', 'compositeRs']);
+    const boostSort = !sortAsc && SCORE_FIELDS.has(sortField);
+    const confBoost = (r: any) => boostSort ? (onBench(r.symbol) ? 6 : 0) + (onRadar(r.symbol) ? 6 : 0) : 0;
     arr.sort((a: any, b: any) => {
       const va = a[sortField], vb = b[sortField];
-      if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
+      if (typeof va === 'number' && typeof vb === 'number') {
+        const av = va + confBoost(a), bv = vb + confBoost(b);
+        return sortAsc ? av - bv : bv - av;
+      }
       if (typeof va === 'string' && typeof vb === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
       if (va == null && vb != null) return 1;
       if (va != null && vb == null) return -1;
       return 0;
     });
     return arr;
-  }, [techRows, sortField, sortAsc, confluenceOnly, onBench, onRadar]);
+  }, [techRows, sortField, sortAsc, confluenceOnly, onBench, onRadar, groupFilter, groupKeyOf]);
   const handleSort = (field: string) => {
     if (sortField === field) setSortAsc(!sortAsc);
     else { setSortField(field); setSortAsc(field === 'symbol' || field === 'company'); }
@@ -9226,6 +9310,59 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       )}
 
+      {/* ADDITIVE (audit R3) — REGIME-ADAPTIVE STANCE directive. A great chart in a
+          bad tape is still a bad trade. Turns the breadth composite into an explicit
+          position-sizing posture that frames the whole tab. Color = regime. */}
+      {techRegime && (() => {
+        const c = techRegime.composite;
+        const s = c >= 60
+          ? { col: '#10B981', head: '🟢 PRESS BREAKOUTS — FULL SIZE', body: 'Risk-on / expansion tape. Leadership is broad — take full position size on clean pivots and let winners run.' }
+          : c >= 40
+            ? { col: '#FBBF24', head: '🟡 SELECTIVE — HALF SIZE, A+ ONLY', body: 'Transitional tape. Trade half size, only A+ setups (bench 🏆 / radar 🚀-backed), tighter stops. Pass on marginal breakouts.' }
+            : { col: '#EF4444', head: '🔴 CAPITAL PRESERVATION — RAISE CASH', body: 'Risk-off tape. Most breakouts FAIL here — even perfect setups have low odds. Shrink size, raise cash, wait for a follow-through day before committing.' };
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '13px 18px', borderRadius: 12, marginBottom: 16,
+            background: `color-mix(in srgb, ${s.col} 14%, transparent)`, border: `2px solid ${s.col}`, boxShadow: `0 0 0 1px color-mix(in srgb, ${s.col} 20%, transparent)` }}>
+            <span style={{ fontSize: 17, fontWeight: 900, color: s.col, whiteSpace: 'nowrap' }}>{s.head}</span>
+            <span style={{ fontSize: 13, color: TXT, lineHeight: 1.45, flex: 1, minWidth: 240 }}>{s.body}</span>
+          </div>
+        );
+      })()}
+
+      {/* ADDITIVE (audit R2) — AUTO-SYNC freshness banner. Data auto-pulls on mount
+          from the daily GitHub-Action TradingView sync (see zzz156 auto-pull effect),
+          so no manual upload is needed. This surfaces that state clearly + gives a
+          one-click re-pull. Falls back to a "no server rows for this market" note. */}
+      {(() => {
+        const n = techLocalRows.length;
+        const broken = techSyncStatus?.syncBroken;
+        const hasServerRows = techSources.some(s => s.name.startsWith('📡') && s.rowCount > 0);
+        const bg = broken ? 'rgba(239,68,68,0.08)' : n > 0 ? 'color-mix(in srgb, #10B981 8%, transparent)' : 'rgba(251,191,36,0.08)';
+        const bd = broken ? 'rgba(239,68,68,0.4)' : n > 0 ? 'color-mix(in srgb, #10B981 40%, transparent)' : 'rgba(251,191,36,0.4)';
+        const col = broken ? '#EF4444' : n > 0 ? '#10B981' : '#FBBF24';
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 14px', borderRadius: 10, marginBottom: 14, background: bg, border: `1px solid ${bd}` }}>
+            <span style={{ fontSize: 13.5, fontWeight: 800, color: col }}>
+              {broken
+                ? '⚠️ Auto-sync degraded — server files may be stale'
+                : n > 0
+                  ? `🔄 Auto-synced from TradingView · last sync ${agoLabel(techSyncStatus?.lastSync)} · ${n} ${market} stocks scored`
+                  : hasServerRows
+                    ? `🔄 Auto-synced · last sync ${agoLabel(techSyncStatus?.lastSync)} · no ${market} rows in this snapshot`
+                    : `⏳ No server rows for ${market} yet — upload a TradingView CSV below, or ↻ re-pull`}
+            </span>
+            {techSyncStatus && typeof techSyncStatus.okCount === 'number' && (
+              <span style={{ fontSize: 11.5, color: MUTED }}>{techSyncStatus.okCount} file{techSyncStatus.okCount !== 1 ? 's' : ''} on server{techSyncStatus.failCount ? ` · ${techSyncStatus.failCount} failed` : ''}</span>
+            )}
+            <button onClick={() => { handlePullFromServer(); setTimeout(refreshSyncStatus, 1500); }} disabled={techLoading}
+              title="Re-pull the latest daily-synced TradingView exports now"
+              style={{ marginLeft: 'auto', background: 'transparent', color: col, border: `1px solid ${bd}`, padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
+              {techLoading ? '⏳ Syncing…' : '↻ Re-pull now'}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* zzz146 — INDEPENDENT FILE UPLOAD for Technicals tab (India / USA / mix) */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -9399,6 +9536,33 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         );
       })()}
 
+      {/* ADDITIVE (audit R3) — O'Neil LEADING GROUPS strip. Where leadership is
+          concentrated = where institutional money is flowing. Click a group to
+          filter the master table to it; click again (or ✕) to clear. */}
+      {leadingGroups.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', borderRadius: 10, marginBottom: 16, background: 'color-mix(in srgb, #F59E0B 7%, transparent)', border: '1px solid color-mix(in srgb, #F59E0B 40%, transparent)' }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: '#F59E0B', whiteSpace: 'nowrap' }}>🔥 Leading groups</span>
+          <span style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>(eligible leaders by sector — buy a leader in a leading group)</span>
+          {leadingGroups.map(g => {
+            const active = groupFilter === g.name;
+            return (
+              <button key={g.name} onClick={() => setGroupFilter(active ? '' : g.name)}
+                title={active ? 'Click to clear filter' : `Filter master table to ${g.name}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: active ? '#F59E0B' : PANEL2, color: active ? '#0B1220' : TXT, border: `1px solid ${active ? '#F59E0B' : LINE}`, padding: '5px 11px', borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                <b>{g.name.slice(0, 22)}</b>
+                <span style={{ color: active ? '#0B1220' : CYAN, fontWeight: 900 }}>{g.count}</span>
+                {typeof g.avgRs === 'number' && <span style={{ color: active ? '#0B1220' : MUTED, fontSize: 10.5 }}>RS {g.avgRs}</span>}
+              </button>
+            );
+          })}
+          {groupFilter && (
+            <button onClick={() => setGroupFilter('')} style={{ background: 'transparent', color: MUTED, border: `1px solid ${LINE}`, padding: '4px 9px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer' }}>
+              ✕ clear · showing {groupFilter.slice(0, 20)} only
+            </button>
+          )}
+        </div>
+      )}
+
       {/* zzz133/zzz208 — DATA QUALITY + ELIGIBILITY summary chips (cleaned) */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 16 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -9436,7 +9600,12 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       <div style={{ ...cardStyle, background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,211,238,0.05))', borderColor: '#10B981', borderWidth: 2 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
           <div style={{ fontSize: 20, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🏆 CHAMPIONS — TECH + FUNDAMENTAL ELITE ({champions.length})</div>
-          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Eligible + BUY ZONE or EXTENDED (never CHASE) + tech ≥ 45 + fund ≥ 40 + positive 1M + no falling knife. EXTENDED names → wait for pullback to SMA50 before adding.</div>
+          {/* ADDITIVE (audit R3) — Buyable-only toggle: hide extended names (chasing = poor R/R). */}
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }}>
+            <input type="checkbox" checked={buyableOnly} onChange={e => setBuyableOnly(e.target.checked)} />
+            🎯 Buyable only <span style={{ color: MUTED }}>(hide extended)</span>
+          </label>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic', flexBasis: '100%' }}>Eligible + BUY ZONE or EXTENDED (never CHASE) + tech ≥ 45 + fund ≥ 40 + positive 1M + no falling knife. 🎯 Buyable = within ~5% of 21-EMA pivot; ⏳/🚫 = extended, wait for pullback.</div>
         </div>
         {champions.length === 0 ? (
           <div style={{ fontSize: 13, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>
@@ -9444,7 +9613,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
-            {champions.map(r => (
+            {champions.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).map(r => (
               <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative' }}>
                 <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
                   <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
@@ -9452,6 +9621,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 11, fontWeight: 800, color: bq.color, background: `color-mix(in srgb, ${bq.color} 15%, transparent)`, padding: '2px 7px', borderRadius: 5 }}>{bq.label}</span> : null; })()}
                   <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
                   <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
                   <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
@@ -9483,6 +9653,10 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                   {typeof r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1M {fmtPct(r.perf1m)}</span> : null}
                   {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ background: 'rgba(16,185,129,0.18)', color: '#10B981', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}× 🔥</span> : null}
                   {typeof r.rsi === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>RSI {r.rsi.toFixed(0)}</span> : null}
+                  {/* ADDITIVE (audit R2) — O'Neil/Minervini leadership signals on leaders:
+                      Composite RS rank + proximity to 52w high (the breakout pivot). */}
+                  {typeof r.compositeRs === 'number' ? <span title="Composite Relative-Strength rank vs universe (Minervini SEPA wants ≥80)" style={{ background: r.compositeRs >= 80 ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.05)', color: r.compositeRs >= 80 ? '#10B981' : TXT, padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>RS {r.compositeRs}{r.compositeRs >= 90 ? ' 🔥' : ''}</span> : null}
+                  {typeof r.distFromHigh === 'number' ? <span title="Distance below 52-week high — the breakout pivot. Minervini buys within 25%." style={{ background: r.distFromHigh >= -5 ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.05)', color: r.distFromHigh >= -5 ? '#10B981' : TXT, padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>{r.distFromHigh >= -1 ? '≈52wH 🎯' : `${r.distFromHigh.toFixed(0)}% ← 52wH`}</span> : null}
                   {typeof r.revGrowthQtr === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Rev {fmtPct(r.revGrowthQtr)}</span> : null}
                   {typeof r.epsGrowthTTM === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>EPS {fmtPct(r.epsGrowthTTM)}</span> : null}
                 </div>
@@ -9521,11 +9695,12 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their SMA50.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
-            {buyZone.map(r => (
+            {buyZone.filter(r => !buyableOnly || (buyability(r)?.buyable ?? true)).map(r => (
               <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>{symBadges(r.symbol)}
                   <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  {(() => { const bq = buyability(r); return bq ? <span title={bq.title} style={{ fontSize: 10, fontWeight: 800, color: bq.color }}>{bq.label}</span> : null; })()}
                   <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
                 </div>
                 <div style={{ fontSize: 11.5, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
