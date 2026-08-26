@@ -4115,6 +4115,7 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     // multi-pivot — EMA 89 (deeper trend pullback pivot). Optional; degrades to
     // "unavailable" until the user adds this column to their TradingView export.
     ema89: n(row['Exponential moving average, 89, 1 day'] ?? row['EMA 89']),
+    ema100: n(row['Exponential moving average, 100, 1 day'] ?? row['EMA 100'] ?? row['Simple moving average, 100, 1 day'] ?? row['SMA 100']),
     // zzz130 — New technical fields user added to TradingView export for the
     // Technicals tab (Qulla/Zanger/Bonde/Minervini). All optional; the tab
     // gracefully falls back if any are missing.
@@ -7624,7 +7625,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     const cands = [
       { ma: '21-EMA', dist: r?.pctVsEma21, band: Math.max(4, adr ? adr * 1.5 : 4) },
       { ma: '50-DMA', dist: (typeof r?.pctVsSma50 === 'number' ? r.pctVsSma50 : r?.pctVsEma50), band: Math.max(7, adr ? adr * 2 : 7) },
-      { ma: '89-EMA', dist: r?.pctVsEma89, band: Math.max(9, adr ? adr * 2.5 : 9) },
+      { ma: (r?.mediumMaLabel || '89-EMA'), dist: r?.pctVsMedium, band: Math.max(9, adr ? adr * 2.5 : 9) },
       { ma: '200-DMA', dist: (typeof r?.pctVsSma200 === 'number' ? r.pctVsSma200 : r?.pctVsEma200), band: Math.max(12, adr ? adr * 3 : 12) },
     ].filter(c => typeof c.dist === 'number');
     // "at" a pivot = from just below (reclaim, -2%) up to that MA's adaptive ceiling
@@ -8096,6 +8097,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     ema50?: number; ema200?: number; rsi?: number;
     ema21?: number;              // zzz138 — Qullamaggie's actual entry rule
     ema89?: number;              // multi-pivot — deeper trend pullback pivot
+    ema100?: number;             // multi-pivot — real 100-MA if the column is present
+    mediumMaLabel?: string;      // multi-pivot — resolved medium-MA label (89-EMA / 100-DMA / ~100-DMA)
+    pctVsMedium?: number;        // multi-pivot — % distance to the resolved medium MA
     pctVsEma21?: number;
     perf1y?: number; perf3m?: number; perf6m?: number;
     high52w?: number; beta?: number; avgVol30d?: number;
@@ -8172,7 +8176,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       const ema50 = num(r.ema50);
       const ema200 = num(r.ema200);
       const ema21 = num(r.ema21);  // zzz138 — Qullamaggie's exact entry rule
-      const ema89 = num(r.ema89);  // multi-pivot — deeper trend pullback pivot
+      const ema89 = num(r.ema89);  // multi-pivot — deeper trend pullback pivot (real, if column present)
+      const ema100 = num(r.ema100);  // multi-pivot — real 100-period MA if the column is present
       const rsi = num(r.rsi);
       const perf1y = num(r.perf1y);
       const perf3m = num(r.perf3m);
@@ -8201,6 +8206,18 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         ? Math.round((price - ema21) / ema21 * 1000) / 10 : undefined;
       const pctVsEma89 = (price !== undefined && ema89 !== undefined && ema89 > 0)
         ? Math.round((price - ema89) / ema89 * 1000) / 10 : undefined;
+      // MEDIUM-TERM PIVOT — prefer the real 89-EMA (Qullamaggie's), else a real 100-MA,
+      // else derive a ~100-period line from EMA50/EMA200 so the pivot ALWAYS works even
+      // when the export lacks an 89/100 column. Blend weight: 100 sits 1/3 of the way
+      // from EMA50 to EMA200 in period-space → EMA100 ≈ EMA50·2/3 + EMA200·1/3.
+      let mediumMa: number | undefined;
+      let mediumMaLabel: string | undefined;
+      if (ema89 !== undefined && ema89 > 0) { mediumMa = ema89; mediumMaLabel = '89-EMA'; }
+      else if (ema100 !== undefined && ema100 > 0) { mediumMa = ema100; mediumMaLabel = '100-DMA'; }
+      else if (ema50 !== undefined && ema200 !== undefined && ema50 > 0 && ema200 > 0) { mediumMa = ema50 * 2 / 3 + ema200 / 3; mediumMaLabel = '~100-DMA'; }
+      else if (sma50 !== undefined && sma200 !== undefined && sma50 > 0 && sma200 > 0) { mediumMa = sma50 * 2 / 3 + sma200 / 3; mediumMaLabel = '~100-DMA'; }
+      const pctVsMedium = (price !== undefined && mediumMa !== undefined && mediumMa > 0)
+        ? Math.round((price - mediumMa) / mediumMa * 1000) / 10 : undefined;
       const pctVsEma200 = (price !== undefined && ema200 !== undefined && ema200 > 0)
         ? Math.round((price - ema200) / ema200 * 1000) / 10 : undefined;
       const pctVsSma50 = (price !== undefined && sma50 !== undefined && sma50 > 0)
@@ -8623,7 +8640,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         industry: (typeof r.industry === 'string' && r.industry) ? r.industry : undefined,  // zzz140
         price, mcapB: mcap, ema50, ema200, rsi,
         ema21, pctVsEma21,  // zzz138
-        ema89, pctVsEma89,  // multi-pivot
+        ema89, ema100, pctVsEma89, mediumMaLabel, pctVsMedium,  // multi-pivot
         perf1y, perf3m, perf6m, high52w, beta, avgVol30d,
         perf1w, perf1m, atr14, sma50, sma150, sma200, vol1m, vol1w, low52w, relVol1w, vol1d,
         pctVsEma50, pctVsEma200, pctVsSma50, pctVsSma150, pctVsSma200,
@@ -9016,7 +9033,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       const systems = sys.has(b) ? [...sys.get(b)!] : [];
       const onB = onBench(r.symbol), onR = onRadar(r.symbol);
       const prox = 1 - Math.min(1, Math.abs(piv.dist) / Math.max(piv.band, 1)); // 1 at the line, 0 at ceiling
-      const maBonus = piv.ma === '21-EMA' ? 4 : piv.ma === '50-DMA' ? 3 : piv.ma === '89-EMA' ? 1 : 0; // prefer tighter pivots
+      const maBonus = piv.ma === '21-EMA' ? 4 : piv.ma === '50-DMA' ? 3 : /89|100/.test(piv.ma) ? 1 : 0; // prefer tighter pivots
       const primeScore = systems.length * 14 + (onB ? 8 : 0) + (onR ? 8 : 0) + (r.totalScore || 0) * 0.5 + (r.fundScore || 0) * 0.3 + prox * 16 + maBonus;
       out.push({ r, piv, systems, onB, onR, prox, primeScore });
     }
@@ -9604,22 +9621,28 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           resting AT a moving-average pivot (21-EMA / 50-DMA / 89-EMA / 200-DMA),
           intersection of every screener. */}
       {(() => {
-        const shown = primeSetups.filter(x => pivotFilter === 'ALL' || x.piv.ma === pivotFilter).slice(0, 8);
-        const has89 = primeSetups.some(x => x.piv.ma === '89-EMA');
-        const pivotChips = ['ALL', '21-EMA', '50-DMA', '89-EMA', '200-DMA'];
+        const isMedium = (ma: string) => /89|100/.test(ma);
+        // the resolved medium-MA label to show on the chip: real 89-EMA > real 100 > ~100 estimate
+        const medLabel = primeSetups.some(x => x.piv.ma === '89-EMA') ? '89-EMA'
+          : primeSetups.some(x => x.piv.ma === '100-DMA') ? '100-DMA' : '~100-DMA';
+        const isApproxMed = medLabel.startsWith('~');
+        const shown = primeSetups.filter(x => pivotFilter === 'ALL' || (pivotFilter === 'MED' ? isMedium(x.piv.ma) : x.piv.ma === pivotFilter)).slice(0, 8);
+        const pivotChips: Array<{ v: string; l: string }> = [
+          { v: 'ALL', l: 'ALL' }, { v: '21-EMA', l: '21-EMA' }, { v: '50-DMA', l: '50-DMA' },
+          { v: 'MED', l: medLabel }, { v: '200-DMA', l: '200-DMA' },
+        ];
         return (
       <div style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.10), rgba(16,185,129,0.02) 60%, transparent)', border: '1px solid rgba(16,185,129,0.30)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 900, color: '#10B981', letterSpacing: '0.3px', marginBottom: 4 }}>🎯 PRIME SETUPS — best at a moving-average pivot ({shown.length})</div>
         <div style={{ fontSize: 12, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>
-          The highest-conviction eligible names resting AT a moving-average pivot — the buyable spot. 21-EMA = tightest (raging trend) · 50-DMA = standard swing · 89-EMA = deeper trend pullback · 200-DMA = deep reclaim. Ranked by how many screeners agree (Champion · Buy Zone · SEPA · Pocket · Momentum · Quality · 🏆 bench · 🚀 radar) × proximity to the line.
+          The highest-conviction eligible names resting AT a moving-average pivot — the buyable spot. 21-EMA = tightest (raging trend) · 50-DMA = standard swing · {medLabel} = deeper trend pullback · 200-DMA = deep reclaim. Ranked by how many screeners agree (Champion · Buy Zone · SEPA · Pocket · Momentum · Quality · 🏆 bench · 🚀 radar) × proximity to the line.{isApproxMed ? ' The ~100-DMA is estimated from EMA-50/EMA-200 — add an “EMA 89” or “EMA 100” column to your TradingView export for the exact line.' : ''}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
           {pivotChips.map(chip => {
-            const active = pivotFilter === chip;
-            const dim = chip === '89-EMA' && !has89;
+            const active = pivotFilter === chip.v;
             return (
-              <button key={chip} onClick={() => setPivotFilter(chip)} title={dim ? "Add 'EMA 89' to your TradingView export columns to enable" : undefined} style={{ fontSize: 11.5, fontWeight: 800, cursor: 'pointer', padding: '4px 11px', borderRadius: 999, border: `1px solid ${active ? '#10B981' : 'rgba(16,185,129,0.35)'}`, background: active ? '#10B981' : 'transparent', color: active ? '#04120C' : '#10B981', opacity: dim ? 0.4 : 1 }}>
-                {chip === 'ALL' ? 'ALL' : chip}
+              <button key={chip.v} onClick={() => setPivotFilter(chip.v)} title={chip.v === 'MED' && isApproxMed ? 'Estimated ~100-DMA (from EMA-50/EMA-200). Add an EMA 89 or EMA 100 column to your TradingView export for the exact 89/100 line.' : undefined} style={{ fontSize: 11.5, fontWeight: 800, cursor: 'pointer', padding: '4px 11px', borderRadius: 999, border: `1px solid ${active ? '#10B981' : 'rgba(16,185,129,0.35)'}`, background: active ? '#10B981' : 'transparent', color: active ? '#04120C' : '#10B981' }}>
+                {chip.l}
               </button>
             );
           })}
