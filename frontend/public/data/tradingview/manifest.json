@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-27T17:23:49.679Z",
+  "lastSync": "2026-08-27T19:11:54.506Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 10,
@@ -11,8 +11,8 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 52207,
-      "rowCount": 46,
+      "size": 50992,
+      "rowCount": 45,
       "error": null
     },
     {
@@ -21,7 +21,7 @@
       "screenerId": "WJDx6FZ9",
       "kind": "screener",
       "ok": true,
-      "size": 24546,
+      "size": 24462,
       "rowCount": 20,
       "error": null
     },
@@ -31,8 +31,8 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 24682,
-      "rowCount": 21,
+      "size": 35681,
+      "rowCount": 31,
       "error": null
     },
     {
@@ -41,7 +41,7 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 68149,
+      "size": 68117,
       "rowCount": 61,
       "error": null
     },
@@ -51,8 +51,8 @@
       "screenerId": "Neuim2Bm",
       "kind": "screener",
       "ok": true,
-      "size": 42015,
-      "rowCount": 37,
+      "size": 46593,
+      "rowCount": 41,
       "error": null
     },
     {
@@ -61,7 +61,7 @@
       "screenerId": "RtSuWTgK",
       "kind": "screener",
       "ok": true,
-      "size": 54233,
+      "size": 54305,
       "rowCount": 46,
       "error": null
     },
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106573,
+      "size": 106002,
       "rowCount": 100,
       "error": null
     },
@@ -91,8 +91,8 @@
       "screenerId": "oRvEFfVY",
       "kind": "screener",
       "ok": true,
-      "size": 108846,
-      "rowCount": 98,
+      "size": 111117,
+      "rowCount": 100,
       "error": null
     },
     {
@@ -101,7 +101,7 @@
       "screenerId": "339270482",
       "kind": "watchlist",
       "ok": true,
-      "size": 51807,
+      "size": 51763,
       "rowCount": 44,
       "error": null
     }
