@@ -500,13 +500,40 @@ function isJunkEvidence(s: string): boolean {
   return EVIDENCE_JUNK_PATTERNS.some(re => re.test(s));
 }
 
+// PATCH 0399 — TABLE / HEADER DUMP filter. PDF tables extract as a run of column
+// headers with no grammar — e.g. Bank of India's credit-rating filing surfaced
+// "Credit Rating Outlook Rating Date of Verificati Date of the Credit Ratin
+// (Stable/ Action (New/ ... Positive Upgrade/ ..." as a [Guidance] bullish reason.
+// These are almost all Title/UPPER-case column labels, repeat the same word down a
+// column, and carry almost no lowercase prose. A genuine rating rationale ("The
+// rating upgrade reflects CRISIL Ratings assessment of the Company's strong
+// business and financial risk profile…") is mostly lowercase prose and passes.
+function isTableOrHeaderDump(s: string): boolean {
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length < 6) return false;
+  const alpha = words.filter(w => /[A-Za-z]/.test(w));
+  if (alpha.length < 5) return true;                                  // mostly numbers / symbols
+  const capWords   = alpha.filter(w => /^[A-Z]/.test(w) && !/^(?:A|I|AI|US|EU|UK|CEO|CFO|GST|PAT|YoY|QoQ|EBITDA|ROCE|ROE|USFDA|EPS)$/.test(w));
+  const proseWords = alpha.filter(w => /^[a-z][a-z']{2,}$/.test(w));  // lowercase words ≥3 letters
+  // (1) header-row: overwhelmingly capitalized labels with little prose
+  if (alpha.length >= 8 && capWords.length / alpha.length > 0.55 && proseWords.length < 4) return true;
+  // (2) a content word echoed down a column ≥4 times
+  const freq: Record<string, number> = {};
+  for (const w of alpha) { const k = w.toLowerCase().replace(/[^a-z]/g, ''); if (k.length >= 4) freq[k] = (freq[k] || 0) + 1; }
+  if (Object.values(freq).some(n => n >= 4)) return true;
+  // (3) a real sentence needs at least a few lowercase prose words
+  if (proseWords.length < 3) return true;
+  return false;
+}
+
 function splitSentences(text: string): string[] {
   // Split on sentence terminators, keep reasonable length
   return text
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
     .filter(s => s.length >= 25 && s.length <= 1000)
-    .filter(s => !isJunkEvidence(s));
+    .filter(s => !isJunkEvidence(s))
+    .filter(s => !isTableOrHeaderDump(s));   // PATCH 0399 — drop PDF table/header dumps
 }
 
 function truncate(s: string, n: number): string {
