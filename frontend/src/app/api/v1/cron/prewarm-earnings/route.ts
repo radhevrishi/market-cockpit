@@ -92,6 +92,17 @@ export async function GET(req: Request) {
     concallWarmed = cr.ok ? (await cr.json())?.results ?? { ok: true } : { status: cr.status };
   } catch (e: any) { concallWarmed = { error: e?.message || String(e) }; }
 
+  // zzz483 — also pre-warm the THEME ROTATION dashboard (both regions) on the same
+  // 4×/day sweep so it's graded on fresh prices and opens instantly, fully
+  // unattended for the long term. Fire-and-forget, never blocks the earnings sweep.
+  let themeRotationWarmed: any = null;
+  try {
+    const rr = await Promise.all(['us', 'india'].map((rg) =>
+      railwaySelfFetch(`${origin}/api/market/theme-rotation?region=${rg}&refresh=1`, { cache: 'no-store', signal: AbortSignal.timeout(90_000) })
+        .then((r) => r.ok).catch(() => false)));
+    themeRotationWarmed = { us: rr[0], india: rr[1] };
+  } catch (e: any) { themeRotationWarmed = { error: e?.message || String(e) }; }
+
   const forceGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
       cache: 'no-store', signal: AbortSignal.timeout(180_000),
@@ -170,6 +181,7 @@ export async function GET(req: Request) {
     status: 'ok',
     bench: benchRefreshed,
     concall_warm: concallWarmed,   // zzz477
+    theme_rotation_warm: themeRotationWarmed,   // zzz483
     window_days: windowDays,
     scanned: results.length,
     refreshed, healed, filled, healthy,

@@ -51,6 +51,28 @@ export const US_THEMES: ThemeDef[] = [
   { id: 'us-biotech',      name: 'Biotech',             emoji: '🧪', group: 'Healthcare', proxy: 'XBI', note: 'Equal-weight biotech (SPDR)' },
   { id: 'us-homebuild',    name: 'Homebuilders',        emoji: '🏠', group: 'Industrials & Cyclicals', proxy: 'XHB', note: 'Homebuilders (SPDR)' },
   { id: 'us-regbanks',     name: 'Regional Banks',      emoji: '🏦', group: 'Financials', proxy: 'KRE', note: 'Regional banks (SPDR)' },
+  // Emerging / next-decade themes (zzz483) — baskets so they self-heal as leaders change.
+  { id: 'us-space',        name: 'Space & Satellites',  emoji: '🛰️', group: 'Frontier Tech', basket: ['RKLB','LUNR','ASTS','PL'], note: 'Launch / satellites / space infra' },
+  { id: 'us-drones',       name: 'Drones & Autonomy',   emoji: '🚁', group: 'Frontier Tech', basket: ['AVAV','KTOS','RCAT','ONDS'], note: 'Unmanned systems & autonomy' },
+  { id: 'us-obesity',      name: 'Obesity / GLP-1',     emoji: '💉', group: 'Healthcare', basket: ['LLY','NVO','VKTX','AMGN'], note: 'GLP-1 / metabolic drugs' },
+  { id: 'us-genomics',     name: 'Genomics',            emoji: '🧬', group: 'Healthcare', proxy: 'ARKG', note: 'Genomic revolution (ARK)' },
+  { id: 'us-crypto',       name: 'Crypto & Blockchain', emoji: '₿', group: 'Frontier Tech', proxy: 'BLOK', note: 'Blockchain equities (Amplify)' },
+  { id: 'us-hydrogen',     name: 'Hydrogen / Fuel Cell',emoji: '🔋', group: 'Energy & Resources', basket: ['PLUG','BE','BLDP'], note: 'Hydrogen & fuel-cell' },
+  { id: 'us-ev',           name: 'EV & Electrification',emoji: '🔌', group: 'Frontier Tech', proxy: 'DRIV', note: 'Autonomous & EV (Global X)' },
+  { id: 'us-water',        name: 'Water',               emoji: '💧', group: 'Energy & Resources', proxy: 'PHO', note: 'Water resources (Invesco)' },
+  // Futuristic thematic ETFs (zzz483b) — tracked continuously so the rotation
+  // engine auto-flips each from AVOID to BUY the moment it inflects, even if that
+  // is years away. One ETF fetch each; leaders in THEME_LEADERS give self-heal.
+  { id: 'us-ai',           name: 'Artificial Intelligence', emoji: '🤖', group: 'Frontier Tech', proxy: 'AIQ', note: 'AI & big-data (Global X)' },
+  { id: 'us-innovation',   name: 'Disruptive Innovation', emoji: '🚀', group: 'Frontier Tech', proxy: 'ARKK', note: 'Disruptive innovation (ARK)' },
+  { id: 'us-battery',      name: 'Battery & Lithium',   emoji: '🔋', group: 'Frontier Tech', proxy: 'LIT', note: 'Lithium & battery tech (Global X)' },
+  { id: 'us-5g',           name: '5G / Connectivity',   emoji: '📡', group: 'Frontier Tech', proxy: 'FIVG', note: 'Next-gen connectivity (Defiance 5G)' },
+  { id: 'us-metaverse',    name: 'Metaverse / AR-VR',   emoji: '🕶️', group: 'Frontier Tech', proxy: 'METV', note: 'Metaverse (Roundhill)' },
+  { id: 'us-gaming',       name: 'Gaming & Esports',    emoji: '🎮', group: 'Frontier Tech', proxy: 'ESPO', note: 'Video games & esports (VanEck)' },
+  { id: 'us-infra',        name: 'Infrastructure / Reshoring', emoji: '🏗️', group: 'Industrials & Cyclicals', proxy: 'PAVE', note: 'US infrastructure build (Global X)' },
+  { id: 'us-copper',       name: 'Copper / Electrification', emoji: '🟠', group: 'Energy & Resources', proxy: 'COPX', note: 'Copper miners (Global X)' },
+  { id: 'us-cleanenergy',  name: 'Clean Energy',        emoji: '🌱', group: 'Energy & Resources', proxy: 'ICLN', note: 'Clean energy (iShares Global)' },
+  { id: 'us-agtech',       name: 'AgTech & Food',       emoji: '🌾', group: 'Frontier Tech', proxy: 'KROP', note: 'AgTech & food innovation (Global X)' },
 ];
 
 // Broad-market reference so the same tape regime is visible next to the themes.
@@ -79,6 +101,13 @@ export const INDIA_THEMES: ThemeDef[] = [
   { id: 'in-infra',        name: 'Infra',               emoji: '🛤️', group: 'Capex & Strategic', proxy: '^CNXINFRA', note: 'NIFTY Infra' },
   { id: 'in-pse',          name: 'PSE (PSU)',           emoji: '🏭', group: 'Capex & Strategic', proxy: '^CNXPSE', note: 'NIFTY PSE' },
   { id: 'in-datacenter',   name: 'Data Center',         emoji: '🖥️', group: 'Tech & New-Age', basket: ['ANANTRAJ.NS','NETWEB.NS','TATACOMM.NS','STLTECH.NS'], note: 'India data-center build-out' },
+  // Emerging / next-decade themes (zzz483) — baskets so they self-heal as leaders change.
+  { id: 'in-renewables',   name: 'Renewables / Green',  emoji: '🔆', group: 'Capex & Strategic', basket: ['SUZLON.NS','INOXWIND.NS','WAAREEENER.NS','JSWENERGY.NS','TATAPOWER.NS'], note: 'Wind / solar / green power' },
+  { id: 'in-newage',       name: 'New-age Internet',    emoji: '📱', group: 'Tech & New-Age', basket: ['PAYTM.NS','NYKAA.NS','POLICYBZR.NS','IRCTC.NS'], note: 'Consumer-internet platforms' },
+  { id: 'in-hospitals',    name: 'Hospitals',           emoji: '🏥', group: 'Healthcare & Consumer', basket: ['APOLLOHOSP.NS','MAXHEALTH.NS','FORTIS.NS','NH.NS'], note: 'Hospital chains' },
+  { id: 'in-cement',       name: 'Cement',              emoji: '🧱', group: 'Energy & Materials', basket: ['ULTRACEMCO.NS','SHREECEM.NS','AMBUJACEM.NS','ACC.NS'], note: 'Cement (housing + infra cycle)' },
+  { id: 'in-retail',       name: 'Retail / Discretionary', emoji: '🛍️', group: 'Healthcare & Consumer', basket: ['TRENT.NS','DMART.NS','TITAN.NS','JUBLFOOD.NS'], note: 'Consumption & retail' },
+  { id: 'in-ports',        name: 'Ports & Shipping',    emoji: '🚢', group: 'Capex & Strategic', basket: ['ADANIPORTS.NS','GESHIP.NS','MAZDOCK.NS','COCHINSHIP.NS'], note: 'Ports, shipping, shipbuilding' },
 ];
 
 export const INDIA_BENCHMARK = { symbol: '^NSEI', name: 'NIFTY 50' };
@@ -106,6 +135,21 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'us-biotech': ['VRTX', 'REGN', 'GILD', 'AMGN', 'MRNA'],
   'us-homebuild': ['DHI', 'LEN', 'PHM', 'NVR'],
   'us-regbanks': ['USB', 'PNC', 'TFC', 'KEY', 'RF'],
+  // futuristic ETF themes — leaders give the self-heal fallback if the ETF ever delists
+  'us-ai': ['NVDA', 'MSFT', 'GOOGL', 'META', 'PLTR'],
+  'us-innovation': ['TSLA', 'COIN', 'HOOD', 'ROKU', 'PLTR'],
+  'us-battery': ['ALB', 'TSLA', 'QS', 'ENVX', 'PANW'],
+  'us-5g': ['QCOM', 'AVGO', 'CSCO', 'AMT', 'TMUS'],
+  'us-metaverse': ['META', 'NVDA', 'AAPL', 'RBLX', 'U'],
+  'us-gaming': ['NVDA', 'RBLX', 'EA', 'TTWO', 'NTES'],
+  'us-infra': ['ETN', 'PWR', 'VMC', 'MLM', 'URI'],
+  'us-copper': ['FCX', 'SCCO', 'TECK', 'ERO'],
+  'us-cleanenergy': ['FSLR', 'ENPH', 'NEE', 'FLNC'],
+  'us-agtech': ['DE', 'CTVA', 'NTR', 'MOS'],
+  'us-genomics': ['VRTX', 'REGN', 'CRSP', 'NTLA', 'TWST'],
+  'us-crypto': ['COIN', 'MSTR', 'HOOD', 'MARA'],
+  'us-ev': ['TSLA', 'RIVN', 'ALB', 'APTV'],
+  'us-water': ['ECL', 'AWK', 'XYL', 'WM'],
   // India
   'in-it': ['TCS.NS', 'INFY.NS', 'HCLTECH.NS', 'WIPRO.NS', 'LTIM.NS', 'PERSISTENT.NS'],
   'in-energy': ['RELIANCE.NS', 'NTPC.NS', 'POWERGRID.NS', 'ONGC.NS', 'COALINDIA.NS'],

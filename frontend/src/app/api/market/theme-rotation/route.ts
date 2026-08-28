@@ -25,7 +25,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v1:${r}`;
-const CACHE_TTL = 30 * 60;
+// zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
+// keeps the tab instant. The cron pre-warm below refreshes it well within this
+// window, and the ↻ Refresh button always bypasses it for a live recompute.
+const CACHE_TTL = 6 * 60 * 60;
 
 // ── small math helpers (self-contained copies of the RRG engine's, so the
 //    existing /api/market/rrg route is left completely untouched) ─────────────
@@ -163,21 +166,41 @@ async function build(region: ThemeRegion) {
   for (const t of themes) { if (t.proxy) symbols.add(t.proxy); (t.basket || []).forEach((s) => symbols.add(s)); }
   const data = await fetchChunked([...symbols], range, interval);
 
+  const enough = (sym: string) => { const d = data.get(sym); return !!d && d.closes.filter((x) => x != null && !isNaN(x)).length >= 20; };
+
+  // zzz483 — SELF-HEAL for the long term: a proxy ETF/index can be delisted or
+  // renamed over the years. Any proxy theme whose series failed to fetch falls
+  // back to a synthetic equal-weight basket of its leader stocks (fetched only in
+  // that case, so normal runs stay lean). The theme keeps working with no manual
+  // maintenance — the leaders can drift over a decade, but the tab never goes dark.
+  const rescue = new Set<string>();
+  for (const t of themes) {
+    if (t.proxy && !enough(t.proxy)) leadersFor(t).forEach((s) => { if (!data.has(s)) rescue.add(s); });
+  }
+  if (rescue.size) {
+    const more = await fetchChunked([...rescue], range, interval);
+    more.forEach((v, k) => data.set(k, v));
+  }
+
   const benchData = data.get(bench.symbol);
   const benchWk = benchData ? resampleToWeekly(benchData.ts, benchData.closes) : [];
 
   const rows = themes.map((t: ThemeDef) => {
-    // Resolve the theme's price series.
+    // Resolve the theme's price series: the proxy if it's healthy, else a
+    // synthetic equal-weight basket (basket themes always; proxy themes only when
+    // their ETF/index failed — the self-heal above).
     let ts: number[] = [], closes: number[] = [], price = 0, dayChg = 0, breadthAbove50: number | null = null, members: string[] = [];
-    if (t.proxy) {
-      const d = data.get(t.proxy);
-      if (d) { ts = d.ts; closes = d.closes; price = d.price; dayChg = d.dayChg; }
-    } else if (t.basket) {
-      members = t.basket;
-      const memberSeries = t.basket.map((s) => data.get(s)).filter(Boolean) as { ts: number[]; closes: number[]; price: number; dayChg: number }[];
+    let sourceKind: 'proxy' | 'basket' | 'proxy-fallback' = 'basket';
+    if (t.proxy && enough(t.proxy)) {
+      const d = data.get(t.proxy)!;
+      ts = d.ts; closes = d.closes; price = d.price; dayChg = d.dayChg; sourceKind = 'proxy';
+    } else {
+      const memberSyms = (t.basket && t.basket.length) ? t.basket : leadersFor(t);
+      members = memberSyms;
+      sourceKind = t.proxy ? 'proxy-fallback' : 'basket';
+      const memberSeries = memberSyms.map((s) => data.get(s)).filter(Boolean) as { ts: number[]; closes: number[]; price: number; dayChg: number }[];
       const synth = synthesize(memberSeries.map((m) => ({ ts: m.ts, closes: m.closes })));
       ts = synth.ts; closes = synth.closes;
-      // basket day change = mean of members'; breadth = % of members above their own 50-DMA
       if (memberSeries.length) {
         dayChg = +(memberSeries.reduce((a, m) => a + (m.dayChg || 0), 0) / memberSeries.length).toFixed(2);
         const above = memberSeries.filter((m) => { const s = sma(m.closes, 50); return s != null && m.closes[m.closes.length - 1] > s; }).length;
@@ -203,7 +226,7 @@ async function build(region: ThemeRegion) {
     const v = verdictFor(quadrant, aboveSMA50);
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
-      proxy: t.proxy || null, members,
+      proxy: t.proxy || null, members, sourceKind,
       price: +price.toFixed(2), dayChangePct: +dayChg.toFixed(2),
       ret, rsRatio, rsMomentum, quadrant, trail,
       aboveSMA50, breadthAbove50,
