@@ -68,7 +68,7 @@ export const EVIDENCE_LADDER: Array<{ score: number; label: string; re: RegExp }
 // "yet to", "to be", "upcoming/planned/pipeline", "once operational" all now count
 // as aspiration so they cannot promote a realised rung (e.g. "future
 // commercialization" no longer reads as "commercial production started").
-const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planning|target\w*|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year|month)|over the (?:medium|long)|future|likely to|poised to|set to|on track to|working towards|to be\b|yet to|upcoming|planned|pipeline|under (?:commission\w*|construction|implementation|development)|once (?:commission\w*|operational|complet\w*)|by (?:\d{4}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|by (?:end|q[1-4]))\b/i;
+const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planning|target\w*|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year|month)|over the (?:medium|long)|future|likely to|poised to|set to|on track to|working towards|to be\b|yet to|upcoming|planned|pipeline|under (?:commission\w*|construction|implementation|development)|once (?:commission\w*|operational|complet\w*)|by (?:\d{4}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|by (?:end|q[1-4])|to (?:replace|substitute|cater)|designed to|aimed at|in order to|with (?:the aim|a view to)|intended to|would (?:help|enable|allow))\b/i;
 const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*)\b/i;
 const QUANTIFIER = /(\d+(?:\.\d+)?\s?(?:%|bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
 const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|delivered|reported|achieved|generated|turned|commenced|started|received|secured|won|added|onboarded|commissioned|ramped|clocked|posted|recorded|stood at|came in)\b/i;
@@ -116,12 +116,16 @@ function extractSentence(text: string, idx: number, len: number): string {
   const rest = text.slice(idx + len, idx + len + 200);
   const endRel = rest.search(/[.!?](\s|$)/);
   const end = endRel >= 0 ? idx + len + endRel + 1 : Math.min(text.length, idx + len + 130);
-  const q = text.slice(start, end).replace(/\s+/g, ' ').trim();
+  let q = text.slice(start, end).replace(/\s+/g, ' ').trim();
+  // zzz469 — strip a LEADING run of chart/table numbers (a sentence that begins
+  // inside a bar-chart row, e.g. "1074 1290 1428 … Foray into fluorospecialties").
+  // Drop leading tokens until we reach a real word, so the quote starts at prose.
+  q = q.replace(/^(?:[₹$]?\d[\d.,%+\-]*\s+|[+\-]?\d[\d.,%]*\s+){2,}/, '').trim();
   const words = q.split(/\s+/).filter(Boolean);
   const alphaWords = words.filter((w) => /[a-zA-Z]{3,}/.test(w));
-  const digitTokens = words.filter((w) => /^\W*\d/.test(w));
+  const digitTokens = words.filter((w) => /^\W*[\d₹$]/.test(w));
   if (alphaWords.length < 5) return '';                                       // not a real sentence
-  if (words.length > 0 && digitTokens.length / words.length > 0.45) return ''; // number-table dump
+  if (words.length > 0 && digitTokens.length / words.length > 0.40) return ''; // number-table dump (tightened 0.45→0.40)
   return q.slice(0, 220);
 }
 
@@ -140,24 +144,36 @@ export function detectCaution(text: string): { level: number; flags: string[] } 
   const guidanceHeld = /\b(maintain\w*|reaffirm\w*|reiterat\w*|retain\w*|raised|rais\w*|increas\w*|upgrad\w*|no reduction|no change|unchanged|intact)\b[^.]{0,25}?\b(guidance|outlook|forecast)\b|\b(guidance|outlook|forecast)\b[^.]{0,25}?\b(maintain\w*|reaffirm\w*|reiterat\w*|unchanged|intact|raised)\b/i;
   let strong = 0;
   if (guidanceCut.test(text) && !guidanceHeld.test(text)) { strong++; flags.push('guidance reduced'); }
-  const medium: Array<[RegExp, string]> = [
-    [/\b(?:pat|net profit|profit(?:ability)?|earnings)\b[^.]{0,22}?\b(fell|fall|declin\w*|drop\w*|de-?grew|de-?growth|down\b)\b/i, 'profit declined'],
-    [/\bmargin\w*\b[^.]{0,22}?\b(contract\w*|declin\w*|fell|compress\w*|shrunk|shrank|erod\w*|dip\w*)\b/i, 'margin contracted'],
-    [/\bvolume\w*\b[^.]{0,22}?\b(declin\w*|fell|fall|slip\w*|drop\w*|de-?grew|down\b|soft\w*)\b/i, 'volume declined'],
-    [/\bremain\w*\s+cautious\b|\b(cautious|caution)\b[^.]{0,25}?\b(outlook|stance|approach|commentary|guidance|demand|near[- ]term|about|regarding)\b/i, 'cautious tone'],
-    [/\b(weak|soft|muted|subdued|sluggish|tepid)\s+demand\b|\bdemand\b[^.]{0,18}?\b(weak\w*|soft\w*|muted|subdued|sluggish|slow\w*)\b/i, 'weak demand'],
-    [/\b(challenging|difficult|tough|adverse)\s+(?:demand|environment|conditions|macro|market|quarter|year|backdrop)\b/i, 'challenging environment'],
-    [/\bde-?growth\b|\bnegative growth\b|\brevenue\b[^.]{0,18}?\b(declin\w*|fell|drop\w*)\b/i, 'de-growth'],
-    [/\b(forex|foreign exchange|currency|fx)\b[^.]{0,18}?\b(loss|hit|impact|headwind|drag|adverse)\b/i, 'forex drag'],
-    [/\b(pricing|price)\s+pressure\b|\brealisation\w*\b[^.]{0,18}?\b(declin\w*|fell|lower|pressure|drop\w*)\b/i, 'pricing pressure'],
+  // zzz469 — broadened so real cautious quarters (like Sharda Cropchem, where the
+  // words were phrased loosely) are actually caught: each financial noun now
+  // accepts a much wider set of decline/pressure words (lower, down, hit,
+  // impacted, muted, under pressure, compressed, YoY decline …).
+  const NEGV = '(fell|fall|declin\\w*|drop\\w*|de-?grew|de-?growth|lower|down\\b|hit|impacted?|erod\\w*|muted|compress\\w*|contract\\w*|shrunk|shrank|soft\\w*|slip\\w*|under pressure|pressure|weak\\w*)';
+  // HARD = a real financial decline (one alone tempers the read a notch).
+  const hardNeg: Array<[RegExp, string]> = [
+    [new RegExp(`\\b(?:pat|net profit|profit(?:ability)?|earnings|bottom[- ]?line)\\b[^.]{0,28}?\\b${NEGV}`, 'i'), 'profit down'],
+    [new RegExp(`\\bmargin\\w*\\b[^.]{0,28}?\\b${NEGV}`, 'i'), 'margin down'],
+    [new RegExp(`\\bvolume\\w*\\b[^.]{0,28}?\\b${NEGV}`, 'i'), 'volume down'],
+    [new RegExp(`\\b(?:revenue\\w*|top[- ]?line|sales)\\b[^.]{0,24}?\\b(declin\\w*|fell|drop\\w*|de-?grew|de-?growth|lower|down\\b)\\b`, 'i'), 'revenue down'],
+    [new RegExp(`\\brealisation\\w*\\b[^.]{0,22}?\\b${NEGV}|\\b(pricing|price)\\s+pressure\\b|\\bprice\\w*\\b[^.]{0,18}?\\b(declin\\w*|fell|lower|drop\\w*|under pressure)\\b`, 'i'), 'pricing pressure'],
+    [/\bde-?growth\b|\bnegative growth\b/i, 'de-growth'],
+    [/\b(forex|foreign exchange|currency|fx)\b[^.]{0,18}?\b(loss|hit|impact\w*|headwind|drag|adverse|volatil\w*)\b/i, 'forex drag'],
+    [/\b(one-?off|exceptional)\b[^.]{0,15}?\b(loss|item|charge|provision|impair\w*)\b|\bwrite[- ]?off\b|\bimpairment\b/i, 'one-off / provision'],
   ];
-  let med = 0;
-  for (const [re, label] of medium) { if (re.test(text)) { med++; flags.push(label); } }
-  const score = strong * 3 + med;
-  // HIGH (2): a guidance cut, OR guidance-cut+any negative, OR 3+ independent negatives.
-  // MIXED (1): 2 negatives. Otherwise none.
-  const level = strong >= 1 || med >= 3 ? 2 : med >= 2 ? 1 : 0;
-  return { level, flags: flags.slice(0, 4) };
+  // SOFT = tone/hedge words (need two before they count, so one boilerplate line is harmless).
+  const softNeg: Array<[RegExp, string]> = [
+    [/\bremain\w*\s+cautious\b|\b(cautious|caution)\b[^.]{0,25}?\b(outlook|stance|approach|commentary|guidance|demand|near[- ]term|environment|on the)\b/i, 'cautious tone'],
+    [/\b(weak|soft|muted|subdued|sluggish|tepid)\s+demand\b|\bdemand\b[^.]{0,18}?\b(weak\w*|soft\w*|muted|subdued|sluggish|slow\w*)\b/i, 'weak demand'],
+    [/\b(challenging|difficult|tough|adverse|subdued)\s+(?:demand|environment|conditions|macro|market|quarter|year|backdrop|outlook|scenario)\b/i, 'challenging environment'],
+    [/\b(slowdown|slow[- ]?down|deceleration|moderation)\b[^.]{0,18}?\b(demand|growth|volume|revenue|sales|market)\b/i, 'slowdown'],
+  ];
+  let hard = 0, soft = 0;
+  for (const [re, label] of hardNeg) { if (re.test(text)) { hard++; flags.push(label); } }
+  for (const [re, label] of softNeg) { if (re.test(text)) { soft++; flags.push(label); } }
+  // HIGH (2 → AVOID / removed): guidance cut, OR 2+ hard negatives, OR hard+2soft.
+  // MIXED (1 → down a tier): 1 hard negative, OR 2+ soft. One lone hedge = 0.
+  const level = strong >= 1 || hard >= 2 || (hard >= 1 && soft >= 2) ? 2 : (hard >= 1 || soft >= 2) ? 1 : 0;
+  return { level, flags: flags.slice(0, 5) };
 }
 
 // Walk the ladder high → low; a rung wins only when it has at least one match

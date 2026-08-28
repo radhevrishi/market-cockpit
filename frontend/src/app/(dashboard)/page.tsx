@@ -5213,15 +5213,20 @@ function readTransform(e: any): { verdict: string; isBuy: boolean; headline: str
   const patAll = pats.map((p: any) => p.label).join(', ') || '—';
   const proof = (e.evidence_label && !/no transformation/i.test(e.evidence_label)) ? e.evidence_label : 'early narrative only';
   const quote = (e.evidence_quote && String(e.evidence_quote).trim()) ? String(e.evidence_quote).trim() : '';
-  // zzz467 — HAIRCUTS before the verdict: a cautious/guidance-cut concall is NOT
-  // a buy no matter what positive keyword fired; a mixed quarter is downgraded a
-  // tier; a subject/title-only read (no PDF) can never be a confident buy.
+  // zzz467/zzz469 — HAIRCUTS before the verdict. Cross-check the filing's own
+  // sentiment tier: a concall the bullish classifier tagged NEUTRAL/negative adds
+  // one caution notch even if my keyword net missed it (belt-and-suspenders, so a
+  // cautious quarter can't slip through on phrasing alone).
+  const tier = String(e.bullish_tier || '').toUpperCase();
+  const tierCaution = /NEUTRAL|MIXED_NEG|BEARISH/.test(tier) ? 1 : 0;
+  const effCaution = Math.min(2, cautionLevel + tierCaution);
   let ev = evRaw;
-  if (cautionLevel >= 2) ev = Math.min(ev, 2);       // cautious / guidance cut → out of the buy zone
-  else if (cautionLevel === 1) ev = Math.max(0, ev - 3); // mixed quarter → down a tier
+  if (effCaution >= 2) ev = Math.min(ev, 2);         // cautious / guidance cut → out of the buy zone
+  else if (effCaution === 1) ev = Math.max(0, ev - 3); // mixed quarter → down a tier
   if (subjectOnly) ev = Math.min(ev, 5);             // title-only → never a confident buy
   const warnBits = [
-    ...(cautionFlags.length ? [cautionFlags.join(', ')] : (cautionLevel >= 2 ? ['cautious guidance'] : [])),
+    ...(cautionFlags.length ? [cautionFlags.join(', ')] : (effCaution >= 2 ? ['cautious'] : [])),
+    ...(tierCaution && !cautionFlags.length ? [`filing tone ${tier.toLowerCase().replace(/_/g, ' ')}`] : []),
     ...(subjectOnly ? ['title-only, no transcript'] : []),
   ];
   const warn = warnBits.length ? ` ⚠️ ${warnBits.join(' · ')}` : '';
@@ -5233,11 +5238,11 @@ function readTransform(e: any): { verdict: string; isBuy: boolean; headline: str
   else if (ev >= 6)  { verdict = 'ACCUMULATE'; sub = 'orders / production live'; hColor = '#22C55E'; soft = false; read = 'real hard milestones (orders won / commercial production) — numbers should follow'; }
   else if (ev === 5) { verdict = 'WATCH';      sub = 'customer qualification';  hColor = '#F59E0B'; soft = true;  read = 'qualified/approved by a customer but revenue not yet flowing — not yet a buy'; }
   else if (ev >= 3)  { verdict = 'WATCH';      sub = 'committed, unproven';     hColor = '#F59E0B'; soft = true;  read = 'capex/partnership committed but not yet earning it — not yet a buy'; }
-  else if (cautionLevel >= 2) { verdict = 'AVOID'; sub = 'cautious guidance';   hColor = '#EF4444'; soft = true;  read = 'the concall cut guidance or turned cautious — the positive line is outweighed by the negatives'; }
+  else if (effCaution >= 2) { verdict = 'AVOID'; sub = 'cautious quarter';     hColor = '#EF4444'; soft = true;  read = 'the concall cut guidance or turned cautious — the positive line is outweighed by the negatives'; }
   else               { verdict = 'WATCH';      sub = 'guidance / story only';   hColor = '#94A3B8'; soft = true;  read = 'guidance or narrative without realised proof yet — not a buy'; }
   // depth upgrade: BUY (8-9) with 4+ proof points reads as STRONG BUY (only when clean)
-  if (verdict === 'BUY' && breadth >= 4 && cautionLevel === 0) { verdict = 'STRONG BUY'; sub = 'proven on multiple fronts'; hColor = '#059669'; read = 'multiple independent proof points confirm the inflection — high conviction'; }
-  const isBuy = ev >= 6 && cautionLevel < 2;   // never a buy at home if cautious
+  if (verdict === 'BUY' && breadth >= 4 && effCaution === 0) { verdict = 'STRONG BUY'; sub = 'proven on multiple fronts'; hColor = '#059669'; read = 'multiple independent proof points confirm the inflection — high conviction'; }
+  const isBuy = ev >= 6 && effCaution < 2;   // never a buy at home if cautious
   const emoji = verdict === 'AVOID' ? '⛔' : (ev >= 10 || verdict === 'STRONG BUY') ? '🟢🟢' : ev >= 6 ? '🟢' : '🟡';
   const headline = `${emoji} ${verdict} · ${sub}${warn}`;
   const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
