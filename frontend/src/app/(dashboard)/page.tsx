@@ -5284,7 +5284,7 @@ function DailySignalInbox() {
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [laneStatus, setLaneStatus] = useState<Record<LaneKey, boolean>>({ momentum: false, warrant: false, transform: false, bench: false });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setLoading(true);
     // Per-fetch timeout so one slow feed (e.g. a cold PDF-scanning warrant feed)
     // can NEVER stall the whole inbox the way the old Promise.all did.
@@ -5386,7 +5386,7 @@ function DailySignalInbox() {
     });
 
     // TRANSFORM — batch radar.
-    j('/api/v1/concall-intel/transformation-screener?days=60&limit=24', 16000).then((transform) => {
+    j(`/api/v1/concall-intel/transformation-screener?days=60&limit=24${force ? '&refresh=1' : ''}`, force ? 55000 : 16000).then((transform) => {
       if (!transform || transform.error) return;
       const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
@@ -5446,7 +5446,8 @@ function DailySignalInbox() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={load} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(96,165,250,0.4)', background: 'transparent', color: '#60A5FA' }}>{loading ? '⏳' : '↻ Refresh'}</button>
+          <button onClick={() => load(false)} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(96,165,250,0.4)', background: 'transparent', color: '#60A5FA' }}>{loading ? '⏳' : '↻ Refresh'}</button>
+          <button onClick={() => load(true)} disabled={loading} title="Force a fresh server scan (bypasses the cache) — takes ~30-50s" style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(16,185,129,0.5)', background: 'transparent', color: '#10B981' }}>{loading ? '⏳' : '↻ Fresh'}</button>
           <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
         </div>
       </div>
