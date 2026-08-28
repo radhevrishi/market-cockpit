@@ -27,6 +27,8 @@ interface TransformationRadarData {
   evidence_label: string;
   evidence_quote?: string;      // zzz462 — exact proof sentence
   evidence_breadth?: number;    // zzz462 — distinct proof rungs fired
+  caution_level?: number;       // zzz467 — 0 none / 1 mixed / 2 cautious
+  caution_flags?: string[];     // zzz467 — the negatives found
   stage: number;
   stage_sweet_spot: boolean;
   velocity: string;
@@ -3627,6 +3629,11 @@ function TransformationRadar({ t, ticker }: { t: TransformationRadarData; ticker
           “{t.evidence_quote}” <span style={{ color: TF.dim, fontStyle: 'normal' }}>— verify against the transcript before acting</span>
         </div>
       ) : null}
+      {typeof t.caution_level === 'number' && t.caution_level >= 1 && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: t.caution_level >= 2 ? '#EF4444' : '#F59E0B', marginBottom: 10, padding: '6px 10px', borderRadius: 4, background: t.caution_level >= 2 ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.10)', border: `1px solid ${t.caution_level >= 2 ? '#EF444455' : '#F59E0B55'}` }}>
+          {t.caution_level >= 2 ? '⛔ CAUTIOUS CONCALL — downgraded' : '⚠️ MIXED quarter'}{t.caution_flags && t.caution_flags.length ? `: ${t.caution_flags.join(' · ')}` : ''}. The positive signal is outweighed — do not treat as a clean buy.
+        </div>
+      )}
       {t.patterns.length > 0 && (
         <>
           <div style={{ ...TFM, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim, marginBottom: 7 }}>Transformation patterns detected</div>
@@ -3838,7 +3845,7 @@ interface TransformScreenEntry {
   bullish_tier: string;
   transformation_score: number; pattern_count: number;
   patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
-  evidence_score: number; evidence_label: string; evidence_quote?: string; evidence_breadth?: number;
+  evidence_score: number; evidence_label: string; evidence_quote?: string; evidence_breadth?: number; caution_level?: number; caution_flags?: string[];
   stage: number; stage_sweet_spot: boolean; velocity: string;
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';

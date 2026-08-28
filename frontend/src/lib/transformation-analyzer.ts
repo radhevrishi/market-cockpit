@@ -99,10 +99,14 @@ function extractSentence(text: string, idx: number, len: number): string {
   // sentence START: prefer the last real break (period/!/? + space) within 200
   // chars; else fall back ~130 chars but snap FORWARD to the next word boundary.
   const pre = text.slice(Math.max(0, idx - 200), idx);
-  const preBreak = pre.search(/[.!?]\s(?=[^]*$)/);
+  // zzz467 — use the NEAREST (last) sentence break before the match, not the
+  // first, so the quote is just the sentence containing the proof (was pulling
+  // in a preceding sentence, e.g. STEELCAST's power-plant clause before "order book").
+  let lastBreak = -1; const brRe = /[.!?]\s/g; let bm: RegExpExecArray | null;
+  while ((bm = brRe.exec(pre)) !== null) lastBreak = bm.index + bm[0].length;
   let start: number;
-  if (preBreak >= 0) {
-    start = Math.max(0, idx - 200) + preBreak + 2;   // right after the break + its space
+  if (lastBreak >= 0) {
+    start = Math.max(0, idx - 200) + lastBreak;       // right after the nearest break
   } else {
     start = Math.max(0, idx - 130);
     const sp = text.indexOf(' ', start);
@@ -119,6 +123,41 @@ function extractSentence(text: string, idx: number, len: number): string {
   if (alphaWords.length < 5) return '';                                       // not a real sentence
   if (words.length > 0 && digitTokens.length / words.length > 0.45) return ''; // number-table dump
   return q.slice(0, 220);
+}
+
+// ─── zzz467 — CAUTION / guidance-cut detector ──────────────────────────────
+// The evidence ladder only hunts POSITIVE keywords, so a concall that cut
+// guidance or turned cautious could still read as a BUY off one upbeat line
+// (e.g. Sharda Cropchem: volume slipped, PAT fell, margin contracted, forex hit —
+// yet graded ACCUMULATE). This reads the whole document for real negatives and
+// returns a level (0 none / 1 mixed / 2 cautious) used to haircut the verdict.
+// Calibrated conservatively — one stray "challenging" won't trip it; it needs a
+// genuine guidance cut, or several independent negatives (as a real analyst reads).
+export function detectCaution(text: string): { level: number; flags: string[] } {
+  const flags: string[] = [];
+  // explicit guidance CUT (strong) — but not "maintained / reaffirmed / raised / no reduction"
+  const guidanceCut = /\b(reduc\w*|lower\w*|cut|trimm\w*|slash\w*|downgrad\w*|revis\w*\s+(?:down\w*|lower))\b[^.]{0,30}?\b(guidance|outlook|forecast|estimate\w*|target\w*)\b|\b(guidance|outlook|forecast)\b[^.]{0,30}?\b(reduc\w*|lower\w*|cut|trimm\w*|downward|revis\w*\s+down\w*)\b/i;
+  const guidanceHeld = /\b(maintain\w*|reaffirm\w*|reiterat\w*|retain\w*|raised|rais\w*|increas\w*|upgrad\w*|no reduction|no change|unchanged|intact)\b[^.]{0,25}?\b(guidance|outlook|forecast)\b|\b(guidance|outlook|forecast)\b[^.]{0,25}?\b(maintain\w*|reaffirm\w*|reiterat\w*|unchanged|intact|raised)\b/i;
+  let strong = 0;
+  if (guidanceCut.test(text) && !guidanceHeld.test(text)) { strong++; flags.push('guidance reduced'); }
+  const medium: Array<[RegExp, string]> = [
+    [/\b(?:pat|net profit|profit(?:ability)?|earnings)\b[^.]{0,22}?\b(fell|fall|declin\w*|drop\w*|de-?grew|de-?growth|down\b)\b/i, 'profit declined'],
+    [/\bmargin\w*\b[^.]{0,22}?\b(contract\w*|declin\w*|fell|compress\w*|shrunk|shrank|erod\w*|dip\w*)\b/i, 'margin contracted'],
+    [/\bvolume\w*\b[^.]{0,22}?\b(declin\w*|fell|fall|slip\w*|drop\w*|de-?grew|down\b|soft\w*)\b/i, 'volume declined'],
+    [/\bremain\w*\s+cautious\b|\b(cautious|caution)\b[^.]{0,25}?\b(outlook|stance|approach|commentary|guidance|demand|near[- ]term|about|regarding)\b/i, 'cautious tone'],
+    [/\b(weak|soft|muted|subdued|sluggish|tepid)\s+demand\b|\bdemand\b[^.]{0,18}?\b(weak\w*|soft\w*|muted|subdued|sluggish|slow\w*)\b/i, 'weak demand'],
+    [/\b(challenging|difficult|tough|adverse)\s+(?:demand|environment|conditions|macro|market|quarter|year|backdrop)\b/i, 'challenging environment'],
+    [/\bde-?growth\b|\bnegative growth\b|\brevenue\b[^.]{0,18}?\b(declin\w*|fell|drop\w*)\b/i, 'de-growth'],
+    [/\b(forex|foreign exchange|currency|fx)\b[^.]{0,18}?\b(loss|hit|impact|headwind|drag|adverse)\b/i, 'forex drag'],
+    [/\b(pricing|price)\s+pressure\b|\brealisation\w*\b[^.]{0,18}?\b(declin\w*|fell|lower|pressure|drop\w*)\b/i, 'pricing pressure'],
+  ];
+  let med = 0;
+  for (const [re, label] of medium) { if (re.test(text)) { med++; flags.push(label); } }
+  const score = strong * 3 + med;
+  // HIGH (2): a guidance cut, OR guidance-cut+any negative, OR 3+ independent negatives.
+  // MIXED (1): 2 negatives. Otherwise none.
+  const level = strong >= 1 || med >= 3 ? 2 : med >= 2 ? 1 : 0;
+  return { level, flags: flags.slice(0, 4) };
 }
 
 // Walk the ladder high → low; a rung wins only when it has at least one match
@@ -155,6 +194,8 @@ export interface TransformationResult {
   evidence_label: string;
   evidence_quote: string;      // zzz462 — the exact sentence that proves the top rung (verifiability)
   evidence_breadth: number;    // zzz462 — how many distinct proof rungs fired (depth of proof)
+  caution_level: number;       // zzz467 — 0 none / 1 mixed / 2 cautious (guidance cut / negatives)
+  caution_flags: string[];     // zzz467 — the specific negatives found (e.g. 'margin contracted')
   stage: number;
   stage_sweet_spot: boolean;
   velocity: string;
@@ -179,6 +220,7 @@ export function analyzeTransformation(text: string): TransformationResult {
     .slice(0, 24);
 
   const evidence = detectEvidence(text);
+  const caution = detectCaution(text);   // zzz467 — reads the cautious/negative tone
 
   // Inflection ladder stage 0-10, derived from the strongest evidence tell.
   const stageMap: Record<number, number> = { 0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 11: 10 };
@@ -197,6 +239,7 @@ export function analyzeTransformation(text: string): TransformationResult {
     patterns, events,
     evidence_score: evidence.score, evidence_label: evidence.label,
     evidence_quote: evidence.quote, evidence_breadth: evidence.breadth,
+    caution_level: caution.level, caution_flags: caution.flags,
     stage, stage_sweet_spot: inSweetSpot,
     velocity, pattern_count: nPat,
     triple: { industry, company, financial, count: tripleCount },

@@ -5201,34 +5201,48 @@ type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
 // actually changing (the pattern labels, not "vectors"), the proof reached so
 // far, and how broadly it's confirmed (industry / company / financials).
 function readTransform(e: any): { verdict: string; isBuy: boolean; headline: string; detail: string; hColor: string; soft: boolean; note: string; quote: string } {
-  const ev = Number(e.evidence_score) || 0;
+  const evRaw = Number(e.evidence_score) || 0;
   const tc = Number(e.triple?.count) || 0;
   const sweet = !!e.stage_sweet_spot;
   const breadth = Number(e.evidence_breadth) || 0;   // zzz462 — how many proof rungs fired
+  const cautionLevel = Number(e.caution_level) || 0; // zzz467 — 0 none / 1 mixed / 2 cautious
+  const cautionFlags: string[] = Array.isArray(e.caution_flags) ? e.caution_flags : [];
+  const subjectOnly = e.scored_from === 'SUBJECT';   // no PDF text — just the filing title
   const pats = (e.patterns || []).filter((p: any) => (p.hits || 0) > 0).sort((a: any, b: any) => (b.hits || 0) - (a.hits || 0));
   const patTop = pats.slice(0, 2).map((p: any) => p.label).join(' + ') || 'transformation signals';
   const patAll = pats.map((p: any) => p.label).join(', ') || '—';
   const proof = (e.evidence_label && !/no transformation/i.test(e.evidence_label)) ? e.evidence_label : 'early narrative only';
   const quote = (e.evidence_quote && String(e.evidence_quote).trim()) ? String(e.evidence_quote).trim() : '';
-  // zzz464 — explicit BUY-strength VERDICT (STRONG BUY / BUY / ACCUMULATE), and a
-  // depth bump: a BUY read backed by 4+ independent proof points is upgraded a
-  // notch (layered proof > a single high rung). Home only ever shows buy-side —
-  // the WATCH tier (unproven story) is filtered out of the inbox lane.
+  // zzz467 — HAIRCUTS before the verdict: a cautious/guidance-cut concall is NOT
+  // a buy no matter what positive keyword fired; a mixed quarter is downgraded a
+  // tier; a subject/title-only read (no PDF) can never be a confident buy.
+  let ev = evRaw;
+  if (cautionLevel >= 2) ev = Math.min(ev, 2);       // cautious / guidance cut → out of the buy zone
+  else if (cautionLevel === 1) ev = Math.max(0, ev - 3); // mixed quarter → down a tier
+  if (subjectOnly) ev = Math.min(ev, 5);             // title-only → never a confident buy
+  const warnBits = [
+    ...(cautionFlags.length ? [cautionFlags.join(', ')] : (cautionLevel >= 2 ? ['cautious guidance'] : [])),
+    ...(subjectOnly ? ['title-only, no transcript'] : []),
+  ];
+  const warn = warnBits.length ? ` ⚠️ ${warnBits.join(' · ')}` : '';
+  // zzz464 — explicit BUY-strength VERDICT (STRONG BUY / BUY / ACCUMULATE). Home
+  // only ever shows buy-side; WATCH (unproven / cautious) is filtered out.
   let verdict: string, sub: string, hColor: string, soft: boolean, read: string;
   if (ev >= 10)      { verdict = 'STRONG BUY'; sub = 'cash / customer proof';   hColor = '#059669'; soft = false; read = 'strongest tier — proof is in free cash flow or repeat customers, not just margins'; }
   else if (ev >= 8)  { verdict = 'BUY';        sub = 'showing in the numbers';  hColor = '#10B981'; soft = false; read = 'the inflection is already hitting revenue / margins'; }
   else if (ev >= 6)  { verdict = 'ACCUMULATE'; sub = 'orders / production live'; hColor = '#22C55E'; soft = false; read = 'real hard milestones (orders won / commercial production) — numbers should follow'; }
   else if (ev === 5) { verdict = 'WATCH';      sub = 'customer qualification';  hColor = '#F59E0B'; soft = true;  read = 'qualified/approved by a customer but revenue not yet flowing — not yet a buy'; }
   else if (ev >= 3)  { verdict = 'WATCH';      sub = 'committed, unproven';     hColor = '#F59E0B'; soft = true;  read = 'capex/partnership committed but not yet earning it — not yet a buy'; }
+  else if (cautionLevel >= 2) { verdict = 'AVOID'; sub = 'cautious guidance';   hColor = '#EF4444'; soft = true;  read = 'the concall cut guidance or turned cautious — the positive line is outweighed by the negatives'; }
   else               { verdict = 'WATCH';      sub = 'guidance / story only';   hColor = '#94A3B8'; soft = true;  read = 'guidance or narrative without realised proof yet — not a buy'; }
-  // depth upgrade: BUY (8-9) with 4+ proof points reads as STRONG BUY
-  if (verdict === 'BUY' && breadth >= 4) { verdict = 'STRONG BUY'; sub = 'proven on multiple fronts'; hColor = '#059669'; read = 'multiple independent proof points confirm the inflection — high conviction'; }
-  const isBuy = ev >= 6;   // STRONG BUY / BUY / ACCUMULATE — never WATCH at home
-  const emoji = ev >= 10 || (verdict === 'STRONG BUY') ? '🟢🟢' : ev >= 6 ? '🟢' : '🟡';
-  const headline = `${emoji} ${verdict} · ${sub}`;
+  // depth upgrade: BUY (8-9) with 4+ proof points reads as STRONG BUY (only when clean)
+  if (verdict === 'BUY' && breadth >= 4 && cautionLevel === 0) { verdict = 'STRONG BUY'; sub = 'proven on multiple fronts'; hColor = '#059669'; read = 'multiple independent proof points confirm the inflection — high conviction'; }
+  const isBuy = ev >= 6 && cautionLevel < 2;   // never a buy at home if cautious
+  const emoji = verdict === 'AVOID' ? '⛔' : (ev >= 10 || verdict === 'STRONG BUY') ? '🟢🟢' : ev >= 6 ? '🟢' : '🟡';
+  const headline = `${emoji} ${verdict} · ${sub}${warn}`;
   const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
-  const detail = `${patTop} · proof: ${proof} (${ev}/11)${breadth > 1 ? ` · ${breadth} proof points` : ''}`;
-  const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: verdict ${verdict}. ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11, ${breadth} rung${breadth === 1 ? '' : 's'} fired): ${proof}.${quote ? ` Quoted from the concall: "${quote}"` : ''} Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}. Verify the quote before acting — this is a deterministic keyword read, not a recommendation.`;
+  const detail = `${patTop} · proof: ${proof} (${evRaw}/11)${breadth > 1 ? ` · ${breadth} proof points` : ''}`;
+  const note = `BUY-SIDE RADAR — surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: verdict ${verdict}. ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${evRaw}/11, ${breadth} rung${breadth === 1 ? '' : 's'} fired): ${proof}.${quote ? ` Quoted from the concall: "${quote}"` : ''}${cautionFlags.length ? ` ⚠️ CAUTION in the concall: ${cautionFlags.join(', ')} — this downgrades the read.` : ''}${subjectOnly ? ' ⚠️ Scored from the filing TITLE only (no transcript) — unverified.' : ''} Confirmation: ${conf}${sweet ? ' · stage-3–7 sweet spot' : ''}. Read: ${read}. Verify against the transcript before acting — a deterministic keyword read, not a recommendation.`;
   return { verdict, isBuy, headline, detail, hColor, soft, note, quote };
 }
 

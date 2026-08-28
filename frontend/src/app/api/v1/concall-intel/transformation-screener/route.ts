@@ -47,6 +47,8 @@ export interface TransformScreenEntry {
   evidence_label: string;
   evidence_quote: string;      // zzz462 — exact proof sentence (verifiability)
   evidence_breadth: number;    // zzz462 — distinct proof rungs that fired (depth)
+  caution_level: number;       // zzz467 — 0 none / 1 mixed / 2 cautious (guidance cut / negatives)
+  caution_flags: string[];     // zzz467 — the negatives found
   stage: number;
   stage_sweet_spot: boolean;
   velocity: string;
@@ -90,7 +92,10 @@ function transformScore(t: ReturnType<typeof analyzeTransformation>): number {
   // (capex → facility → production → revenue → margin) is more genuinely proven
   // than one that scored a single high rung off one lucky sentence.
   const breadthBonus = Math.min(t.evidence_breadth || 0, 5) * 2;
-  return t.pattern_count * 3 + t.evidence_score + t.triple.count * 2 + (t.stage_sweet_spot ? 4 : 0) + breadthBonus;
+  // zzz467 — caution haircut: a guidance-cut / cautious concall sinks in the
+  // leaderboard even if a positive keyword fired (real-analyst behaviour).
+  const cautionPenalty = t.caution_level >= 2 ? 12 : t.caution_level === 1 ? 5 : 0;
+  return t.pattern_count * 3 + t.evidence_score + t.triple.count * 2 + (t.stage_sweet_spot ? 4 : 0) + breadthBonus - cautionPenalty;
 }
 
 const emptyPayload = (days: number, error?: string): ScreenPayload => ({
@@ -208,6 +213,8 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
         evidence_label: t.evidence_label,
         evidence_quote: t.evidence_quote,
         evidence_breadth: t.evidence_breadth,
+        caution_level: t.caution_level,
+        caution_flags: t.caution_flags,
         stage: t.stage,
         stage_sweet_spot: t.stage_sweet_spot,
         velocity: t.velocity,
