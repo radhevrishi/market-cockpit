@@ -44,6 +44,8 @@ export type SystemNode =
   | 'MANUFACTURING_CAPACITY'  // production capacity, ramp, capex
   | 'LABOR_CONSTRAINT'        // talent, layoffs, strikes, skill gap
   | 'CAPITAL_CONSTRAINT'      // credit, NPA, banking infra, payment rails
+  // Digital / security
+  | 'CYBERSECURITY_INFRA'     // cyber, ransomware, zero-trust, identity, SOC, breach
   // Other
   | 'NONE';
 
@@ -388,6 +390,21 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
     node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'STRUCTURE' },
   { pattern: /\b(qip|qualified institutional placement|rights issue|preferential allotment|fund.?rais(?:e|ing).{0,20}rs\.?)\b/i,
     node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'EVENT' },
+
+  // ─── CYBERSECURITY_INFRA — the security spend bottleneck ────────────────
+  // Structural: AI-amplified threat surface + acute security-talent shortage +
+  // mandatory compliance (DPDP / CERT-In / SEC disclosure / cyber insurance)
+  // force non-discretionary, compounding security budgets. NOTE: bare "SOC" is
+  // deliberately excluded — it collides with "SoC" (system-on-chip) in the heavy
+  // semiconductor feed; we require the spelled-out / adjacent security cues.
+  { pattern: /\bcyber ?security\b/i,                                                    node: 'CYBERSECURITY_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(cyber ?attack|cyber ?threat|cyber ?breach|cyber ?war(?:fare)?|cyber ?espionage|state[- ]sponsored (?:hack|attack))\b/i, node: 'CYBERSECURITY_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(ransomware|malware|spyware|phishing|zero[- ]day|data breach|supply[- ]chain attack)\b/i, node: 'CYBERSECURITY_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(zero[- ]trust|\bSASE\b|\bSIEM\b|\bEDR\b|\bXDR\b|\bMDR\b|security operations cent(?:er|re)|endpoint (?:security|protection|detection))\b/i, node: 'CYBERSECURITY_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(identity (?:security|access|governance)|\bIAM\b|privileged access|\bPAM\b|passwordless|multi[- ]factor auth|\bMFA\b)\b/i, node: 'CYBERSECURITY_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(firewall|threat intelligence|vulnerability management|penetration test|red team|SOC ?2|threat hunting|attack surface)\b/i, node: 'CYBERSECURITY_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(CrowdStrike|Palo Alto Networks|Zscaler|Fortinet|SentinelOne|CyberArk|Okta|Cloudflare|Tenable|Qualys|Rubrik|\bWiz\b|Check Point|Rapid7|Varonis)\b/i, node: 'CYBERSECURITY_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(CERT[- ]?In|DPDP|data protection (?:act|bill|board)|cyber insurance|cyber[- ]?resilience|security mandate|breach (?:disclosure|notification))\b/i, node: 'CYBERSECURITY_INFRA', weight: 6, event_hint: 'STRUCTURE' },
 ];
 
 // ─── Dependency edges — graph of how nodes depend on each other ───────────
@@ -585,5 +602,6 @@ export const NODE_DISPLAY: Record<SystemNode, string> = {
   MANUFACTURING_CAPACITY:  'Mfg capacity',
   LABOR_CONSTRAINT:        'Labor',
   CAPITAL_CONSTRAINT:      'Capital infra',
+  CYBERSECURITY_INFRA:     'Cybersecurity infra',
   NONE:                    '—',
 };

@@ -46,6 +46,7 @@ const STRUCTURAL_NODES: Set<string> = new Set([
   'AEROSPACE_INFRA',
   'RESOURCE_SCARCITY',
   'MANUFACTURING_CAPACITY',
+  'CYBERSECURITY_INFRA',
 ]);
 
 function ttlSecondsFor(node: SystemNode): number {
@@ -239,6 +240,7 @@ const BOTTLENECK_LABEL: Partial<Record<SystemNode, { label: string; sub: string 
   MANUFACTURING_CAPACITY:{ label: 'MFG CAPACITY / PLI',       sub: 'Production-linked + reshoring + capex ramp' },
   LABOR_CONSTRAINT:     { label: 'LABOUR / TALENT',           sub: 'Skilled-talent gap + strikes + visa friction' },
   CAPITAL_CONSTRAINT:   { label: 'CAPITAL / CREDIT',          sub: 'Banking / NPA / payment rails / liquidity' },
+  CYBERSECURITY_INFRA:  { label: 'CYBERSECURITY / ZERO-TRUST', sub: 'AI-amplified threat surface + security-talent shortage + mandatory compliance — non-discretionary spend' },
 };
 
 export function bottleneckLabelFor(node: SystemNode): { label: string; sub: string } {

@@ -402,6 +402,16 @@ export const INDIA_ROSTER: LayerTicker[] = [
 
 // India-specific NODE_RULES — same SystemNodes, India-listed mandatory injects.
 export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
+  // India cyber is thin on pure-plays (Quick Heal) — the real capture is the IT
+  // services majors' fast-growing security practices + managed-security telecom.
+  CYBERSECURITY_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: {
+      L1: ['QUICKHEAL.NS'],
+      L4: ['HAPPSTMNDS.NS','TATACOMM.NS','LTIM.NS','PERSISTENT.NS','COFORGE.NS'],
+      L5: ['TCS.NS','INFY.NS','HCLTECH.NS','WIPRO.NS','TECHM.NS'],
+    },
+  },
   COMPUTE_INFRA: {
     fires: ['L1','L2','L4','L5','L6'],
     // PATCH 0107: AEROFLEX / HONAUT / CENTUM are export proxies for US AI DC mechanical + electronics
@@ -608,6 +618,16 @@ interface NodeRule {
 }
 
 export const NODE_RULES: Record<SystemNode, NodeRule> = {
+  // Cybersecurity — L1 pure-plays capture the non-discretionary spend directly;
+  // L4 integrators (ACN/IBM) ride deployment; L5 platforms (MSFT/GOOGL security ARR).
+  CYBERSECURITY_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: {
+      L1: ['CRWD','PANW','ZS','FTNT','S','CYBR','OKTA','NET','TENB','QLYS','RBRK','VRNS','GEN','RPD'],
+      L4: ['ACN','IBM'],
+      L5: ['MSFT','GOOGL','CSCO','AMZN'],
+    },
+  },
   // Compute / memory / packaging — full L1-L6 with AMD/INTC/ARM injection
   COMPUTE_INFRA: {
     fires: ['L1','L2','L3','L4','L5','L6'],
@@ -757,6 +777,12 @@ export interface TransmissionCascade {
 // the T1-T4 lines describe what historically happens once a constraint of that
 // class fires. Generic enough to not over-promise, specific enough to be useful.
 const CASCADE_BY_NODE: Partial<Record<SystemNode, Omit<TransmissionCascade, 'T0'>>> = {
+  CYBERSECURITY_INFRA: {
+    T1: 'Breach / ransomware headlines + regulatory disclosure (SEC 8-K, CERT-In, DPDP) referenced; security budgets flagged non-discretionary; pure-plays (CRWD/PANW/ZS/FTNT) see pipeline acceleration',
+    T2: 'Platform consolidation accelerates — CRWD/PANW single-vendor wins; identity + zero-trust (OKTA/ZS/CYBR) net-new ARR inflects; India IT security practices (HAPPSTMNDS/TCS/WIPRO) book managed-security deals',
+    T3: 'NRR / billings step up as breach-driven spend compounds; margin expansion in scaled pure-plays as land-and-expand matures; MSFT/GOOGL security ARR (Defender / Mandiant / Wiz) crosses milestones',
+    T4: 'EPS + FCF rerating on 2-4Q lag in L1 platforms (CRWD/PANW/ZS); security re-rates from cyclical IT toward non-discretionary utility; consensus revision cycle',
+  },
   COMPUTE_INFRA: {
     T1: 'GPU lead-times extend → CPU-attach increases (L2 CPU-cycle: AMD-EPYC / INTC / ARM); inference begins shifting to edge (L3: AKAM/NET caching, request compression, latency arbitrage, "avoid GPU call" architectures); alt-accelerator order rotation begins (L2 GPU-sub: AMD / AVGO / MRVL)',
     T2: 'L1 capacity capturers + L4 industrial pass-through revenue acceleration; OSAT + connector + EPC backlogs extend 18→36 months; hyperscaler capex disclosures lift L5 forecasts; AMD-EPYC + INTC AI-PC cycle inflects',
