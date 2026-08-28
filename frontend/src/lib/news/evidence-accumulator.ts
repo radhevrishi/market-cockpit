@@ -47,6 +47,19 @@ const STRUCTURAL_NODES: Set<string> = new Set([
   'RESOURCE_SCARCITY',
   'MANUFACTURING_CAPACITY',
   'CYBERSECURITY_INFRA',
+  // Futuristic 20-year secular themes — all structural by nature
+  'AI_SOFTWARE',
+  'ROBOTICS_AUTOMATION',
+  'QUANTUM_COMPUTING',
+  'BIOTECH_GENOMICS',
+  'HEALTHCARE_MEDTECH',
+  'BATTERY_STORAGE',
+  'HYDROGEN_FUELCELL',
+  'AUTONOMOUS_MOBILITY',
+  'CLIMATE_CARBON',
+  'WATER_INFRA',
+  'DIGITAL_ASSETS',
+  'ADVANCED_MATERIALS',
 ]);
 
 function ttlSecondsFor(node: SystemNode): number {
@@ -241,6 +254,18 @@ const BOTTLENECK_LABEL: Partial<Record<SystemNode, { label: string; sub: string 
   LABOR_CONSTRAINT:     { label: 'LABOUR / TALENT',           sub: 'Skilled-talent gap + strikes + visa friction' },
   CAPITAL_CONSTRAINT:   { label: 'CAPITAL / CREDIT',          sub: 'Banking / NPA / payment rails / liquidity' },
   CYBERSECURITY_INFRA:  { label: 'CYBERSECURITY / ZERO-TRUST', sub: 'AI-amplified threat surface + security-talent shortage + mandatory compliance — non-discretionary spend' },
+  AI_SOFTWARE:          { label: 'AI SOFTWARE / AGENTS',      sub: 'LLMs + agents + inference SaaS — the monetisation layer above the GPU' },
+  ROBOTICS_AUTOMATION:  { label: 'ROBOTICS / HUMANOIDS',      sub: 'Humanoid + industrial robots + machine vision — labour cost + reshoring convexity' },
+  QUANTUM_COMPUTING:    { label: 'QUANTUM COMPUTING',         sub: 'Qubits + quantum advantage + post-quantum crypto — early but strategic' },
+  BIOTECH_GENOMICS:     { label: 'BIOTECH / GENOMICS',        sub: 'Gene editing + mRNA + cell therapy + GLP-1 + synthetic biology' },
+  HEALTHCARE_MEDTECH:   { label: 'HEALTHCARE / MEDTECH',      sub: 'Devices + diagnostics + hospitals — aging demographics + care-cost bottleneck' },
+  BATTERY_STORAGE:      { label: 'BATTERY / GRID STORAGE',    sub: 'Solid-state + grid-scale storage + gigafactory + recycling' },
+  HYDROGEN_FUELCELL:    { label: 'GREEN HYDROGEN / FUEL CELL',sub: 'Electrolyzers + green H2 + fuel cells + green ammonia' },
+  AUTONOMOUS_MOBILITY:  { label: 'EV / AUTONOMOUS MOBILITY',  sub: 'EV powertrain + self-driving/ADAS + lidar + charging — auto value-chain shift' },
+  CLIMATE_CARBON:       { label: 'CARBON CAPTURE / CLIMATE',  sub: 'CCUS + direct air capture + carbon markets + decarbonisation capex' },
+  WATER_INFRA:          { label: 'WATER / DESALINATION',      sub: 'Desalination + treatment + pipes — scarcity-driven infra spend' },
+  DIGITAL_ASSETS:       { label: 'BLOCKCHAIN / DIGITAL ASSETS',sub: 'Crypto rails + tokenization + stablecoins + CBDC — programmable money' },
+  ADVANCED_MATERIALS:   { label: 'ADVANCED MATERIALS / POWER SEMI', sub: 'SiC/GaN power semis + rare-earth magnets + specialty chemicals' },
 };
 
 export function bottleneckLabelFor(node: SystemNode): { label: string; sub: string } {

@@ -46,6 +46,19 @@ export type SystemNode =
   | 'CAPITAL_CONSTRAINT'      // credit, NPA, banking infra, payment rails
   // Digital / security
   | 'CYBERSECURITY_INFRA'     // cyber, ransomware, zero-trust, identity, SOC, breach
+  // ── Futuristic / 20-year secular themes ──────────────────────────────────
+  | 'AI_SOFTWARE'            // LLMs, agents, inference SaaS, model layer above the GPU
+  | 'ROBOTICS_AUTOMATION'    // humanoids, industrial robots, cobots, machine vision
+  | 'QUANTUM_COMPUTING'      // qubits, quantum advantage, post-quantum crypto
+  | 'BIOTECH_GENOMICS'       // CRISPR, mRNA, cell therapy, GLP-1, synthetic biology
+  | 'HEALTHCARE_MEDTECH'     // medical devices, diagnostics, hospitals, aging demographics
+  | 'BATTERY_STORAGE'        // solid-state, grid storage, gigafactory, LFP/sodium-ion
+  | 'HYDROGEN_FUELCELL'      // green hydrogen, electrolyzers, fuel cells, green ammonia
+  | 'AUTONOMOUS_MOBILITY'    // EV powertrains, self-driving/ADAS, lidar, charging
+  | 'CLIMATE_CARBON'         // carbon capture (CCUS), direct air capture, carbon markets
+  | 'WATER_INFRA'            // desalination, water treatment, pipes, scarcity
+  | 'DIGITAL_ASSETS'         // blockchain, crypto rails, tokenization, stablecoins, CBDC
+  | 'ADVANCED_MATERIALS'     // SiC/GaN power semis, rare-earth magnets, specialty chemicals
   // Other
   | 'NONE';
 
@@ -405,6 +418,50 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
   { pattern: /\b(firewall|threat intelligence|vulnerability management|penetration test|red team|SOC ?2|threat hunting|attack surface)\b/i, node: 'CYBERSECURITY_INFRA', weight: 6, event_hint: 'STRUCTURE' },
   { pattern: /\b(CrowdStrike|Palo Alto Networks|Zscaler|Fortinet|SentinelOne|CyberArk|Okta|Cloudflare|Tenable|Qualys|Rubrik|\bWiz\b|Check Point|Rapid7|Varonis)\b/i, node: 'CYBERSECURITY_INFRA', weight: 8, event_hint: 'STRUCTURE' },
   { pattern: /\b(CERT[- ]?In|DPDP|data protection (?:act|bill|board)|cyber insurance|cyber[- ]?resilience|security mandate|breach (?:disclosure|notification))\b/i, node: 'CYBERSECURITY_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+
+  // ─── AI_SOFTWARE — the model / agent / inference layer above the GPU ─────
+  { pattern: /\b(large language model|\bLLM\b|foundation model|generative ai|\bgen ?ai\b|ai agent|agentic (?:ai|workflow)|copilot|ai assistant)\b/i, node: 'AI_SOFTWARE', weight: 7, event_hint: 'SECULAR' },
+  { pattern: /\b(inference (?:as a service|endpoint|api|stack)|model serving|fine[- ]tun(?:e|ing)|\bRAG\b|vector (?:database|search)|prompt engineering|ai (?:saas|platform|orchestration))\b/i, node: 'AI_SOFTWARE', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(OpenAI|Anthropic|Mistral|Cohere|Hugging Face|Databricks|Scale AI|Perplexity)\b/i, node: 'AI_SOFTWARE', weight: 6, event_hint: 'SECULAR' },
+
+  // ─── ROBOTICS_AUTOMATION — humanoids, industrial robots, machine vision ──
+  { pattern: /\b(humanoid|robotics?|cobot|industrial robot|warehouse automation|machine vision|robotic arm|autonomous mobile robot|\bAMR\b|factory automation|lights[- ]out (?:factory|manufacturing))\b/i, node: 'ROBOTICS_AUTOMATION', weight: 7, event_hint: 'SECULAR' },
+  { pattern: /\b(Optimus|Figure ai|Boston Dynamics|Agility Robotics|Unitree)\b/i, node: 'ROBOTICS_AUTOMATION', weight: 7, event_hint: 'SECULAR' },
+
+  // ─── QUANTUM_COMPUTING ──────────────────────────────────────────────────
+  { pattern: /\b(quantum comput|qubit|quantum (?:supremacy|advantage|processor|chip|annealing|sensing|network)|post[- ]quantum|superconducting qubit|trapped ion)\b/i, node: 'QUANTUM_COMPUTING', weight: 8, event_hint: 'SECULAR' },
+
+  // ─── BIOTECH_GENOMICS — gene editing, mRNA, GLP-1, synthetic biology ─────
+  { pattern: /\b(CRISPR|gene (?:editing|therapy)|\bmRNA\b|cell therapy|\bCAR-?T\b|synthetic biology|genomic|GLP-?1|obesity drug|weight[- ]loss drug|longevity|biomanufactur|biosimilar)\b/i, node: 'BIOTECH_GENOMICS', weight: 7, event_hint: 'SECULAR' },
+  { pattern: /\b(Moderna|CRISPR Therapeutics|Novo Nordisk|Eli Lilly|Illumina|Vertex Pharma)\b/i, node: 'BIOTECH_GENOMICS', weight: 6, event_hint: 'STRUCTURE' },
+
+  // ─── HEALTHCARE_MEDTECH — devices, diagnostics, hospitals, aging ─────────
+  { pattern: /\b(medical device|medtech|diagnostics?|hospital chain|elder(?:ly)? care|aging (?:population|demographic)|health ?tech|surgical robot|implant|\bIVD\b|point[- ]of[- ]care)\b/i, node: 'HEALTHCARE_MEDTECH', weight: 6, event_hint: 'SECULAR' },
+
+  // ─── BATTERY_STORAGE — cells, solid-state, grid storage, recycling ──────
+  { pattern: /\b(battery (?:storage|gigafactory|cell|pack|recycl)|solid[- ]state battery|grid[- ]scale storage|\bBESS\b|lithium[- ]ion|\bLFP\b|sodium[- ]ion|energy storage system)\b/i, node: 'BATTERY_STORAGE', weight: 7, event_hint: 'STRUCTURE' },
+
+  // ─── HYDROGEN_FUELCELL — electrolyzers, green H2, ammonia ───────────────
+  { pattern: /\b(green hydrogen|hydrogen (?:economy|fuel|production|hub)|electroly(?:s|z)er|fuel cell|green ammonia|\bPEM\b electroly)\b/i, node: 'HYDROGEN_FUELCELL', weight: 7, event_hint: 'STRUCTURE' },
+
+  // ─── AUTONOMOUS_MOBILITY — EV powertrain, self-driving, lidar, charging ──
+  { pattern: /\b(electric vehicle|\bEV\b|autonomous (?:driving|vehicle)|self[- ]driving|\bADAS\b|robotaxi|\blidar\b|ev charging|charging (?:network|station|infrastructure)|battery electric)\b/i, node: 'AUTONOMOUS_MOBILITY', weight: 6, event_hint: 'SECULAR' },
+
+  // ─── CLIMATE_CARBON — CCUS, DAC, carbon markets, decarbonisation ────────
+  { pattern: /\b(carbon capture|\bCCUS\b|direct air capture|\bDAC\b|carbon (?:credit|market|removal|sequestration)|net[- ]zero|decarboni[sz]|climate adaptation)\b/i, node: 'CLIMATE_CARBON', weight: 6, event_hint: 'SECULAR' },
+
+  // ─── WATER_INFRA — desalination, treatment, scarcity ────────────────────
+  { pattern: /\b(desalinat|water (?:treatment|scarcity|infrastructure|utility|recycl|technolog)|waste ?water|water pipe|reverse osmosis)\b/i, node: 'WATER_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+
+  // ─── DIGITAL_ASSETS — blockchain, crypto rails, tokenization, CBDC ──────
+  { pattern: /\b(blockchain|cryptocurrency|bitcoin|ethereum|stablecoin|tokeni[sz]ation|\bCBDC\b|digital (?:asset|rupee|currency)|web3|\bdefi\b|crypto exchange)\b/i, node: 'DIGITAL_ASSETS', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(Coinbase|Circle|Ripple|Tether|USDC)\b/i, node: 'DIGITAL_ASSETS', weight: 6, event_hint: 'STRUCTURE' },
+
+  // ─── ADVANCED_MATERIALS — power semis (SiC/GaN), magnets, specialty ─────
+  { pattern: /\b(silicon carbide|\bSiC\b|gallium nitride|\bGaN\b|power semiconductor|wide[- ]bandgap|graphene|advanced material|specialty (?:chemical|polymer|ceramic)|\bNdFeB\b|permanent magnet|rare[- ]earth magnet)\b/i, node: 'ADVANCED_MATERIALS', weight: 7, event_hint: 'STRUCTURE' },
+
+  // ─── AEROSPACE / SPACE — expand to catch the LEO / launch economy ───────
+  { pattern: /\b(space launch|reusable rocket|low earth orbit|\bLEO\b constellation|satellite (?:constellation|internet|broadband)|SpaceX|Starlink|space economy|space station)\b/i, node: 'AEROSPACE_INFRA', weight: 7, event_hint: 'SECULAR' },
 ];
 
 // ─── Dependency edges — graph of how nodes depend on each other ───────────
@@ -603,5 +660,17 @@ export const NODE_DISPLAY: Record<SystemNode, string> = {
   LABOR_CONSTRAINT:        'Labor',
   CAPITAL_CONSTRAINT:      'Capital infra',
   CYBERSECURITY_INFRA:     'Cybersecurity infra',
+  AI_SOFTWARE:             'AI software / agents',
+  ROBOTICS_AUTOMATION:     'Robotics / automation',
+  QUANTUM_COMPUTING:       'Quantum computing',
+  BIOTECH_GENOMICS:        'Biotech / genomics',
+  HEALTHCARE_MEDTECH:      'Healthcare / medtech',
+  BATTERY_STORAGE:         'Battery / storage',
+  HYDROGEN_FUELCELL:       'Hydrogen / fuel cell',
+  AUTONOMOUS_MOBILITY:     'EV / autonomous mobility',
+  CLIMATE_CARBON:          'Carbon capture / climate',
+  WATER_INFRA:             'Water infra',
+  DIGITAL_ASSETS:          'Blockchain / digital assets',
+  ADVANCED_MATERIALS:      'Advanced materials',
   NONE:                    '—',
 };

@@ -412,6 +412,19 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
       L5: ['TCS.NS','INFY.NS','HCLTECH.NS','WIPRO.NS','TECHM.NS'],
     },
   },
+  // ── Futuristic 20-year secular themes — India-listed beneficiaries ───────
+  AI_SOFTWARE:          { fires: ['L1','L4','L5'], mandatory: { L4: ['PERSISTENT.NS','COFORGE.NS','LTIM.NS','HAPPSTMNDS.NS','TATAELXSI.NS'], L5: ['TCS.NS','INFY.NS','WIPRO.NS','HCLTECH.NS'] } },
+  ROBOTICS_AUTOMATION:  { fires: ['L1','L4','L6'], mandatory: { L1: ['ABB.NS','SIEMENS.NS'], L4: ['LTTS.NS','TATAELXSI.NS','HONAUT.NS','KAYNES.NS'] } },
+  QUANTUM_COMPUTING:    { fires: ['L4','L5'],       mandatory: { L4: ['TATAELXSI.NS','LTTS.NS'], L5: ['TCS.NS','HCLTECH.NS'] } },
+  BIOTECH_GENOMICS:     { fires: ['L1','L4'],       mandatory: { L1: ['BIOCON.NS','SYNGENE.NS','DIVISLAB.NS','LAURUSLABS.NS'], L4: ['SUNPHARMA.NS','DRREDDY.NS'] } },
+  HEALTHCARE_MEDTECH:   { fires: ['L1','L4'],       mandatory: { L1: ['POLYMED.NS','METROPOLIS.NS','LALPATHLAB.NS'], L4: ['APOLLOHOSP.NS','MAXHEALTH.NS','FORTIS.NS'] } },
+  BATTERY_STORAGE:      { fires: ['L1','L4','L6'], mandatory: { L1: ['EXIDEIND.NS','ARE&M.NS'], L4: ['WAAREE.NS','TATAPOWER.NS'] } },
+  HYDROGEN_FUELCELL:    { fires: ['L1','L4','L5'], mandatory: { L1: ['THERMAX.NS'], L4: ['LT.NS','RELIANCE.NS'], L5: ['NTPC.NS','ADANIGREEN.NS'] } },
+  AUTONOMOUS_MOBILITY:  { fires: ['L1','L4'],       mandatory: { L1: ['TATAMOTORS.NS','M&M.NS','OLAELEC.NS'], L4: ['SONACOMS.NS','UNOMINDA.NS','BOSCHLTD.NS'] } },
+  CLIMATE_CARBON:       { fires: ['L1','L4','L5'], mandatory: { L1: ['THERMAX.NS'], L4: ['LT.NS','RELIANCE.NS'], L5: ['NTPC.NS'] } },
+  WATER_INFRA:          { fires: ['L1','L4'],       mandatory: { L1: ['VATECHWABAG.NS','IONEXCHANG.NS'], L4: ['THERMAX.NS','KIRLOSBROS.NS'] } },
+  DIGITAL_ASSETS:       { fires: ['L1','L4'],       mandatory: { L1: ['CDSL.NS','BSE.NS','MCX.NS'], L4: ['PAYTM.NS'] } },
+  ADVANCED_MATERIALS:   { fires: ['L1','L4'],       mandatory: { L1: ['PIIND.NS','SRF.NS','NAVINFLUOR.NS','DEEPAKNTR.NS'], L4: ['CGPOWER.NS'] } },
   COMPUTE_INFRA: {
     fires: ['L1','L2','L4','L5','L6'],
     // PATCH 0107: AEROFLEX / HONAUT / CENTUM are export proxies for US AI DC mechanical + electronics
@@ -628,6 +641,19 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
       L5: ['MSFT','GOOGL','CSCO','AMZN'],
     },
   },
+  // ── Futuristic 20-year secular themes — global beneficiaries ─────────────
+  AI_SOFTWARE:          { fires: ['L1','L2','L4','L5'], mandatory: { L1: ['PLTR','NOW','SNOW','DDOG','MDB','NET','AI','PATH','GTLB'], L5: ['MSFT','GOOGL','META','AMZN'] } },
+  ROBOTICS_AUTOMATION:  { fires: ['L1','L2','L4','L6'], mandatory: { L1: ['ISRG','ROK','TER','ZBRA','FANUY','ABBNY'], L2: ['NVDA','TSLA'] } },
+  QUANTUM_COMPUTING:    { fires: ['L1','L5'],           mandatory: { L1: ['IONQ','RGTI','QBTS','QUBT'], L5: ['IBM','GOOGL','HON'] } },
+  BIOTECH_GENOMICS:     { fires: ['L1','L4'],           mandatory: { L1: ['LLY','NVO','VRTX','CRSP','NTLA','BEAM','ILMN','MRNA','REGN'] } },
+  HEALTHCARE_MEDTECH:   { fires: ['L1','L4'],           mandatory: { L1: ['ISRG','MDT','ABT','TMO','SYK','BSX','DXCM'] } },
+  BATTERY_STORAGE:      { fires: ['L1','L4'],           mandatory: { L1: ['TSLA','ENPH','FLNC','QS','ALB'] } },
+  HYDROGEN_FUELCELL:    { fires: ['L1','L4'],           mandatory: { L1: ['PLUG','BE','BLDP'], L4: ['LIN','APD'] } },
+  AUTONOMOUS_MOBILITY:  { fires: ['L1','L2','L4'],     mandatory: { L1: ['TSLA','MBLY','RIVN','CHPT'], L2: ['NVDA'], L4: ['APTV','GM'] } },
+  CLIMATE_CARBON:       { fires: ['L1','L4'],           mandatory: { L1: ['OXY','LIN','BKR','APD'] } },
+  WATER_INFRA:          { fires: ['L1','L4'],           mandatory: { L1: ['XYL','AWK','VEOEY','PNR','ECL'] } },
+  DIGITAL_ASSETS:       { fires: ['L1','L5'],           mandatory: { L1: ['COIN','MSTR','HOOD','CRCL'], L5: ['BLK'] } },
+  ADVANCED_MATERIALS:   { fires: ['L1','L4'],           mandatory: { L1: ['WOLF','ON','IFNNY','STM','MP'] } },
   // Compute / memory / packaging — full L1-L6 with AMD/INTC/ARM injection
   COMPUTE_INFRA: {
     fires: ['L1','L2','L3','L4','L5','L6'],
