@@ -14,6 +14,7 @@ import {
 } from '@/lib/multibagger/framework-extensions';
 // PATCH 0272 — Conviction Beats overlay on Multibagger results.
 import { getConvictionTickers, readConvictionBeats } from '@/lib/conviction-beats';
+import ThemeRotationTab from '@/components/dashboard/ThemeRotationTab'; // zzz480
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getDecision, setDecision, clearDecision, subscribeDecisions, readDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
 // zzz412 — Book Watch flag store (Stage-4 breakdown arming for held/bench names).
@@ -5909,8 +5910,8 @@ export default function MultibaggerPage() {
   // dedicated dashboards for the USA Multibagger universe and the
   // Turnaround universe respectively. The original 'analytics' tab stays
   // as the cross-market overview (India-led).
-  type MbTab = 'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'technicals-usa'|'technicals-ind'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference';
-  const VALID_TABS: MbTab[] = ['analytics','excel','usa','usa-analytics','technicals','technicals-usa','technicals-ind','turnaround','turnaround-analytics','usa-checklist','checklist','capital-alloc','reference'];
+  type MbTab = 'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'technicals-usa'|'technicals-ind'|'theme-rotation'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference';
+  const VALID_TABS: MbTab[] = ['analytics','excel','usa','usa-analytics','technicals','technicals-usa','technicals-ind','theme-rotation','turnaround','turnaround-analytics','usa-checklist','checklist','capital-alloc','reference'];
   // zzz166 — Support deep-links like /multibagger?tab=technicals-usa from home nav chips.
   const initialTab = React.useMemo<MbTab>(() => {
     if (typeof window === 'undefined') return 'analytics';
@@ -6209,6 +6210,7 @@ export default function MultibaggerPage() {
               {id:'usa-analytics',          label:'📊 USA Analytics'},
               {id:'technicals-usa',         label:'📈 USA Technicals (Qulla/Zanger/Bonde/Minervini)'},
               {id:'technicals-ind',         label:'📈 India Technicals (Qulla/Zanger/Bonde/Minervini)'},
+              {id:'theme-rotation',         label:'🔄 Theme Rotation (US + India)'},
               {id:'turnaround',             label:'🔄 Turnarounds'},
               {id:'turnaround-analytics',   label:'📈 Turnaround Analytics'},
               {id:'usa-checklist',          label:'🇺🇸 USA Checklist'},
@@ -6242,6 +6244,7 @@ export default function MultibaggerPage() {
       {activeTab==='usa-analytics'         && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} initialScope="USA" />}
       {activeTab==='technicals-usa'        && <TechnicalsTab market="USA" />}
       {activeTab==='technicals-ind'        && <TechnicalsTab market="IND" />}
+      {activeTab==='theme-rotation'        && <ThemeRotationTab />}
       {activeTab==='technicals'            && <TechnicalsTab market="USA" />}
       {activeTab==='turnaround'            && <TurnaroundCompare />}
       {activeTab==='turnaround-analytics'  && <TurnaroundAnalytics />}
