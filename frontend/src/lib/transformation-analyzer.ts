@@ -63,7 +63,12 @@ export const EVIDENCE_LADDER: Array<{ score: number; label: string; re: RegExp }
 // every concall says "margin improvement" or "free cash flow" somewhere. These
 // gates reject a match that is aspirational, negated, or (for the top realised
 // rungs) not backed by a number or a past-tense realisation verb.
-const FWD_LOOKING = /\b(expect|anticipat\w*|aim|aims|aiming|plan|plans|planning|target|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year)|over the (?:medium|long)|in (?:the )?future|likely to|poised to|set to|on track to|working towards)\b/i;
+// zzz465 — strengthened after live spot-check found forward-looking leaks: bare
+// "future", "targeting", "expected to", "under commissioning", "by <year/month>",
+// "yet to", "to be", "upcoming/planned/pipeline", "once operational" all now count
+// as aspiration so they cannot promote a realised rung (e.g. "future
+// commercialization" no longer reads as "commercial production started").
+const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planning|target\w*|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year|month)|over the (?:medium|long)|future|likely to|poised to|set to|on track to|working towards|to be\b|yet to|upcoming|planned|pipeline|under (?:commission\w*|construction|implementation|development)|once (?:commission\w*|operational|complet\w*)|by (?:\d{4}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|by (?:end|q[1-4]))\b/i;
 const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*)\b/i;
 const QUANTIFIER = /(\d+(?:\.\d+)?\s?(?:%|bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
 const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|delivered|reported|achieved|generated|turned|commenced|started|received|secured|won|added|onboarded|commissioned|ramped|clocked|posted|recorded|stood at|came in)\b/i;
@@ -86,20 +91,34 @@ function evidenceContextOk(text: string, idx: number, len: number, score: number
   return true;
 }
 
-// zzz462 — pull the exact sentence around a match so the card can QUOTE the
-// real proof line (verifiability — the user can confirm it isn't a fluke).
+// zzz462/zzz465 — pull the exact sentence around a match so the card can QUOTE
+// the real proof line (verifiability). Starts at a WORD boundary (never mid-word
+// like "rehensive…"), ends at a real sentence break (not a decimal), and rejects
+// PDF table/chart dumps that are mostly numbers — better to show no quote than junk.
 function extractSentence(text: string, idx: number, len: number): string {
-  // sentence START: last real sentence break before the match (a period/!/? that
-  // is NOT a decimal point — i.e. followed by whitespace), floored at -160 chars.
+  // sentence START: prefer the last real break (period/!/? + space) within 200
+  // chars; else fall back ~130 chars but snap FORWARD to the next word boundary.
   const pre = text.slice(Math.max(0, idx - 200), idx);
-  const preBreak = pre.search(/[.!?]\s(?=[^]*$)/);   // first break in the window
-  let start = idx - (pre.length - (preBreak >= 0 ? preBreak + 2 : 0));
-  if (idx - start > 160 || start < 0) start = Math.max(0, idx - 160);
+  const preBreak = pre.search(/[.!?]\s(?=[^]*$)/);
+  let start: number;
+  if (preBreak >= 0) {
+    start = Math.max(0, idx - 200) + preBreak + 2;   // right after the break + its space
+  } else {
+    start = Math.max(0, idx - 130);
+    const sp = text.indexOf(' ', start);
+    if (sp >= 0 && sp < idx) start = sp + 1;          // don't begin mid-word
+  }
   // sentence END: next break AFTER the match that isn't a decimal (period+space).
   const rest = text.slice(idx + len, idx + len + 200);
   const endRel = rest.search(/[.!?](\s|$)/);
   const end = endRel >= 0 ? idx + len + endRel + 1 : Math.min(text.length, idx + len + 130);
-  return text.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 220);
+  const q = text.slice(start, end).replace(/\s+/g, ' ').trim();
+  const words = q.split(/\s+/).filter(Boolean);
+  const alphaWords = words.filter((w) => /[a-zA-Z]{3,}/.test(w));
+  const digitTokens = words.filter((w) => /^\W*\d/.test(w));
+  if (alphaWords.length < 5) return '';                                       // not a real sentence
+  if (words.length > 0 && digitTokens.length / words.length > 0.45) return ''; // number-table dump
+  return q.slice(0, 220);
 }
 
 // Walk the ladder high → low; a rung wins only when it has at least one match
