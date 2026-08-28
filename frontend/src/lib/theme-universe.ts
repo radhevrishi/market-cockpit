@@ -83,9 +83,53 @@ export const INDIA_THEMES: ThemeDef[] = [
 
 export const INDIA_BENCHMARK = { symbol: '^NSEI', name: 'NIFTY 50' };
 
+// ─── CONSTITUENT LEADERS (zzz481) — the buyable names inside each theme, shown
+// on drill-down so "buy Cybersecurity" resolves to "buy PANW / CRWD / ZS …".
+// Basket themes already ARE their leaders (basket is used); this map fills in the
+// proxy (ETF/index) themes. Curated top names; non-resolving tickers drop out.
+export const THEME_LEADERS: Record<string, string[]> = {
+  // US
+  'us-semis': ['NVDA', 'AVGO', 'AMD', 'MU', 'TSM', 'LRCX'],
+  'us-software': ['MSFT', 'CRM', 'ORCL', 'NOW', 'PANW', 'ADBE'],
+  'us-cloud': ['MSFT', 'AMZN', 'GOOGL', 'ORCL', 'SNOW', 'DDOG'],
+  'us-cyber': ['PANW', 'CRWD', 'ZS', 'FTNT', 'NET', 'CYBR'],
+  'us-internet': ['AMZN', 'META', 'GOOGL', 'NFLX', 'SHOP', 'UBER'],
+  'us-fintech': ['V', 'MA', 'PYPL', 'COIN', 'HOOD', 'SOFI'],
+  'us-quantum': ['IONQ', 'RGTI', 'QBTS', 'IBM', 'NVDA'],
+  'us-energy': ['XOM', 'CVX', 'COP', 'SLB', 'EOG'],
+  'us-nuclear': ['CCJ', 'LEU', 'OKLO', 'SMR', 'UEC'],
+  'us-solar': ['FSLR', 'ENPH', 'NXT', 'RUN', 'ARRY'],
+  'us-critminerals': ['MP', 'ALB', 'FCX', 'LAC'],
+  'us-gold': ['NEM', 'GOLD', 'AEM', 'FNV', 'WPM'],
+  'us-defense': ['RTX', 'LMT', 'GD', 'NOC', 'LHX', 'HWM'],
+  'us-robotics': ['NVDA', 'ISRG', 'ABB', 'ROK', 'TER'],
+  'us-biotech': ['VRTX', 'REGN', 'GILD', 'AMGN', 'MRNA'],
+  'us-homebuild': ['DHI', 'LEN', 'PHM', 'NVR'],
+  'us-regbanks': ['USB', 'PNC', 'TFC', 'KEY', 'RF'],
+  // India
+  'in-it': ['TCS.NS', 'INFY.NS', 'HCLTECH.NS', 'WIPRO.NS', 'LTIM.NS', 'PERSISTENT.NS'],
+  'in-energy': ['RELIANCE.NS', 'NTPC.NS', 'POWERGRID.NS', 'ONGC.NS', 'COALINDIA.NS'],
+  'in-metal': ['TATASTEEL.NS', 'JSWSTEEL.NS', 'HINDALCO.NS', 'VEDL.NS', 'JINDALSTEL.NS'],
+  'in-pharma': ['SUNPHARMA.NS', 'CIPLA.NS', 'DRREDDY.NS', 'DIVISLAB.NS', 'LUPIN.NS'],
+  'in-fmcg': ['HINDUNILVR.NS', 'ITC.NS', 'NESTLEIND.NS', 'VBL.NS', 'BRITANNIA.NS'],
+  'in-auto': ['M&M.NS', 'MARUTI.NS', 'TATAMOTORS.NS', 'BAJAJ-AUTO.NS', 'EICHERMOT.NS'],
+  'in-realty': ['DLF.NS', 'LODHA.NS', 'GODREJPROP.NS', 'PRESTIGE.NS', 'OBEROIRLTY.NS'],
+  'in-psubank': ['SBIN.NS', 'BANKBARODA.NS', 'PNB.NS', 'CANBK.NS', 'UNIONBANK.NS'],
+  'in-bank': ['HDFCBANK.NS', 'ICICIBANK.NS', 'AXISBANK.NS', 'KOTAKBANK.NS', 'SBIN.NS'],
+  'in-finserv': ['BAJFINANCE.NS', 'JIOFIN.NS', 'CHOLAFIN.NS', 'SHRIRAMFIN.NS', 'BAJAJFINSV.NS'],
+  'in-infra': ['LT.NS', 'ADANIPORTS.NS', 'ULTRACEMCO.NS', 'GRASIM.NS', 'SIEMENS.NS'],
+  'in-pse': ['NTPC.NS', 'POWERGRID.NS', 'BEL.NS', 'COALINDIA.NS', 'HAL.NS'],
+};
+
 export function themesForRegion(region: ThemeRegion): ThemeDef[] {
   return region === 'us' ? US_THEMES : INDIA_THEMES;
 }
 export function benchmarkForRegion(region: ThemeRegion) {
   return region === 'us' ? US_BENCHMARK : INDIA_BENCHMARK;
+}
+// The buyable names inside a theme: its basket if it has one, else the curated
+// leader list for the proxy theme (empty if not mapped).
+export function leadersFor(t: ThemeDef): string[] {
+  if (t.basket && t.basket.length) return t.basket;
+  return THEME_LEADERS[t.id] || [];
 }

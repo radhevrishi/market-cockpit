@@ -18,7 +18,7 @@ import { NextResponse } from 'next/server';
 import { fetchChart } from '@/lib/yahoo';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import {
-  themesForRegion, benchmarkForRegion, type ThemeRegion, type ThemeDef,
+  themesForRegion, benchmarkForRegion, leadersFor, type ThemeRegion, type ThemeDef,
 } from '@/lib/theme-universe';
 
 export const dynamic = 'force-dynamic';
@@ -235,10 +235,51 @@ async function build(region: ThemeRegion) {
   };
 }
 
+// zzz481 — DRILL-DOWN: the buyable stocks inside one theme, so the tab answers
+// "buy Cybersecurity" with "PANW / CRWD / ZS are the strongest, above their
+// 50-DMA". Lazy (only when a row is expanded) so the main call stays fast.
+async function buildDrill(region: ThemeRegion, themeId: string) {
+  const bench = benchmarkForRegion(region);
+  const theme = themesForRegion(region).find((t) => t.id === themeId);
+  if (!theme) return { themeId, stocks: [], error: 'unknown theme' };
+  const syms = leadersFor(theme);
+  if (!syms.length) return { themeId, stocks: [], note: 'constituents not mapped for this theme yet' };
+  const data = await fetchChunked([bench.symbol, ...syms], '1y', '1d');
+  const bench3m = (() => { const d = data.get(bench.symbol); return d ? returns(d.ts, d.closes).m3 : 0; })();
+  const stocks = syms.map((sym) => {
+    const d = data.get(sym);
+    if (!d) return null;
+    const r = returns(d.ts, d.closes);
+    const s50 = sma(d.closes, 50);
+    const cLast = d.closes.filter((x) => x != null && !isNaN(x)).pop() as number;
+    const aboveSMA50 = s50 != null ? cLast > s50 : false;
+    const rs3m = +(r.m3 - bench3m).toFixed(1);           // relative strength vs benchmark, 3M
+    return {
+      sym: sym.replace(/\.NS$/, ''), price: +d.price.toFixed(2), dayChangePct: +d.dayChg.toFixed(2),
+      m1: r.m1, m3: r.m3, m6: r.m6, aboveSMA50, rs3m,
+      buyReady: aboveSMA50 && rs3m > 0,
+    };
+  }).filter(Boolean) as any[];
+  stocks.sort((a, b) => b.rs3m - a.rs3m);                 // strongest leaders first
+  return { themeId, benchmark3m: bench3m, stocks };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const region = (searchParams.get('region') === 'us' ? 'us' : 'india') as ThemeRegion;
+  const themeId = searchParams.get('theme');
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
+  if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
+    try {
+      const key = `theme-rotation:v1:drill:${region}:${themeId}`;
+      if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
+      const payload = await buildDrill(region, themeId);
+      try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }
+      return NextResponse.json(payload);
+    } catch (e: any) {
+      return NextResponse.json({ themeId, stocks: [], error: e?.message || 'drill failed' }, { status: 200 });
+    }
+  }
   try {
     if (isRedisAvailable() && !force) {
       const cached = await kvGet<any>(CACHE_KEY(region));

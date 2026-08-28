@@ -43,6 +43,9 @@ export default function ThemeRotationTab() {
   const [loading, setLoading] = useState(false);
   const [sortKey, setSortKey] = useState<'rs' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1'>('rs');
   const [hover, setHover] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [drill, setDrill] = useState<Record<string, any>>({});
+  const [drillLoading, setDrillLoading] = useState<string | null>(null);
 
   const load = useCallback(async (r: Region, force = false) => {
     setLoading(true);
@@ -53,11 +56,43 @@ export default function ThemeRotationTab() {
     } catch { /* keep prior */ } finally { setLoading(false); }
   }, []);
 
+  const loadDrill = useCallback(async (r: Region, themeId: string) => {
+    const key = `${r}:${themeId}`;
+    setDrill((prev) => { if (prev[key]) return prev; return prev; });
+    setDrillLoading(key);
+    try {
+      const res = await fetch(`/api/market/theme-rotation?region=${r}&theme=${themeId}`, { cache: 'no-store' });
+      const j = await res.json();
+      setDrill((prev) => ({ ...prev, [key]: j }));
+    } catch { /* ignore */ } finally { setDrillLoading(null); }
+  }, []);
+
+  const toggleExpand = useCallback((themeId: string) => {
+    setExpanded((cur) => {
+      const nxt = cur === themeId ? null : themeId;
+      if (nxt && !drill[`${region}:${themeId}`]) loadDrill(region, themeId);
+      return nxt;
+    });
+  }, [region, drill, loadDrill]);
+
   useEffect(() => { if (!data[region]) load(region); }, [region, data, load]);
+  useEffect(() => { setExpanded(null); }, [region]);
 
   const payload = data[region];
   const themes = payload?.themes?.filter((t) => t.ok) || [];
   const byId = useMemo(() => { const m = new Map<string, ThemeRow>(); themes.forEach((t) => m.set(t.id, t)); return m; }, [themes]);
+
+  const regime = useMemo(() => {
+    if (!payload || !themes.length) return null;
+    const nm = (id: string) => byId.get(id)?.name;
+    const buys = (payload.topBuy || []).map(nm).filter(Boolean) as string[];
+    const avoids = ((payload.topAvoid && payload.topAvoid.length ? payload.topAvoid : payload.rotatingOut) || []).map(nm).filter(Boolean) as string[];
+    const lead = themes.filter((t) => t.quadrant === 'Leading').length;
+    const lag = themes.filter((t) => t.quadrant === 'Lagging').length;
+    const benchUp = (payload.benchmark?.changePercent ?? 0) >= 0;
+    const risk = lead >= lag * 1.3 ? 'risk-on' : lag >= lead * 1.3 ? 'risk-off' : 'mixed';
+    return { buys, avoids, lead, lag, benchUp, risk };
+  }, [payload, themes, byId]);
 
   const sorted = useMemo(() => {
     const key = sortKey;
@@ -96,6 +131,18 @@ export default function ThemeRotationTab() {
 
       {payload && !payload.error && themes.length > 0 && (
         <>
+          {/* TODAY'S CALL — the punchy one-line regime summary */}
+          {regime && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: regime.risk === 'risk-on' ? 'rgba(22,163,74,0.09)' : regime.risk === 'risk-off' ? 'rgba(239,68,68,0.09)' : 'rgba(148,163,184,0.09)', border: `1px solid ${regime.risk === 'risk-on' ? 'rgba(22,163,74,0.35)' : regime.risk === 'risk-off' ? 'rgba(239,68,68,0.35)' : 'rgba(148,163,184,0.3)'}`, borderRadius: 10, padding: '10px 13px', marginBottom: 12 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 900, color: regime.risk === 'risk-on' ? '#22C55E' : regime.risk === 'risk-off' ? '#F87171' : '#CBD5E1', whiteSpace: 'nowrap' }}>📣 Today’s call · {regime.risk === 'risk-on' ? 'RISK-ON' : regime.risk === 'risk-off' ? 'RISK-OFF' : 'MIXED'}</span>
+              <span style={{ fontSize: 12, color: MUT }}>
+                {regime.buys.length ? <>Buy <b style={{ color: '#22C55E' }}>{regime.buys.slice(0, 3).join(', ')}</b>. </> : 'No clear leaders — stay patient. '}
+                {regime.avoids.length ? <>Avoid <b style={{ color: '#EF4444' }}>{regime.avoids.slice(0, 3).join(', ')}</b>.</> : null}
+                <span style={{ color: DIM }}> · {regime.lead} leading / {regime.lag} lagging</span>
+              </span>
+            </div>
+          )}
+
           {/* BUY / AVOID / ROTATION call strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: 10, marginBottom: 14 }}>
             <div style={{ background: 'rgba(22,163,74,0.07)', border: '1px solid rgba(22,163,74,0.3)', borderRadius: 10, padding: '11px 13px' }}>
@@ -147,15 +194,22 @@ export default function ThemeRotationTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sorted.map((t) => (
-                    <tr key={t.id} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}
-                      style={{ borderTop: `1px solid ${BORD}`, background: hover === t.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+                  {sorted.map((t) => {
+                    const isOpen = expanded === t.id;
+                    const dkey = `${region}:${t.id}`;
+                    const dd = drill[dkey];
+                    const dLoading = drillLoading === dkey;
+                    return (
+                    <React.Fragment key={t.id}>
+                    <tr onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)} onClick={() => toggleExpand(t.id)}
+                      style={{ borderTop: `1px solid ${BORD}`, background: isOpen ? 'rgba(59,130,246,0.06)' : hover === t.id ? 'rgba(255,255,255,0.03)' : 'transparent', cursor: 'pointer' }}>
                       <td style={{ padding: '7px 8px', textAlign: 'left' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          <span style={{ color: DIM, fontSize: 9, width: 8, flexShrink: 0 }}>{isOpen ? '▾' : '▸'}</span>
                           <span style={{ width: 8, height: 8, borderRadius: 8, background: QC[t.quadrant || 'Lagging'], flexShrink: 0 }} />
                           <div>
                             <div style={{ fontWeight: 800, color: TXT }}>{t.emoji} {t.name}</div>
-                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? '' : ' · basket'}</div>
+                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}</div>
                           </div>
                         </div>
                       </td>
@@ -169,7 +223,36 @@ export default function ThemeRotationTab() {
                         {t.rsRatio?.toFixed(0)}<span style={{ color: (t.rsMomentum || 100) >= 100 ? '#22C55E' : '#EF4444', marginLeft: 4 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
                       </td>
                     </tr>
-                  ))}
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: '2px 8px 12px 24px', background: 'rgba(59,130,246,0.04)' }}>
+                          {dLoading && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>Loading {t.name} leaders…</div>}
+                          {!dLoading && dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>{dd.note}</div>}
+                          {!dLoading && dd?.stocks && dd.stocks.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: 10, color: DIM, margin: '4px 0 6px' }}>Buyable leaders in {t.emoji} {t.name} — sorted by relative strength vs benchmark (3M). <b style={{ color: '#22C55E' }}>green ✓</b> = above 50-DMA and outperforming (ready to buy).</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                                {dd.stocks.map((s: any) => (
+                                  <div key={s.sym} style={{ minWidth: 132, flex: '0 0 auto', background: CARD, border: `1px solid ${s.buyReady ? 'rgba(34,197,94,0.45)' : BORD}`, borderRadius: 8, padding: '7px 9px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                                      <span style={{ fontWeight: 900, color: TXT, fontSize: 12 }}>{s.sym}</span>
+                                      <span style={{ fontSize: 9, fontWeight: 800, color: s.buyReady ? '#22C55E' : s.aboveSMA50 ? '#EAB308' : '#EF4444' }}>{s.buyReady ? '✓ buy-ready' : s.aboveSMA50 ? '~ watch' : '✕ weak'}</span>
+                                    </div>
+                                    <div style={{ fontSize: 9.5, color: DIM, marginTop: 3, fontFamily: 'ui-monospace,monospace' }}>
+                                      3M <span style={{ color: (s.m3 ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(s.m3)}</span> · RS <span style={{ color: (s.rs3m ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{s.rs3m > 0 ? '+' : ''}{s.rs3m}</span>{s.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {!dLoading && dd?.stocks && dd.stocks.length === 0 && !dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>No constituent data available.</div>}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
