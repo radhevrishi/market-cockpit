@@ -38,19 +38,71 @@ export const EVENT_KEYWORDS = [
 ];
 
 // Story → Evidence strength (1 weakest … 11 strongest). Find the STRONGEST tell.
+// NOTE (zzz460): regexes use word STEMS (improv\w*, expand\w*) rather than a
+// strict trailing \b, because the old \b placement silently FAILED to match the
+// commonest realised forms ("improved", "expanded", "improvement"). Loose
+// matching is fine here because detectEvidence() gates every match by context
+// (forward-looking / negation / quantifier) so only genuine REALISED proof
+// promotes a company up the ladder — see detectEvidence below.
 export const EVIDENCE_LADDER: Array<{ score: number; label: string; re: RegExp }> = [
-  { score: 11, label: 'Second / third customer or product', re: /\b(second customer|third customer|multiple customers|additional customer|new customer.{0,20}(?:added|won|onboard))\b/i },
-  { score: 10, label: 'FCF / cash-flow improvement',        re: /\b(free cash flow|\bFCF\b|cash flow.{0,20}(?:improv|positive|generation))\b/i },
-  { score: 9,  label: 'Margin improvement realised',        re: /\b(margin.{0,20}(?:improv|expand|expansion|up)|EBITDA margin.{0,15}(?:up|improv|expand))\b/i },
-  { score: 8,  label: 'Revenue visible / contributing',     re: /\b(revenue.{0,20}(?:commenc|contribut|visible|of ₹|of Rs)|first revenue)\b/i },
-  { score: 7,  label: 'Commercial production started',      re: /\b(commercial (?:production|supply|dispatch)|commenced (?:production|supply|dispatch)|commercialis)\b/i },
-  { score: 6,  label: 'Order received',                     re: /\b(received (?:an )?order|order (?:won|received|secured|bagged)|purchase order|design win)\b/i },
-  { score: 5,  label: 'Customer qualification',             re: /\b(qualif(?:y|ied|ication)|customer approval|approved by|validated)\b/i },
-  { score: 4,  label: 'Facility / equipment ready',         re: /\b(facility (?:ready|complete|commission)|plant (?:ready|complete|commission)|equipment installed|trial (?:run|production))\b/i },
-  { score: 3,  label: 'Capex / partnership signed',         re: /\b(capex.{0,15}(?:approv|announc|commit)|partnership (?:sign|agreement)|\bMOU\b|memorandum of understanding|joint venture)\b/i },
-  { score: 2,  label: 'Strategy / guidance announced',      re: /\b(guidance|we (?:expect|intend|plan|target|aim|endeavour)|strategy|roadmap)\b/i },
+  { score: 11, label: 'Second / third customer or product', re: /\b(second customer|third customer|multiple customers|additional customer|new customer\w*\s+(?:added|won|onboard\w*))\b/i },
+  { score: 10, label: 'FCF / cash-flow improvement',        re: /\b(free cash flow|\bFCF\b|operating cash flow)\b/i },
+  { score: 9,  label: 'Margin improvement realised',        re: /\bebitda margins?\b[^.]{0,25}?(?:expand\w*|expansion|improv\w*|widen\w*|higher|\bup\b)|\bmargins?\b[^.]{0,25}?(?:expand\w*|expansion|improv\w*|widen\w*|higher)|\b(?:expand\w*|improv\w*)\b[^.]{0,15}?margins?\b/i },
+  { score: 8,  label: 'Revenue visible / contributing',     re: /\brevenue\w*\b[^.]{0,30}?(?:commenc\w*|contribut\w*|visible|kick(?:ed)?[- ]?in|of ₹|of rs)|\bfirst revenue\b/i },
+  { score: 7,  label: 'Commercial production started',      re: /\b(commercial (?:production|supply|dispatch)|commenced (?:production|supply|dispatch)|commercialis\w*)\b/i },
+  { score: 6,  label: 'Order received',                     re: /\b(received (?:an )?order|order\w*\s+(?:won|received|secured|bagged)|purchase order|design win|order (?:win|book\w*))\b/i },
+  { score: 5,  label: 'Customer qualification',             re: /\b(qualif(?:y|ied|ication|ying)|customer approval|approved by|validat(?:ed|ion))\b/i },
+  { score: 4,  label: 'Facility / equipment ready',         re: /\b(facility\w*\s+(?:ready|complet\w*|commission\w*)|plant\w*\s+(?:ready|complet\w*|commission\w*)|equipment installed|trial (?:run|production))\b/i },
+  { score: 3,  label: 'Capex / partnership signed',         re: /\b(capex\w*\s+(?:approv\w*|announc\w*|commit\w*)|partnership\w*\s+(?:sign\w*|agreement)|\bMOU\b|memorandum of understanding|joint venture)\b/i },
+  { score: 2,  label: 'Strategy / guidance announced',      re: /\b(guidance|we (?:expect|intend|plan|target|aim|endeavour)|strategy|roadmap|outlook)\b/i },
   { score: 1,  label: 'Opportunity talk only',              re: /\b(opportunity|we are exploring|evaluating|in discussion|potential|looking at)\b/i },
 ];
+
+// ─── Context gates (zzz460) — make the ladder measure REALISED proof, not talk ─
+// A ladder keyword found in a long transcript is meaningless on its own — almost
+// every concall says "margin improvement" or "free cash flow" somewhere. These
+// gates reject a match that is aspirational, negated, or (for the top realised
+// rungs) not backed by a number or a past-tense realisation verb.
+const FWD_LOOKING = /\b(expect|anticipat\w*|aim|aims|aiming|plan|plans|planning|target|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year)|over the (?:medium|long)|in (?:the )?future|likely to|poised to|set to|on track to|working towards)\b/i;
+const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*)\b/i;
+const QUANTIFIER = /(\d+(?:\.\d+)?\s?(?:%|bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
+const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|delivered|reported|achieved|generated|turned|commenced|started|received|secured|won|added|onboarded|commissioned|ramped|clocked|posted|recorded|stood at|came in)\b/i;
+
+// Rungs >= 3 (claims something is happening/done) must NOT be forward-looking or
+// negated; rungs >= 8 (realised results) additionally require a number or a
+// past-tense realisation verb nearby. Rungs 1-2 are inherently aspirational so
+// stay ungated. Returns whether a specific match at `idx` genuinely counts.
+function evidenceContextOk(text: string, idx: number, len: number, score: number): boolean {
+  if (score >= 3) {
+    const fwdWin = text.slice(Math.max(0, idx - 45), idx + len + 25);
+    if (FWD_LOOKING.test(fwdWin)) return false;
+    const negWin = text.slice(Math.max(0, idx - 28), idx + len + 28);
+    if (NEGATION.test(negWin)) return false;
+  }
+  if (score >= 8) {
+    const proofWin = text.slice(Math.max(0, idx - 55), idx + len + 55);
+    if (!(QUANTIFIER.test(proofWin) || REALISED_VERB.test(proofWin))) return false;
+  }
+  return true;
+}
+
+// Walk the ladder high → low; a rung wins only when it has at least one match
+// that survives the context gates. This replaces the old "first keyword found
+// anywhere" logic that inflated almost every transcript to rungs 9-11.
+export function detectEvidence(text: string): { score: number; label: string } {
+  for (const e of EVIDENCE_LADDER) {
+    const re = new RegExp(e.re.source, e.re.flags.includes('g') ? e.re.flags : e.re.flags + 'g');
+    let m: RegExpExecArray | null;
+    let guard = 0;
+    while ((m = re.exec(text)) !== null && guard++ < 500) {
+      if (evidenceContextOk(text, m.index, m[0].length, e.score)) {
+        return { score: e.score, label: e.label };
+      }
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+  }
+  return { score: 0, label: 'No transformation evidence detected' };
+}
 
 export interface TransformationResult {
   patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
@@ -80,8 +132,7 @@ export function analyzeTransformation(text: string): TransformationResult {
     .sort((a, b) => b.hits - a.hits)
     .slice(0, 24);
 
-  let evidence = { score: 0, label: 'No transformation evidence detected' };
-  for (const e of EVIDENCE_LADDER) { if (e.re.test(text)) { evidence = { score: e.score, label: e.label }; break; } }
+  const evidence = detectEvidence(text);
 
   // Inflection ladder stage 0-10, derived from the strongest evidence tell.
   const stageMap: Record<number, number> = { 0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 11: 10 };
