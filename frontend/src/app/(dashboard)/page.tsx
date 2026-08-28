@@ -5188,6 +5188,8 @@ interface InboxSignal {
   hColor?: string;      // zzz452 — headline colour override (e.g. transform stance)
   note?: string;        // zzz452 — hover tooltip with the full plain-English read
   quote?: string;       // zzz464 — inline proof snippet shown on the card (verifiability)
+  stale?: boolean;      // zzz472 — a standing idea shown because no FRESH buy exists
+  ageDays?: number;     // zzz472 — age of the filing in days (for the ⏳ chip)
 }
 
 type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
@@ -5390,34 +5392,42 @@ function DailySignalInbox() {
       setLaneStatus((prev) => ({ ...prev, warrant: true }));
     });
 
-    // TRANSFORM — batch radar.
-    j(`/api/v1/concall-intel/transformation-screener?days=60&limit=24${force ? '&refresh=1' : ''}`, force ? 55000 : 16000).then((transform) => {
+    // TRANSFORM — batch radar. zzz472 — pull the wider limit=80 pool (reuses the
+    // Radar's warm cache) so that when the NEWEST filings have no real buy, we can
+    // still surface the best STANDING ideas from the last 60 days instead of an
+    // empty lane — clearly labelled "not fresh" so they're never mistaken for a
+    // brand-new signal.
+    j(`/api/v1/concall-intel/transformation-screener?days=60&limit=80${force ? '&refresh=1' : ''}`, force ? 55000 : 16000).then((transform) => {
       if (!transform || transform.error) return;
-      const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
-      // zzz452 — sort by evidence-ladder rung first (most proven at top), then
-      // composite score, so the actionable "accumulate" names lead the lane and
-      // the "watch, story-only" names fall to the bottom.
+      // sort by evidence-ladder rung first (most proven at top), then composite.
       const ordered = [...entries].sort((a: any, b: any) =>
         ((b.evidence_score || 0) - (a.evidence_score || 0)) || ((b.transformation_score || 0) - (a.transformation_score || 0)));
-      // dedup by symbol (a company can file twice in the window) — keep the
-      // highest-evidence instance, which is already first after the sort.
+      // dedup by symbol — keep the highest-evidence instance (first after sort).
       const seenTf = new Set<string>();
       const orderedUniq = ordered.filter((e: any) => {
         const k = (e.symbol || '').toUpperCase();
         if (!k || seenTf.has(k)) return false;
         seenTf.add(k); return true;
       });
-      // zzz464 — HOME shows buy-side only: STRONG BUY / BUY / ACCUMULATE. The
-      // unproven WATCH names (story/guidance, ev<6) are dropped from the inbox.
-      orderedUniq.forEach((e: any) => {
-        const t = readTransform(e);
-        if (!t.isBuy) return;                       // no watch / hold at home
-        rows.push({
-          lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
-          headline: t.headline, detail: t.detail, hColor: t.hColor, note: t.note, quote: t.quote,
-          score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: t.soft });
-      });
+      // freshness: a filing is FRESH if it lands within 3 days of the newest
+      // filing in the pool (robust to feed lag). Older buys are "standing".
+      const DAY = 86400000;
+      const dayMs = (e: any) => { const d = new Date(e.filing_datetime); return isNaN(d.getTime()) ? 0 : d.getTime(); };
+      const now = Date.now();
+      let maxDay = 0; for (const e of orderedUniq) maxDay = Math.max(maxDay, dayMs(e));
+      const freshFrom = (maxDay || now) - 3 * DAY;
+      // HOME shows buy-side only: STRONG BUY / BUY / ACCUMULATE (ev>=6, not cautious).
+      const buys = orderedUniq.map((e: any) => ({ e, t: readTransform(e), fd: dayMs(e) })).filter((b) => b.t.isBuy);
+      const fresh = buys.filter((b) => b.fd >= freshFrom);
+      const useStanding = fresh.length === 0 && buys.length > 0;   // quiet week → fall back
+      const chosen = fresh.length ? fresh : (useStanding ? buys.slice(0, 8) : []);
+      const rows: InboxSignal[] = chosen.map(({ e, t, fd }) => ({
+        lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
+        headline: t.headline, detail: t.detail, hColor: t.hColor, note: t.note, quote: t.quote,
+        score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: t.soft,
+        stale: useStanding, ageDays: fd ? Math.max(0, Math.round((now - fd) / DAY)) : undefined,
+      }));
       setGeneratedAt(transform.generated_at || null);
       mergeLane('TRANSFORM', rows, 'transform');
       setLaneStatus((prev) => ({ ...prev, transform: true }));
@@ -5521,12 +5531,19 @@ function DailySignalInbox() {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
               const laneCount = laneSignals.length;
+              // zzz472 — whole lane is standing ideas (no fresh buy this cycle)
+              const staleLane = laneCount > 0 && laneSignals.every((s) => s.stale);
               return (
                 <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px', breakInside: 'avoid', marginBottom: 9, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <span style={{ fontSize: 10.5, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
                     <span style={{ fontSize: 9, fontWeight: 800, color: laneCount ? meta.c : DIM, fontFamily: 'ui-monospace, monospace', background: laneCount ? `${meta.c}1f` : 'transparent', borderRadius: 20, padding: laneCount ? '1px 7px' : 0, minWidth: 16, textAlign: 'center' }}>{laneCount}</span>
                   </div>
+                  {staleLane && (
+                    <div style={{ fontSize: 8.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.30)', borderRadius: 5, padding: '3px 6px', marginBottom: 6, lineHeight: 1.4 }}>
+                      ⏳ Quiet — no new buy in the latest filings. Best open ideas from the last 60 days.
+                    </div>
+                  )}
                   {laneSignals.length === 0 ? (
                     <div style={{ fontSize: 10, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
                   ) : (
@@ -5536,7 +5553,8 @@ function DailySignalInbox() {
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                             <span style={{ fontSize: 12, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
                             <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
-                            {s.soft && <span style={{ fontSize: 7.5, color: DIM, marginLeft: 'auto', flexShrink: 0 }}>watch</span>}
+                            {s.stale && typeof s.ageDays === 'number' && <span title={`from a filing ~${s.ageDays} days ago — not a fresh signal`} style={{ fontSize: 7.5, fontWeight: 800, color: '#F59E0B', background: 'rgba(245,158,11,0.14)', borderRadius: 3, padding: '0 4px', marginLeft: 'auto', flexShrink: 0 }}>⏳ {s.ageDays}d</span>}
+                            {s.soft && !s.stale && <span style={{ fontSize: 7.5, color: DIM, marginLeft: 'auto', flexShrink: 0 }}>watch</span>}
                           </div>
                           <div style={{ fontSize: 10, fontWeight: 700, color: s.hColor || meta.c, marginTop: 1 }}>{s.headline}</div>
                           <div style={{ fontSize: 9, color: DIM, marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>
