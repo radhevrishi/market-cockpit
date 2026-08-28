@@ -5187,6 +5187,7 @@ interface InboxSignal {
   soft?: boolean;       // zzz435 — a "watch"/fallback item, not a fired event
   hColor?: string;      // zzz452 — headline colour override (e.g. transform stance)
   note?: string;        // zzz452 — hover tooltip with the full plain-English read
+  quote?: string;       // zzz464 — inline proof snippet shown on the card (verifiability)
 }
 
 type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
@@ -5199,30 +5200,36 @@ type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
 // milestones (5-7) → showing in the numbers (8+). We say the stance, what is
 // actually changing (the pattern labels, not "vectors"), the proof reached so
 // far, and how broadly it's confirmed (industry / company / financials).
-function readTransform(e: any): { headline: string; detail: string; hColor: string; soft: boolean; note: string } {
+function readTransform(e: any): { verdict: string; isBuy: boolean; headline: string; detail: string; hColor: string; soft: boolean; note: string; quote: string } {
   const ev = Number(e.evidence_score) || 0;
   const tc = Number(e.triple?.count) || 0;
   const sweet = !!e.stage_sweet_spot;
+  const breadth = Number(e.evidence_breadth) || 0;   // zzz462 — how many proof rungs fired
   const pats = (e.patterns || []).filter((p: any) => (p.hits || 0) > 0).sort((a: any, b: any) => (b.hits || 0) - (a.hits || 0));
   const patTop = pats.slice(0, 2).map((p: any) => p.label).join(' + ') || 'transformation signals';
   const patAll = pats.map((p: any) => p.label).join(', ') || '—';
   const proof = (e.evidence_label && !/no transformation/i.test(e.evidence_label)) ? e.evidence_label : 'early narrative only';
-  // zzz461 — finer stance tiers so cards VISIBLY differ by proof strength (the
-  // lane shows the top-by-evidence, so without gradation everything looked the
-  // same). The evidence rung (1–11) is now shown on every card too.
-  let headline: string, hColor: string, soft: boolean, read: string;
-  if (ev >= 10)     { headline = '🟢 STRONG accumulate · cash / customer proof'; hColor = '#059669'; soft = false; read = 'strongest tier — proof is showing up in free cash flow or repeat customers, not just margins'; }
-  else if (ev >= 8) { headline = '🟢 Accumulate · showing in the numbers';       hColor = '#10B981'; soft = false; read = 'accumulate — the inflection is already hitting revenue / margins'; }
-  else if (ev >= 6) { headline = '🟢 Accumulate · orders / production live';     hColor = '#10B981'; soft = false; read = 'accumulate — real hard milestones (orders won / commercial production), numbers should follow'; }
-  else if (ev === 5){ headline = '🟡 Build · customer qualification';           hColor = '#F59E0B'; soft = true;  read = 'starter — qualified/approved by a customer but revenue not yet flowing'; }
-  else if (ev >= 3) { headline = '🟡 Starter · committed, unproven';            hColor = '#F59E0B'; soft = true;  read = 'starter position only — capex/partnership committed but not yet earning it'; }
-  else              { headline = '👀 Watch · guidance / story only';            hColor = '#94A3B8'; soft = true;  read = 'watchlist — guidance or narrative without realised proof yet; wait for the first hard milestone'; }
-  const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
-  const breadth = Number(e.evidence_breadth) || 0;   // zzz462 — how many proof rungs fired
   const quote = (e.evidence_quote && String(e.evidence_quote).trim()) ? String(e.evidence_quote).trim() : '';
+  // zzz464 — explicit BUY-strength VERDICT (STRONG BUY / BUY / ACCUMULATE), and a
+  // depth bump: a BUY read backed by 4+ independent proof points is upgraded a
+  // notch (layered proof > a single high rung). Home only ever shows buy-side —
+  // the WATCH tier (unproven story) is filtered out of the inbox lane.
+  let verdict: string, sub: string, hColor: string, soft: boolean, read: string;
+  if (ev >= 10)      { verdict = 'STRONG BUY'; sub = 'cash / customer proof';   hColor = '#059669'; soft = false; read = 'strongest tier — proof is in free cash flow or repeat customers, not just margins'; }
+  else if (ev >= 8)  { verdict = 'BUY';        sub = 'showing in the numbers';  hColor = '#10B981'; soft = false; read = 'the inflection is already hitting revenue / margins'; }
+  else if (ev >= 6)  { verdict = 'ACCUMULATE'; sub = 'orders / production live'; hColor = '#22C55E'; soft = false; read = 'real hard milestones (orders won / commercial production) — numbers should follow'; }
+  else if (ev === 5) { verdict = 'WATCH';      sub = 'customer qualification';  hColor = '#F59E0B'; soft = true;  read = 'qualified/approved by a customer but revenue not yet flowing — not yet a buy'; }
+  else if (ev >= 3)  { verdict = 'WATCH';      sub = 'committed, unproven';     hColor = '#F59E0B'; soft = true;  read = 'capex/partnership committed but not yet earning it — not yet a buy'; }
+  else               { verdict = 'WATCH';      sub = 'guidance / story only';   hColor = '#94A3B8'; soft = true;  read = 'guidance or narrative without realised proof yet — not a buy'; }
+  // depth upgrade: BUY (8-9) with 4+ proof points reads as STRONG BUY
+  if (verdict === 'BUY' && breadth >= 4) { verdict = 'STRONG BUY'; sub = 'proven on multiple fronts'; hColor = '#059669'; read = 'multiple independent proof points confirm the inflection — high conviction'; }
+  const isBuy = ev >= 6;   // STRONG BUY / BUY / ACCUMULATE — never WATCH at home
+  const emoji = ev >= 10 || (verdict === 'STRONG BUY') ? '🟢🟢' : ev >= 6 ? '🟢' : '🟡';
+  const headline = `${emoji} ${verdict} · ${sub}`;
+  const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
   const detail = `${patTop} · proof: ${proof} (${ev}/11)${breadth > 1 ? ` · ${breadth} proof points` : ''}`;
-  const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11, ${breadth} rung${breadth === 1 ? '' : 's'} fired): ${proof}.${quote ? ` Quoted from the concall: "${quote}"` : ''} Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}. Verify the quote before acting — this is a deterministic keyword read, not a recommendation.`;
-  return { headline, detail, hColor, soft, note };
+  const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: verdict ${verdict}. ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11, ${breadth} rung${breadth === 1 ? '' : 's'} fired): ${proof}.${quote ? ` Quoted from the concall: "${quote}"` : ''} Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}. Verify the quote before acting — this is a deterministic keyword read, not a recommendation.`;
+  return { verdict, isBuy, headline, detail, hColor, soft, note, quote };
 }
 
 // zzz445 — QUALITY PULLBACKS. Great-earnings names (the institutional quality
@@ -5382,11 +5389,14 @@ function DailySignalInbox() {
         if (!k || seenTf.has(k)) return false;
         seenTf.add(k); return true;
       });
-      orderedUniq.slice(0, 12).forEach((e: any) => {
+      // zzz464 — HOME shows buy-side only: STRONG BUY / BUY / ACCUMULATE. The
+      // unproven WATCH names (story/guidance, ev<6) are dropped from the inbox.
+      orderedUniq.forEach((e: any) => {
         const t = readTransform(e);
+        if (!t.isBuy) return;                       // no watch / hold at home
         rows.push({
           lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
-          headline: t.headline, detail: t.detail, hColor: t.hColor, note: t.note,
+          headline: t.headline, detail: t.detail, hColor: t.hColor, note: t.note, quote: t.quote,
           score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: t.soft });
       });
       setGeneratedAt(transform.generated_at || null);
@@ -5510,6 +5520,7 @@ function DailySignalInbox() {
                           </div>
                           <div style={{ fontSize: 10, fontWeight: 700, color: s.hColor || meta.c, marginTop: 1 }}>{s.headline}</div>
                           <div style={{ fontSize: 9, color: DIM, marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>
+                          {s.quote ? <div style={{ fontSize: 8.5, color: 'var(--mc-text-3)', marginTop: 3, lineHeight: 1.35, fontStyle: 'italic', borderLeft: `2px solid ${s.hColor || meta.c}`, paddingLeft: 5 }}>“{s.quote.length > 120 ? s.quote.slice(0, 120) + '…' : s.quote}”</div> : null}
                         </Link>
                       ))}
                     </div>
