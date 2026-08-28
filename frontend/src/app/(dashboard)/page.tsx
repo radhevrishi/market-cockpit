@@ -5207,13 +5207,18 @@ function readTransform(e: any): { headline: string; detail: string; hColor: stri
   const patTop = pats.slice(0, 2).map((p: any) => p.label).join(' + ') || 'transformation signals';
   const patAll = pats.map((p: any) => p.label).join(', ') || '—';
   const proof = (e.evidence_label && !/no transformation/i.test(e.evidence_label)) ? e.evidence_label : 'early narrative only';
+  // zzz461 — finer stance tiers so cards VISIBLY differ by proof strength (the
+  // lane shows the top-by-evidence, so without gradation everything looked the
+  // same). The evidence rung (1–11) is now shown on every card too.
   let headline: string, hColor: string, soft: boolean, read: string;
-  if (ev >= 8)      { headline = '🟢 Accumulate · showing in the numbers'; hColor = '#10B981'; soft = false; read = 'accumulate — the inflection is already hitting revenue/margins/cash'; }
-  else if (ev >= 5) { headline = '🟢 Accumulate · real milestones hit';    hColor = '#10B981'; soft = false; read = 'accumulate on strength or pullbacks — the story is proving out with hard milestones'; }
-  else if (ev >= 3) { headline = '🟡 Starter · committed, unproven';       hColor = '#F59E0B'; soft = true;  read = 'starter position only — capex/partnership is committed but not yet earning it'; }
-  else              { headline = '👀 Watch · story only, no proof yet';    hColor = '#94A3B8'; soft = true;  read = 'watchlist — a narrative without evidence yet; wait for the first real milestone'; }
+  if (ev >= 10)     { headline = '🟢 STRONG accumulate · cash / customer proof'; hColor = '#059669'; soft = false; read = 'strongest tier — proof is showing up in free cash flow or repeat customers, not just margins'; }
+  else if (ev >= 8) { headline = '🟢 Accumulate · showing in the numbers';       hColor = '#10B981'; soft = false; read = 'accumulate — the inflection is already hitting revenue / margins'; }
+  else if (ev >= 6) { headline = '🟢 Accumulate · orders / production live';     hColor = '#10B981'; soft = false; read = 'accumulate — real hard milestones (orders won / commercial production), numbers should follow'; }
+  else if (ev === 5){ headline = '🟡 Build · customer qualification';           hColor = '#F59E0B'; soft = true;  read = 'starter — qualified/approved by a customer but revenue not yet flowing'; }
+  else if (ev >= 3) { headline = '🟡 Starter · committed, unproven';            hColor = '#F59E0B'; soft = true;  read = 'starter position only — capex/partnership committed but not yet earning it'; }
+  else              { headline = '👀 Watch · guidance / story only';            hColor = '#94A3B8'; soft = true;  read = 'watchlist — guidance or narrative without realised proof yet; wait for the first hard milestone'; }
   const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
-  const detail = `${patTop} · proof: ${proof}`;
+  const detail = `${patTop} · proof: ${proof} (${ev}/11)`;
   const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11): ${proof}. Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}.`;
   return { headline, detail, hColor, soft, note };
 }
