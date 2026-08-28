@@ -28,7 +28,12 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new grading appears fast
-const CACHE_KEY = (days: number, limit: number) => `transform-screener:v1:${days}:${limit}`;
+// zzz475 — BUMP this version string whenever the analyzer grading/quote logic
+// changes. The Redis cache survives redeploys, so without a version bump a code
+// fix keeps serving the OLD graded results until the 12-min TTL lapses or the user
+// force-refreshes — which is why fixed quotes appeared "still broken". A new
+// version orphans the stale entries so the very next request recomputes fresh.
+const CACHE_KEY = (days: number, limit: number) => `transform-screener:v2:${days}:${limit}`;
 
 export interface TransformScreenEntry {
   symbol: string;

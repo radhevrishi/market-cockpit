@@ -87,6 +87,15 @@ const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planni
 // a milestone was hit. Checked in a WIDER window for the realised rungs (score>=6)
 // because the capability noun often sits a clause away from the milestone word.
 const CAPABILITY_TALK = /\b(capabilit\w*|one[- ]stop[- ]shop|end[- ]to[- ]end|covers everything|full[- ]service|suite of|range of (?:services|solutions|offerings|capabilit\w*)|we (?:offer|provide)|our (?:offering|platform|solution|portfolio)s?|positioned as|serve as a)\b/i;
+// zzz475 — a NUMERIC TARGET / guidance band sitting next to a margin/revenue word
+// is aspiration, not a realised result (BALAMINES: "EBITDA margin targeted at
+// 22-23% in FY27 vs ~20% in FY26"). Stronger than the general FWD list — catches
+// the specific "targeted at / guidance of / aiming for / exit margin" phrasings.
+const TARGET_GUIDANCE = /\btarget\w*|guidance\s+(?:of|at|for|band|range)|aiming\s+(?:for|at|to)|aspir\w*|expect\w*\s+to\s+(?:reach|achieve|touch|be)|to\s+(?:reach|achieve|touch)\s+~?\d|glide\s?path|exit\s+(?:rate|margin|velocity)|steady[- ]state|over\s+the\s+next\s+\d/i;
+// zzz475 — a methodology FOOTNOTE ("Note: Calculated as (Interest Expense …
+// divided by …)") is a definition, not a proof (CGCL surfaced one as a 9/11
+// margin). Reject any realised rung whose sentence is a calc note.
+const FOOTNOTE_METHOD = /\bnote\s*:\s|calculated as|computed as|defined as|is defined|divided by\b|\bformula\b|methodology|refer to (?:note|slide|page)/i;
 const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*|negative|outflow|cash burn|erod\w*)\b/i;
 // zzz473 — FIX: the old `(?:%|bps|…)\b` put a word-boundary AFTER the unit, so
 // "12.5%," / "300bps." / "14%)" (a percent followed by punctuation or end) did
@@ -124,6 +133,10 @@ function evidenceContextOk(text: string, idx: number, len: number, score: number
     // inside a CAPABILITY description ("one-stop-shop capability that covers …
     // commercial production"). Wider window — capability noun is often a clause away.
     if (CAPABILITY_TALK.test(win(idx - 80, idx + len + 40))) return false;
+    // zzz475 — nor next to a numeric TARGET/guidance band (aspiration, not result),
+    // nor inside a methodology footnote (a definition, not a proof).
+    if (TARGET_GUIDANCE.test(win(idx - 75, idx + len + 45))) return false;
+    if (FOOTNOTE_METHOD.test(win(idx - 120, idx + len + 120))) return false;
   }
   if (score >= 8) {
     const proofWin = win(idx - 55, idx + len + 55);
@@ -184,6 +197,15 @@ function extractSentence(text: string, idx: number, len: number): string {
   // 8784.7 Cr 2.9% CPLY 151 bps"). Require ≥3 lowercase prose words (≥3 letters).
   const proseWords = words.filter((w) => /^[a-z][a-z']{2,}$/.test(w));
   if (proseWords.length < 3) return '';
+  // zzz475 — reject a spec / model-code LIST (AEQUS: "Long range A330, A350, B767,
+  // B777, B787 Single aisle A220, A320, B737 …") — 3+ part/model codes = a table
+  // of SKUs, not a proof sentence. Codes are letter(s)+digits so the digit-ratio
+  // check misses them.
+  const modelCodes = words.filter((w) =>
+    /^[A-Za-z]{1,3}[- ]?\d{2,4}[A-Za-z]?[,.;]?$/.test(w)      // letter(s)+digits, e.g. A330 / B737
+    && !/^(?:FY|Q[1-4]|H[12]|CY|FQ|Rs)/i.test(w)             // but NOT FY26 / Q1 / H2 / CY24 / Rs500
+    && !/^(?:19|20)\d\d[,.;]?$/.test(w));                     // nor a bare calendar year 2024
+  if (modelCodes.length >= 3) return '';
   return q.slice(0, 220);
 }
 
