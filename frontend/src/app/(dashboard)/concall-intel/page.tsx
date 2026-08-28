@@ -25,6 +25,8 @@ interface TransformationRadarData {
   events: Array<{ kw: string; hits: number }>;
   evidence_score: number;
   evidence_label: string;
+  evidence_quote?: string;      // zzz462 — exact proof sentence
+  evidence_breadth?: number;    // zzz462 — distinct proof rungs fired
   stage: number;
   stage_sweet_spot: boolean;
   velocity: string;
@@ -3619,7 +3621,12 @@ function TransformationRadar({ t, ticker }: { t: TransformationRadarData; ticker
         <div style={{ height: '100%', width: `${stagePct}%`, background: `linear-gradient(90deg, ${TF.red}, ${TF.amber} 50%, ${TF.green})` }} />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', ...TFM, fontSize: 8.5, color: TF.dim, marginBottom: 12 }}><span>0 talk</span><span>3 facility</span><span>5 first order</span><span>7 accelerates</span><span>10 re-expand</span></div>
-      <div style={{ fontSize: 11.5, color: TF.muted, marginBottom: 10 }}>Strongest evidence: <strong style={{ color: evCol }}>{t.evidence_label}</strong></div>
+      <div style={{ fontSize: 11.5, color: TF.muted, marginBottom: t.evidence_quote ? 4 : 10 }}>Strongest evidence: <strong style={{ color: evCol }}>{t.evidence_label}</strong>{typeof t.evidence_breadth === 'number' && t.evidence_breadth > 1 ? <span style={{ color: TF.dim }}> · {t.evidence_breadth} proof points</span> : null}</div>
+      {t.evidence_quote ? (
+        <div style={{ fontSize: 11, color: TF.text2, marginBottom: 10, padding: '7px 10px', borderLeft: `3px solid ${evCol}`, background: 'rgba(255,255,255,0.03)', borderRadius: 4, fontStyle: 'italic', lineHeight: 1.5 }}>
+          “{t.evidence_quote}” <span style={{ color: TF.dim, fontStyle: 'normal' }}>— verify against the transcript before acting</span>
+        </div>
+      ) : null}
       {t.patterns.length > 0 && (
         <>
           <div style={{ ...TFM, fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim, marginBottom: 7 }}>Transformation patterns detected</div>
@@ -3831,7 +3838,7 @@ interface TransformScreenEntry {
   bullish_tier: string;
   transformation_score: number; pattern_count: number;
   patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
-  evidence_score: number; evidence_label: string;
+  evidence_score: number; evidence_label: string; evidence_quote?: string; evidence_breadth?: number;
   stage: number; stage_sweet_spot: boolean; velocity: string;
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';

@@ -5218,8 +5218,10 @@ function readTransform(e: any): { headline: string; detail: string; hColor: stri
   else if (ev >= 3) { headline = '🟡 Starter · committed, unproven';            hColor = '#F59E0B'; soft = true;  read = 'starter position only — capex/partnership committed but not yet earning it'; }
   else              { headline = '👀 Watch · guidance / story only';            hColor = '#94A3B8'; soft = true;  read = 'watchlist — guidance or narrative without realised proof yet; wait for the first hard milestone'; }
   const conf = tc >= 3 ? 'industry + company + financials all confirm' : tc === 2 ? 'two of three axes confirm' : tc === 1 ? 'one axis confirms' : 'single-axis so far';
-  const detail = `${patTop} · proof: ${proof} (${ev}/11)`;
-  const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11): ${proof}. Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}.`;
+  const breadth = Number(e.evidence_breadth) || 0;   // zzz462 — how many proof rungs fired
+  const quote = (e.evidence_quote && String(e.evidence_quote).trim()) ? String(e.evidence_quote).trim() : '';
+  const detail = `${patTop} · proof: ${proof} (${ev}/11)${breadth > 1 ? ` · ${breadth} proof points` : ''}`;
+  const note = `BUY-SIDE RADAR — this surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${ev}/11, ${breadth} rung${breadth === 1 ? '' : 's'} fired): ${proof}.${quote ? ` Quoted from the concall: "${quote}"` : ''} Confirmation: ${conf}${sweet ? ' · sits in the stage-3–7 sweet spot (built & ramping, not yet re-rated)' : ''}. Read: ${read}. Verify the quote before acting — this is a deterministic keyword read, not a recommendation.`;
   return { headline, detail, hColor, soft, note };
 }
 

@@ -86,22 +86,47 @@ function evidenceContextOk(text: string, idx: number, len: number, score: number
   return true;
 }
 
+// zzz462 — pull the exact sentence around a match so the card can QUOTE the
+// real proof line (verifiability — the user can confirm it isn't a fluke).
+function extractSentence(text: string, idx: number, len: number): string {
+  // sentence START: last real sentence break before the match (a period/!/? that
+  // is NOT a decimal point — i.e. followed by whitespace), floored at -160 chars.
+  const pre = text.slice(Math.max(0, idx - 200), idx);
+  const preBreak = pre.search(/[.!?]\s(?=[^]*$)/);   // first break in the window
+  let start = idx - (pre.length - (preBreak >= 0 ? preBreak + 2 : 0));
+  if (idx - start > 160 || start < 0) start = Math.max(0, idx - 160);
+  // sentence END: next break AFTER the match that isn't a decimal (period+space).
+  const rest = text.slice(idx + len, idx + len + 200);
+  const endRel = rest.search(/[.!?](\s|$)/);
+  const end = endRel >= 0 ? idx + len + endRel + 1 : Math.min(text.length, idx + len + 130);
+  return text.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 220);
+}
+
 // Walk the ladder high → low; a rung wins only when it has at least one match
-// that survives the context gates. This replaces the old "first keyword found
-// anywhere" logic that inflated almost every transcript to rungs 9-11.
-export function detectEvidence(text: string): { score: number; label: string } {
+// that survives the context gates. zzz462: scan ALL rungs (not just the peak) so
+// we also return `breadth` = how many DISTINCT proof rungs fired — a genuinely
+// proven transformation shows several (capex → facility → production → revenue →
+// margin), so one lucky keyword no longer looks as strong as layered evidence.
+export function detectEvidence(text: string): { score: number; label: string; quote: string; breadth: number } {
+  let winner: { score: number; label: string; quote: string } | null = null;
+  let breadth = 0;
   for (const e of EVIDENCE_LADDER) {
     const re = new RegExp(e.re.source, e.re.flags.includes('g') ? e.re.flags : e.re.flags + 'g');
     let m: RegExpExecArray | null;
     let guard = 0;
+    let firedThisRung = false;
     while ((m = re.exec(text)) !== null && guard++ < 500) {
       if (evidenceContextOk(text, m.index, m[0].length, e.score)) {
-        return { score: e.score, label: e.label };
+        if (!winner) winner = { score: e.score, label: e.label, quote: extractSentence(text, m.index, m[0].length) };
+        firedThisRung = true;
+        break; // one valid match is enough to count this rung toward breadth
       }
       if (m.index === re.lastIndex) re.lastIndex++;
     }
+    if (firedThisRung) breadth++;
   }
-  return { score: 0, label: 'No transformation evidence detected' };
+  if (!winner) return { score: 0, label: 'No transformation evidence detected', quote: '', breadth: 0 };
+  return { ...winner, breadth };
 }
 
 export interface TransformationResult {
@@ -109,6 +134,8 @@ export interface TransformationResult {
   events: Array<{ kw: string; hits: number }>;
   evidence_score: number;
   evidence_label: string;
+  evidence_quote: string;      // zzz462 — the exact sentence that proves the top rung (verifiability)
+  evidence_breadth: number;    // zzz462 — how many distinct proof rungs fired (depth of proof)
   stage: number;
   stage_sweet_spot: boolean;
   velocity: string;
@@ -150,6 +177,7 @@ export function analyzeTransformation(text: string): TransformationResult {
   return {
     patterns, events,
     evidence_score: evidence.score, evidence_label: evidence.label,
+    evidence_quote: evidence.quote, evidence_breadth: evidence.breadth,
     stage, stage_sweet_spot: inSweetSpot,
     velocity, pattern_count: nPat,
     triple: { industry, company, financial, count: tripleCount },

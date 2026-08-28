@@ -28,9 +28,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const CACHE_TTL = 30 * 60;               // 30 min
-// zzz417 — v2: ranked entries are now deduped one-per-company (see below), so
-// bump the cache key to stop serving 30-min-old duplicated payloads.
-const CACHE_KEY = (days: number, limit: number) => `transform-screener:v2:${days}:${limit}`;
+const CACHE_KEY = (days: number, limit: number) => `transform-screener:v1:${days}:${limit}`;
 
 export interface TransformScreenEntry {
   symbol: string;
@@ -47,6 +45,8 @@ export interface TransformScreenEntry {
   patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
   evidence_score: number;
   evidence_label: string;
+  evidence_quote: string;      // zzz462 — exact proof sentence (verifiability)
+  evidence_breadth: number;    // zzz462 — distinct proof rungs that fired (depth)
   stage: number;
   stage_sweet_spot: boolean;
   velocity: string;
@@ -86,7 +86,11 @@ interface ScreenPayload {
 // triple, and a sweet-spot bonus for stages 3-7 (built, ramping, not yet
 // fully re-rated).
 function transformScore(t: ReturnType<typeof analyzeTransformation>): number {
-  return t.pattern_count * 3 + t.evidence_score + t.triple.count * 2 + (t.stage_sweet_spot ? 4 : 0);
+  // zzz462 — reward proof DEPTH: a story with several evidence rungs firing
+  // (capex → facility → production → revenue → margin) is more genuinely proven
+  // than one that scored a single high rung off one lucky sentence.
+  const breadthBonus = Math.min(t.evidence_breadth || 0, 5) * 2;
+  return t.pattern_count * 3 + t.evidence_score + t.triple.count * 2 + (t.stage_sweet_spot ? 4 : 0) + breadthBonus;
 }
 
 const emptyPayload = (days: number, error?: string): ScreenPayload => ({
@@ -188,6 +192,8 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
         patterns: t.patterns,
         evidence_score: t.evidence_score,
         evidence_label: t.evidence_label,
+        evidence_quote: t.evidence_quote,
+        evidence_breadth: t.evidence_breadth,
         stage: t.stage,
         stage_sweet_spot: t.stage_sweet_spot,
         velocity: t.velocity,
@@ -203,26 +209,8 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   // Keep the ones with real transformation signal, best first. Obvious
   // non-earnings notices (management change / AGM / record date …) are kept OUT
   // of the ranking even if their notice text happens to hit a keyword.
-  // zzz417 — ONE ROW PER COMPANY. A company that filed several documents in
-  // the window (transcript + investor presentation + results presentation is
-  // the normal pattern — e.g. GALLANTT) produced one entry PER FILING, so the
-  // same symbol repeated in the ranked list and crowded real names out of the
-  // top slots. Keep the strongest read per symbol: highest transformation
-  // score wins; on a tie the most recent filing wins.
-  const bySymbol = new Map<string, TransformScreenEntry>();
-  for (const e of entries) {
-    if (!(e.pattern_count >= minPatterns) || isNoiseNotice(e)) continue;
-    const sym = String(e.symbol || '').toUpperCase().trim();
-    if (!sym) continue;
-    const prev = bySymbol.get(sym);
-    if (!prev
-      || e.transformation_score > prev.transformation_score
-      || (e.transformation_score === prev.transformation_score
-          && new Date(e.filing_datetime).getTime() > new Date(prev.filing_datetime).getTime())) {
-      bySymbol.set(sym, e);
-    }
-  }
-  const ranked = [...bySymbol.values()]
+  const ranked = entries
+    .filter((e) => e.pattern_count >= minPatterns && !isNoiseNotice(e))
     .sort((a, b) => b.transformation_score - a.transformation_score);
 
   // zzz434 — the rest were scanned but produced no signal (or were notices).
