@@ -5357,16 +5357,29 @@ function DailySignalInbox() {
       setLaneStatus((prev) => ({ ...prev, warrant: true }));
     });
 
-    // TRANSFORM — batch radar.
-    j('/api/v1/concall-intel/transformation-screener?days=60&limit=24', 16000).then((transform) => {
+    // TRANSFORM — batch radar. zzz417: limit=80 (was 24) so the home lane runs
+    // the SAME scan as the radar tab — one shared 30-min server cache, and a
+    // much wider universe than the old 24-filing mini-scan that surfaced only
+    // 4-5 companies.
+    j('/api/v1/concall-intel/transformation-screener?days=60&limit=80', 16000).then((transform) => {
       if (!transform || transform.error) return;
       const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
       // zzz452 — sort by evidence-ladder rung first (most proven at top), then
       // composite score, so the actionable "accumulate" names lead the lane and
       // the "watch, story-only" names fall to the bottom.
+      // zzz417 — defensive one-per-symbol dedupe (server now dedupes too, but a
+      // cached pre-fix payload or any upstream dupe must never repeat a stock
+      // in the 6 visible slots, as GALLANTT did).
+      const seenSym = new Set<string>();
       const ordered = [...entries].sort((a: any, b: any) =>
-        ((b.evidence_score || 0) - (a.evidence_score || 0)) || ((b.transformation_score || 0) - (a.transformation_score || 0)));
+        ((b.evidence_score || 0) - (a.evidence_score || 0)) || ((b.transformation_score || 0) - (a.transformation_score || 0)))
+        .filter((e: any) => {
+          const s = String(e.symbol || '').toUpperCase().trim();
+          if (!s || seenSym.has(s)) return false;
+          seenSym.add(s);
+          return true;
+        });
       ordered.slice(0, 6).forEach((e: any) => {
         const t = readTransform(e);
         rows.push({
