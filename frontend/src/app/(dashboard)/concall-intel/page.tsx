@@ -3872,10 +3872,11 @@ function TransformationScreenerTab() {
   const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
   useEffect(() => { try { setBench(readConvictionBeats()); } catch { setBench({}); } }, []);
 
-  const load = useCallback(async (d: number) => {
+  const load = useCallback(async (d: number, force = false) => {
     setLoading(true); setErr(null);
     try {
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80`, { cache: 'no-store' });
+      // zzz466 — Rescan forces a fresh server computation (bypasses the cache)
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80${force ? '&refresh=1' : ''}`, { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j: TransformScreenPayload = await r.json();
       setData(j);
@@ -3913,10 +3914,10 @@ function TransformationScreenerTab() {
               color: days === d ? TF.cyan : TF.muted,
             }}>{d}d</button>
           ))}
-          <button onClick={() => load(days)} disabled={loading} style={{
+          <button onClick={() => load(days, true)} disabled={loading} title="Force a fresh scan now (bypasses the cache)" style={{
             fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
             border: `1px solid ${TF.green}`, background: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', color: TF.green,
-          }}>{loading ? '⏳ Scanning…' : '↻ Rescan'}</button>
+          }}>{loading ? '⏳ Scanning…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
               {data.analyzed} concalls scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed

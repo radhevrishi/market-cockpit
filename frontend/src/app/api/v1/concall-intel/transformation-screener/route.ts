@@ -27,7 +27,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const CACHE_TTL = 30 * 60;               // 30 min
+const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new grading appears fast
 const CACHE_KEY = (days: number, limit: number) => `transform-screener:v1:${days}:${limit}`;
 
 export interface TransformScreenEntry {
@@ -118,10 +118,15 @@ export async function GET(req: NextRequest) {
 }
 
 async function handle(req: NextRequest, days: number, limit: number, minPatterns: number) {
+  // zzz466 — force-refresh bypass: ?refresh=1 (or ?nocache=1) skips the cache
+  // READ so a fresh computation runs immediately (still written back to cache).
+  // Lets you see new grading at once instead of waiting out the cache window.
+  const sp = req.nextUrl.searchParams;
+  const forceFresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
   // cached?
-  if (isRedisAvailable()) {
+  if (isRedisAvailable() && !forceFresh) {
     const cached = await kvGet<ScreenPayload>(CACHE_KEY(days, limit));
-    if (cached) return NextResponse.json(cached, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=1800' } });
+    if (cached) return NextResponse.json(cached, { headers: { 'Cache-Control': 's-maxage=120, stale-while-revalidate=600' } });
   }
 
   const origin = new URL(req.url).origin;
