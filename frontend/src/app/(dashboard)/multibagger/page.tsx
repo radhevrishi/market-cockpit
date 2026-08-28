@@ -1455,7 +1455,17 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         setParseError('Auto-sync failed: no CSVs in /data/screener/. Run the GitHub Action first.');
         return;
       }
-      await handleFiles(files);
+      // zzz479 — also pull the India Multibagger screeners that live on TradingView
+      // (they sync to /data/tradingview/ like USA Multibagger does) and MERGE them
+      // into the same India pool. Best-effort + additive: if they haven't synced yet
+      // the screener.in pool still loads exactly as before, and handleFiles never
+      // replaces an existing screener.in row — it only adds new tickers.
+      let allFiles: File[] = files;
+      try {
+        const tvFiles = await fetchTradingviewCsvsAsFiles(SYNC_ROUTING.multibaggerIndiaTV);
+        if (tvFiles.length) allFiles = [...files, ...tvFiles];
+      } catch { /* TV screeners not synced yet — India pool still loads */ }
+      await handleFiles(allFiles);
       markAutoLoaded('multibagger-india');
       // Stamp the lastSync timestamp the user just absorbed so the
       // freshness check below doesn't re-fire on every navigation.

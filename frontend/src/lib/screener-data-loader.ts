@@ -73,6 +73,15 @@ export const SYNC_ROUTING = {
     'usa-multibagger-3.csv',
     'future-super-scalers-nbis.csv',
   ],
+  // zzz479 — India Multibagger screeners that live on TradingView (not
+  // screener.in). These CSVs land in /data/tradingview/ (like multibaggerUsa),
+  // so they must be loaded with fetchTradingviewCsvsAsFiles() and are MERGED into
+  // the India fundamental pool alongside the screener.in screens (handleFiles is
+  // additive — it never replaces an existing screener.in row for the same ticker).
+  multibaggerIndiaTV: [
+    'india-multibagger-tv-1.csv',
+    'india-multibagger-tv-2.csv',
+  ],
   portfolioUsa: 'watchlist-usa-339270482.csv',
 } as const;
 
