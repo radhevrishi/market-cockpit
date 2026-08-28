@@ -24,7 +24,10 @@ import {
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v1:${r}`;
+// zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
+// techno score to drill stocks), so the 6h cache doesn't keep serving old data
+// missing the new fields. A new version orphans stale entries → recompute on deploy.
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v2:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -305,7 +308,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v1:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v2:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }

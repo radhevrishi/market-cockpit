@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { readConvictionBeats } from '@/lib/conviction-beats';
+import { classifyTheme } from '@/lib/theme-classify';
 
 type Region = 'us' | 'india';
 interface Ret { w1: number; m1: number; m3: number; m6: number; ytd: number; y1: number }
@@ -101,6 +102,25 @@ export default function ThemeRotationTab() {
     return { fundo, tech, bench, norm };
   }, [region, payload]);
 
+  // zzz485 — YOUR BOOK: take every stock across the user's Technicals + Multibagger
+  // lists, classify each into a theme by its sector/industry (auto — works for
+  // years and for stocks added later), and group them so NONE of the user's names
+  // are left uncovered. Client-side (data is in the browser); guarded.
+  const userBook = useMemo(() => {
+    const norm = userLists.norm;
+    const readJSON = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+    const map = new Map<string, { symbol: string; sector?: string; industry?: string; score?: number; grade?: string; inTech?: boolean; inFundo?: boolean }>();
+    const trows = readJSON(region === 'us' ? 'mb_tech_rows_usa_v1' : 'mb_tech_rows_ind_v1');
+    if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (!s) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.inTech = true; map.set(s, e); }
+    const frows = readJSON(region === 'us' ? 'mb_usa_scored_v2' : 'mb_excel_scored_v2');
+    if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (!s) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.score = r?.score; e.grade = r?.grade; e.inFundo = true; map.set(s, e); }
+    const all = [...map.values()];
+    const groups = new Map<string, typeof all>();
+    const other: typeof all = [];
+    for (const st of all) { const tid = classifyTheme(st.sector, st.industry, region); if (tid) { if (!groups.has(tid)) groups.set(tid, []); groups.get(tid)!.push(st); } else other.push(st); }
+    return { total: all.length, groups, other };
+  }, [region, payload, userLists]);
+
   const regime = useMemo(() => {
     if (!payload || !themes.length) return null;
     const nm = (id: string) => byId.get(id)?.name;
@@ -189,18 +209,12 @@ export default function ThemeRotationTab() {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-            {/* RRG quadrant map */}
-            <div style={{ flex: '1 1 360px', minWidth: 300, background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: MUT, marginBottom: 6 }}>Rotation map — RS-Ratio (→) × Momentum (↑)</div>
-              <RRG themes={themes} hover={hover} setHover={setHover} />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8, fontSize: 10.5 }}>
-                {Object.entries(QC).map(([q, c]) => <span key={q} style={{ color: c, fontWeight: 700 }}>● {q}</span>)}
-              </div>
-            </div>
+          {/* CLEAR rotation board — 2×2 quadrants you read at a glance */}
+          <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expanded={expanded} />
 
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
             {/* leaderboard */}
-            <div style={{ flex: '2 1 520px', minWidth: 320, overflowX: 'auto' }}>
+            <div style={{ flex: '1 1 100%', minWidth: 320, overflowX: 'auto', marginTop: 4 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ color: DIM, textAlign: 'right' }}>
@@ -293,6 +307,38 @@ export default function ThemeRotationTab() {
             </div>
           </div>
 
+          {/* YOUR BOOK — every stock on your lists, auto-mapped to a theme + its call */}
+          {userBook.total > 0 && (
+            <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>📋 Your Book by Theme</div>
+              <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10 }}>Every stock on your Technicals / Multibagger lists, auto-sorted into its theme by sector — so you see the rotation call for each one. {userBook.total} names · {userBook.total - userBook.other.length} themed{userBook.other.length ? ` · ${userBook.other.length} not yet mapped` : ''}.</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 9 }}>
+                {[...userBook.groups.entries()]
+                  .map(([tid, sts]) => ({ tid, sts, th: byId.get(tid) }))
+                  .sort((a, b) => { const rk = (v?: string) => v === 'BUY' ? 0 : v === 'EARLY BUY' ? 1 : v === 'HOLD' || v === 'WATCH' ? 2 : v === 'TRIM' ? 3 : v === 'AVOID' ? 4 : 5; return rk(a.th?.verdict) - rk(b.th?.verdict) || b.sts.length - a.sts.length; })
+                  .map(({ tid, sts, th }) => (
+                    <div key={tid} style={{ border: `1px solid ${th?.verdictColor || BORD}44`, borderRadius: 8, padding: '8px 10px', background: BG }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
+                        <button onClick={() => th && toggleExpand(tid)} style={{ background: 'transparent', border: 'none', color: TXT, fontWeight: 800, fontSize: 12, cursor: th ? 'pointer' : 'default', padding: 0 }}>{th ? `${th.emoji} ${th.name}` : tid}</button>
+                        {th?.verdict ? <span style={{ fontSize: 9, fontWeight: 900, color: th.verdictColor, background: `${th.verdictColor}1a`, border: `1px solid ${th.verdictColor}55`, borderRadius: 5, padding: '2px 6px' }}>{th.verdict}</span> : null}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                        {sts.slice(0, 14).map((s) => (
+                          <span key={s.symbol} title={`${s.sector || ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 6px' }}>★ {s.symbol}{s.grade ? <span style={{ color: DIM }}> {s.grade}</span> : null}</span>
+                        ))}
+                        {sts.length > 14 ? <span style={{ fontSize: 10, color: DIM }}>+{sts.length - 14}</span> : null}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+              {userBook.other.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 10.5, color: DIM }}>
+                  <b style={{ color: MUT }}>Not yet mapped ({userBook.other.length}):</b> {userBook.other.slice(0, 30).map((s) => s.symbol).join(', ')}{userBook.other.length > 30 ? '…' : ''}. These have a sector we don’t map to a theme yet — tell me and I’ll add a rule so they’re covered too.
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ marginTop: 12, fontSize: 10, color: DIM, lineHeight: 1.6 }}>
             <b style={{ color: MUT }}>How to read it:</b> Leading (green) = strong &amp; rising → buy leaders. Improving (blue) = weak but turning up → early buy on 50-DMA reclaim. Weakening (orange) = strong but rolling over → trim. Lagging (red) = weak &amp; falling → avoid. Verdicts combine the quadrant with the price’s position vs its 50-DMA. Live prices via {payload.source}. Themes with no clean ETF use an equal-weight basket of leaders. Educational, not investment advice.
             {payload.asOf && <span> · updated {new Date(payload.asOf).toLocaleString()}</span>}
@@ -303,7 +349,46 @@ export default function ThemeRotationTab() {
   );
 }
 
-// ── RRG scatter ─────────────────────────────────────────────────────────────
+// ── Quadrant board (zzz485) — the clear "read it at a glance" rotation view ───
+// Four boxes, positioned like the RRG (right = strong, top = rising momentum):
+//   IMPROVING (early buy) | LEADING (buy)
+//   LAGGING   (avoid)     | WEAKENING (trim)
+function QuadrantBoard({ themes, onPick, expanded }: { themes: ThemeRow[]; onPick: (id: string) => void; expanded: string | null }) {
+  const bucket = (q: string) => themes.filter((t) => t.quadrant === q);
+  const strength = (t: ThemeRow) => (t.rsRatio || 0) + (t.rsMomentum || 0);
+  const boxes: { q: string; label: string; action: string; color: string; tint: string; emoji: string; items: ThemeRow[] }[] = [
+    { q: 'Improving', label: 'IMPROVING', action: 'rotating in — early buy', color: '#3B82F6', tint: 'rgba(59,130,246,0.07)', emoji: '🔵', items: bucket('Improving').sort((a, b) => (b.rsMomentum || 0) - (a.rsMomentum || 0)) },
+    { q: 'Leading', label: 'LEADING', action: 'strongest — buy leaders', color: '#16A34A', tint: 'rgba(22,163,74,0.08)', emoji: '🟢', items: bucket('Leading').sort((a, b) => strength(b) - strength(a)) },
+    { q: 'Lagging', label: 'LAGGING', action: 'weak & falling — avoid', color: '#EF4444', tint: 'rgba(239,68,68,0.07)', emoji: '🔴', items: bucket('Lagging').sort((a, b) => strength(a) - strength(b)) },
+    { q: 'Weakening', label: 'WEAKENING', action: 'rolling over — trim', color: '#F97316', tint: 'rgba(249,115,22,0.07)', emoji: '🟠', items: bucket('Weakening').sort((a, b) => (a.rsMomentum || 0) - (b.rsMomentum || 0)) },
+  ];
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Rotation board — where every theme sits right now. <b style={{ color: '#22C55E' }}>Top-right = buy</b>, moving clockwise to <b style={{ color: '#EF4444' }}>bottom-left = avoid</b>. Click any theme to see its stocks.</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        {boxes.map((b) => (
+          <div key={b.q} style={{ background: b.tint, border: `1px solid ${b.color}55`, borderRadius: 10, padding: '10px 11px', minHeight: 92 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 900, color: b.color, letterSpacing: 0.4 }}>{b.emoji} {b.label}</span>
+              <span style={{ fontSize: 9.5, color: DIM }}>{b.items.length} · {b.action}</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {b.items.length ? b.items.map((t) => (
+                <button key={t.id} onClick={() => onPick(t.id)} title={`${t.name} — RS ${t.rsRatio?.toFixed(0)} · click for stocks`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', color: expanded === t.id ? '#fff' : TXT, background: expanded === t.id ? b.color : `${b.color}18`, border: `1px solid ${b.color}${expanded === t.id ? '' : '44'}`, borderRadius: 20, padding: '3px 9px' }}>
+                  {t.emoji} {t.name}
+                  <span style={{ color: (t.rsMomentum || 100) >= 100 ? (expanded === t.id ? '#fff' : '#22C55E') : (expanded === t.id ? '#fff' : '#EF4444'), fontWeight: 900 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
+                </button>
+              )) : <span style={{ fontSize: 11, color: DIM }}>—</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── RRG scatter (kept for reference; the quadrant board above is the primary view) ─
 function RRG({ themes, hover, setHover }: { themes: ThemeRow[]; hover: string | null; setHover: (s: string | null) => void }) {
   const W = 360, H = 300, pad = 26;
   const pts = themes.filter((t) => t.rsRatio != null && t.rsMomentum != null);
