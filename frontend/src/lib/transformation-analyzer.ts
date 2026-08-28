@@ -49,7 +49,12 @@ export const EVIDENCE_LADDER: Array<{ score: number; label: string; re: RegExp }
   { score: 10, label: 'FCF / cash-flow improvement',        re: /\b(free cash flow|\bFCF\b|operating cash flow)\b/i },
   { score: 9,  label: 'Margin improvement realised',        re: /\bebitda margins?\b[^.]{0,25}?(?:expand\w*|expansion|improv\w*|widen\w*|higher|\bup\b)|\bmargins?\b[^.]{0,25}?(?:expand\w*|expansion|improv\w*|widen\w*|higher)|\b(?:expand\w*|improv\w*)\b[^.]{0,15}?margins?\b/i },
   { score: 8,  label: 'Revenue visible / contributing',     re: /\brevenue\w*\b[^.]{0,30}?(?:commenc\w*|contribut\w*|visible|kick(?:ed)?[- ]?in|of ₹|of rs)|\bfirst revenue\b/i },
-  { score: 7,  label: 'Commercial production started',      re: /\b(commercial (?:production|supply|dispatch)|commenced (?:production|supply|dispatch)|commercialis\w*)\b/i },
+  // zzz470 — the bare noun "commercialisation/commercialise" is almost always
+  // forward/capability talk ("enable the commercialisation", "before
+  // commercialisation begins"), NOT a realised milestone — so it no longer
+  // matches. Only the realised PHRASE ("commercial production/supply") or a
+  // past-tense "commercialised" counts; still context-gated below.
+  { score: 7,  label: 'Commercial production started',      re: /\bcommercial (?:production|supply|dispatch|launch)\b|\b(?:commenc\w*|began|begun|started|initiated|ramp(?:ed|ing)? up)\s+(?:commercial\s+)?(?:production|supply|dispatch|manufacturing)\b|\bcommerciali[sz]ed\b/i },
   { score: 6,  label: 'Order received',                     re: /\b(received (?:an )?order|order\w*\s+(?:won|received|secured|bagged)|purchase order|design win|order (?:win|book\w*))\b/i },
   { score: 5,  label: 'Customer qualification',             re: /\b(qualif(?:y|ied|ication|ying)|customer approval|approved by|validat(?:ed|ion))\b/i },
   { score: 4,  label: 'Facility / equipment ready',         re: /\b(facility\w*\s+(?:ready|complet\w*|commission\w*)|plant\w*\s+(?:ready|complet\w*|commission\w*)|equipment installed|trial (?:run|production))\b/i },
@@ -68,7 +73,14 @@ export const EVIDENCE_LADDER: Array<{ score: number; label: string; re: RegExp }
 // "yet to", "to be", "upcoming/planned/pipeline", "once operational" all now count
 // as aspiration so they cannot promote a realised rung (e.g. "future
 // commercialization" no longer reads as "commercial production started").
-const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planning|target\w*|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year|month)|over the (?:medium|long)|future|likely to|poised to|set to|on track to|working towards|to be\b|yet to|upcoming|planned|pipeline|under (?:commission\w*|construction|implementation|development)|once (?:commission\w*|operational|complet\w*)|by (?:\d{4}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|by (?:end|q[1-4])|to (?:replace|substitute|cater)|designed to|aimed at|in order to|with (?:the aim|a view to)|intended to|would (?:help|enable|allow))\b/i;
+const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planning|target\w*|intend\w*|hope|hoping|going to|going forward|scope for|guid\w*|will|would|could|should|shall|endeavour|aspir\w*|outlook|next (?:year|quarter|few)|coming (?:quarter|year|month)|over the (?:medium|long)|future|likely to|poised to|set to|on track to|working towards|to be\b|yet to|upcoming|planned|pipeline|under (?:commission\w*|construction|implementation|development)|once (?:commission\w*|operational|complet\w*)|by (?:\d{4}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|by (?:end|q[1-4])|to (?:replace|substitute|cater)|designed to|aimed at|in order to|with (?:the aim|a view to)|intended to|would (?:help|enable|allow)|enabl(?:e|es|ing)\b|ability to|potential to|positions? (?:us|the company|it)\b)\b/i;
+
+// zzz470 — CAPABILITY / scope talk: a description of what the company CAN do
+// ("one-stop-shop capability that covers everything from discovery to commercial
+// production", "end-to-end capabilities", "we offer / our platform") is not proof
+// a milestone was hit. Checked in a WIDER window for the realised rungs (score>=6)
+// because the capability noun often sits a clause away from the milestone word.
+const CAPABILITY_TALK = /\b(capabilit\w*|one[- ]stop[- ]shop|end[- ]to[- ]end|covers everything|full[- ]service|suite of|range of (?:services|solutions|offerings|capabilit\w*)|we (?:offer|provide)|our (?:offering|platform|solution|portfolio)s?|positioned as|serve as a)\b/i;
 const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*)\b/i;
 const QUANTIFIER = /(\d+(?:\.\d+)?\s?(?:%|bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
 const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|delivered|reported|achieved|generated|turned|commenced|started|received|secured|won|added|onboarded|commissioned|ramped|clocked|posted|recorded|stood at|came in)\b/i;
@@ -78,14 +90,33 @@ const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|de
 // past-tense realisation verb nearby. Rungs 1-2 are inherently aspirational so
 // stay ungated. Returns whether a specific match at `idx` genuinely counts.
 function evidenceContextOk(text: string, idx: number, len: number, score: number): boolean {
+  // zzz470 — SENTENCE-CLAMP: find the bounds of the sentence the match sits in, so
+  // an aspiration/negation in a NEIGHBOURING sentence can't bleed across a full
+  // stop and wrongly reject (or accept) this proof. Fixes "…commercialise next
+  // year. EBITDA margin expanded 300bps…" where "next year" was killing the margin
+  // proof one sentence over. Proximity windows below are intersected with these.
+  const back = text.slice(Math.max(0, idx - 260), idx);
+  let sentStart = Math.max(0, idx - 260);
+  const brRe = /[.!?]\s/g; let bm: RegExpExecArray | null; let lastBr = -1;
+  while ((bm = brRe.exec(back)) !== null) lastBr = bm.index + bm[0].length;
+  if (lastBr >= 0) sentStart = Math.max(0, idx - 260) + lastBr;
+  const fwdRest = text.slice(idx + len, idx + len + 260);
+  const endRel = fwdRest.search(/[.!?](\s|$)/);
+  const sentEnd = endRel >= 0 ? idx + len + endRel + 1 : Math.min(text.length, idx + len + 260);
+  const win = (a: number, b: number) => text.slice(Math.max(sentStart, a), Math.min(sentEnd, b));
+
   if (score >= 3) {
-    const fwdWin = text.slice(Math.max(0, idx - 45), idx + len + 25);
-    if (FWD_LOOKING.test(fwdWin)) return false;
-    const negWin = text.slice(Math.max(0, idx - 28), idx + len + 28);
-    if (NEGATION.test(negWin)) return false;
+    if (FWD_LOOKING.test(win(idx - 45, idx + len + 25))) return false;
+    if (NEGATION.test(win(idx - 28, idx + len + 28))) return false;
+  }
+  if (score >= 6) {
+    // realised milestone rungs (order / production / revenue / margin) must not sit
+    // inside a CAPABILITY description ("one-stop-shop capability that covers …
+    // commercial production"). Wider window — capability noun is often a clause away.
+    if (CAPABILITY_TALK.test(win(idx - 80, idx + len + 40))) return false;
   }
   if (score >= 8) {
-    const proofWin = text.slice(Math.max(0, idx - 55), idx + len + 55);
+    const proofWin = win(idx - 55, idx + len + 55);
     if (!(QUANTIFIER.test(proofWin) || REALISED_VERB.test(proofWin))) return false;
   }
   return true;
@@ -126,6 +157,12 @@ function extractSentence(text: string, idx: number, len: number): string {
   const digitTokens = words.filter((w) => /^\W*[\d₹$]/.test(w));
   if (alphaWords.length < 5) return '';                                       // not a real sentence
   if (words.length > 0 && digitTokens.length / words.length > 0.40) return ''; // number-table dump (tightened 0.45→0.40)
+  // zzz470 — reject metric/chart TABLE dumps that are grammatically empty: a real
+  // sentence has lowercase connective/prose words (the, to, of, with, increased,
+  // by, our…), a bar-chart row is ALL-CAPS labels + numbers ("EBITDA per Tonne
+  // 8784.7 Cr 2.9% CPLY 151 bps"). Require ≥3 lowercase prose words (≥3 letters).
+  const proseWords = words.filter((w) => /^[a-z][a-z']{2,}$/.test(w));
+  if (proseWords.length < 3) return '';
   return q.slice(0, 220);
 }
 
@@ -189,13 +226,19 @@ export function detectEvidence(text: string): { score: number; label: string; qu
     let m: RegExpExecArray | null;
     let guard = 0;
     let firedThisRung = false;
+    let bestQuote = '';          // zzz470 — keep scanning this rung for a match that
+    let sawValid = false;        //   yields a CLEAN sentence, not the first table-dump.
     while ((m = re.exec(text)) !== null && guard++ < 500) {
       if (evidenceContextOk(text, m.index, m[0].length, e.score)) {
-        if (!winner) winner = { score: e.score, label: e.label, quote: extractSentence(text, m.index, m[0].length) };
-        firedThisRung = true;
-        break; // one valid match is enough to count this rung toward breadth
+        sawValid = true;
+        if (!bestQuote) bestQuote = extractSentence(text, m.index, m[0].length);
+        if (bestQuote) break;    // got a verifiable quote — good enough for this rung
       }
       if (m.index === re.lastIndex) re.lastIndex++;
+    }
+    if (sawValid) {
+      firedThisRung = true;
+      if (!winner) winner = { score: e.score, label: e.label, quote: bestQuote };
     }
     if (firedThisRung) breadth++;
   }
