@@ -46,7 +46,13 @@ export const EVENT_KEYWORDS = [
 // promotes a company up the ladder — see detectEvidence below.
 export const EVIDENCE_LADDER: Array<{ score: number; label: string; re: RegExp }> = [
   { score: 11, label: 'Second / third customer or product', re: /\b(second customer|third customer|multiple customers|additional customer|new customer\w*\s+(?:added|won|onboard\w*))\b/i },
-  { score: 10, label: 'FCF / cash-flow improvement',        re: /\b(free cash flow|\bFCF\b|operating cash flow)\b/i },
+  // zzz473 — POLARITY: the FCF rung used to fire on the mere presence of "free
+  // cash flow", so KITEX's "combined free cash flow was NEGATIVE at INR4,101mn …
+  // due to ongoing capex" (cash BURN) graded as a 10/11 cash-generation proof.
+  // Now it requires a POSITIVE frame — "positive/strong/healthy FCF", or FCF
+  // followed by generated / improved / turned positive / of ₹…. Negative-FCF
+  // sentences no longer match (and 'negative' is now a NEGATION word below).
+  { score: 10, label: 'FCF / cash-flow improvement',        re: /\b(?:positive|strong|healthy|robust|higher|improved)\s+(?:free\s+cash\s+flow|\bFCF\b|operating\s+cash\s+flow)\b|\b(?:free\s+cash\s+flow|\bFCF\b|operating\s+cash\s+flow|cash\s+flow\s+from\s+operations)\b[^.]{0,34}?(?:positive|generat\w*|improv\w*|turned\s+positive|strong|robust|of\s+(?:₹|rs\.?|inr)\s?\d)/i },
   { score: 9,  label: 'Margin improvement realised',        re: /\bebitda margins?\b[^.]{0,25}?(?:expand\w*|expansion|improv\w*|widen\w*|higher|\bup\b)|\bmargins?\b[^.]{0,25}?(?:expand\w*|expansion|improv\w*|widen\w*|higher)|\b(?:expand\w*|improv\w*)\b[^.]{0,15}?margins?\b/i },
   { score: 8,  label: 'Revenue visible / contributing',     re: /\brevenue\w*\b[^.]{0,30}?(?:commenc\w*|contribut\w*|visible|kick(?:ed)?[- ]?in|of ₹|of rs)|\bfirst revenue\b/i },
   // zzz470 — the bare noun "commercialisation/commercialise" is almost always
@@ -81,7 +87,7 @@ const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planni
 // a milestone was hit. Checked in a WIDER window for the realised rungs (score>=6)
 // because the capability noun often sits a clause away from the milestone word.
 const CAPABILITY_TALK = /\b(capabilit\w*|one[- ]stop[- ]shop|end[- ]to[- ]end|covers everything|full[- ]service|suite of|range of (?:services|solutions|offerings|capabilit\w*)|we (?:offer|provide)|our (?:offering|platform|solution|portfolio)s?|positioned as|serve as a)\b/i;
-const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*)\b/i;
+const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*|negative|outflow|cash burn|erod\w*)\b/i;
 const QUANTIFIER = /(\d+(?:\.\d+)?\s?(?:%|bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
 const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|delivered|reported|achieved|generated|turned|commenced|started|received|secured|won|added|onboarded|commissioned|ramped|clocked|posted|recorded|stood at|came in)\b/i;
 
