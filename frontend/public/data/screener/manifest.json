@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-27T21:23:16Z",
+  "lastSync": "2026-08-28T15:51:32Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9046,
+      "size": 8606,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10523,
+      "size": 10947,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,27 +25,27 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 4428,
+      "size": 4871,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 11028,
+      "size": 8923,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 6279,
+      "size": 6611,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4432,
+      "size": 4833,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 6751,
+      "size": 7109,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 5972,
+      "size": 5526,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -70,7 +70,7 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2373,
+      "size": 2831,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 26142,
+      "size": 25256,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63496,
+      "size": 63503,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65686,
+      "size": 65688,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 4192,
+      "size": 4184,
       "displayName": "Weekly Volume Pockets"
     }
   ]
