@@ -5477,14 +5477,15 @@ function DailySignalInbox() {
             )}
           </div>
 
-          {/* ── RIGHT · the live signal lanes, always a clean 2×2 (2 up / 2 down) ── */}
-          <div style={{ flex: '1.15 1 320px', minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridAutoRows: '1fr', gap: 9, alignContent: 'start' }}>
+          {/* ── RIGHT · the live signal lanes, balanced 2-column masonry so short
+                 lanes (e.g. Warrant) don't leave big empty gaps under tall ones ── */}
+          <div style={{ flex: '1.15 1 320px', minWidth: 0, columnCount: 2, columnGap: 9 }}>
             {lanes.map((lane) => {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
               const laneCount = laneSignals.length;
               return (
-                <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px', minHeight: 108, display: 'flex', flexDirection: 'column' }}>
+                <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px', breakInside: 'avoid', marginBottom: 9, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <span style={{ fontSize: 10.5, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
                     <span style={{ fontSize: 9, fontWeight: 800, color: laneCount ? meta.c : DIM, fontFamily: 'ui-monospace, monospace', background: laneCount ? `${meta.c}1f` : 'transparent', borderRadius: 20, padding: laneCount ? '1px 7px' : 0, minWidth: 16, textAlign: 'center' }}>{laneCount}</span>
