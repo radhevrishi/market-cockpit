@@ -99,6 +99,31 @@ export async function GET(req: NextRequest) {
     results.keyword_watch = { ok: false, error: e?.message || String(e) };
   }
 
+  // zzz477 — pre-warm the TRANSFORMATION SCREENER so the Radar + home Daily Signal
+  // Inbox are graded on the freshest filings automatically (no user ↻ Fresh). Runs
+  // AFTER the live-feed warm above, so the PDFs it needs are already extracted. Both
+  // the radar and the home inbox read days=60 & limit=80, so this one call warms the
+  // exact cache key both pages use. refresh=1 recomputes fresh and rewrites the cache.
+  try {
+    const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/transformation-screener?days=60&limit=80&refresh=1`, {
+      cache: 'no-store',
+      headers: { 'User-Agent': 'MC-Cron-ConcallWarm/1.0' },
+    });
+    if (r.ok) {
+      const j = await r.json();
+      results.transformation_screener = {
+        ok: true,
+        scanned: j.scanned ?? j.entries?.length,
+        candidates_total: j.candidates_total,
+        generated_at: j.generated_at,
+      };
+    } else {
+      results.transformation_screener = { ok: false, status: r.status };
+    }
+  } catch (e: any) {
+    results.transformation_screener = { ok: false, error: e?.message || String(e) };
+  }
+
   return NextResponse.json({
     ok: true,
     elapsed_ms: Date.now() - started,

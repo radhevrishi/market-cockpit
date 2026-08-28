@@ -78,6 +78,20 @@ export async function GET(req: Request) {
     else benchRefreshed = { status: br.status };
   } catch (e: any) { benchRefreshed = { error: e?.message || String(e) }; }
 
+  // zzz477 — piggyback the CONCALL INTEL + TRANSFORMATION RADAR warm on this
+  // already-scheduled 4×/day sweep (the GitHub workflow file is protected and
+  // can't be edited via remote tools). concall-intel-warm extracts fresh live-feed
+  // PDFs and re-grades the transformation screener (days=60 & limit=80 — the exact
+  // key the Radar AND the home Daily Signal Inbox read), so both pages stay graded
+  // on the newest filings automatically, no user ↻ Fresh. Fire-and-forget: never
+  // let it block or fail the earnings sweep.
+  let concallWarmed: any = null;
+  try {
+    const cs = expected ? `?secret=${encodeURIComponent(expected)}` : '';
+    const cr = await railwaySelfFetch(`${origin}/api/v1/cron/concall-intel-warm${cs}`, { cache: 'no-store', signal: AbortSignal.timeout(120_000) });
+    concallWarmed = cr.ok ? (await cr.json())?.results ?? { ok: true } : { status: cr.status };
+  } catch (e: any) { concallWarmed = { error: e?.message || String(e) }; }
+
   const forceGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
       cache: 'no-store', signal: AbortSignal.timeout(180_000),
@@ -155,6 +169,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     status: 'ok',
     bench: benchRefreshed,
+    concall_warm: concallWarmed,   // zzz477
     window_days: windowDays,
     scanned: results.length,
     refreshed, healed, filled, healthy,
