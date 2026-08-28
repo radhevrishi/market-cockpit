@@ -2693,6 +2693,7 @@ export default function HomeDashboard() {
               <Link href="/multibagger?tab=technicals-usa" style={navChip('#22D3EE')}>📈 USA Technicals</Link>
               <Link href="/valuation-calc"                 style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
               <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
+              <Link href="/multibagger?tab=theme-rotation" style={navChip('#10B981')}>🔄 Theme Rotation</Link>
               <Link href="/market-cycles"                  style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
               <Link href="/news-triage"                    style={navChip('#EF4444')}>📰 News Triage</Link>
               <Link href="/budget-intel"                   style={navChip('#F59E0B')}>📊 Budget Intel</Link>
