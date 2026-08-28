@@ -106,7 +106,7 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
 
 export async function GET(req: NextRequest) {
   const days = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 60));
-  const limit = Math.min(120, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 60));
+  const limit = Math.min(150, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 80));
   const minPatterns = Math.max(0, Number(req.nextUrl.searchParams.get('minPatterns')) || 1);
   try {
     return await handle(req, days, limit, minPatterns);
@@ -138,17 +138,26 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const isTranscript = (f: any) => /transcript|earnings call|con\s?call|conference call|investor (?:presentation|meet|update)|analyst (?:meet|call)|results? (?:presentation|call)|q[1-4]\s?fy/i.test(`${f.subject || ''} ${(f.attachment_urls?.[0] || '')}`);
   const isNoiseNotice = (f: any) => /management change|change in (?:management|director|kmp)|record date|book closure|board meeting|annual general meeting|\bAGM\b|postal ballot|voting result|scrutinizer|newspaper (?:publication|advertisement|clipping)|loss of (?:share|certificate)|duplicate (?:share|certificate)|sub[- ]division|stock split|dividend distribution|trading window|compliance certificate|reg\.?\s?74|reconciliation of share/i.test(f.subject || '');
 
-  // Prioritise: real transcripts first, then high-bullish, then most recent.
-  // Only filings with an attachment can be text-analyzed.
+  // zzz463 — FRESHNESS-FIRST scan order so the radar always reads the NEWEST
+  // concalls, never gets stuck re-chewing the same old high-tier set. Root fix
+  // for "does it read new or the same old 80?": we scan newest DAY first, and
+  // within a day put transcripts + high-bullish ahead (quality within freshness).
+  // Noise notices (AGM / record date / board meeting …) are dropped from the
+  // scan queue entirely so the budget is never spent on them. Because PDF text
+  // is cached (pdf-text KV), older filings are near-free to include — so the
+  // cold-fetch budget is spent on genuinely NEW filings, newest first.
   const TIER_RANK: Record<string, number> = { ULTRA_BULLISH: 0, BULLISH: 1, MIXED_POSITIVE: 2, NEUTRAL: 3, MIXED_NEGATIVE: 4, BEARISH: 5 };
+  const dayOf = (f: any) => { const d = new Date(f.filing_datetime); return isNaN(d.getTime()) ? '0000-00-00' : d.toISOString().slice(0, 10); };
   const withPdf = filings
     .filter((f) => Array.isArray(f.attachment_urls) && f.attachment_urls.length > 0)
+    .filter((f) => !isNoiseNotice(f))                       // never waste budget on notices
     .sort((a, b) => {
-      // transcripts up top so the scan budget covers the meaningful filings
+      const da = dayOf(a), db = dayOf(b);
+      if (da !== db) return da < db ? 1 : -1;               // newest day first — guarantees fresh reads
       const ta = isTranscript(a) ? 0 : 1, tb = isTranscript(b) ? 0 : 1;
-      if (ta !== tb) return ta - tb;
+      if (ta !== tb) return ta - tb;                        // within a day: transcripts first
       const t = (TIER_RANK[a.bullish?.tier] ?? 9) - (TIER_RANK[b.bullish?.tier] ?? 9);
-      if (t !== 0) return t;
+      if (t !== 0) return t;                                // then high-bullish
       return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
     })
     .slice(0, limit);
