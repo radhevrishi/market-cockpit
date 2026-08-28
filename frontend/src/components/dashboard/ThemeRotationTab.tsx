@@ -6,6 +6,7 @@
 // multi-timeframe leaderboard. The whole point: always clear what to buy / avoid.
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { readConvictionBeats } from '@/lib/conviction-beats';
 
 type Region = 'us' | 'india';
 interface Ret { w1: number; m1: number; m3: number; m6: number; ytd: number; y1: number }
@@ -81,6 +82,24 @@ export default function ThemeRotationTab() {
   const payload = data[region];
   const themes = payload?.themes?.filter((t) => t.ok) || [];
   const byId = useMemo(() => { const m = new Map<string, ThemeRow>(); themes.forEach((t) => m.set(t.id, t)); return m; }, [themes]);
+
+  // zzz484 — read the user's OWN lists (Multibagger fundamental pool + India/USA
+  // Technicals + Conviction bench) so drill-down stocks that are on the user's
+  // lists get a ★ and their fundo score. Client-side because these live in the
+  // browser. Wrapped in try/catch; if nothing's uploaded the drill still works.
+  const userLists = useMemo(() => {
+    const norm = (s: any) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/, '').replace(/^(NSE|BSE):/, '').trim();
+    const fundo = new Map<string, { score?: number; grade?: string }>();
+    const tech = new Set<string>();
+    const bench = new Map<string, string>();
+    const readJSON = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+    const frows = readJSON(region === 'us' ? 'mb_usa_scored_v2' : 'mb_excel_scored_v2');
+    if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (s) fundo.set(s, { score: r?.score, grade: r?.grade }); }
+    const trows = readJSON(region === 'us' ? 'mb_tech_rows_usa_v1' : 'mb_tech_rows_ind_v1');
+    if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (s) tech.add(s); }
+    try { const cb = readConvictionBeats() as Record<string, any>; for (const k in cb) { const s = norm(k); if (s) bench.set(s, cb[k]?.tier); } } catch { /* none */ }
+    return { fundo, tech, bench, norm };
+  }, [region, payload]);
 
   const regime = useMemo(() => {
     if (!payload || !themes.length) return null;
@@ -230,19 +249,35 @@ export default function ThemeRotationTab() {
                           {!dLoading && dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>{dd.note}</div>}
                           {!dLoading && dd?.stocks && dd.stocks.length > 0 && (
                             <div>
-                              <div style={{ fontSize: 10, color: DIM, margin: '4px 0 6px' }}>Buyable leaders in {t.emoji} {t.name} — sorted by relative strength vs benchmark (3M). <b style={{ color: '#22C55E' }}>green ✓</b> = above 50-DMA and outperforming (ready to buy).</div>
+                              <div style={{ fontSize: 10, color: DIM, margin: '4px 0 6px' }}>Buyable leaders in {t.emoji} {t.name} — sorted by relative strength (3M). <b style={{ color: '#22C55E' }}>✓</b> = above 50-DMA and outperforming. <b style={{ color: '#F59E0B' }}>★</b> = on your Multibagger / Technicals list (shows your <b>Fundo</b> grade; <b>FT</b> = combined Fundo-Techno).</div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-                                {dd.stocks.map((s: any) => (
-                                  <div key={s.sym} style={{ minWidth: 132, flex: '0 0 auto', background: CARD, border: `1px solid ${s.buyReady ? 'rgba(34,197,94,0.45)' : BORD}`, borderRadius: 8, padding: '7px 9px' }}>
+                                {dd.stocks.map((s: any) => {
+                                  const nsym = userLists.norm(s.sym);
+                                  const f = userLists.fundo.get(nsym);
+                                  const inTech = userLists.tech.has(nsym);
+                                  const tier = userLists.bench.get(nsym);
+                                  const inList = !!f || inTech || !!tier;
+                                  const fundoScore = f?.score;
+                                  const ft = (typeof s.techno === 'number' && typeof fundoScore === 'number') ? Math.round((s.techno + fundoScore) / 2) : null;
+                                  const scoreCol = (v: number) => v >= 70 ? '#22C55E' : v >= 50 ? '#EAB308' : '#EF4444';
+                                  const bord = s.buyReady ? 'rgba(34,197,94,0.5)' : inList ? 'rgba(245,158,11,0.5)' : BORD;
+                                  return (
+                                  <div key={s.sym} style={{ minWidth: 156, flex: '0 0 auto', background: CARD, border: `1px solid ${bord}`, borderRadius: 8, padding: '7px 9px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                                      <span style={{ fontWeight: 900, color: TXT, fontSize: 12 }}>{s.sym}</span>
+                                      <span style={{ fontWeight: 900, color: TXT, fontSize: 12 }}>{inList && <span style={{ color: '#F59E0B' }} title="on your list">★ </span>}{s.sym}</span>
                                       <span style={{ fontSize: 9, fontWeight: 800, color: s.buyReady ? '#22C55E' : s.aboveSMA50 ? '#EAB308' : '#EF4444' }}>{s.buyReady ? '✓ buy-ready' : s.aboveSMA50 ? '~ watch' : '✕ weak'}</span>
                                     </div>
-                                    <div style={{ fontSize: 9.5, color: DIM, marginTop: 3, fontFamily: 'ui-monospace,monospace' }}>
-                                      3M <span style={{ color: (s.m3 ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(s.m3)}</span> · RS <span style={{ color: (s.rs3m ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{s.rs3m > 0 ? '+' : ''}{s.rs3m}</span>{s.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}
+                                    <div style={{ fontSize: 9.5, marginTop: 4, fontFamily: 'ui-monospace,monospace', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                      <span style={{ color: DIM }}>Techno <b style={{ color: scoreCol(s.techno ?? 0) }}>{s.techno ?? '·'}</b></span>
+                                      {f ? <span style={{ color: DIM }}>Fundo <b style={{ color: f.grade ? (String(f.grade).startsWith('A') ? '#22C55E' : String(f.grade).startsWith('B') ? '#EAB308' : '#EF4444') : DIM }}>{f.grade || '·'}{typeof fundoScore === 'number' ? `(${fundoScore})` : ''}</b></span> : null}
+                                      {ft != null ? <span style={{ color: DIM }}>FT <b style={{ color: scoreCol(ft) }}>{ft}</b></span> : null}
+                                    </div>
+                                    <div style={{ fontSize: 9, color: DIM, marginTop: 3, fontFamily: 'ui-monospace,monospace' }}>
+                                      3M <span style={{ color: (s.m3 ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(s.m3)}</span> · RS <span style={{ color: (s.rs3m ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{s.rs3m > 0 ? '+' : ''}{s.rs3m}</span>{tier ? <span style={{ color: '#F59E0B' }}> · {tier === 'BLOCKBUSTER' ? 'BB' : tier}</span> : null}{inTech ? <span style={{ color: '#60A5FA' }}> · in tech</span> : null}
                                     </div>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}

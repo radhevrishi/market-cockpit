@@ -277,9 +277,20 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
     const cLast = d.closes.filter((x) => x != null && !isNaN(x)).pop() as number;
     const aboveSMA50 = s50 != null ? cLast > s50 : false;
     const rs3m = +(r.m3 - bench3m).toFixed(1);           // relative strength vs benchmark, 3M
+    // zzz484 — universal TECHNO score (0-100) from live price: relative strength,
+    // trend (vs 50-DMA), and momentum consistency. Works for every stock, forever,
+    // with no dependency on uploads. (The FUNDO half is overlaid client-side from
+    // the user's own Multibagger / Technicals lists, which the app actually has.)
+    let techno = 30;
+    techno += Math.max(-30, Math.min(35, rs3m * 1.4));   // momentum vs benchmark
+    if (aboveSMA50) techno += 15; else techno -= 8;      // trend
+    if (r.m1 > 0 && r.m3 > 0 && r.m6 > 0) techno += 12;  // consistent uptrend
+    else if (r.m1 < 0 && r.m3 < 0) techno -= 8;
+    if (r.m1 > 0) techno += 4;
+    techno = Math.max(0, Math.min(100, Math.round(techno)));
     return {
       sym: sym.replace(/\.NS$/, ''), price: +d.price.toFixed(2), dayChangePct: +d.dayChg.toFixed(2),
-      m1: r.m1, m3: r.m3, m6: r.m6, aboveSMA50, rs3m,
+      m1: r.m1, m3: r.m3, m6: r.m6, aboveSMA50, rs3m, techno,
       buyReady: aboveSMA50 && rs3m > 0,
     };
   }).filter(Boolean) as any[];
