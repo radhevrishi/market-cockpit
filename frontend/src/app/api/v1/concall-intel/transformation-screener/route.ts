@@ -33,7 +33,7 @@ const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new gr
 // fix keeps serving the OLD graded results until the 12-min TTL lapses or the user
 // force-refreshes — which is why fixed quotes appeared "still broken". A new
 // version orphans the stale entries so the very next request recomputes fresh.
-const CACHE_KEY = (days: number, limit: number) => `transform-screener:v2:${days}:${limit}`;
+const CACHE_KEY = (days: number, limit: number) => `transform-screener:v3:${days}:${limit}`;
 
 export interface TransformScreenEntry {
   symbol: string;

@@ -133,10 +133,13 @@ function evidenceContextOk(text: string, idx: number, len: number, score: number
     // inside a CAPABILITY description ("one-stop-shop capability that covers …
     // commercial production"). Wider window — capability noun is often a clause away.
     if (CAPABILITY_TALK.test(win(idx - 80, idx + len + 40))) return false;
-    // zzz475 — nor next to a numeric TARGET/guidance band (aspiration, not result),
-    // nor inside a methodology footnote (a definition, not a proof).
-    if (TARGET_GUIDANCE.test(win(idx - 75, idx + len + 45))) return false;
-    if (FOOTNOTE_METHOD.test(win(idx - 120, idx + len + 120))) return false;
+    // zzz475b — nor anywhere in the SAME sentence as a numeric TARGET/guidance band
+    // (aspiration, not result) or a methodology footnote (a definition, not a proof).
+    // Checked over the full clamped sentence (win bounds it) because slide/table text
+    // has no full stops, so the disqualifier can sit a whole caption away from the
+    // keyword — CGCL "…RoE expansion Capri Global's target is to deliver RoAE 19-21%".
+    if (TARGET_GUIDANCE.test(win(idx - 400, idx + len + 400))) return false;
+    if (FOOTNOTE_METHOD.test(win(idx - 400, idx + len + 400))) return false;
   }
   if (score >= 8) {
     const proofWin = win(idx - 55, idx + len + 55);
@@ -206,6 +209,12 @@ function extractSentence(text: string, idx: number, len: number): string {
     && !/^(?:FY|Q[1-4]|H[12]|CY|FQ|Rs)/i.test(w)             // but NOT FY26 / Q1 / H2 / CY24 / Rs500
     && !/^(?:19|20)\d\d[,.;]?$/.test(w));                     // nor a bare calendar year 2024
   if (modelCodes.length >= 3) return '';
+  // zzz475b — reject a CHART CAPTION where a label is echoed down the bars/columns
+  // (GALLANTT: "…10.8% … 2.9% CPLY 151 bps CPLY … 17.6% … 102 bps CPLY … CPLY …" —
+  // "CPLY" 5×). A real sentence doesn't repeat a token 4+ times; a chart axis does.
+  const freq: Record<string, number> = {};
+  for (const w of words) { const k = w.toLowerCase().replace(/[^a-z0-9]/g, ''); if (k.length >= 3) freq[k] = (freq[k] || 0) + 1; }
+  if (Object.values(freq).some((n) => n >= 4)) return '';
   return q.slice(0, 220);
 }
 
