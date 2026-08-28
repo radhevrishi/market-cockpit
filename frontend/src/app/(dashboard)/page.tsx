@@ -5276,7 +5276,7 @@ function DailySignalInbox() {
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
       const benchRows: InboxSignal[] = [];
-      getConvictionList().filter((b) => b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG').slice(0, 6).forEach((b) => {
+      getConvictionList().filter((b) => b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG').slice(0, 12).forEach((b) => {
         const isToday = b.filing_date === todayStr;
         const parts: string[] = [];
         if (b.sales_yoy_pct != null) parts.push(`sales ${b.sales_yoy_pct >= 0 ? '+' : ''}${Math.round(b.sales_yoy_pct)}%`);
@@ -5314,17 +5314,17 @@ function DailySignalInbox() {
     ]).then(([quotes, movers]) => {
       const rows: InboxSignal[] = []; const seen = new Set<string>();
       if (movers && !movers.error) {
-        (movers.new_entries || []).slice(0, 3).forEach((m: any) => { seen.add(m.symbol); rows.push({
+        (movers.new_entries || []).slice(0, 6).forEach((m: any) => { seen.add(m.symbol); rows.push({
           lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
           headline: 'New to concall top-30', detail: `${(m.tier || '').replace('_', ' ')} · rank #${m.rank_today}`,
           score: (m.composite_today || 0) + 1000, href: '/concall-intel' }); });
-        (movers.big_jumps || []).slice(0, 3).forEach((m: any) => { if (seen.has(m.symbol)) return; seen.add(m.symbol); rows.push({
+        (movers.big_jumps || []).slice(0, 6).forEach((m: any) => { if (seen.has(m.symbol)) return; seen.add(m.symbol); rows.push({
           lane: 'MOMENTUM', symbol: m.symbol, company: m.company_name || '',
           headline: `Concall score jump +${(m.delta ?? 0).toFixed(1)}`, detail: `${(m.tier || '').replace('_', ' ')} · now #${m.rank_today}`,
           score: (m.delta || 0) + 500, href: '/concall-intel' }); });
       }
       if (quotes && Array.isArray(quotes.gainers)) {
-        quotes.gainers.filter((g: any) => (g.changePercent || 0) >= 3 && (g.price || 0) >= 50).slice(0, 6).forEach((g: any) => {
+        quotes.gainers.filter((g: any) => (g.changePercent || 0) >= 3 && (g.price || 0) >= 50).slice(0, 12).forEach((g: any) => {
           if (seen.has(g.ticker)) return; seen.add(g.ticker);
           rows.push({ lane: 'MOMENTUM', symbol: g.ticker, company: g.company || '',
             headline: `Price +${(g.changePercent || 0).toFixed(1)}% today`,
@@ -5343,12 +5343,12 @@ function DailySignalInbox() {
       const isDistress = (f: any) => /distress/i.test(f?.conviction?.tier || '') || (f?.conviction?.distress_probability ?? 0) >= 0.5;
       const passing = all.filter((f: any) => f?.conviction?.passes_gate);
       const watch = all.filter((f: any) => !f?.conviction?.passes_gate && !isDistress(f) && (f?.conviction?.conviction ?? 0) >= 3);
-      passing.slice(0, 5).forEach((f: any) => rows.push({
+      passing.slice(0, 10).forEach((f: any) => rows.push({
         lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
         headline: `Warrant qualified · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
         detail: f.conviction?.tier ? `${f.conviction.tier} · ${String(f.subject || '').slice(0, 40)}` : String(f.subject || '').slice(0, 50),
         score: (f.conviction?.conviction || 0) + 100, href: '/concall-intel' }));
-      if (passing.length === 0) watch.slice(0, 5).forEach((f: any) => rows.push({
+      if (passing.length === 0) watch.slice(0, 10).forEach((f: any) => rows.push({
         lane: 'WARRANT', symbol: f.symbol, company: f.company_name || '',
         headline: `Warrant watch · ${(f.conviction?.conviction ?? 0).toFixed(1)}/10`,
         detail: `${f.conviction?.tier || 'watch'} · building, below strict gate`,
@@ -5357,30 +5357,25 @@ function DailySignalInbox() {
       setLaneStatus((prev) => ({ ...prev, warrant: true }));
     });
 
-    // TRANSFORM — batch radar. zzz417: limit=80 (was 24) so the home lane runs
-    // the SAME scan as the radar tab — one shared 30-min server cache, and a
-    // much wider universe than the old 24-filing mini-scan that surfaced only
-    // 4-5 companies.
-    j('/api/v1/concall-intel/transformation-screener?days=60&limit=80', 16000).then((transform) => {
+    // TRANSFORM — batch radar.
+    j('/api/v1/concall-intel/transformation-screener?days=60&limit=24', 16000).then((transform) => {
       if (!transform || transform.error) return;
       const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
       // zzz452 — sort by evidence-ladder rung first (most proven at top), then
       // composite score, so the actionable "accumulate" names lead the lane and
       // the "watch, story-only" names fall to the bottom.
-      // zzz417 — defensive one-per-symbol dedupe (server now dedupes too, but a
-      // cached pre-fix payload or any upstream dupe must never repeat a stock
-      // in the 6 visible slots, as GALLANTT did).
-      const seenSym = new Set<string>();
       const ordered = [...entries].sort((a: any, b: any) =>
-        ((b.evidence_score || 0) - (a.evidence_score || 0)) || ((b.transformation_score || 0) - (a.transformation_score || 0)))
-        .filter((e: any) => {
-          const s = String(e.symbol || '').toUpperCase().trim();
-          if (!s || seenSym.has(s)) return false;
-          seenSym.add(s);
-          return true;
-        });
-      ordered.slice(0, 6).forEach((e: any) => {
+        ((b.evidence_score || 0) - (a.evidence_score || 0)) || ((b.transformation_score || 0) - (a.transformation_score || 0)));
+      // dedup by symbol (a company can file twice in the window) — keep the
+      // highest-evidence instance, which is already first after the sort.
+      const seenTf = new Set<string>();
+      const orderedUniq = ordered.filter((e: any) => {
+        const k = (e.symbol || '').toUpperCase();
+        if (!k || seenTf.has(k)) return false;
+        seenTf.add(k); return true;
+      });
+      orderedUniq.slice(0, 12).forEach((e: any) => {
         const t = readTransform(e);
         rows.push({
           lane: 'TRANSFORM', symbol: e.symbol, company: e.company_name || '',
@@ -5498,7 +5493,7 @@ function DailySignalInbox() {
                     <div style={{ fontSize: 10, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      {laneSignals.slice(0, 5).map((s, i) => (
+                      {laneSignals.slice(0, 10).map((s, i) => (
                         <Link key={`${s.symbol}-${i}`} href={s.href} title={s.note || undefined} style={{ textDecoration: 'none', display: 'block', padding: '5px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${(s.hColor || meta.c)}22`}`, opacity: s.soft ? 0.82 : 1 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                             <span style={{ fontSize: 12, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
