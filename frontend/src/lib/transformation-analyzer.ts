@@ -88,7 +88,11 @@ const FWD_LOOKING = /\b(expect\w*|anticipat\w*|aim|aims|aiming|plan|plans|planni
 // because the capability noun often sits a clause away from the milestone word.
 const CAPABILITY_TALK = /\b(capabilit\w*|one[- ]stop[- ]shop|end[- ]to[- ]end|covers everything|full[- ]service|suite of|range of (?:services|solutions|offerings|capabilit\w*)|we (?:offer|provide)|our (?:offering|platform|solution|portfolio)s?|positioned as|serve as a)\b/i;
 const NEGATION = /\b(not|no|never|without|weak\w*|declin\w*|fell|fall\w*|lower|drop\w*|down|contract(?:ed|ing)?|miss\w*|shortfall|pressure|headwind\w*|subdued|muted|degrow\w*|negative|outflow|cash burn|erod\w*)\b/i;
-const QUANTIFIER = /(\d+(?:\.\d+)?\s?(?:%|bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
+// zzz473 — FIX: the old `(?:%|bps|…)\b` put a word-boundary AFTER the unit, so
+// "12.5%," / "300bps." / "14%)" (a percent followed by punctuation or end) did
+// NOT match — silently starving the score>=8 proof gate and dropping genuine
+// margin/FCF/revenue proofs. Percent needs no trailing \b; only the alpha units do.
+const QUANTIFIER = /(\d+(?:\.\d+)?\s?%|\d+(?:\.\d+)?\s?(?:bps|bn|mn|cr|crore|million|billion|lakh|x)\b|₹\s?\d|rs\.?\s?\d)/i;
 const REALISED_VERB = /\b(expanded|improved|rose|grew|grown|increased|reached|delivered|reported|achieved|generated|turned|commenced|started|received|secured|won|added|onboarded|commissioned|ramped|clocked|posted|recorded|stood at|came in)\b/i;
 
 // Rungs >= 3 (claims something is happening/done) must NOT be forward-looking or
@@ -124,6 +128,17 @@ function evidenceContextOk(text: string, idx: number, len: number, score: number
   if (score >= 8) {
     const proofWin = win(idx - 55, idx + len + 55);
     if (!(QUANTIFIER.test(proofWin) || REALISED_VERB.test(proofWin))) return false;
+  }
+  if (score === 9) {
+    // zzz473 — the margin rung must measure OPERATING margin, not "other income as
+    // % of revenue". AEQUS graded "other income increased … (1% margin) → (4%
+    // margin) … margin improvement of 300bps" as a 9/11 operating-margin proof —
+    // it's non-operating (treasury/forex/interest) income, not the core business
+    // improving. Reject when the sentence is about other/non-operating income and
+    // carries no real operating-margin qualifier (operating / EBITDA / gross / PAT).
+    const s = win(idx - 400, idx + len + 250);   // the FULL sentence (win clamps to it)
+    if (/\bother income\b|\bnon[- ]operating\b|\btreasury income\b|\bforex gain\b/i.test(s)
+        && !/\b(?:operating|ebitda|gross|contribution|pat|net\s*profit)\s*margin/i.test(s)) return false;
   }
   return true;
 }
