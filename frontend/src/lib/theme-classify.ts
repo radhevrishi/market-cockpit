@@ -5,7 +5,7 @@
 // no per-ticker maintenance. Returns a theme id from theme-universe, or null when
 // nothing fits (those land in an "Other" bucket the user can ask us to map).
 // ═══════════════════════════════════════════════════════════════════════════
-import type { ThemeRegion } from './theme-universe';
+import { TICKER_OVERRIDE, type ThemeRegion } from './theme-universe';
 
 type Rule = { re: RegExp; theme: string };
 
@@ -102,9 +102,11 @@ const IN_RULES: Rule[] = [
   { re: /pse|public sector|psu/i, theme: 'in-pse' },
 ];
 
-// Classify a stock into a theme id from its sector + industry text. Industry is
-// the finer tell, so it's tried first, then the broader sector.
-export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion): string | null {
+// Classify a stock into a theme id. A curated TICKER_OVERRIDE wins first (fixes the
+// famous names the coarse sector tag mislabels), then the sector/industry keyword
+// rules (industry is the finer tell, tried before the broader sector).
+export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion, ticker?: string | null): string | null {
+  if (ticker) { const ov = TICKER_OVERRIDE[ticker.toUpperCase().replace(/\.(NS|BO)$/, '').trim()]; if (ov) return ov; }
   const rules = region === 'us' ? US_RULES : IN_RULES;
   const ind = (industry || '').toString();
   const sec = (sector || '').toString();

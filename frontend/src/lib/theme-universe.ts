@@ -192,6 +192,48 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'in-pse': ['NTPC.NS', 'POWERGRID.NS', 'BEL.NS', 'COALINDIA.NS', 'HAL.NS'],
 };
 
+// zzz489 — TICKER OVERRIDES. Coarse sector tags mislabel well-known names (payment
+// processors show up as "Industrials", solar/hydrogen/quantum as "Semiconductors").
+// These curated ticker→theme mappings are checked BEFORE the sector classifier so
+// the famous names always land in the right theme. The sector classifier still
+// handles the long tail (and future stocks) automatically. Bare symbols, UPPERCASE.
+export const TICKER_OVERRIDE: Record<string, string> = {
+  // Payments / fintech
+  CPAY: 'us-fintech', RELY: 'us-fintech', FLYW: 'us-fintech', PAYS: 'us-fintech', GLBE: 'us-fintech',
+  DLO: 'us-fintech', SEZL: 'us-fintech', AFRM: 'us-fintech', TOST: 'us-fintech', PYPL: 'us-fintech',
+  // Solar / clean
+  FSLR: 'us-solar', NXT: 'us-solar', RUN: 'us-solar', ENPH: 'us-solar', ARRY: 'us-solar', SHLS: 'us-solar', SEDG: 'us-solar',
+  // Hydrogen
+  PLUG: 'us-hydrogen', BE: 'us-hydrogen', BLDP: 'us-hydrogen',
+  // Quantum
+  IONQ: 'us-quantum', RGTI: 'us-quantum', QBTS: 'us-quantum', QUBT: 'us-quantum',
+  // Photonics / optical / lidar
+  LITE: 'us-photonics', POET: 'us-photonics', COHR: 'us-photonics', CIEN: 'us-photonics', AAOI: 'us-photonics',
+  OUST: 'us-photonics', LASR: 'us-photonics', LPTH: 'us-photonics', FN: 'us-photonics', INFN: 'us-photonics',
+  // Space & satellites
+  RKLB: 'us-space', RDW: 'us-space', LUNR: 'us-space', ASTS: 'us-space', PL: 'us-space', BKSY: 'us-space', MDA: 'us-space',
+  // Drones
+  AVAV: 'us-drones', KTOS: 'us-drones', RCAT: 'us-drones', ONDS: 'us-drones', UMAC: 'us-drones',
+  // Nuclear / uranium
+  LEU: 'us-nuclear', OKLO: 'us-nuclear', SMR: 'us-nuclear', CCJ: 'us-nuclear', UEC: 'us-nuclear', UUUU: 'us-nuclear', NNE: 'us-nuclear',
+  // Crypto miners / blockchain
+  BTDR: 'us-crypto', HIVE: 'us-crypto', WULF: 'us-crypto', MARA: 'us-crypto', RIOT: 'us-crypto', CIFR: 'us-crypto', IREN: 'us-crypto', CORZ: 'us-crypto', BULL: 'us-crypto', COIN: 'us-crypto', MSTR: 'us-crypto',
+  // Data-center power / electrification
+  VRT: 'us-datacenter', GEV: 'us-datacenter', ETN: 'us-datacenter', PWR: 'us-datacenter', POWL: 'us-datacenter', AMSC: 'us-datacenter',
+  // Defense / aerospace
+  LOAR: 'us-defense', AIR: 'us-defense', BWXT: 'us-defense', SWBI: 'us-defense', NPK: 'us-defense',
+  // Semiconductor equipment / memory
+  ACMR: 'us-semis', ICHR: 'us-semis', COHU: 'us-semis', AEHR: 'us-semis', KLIC: 'us-semis', ONTO: 'us-semis', UCTT: 'us-semis',
+  NLST: 'us-memory', QMCO: 'us-memory', SNDK: 'us-memory', STX: 'us-memory', WDC: 'us-memory', MU: 'us-memory',
+  // Energy services / midstream
+  OII: 'us-energy', GLNG: 'us-energy', SUN: 'us-energy', DNOW: 'us-energy', FTK: 'us-energy', KGS: 'us-energy', NESR: 'us-energy',
+  // AI software
+  INOD: 'us-ai', BBAI: 'us-ai', SOUN: 'us-ai', AI: 'us-ai',
+  // India — jewellery -> retail; servers -> data center; cranes -> capital goods
+  SKYGOLD: 'in-retail', PCJEWELLER: 'in-retail', GOLDIAM: 'in-retail', DPABHUSHAN: 'in-retail', THANGAMAYL: 'in-retail', IGIL: 'in-retail', SENCO: 'in-retail', KALYANKJIL: 'in-retail',
+  NETWEB: 'in-datacenter', SANGHVIMOV: 'in-capgoods',
+};
+
 export function themesForRegion(region: ThemeRegion): ThemeDef[] {
   return region === 'us' ? US_THEMES : INDIA_THEMES;
 }

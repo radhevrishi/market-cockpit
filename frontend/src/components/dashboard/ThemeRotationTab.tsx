@@ -129,7 +129,7 @@ export default function ThemeRotationTab() {
     const all = [...map.values()];
     const groups = new Map<string, typeof all>();
     const other: typeof all = [];
-    for (const st of all) { const tid = classifyTheme(st.sector, st.industry, region); if (tid) { if (!groups.has(tid)) groups.set(tid, []); groups.get(tid)!.push(st); } else other.push(st); }
+    for (const st of all) { const tid = classifyTheme(st.sector, st.industry, region, st.symbol); if (tid) { if (!groups.has(tid)) groups.set(tid, []); groups.get(tid)!.push(st); } else other.push(st); }
     // zzz487 — anything the classifier can't place still gets shown, grouped by its
     // raw sector (no rotation call, but visible) so NONE of the user's names vanish.
     const sectorGroups = new Map<string, typeof all>();
@@ -225,11 +225,15 @@ export default function ThemeRotationTab() {
             </div>
           )}
 
-          {/* YOUR BOOK — every stock on your lists, mapped to a theme, shown right
-              under the call strip. Nothing hidden: themed stocks show the theme's
-              call; the rest are grouped by their sector. */}
+          {/* CLEAR rotation board — 2×2 quadrants you read at a glance */}
+          <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expandedIds={expandedIds} />
+
+          {/* YOUR BOOK — every stock on your lists, mapped to a theme. Sits BELOW the
+              rotation board (below Leading/Improving/Lagging) per the user's ask.
+              Nothing hidden: themed stocks show the theme's call; the rest are
+              grouped by their sector. */}
           {userBook.total > 0 && (
-            <div style={{ marginBottom: 14, background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
+            <div style={{ margin: '14px 0', background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
               <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>📋 Your Book by Theme</div>
               <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10 }}>Every stock on your Technicals / Multibagger lists, auto-sorted into its theme by sector so you see the rotation call for each. <b style={{ color: MUT }}>{userBook.total}</b> names · <b style={{ color: MUT }}>{userBook.themed}</b> in a rotation theme{userBook.sectorGroups.size ? <> · <b style={{ color: MUT }}>{userBook.other.length}</b> grouped by sector below</> : null}. ★ = your name; grade = your Fundo.</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(250px,1fr))', gap: 9 }}>
@@ -266,9 +270,6 @@ export default function ThemeRotationTab() {
               </div>
             </div>
           )}
-
-          {/* CLEAR rotation board — 2×2 quadrants you read at a glance */}
-          <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expandedIds={expandedIds} />
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
             {/* leaderboard */}
