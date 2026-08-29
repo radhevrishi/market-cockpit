@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v8:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v9:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -282,6 +282,28 @@ async function build(region: ThemeRegion) {
     if (prevMomentum < 100 - DB && rsMomentum >= 100 + DB && aboveSMA50) characterChange = 'bullish';
     else if (prevMomentum >= 100 + DB && rsMomentum < 100 - DB && !aboveSMA50) characterChange = 'bearish';
     const v = verdictFor(quadrant, aboveSMA50, ret.m1, ret.m3);
+    // zzz497 — CONVICTION SCORE (0-100): rank themes by the STRENGTH of the signal,
+    // not just the quadrant label. Blends relative strength vs the theme's own trend,
+    // momentum, the 50-DMA trend confirmation, basket breadth, and the absolute 3M.
+    let conv = 50;
+    conv += (rsRatio - 100) * 1.6;
+    conv += (rsMomentum - 100) * 1.2;
+    conv += aboveSMA50 ? 8 : -8;
+    if (typeof breadthAbove50 === 'number') conv += (breadthAbove50 - 50) * 0.22;
+    conv += Math.max(-10, Math.min(10, (ret.m3 ?? 0) * 0.5));
+    const conviction = Math.max(0, Math.min(100, Math.round(conv)));
+    // zzz497 — ROTATION VELOCITY: total path length the theme travelled through
+    // RS/momentum space over the recent weeks, per segment. Fast = high-beta rotator
+    // (act quicker, size smaller); steady = slow compounder. Comes straight from the
+    // weekly RRG trail — no stored history needed.
+    let vel = 0;
+    for (let i = 1; i < trail.length; i++) { const dx = trail[i].x - trail[i - 1].x; const dy = trail[i].y - trail[i - 1].y; vel += Math.sqrt(dx * dx + dy * dy); }
+    const velPerWk = trail.length > 1 ? vel / (trail.length - 1) : 0;
+    const rotation = velPerWk >= 2.4 ? 'fast' : velPerWk <= 1.0 ? 'steady' : 'normal';
+    // zzz497 — ACTION signal tied to Your Book: a bullish character change (rotating
+    // INTO strength — reclaimed 50-DMA + momentum crossed up) = ADD; a bearish one
+    // (rolling over + lost the 50-DMA) = TRIM.
+    const action = characterChange === 'bullish' ? 'ADD' : characterChange === 'bearish' ? 'TRIM' : null;
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
       proxy: t.proxy || null, members, sourceKind,
@@ -289,6 +311,7 @@ async function build(region: ThemeRegion) {
       ret, rsRatio, rsMomentum, quadrant, trail,
       aboveSMA50, breadthAbove50,
       characterChange,
+      conviction, rotationVelocity: +velPerWk.toFixed(2), rotation, action,
       verdict: v.verdict, verdictColor: v.color, verdictNote: v.note,
       ok: true,
     };
@@ -366,7 +389,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v8:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v9:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }

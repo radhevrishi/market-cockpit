@@ -18,6 +18,7 @@ interface ThemeRow {
   ret?: Ret; rsRatio?: number; rsMomentum?: number; quadrant?: string; trail?: { x: number; y: number }[];
   aboveSMA50?: boolean; breadthAbove50?: number | null;
   characterChange?: 'bullish' | 'bearish' | null;
+  conviction?: number; rotationVelocity?: number; rotation?: string; action?: string | null;
   verdict?: string; verdictColor?: string; verdictNote?: string;
   ok?: boolean;
 }
@@ -43,7 +44,7 @@ export default function ThemeRotationTab() {
   const [region, setRegion] = useState<Region>('us');
   const [data, setData] = useState<Record<Region, Payload | null>>({ us: null, india: null });
   const [loading, setLoading] = useState(false);
-  const [sortKey, setSortKey] = useState<'rs' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1'>('rs');
+  const [sortKey, setSortKey] = useState<'conv' | 'rs' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1'>('conv');
   const [hover, setHover] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());   // zzz486 — multi-expand
   const [drill, setDrill] = useState<Record<string, any>>({});
@@ -194,11 +195,11 @@ export default function ThemeRotationTab() {
 
   const sorted = useMemo(() => {
     const key = sortKey;
-    return [...themes].sort((a, b) => {
-      const va = key === 'rs' ? (a.rsRatio || 0) + (a.rsMomentum || 0) - 200 : (a.ret?.[key] ?? -999);
-      const vb = key === 'rs' ? (b.rsRatio || 0) + (b.rsMomentum || 0) - 200 : (b.ret?.[key] ?? -999);
-      return vb - va;
-    });
+    const val = (r: ThemeRow) =>
+      key === 'conv' ? (r.conviction ?? -999)
+      : key === 'rs' ? (r.rsRatio || 0) + (r.rsMomentum || 0) - 200
+      : (r.ret?.[key] ?? -999);
+    return [...themes].sort((a, b) => val(b) - val(a));
   }, [themes, sortKey]);
 
   const chip = (id: string, color: string) => {
@@ -287,7 +288,11 @@ export default function ThemeRotationTab() {
                     <div key={tid} style={{ border: `1px solid ${(th?.verdictColor || '#64748B')}44`, borderRadius: 8, padding: '8px 10px', background: BG }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
                         <button onClick={() => th && toggleExpand(tid)} style={{ background: 'transparent', border: 'none', color: TXT, fontWeight: 800, fontSize: 12, cursor: th ? 'pointer' : 'default', padding: 0, textAlign: 'left' }}>{th ? `${th.emoji} ${th.name}` : tid} <span style={{ color: DIM, fontWeight: 600 }}>· {sts.length}</span></button>
-                        {th?.verdict ? <span style={{ fontSize: 9, fontWeight: 900, color: th.verdictColor, background: `${th.verdictColor}1a`, border: `1px solid ${th.verdictColor}55`, borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{th.verdict}</span> : null}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                          {th?.action === 'ADD' && <span title="Rotating into strength — add 25%" style={{ fontSize: 8.5, fontWeight: 900, color: '#22C55E', background: 'rgba(34,197,94,0.16)', border: '1px solid rgba(34,197,94,0.45)', borderRadius: 5, padding: '2px 5px' }}>➕ ADD 25%</span>}
+                          {th?.action === 'TRIM' && <span title="Rolling over — trim 25%" style={{ fontSize: 8.5, fontWeight: 900, color: '#EF4444', background: 'rgba(239,68,68,0.16)', border: '1px solid rgba(239,68,68,0.45)', borderRadius: 5, padding: '2px 5px' }}>✂️ TRIM 25%</span>}
+                          {th?.verdict ? <span style={{ fontSize: 9, fontWeight: 900, color: th.verdictColor, background: `${th.verdictColor}1a`, border: `1px solid ${th.verdictColor}55`, borderRadius: 5, padding: '2px 6px' }}>{th.verdict}</span> : null}
+                        </div>
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                         {sts.map((s) => (
@@ -333,6 +338,7 @@ export default function ThemeRotationTab() {
                       <th key={k} onClick={() => setSortKey(k as any)} style={{ padding: '6px 6px', fontWeight: sortKey === k ? 900 : 700, color: sortKey === k ? TXT : DIM, cursor: 'pointer' }}>{lbl}{sortKey === k ? ' ▾' : ''}</th>
                     ))}
                     <th onClick={() => setSortKey('rs')} style={{ padding: '6px 8px', fontWeight: sortKey === 'rs' ? 900 : 700, color: sortKey === 'rs' ? TXT : DIM, cursor: 'pointer' }}>RS{sortKey === 'rs' ? ' ▾' : ''}</th>
+                    <th onClick={() => setSortKey('conv')} title="Conviction score 0-100 — RS × momentum × 50-DMA trend × breadth" style={{ padding: '6px 8px', fontWeight: sortKey === 'conv' ? 900 : 700, color: sortKey === 'conv' ? TXT : DIM, cursor: 'pointer' }}>Conv{sortKey === 'conv' ? ' ▾' : ''}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -350,8 +356,11 @@ export default function ThemeRotationTab() {
                           <span style={{ color: DIM, fontSize: 9, width: 8, flexShrink: 0 }}>{isOpen ? '▾' : '▸'}</span>
                           <span style={{ width: 8, height: 8, borderRadius: 8, background: QC[t.quadrant || 'Lagging'], flexShrink: 0 }} />
                           <div>
-                            <div style={{ fontWeight: 800, color: TXT }}>{t.emoji} {t.name}</div>
-                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}</div>
+                            <div style={{ fontWeight: 800, color: TXT }}>{t.emoji} {t.name}
+                              {t.action === 'ADD' && <span title="Rotating into strength — add" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#22C55E', background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.4)', borderRadius: 4, padding: '1px 5px' }}>➕ ADD</span>}
+                              {t.action === 'TRIM' && <span title="Rolling over — trim" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#EF4444', background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 4, padding: '1px 5px' }}>✂️ TRIM</span>}
+                            </div>
+                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}</div>
                           </div>
                         </div>
                       </td>
@@ -364,10 +373,15 @@ export default function ThemeRotationTab() {
                       <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: MUT }}>
                         {t.rsRatio?.toFixed(0)}<span style={{ color: (t.rsMomentum || 100) >= 100 ? '#22C55E' : '#EF4444', marginLeft: 4 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
                       </td>
+                      <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>
+                        {typeof t.conviction === 'number'
+                          ? <span style={{ fontWeight: 800, color: t.conviction >= 66 ? '#22C55E' : t.conviction >= 45 ? '#EAB308' : '#EF4444' }}>{t.conviction}</span>
+                          : <span style={{ color: DIM }}>·</span>}
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={8} style={{ padding: '2px 8px 12px 24px', background: 'rgba(59,130,246,0.04)' }}>
+                        <td colSpan={9} style={{ padding: '2px 8px 12px 24px', background: 'rgba(59,130,246,0.04)' }}>
                           {dLoading && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>Loading {t.name} leaders…</div>}
                           {!dLoading && dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>{dd.note}</div>}
                           {!dLoading && dd?.stocks && dd.stocks.length > 0 && (
