@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v6:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v7:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -178,12 +178,36 @@ async function fetchChunked(symbols: string[], range: string, interval: string) 
   return out;
 }
 
-function verdictFor(quadrant: string, aboveSMA50: boolean): { verdict: string; color: string; note: string } {
-  if (quadrant === 'Leading')   return aboveSMA50 ? { verdict: 'BUY', color: '#16A34A', note: 'Leading + above 50-DMA — strongest theme, buy leaders on strength' }
-                                                   : { verdict: 'HOLD', color: '#F59E0B', note: 'Leading on RS but price under 50-DMA — wait for reclaim' };
-  if (quadrant === 'Improving') return aboveSMA50 ? { verdict: 'EARLY BUY', color: '#22C55E', note: 'Rotating IN — RS momentum turning up and price back above 50-DMA' }
-                                                   : { verdict: 'WATCH', color: '#EAB308', note: 'Rotating in on momentum but still below 50-DMA — watch for the reclaim' };
+// zzz494 — VERDICT now cross-checks ABSOLUTE trend (1M + 3M returns), not just the
+// RRG quadrant + 50-DMA. The old version gave a green 'EARLY BUY' to any Improving
+// theme above its 50-DMA — so a falling knife like Drones (−27% over 3M, a one-month
+// dead-cat bounce) read as 'early buy', which is exactly what confused the read. Rule
+// now: no green call while the 3-month trend is still a deep decline, and 'EARLY BUY'
+// requires a REAL turn (above 50-DMA + last month up + 3M not deeply negative). This
+// makes the words match the numbers a human sees.
+function verdictFor(quadrant: string, aboveSMA50: boolean, m1?: number, m3?: number): { verdict: string; color: string; note: string } {
+  const up1  = typeof m1 === 'number' ? m1 > 0 : false;      // turning up over the last month
+  const pos3 = typeof m3 === 'number' ? m3 > 0 : false;      // 3-month trend actually positive
+  const deep = typeof m3 === 'number' ? m3 <= -12 : false;   // still in a real 3-month downtrend
+
+  // LEADING — strong relative strength. BUY only if PRICE confirms (above 50-DMA AND
+  // 3M positive); leading on RS alone with a soft price = HOLD, don't chase.
+  if (quadrant === 'Leading') {
+    if (aboveSMA50 && pos3) return { verdict: 'BUY', color: '#16A34A', note: 'Leading + above 50-DMA + rising 3M — strongest theme, buy leaders on strength' };
+    return { verdict: 'HOLD', color: '#F59E0B', note: 'Leading on relative strength but price/3M not confirming — hold, wait for the trend to catch up' };
+  }
+
+  // IMPROVING — the rotation-in zone, and the one that must NOT flatter a falling knife.
+  if (quadrant === 'Improving') {
+    if (aboveSMA50 && up1 && !deep) return { verdict: 'EARLY BUY', color: '#22C55E', note: 'Rotating IN — above 50-DMA, last month up, 3M no longer falling: a real early turn' };
+    if (deep)                        return { verdict: 'WATCH', color: '#EAB308', note: 'Bouncing but still down hard over 3M — unconfirmed dead-cat, watch, do not chase' };
+    return { verdict: 'WATCH', color: '#EAB308', note: 'Turning on momentum but price/trend not confirmed — watch for the 50-DMA reclaim' };
+  }
+
+  // WEAKENING — was strong, now rolling over → TRIM (don't add, tighten stops).
   if (quadrant === 'Weakening') return { verdict: 'TRIM', color: '#F97316', note: 'Still strong but momentum rolling over — trim / tighten stops, do not add' };
+
+  // LAGGING — weak & falling → AVOID.
   return { verdict: 'AVOID', color: '#EF4444', note: 'Lagging — weak RS and falling momentum, avoid until it turns' };
 }
 
@@ -257,7 +281,7 @@ async function build(region: ThemeRegion) {
     let characterChange: 'bullish' | 'bearish' | null = null;
     if (prevMomentum < 100 - DB && rsMomentum >= 100 + DB && aboveSMA50) characterChange = 'bullish';
     else if (prevMomentum >= 100 + DB && rsMomentum < 100 - DB && !aboveSMA50) characterChange = 'bearish';
-    const v = verdictFor(quadrant, aboveSMA50);
+    const v = verdictFor(quadrant, aboveSMA50, ret.m1, ret.m3);
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
       proxy: t.proxy || null, members, sourceKind,
@@ -273,8 +297,11 @@ async function build(region: ThemeRegion) {
   const okRows = rows.filter((r: any) => r.ok);
   // rotation: momentum delta this bar (rsMomentum vs prev) proxies acceleration.
   const withDelta = okRows.map((r: any) => ({ id: r.id, name: r.name, emoji: r.emoji, quadrant: r.quadrant, momo: r.rsMomentum, rs: r.rsRatio }));
-  const rotatingIn = withDelta.filter((r) => r.quadrant === 'Improving')   // zzz493 — Improving ONLY. Every Leading theme has momo>=100, so the old OR-clause duplicated all BUY themes into this 'early' strip. Rotating-in = weak-but-turning-up, distinct from BUY.
-    .sort((a, b) => b.momo - a.momo).slice(0, 5).map((r) => r.id);
+  // zzz494 — the 'rotating in — early' strip shows only themes whose verdict is a
+  // genuine EARLY BUY (real turn), so deep-down bounces (Drones) and still-basing
+  // themes (Defense, below 50-DMA) no longer masquerade as early buys.
+  const rotatingIn = okRows.filter((r: any) => r.verdict === 'EARLY BUY')
+    .sort((a: any, b: any) => (b.rsRatio + b.rsMomentum) - (a.rsRatio + a.rsMomentum)).slice(0, 5).map((r: any) => r.id);
   const rotatingOut = withDelta.filter((r) => r.quadrant === 'Lagging' || r.quadrant === 'Weakening')
     .sort((a, b) => a.momo - b.momo).slice(0, 5).map((r) => r.id);
   const topBuy = okRows.filter((r: any) => r.verdict === 'BUY')
@@ -339,7 +366,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v6:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v7:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }
