@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v4:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v5:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -125,24 +125,37 @@ function sma(closes: number[], period: number): number | null {
 }
 
 // Build a synthetic equal-weight index from several basket members' daily closes.
-// Each member is normalized to 100 at its first common point, then averaged.
+// CRITICAL: chain the AVERAGE DAILY RETURN, do NOT average normalized price LEVELS.
+// Averaging levels made a member entering/leaving the basket (different IPO dates,
+// data gaps) shift the composite discretely — a stock joining at normalized 100
+// while others sat at 300 injected a phantom −33% day, producing impossible moves
+// like "+145% in a week" on the return columns and corrupting the quadrant. Chaining
+// average returns means a member only ever contributes its own day-over-day move
+// (and only on days it's present), so there are no level discontinuities and the
+// 1W/1M/3M/YTD/1Y numbers are real. Robust to any mix of histories, forever.
 function synthesize(series: { ts: number[]; closes: number[] }[]): { ts: number[]; closes: number[] } {
   const valid = series.filter((s) => s.closes.filter((x) => x != null && !isNaN(x)).length > 30);
   if (!valid.length) return { ts: [], closes: [] };
-  // Align on the union of timestamps of the member with the most points.
   const ref = valid.reduce((a, b) => (b.ts.length > a.ts.length ? b : a));
-  const norm = valid.map((s) => {
-    const map = new Map<number, number>();
-    for (let i = 0; i < s.ts.length; i++) if (s.closes[i] != null && !isNaN(s.closes[i])) map.set(s.ts[i], s.closes[i]);
-    let firstVal = 0;
-    for (const t of ref.ts) { const v = map.get(t); if (v) { firstVal = v; break; } }
-    return { map, firstVal: firstVal || 1 };
+  const maps = valid.map((s) => {
+    const m = new Map<number, number>();
+    for (let i = 0; i < s.ts.length; i++) if (s.closes[i] != null && !isNaN(s.closes[i])) m.set(s.ts[i], s.closes[i]);
+    return m;
   });
   const ts: number[] = []; const closes: number[] = [];
+  let level = 100; let prevT: number | null = null;
   for (const t of ref.ts) {
+    if (prevT === null) {
+      if (!maps.some((m) => m.has(t))) continue;   // wait for the first day with any data
+      ts.push(t); closes.push(level); prevT = t; continue;
+    }
     let sum = 0, cnt = 0;
-    for (const m of norm) { const v = m.map.get(t); if (v) { sum += (v / m.firstVal) * 100; cnt++; } }
-    if (cnt) { ts.push(t); closes.push(sum / cnt); }
+    for (const m of maps) {
+      const c1 = m.get(prevT), c0 = m.get(t);
+      if (c1 && c0 && c1 > 0) { sum += (c0 / c1) - 1; cnt++; }   // member's own daily return
+    }
+    if (cnt) level *= 1 + sum / cnt;   // equal-weight average return, chained
+    ts.push(t); closes.push(level); prevT = t;
   }
   return { ts, closes };
 }
@@ -237,10 +250,13 @@ async function build(region: ThemeRegion) {
     const aboveSMA50 = s50 != null ? cLast > s50 : false;
     // character change: momentum crossed 100 on the latest bar AND price on the
     // right side of the 50-DMA (bullish turn = the theme just became buyable;
-    // bearish turn = a leader just rolled over).
+    // bearish turn = a leader just rolled over). A ±0.5 deadband around 100 keeps
+    // the now-centered momentum from firing on every marginal wobble across the
+    // line — only decisive crossings count, so the alert stays rare and meaningful.
+    const DB = 0.5;
     let characterChange: 'bullish' | 'bearish' | null = null;
-    if (prevMomentum < 100 && rsMomentum >= 100 && aboveSMA50) characterChange = 'bullish';
-    else if (prevMomentum >= 100 && rsMomentum < 100 && !aboveSMA50) characterChange = 'bearish';
+    if (prevMomentum < 100 - DB && rsMomentum >= 100 + DB && aboveSMA50) characterChange = 'bullish';
+    else if (prevMomentum >= 100 + DB && rsMomentum < 100 - DB && !aboveSMA50) characterChange = 'bearish';
     const v = verdictFor(quadrant, aboveSMA50);
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
@@ -323,7 +339,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v4:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v5:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }

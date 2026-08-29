@@ -191,6 +191,8 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'in-infra': ['LT.NS', 'ADANIPORTS.NS', 'ULTRACEMCO.NS', 'GRASIM.NS', 'SIEMENS.NS'],
   'in-pse': ['NTPC.NS', 'POWERGRID.NS', 'BEL.NS', 'COALINDIA.NS', 'HAL.NS'],
   'in-media': ['ZEEL.NS', 'PVRINOX.NS', 'SUNTV.NS', 'NAZARA.NS', 'SAREGAMA.NS', 'TIPSMUSIC.NS'],
+  'in-consumption': ['TITAN.NS', 'TRENT.NS', 'DMART.NS', 'JUBLFOOD.NS', 'VBL.NS', 'ZOMATO.NS'],
+  'in-commodities': ['RELIANCE.NS', 'TATASTEEL.NS', 'JSWSTEEL.NS', 'GRASIM.NS', 'UPL.NS', 'PIIND.NS'],
 };
 
 // zzz489 — TICKER OVERRIDES. Coarse sector tags mislabel well-known names (payment
@@ -226,8 +228,9 @@ export const TICKER_OVERRIDE: Record<string, string> = {
   // Semiconductor equipment / memory
   ACMR: 'us-semis', ICHR: 'us-semis', COHU: 'us-semis', AEHR: 'us-semis', KLIC: 'us-semis', ONTO: 'us-semis', UCTT: 'us-semis',
   NLST: 'us-memory', QMCO: 'us-memory', SNDK: 'us-memory', STX: 'us-memory', WDC: 'us-memory', MU: 'us-memory',
-  // Energy services / midstream
+  // Energy services / midstream / royalty trusts
   OII: 'us-energy', GLNG: 'us-energy', SUN: 'us-energy', DNOW: 'us-energy', FTK: 'us-energy', KGS: 'us-energy', NESR: 'us-energy',
+  VNOM: 'us-energy', PBT: 'us-energy', WT: 'us-fintech',
   // AI software
   INOD: 'us-ai', BBAI: 'us-ai', SOUN: 'us-ai', AI: 'us-ai',
   // India — jewellery -> retail; servers -> data center; cranes -> capital goods
