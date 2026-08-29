@@ -45,7 +45,7 @@ export default function ThemeRotationTab() {
   const [loading, setLoading] = useState(false);
   const [sortKey, setSortKey] = useState<'rs' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1'>('rs');
   const [hover, setHover] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());   // zzz486 — multi-expand
   const [drill, setDrill] = useState<Record<string, any>>({});
   const [drillLoading, setDrillLoading] = useState<string | null>(null);
 
@@ -70,18 +70,28 @@ export default function ThemeRotationTab() {
   }, []);
 
   const toggleExpand = useCallback((themeId: string) => {
-    setExpanded((cur) => {
-      const nxt = cur === themeId ? null : themeId;
-      if (nxt && !drill[`${region}:${themeId}`]) loadDrill(region, themeId);
+    setExpandedIds((cur) => {
+      const nxt = new Set(cur);
+      if (nxt.has(themeId)) nxt.delete(themeId);
+      else { nxt.add(themeId); if (!drill[`${region}:${themeId}`]) loadDrill(region, themeId); }
       return nxt;
     });
   }, [region, drill, loadDrill]);
 
   useEffect(() => { if (!data[region]) load(region); }, [region, data, load]);
-  useEffect(() => { setExpanded(null); }, [region]);
+  useEffect(() => { setExpandedIds(new Set()); }, [region]);
 
   const payload = data[region];
   const themes = payload?.themes?.filter((t) => t.ok) || [];
+
+  // zzz486 — expand / collapse ALL themes at once so every theme's stocks show
+  // together. Drills load staggered (120ms apart) so Yahoo isn't hit in one burst.
+  const expandAll = useCallback(() => {
+    const ids = themes.map((t) => t.id);
+    setExpandedIds(new Set(ids));
+    ids.forEach((id, i) => { if (!drill[`${region}:${id}`]) setTimeout(() => loadDrill(region, id), i * 120); });
+  }, [themes, region, drill, loadDrill]);
+  const collapseAll = useCallback(() => setExpandedIds(new Set()), []);
   const byId = useMemo(() => { const m = new Map<string, ThemeRow>(); themes.forEach((t) => m.set(t.id, t)); return m; }, [themes]);
 
   // zzz484 — read the user's OWN lists (Multibagger fundamental pool + India/USA
@@ -210,11 +220,18 @@ export default function ThemeRotationTab() {
           )}
 
           {/* CLEAR rotation board — 2×2 quadrants you read at a glance */}
-          <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expanded={expanded} />
+          <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expandedIds={expandedIds} />
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
             {/* leaderboard */}
             <div style={{ flex: '1 1 100%', minWidth: 320, overflowX: 'auto', marginTop: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11.5, color: DIM }}>{themes.length} themes{expandedIds.size ? ` · ${expandedIds.size} expanded` : ''} · click a row to see its stocks</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={expandAll} style={{ fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 7, cursor: 'pointer', border: '1px solid rgba(59,130,246,0.45)', background: 'transparent', color: '#60A5FA' }}>⤢ Expand all</button>
+                  <button onClick={collapseAll} disabled={!expandedIds.size} style={{ fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 7, cursor: expandedIds.size ? 'pointer' : 'default', border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: expandedIds.size ? MUT : DIM }}>⤡ Collapse all</button>
+                </div>
+              </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ color: DIM, textAlign: 'right' }}>
@@ -228,7 +245,7 @@ export default function ThemeRotationTab() {
                 </thead>
                 <tbody>
                   {sorted.map((t) => {
-                    const isOpen = expanded === t.id;
+                    const isOpen = expandedIds.has(t.id);
                     const dkey = `${region}:${t.id}`;
                     const dd = drill[dkey];
                     const dLoading = drillLoading === dkey;
@@ -353,7 +370,7 @@ export default function ThemeRotationTab() {
 // Four boxes, positioned like the RRG (right = strong, top = rising momentum):
 //   IMPROVING (early buy) | LEADING (buy)
 //   LAGGING   (avoid)     | WEAKENING (trim)
-function QuadrantBoard({ themes, onPick, expanded }: { themes: ThemeRow[]; onPick: (id: string) => void; expanded: string | null }) {
+function QuadrantBoard({ themes, onPick, expandedIds }: { themes: ThemeRow[]; onPick: (id: string) => void; expandedIds: Set<string> }) {
   const bucket = (q: string) => themes.filter((t) => t.quadrant === q);
   const strength = (t: ThemeRow) => (t.rsRatio || 0) + (t.rsMomentum || 0);
   const boxes: { q: string; label: string; action: string; color: string; tint: string; emoji: string; items: ThemeRow[] }[] = [
@@ -375,9 +392,9 @@ function QuadrantBoard({ themes, onPick, expanded }: { themes: ThemeRow[]; onPic
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {b.items.length ? b.items.map((t) => (
                 <button key={t.id} onClick={() => onPick(t.id)} title={`${t.name} — RS ${t.rsRatio?.toFixed(0)} · click for stocks`}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', color: expanded === t.id ? '#fff' : TXT, background: expanded === t.id ? b.color : `${b.color}18`, border: `1px solid ${b.color}${expanded === t.id ? '' : '44'}`, borderRadius: 20, padding: '3px 9px' }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', color: expandedIds.has(t.id) ? '#fff' : TXT, background: expandedIds.has(t.id) ? b.color : `${b.color}18`, border: `1px solid ${b.color}${expandedIds.has(t.id) ? '' : '44'}`, borderRadius: 20, padding: '3px 9px' }}>
                   {t.emoji} {t.name}
-                  <span style={{ color: (t.rsMomentum || 100) >= 100 ? (expanded === t.id ? '#fff' : '#22C55E') : (expanded === t.id ? '#fff' : '#EF4444'), fontWeight: 900 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
+                  <span style={{ color: (t.rsMomentum || 100) >= 100 ? (expandedIds.has(t.id) ? '#fff' : '#22C55E') : (expandedIds.has(t.id) ? '#fff' : '#EF4444'), fontWeight: 900 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
                 </button>
               )) : <span style={{ fontSize: 11, color: DIM }}>—</span>}
             </div>
