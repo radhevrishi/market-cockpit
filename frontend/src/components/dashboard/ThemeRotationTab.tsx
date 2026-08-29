@@ -249,7 +249,7 @@ export default function ThemeRotationTab() {
             </div>
             <div style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 10, padding: '11px 13px' }}>
               <div style={{ fontSize: 11, fontWeight: 900, color: '#60A5FA', letterSpacing: 0.5, marginBottom: 7 }}>🔵 ROTATING IN — early</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{payload.rotatingIn.length ? payload.rotatingIn.map((id) => chip(id, '#3B82F6')) : <span style={{ color: DIM, fontSize: 12 }}>—</span>}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{payload.rotatingIn.length ? payload.rotatingIn.map((id) => chip(id, '#3B82F6')) : <span style={{ color: DIM, fontSize: 11 }}>none confirmed yet — no weak theme has reclaimed its 50-DMA</span>}</div>
             </div>
             <div style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: '11px 13px' }}>
               <div style={{ fontSize: 11, fontWeight: 900, color: '#F87171', letterSpacing: 0.5, marginBottom: 7 }}>🔴 AVOID / ROTATING OUT</div>

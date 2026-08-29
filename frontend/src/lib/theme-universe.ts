@@ -147,17 +147,17 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'us-critminerals': ['MP', 'ALB', 'FCX', 'LAC'],
   'us-gold': ['NEM', 'GOLD', 'AEM', 'FNV', 'WPM'],
   'us-defense': ['RTX', 'LMT', 'GD', 'NOC', 'LHX', 'HWM'],
-  'us-robotics': ['NVDA', 'ISRG', 'ABB', 'ROK', 'TER'],
+  'us-robotics': ['ISRG', 'ABB', 'ROK', 'TER', 'CGNX'],   // zzz496 — NVDA out; CGNX (Cognex) is a machine-vision robotics pure-play
   'us-biotech': ['VRTX', 'REGN', 'GILD', 'AMGN', 'MRNA'],
   'us-homebuild': ['DHI', 'LEN', 'PHM', 'NVR'],
   'us-regbanks': ['USB', 'PNC', 'TFC', 'KEY', 'RF'],
   // futuristic ETF themes — leaders give the self-heal fallback if the ETF ever delists
   'us-ai': ['NVDA', 'MSFT', 'GOOGL', 'META', 'PLTR'],
   'us-innovation': ['TSLA', 'COIN', 'HOOD', 'ROKU', 'PLTR'],
-  'us-battery': ['ALB', 'TSLA', 'QS', 'ENVX', 'PANW'],
+  'us-battery': ['ALB', 'TSLA', 'QS', 'ENVX', 'SQM'],   // zzz496 — PANW was wrong (cybersecurity); SQM = lithium
   'us-5g': ['QCOM', 'AVGO', 'CSCO', 'AMT', 'TMUS'],
-  'us-metaverse': ['META', 'NVDA', 'AAPL', 'RBLX', 'U'],
-  'us-gaming': ['NVDA', 'RBLX', 'EA', 'TTWO', 'NTES'],
+  'us-metaverse': ['META', 'RBLX', 'U', 'AAPL', 'SNAP'],   // zzz496 — NVDA belongs in AI/semis, not metaverse
+  'us-gaming': ['EA', 'TTWO', 'RBLX', 'NTES', 'SE'],   // zzz496 — NVDA is a chipmaker, not a game publisher
   'us-infra': ['ETN', 'PWR', 'VMC', 'MLM', 'URI'],
   'us-copper': ['FCX', 'SCCO', 'TECK', 'ERO'],
   'us-cleanenergy': ['FSLR', 'ENPH', 'NEE', 'FLNC'],
@@ -167,7 +167,7 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'us-ev': ['TSLA', 'RIVN', 'ALB', 'APTV'],
   'us-water': ['ECL', 'AWK', 'XYL', 'WM'],
   // broad sectors
-  'us-industrials': ['GE', 'CAT', 'HON', 'DE', 'UBER'],
+  'us-industrials': ['GE', 'CAT', 'HON', 'DE', 'EMR'],   // zzz496 — UBER is transport/tech, not industrial
   'us-transport': ['UBER', 'UPS', 'DAL', 'CSX', 'ODFL'],
   'us-retail': ['AMZN', 'COST', 'WMT', 'HD', 'TJX'],
   'us-condisc': ['AMZN', 'TSLA', 'HD', 'MCD', 'NKE'],
