@@ -134,6 +134,21 @@ export default function ThemeRotationTab() {
     // raw sector (no rotation call, but visible) so NONE of the user's names vanish.
     const sectorGroups = new Map<string, typeof all>();
     for (const st of other) { const sec = (st.sector || st.industry || 'Unclassified').toString().trim() || 'Unclassified'; if (!sectorGroups.has(sec)) sectorGroups.set(sec, []); sectorGroups.get(sec)!.push(st); }
+    // Order the names INSIDE every group by Fundo grade — best first (A+ → A → B+
+    // → … → D), ungraded last, symbol as the tiebreak. Applied to both the theme
+    // groups and the sector-fallback groups, on both the US and India tabs.
+    const gradeRank = (g?: string | null) => {
+      if (!g) return 99;
+      const m = String(g).trim().toUpperCase().match(/^([A-F])\s*([+-]?)/);
+      if (!m) return 99;
+      const base: Record<string, number> = { A: 0, B: 3, C: 6, D: 9, E: 12, F: 12 };
+      const mod = m[2] === '+' ? 0 : m[2] === '-' ? 2 : 1;   // '+' best, plain mid, '-' worst
+      return (base[m[1]] ?? 90) + mod;
+    };
+    const byGrade = (a: { grade?: string; symbol: string }, b: { grade?: string; symbol: string }) =>
+      gradeRank(a.grade) - gradeRank(b.grade) || a.symbol.localeCompare(b.symbol);
+    for (const arr of groups.values()) arr.sort(byGrade);
+    for (const arr of sectorGroups.values()) arr.sort(byGrade);
     return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups };
   }, [region, payload, userLists]);
 
