@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v5:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v6:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -273,11 +273,11 @@ async function build(region: ThemeRegion) {
   const okRows = rows.filter((r: any) => r.ok);
   // rotation: momentum delta this bar (rsMomentum vs prev) proxies acceleration.
   const withDelta = okRows.map((r: any) => ({ id: r.id, name: r.name, emoji: r.emoji, quadrant: r.quadrant, momo: r.rsMomentum, rs: r.rsRatio }));
-  const rotatingIn = withDelta.filter((r) => r.quadrant === 'Improving' || (r.quadrant === 'Leading' && r.momo >= 100))
+  const rotatingIn = withDelta.filter((r) => r.quadrant === 'Improving')   // zzz493 — Improving ONLY. Every Leading theme has momo>=100, so the old OR-clause duplicated all BUY themes into this 'early' strip. Rotating-in = weak-but-turning-up, distinct from BUY.
     .sort((a, b) => b.momo - a.momo).slice(0, 5).map((r) => r.id);
   const rotatingOut = withDelta.filter((r) => r.quadrant === 'Lagging' || r.quadrant === 'Weakening')
     .sort((a, b) => a.momo - b.momo).slice(0, 5).map((r) => r.id);
-  const topBuy = okRows.filter((r: any) => r.verdict === 'BUY' || r.verdict === 'EARLY BUY')
+  const topBuy = okRows.filter((r: any) => r.verdict === 'BUY')
     .sort((a: any, b: any) => (b.rsRatio + b.rsMomentum) - (a.rsRatio + a.rsMomentum)).slice(0, 5).map((r: any) => r.id);
   const topAvoid = okRows.filter((r: any) => r.verdict === 'AVOID')
     .sort((a: any, b: any) => (a.rsRatio + a.rsMomentum) - (b.rsRatio + b.rsMomentum)).slice(0, 5).map((r: any) => r.id);
@@ -339,7 +339,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v5:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v6:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }

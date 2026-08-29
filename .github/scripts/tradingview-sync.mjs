@@ -32,8 +32,8 @@ const SCREENERS = [
   { id: 'GHHf1HVl', slug: 'usa-multibagger-3',         name: 'USA Multibagger (GHHf1HVl)' },
   { id: 'oRvEFfVY', slug: 'future-super-scalers-nbis', name: 'Future Super Scalers like NBIS Full' },
   // zzz479 — India Multibagger (TradingView) — mirror USA-Multibagger routing for India.
-  { id: 'SwBe8R8b', slug: 'india-multibagger-tv-1',   name: 'India Multibagger (SwBe8R8b)' },
-  { id: 'I0y51g1p', slug: 'india-multibagger-tv-2',   name: 'India Multibagger (I0y51g1p)' },
+  { id: 'SwBe8R8b', slug: 'usa-multibagger-tv-1',     name: 'USA Multibagger (SwBe8R8b)' },
+  { id: 'I0y51g1p', slug: 'india-multibagger-tv-1',   name: 'India Multibagger (I0y51g1p)' },
 ];
 
 // zzz270 — TradingView WATCHLISTS (personal saved lists). Different from

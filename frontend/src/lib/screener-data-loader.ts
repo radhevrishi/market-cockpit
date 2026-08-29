@@ -72,6 +72,9 @@ export const SYNC_ROUTING = {
     'future-nvda-alab-app-pltr.csv',
     'usa-multibagger-3.csv',
     'future-super-scalers-nbis.csv',
+    // zzz493 — SwBe8R8b returns USA-exchange stocks, so it belongs here (was
+    // mis-routed into India). USA-exchange filter keeps it clean regardless.
+    'usa-multibagger-tv-1.csv',
   ],
   // zzz479 — India Multibagger screeners that live on TradingView (not
   // screener.in). These CSVs land in /data/tradingview/ (like multibaggerUsa),
@@ -79,8 +82,9 @@ export const SYNC_ROUTING = {
   // the India fundamental pool alongside the screener.in screens (handleFiles is
   // additive — it never replaces an existing screener.in row for the same ticker).
   multibaggerIndiaTV: [
+    // zzz493 — only the genuinely India-exchange screener (I0y51g1p). The other
+    // TradingView screener (SwBe8R8b) was USA stocks → moved to multibaggerUsa.
     'india-multibagger-tv-1.csv',
-    'india-multibagger-tv-2.csv',
   ],
   portfolioUsa: 'watchlist-usa-339270482.csv',
 } as const;
