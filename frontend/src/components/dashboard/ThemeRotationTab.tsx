@@ -118,12 +118,14 @@ export default function ThemeRotationTab() {
   // are left uncovered. Client-side (data is in the browser); guarded.
   const userBook = useMemo(() => {
     const norm = userLists.norm;
+    // zzz487 — index/benchmark ETFs are not holdings; keep them out of Your Book.
+    const EXCLUDE = new Set(['SPY', 'QQQ', 'QQQM', 'IWM', 'DIA', 'VOO', 'VTI', 'VT', 'SPX', 'NDX', 'RUT', 'NIFTY', 'NIFTYBEES', 'BANKBEES', 'GOLDBEES']);
     const readJSON = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
     const map = new Map<string, { symbol: string; sector?: string; industry?: string; score?: number; grade?: string; inTech?: boolean; inFundo?: boolean }>();
     const trows = readJSON(region === 'us' ? 'mb_tech_rows_usa_v1' : 'mb_tech_rows_ind_v1');
-    if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (!s) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.inTech = true; map.set(s, e); }
+    if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.inTech = true; map.set(s, e); }
     const frows = readJSON(region === 'us' ? 'mb_usa_scored_v2' : 'mb_excel_scored_v2');
-    if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (!s) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.score = r?.score; e.grade = r?.grade; e.inFundo = true; map.set(s, e); }
+    if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.score = r?.score; e.grade = r?.grade; e.inFundo = true; map.set(s, e); }
     const all = [...map.values()];
     const groups = new Map<string, typeof all>();
     const other: typeof all = [];

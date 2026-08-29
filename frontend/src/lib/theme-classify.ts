@@ -30,7 +30,7 @@ const US_RULES: Rule[] = [
   { re: /clean energy|renewable energy|wind power/i, theme: 'us-cleanenergy' },
   { re: /lithium|\bbattery\b/i, theme: 'us-battery' },
   { re: /electric vehicle|\bev\b|automobile manufactur|auto manufactur|vehicle manufactur/i, theme: 'us-ev' },
-  { re: /\boil\b|\bgas\b|petroleum|energy minerals|refin|pipeline|drilling|oilfield/i, theme: 'us-energy' },
+  { re: /\boil\b|\bgas\b|petroleum|(?<!non-)energy minerals|refin|pipeline|drilling|oilfield/i, theme: 'us-energy' },
   { re: /\bcopper\b|base metal/i, theme: 'us-copper' },
   { re: /\bgold\b|precious metal|silver mining/i, theme: 'us-gold' },
   { re: /rare earth|critical mineral|strategic metal/i, theme: 'us-critminerals' },
@@ -43,45 +43,51 @@ const US_RULES: Rule[] = [
   { re: /\brobot|factory automation/i, theme: 'us-robotics' },
   // transport & shipping
   { re: /marine|tanker|shipping|freight|airline|air freight|trucking|railroad|\brail\b|logistics|transportation|courier|package delivery|dry bulk/i, theme: 'us-transport' },
-  // real estate BEFORE financials so "investment trust" -> REIT, not finance
-  { re: /real estate|\breit\b|investment trust|property (?:trust|manage)/i, theme: 'us-reit' },
+  // real estate BEFORE financials. NB: "investment trust" removed — it wrongly
+  // caught unit-investment-trust ETFs (SPY/QQQ) and oil royalty trusts.
+  { re: /real estate|\breit\b|real estate investment|property (?:trust|manage|developer)|reits?\b/i, theme: 'us-reit' },
   // broad consumer
   { re: /retail|apparel|footwear|luxury goods|department store|specialty (?:retail|store)|discount store|supermarket|grocery/i, theme: 'us-retail' },
   { re: /restaurant|\bhotel|leisure|casino|resort|cruise|\btravel|lodging|recreation|home improvement|consumer discretionary|automotive (?:retail|dealer|part)/i, theme: 'us-condisc' },
   { re: /beverage|packaged food|\bfood\b|household (?:product|durable)|tobacco|consumer staple|personal (?:care|product)|consumer non-durable/i, theme: 'us-staples' },
   // financials
-  { re: /\bbank\b|regional bank|savings|thrift/i, theme: 'us-regbanks' },
+  { re: /\bbanks?\b|regional bank|savings|thrift/i, theme: 'us-regbanks' },
   { re: /finance|financial|insurance|reinsuranc|\binvest\b|asset manage|capital market|brokerage|mortgage|private equity/i, theme: 'us-fintech' },
   // utilities BEFORE water; then materials / comm / infra / industrials / health
   { re: /utilit|electric power|power generation|water utilit/i, theme: 'us-utilities' },
   { re: /\bwater\b/i, theme: 'us-water' },
-  { re: /chemical|\bmaterials\b|\bpaper\b|packaging|forest product|coating|specialty material|metal fabric|process industr/i, theme: 'us-materials' },
+  { re: /chemical|\bmaterials\b|\bpaper\b|packaging|forest product|coating|specialty material|metal fabric|process industr|\bsteel\b|\biron\b|alumin[iu]um|\bmining\b|non-energy mineral|industrial metal/i, theme: 'us-materials' },
   { re: /media|entertainment|broadcast|publishing|advertis|telecom|wireless|communication/i, theme: 'us-comm' },
   { re: /infrastructure|engineering (?:&|and) construction|electrical equip/i, theme: 'us-infra' },
   { re: /machinery|\bindustrial|manufactur|building material|conglomerat|commercial service|business service|distribution|producer manufacturing/i, theme: 'us-industrials' },
   { re: /health|medical|pharmac|\bdrug\b|hospital|life scien|diagnostic|therapeut|dental|managed care/i, theme: 'us-healthcare' },
   { re: /\bai\b|artificial intelligence|machine learning/i, theme: 'us-ai' },
-  { re: /technology services|electronic technology|computer|hardware/i, theme: 'us-semis' },
+  // Broad tech catch-alls LAST, and split correctly: "Electronic Technology" is
+  // the semis/hardware sector; "Technology Services" is overwhelmingly SOFTWARE /
+  // internet / IT — it must NOT dump into Semiconductors (that made 87 software
+  // names show as chips). Anything still unmatched falls to the sector bucket.
+  { re: /electronic technology|electronic (?:component|equipment)|computer (?:hardware|peripheral|storage)|networking equipment/i, theme: 'us-semis' },
+  { re: /technology services|internet software|it (?:service|consulting)|packaged software|information technology|software|computer services/i, theme: 'us-software' },
 ];
 
 const IN_RULES: Rule[] = [
-  { re: /software|it services|information technology|computer|saas/i, theme: 'in-it' },
-  { re: /electronic|ems|contract manufactur|component/i, theme: 'in-ems' },
+  { re: /software|it services|information technology|\bit - software\b|saas/i, theme: 'in-it' },
+  { re: /electronic|\bems\b|contract manufactur|\bcomponent|it - hardware|computer hardware|\bhardware\b|semiconduct/i, theme: 'in-ems' },
   { re: /defen[cs]e|aerospace|shipbuild|explosive/i, theme: 'in-defence' },
   { re: /rail|wagon|locomotive/i, theme: 'in-railways' },
-  { re: /power|electric util|transmission|transformer|energy - power/i, theme: 'in-power' },
-  { re: /renewable|solar|wind|green (?:energy|hydrogen)/i, theme: 'in-renewables' },
-  { re: /capital good|engineering|machinery|industrial|infrastructure develop|construction - civil/i, theme: 'in-capgoods' },
+  { re: /power|electric util|transmission|transformer|energy - power|electrical equip|switchgear|\bcables?\b|\bwires?\b|electric equipment/i, theme: 'in-power' },
+  { re: /renewable|solar|wind (?:energy|power)|green (?:energy|hydrogen)/i, theme: 'in-renewables' },
+  { re: /capital good|engineering|machinery|industrial|infrastructure develop|construction - civil|producer manufacturing|fastener|bearing|abrasive|industrial product|\bepc\b|construction & engineering/i, theme: 'in-capgoods' },
   { re: /oil|gas|petroleum|refin|energy|coal/i, theme: 'in-energy' },
-  { re: /steel|metal|aluminium|mining|iron/i, theme: 'in-metal' },
-  { re: /chemical|fertiliz|specialty chem|agrochem/i, theme: 'in-chemicals' },
-  { re: /pharma|drug|healthcare - (?:pharma|drug)|life scien/i, theme: 'in-pharma' },
-  { re: /hospital|healthcare (?:services|facilit)|diagnostic|medical/i, theme: 'in-hospitals' },
-  { re: /fmcg|consumer staple|food|beverage|personal (?:care|product)|household/i, theme: 'in-fmcg' },
+  { re: /steel|metal|aluminium|mining|\biron\b|zinc|\bcopper/i, theme: 'in-metal' },
+  { re: /chemical|fertiliz|specialty chem|agrochem|process industr/i, theme: 'in-chemicals' },
+  { re: /pharma|\bdrug\b|healthcare - (?:pharma|drug)|life scien/i, theme: 'in-pharma' },
+  { re: /hospital|healthcare (?:services|facilit)|diagnostic|\bmedical\b/i, theme: 'in-hospitals' },
+  { re: /fmcg|consumer staple|\bfood\b|beverage|personal (?:care|product)|household|tobacco|cigarette|\bsugar\b|\bagro\b|edible oil|dairy/i, theme: 'in-fmcg' },
   { re: /auto|vehicle|automobile|tyre|auto (?:anc|part)/i, theme: 'in-auto' },
   { re: /realty|real estate|property|housing develop/i, theme: 'in-realty' },
-  { re: /cement|building material/i, theme: 'in-cement' },
-  { re: /retail|apparel|footwear|jewel|restaurant|qsr|discretionary/i, theme: 'in-retail' },
+  { re: /cement|building material|other construction material/i, theme: 'in-cement' },
+  { re: /retail|apparel|footwear|jewel|gems|diamond|bullion|restaurant|qsr|discretionary/i, theme: 'in-retail' },
   { re: /internet|e-?commerce|fintech|online|new age|platform/i, theme: 'in-newage' },
   { re: /port|shipping|logistic|marine/i, theme: 'in-ports' },
   { re: /psu bank|public sector bank/i, theme: 'in-psubank' },
