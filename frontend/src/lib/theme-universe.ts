@@ -140,7 +140,7 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'us-cyber': ['PANW', 'CRWD', 'ZS', 'FTNT', 'NET', 'CYBR'],
   'us-internet': ['AMZN', 'META', 'GOOGL', 'NFLX', 'SHOP', 'UBER'],
   'us-fintech': ['V', 'MA', 'PYPL', 'COIN', 'HOOD', 'SOFI'],
-  'us-quantum': ['IONQ', 'RGTI', 'QBTS', 'IBM', 'NVDA'],
+  'us-quantum': ['IONQ', 'RGTI', 'QBTS', 'QUBT', 'IBM'],
   'us-energy': ['XOM', 'CVX', 'COP', 'SLB', 'EOG'],
   'us-nuclear': ['CCJ', 'LEU', 'OKLO', 'SMR', 'UEC'],
   'us-solar': ['FSLR', 'ENPH', 'NXT', 'RUN', 'ARRY'],
@@ -190,6 +190,7 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'in-finserv': ['BAJFINANCE.NS', 'JIOFIN.NS', 'CHOLAFIN.NS', 'SHRIRAMFIN.NS', 'BAJAJFINSV.NS'],
   'in-infra': ['LT.NS', 'ADANIPORTS.NS', 'ULTRACEMCO.NS', 'GRASIM.NS', 'SIEMENS.NS'],
   'in-pse': ['NTPC.NS', 'POWERGRID.NS', 'BEL.NS', 'COALINDIA.NS', 'HAL.NS'],
+  'in-media': ['ZEEL.NS', 'PVRINOX.NS', 'SUNTV.NS', 'NAZARA.NS', 'SAREGAMA.NS', 'TIPSMUSIC.NS'],
 };
 
 // zzz489 — TICKER OVERRIDES. Coarse sector tags mislabel well-known names (payment

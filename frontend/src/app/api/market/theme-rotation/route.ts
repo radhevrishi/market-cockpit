@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v3:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v4:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -64,18 +64,33 @@ function getQuadrant(rsRatio: number, rsMomentum: number): string {
 // current pair plus a short trail and the previous-momentum (for cross detection).
 function jdk(themeWk: number[], benchWk: number[]): { rsRatio: number; rsMomentum: number; prevMomentum: number; trail: { x: number; y: number }[] } {
   const len = Math.min(themeWk.length, benchWk.length);
-  if (len < 4) return { rsRatio: 100, rsMomentum: 100, prevMomentum: 100, trail: [] };
+  if (len < 8) return { rsRatio: 100, rsMomentum: 100, prevMomentum: 100, trail: [] };
   const t = themeWk.slice(themeWk.length - len);
   const b = benchWk.slice(benchWk.length - len);
-  const rsRaw: number[] = [];
-  for (let i = 0; i < len; i++) rsRaw.push(b[i] ? (t[i] / b[i]) * 100 : 100);
-  const base = rsRaw[0] || 100;
-  const rsNorm = rsRaw.map((v) => (v / base) * 100);
-  const period = Math.max(4, Math.min(10, Math.floor(len / 3)));
-  const alpha = 2 / (period + 1);
-  const rsS: number[] = [rsNorm[0]];
-  for (let i = 1; i < rsNorm.length; i++) rsS.push(rsS[i - 1] + alpha * (rsNorm[i] - rsS[i - 1]));
-  const momRaw: number[] = rsS.map((v, i) => (i === 0 || !rsS[i - 1] ? 100 : (v / rsS[i - 1]) * 100));
+  // Relative-strength line = theme / benchmark (unitless).
+  const rs: number[] = [];
+  for (let i = 0; i < len; i++) rs.push(b[i] ? t[i] / b[i] : (rs[i - 1] ?? 1));
+  // JdK RS-Ratio — CRITICAL: normalize RS against its OWN trailing mean (centered
+  // at 100), NOT against the window's first bar. The first-bar version measured
+  // cumulative outperformance-since-2y-ago, so a theme that 5×'d long ago stayed
+  // pinned near the top of "Leading" forever (Memory RS 697, Photonics 698) even
+  // while every constituent was rolling over below its 50-DMA. Own-mean
+  // normalization is comparable across every theme (ETF-proxy and synthetic basket
+  // alike) and self-correcting: when a past winner fades, its RS drops below its
+  // own recent average → RS-Ratio < 100 → it leaves Leading automatically. This is
+  // what makes the board honest for the long run.
+  const N = Math.max(8, Math.min(18, Math.floor(len / 4)));
+  const rollMean = (arr: number[], i: number, w: number) => {
+    const s = Math.max(0, i - w + 1); const win = arr.slice(s, i + 1);
+    return win.reduce((a, c) => a + c, 0) / win.length;
+  };
+  const rsRatioRaw = rs.map((v, i) => { const m = rollMean(rs, i, N); return m ? 100 * (v / m) : 100; });
+  const alpha = 2 / (Math.max(3, Math.floor(N / 2)) + 1);
+  const rsS: number[] = [rsRatioRaw[0]];
+  for (let i = 1; i < rsRatioRaw.length; i++) rsS.push(rsS[i - 1] + alpha * (rsRatioRaw[i] - rsS[i - 1]));
+  // RS-Momentum = RS-Ratio vs its own trailing mean, centered at 100.
+  const M = Math.max(4, Math.floor(N / 2));
+  const momRaw: number[] = rsS.map((v, i) => { const m = rollMean(rsS, i, M); return m ? 100 * (v / m) : 100; });
   const momS: number[] = [momRaw[0]];
   for (let i = 1; i < momRaw.length; i++) momS.push(momS[i - 1] + alpha * (momRaw[i] - momS[i - 1]));
   const trail: { x: number; y: number }[] = [];
@@ -308,7 +323,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v3:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v4:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }

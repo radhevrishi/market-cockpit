@@ -48,7 +48,7 @@ const US_RULES: Rule[] = [
   { re: /real estate|\breit\b|real estate investment|property (?:trust|manage|developer)|reits?\b/i, theme: 'us-reit' },
   // broad consumer
   { re: /retail|apparel|footwear|luxury goods|department store|specialty (?:retail|store)|discount store|supermarket|grocery/i, theme: 'us-retail' },
-  { re: /restaurant|\bhotel|leisure|casino|resort|cruise|\btravel|lodging|recreation|home improvement|consumer discretionary|automotive (?:retail|dealer|part)/i, theme: 'us-condisc' },
+  { re: /restaurant|\bhotel|leisure|casino|resort|cruise|\btravel|lodging|recreation|home improvement|consumer discretionary|consumer services|consumer durable|automotive (?:retail|dealer|part)/i, theme: 'us-condisc' },
   { re: /beverage|packaged food|\bfood\b|household (?:product|durable)|tobacco|consumer staple|personal (?:care|product)|consumer non-durable/i, theme: 'us-staples' },
   // financials
   { re: /\bbanks?\b|regional bank|savings|thrift/i, theme: 'us-regbanks' },
@@ -100,6 +100,9 @@ const IN_RULES: Rule[] = [
   { re: /consumer|durables|leisure|hotel|travel|airline|aviation|logistics/i, theme: 'in-consumption' },
   { re: /trading|diversified|holding|conglomerat|misc|services/i, theme: 'in-consumption' },
   { re: /pse|public sector|psu/i, theme: 'in-pse' },
+  // Low-priority fallback: bare "Construction" / "Infrastructure" / "Civil" that
+  // no finer rule caught (cement & construction-material already matched above).
+  { re: /\bconstruction\b|infrastructure|\bcivil\b|\bbuilder/i, theme: 'in-capgoods' },
 ];
 
 // Classify a stock into a theme id. A curated TICKER_OVERRIDE wins first (fixes the
