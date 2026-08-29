@@ -73,6 +73,17 @@ export const US_THEMES: ThemeDef[] = [
   { id: 'us-copper',       name: 'Copper / Electrification', emoji: '🟠', group: 'Energy & Resources', proxy: 'COPX', note: 'Copper miners (Global X)' },
   { id: 'us-cleanenergy',  name: 'Clean Energy',        emoji: '🌱', group: 'Energy & Resources', proxy: 'ICLN', note: 'Clean energy (iShares Global)' },
   { id: 'us-agtech',       name: 'AgTech & Food',       emoji: '🌾', group: 'Frontier Tech', proxy: 'KROP', note: 'AgTech & food innovation (Global X)' },
+  // Broad sectors (zzz487) — so every holding lands in a theme with a real call.
+  { id: 'us-industrials',  name: 'Industrials',         emoji: '🏭', group: 'Broad Sectors', proxy: 'XLI', note: 'Industrials (SPDR)' },
+  { id: 'us-transport',    name: 'Transport & Shipping',emoji: '🚚', group: 'Broad Sectors', proxy: 'IYT', note: 'Transportation — rail/air/truck/shipping (iShares)' },
+  { id: 'us-retail',       name: 'Retail',              emoji: '🛒', group: 'Broad Sectors', proxy: 'XRT', note: 'Retail (SPDR)' },
+  { id: 'us-condisc',      name: 'Consumer Discretionary', emoji: '🛍️', group: 'Broad Sectors', proxy: 'XLY', note: 'Consumer discretionary (SPDR)' },
+  { id: 'us-staples',      name: 'Consumer Staples',    emoji: '🧺', group: 'Broad Sectors', proxy: 'XLP', note: 'Consumer staples (SPDR)' },
+  { id: 'us-healthcare',   name: 'Healthcare (broad)',  emoji: '🏥', group: 'Broad Sectors', proxy: 'XLV', note: 'Healthcare (SPDR)' },
+  { id: 'us-materials',    name: 'Materials',           emoji: '⚗️', group: 'Broad Sectors', proxy: 'XLB', note: 'Materials (SPDR)' },
+  { id: 'us-utilities',    name: 'Utilities',           emoji: '💡', group: 'Broad Sectors', proxy: 'XLU', note: 'Utilities (SPDR)' },
+  { id: 'us-reit',         name: 'Real Estate / REITs', emoji: '🏢', group: 'Broad Sectors', proxy: 'VNQ', note: 'Real estate (Vanguard)' },
+  { id: 'us-comm',         name: 'Communication / Media', emoji: '📺', group: 'Broad Sectors', proxy: 'XLC', note: 'Communication services (SPDR)' },
 ];
 
 // Broad-market reference so the same tape regime is visible next to the themes.
@@ -108,6 +119,11 @@ export const INDIA_THEMES: ThemeDef[] = [
   { id: 'in-cement',       name: 'Cement',              emoji: '🧱', group: 'Energy & Materials', basket: ['ULTRACEMCO.NS','SHREECEM.NS','AMBUJACEM.NS','ACC.NS'], note: 'Cement (housing + infra cycle)' },
   { id: 'in-retail',       name: 'Retail / Discretionary', emoji: '🛍️', group: 'Healthcare & Consumer', basket: ['TRENT.NS','DMART.NS','TITAN.NS','JUBLFOOD.NS'], note: 'Consumption & retail' },
   { id: 'in-ports',        name: 'Ports & Shipping',    emoji: '🚢', group: 'Capex & Strategic', basket: ['ADANIPORTS.NS','GESHIP.NS','MAZDOCK.NS','COCHINSHIP.NS'], note: 'Ports, shipping, shipbuilding' },
+  // Broad sectors (zzz487) — coverage catch-alls with a real call.
+  { id: 'in-media',        name: 'Media',               emoji: '📺', group: 'Broad Sectors', proxy: '^CNXMEDIA', note: 'NIFTY Media' },
+  { id: 'in-consumption',  name: 'Consumption',         emoji: '🛍️', group: 'Broad Sectors', proxy: '^CNXCONSUM', note: 'NIFTY Consumption' },
+  { id: 'in-commodities',  name: 'Commodities',         emoji: '⚗️', group: 'Broad Sectors', proxy: '^CNXCMDT', note: 'NIFTY Commodities' },
+  { id: 'in-psubank2',     name: 'PSU (broad)',         emoji: '🏛️', group: 'Broad Sectors', basket: ['SBIN.NS','NTPC.NS','ONGC.NS','COALINDIA.NS','BEL.NS','POWERGRID.NS'], note: 'PSU heavyweights' },
 ];
 
 export const INDIA_BENCHMARK = { symbol: '^NSEI', name: 'NIFTY 50' };
@@ -150,6 +166,17 @@ export const THEME_LEADERS: Record<string, string[]> = {
   'us-crypto': ['COIN', 'MSTR', 'HOOD', 'MARA'],
   'us-ev': ['TSLA', 'RIVN', 'ALB', 'APTV'],
   'us-water': ['ECL', 'AWK', 'XYL', 'WM'],
+  // broad sectors
+  'us-industrials': ['GE', 'CAT', 'HON', 'DE', 'UBER'],
+  'us-transport': ['UBER', 'UPS', 'DAL', 'CSX', 'ODFL'],
+  'us-retail': ['AMZN', 'COST', 'WMT', 'HD', 'TJX'],
+  'us-condisc': ['AMZN', 'TSLA', 'HD', 'MCD', 'NKE'],
+  'us-staples': ['WMT', 'PG', 'KO', 'COST', 'PEP'],
+  'us-healthcare': ['LLY', 'UNH', 'JNJ', 'ABBV', 'MRK'],
+  'us-materials': ['LIN', 'SHW', 'FCX', 'NEM', 'ECL'],
+  'us-utilities': ['NEE', 'SO', 'DUK', 'CEG', 'VST'],
+  'us-reit': ['PLD', 'AMT', 'EQIX', 'WELL', 'DLR'],
+  'us-comm': ['META', 'GOOGL', 'NFLX', 'DIS', 'TMUS'],
   // India
   'in-it': ['TCS.NS', 'INFY.NS', 'HCLTECH.NS', 'WIPRO.NS', 'LTIM.NS', 'PERSISTENT.NS'],
   'in-energy': ['RELIANCE.NS', 'NTPC.NS', 'POWERGRID.NS', 'ONGC.NS', 'COALINDIA.NS'],

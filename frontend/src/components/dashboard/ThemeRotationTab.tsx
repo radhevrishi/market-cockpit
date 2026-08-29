@@ -128,7 +128,11 @@ export default function ThemeRotationTab() {
     const groups = new Map<string, typeof all>();
     const other: typeof all = [];
     for (const st of all) { const tid = classifyTheme(st.sector, st.industry, region); if (tid) { if (!groups.has(tid)) groups.set(tid, []); groups.get(tid)!.push(st); } else other.push(st); }
-    return { total: all.length, groups, other };
+    // zzz487 — anything the classifier can't place still gets shown, grouped by its
+    // raw sector (no rotation call, but visible) so NONE of the user's names vanish.
+    const sectorGroups = new Map<string, typeof all>();
+    for (const st of other) { const sec = (st.sector || st.industry || 'Unclassified').toString().trim() || 'Unclassified'; if (!sectorGroups.has(sec)) sectorGroups.set(sec, []); sectorGroups.get(sec)!.push(st); }
+    return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups };
   }, [region, payload, userLists]);
 
   const regime = useMemo(() => {
@@ -216,6 +220,48 @@ export default function ThemeRotationTab() {
                   {t.characterChange === 'bullish' ? '⚡ Character change ↑' : '⚠️ Character change ↓'} — {t.emoji} {t.name}: {t.characterChange === 'bullish' ? 'momentum crossed up + reclaimed 50-DMA' : 'momentum rolled over + lost 50-DMA'}
                 </span>
               ))}
+            </div>
+          )}
+
+          {/* YOUR BOOK — every stock on your lists, mapped to a theme, shown right
+              under the call strip. Nothing hidden: themed stocks show the theme's
+              call; the rest are grouped by their sector. */}
+          {userBook.total > 0 && (
+            <div style={{ marginBottom: 14, background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>📋 Your Book by Theme</div>
+              <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10 }}>Every stock on your Technicals / Multibagger lists, auto-sorted into its theme by sector so you see the rotation call for each. <b style={{ color: MUT }}>{userBook.total}</b> names · <b style={{ color: MUT }}>{userBook.themed}</b> in a rotation theme{userBook.sectorGroups.size ? <> · <b style={{ color: MUT }}>{userBook.other.length}</b> grouped by sector below</> : null}. ★ = your name; grade = your Fundo.</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(250px,1fr))', gap: 9 }}>
+                {[...userBook.groups.entries()]
+                  .map(([tid, sts]) => ({ tid, sts, th: byId.get(tid) }))
+                  .sort((a, b) => { const rk = (v?: string) => v === 'BUY' ? 0 : v === 'EARLY BUY' ? 1 : v === 'HOLD' || v === 'WATCH' ? 2 : v === 'TRIM' ? 3 : v === 'AVOID' ? 4 : 5; return rk(a.th?.verdict) - rk(b.th?.verdict) || b.sts.length - a.sts.length; })
+                  .map(({ tid, sts, th }) => (
+                    <div key={tid} style={{ border: `1px solid ${(th?.verdictColor || '#64748B')}44`, borderRadius: 8, padding: '8px 10px', background: BG }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
+                        <button onClick={() => th && toggleExpand(tid)} style={{ background: 'transparent', border: 'none', color: TXT, fontWeight: 800, fontSize: 12, cursor: th ? 'pointer' : 'default', padding: 0, textAlign: 'left' }}>{th ? `${th.emoji} ${th.name}` : tid} <span style={{ color: DIM, fontWeight: 600 }}>· {sts.length}</span></button>
+                        {th?.verdict ? <span style={{ fontSize: 9, fontWeight: 900, color: th.verdictColor, background: `${th.verdictColor}1a`, border: `1px solid ${th.verdictColor}55`, borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{th.verdict}</span> : null}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                        {sts.map((s) => (
+                          <span key={s.symbol} title={`${s.sector || ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 6px' }}>★ {s.symbol}{s.grade ? <span style={{ color: DIM }}> {s.grade}</span> : null}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                {/* sector-fallback groups — visible even without a rotation theme */}
+                {[...userBook.sectorGroups.entries()].sort((a, b) => b[1].length - a[1].length).map(([sec, sts]) => (
+                  <div key={`sec:${sec}`} style={{ border: `1px dashed ${BORD}`, borderRadius: 8, padding: '8px 10px', background: BG }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
+                      <span style={{ color: MUT, fontWeight: 800, fontSize: 11.5 }}>{sec} <span style={{ color: DIM, fontWeight: 600 }}>· {sts.length}</span></span>
+                      <span style={{ fontSize: 8.5, color: DIM }}>no theme call</span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {sts.map((s) => (
+                        <span key={s.symbol} title={`${s.sector || ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: MUT, background: 'rgba(148,163,184,0.12)', borderRadius: 4, padding: '1px 6px' }}>★ {s.symbol}{s.grade ? <span style={{ color: DIM }}> {s.grade}</span> : null}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -324,37 +370,6 @@ export default function ThemeRotationTab() {
             </div>
           </div>
 
-          {/* YOUR BOOK — every stock on your lists, auto-mapped to a theme + its call */}
-          {userBook.total > 0 && (
-            <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>📋 Your Book by Theme</div>
-              <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10 }}>Every stock on your Technicals / Multibagger lists, auto-sorted into its theme by sector — so you see the rotation call for each one. {userBook.total} names · {userBook.total - userBook.other.length} themed{userBook.other.length ? ` · ${userBook.other.length} not yet mapped` : ''}.</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 9 }}>
-                {[...userBook.groups.entries()]
-                  .map(([tid, sts]) => ({ tid, sts, th: byId.get(tid) }))
-                  .sort((a, b) => { const rk = (v?: string) => v === 'BUY' ? 0 : v === 'EARLY BUY' ? 1 : v === 'HOLD' || v === 'WATCH' ? 2 : v === 'TRIM' ? 3 : v === 'AVOID' ? 4 : 5; return rk(a.th?.verdict) - rk(b.th?.verdict) || b.sts.length - a.sts.length; })
-                  .map(({ tid, sts, th }) => (
-                    <div key={tid} style={{ border: `1px solid ${th?.verdictColor || BORD}44`, borderRadius: 8, padding: '8px 10px', background: BG }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
-                        <button onClick={() => th && toggleExpand(tid)} style={{ background: 'transparent', border: 'none', color: TXT, fontWeight: 800, fontSize: 12, cursor: th ? 'pointer' : 'default', padding: 0 }}>{th ? `${th.emoji} ${th.name}` : tid}</button>
-                        {th?.verdict ? <span style={{ fontSize: 9, fontWeight: 900, color: th.verdictColor, background: `${th.verdictColor}1a`, border: `1px solid ${th.verdictColor}55`, borderRadius: 5, padding: '2px 6px' }}>{th.verdict}</span> : null}
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                        {sts.slice(0, 14).map((s) => (
-                          <span key={s.symbol} title={`${s.sector || ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 6px' }}>★ {s.symbol}{s.grade ? <span style={{ color: DIM }}> {s.grade}</span> : null}</span>
-                        ))}
-                        {sts.length > 14 ? <span style={{ fontSize: 10, color: DIM }}>+{sts.length - 14}</span> : null}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-              {userBook.other.length > 0 && (
-                <div style={{ marginTop: 10, fontSize: 10.5, color: DIM }}>
-                  <b style={{ color: MUT }}>Not yet mapped ({userBook.other.length}):</b> {userBook.other.slice(0, 30).map((s) => s.symbol).join(', ')}{userBook.other.length > 30 ? '…' : ''}. These have a sector we don’t map to a theme yet — tell me and I’ll add a rule so they’re covered too.
-                </div>
-              )}
-            </div>
-          )}
 
           <div style={{ marginTop: 12, fontSize: 10, color: DIM, lineHeight: 1.6 }}>
             <b style={{ color: MUT }}>How to read it:</b> Leading (green) = strong &amp; rising → buy leaders. Improving (blue) = weak but turning up → early buy on 50-DMA reclaim. Weakening (orange) = strong but rolling over → trim. Lagging (red) = weak &amp; falling → avoid. Verdicts combine the quadrant with the price’s position vs its 50-DMA. Live prices via {payload.source}. Themes with no clean ETF use an equal-weight basket of leaders. Educational, not investment advice.

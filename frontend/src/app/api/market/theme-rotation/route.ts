@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v2:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v3:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -206,7 +206,7 @@ async function build(region: ThemeRegion) {
       ts = synth.ts; closes = synth.closes;
       if (memberSeries.length) {
         dayChg = +(memberSeries.reduce((a, m) => a + (m.dayChg || 0), 0) / memberSeries.length).toFixed(2);
-        const above = memberSeries.filter((m) => { const s = sma(m.closes, 50); return s != null && m.closes[m.closes.length - 1] > s; }).length;
+        const above = memberSeries.filter((m) => { const s = sma(m.closes, 50); const cc = m.closes.filter((x) => x != null && !isNaN(x)); const last = cc[cc.length - 1]; return s != null && last != null && last > s; }).length;   // zzz487 — use last VALID close (was reading a trailing null → always 0%)
         breadthAbove50 = Math.round((above / memberSeries.length) * 100);
       }
     }
@@ -284,11 +284,11 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
     // trend (vs 50-DMA), and momentum consistency. Works for every stock, forever,
     // with no dependency on uploads. (The FUNDO half is overlaid client-side from
     // the user's own Multibagger / Technicals lists, which the app actually has.)
-    let techno = 30;
-    techno += Math.max(-30, Math.min(35, rs3m * 1.4));   // momentum vs benchmark
-    if (aboveSMA50) techno += 15; else techno -= 8;      // trend
+    let techno = 38;                                     // zzz487 — more granularity in the weak zone (was flooring lots at 0)
+    techno += Math.max(-34, Math.min(40, rs3m * 1.15));  // momentum vs benchmark
+    if (aboveSMA50) techno += 14; else techno -= 6;      // trend
     if (r.m1 > 0 && r.m3 > 0 && r.m6 > 0) techno += 12;  // consistent uptrend
-    else if (r.m1 < 0 && r.m3 < 0) techno -= 8;
+    else if (r.m1 < 0 && r.m3 < 0) techno -= 6;
     if (r.m1 > 0) techno += 4;
     techno = Math.max(0, Math.min(100, Math.round(techno)));
     return {
@@ -308,7 +308,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v2:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v3:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }
