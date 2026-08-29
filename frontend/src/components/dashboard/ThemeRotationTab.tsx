@@ -152,6 +152,34 @@ export default function ThemeRotationTab() {
     return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups };
   }, [region, payload, userLists]);
 
+  // zzz495 — DUMMY PORTFOLIO. The best 25 of YOUR names, taken ONLY from themes the
+  // engine currently rates BUY or EARLY BUY (Leading / genuine early-turn). Nothing
+  // from Weakening (TRIM) or Lagging (AVOID) ever enters. Ranked by Fundo grade
+  // (A+ → A → B+ … → D, ungraded last), BUY themes ahead of EARLY BUY on ties.
+  // Equal-weighted as a simple starter book. Rebuilds live per region.
+  const dummyPortfolio = useMemo(() => {
+    const gradeRank = (g?: string | null) => {
+      if (!g) return 99;
+      const m = String(g).trim().toUpperCase().match(/^([A-F])\s*([+-]?)/);
+      if (!m) return 99;
+      const base: Record<string, number> = { A: 0, B: 3, C: 6, D: 9, E: 12, F: 12 };
+      const mod = m[2] === '+' ? 0 : m[2] === '-' ? 2 : 1;
+      return (base[m[1]] ?? 90) + mod;
+    };
+    const BUYABLE = new Set(['BUY', 'EARLY BUY']);
+    const picks: { symbol: string; grade?: string; gr: number; themeName: string; themeEmoji: string; verdict: string; verdictColor?: string }[] = [];
+    for (const [tid, sts] of userBook.groups.entries()) {
+      const th = byId.get(tid);
+      if (!th || !th.verdict || !BUYABLE.has(th.verdict)) continue;
+      for (const s of sts) picks.push({ symbol: s.symbol, grade: s.grade, gr: gradeRank(s.grade), themeName: th.name, themeEmoji: th.emoji, verdict: th.verdict, verdictColor: th.verdictColor });
+    }
+    picks.sort((a, b) => a.gr - b.gr || ((a.verdict === 'BUY' ? 0 : 1) - (b.verdict === 'BUY' ? 0 : 1)) || a.symbol.localeCompare(b.symbol));
+    const top = picks.slice(0, 25);
+    const graded = top.filter((p) => p.gr < 99).length;
+    const wt = top.length ? +(100 / top.length).toFixed(1) : 0;
+    return { top, graded, wt };
+  }, [userBook, byId]);
+
   const regime = useMemo(() => {
     if (!payload || !themes.length) return null;
     const nm = (id: string) => byId.get(id)?.name;
@@ -388,6 +416,48 @@ export default function ThemeRotationTab() {
             </div>
           </div>
 
+
+          {/* ═══ DUMMY PORTFOLIO — best 25 of your names from BUY / EARLY-BUY themes ═══ */}
+          <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 12, padding: 15 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 3 }}>
+              <div style={{ fontSize: 14, fontWeight: 900, color: TXT }}>🧪 Dummy Portfolio — Best {dummyPortfolio.top.length} <span style={{ color: DIM, fontWeight: 700 }}>({region === 'us' ? '🇺🇸 USA' : '🇮🇳 India'})</span></div>
+              {dummyPortfolio.top.length > 0 && <div style={{ fontSize: 10.5, color: DIM }}><b style={{ color: MUT }}>{dummyPortfolio.graded}</b> graded · equal-weight <b style={{ color: MUT }}>{dummyPortfolio.wt}%</b> each</div>}
+            </div>
+            <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>Your Multibagger / Technicals names that sit in a theme the engine rates <b style={{ color: '#22C55E' }}>BUY</b> or <b style={{ color: '#22C55E' }}>EARLY BUY</b> right now — <b style={{ color: MUT }}>nothing from Weakening or Lagging</b>. Ranked by your Fundo grade (A+ first). A simple starter book, not advice.</div>
+            {dummyPortfolio.top.length === 0 ? (
+              <div style={{ fontSize: 11.5, color: DIM, padding: '10px 0' }}>No names from your lists currently sit in a BUY / EARLY-BUY theme. When a theme you own rotates into a buy call, its best-graded names appear here.</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ color: DIM, textAlign: 'left' }}>
+                      <th style={{ padding: '5px 8px', fontWeight: 700, width: 30 }}>#</th>
+                      <th style={{ padding: '5px 8px', fontWeight: 700 }}>Ticker</th>
+                      <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'center' }}>Fundo</th>
+                      <th style={{ padding: '5px 8px', fontWeight: 700 }}>Theme</th>
+                      <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'center' }}>Call</th>
+                      <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'right' }}>Wt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dummyPortfolio.top.map((p, i) => {
+                      const gcol = p.grade ? (String(p.grade).startsWith('A') ? '#22C55E' : String(p.grade).startsWith('B') ? '#EAB308' : '#F59E0B') : DIM;
+                      return (
+                        <tr key={p.symbol} style={{ borderTop: `1px solid ${BORD}` }}>
+                          <td style={{ padding: '6px 8px', color: DIM, fontWeight: 700 }}>{i + 1}</td>
+                          <td style={{ padding: '6px 8px', color: '#F59E0B', fontWeight: 800 }}>★ {p.symbol}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: gcol }}>{p.grade || '·'}</td>
+                          <td style={{ padding: '6px 8px', color: MUT, whiteSpace: 'nowrap' }}>{p.themeEmoji} {p.themeName}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'center' }}><span style={{ fontSize: 9, fontWeight: 900, color: p.verdictColor, background: `${p.verdictColor}1a`, border: `1px solid ${p.verdictColor}55`, borderRadius: 5, padding: '2px 6px', whiteSpace: 'nowrap' }}>{p.verdict}</span></td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right', color: MUT, fontWeight: 700 }}>{dummyPortfolio.wt}%</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           <div style={{ marginTop: 12, fontSize: 10, color: DIM, lineHeight: 1.6 }}>
             <b style={{ color: MUT }}>How to read it:</b> Leading (green) = strong &amp; rising → buy leaders. Improving (blue) = weak but turning up → early buy on 50-DMA reclaim. Weakening (orange) = strong but rolling over → trim. Lagging (red) = weak &amp; falling → avoid. Verdicts combine the quadrant with the price’s position vs its 50-DMA. Live prices via {payload.source}. Themes with no clean ETF use an equal-weight basket of leaders. Educational, not investment advice.
