@@ -5242,6 +5242,44 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
                 </>
               );
             })()}
+            {/* zzz501 — CASH-BACKED PROFIT chip: cumulative Cash-from-Operations ÷
+                Net Profit. The single best earnings-quality test — real cash must
+                back reported profit. ≥1× = CFO exceeds PAT (pristine); 0.8–1 =
+                healthy; 0.5–0.8 = working-capital/accrual drag; <0.5 = profits NOT
+                cash-backed (aggressive-accounting red flag). Not meaningful for
+                lenders (financing-driven cash flows) → shown n/a. Multi-year
+                consistency (annual_cfo_pat) surfaces in the tooltip. */}
+            {(() => {
+              const fin = cbIsFinancial(entry);
+              const r = (entry as any).cfo_to_pat_ratio;
+              const yrs = Array.isArray((entry as any).annual_cfo_pat)
+                ? (((entry as any).annual_cfo_pat as (number | null)[]).filter((x) => typeof x === 'number' && Number.isFinite(x as number)) as number[])
+                : [];
+              const backed = yrs.filter((x) => x >= 0.8).length;
+              if (fin) return (
+                <>
+                  <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
+                  <span title="Cash conversion (CFO/PAT) is not meaningful for banks / NBFCs / lenders — their cash flow is dominated by financing activity, not operations.">
+                    <span style={{ color: 'var(--mc-text-4)' }}>💵 CASH</span> <strong style={{ color: 'var(--mc-text-4)' }}>n/a</strong>
+                  </span>
+                </>
+              );
+              if (typeof r !== 'number' || !Number.isFinite(r)) return null;
+              const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
+              const tag = r >= 1 ? 'cash-rich' : r >= 0.8 ? 'backed' : r >= 0.5 ? 'partial' : 'accrual risk';
+              const icon = r >= 0.8 ? '💵' : r >= 0.5 ? '◐' : '⚠';
+              const yrTxt = yrs.length ? ` · consistency: ${backed}/${yrs.length} yrs ≥0.8× (per-yr ${yrs.map((v) => v.toFixed(1)).join(', ')})` : '';
+              return (
+                <>
+                  <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
+                  <span title={`Cash-backed profit: cumulative Cash-from-Operations ÷ Net Profit = ${r.toFixed(2)}×. ≥1 = CFO exceeds reported profit (pristine); 0.8–1 = healthy; 0.5–0.8 = working-capital / accrual drag; <0.5 = profits NOT backed by cash — an earnings-quality red flag.${yrTxt}`}>
+                    <span style={{ color: 'var(--mc-text-4)' }}>{icon} CASH</span>{' '}
+                    <strong style={{ color: col }}>{r.toFixed(2)}×</strong>
+                    <span style={{ color: col, opacity: 0.85, fontSize: 9 }}> {tag}</span>
+                  </span>
+                </>
+              );
+            })()}
           </div>
         );
       })()}
