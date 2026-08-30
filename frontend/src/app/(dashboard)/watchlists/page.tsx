@@ -5080,9 +5080,9 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
               // zzz364 (BUG 2c) — financials: CFO/PAT is not meaningful for lenders/NBFCs.
               if (cbIsFinancial(entry)) {
                 return (
-                  <span title="Cash-flow/PAT is not meaningful for lenders/NBFCs">
+                  <span title="Cash conversion (CFO/PAT) is not meaningful for lenders / NBFCs — their cash flow is dominated by financing activity, not operations.">
                     <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                    <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT</span>{' '}
+                    <span style={{ color: 'var(--mc-text-4)' }}>💵 CASH</span>{' '}
                     <strong style={{ color: 'var(--mc-text-4)' }}>n/m</strong>
                   </span>
                 );
@@ -5093,22 +5093,32 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
                 return (
                   <span title={`Annual CFO/PAT ${r.toFixed(2)} is outside the meaningful range (|ratio| > 5×) — likely a depressed-PAT or working-capital artifact, not a genuine cash-conversion signal.`}>
                     <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                    <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT FY</span>{' '}
+                    <span style={{ color: 'var(--mc-text-4)' }}>💵 CASH</span>{' '}
                     <strong style={{ color: 'var(--mc-text-4)' }}>n/m</strong>
                   </span>
                 );
               }
               const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
-              const base = 'Annual CFO/PAT ' + r.toFixed(2) + ' (Screener FY figures — cash flow is published annually, not quarterly). ';
-              const tip = r >= 1 ? base + 'Pristine cash conversion (>=1 means annual CFO ≥ reported profit).'
+              // zzz502 — make cash-backed profit read at a glance: 💵/◐/⚠ icon + a
+              // one-word verdict, plus multi-year consistency (how many of the last
+              // N years converted ≥0.8×) in the tooltip. Same value as before, just
+              // legible — this is THE earnings-quality signal, so it earns the space.
+              const icon = r >= 0.8 ? '💵' : r >= 0.5 ? '◐' : '⚠';
+              const tag = r >= 1 ? 'cash-rich' : r >= 0.8 ? 'backed' : r >= 0.5 ? 'partial' : 'accrual risk';
+              const series = arr && arr.length ? (arr as number[]) : [];
+              const backed = series.filter((x) => x >= 0.8).length;
+              const consistency = series.length >= 2 ? ` · consistency ${backed}/${series.length} yrs ≥0.8× (per-yr ${series.map((v) => v.toFixed(1)).join(', ')})` : '';
+              const base = 'Cash-backed profit — annual Cash-from-Operations ÷ Net Profit = ' + r.toFixed(2) + '× (Screener FY figures; cash flow is published annually). ';
+              const tip = (r >= 1 ? base + 'Pristine — CFO ≥ reported profit.'
                 : r >= 0.8 ? base + 'Healthy multi-year cash conversion.'
-                : r >= 0.5 ? base + 'Cash conversion running below reported profit — watch working capital days.'
-                : base + 'WEAK: profits not translating into cash. Earnings-quality concern that predates this quarter.';
+                : r >= 0.5 ? base + 'Below reported profit — watch working-capital days.'
+                : base + 'WEAK — profits not converting to cash. An earnings-quality red flag that predates this quarter.') + consistency;
               return (
                 <span title={tip}>
                   <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                  <span style={{ color: 'var(--mc-text-4)' }}>CFO/PAT FY</span>{' '}
-                  <strong style={{ color: col }}>{r.toFixed(2)}</strong>
+                  <span style={{ color: 'var(--mc-text-4)' }}>{icon} CASH</span>{' '}
+                  <strong style={{ color: col }}>{r.toFixed(2)}×</strong>
+                  <span style={{ color: col, opacity: 0.85 }}> {tag}</span>
                 </span>
               );
             })()}
@@ -5238,44 +5248,6 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
                     : `Promoter pledge ${p.toFixed(p < 1 ? 2 : 1)}% of promoter holding. Pledged shares = leverage/liquidity risk; forced sale on margin call can cascade the price.`}>
                     <span style={{ color: 'var(--mc-text-4)' }}>PLEDGE</span>{' '}
                     <strong style={{ color: col }}>{clean ? '0%' : p.toFixed(p < 1 ? 2 : 1) + '%'}</strong>
-                  </span>
-                </>
-              );
-            })()}
-            {/* zzz501 — CASH-BACKED PROFIT chip: cumulative Cash-from-Operations ÷
-                Net Profit. The single best earnings-quality test — real cash must
-                back reported profit. ≥1× = CFO exceeds PAT (pristine); 0.8–1 =
-                healthy; 0.5–0.8 = working-capital/accrual drag; <0.5 = profits NOT
-                cash-backed (aggressive-accounting red flag). Not meaningful for
-                lenders (financing-driven cash flows) → shown n/a. Multi-year
-                consistency (annual_cfo_pat) surfaces in the tooltip. */}
-            {(() => {
-              const fin = cbIsFinancial(entry);
-              const r = (entry as any).cfo_to_pat_ratio;
-              const yrs = Array.isArray((entry as any).annual_cfo_pat)
-                ? (((entry as any).annual_cfo_pat as (number | null)[]).filter((x) => typeof x === 'number' && Number.isFinite(x as number)) as number[])
-                : [];
-              const backed = yrs.filter((x) => x >= 0.8).length;
-              if (fin) return (
-                <>
-                  <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-                  <span title="Cash conversion (CFO/PAT) is not meaningful for banks / NBFCs / lenders — their cash flow is dominated by financing activity, not operations.">
-                    <span style={{ color: 'var(--mc-text-4)' }}>💵 CASH</span> <strong style={{ color: 'var(--mc-text-4)' }}>n/a</strong>
-                  </span>
-                </>
-              );
-              if (typeof r !== 'number' || !Number.isFinite(r)) return null;
-              const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
-              const tag = r >= 1 ? 'cash-rich' : r >= 0.8 ? 'backed' : r >= 0.5 ? 'partial' : 'accrual risk';
-              const icon = r >= 0.8 ? '💵' : r >= 0.5 ? '◐' : '⚠';
-              const yrTxt = yrs.length ? ` · consistency: ${backed}/${yrs.length} yrs ≥0.8× (per-yr ${yrs.map((v) => v.toFixed(1)).join(', ')})` : '';
-              return (
-                <>
-                  <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-                  <span title={`Cash-backed profit: cumulative Cash-from-Operations ÷ Net Profit = ${r.toFixed(2)}×. ≥1 = CFO exceeds reported profit (pristine); 0.8–1 = healthy; 0.5–0.8 = working-capital / accrual drag; <0.5 = profits NOT backed by cash — an earnings-quality red flag.${yrTxt}`}>
-                    <span style={{ color: 'var(--mc-text-4)' }}>{icon} CASH</span>{' '}
-                    <strong style={{ color: col }}>{r.toFixed(2)}×</strong>
-                    <span style={{ color: col, opacity: 0.85, fontSize: 9 }}> {tag}</span>
                   </span>
                 </>
               );
