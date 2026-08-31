@@ -61,7 +61,9 @@ export default function InvestingPlaybookPage() {
   const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set()); // zzz401 — PART-XX sub-list collapsed by default
   const [collapsedBooks, setCollapsedBooks] = useState<Set<number>>(new Set(ALL_BOOKS)); // zzz402 — all Books collapsed by default
   const [view, setView] = useState<'intro' | 'book'>('intro'); // zzz407 — First Principles is the default landing page
+  const [completed, setCompleted] = useState<Set<number>>(new Set()); // zzz514 — sections marked done
   const mainRef = useRef<HTMLDivElement>(null);
+  const toggleComplete = (i: number) => setCompleted((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
 
   const totalLines = useMemo(() => BOOK.reduce((n, p) => n + partLines(p), 0), []);
   const totalSubs = useMemo(() => BOOK.reduce((n, p) => n + p.subs.length, 0), []);
@@ -77,13 +79,14 @@ export default function InvestingPlaybookPage() {
       const s = JSON.parse(raw);
       if (typeof s.activePart === 'number' && s.activePart >= 0 && s.activePart < BOOK.length) setActivePart(s.activePart);
       if (Array.isArray(s.expandedParts)) setExpandedParts(new Set(s.expandedParts.filter((n: unknown) => typeof n === 'number') as number[]));
+      if (Array.isArray(s.completed)) setCompleted(new Set(s.completed.filter((n: unknown) => typeof n === 'number') as number[]));
     } catch { /* ignore */ }
   }, []);
 
-  // Persist reading position whenever it changes.
+  // Persist reading position + completion whenever they change.
   useEffect(() => {
-    try { localStorage.setItem(LS_PROGRESS, JSON.stringify({ activePart, expandedParts: Array.from(expandedParts) })); } catch { /* ignore */ }
-  }, [activePart, expandedParts]);
+    try { localStorage.setItem(LS_PROGRESS, JSON.stringify({ activePart, expandedParts: Array.from(expandedParts), completed: Array.from(completed) })); } catch { /* ignore */ }
+  }, [activePart, expandedParts, completed]);
 
   const searchHits = useMemo(() => {
     if (!q.trim()) return null;
@@ -143,6 +146,16 @@ export default function InvestingPlaybookPage() {
           <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 4 }}>INVESTING PLAYBOOK</div>
           <h1 style={{ fontSize: 18, fontWeight: 800, margin: 0, letterSpacing: '-0.3px' }}>📚 Master Learning Tab</h1>
           <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>{BOOK.length} sections · {totalSubs.toLocaleString()} sub-sections · {totalLines.toLocaleString()} lines</div>
+          {/* zzz514 — completion progress */}
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: C.text3, marginBottom: 4 }}>
+              <span>YOUR PROGRESS</span>
+              <span style={{ color: C.text, fontWeight: 700 }}>{completed.size} / {BOOK.length} done</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 3, background: C.panel2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.round((completed.size / Math.max(1, BOOK.length)) * 100)}%`, background: '#10B981', transition: 'width 0.2s' }} />
+            </div>
+          </div>
         </div>
         <div style={{ padding: '12px 14px' }}>
           <input type="text" placeholder="🔍 Search entire book…" value={q} onChange={e => setQ(e.target.value)} style={{ width: '100%', padding: '8px 12px', background: C.panel2, border: '1px solid ' + C.border, borderRadius: 6, color: C.text, fontSize: 13, outline: 'none' }} />
@@ -244,8 +257,18 @@ export default function InvestingPlaybookPage() {
           </article>
         ) : (
           <article style={{ maxWidth: 820, margin: '0 auto' }}>
-            <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px', marginBottom: 6 }}>
-              BOOK {currentPart.book} · Section {activePart + 1} of {BOOK.length}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+              <div style={{ fontSize: 11, color: C.text3, letterSpacing: '0.5px' }}>
+                BOOK {currentPart.book} · Section {activePart + 1} of {BOOK.length}
+              </div>
+              {/* zzz514 — mark this section complete */}
+              <button onClick={() => toggleComplete(activePart)} title="Mark this section complete"
+                style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 11px', borderRadius: 6, cursor: 'pointer',
+                  border: '1px solid ' + (completed.has(activePart) ? '#10B981' : C.border),
+                  background: completed.has(activePart) ? 'color-mix(in srgb, #10B981 14%, transparent)' : C.panel2,
+                  color: completed.has(activePart) ? '#10B981' : C.text2 }}>
+                {completed.has(activePart) ? '✓ Completed' : '○ Mark complete'}
+              </button>
             </div>
             <h1 style={{ fontSize: 30, fontWeight: 800, marginTop: 0, marginBottom: 14, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{currentPart.title}</h1>
             {(currentPart as any).summary && (

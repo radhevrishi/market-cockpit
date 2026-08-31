@@ -2901,8 +2901,22 @@ function DCFCalculator() {
   const [shares, setShares] = useState(10);
   const [mcap, setMcap] = useState(2000);
 
+  // Pure 3-stage DCF → fair market cap for a given (growth, discount) pair.
+  const dcfMcap = (g: number, d: number): number => {
+    if (d <= terminalGrowth) return 0;
+    let explicitPv = 0;
+    let lastFcf = fcf;
+    for (let t = 1; t <= years; t++) {
+      lastFcf = lastFcf * (1 + g / 100);
+      explicitPv += lastFcf / Math.pow(1 + d / 100, t);
+    }
+    const tFcf = lastFcf * (1 + terminalGrowth / 100);
+    const terminalValue = tFcf / ((d - terminalGrowth) / 100);
+    const terminalPv = terminalValue / Math.pow(1 + d / 100, years);
+    return explicitPv + terminalPv;
+  };
+
   const result = useMemo(() => {
-    // 3-stage DCF: high growth N years, then terminal Gordon.
     if (discount <= terminalGrowth) return { fairMcap: 0, perShare: 0, upside: 0, terminalPv: 0, explicitPv: 0 };
     let explicitPv = 0;
     let lastFcf = fcf;
@@ -2918,6 +2932,25 @@ function DCFCalculator() {
     const upside = mcap > 0 ? (fairMcap / mcap - 1) * 100 : 0;
     return { fairMcap, perShare, upside, terminalPv, explicitPv };
   }, [fcf, growth, terminalGrowth, discount, years, shares, mcap]);
+
+  // Sensitivity grid: growth rows × discount cols, cells = upside % vs current mcap.
+  const sens = useMemo(() => {
+    const gRows = [growth - 6, growth - 3, growth, growth + 3, growth + 6];
+    const dCols = [discount - 2, discount - 1, discount, discount + 1, discount + 2];
+    const cells = gRows.map((g) =>
+      dCols.map((d) => {
+        const fm = dcfMcap(g, d);
+        const ups = mcap > 0 ? (fm / mcap - 1) * 100 : 0;
+        const perSh = shares > 0 ? fm / shares : 0;
+        return { g, d, fm, ups, perSh, valid: d > terminalGrowth && fm > 0 };
+      })
+    );
+    return { gRows, dCols, cells };
+  }, [fcf, growth, terminalGrowth, discount, years, shares, mcap]);
+
+  const sensColor = (ups: number): string =>
+    ups >= 50 ? '#10B981' : ups >= 25 ? '#22D3EE' : ups >= 0 ? '#F59E0B'
+      : ups >= -25 ? '#F87171' : '#EF4444';
 
   return (
     <MethodSection
@@ -2947,6 +2980,63 @@ function DCFCalculator() {
           Explicit period PV: ₹{Math.round(result.explicitPv).toLocaleString('en-IN')} Cr ·{' '}
           Terminal PV: ₹{Math.round(result.terminalPv).toLocaleString('en-IN')} Cr{' '}
           ({result.fairMcap > 0 ? Math.round(result.terminalPv / result.fairMcap * 100) : 0}% of fair value)
+        </div>
+      </div>
+
+      {/* Sensitivity grid — upside % across growth (rows) × discount rate (cols) */}
+      <div style={{ marginTop: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: TEXT, marginBottom: 2 }}>
+          🎯 Sensitivity — upside % vs current price
+        </div>
+        <div style={{ fontSize: 10, color: DIM, marginBottom: 8 }}>
+          How the DCF fair value swings as growth and discount rate move ±. Your inputs sit in the centre (outlined) cell.
+          A thesis that only works in the top-right corner is fragile.
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 360 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', color: DIM, fontWeight: 700, fontSize: 9, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                  growth ↓ / discount →
+                </th>
+                {sens.dCols.map((d) => (
+                  <th key={d} style={{ padding: '4px 8px', color: DIM, fontWeight: 700, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    {d}%
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sens.cells.map((row, ri) => (
+                <tr key={ri}>
+                  <td style={{ padding: '4px 8px', color: DIM, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    {sens.gRows[ri]}%
+                  </td>
+                  {row.map((c, ci) => {
+                    const isCenter = ri === 2 && ci === 2;
+                    const col = c.valid ? sensColor(c.ups) : DIM;
+                    return (
+                      <td
+                        key={ci}
+                        title={c.valid ? `Fair ₹${Math.round(c.perSh).toLocaleString('en-IN')}/sh` : 'discount ≤ terminal growth'}
+                        style={{
+                          padding: '5px 8px',
+                          textAlign: 'center',
+                          fontWeight: isCenter ? 800 : 600,
+                          color: col,
+                          background: `${col}14`,
+                          border: isCenter ? `2px solid ${col}` : `1px solid ${BORDER}`,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {c.valid ? `${c.ups >= 0 ? '+' : ''}${c.ups.toFixed(0)}%` : '—'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </MethodSection>

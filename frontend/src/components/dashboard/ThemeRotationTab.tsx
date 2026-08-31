@@ -431,6 +431,54 @@ export default function ThemeRotationTab() {
           </div>
 
 
+          {/* ═══ zzz514 — YOUR EXPOSURE vs THE ROTATION CALL ═══ */}
+          {(() => {
+            const tById = new Map<string, any>((payload.themes || []).map((t: any) => [t.id, t]));
+            const rows: { theme: any; names: string[] }[] = [];
+            for (const [tid, names] of userBook.groups) { const t = tById.get(tid); if (t) rows.push({ theme: t, names: (names as any[]).map((n) => n.symbol) }); }
+            const LEAD = new Set(['BUY', 'EARLY BUY']);
+            const FADE = new Set(['TRIM', 'AVOID']);
+            const leading = rows.filter((r) => LEAD.has(r.theme.verdict)).sort((a, b) => b.names.length - a.names.length);
+            const fading = rows.filter((r) => FADE.has(r.theme.verdict)).sort((a, b) => b.names.length - a.names.length);
+            const nLead = leading.reduce((a, r) => a + r.names.length, 0);
+            const nFade = fading.reduce((a, r) => a + r.names.length, 0);
+            const nTot = rows.reduce((a, r) => a + r.names.length, 0);
+            if (nTot === 0) return null;
+            const tiltGood = nLead >= nFade;
+            return (
+              <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 12, padding: 15 }}>
+                <div style={{ fontSize: 14, fontWeight: 900, color: TXT, marginBottom: 3 }}>🧭 Your exposure vs the rotation call</div>
+                <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>
+                  Where your book actually sits against today's rotation. <b style={{ color: '#22C55E' }}>{nLead}</b> of your {nTot} themed names are in leading / early-buy themes; <b style={{ color: '#EF4444' }}>{nFade}</b> sit in fading themes (trim / avoid). {tiltGood ? 'Your tilt is with the rotation.' : 'You are heavy in themes rolling over — review the trim list.'}
+                </div>
+                {fading.length > 0 && (
+                  <div style={{ marginBottom: leading.length ? 12 : 0 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#EF4444', textTransform: 'uppercase', marginBottom: 6 }}>✂️ Exposed to fading themes — trim candidates</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {fading.map((r) => (
+                        <div key={r.theme.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11.5 }}>
+                          <span style={{ color: TXT, fontWeight: 700, minWidth: 150 }}>{r.theme.emoji} {r.theme.name}</span>
+                          <span style={{ fontSize: 9.5, fontWeight: 800, color: '#EF4444', background: 'color-mix(in srgb, #EF4444 12%, transparent)', border: '1px solid color-mix(in srgb, #EF4444 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
+                          <span style={{ color: MUT, fontFamily: 'ui-monospace, Menlo, monospace' }}>{r.names.join(', ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {leading.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#22C55E', textTransform: 'uppercase', marginBottom: 6 }}>✓ Aligned — in leading themes</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {leading.map((r) => (
+                        <span key={r.theme.id} style={{ fontSize: 10.5, color: MUT, background: BG, border: `1px solid ${BORD}`, padding: '2px 7px', borderRadius: 5 }}>{r.theme.emoji} {r.theme.name} <b style={{ color: TXT }}>·{r.names.length}</b></span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* ═══ DUMMY PORTFOLIO — best 25 of your names from BUY / EARLY-BUY themes ═══ */}
           <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 12, padding: 15 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 3 }}>
