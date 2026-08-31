@@ -184,8 +184,35 @@ function gradeRow(row: any): ParsedEarning | null {
     if (row?.pat_curr_cr != null) absoluteBits.push(`PAT \u20B9${row.pat_curr_cr}Cr`);
     if (row?.eps_curr != null) absoluteBits.push(`EPS \u20B9${row.eps_curr}`);
     const absStr = absoluteBits.length ? ' \u00b7 ' + absoluteBits.join(' \u00b7 ') : '';
+    // zzz503 \u2014 honest labelling of the no-YoY case. The previous copy
+    // ("YoY comparison unavailable (prior-period data missing)") read like a
+    // pipeline bug. In practice a company reaches this branch \u2014 full current
+    // absolutes but zero prior-period and zero YoY \u2014 almost only when it is
+    // NEWLY LISTED (Screener has no year-ago column because it wasn't trading a
+    // year ago). We now say so plainly, and enrich a richer one-liner (net
+    // margin + price/PE) so the card is genuinely informative, not a stub.
+    const _isNew = row?.newly_listed === true
+      || (row?.num_quarters != null && row.num_quarters <= 5)
+      || (hasAnyAbsolute && row?.sales_prev_cr == null && row?.pat_prev_cr == null && row?.eps_prev == null);
+    const _netMargin = (row?.pat_curr_cr != null && row?.sales_curr_cr != null && row.sales_curr_cr > 0)
+      ? Math.round((row.pat_curr_cr / row.sales_curr_cr) * 1000) / 10 : null;
+    const _marginBit = _netMargin != null ? ` (${_netMargin}% net margin)` : '';
+    const _priceBits: string[] = [];
+    if (row?.current_price != null) _priceBits.push(`\u20b9${row.current_price}`);
+    if ((row?.pe ?? row?.stockPE) != null) _priceBits.push(`P/E ${Math.round(row.pe ?? row.stockPE)}`);
+    const _priceStr = _priceBits.length ? ` \u00b7 trades at ${_priceBits.join(', ')}` : '';
+    // Re-word absStr to attach the net-margin note to PAT for the newly-listed line.
+    const _absNew = (() => {
+      const bits: string[] = [];
+      if (row?.sales_curr_cr != null) bits.push(`Rev \u20b9${row.sales_curr_cr}Cr`);
+      if (row?.pat_curr_cr != null) bits.push(`PAT \u20b9${row.pat_curr_cr}Cr${_marginBit}`);
+      if (row?.eps_curr != null) bits.push(`EPS \u20b9${row.eps_curr}`);
+      return bits.length ? ' \u00b7 ' + bits.join(' \u00b7 ') : '';
+    })();
     const narrative = hasAnyAbsolute
-      ? `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${absStr}. YoY comparison unavailable (prior-period data missing).`
+      ? (_isNew
+          ? `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${_absNew}${_priceStr}. Newly listed \u2014 first reported quarter as a public company, so no year-ago comparable yet.`
+          : `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${absStr}. Absolute figures shown; year-ago quarter not yet in source.`)
       : `${row.company || row.symbol} reported ${deriveQuarterLabel(row.filing_date)} results${moveLabel}. Financial detail awaiting enrichment.`;
     return {
       ticker: row.symbol, company: row.company || row.symbol, sector: row.sector, filing_date: row.filing_date,
@@ -201,7 +228,7 @@ function gradeRow(row: any): ParsedEarning | null {
       rs_rating: row.rs_rating ?? null, stage: row.stage ?? null, pct_from_52w_high: row.pct_from_52w_high ?? null,
       composite_score: score, tier,
       methodology_tags: [],
-      caveat_tags: hasAnyAbsolute ? ['prior-year missing'] : [],
+      caveat_tags: hasAnyAbsolute ? [_isNew ? 'newly listed' : 'no YoY yet'] : [],
       narrative,
       filing_url: row.source_url,
       source: hasAnyAbsolute ? (row.financials_source || 'screener-worker') : 'NSE+BSE',
@@ -582,7 +609,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v10:${date}`;  // zzz190: bumped v9->v10 to invalidate cached empty payloads for historic dates under the old 7-day drop rule
+  const cacheKey = `graded:v11:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
@@ -824,6 +851,7 @@ export async function GET(req: Request) {
             sales_curr_cr: e.sales_curr_cr, sales_prev_cr: e.sales_prev_cr, sales_yoy_pct: e.sales_yoy_pct,
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
             eps_curr: e.eps_curr, eps_prev: e.eps_prev, eps_yoy_pct: e.eps_yoy_pct,
+            newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
             op_profit_yoy_pct: e.op_profit_yoy_pct, opm_pct: e.opm_pct, opm_prev_pct: e.opm_prev_pct,
             pe: e.pe, current_price: e.current_price ?? c.price,
             gap_pct: e.gap_pct ?? c.gap_pct, d1_pct: e.d1_pct ?? c.d1_pct, move_pct: e.move_pct ?? c.move_pct,
@@ -1392,6 +1420,7 @@ export async function GET(req: Request) {
       pat_curr_cr: e.pat_curr_cr ?? null, pat_prev_cr: e.pat_prev_cr ?? null,
       pat_yoy_pct: e.pat_yoy_pct ?? null,
       eps_curr: e.eps_curr ?? null, eps_prev: e.eps_prev ?? null, eps_yoy_pct: e.eps_yoy_pct ?? null,
+      newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
       op_profit_yoy_pct: e.op_profit_yoy_pct ?? null, opm_pct: e.opm_pct ?? null, opm_prev_pct: e.opm_prev_pct ?? null,
       pe: e.pe ?? null,
       current_price: e.current_price ?? m.cmp ?? null,

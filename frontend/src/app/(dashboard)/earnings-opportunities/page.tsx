@@ -1138,13 +1138,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v14:';  // zzz417 — bumped v13→v14 to flush undercounted (1-of-N) stale client snapshots; zzz189 — v12→v13
+  const LS_PREFIX = 'mc:graded:v15:';  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:')) localStorage.removeItem(k);  // zzz417 — v13 added
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:') || k.startsWith('mc:graded:v14:')) localStorage.removeItem(k);  // zzz503 — v14 added
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
@@ -4113,9 +4113,17 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           {stock.methodology_tags.map((t) => (
             <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', fontWeight: 700 }}>✓ {t}</span>
           ))}
-          {stock.caveat_tags.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', fontWeight: 700 }}>⚠ {t}</span>
-          ))}
+          {stock.caveat_tags.map((t) => {
+            // zzz503 — "newly listed" / "no YoY yet" are CONTEXT, not risk
+            // flags. Render them as neutral/informational cyan pills (ℹ) so a
+            // recent IPO's card reads as "just listed" rather than a scary
+            // warning. All genuine caveats keep the amber ⚠ styling.
+            const _info = t === 'newly listed' || t === 'no YoY yet';
+            const _c = _info ? 'var(--mc-cyan)' : 'var(--mc-warn)';
+            return (
+              <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: `color-mix(in srgb, ${_c} 8%, transparent)`, color: _c, border: `1px solid color-mix(in srgb, ${_c} 25%, transparent)`, fontWeight: 700 }}>{_info ? 'ℹ' : '⚠'} {t}</span>
+            );
+          })}
         </div>
       )}
 

@@ -430,8 +430,34 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     const hi = ratios['High'] ?? ratios['52w High'];
     const mcap = ratios['Market Cap'] ?? null;
     const bucket = mcap == null ? null : mcap >= 200_000 ? 'MEGA' : mcap >= 20_000 ? 'LARGE' : mcap >= 5_000 ? 'MID' : mcap >= 500 ? 'SMALL' : 'MICRO';
+    // zzz503 — NEWLY-LISTED detection. When a company IPO'd within the last
+    // ~year, Screener's quarterly table has no year-ago column at all (JNPR /
+    // Juniper Green Energy: first listed quarter is Jun-2026, so there is
+    // literally no Jun-2025 column to compute YoY against). The old flow left
+    // sales_prev_cr/pat_prev_cr null and the card was tagged "prior-year
+    // missing" — which reads like a data bug rather than the honest truth
+    // ("this company just listed, no comparable exists yet"). Expose the
+    // quarter count + a newly_listed flag so the grader can label it correctly.
+    // Signal: the entire quarterly history spans < 12 months (no full year of
+    // trading), OR only a handful of quarters exist with no year-ago column.
+    const _labelToMonths = (s: any): number | null => {
+      const m = String(s || '').match(/([A-Za-z]{3})\s+(\d{4})/);
+      if (!m) return null;
+      const mi: Record<string, number> = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+      const mm = mi[m[1].toUpperCase().slice(0, 3)];
+      return mm == null ? null : parseInt(m[2], 10) * 12 + mm;
+    };
+    const _spanMonths = (() => {
+      const a = _labelToMonths(q.labels[0]);
+      const b = _labelToMonths(q.labels[latestIdx]);
+      return (a != null && b != null) ? b - a : null;
+    })();
+    const newlyListed = (_spanMonths != null && _spanMonths < 12)
+      || (salesPrev == null && patPrev == null && N <= 4);
     return {
       sector,
+      num_quarters: N,
+      newly_listed: newlyListed,
       pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
       // zzz358 BUG3 — surface ROCE/ROE from the Screener top-ratios <ul> so the
       // direct-Screener path (worker absent) carries them. Tolerant key lookup
