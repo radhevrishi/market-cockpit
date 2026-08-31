@@ -3,12 +3,23 @@
 // ────────────────────────────────────────────────────────────────────────────
 // A bench name earns its place because the quarter was strong. But quality can
 // roll over AFTER we add it: margins slip, cash stops backing profit, growth
-// turns negative, the post-earnings drift fades into a bull-trap, or the name
-// just sits on the bench for months and never converts to a buy.
+// turns negative, or the post-earnings drift fades into a bull-trap.
 //
 // `assessDecay` inspects a single ConvictionEntry and returns a structured
 // decay assessment (or null when the name still looks clean). Pure + SSR-safe:
 // no window / localStorage access here — the caller feeds it entries.
+//
+// zzz517 — NOISE FIX. The old version flagged a name on ANY single weak reading
+// (a 0.1pp OPM dip, or a single sub-0.6 CFO/PAT), which lit up ~160 bench names
+// at once and buried the few that matter. Two structural fixes:
+//   1. CFO/PAT is a structurally negative number for lenders/NBFCs/banks (they
+//      consume operating cash as the loan book grows), so the cash signal is
+//      MEANINGLESS for financials — it is now suppressed for them. This alone
+//      removes the false positives on Bajaj Finance, Shriram, Muthoot, etc.
+//   2. Thresholds are tightened AND a name must CORROBORATE: a fundamental
+//      signal (margin/cash/growth) has to be joined by a price rollover, OR a
+//      single signal has to be genuinely severe, OR two fundamentals have to be
+//      rolling over together. A lone mild reading no longer clutters the list.
 // ════════════════════════════════════════════════════════════════════════════
 
 import type { ConvictionEntry } from './conviction-beats';
@@ -53,7 +64,7 @@ export function benchAge(e: Pick<ConvictionEntry, 'added_at'>): number {
 }
 
 /** An aging bench name that has sat past the stale horizon (~120d) — presumed
- *  never bought, quietly rotting on the watchlist. */
+ *  never bought, quietly rotting on the watchlist. Surfaced in its own list. */
 export function isStale(e: Pick<ConvictionEntry, 'added_at'>): boolean {
   return benchAge(e) > STALE_DAYS;
 }
@@ -62,73 +73,88 @@ function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-/** Assess whether a single bench entry is decaying. Returns null when no
- *  decay reason fires. Severity buckets: score ≥ 5 high, ≥ 3 med, else low. */
+// Lending / financial businesses run structurally negative operating cash flow
+// while they grow the book, so CFO/PAT is not a quality signal for them. Detect
+// via the sector field first (cleanest), then a conservative company-name regex.
+const FIN_SECTOR_RE = /financ|bank|nbfc|insur|capital\s*market|broking|securities|fintech|lend/i;
+// Leading word-boundary only — these are stems ("financ" must match "Finance",
+// "Financial"; "securit" → "Securities"; "insur" → "Insurance"). A trailing \b
+// would wrongly reject "Finance" (no boundary between the "c" and the "e").
+const FIN_NAME_RE = /\b(?:bank|banking|financ|finserv|fincorp|nbfc|microfin|micro\s*fin|small\s*finance|housing\s*finance|insur|securit|broking|broker|fintech|capital|mortgage|grameen|vysya)/i;
+function isFinancial(e: DecayInput): boolean {
+  const s = String(e.sector || '');
+  if (s && FIN_SECTOR_RE.test(s)) return true;
+  return FIN_NAME_RE.test(String(e.company || ''));
+}
+
+/**
+ * Assess whether a single bench entry is decaying. Returns null unless the
+ * deterioration is corroborated or genuinely severe (see gate below).
+ *
+ * Flag weights (severe = weight ≥ 3):
+ *   margin  OPM ↓ ≥3pp → 3 ·  ↓ ≥1.5pp → 1.5      (drops under 1.5pp ignored)
+ *   cash    CFO/PAT <0 → 3 ·  <0.3 → 2             (financials excluded entirely)
+ *   growth  PAT YoY <-20% → 3 ·  <-5% → 2          (barely-negative ignored)
+ *   drift   bull trap (popped then <-10%) → 3 · plain <-10% → 2
+ *
+ * Inclusion gate — a name shows on the decay list ONLY when one holds:
+ *   • a fundamental flag (margin/cash/growth) is JOINED by a price rollover, or
+ *   • any single flag is severe (weight ≥ 3), or
+ *   • two or more fundamentals are rolling over together.
+ * Severity buckets from the summed score: ≥5 high, ≥3 med, else low.
+ */
 export function assessDecay(e: DecayInput): DecayAssessment | null {
   if (!e) return null;
   const flags: DecayFlag[] = [];
 
-  // ── margin contraction ────────────────────────────────────────────────────
+  // ── margin contraction (need a MEANINGFUL slip, not a rounding dip) ─────────
   const opm = num(e.opm_pct);
   const opmPrev = num(e.opm_prev_pct);
   if (opm != null && opmPrev != null && opm < opmPrev) {
     const drop = opmPrev - opm; // positive pp decline
-    const severe = drop >= 3;
-    flags.push({
-      kind: 'margin',
-      label: `OPM ↓ ${drop.toFixed(1)}pp`,
-      weight: severe ? 3 : 1,
-    });
+    if (drop >= 1.5) {
+      flags.push({ kind: 'margin', label: `OPM ↓ ${drop.toFixed(1)}pp`, weight: drop >= 3 ? 3 : 1.5 });
+    }
   }
 
-  // ── cash conversion weak ──────────────────────────────────────────────────
-  // Prefer the explicit ratio; fall back to the last annual CFO/PAT reading.
-  let cfoPat = num(e.cfo_to_pat_ratio);
-  if (cfoPat == null && Array.isArray(e.annual_cfo_pat) && e.annual_cfo_pat.length) {
-    cfoPat = num(e.annual_cfo_pat[e.annual_cfo_pat.length - 1]);
-  }
-  if (cfoPat != null && cfoPat < 0.6) {
-    flags.push({
-      kind: 'cash',
-      label: `CFO/PAT ${cfoPat.toFixed(2)}`,
-      weight: 2,
-    });
+  // ── cash conversion weak (skip for lenders — CFO/PAT is structurally low) ───
+  if (!isFinancial(e)) {
+    let cfoPat = num(e.cfo_to_pat_ratio);
+    if (cfoPat == null && Array.isArray(e.annual_cfo_pat) && e.annual_cfo_pat.length) {
+      cfoPat = num(e.annual_cfo_pat[e.annual_cfo_pat.length - 1]);
+    }
+    if (cfoPat != null && cfoPat < 0.3) {
+      flags.push({ kind: 'cash', label: `CFO/PAT ${cfoPat.toFixed(2)}`, weight: cfoPat < 0 ? 3 : 2 });
+    }
   }
 
-  // ── growth reversal ───────────────────────────────────────────────────────
+  // ── growth reversal (real decline, not a fraction of a percent) ────────────
   const npYoy = num(e.net_profit_yoy_pct);
-  if (npYoy != null && npYoy < 0) {
-    flags.push({
-      kind: 'growth',
-      label: `PAT YoY ${npYoy.toFixed(0)}%`,
-      weight: 2,
-    });
+  if (npYoy != null && npYoy < -5) {
+    flags.push({ kind: 'growth', label: `PAT YoY ${npYoy.toFixed(0)}%`, weight: npYoy < -20 ? 3 : 2 });
   }
 
-  // ── drift rolling over (post-earnings fade / bull trap) ───────────────────
+  // ── drift rolling over (post-earnings fade / bull trap) ────────────────────
   const move = num(e.move_pct);
-  if (move != null && move < -8) {
+  if (move != null && move < -10) {
     const d1 = num(e.d1_pct);
     const bullTrap = d1 != null && d1 > 0; // popped on the print, then faded
     flags.push({
       kind: 'drift',
-      label: bullTrap
-        ? `Bull trap ${move.toFixed(0)}%`
-        : `Drift ${move.toFixed(0)}%`,
+      label: bullTrap ? `Bull trap ${move.toFixed(0)}%` : `Drift ${move.toFixed(0)}%`,
       weight: bullTrap ? 3 : 2,
     });
   }
 
-  // ── stale (aging, never converted) ────────────────────────────────────────
-  if (isStale(e)) {
-    flags.push({
-      kind: 'stale',
-      label: `${benchAge(e)}d on bench`,
-      weight: 1,
-    });
-  }
-
   if (flags.length === 0) return null;
+
+  // ── corroboration gate — the noise filter ──────────────────────────────────
+  const fundamentals = flags.filter((f) => f.kind === 'margin' || f.kind === 'cash' || f.kind === 'growth');
+  const price = flags.filter((f) => f.kind === 'drift');
+  const hasSevere = flags.some((f) => f.weight >= 3);
+  const corroborated = fundamentals.length >= 1 && price.length >= 1;
+  const multiFundamental = fundamentals.length >= 2;
+  if (!corroborated && !hasSevere && !multiFundamental) return null;
 
   const score = flags.reduce((s, f) => s + f.weight, 0);
   const severity: DecaySeverity = score >= 5 ? 'high' : score >= 3 ? 'med' : 'low';
