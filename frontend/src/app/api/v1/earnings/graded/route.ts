@@ -201,6 +201,27 @@ function gradeRow(row: any): ParsedEarning | null {
     if (row?.current_price != null) _priceBits.push(`\u20b9${row.current_price}`);
     if ((row?.pe ?? row?.stockPE) != null) _priceBits.push(`P/E ${Math.round(row.pe ?? row.stockPE)}`);
     const _priceStr = _priceBits.length ? ` \u00b7 trades at ${_priceBits.join(', ')}` : '';
+    // zzz505 \u2014 a newly-listed company HAS no year-ago quarter, but Screener
+    // does carry its short sequential history (JNPR: sales 161\u2192213\u2192291,
+    // EPS 0.44\u21920.44\u21920.68). YoY is impossible; the QoQ trend is the correct
+    // comparison and we already have it in quarters_sales/quarters_eps. Surface
+    // it so the card shows real momentum instead of three "\u2014" tiles.
+    const _seqStr = (() => {
+      const qs: number[] = Array.isArray(row?.quarters_sales) ? row.quarters_sales.filter((x: any) => typeof x === 'number') : [];
+      const qe: number[] = Array.isArray(row?.quarters_eps) ? row.quarters_eps.filter((x: any) => typeof x === 'number') : [];
+      const bits: string[] = [];
+      if (qs.length >= 2) {
+        const a = qs[qs.length - 2], b = qs[qs.length - 1];
+        const g = a > 0 ? Math.round((b / a - 1) * 100) : null;
+        bits.push(`revenue \u20b9${a}\u2192${b}Cr QoQ${g != null ? ` (${g >= 0 ? '+' : ''}${g}%)` : ''}`);
+      }
+      if (qe.length >= 2) {
+        const a = qe[qe.length - 2], b = qe[qe.length - 1];
+        bits.push(`EPS \u20b9${a}\u2192\u20b9${b}`);
+      }
+      return bits.length ? ` Sequential trend: ${bits.join(', ')}.` : '';
+    })();
+    const _opmBit = (row?.opm_pct != null) ? ` OPM ${Math.round(row.opm_pct)}%.` : '';
     // Re-word absStr to attach the net-margin note to PAT for the newly-listed line.
     const _absNew = (() => {
       const bits: string[] = [];
@@ -211,8 +232,8 @@ function gradeRow(row: any): ParsedEarning | null {
     })();
     const narrative = hasAnyAbsolute
       ? (_isNew
-          ? `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${_absNew}${_priceStr}. Newly listed \u2014 first reported quarter as a public company, so no year-ago comparable yet.`
-          : `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${absStr}. Absolute figures shown; year-ago quarter not yet in source.`)
+          ? `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${_absNew}.${_opmBit}${_priceBits.length ? ' Trades at ' + _priceBits.join(', ') + '.' : ''} Newly listed \u2014 no year-ago comparable yet, so judge it on the sequential trend.${_seqStr}`
+          : `${row.company || row.symbol} ${deriveQuarterLabel(row.filing_date)} results${moveLabel}${absStr}. Absolute figures shown; year-ago quarter not yet in source.${_seqStr}`)
       : `${row.company || row.symbol} reported ${deriveQuarterLabel(row.filing_date)} results${moveLabel}. Financial detail awaiting enrichment.`;
     return {
       ticker: row.symbol, company: row.company || row.symbol, sector: row.sector, filing_date: row.filing_date,
@@ -226,6 +247,8 @@ function gradeRow(row: any): ParsedEarning | null {
       eps_curr: row.eps_curr ?? null, eps_prev: null,
       gap_pct: row.gap_pct ?? null, d1_pct: row.d1_pct ?? null, move_pct: move,
       rs_rating: row.rs_rating ?? null, stage: row.stage ?? null, pct_from_52w_high: row.pct_from_52w_high ?? null,
+      opm_pct: row.opm_pct ?? null, opm_prev_pct: null,  // zzz505 — surface OPM on newly-listed cards (we had it, were dropping it)
+      quarters_sales: row.quarters_sales ?? null, quarters_eps: row.quarters_eps ?? null,  // zzz505 — QoQ sparkline data
       composite_score: score, tier,
       methodology_tags: [],
       caveat_tags: hasAnyAbsolute ? [_isNew ? 'newly listed' : 'no YoY yet'] : [],
@@ -609,7 +632,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v11:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
+  const cacheKey = `graded:v12:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
@@ -852,6 +875,7 @@ export async function GET(req: Request) {
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
             eps_curr: e.eps_curr, eps_prev: e.eps_prev, eps_yoy_pct: e.eps_yoy_pct,
             newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
+            quarters_sales: e.quarters_sales ?? null, quarters_eps: e.quarters_eps ?? null,  // zzz505
             op_profit_yoy_pct: e.op_profit_yoy_pct, opm_pct: e.opm_pct, opm_prev_pct: e.opm_prev_pct,
             pe: e.pe, current_price: e.current_price ?? c.price,
             gap_pct: e.gap_pct ?? c.gap_pct, d1_pct: e.d1_pct ?? c.d1_pct, move_pct: e.move_pct ?? c.move_pct,
@@ -1421,6 +1445,7 @@ export async function GET(req: Request) {
       pat_yoy_pct: e.pat_yoy_pct ?? null,
       eps_curr: e.eps_curr ?? null, eps_prev: e.eps_prev ?? null, eps_yoy_pct: e.eps_yoy_pct ?? null,
       newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
+      quarters_sales: e.quarters_sales ?? null, quarters_eps: e.quarters_eps ?? null,  // zzz505
       op_profit_yoy_pct: e.op_profit_yoy_pct ?? null, opm_pct: e.opm_pct ?? null, opm_prev_pct: e.opm_prev_pct ?? null,
       pe: e.pe ?? null,
       current_price: e.current_price ?? m.cmp ?? null,

@@ -1138,13 +1138,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v15:';  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
+  const LS_PREFIX = 'mc:graded:v16:';  // zzz505 — v15->v16 to surface OPM + QoQ trend on newly-listed cards  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:') || k.startsWith('mc:graded:v14:')) localStorage.removeItem(k);  // zzz503 — v14 added
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:') || k.startsWith('mc:graded:v14:') || k.startsWith('mc:graded:v15:')) localStorage.removeItem(k);  // zzz505 — v15 added
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
