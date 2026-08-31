@@ -80,7 +80,7 @@ const FIN_SECTOR_RE = /financ|bank|nbfc|insur|capital\s*market|broking|securitie
 // Leading word-boundary only — these are stems ("financ" must match "Finance",
 // "Financial"; "securit" → "Securities"; "insur" → "Insurance"). A trailing \b
 // would wrongly reject "Finance" (no boundary between the "c" and the "e").
-const FIN_NAME_RE = /\b(?:bank|banking|financ|finserv|fincorp|nbfc|microfin|micro\s*fin|small\s*finance|housing\s*finance|insur|securit|broking|broker|fintech|capital|mortgage|grameen|vysya)/i;
+const FIN_NAME_RE = /\b(?:bank|banking|financ|finserv|fincorp|nbfc|microfin|micro\s*fin|small\s*finance|housing\s*finance|insur|securit|broking|broker|fintech|capital|mortgage|grameen|vysya|credit|loan)/i;
 function isFinancial(e: DecayInput): boolean {
   const s = String(e.sector || '');
   if (s && FIN_SECTOR_RE.test(s)) return true;
