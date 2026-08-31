@@ -248,7 +248,22 @@ function gradeRow(row: any): ParsedEarning | null {
       gap_pct: row.gap_pct ?? null, d1_pct: row.d1_pct ?? null, move_pct: move,
       rs_rating: row.rs_rating ?? null, stage: row.stage ?? null, pct_from_52w_high: row.pct_from_52w_high ?? null,
       opm_pct: row.opm_pct ?? null, opm_prev_pct: null,  // zzz505 — surface OPM on newly-listed cards (we had it, were dropping it)
-      quarters_sales: row.quarters_sales ?? null, quarters_eps: row.quarters_eps ?? null, quarters_pat: row.quarters_pat ?? null,  // zzz505/507 — QoQ sparkline data
+      quarters_sales: row.quarters_sales ?? null, quarters_eps: row.quarters_eps ?? null,
+      // zzz507 — quarterly PAT. Screener's DIRECT path gives a real Net-Profit
+      // row; the WORKER path (JNPR) only carries sales/EPS. Derive PAT from the
+      // EPS series when the real row is absent: shares = latest PAT / latest EPS
+      // (exact for the latest quarter), then PATᵢ ≈ EPSᵢ × shares. For a recent
+      // IPO with post-listing dilution this is conservative (understates growth),
+      // never overstated — a safe fill for the NET PROFIT QoQ tile.
+      quarters_pat: (() => {
+        if (Array.isArray(row.quarters_pat) && row.quarters_pat.length >= 2) return row.quarters_pat;
+        const qe: number[] = Array.isArray(row.quarters_eps) ? row.quarters_eps.filter((x: any) => typeof x === 'number') : [];
+        if (qe.length >= 2 && row.pat_curr_cr != null && row.eps_curr && row.eps_curr !== 0) {
+          const shares = row.pat_curr_cr / row.eps_curr;
+          return qe.map((e: number) => Math.round(e * shares * 10) / 10);
+        }
+        return null;
+      })(),
       composite_score: score, tier,
       methodology_tags: [],
       caveat_tags: hasAnyAbsolute ? [_isNew ? 'newly listed' : 'no YoY yet'] : [],
@@ -632,7 +647,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v13:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
+  const cacheKey = `graded:v14:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
