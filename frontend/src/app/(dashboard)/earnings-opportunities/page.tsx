@@ -4095,7 +4095,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         <MetricTile label="SALES YOY"  pct={stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={fmtCr(stock.sales_prev_cr)} />
         <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={fmtCr(stock.pat_prev_cr)} />
         <MetricTile label="EPS YOY"    pct={stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={fmtPx(stock.eps_prev)} />
-        <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} />
+        <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
         <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>
           <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
@@ -4343,7 +4343,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
 // Displays current OPM % and YoY change in percentage points, color-coded
 // so user can see margin direction at a glance — feeds the margin-gate
 // rule introduced in Patch 1000.
-function OpmTile({ opm, opmPrev }: { opm: number | null | undefined; opmPrev: number | null | undefined }) {
+function OpmTile({ opm, opmPrev, newlyListed }: { opm: number | null | undefined; opmPrev: number | null | undefined; newlyListed?: boolean }) {
   const hasOpm = typeof opm === 'number' && Number.isFinite(opm);
   const hasPrev = typeof opmPrev === 'number' && Number.isFinite(opmPrev);
   const delta = hasOpm && hasPrev ? (opm as number) - (opmPrev as number) : null;
@@ -4365,7 +4365,7 @@ function OpmTile({ opm, opmPrev }: { opm: number | null | undefined; opmPrev: nu
         </div>
       </div>
       <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : (hasOpm ? 'prior n/a' : 'screener gap')}
+        {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : (hasOpm ? 'prior n/a' : (newlyListed ? 'newly listed' : 'screener gap'))}
       </div>
     </div>
   );
