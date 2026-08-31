@@ -106,6 +106,11 @@ function isFinancial(e: DecayInput): boolean {
 export function assessDecay(e: DecayInput): DecayAssessment | null {
   if (!e) return null;
   const flags: DecayFlag[] = [];
+  // A single signal only earns a spot on its own when it is CATASTROPHIC, or
+  // when the market itself rejected the print (a bull trap). Everything milder
+  // must be corroborated. These latch during flag construction below.
+  let catastrophic = false;
+  let bullTrapHit = false;
 
   // ── margin contraction (need a MEANINGFUL slip, not a rounding dip) ─────────
   const opm = num(e.opm_pct);
@@ -114,6 +119,7 @@ export function assessDecay(e: DecayInput): DecayAssessment | null {
     const drop = opmPrev - opm; // positive pp decline
     if (drop >= 1.5) {
       flags.push({ kind: 'margin', label: `OPM ↓ ${drop.toFixed(1)}pp`, weight: drop >= 3 ? 3 : 1.5 });
+      if (drop >= 5) catastrophic = true; // margin fell off a cliff
     }
   }
 
@@ -125,6 +131,7 @@ export function assessDecay(e: DecayInput): DecayAssessment | null {
     }
     if (cfoPat != null && cfoPat < 0.3) {
       flags.push({ kind: 'cash', label: `CFO/PAT ${cfoPat.toFixed(2)}`, weight: cfoPat < 0 ? 3 : 2 });
+      if (cfoPat < -3) catastrophic = true; // cash wildly divergent from profit
     }
   }
 
@@ -132,6 +139,7 @@ export function assessDecay(e: DecayInput): DecayAssessment | null {
   const npYoy = num(e.net_profit_yoy_pct);
   if (npYoy != null && npYoy < -5) {
     flags.push({ kind: 'growth', label: `PAT YoY ${npYoy.toFixed(0)}%`, weight: npYoy < -20 ? 3 : 2 });
+    if (npYoy < -30) catastrophic = true; // profit more than a third gone
   }
 
   // ── drift rolling over (post-earnings fade / bull trap) ────────────────────
@@ -144,17 +152,24 @@ export function assessDecay(e: DecayInput): DecayAssessment | null {
       label: bullTrap ? `Bull trap ${move.toFixed(0)}%` : `Drift ${move.toFixed(0)}%`,
       weight: bullTrap ? 3 : 2,
     });
+    if (bullTrap) bullTrapHit = true; // market rejected the print — actionable alone
   }
 
   if (flags.length === 0) return null;
 
   // ── corroboration gate — the noise filter ──────────────────────────────────
+  // A lone weak fundamental (a single sub-0.3 CFO/PAT, a 2pp OPM slip) is NOT
+  // enough — that was the old noise. A name shows only when the deterioration
+  // is corroborated across signals, or is bad enough to stand on its own:
+  //   • a fundamental flag JOINED by a price rollover (the core case), or
+  //   • two or more fundamentals rolling over together, or
+  //   • the market rejected the print (a bull trap), or
+  //   • a single CATASTROPHIC reading (CFO/PAT < -3, PAT YoY < -30%, OPM ↓ ≥5pp).
   const fundamentals = flags.filter((f) => f.kind === 'margin' || f.kind === 'cash' || f.kind === 'growth');
   const price = flags.filter((f) => f.kind === 'drift');
-  const hasSevere = flags.some((f) => f.weight >= 3);
   const corroborated = fundamentals.length >= 1 && price.length >= 1;
   const multiFundamental = fundamentals.length >= 2;
-  if (!corroborated && !hasSevere && !multiFundamental) return null;
+  if (!corroborated && !multiFundamental && !bullTrapHit && !catastrophic) return null;
 
   const score = flags.reduce((s, f) => s + f.weight, 0);
   const severity: DecaySeverity = score >= 5 ? 'high' : score >= 3 ? 'med' : 'low';
