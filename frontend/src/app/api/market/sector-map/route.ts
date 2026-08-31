@@ -42,6 +42,27 @@ function parseCsvLine(line: string): string[] {
 
 const norm = (s: string) => (s || '').toUpperCase().replace(/\.(NS|BO|NSE|BSE)$/i, '').trim();
 
+// zzz513b — curated fallback for well-known NSE names that aren't in any of the
+// bundled Screener screens (so they'd otherwise read "Unclassified"). Labels use
+// the exact Screener "Industry Group" taxonomy so they merge with the CSV map.
+// The CSV map always WINS over this; curated only fills genuine gaps.
+const CURATED: Record<string, string> = {
+  JAMNAAUTO: 'Auto Components', SCHAEFFLER: 'Auto Components', NRBBEARING: 'Auto Components',
+  MENONBE: 'Auto Components', LUMAXTECH: 'Auto Components', LUMAXIND: 'Auto Components',
+  ALKYLAMINE: 'Chemicals & Petrochemicals', HSCL: 'Chemicals & Petrochemicals',
+  TANFACIND: 'Chemicals & Petrochemicals', JUBLINGREA: 'Chemicals & Petrochemicals',
+  ULTRAMAR: 'Chemicals & Petrochemicals', NOCIL: 'Chemicals & Petrochemicals',
+  VIYASH: 'Pharmaceuticals & Biotechnology', NGLFINE: 'Pharmaceuticals & Biotechnology',
+  BETA: 'Pharmaceuticals & Biotechnology', GUFICBIO: 'Pharmaceuticals & Biotechnology',
+  WENDT: 'Industrial Products', TIMETECHNO: 'Industrial Products', GOODLUCK: 'Industrial Products',
+  JNKINDIA: 'Industrial Products', CARBORUNIV: 'Industrial Products', GRPLTD: 'Industrial Products',
+  EXICOM: 'Electrical Equipment', SBCL: 'Electrical Equipment', MARINE: 'Electrical Equipment',
+  ASTRAMICRO: 'Aerospace & Defense', PARAS: 'Aerospace & Defense', AVANTEL: 'Aerospace & Defense',
+  TATATECH: 'IT - Services', PICCADIL: 'Beverages', IFBAGRO: 'Beverages',
+  DREDGECORP: 'Engineering Services', DEEPINDS: 'Oil', JINDRILL: 'Oil',
+  IRMENERGY: 'Gas', GAIL: 'Gas',
+};
+
 let _cache: { map: Record<string, string>; count: number; at: number } | null = null;
 const TTL_MS = 6 * 60 * 60 * 1000; // 6h — CSVs refresh via GitHub Actions a few times a day
 
@@ -71,6 +92,8 @@ async function buildMap(): Promise<{ map: Record<string, string>; count: number 
       if (sec && !map[ticker]) map[ticker] = sec;
     }
   }
+  // Fill remaining gaps from the curated list (CSV always wins).
+  for (const [t, s] of Object.entries(CURATED)) { if (!map[t]) map[t] = s; }
   return { map, count: Object.keys(map).length };
 }
 
