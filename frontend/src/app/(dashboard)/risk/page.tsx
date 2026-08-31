@@ -59,6 +59,7 @@ const SINGLE_NAME_FLAG = 0.15;   // 15% of book
 const SECTOR_FLAG = 0.35;        // 35% of book
 const DRAWDOWN_FLAG = 25;        // % off 52w high
 const THIN_LIQUIDITY_ABS = 50_000; // fallback abs threshold for volume-like proxy
+const FX_FALLBACK = 83.5;        // USD→INR fallback when no live rate is available — edit if stale
 
 // ── formatting ──────────────────────────────────────────────────────────────
 const pct = (n: number | null | undefined, dp = 1) =>
@@ -80,6 +81,28 @@ const price = (n: number | null | undefined, region: Region | null) =>
   n == null || !Number.isFinite(n) ? '—' : `${region === 'us' ? '$' : '₹'}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 const flag = (r: Region | null) => (r === 'us' ? '🇺🇸' : r === 'india' ? '🇮🇳' : '🏳️');
+
+/** Defensively probe a quotes payload for an embedded USD→INR rate. Returns
+ *  null when the feed carries no currency field (the current shape). */
+function pickFxFromPayload(payload: any): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const direct = [payload.usdInr, payload.usdinr, payload.fxRate, payload.fx_rate, payload.fx,
+    payload.usdToInr, payload.rates?.INR, payload.currency?.usdInr, payload.forex?.USDINR];
+  for (const v of direct) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 1) return n; // >1 guards against an inverse (INR→USD) slipping in
+  }
+  // a currencies/rows array carrying USDINR=X
+  for (const key of ['currencies', 'stocks', 'quotes', 'data']) {
+    const arr = (payload as any)[key];
+    if (Array.isArray(arr)) {
+      const row = arr.find((r: any) => r && (r.symbol === 'USDINR=X' || r.ticker === 'USDINR=X' || r.name === 'USD/INR'));
+      const n = Number(row?.value ?? row?.price ?? row?.ltp);
+      if (Number.isFinite(n) && n > 1) return n;
+    }
+  }
+  return null;
+}
 
 // ── small presentational atoms ──────────────────────────────────────────────
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
@@ -156,6 +179,7 @@ export default function RiskDeskPage() {
   const [loadingQuotes, setLoadingQuotes] = useState(true);
   const [quotesError, setQuotesError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string>('');
+  const [fx, setFx] = useState<{ rate: number; source: string; live: boolean }>({ rate: FX_FALLBACK, source: `fallback ${FX_FALLBACK} — edit if stale`, live: false });
 
   // 1) read holdings from localStorage (client only, in effect — SSR safe)
   useEffect(() => {
@@ -194,11 +218,13 @@ export default function RiskDeskPage() {
       setLoadingQuotes(true);
       setQuotesError(null);
       const map = new Map<string, QuoteLite>();
+      let usJson: any = null;
       const load = async (market: Region) => {
         try {
           const res = await fetch(`/api/market/quotes?market=${market}`, { cache: 'no-store' });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const json = await res.json();
+          if (market === 'us') usJson = json;
           const rows = extractQuoteRows(json);
           for (const row of rows) {
             const q = toQuoteLite(row, market);
@@ -215,6 +241,34 @@ export default function RiskDeskPage() {
       if (map.size === 0) setQuotesError('Live quotes are unavailable right now — showing entry-price estimates.');
       setQuotesBySymbol(map);
       setUpdatedAt(uIndia || uUs || new Date().toISOString());
+
+      // ── resolve USD→INR ─────────────────────────────────────────────────
+      // 1) probe the us quotes payload for an embedded FX field;
+      // 2) else the app's macro feed (Yahoo USD/INR, already allowed);
+      // 3) else a clearly-labelled fallback constant.
+      const resolveFx = async (): Promise<{ rate: number; source: string; live: boolean } | null> => {
+        // 1) embedded field on the us quotes response
+        const embedded = pickFxFromPayload(usJson);
+        if (embedded && embedded > 0) return { rate: embedded, source: 'US quotes feed', live: true };
+        // 2) macro feed → currencies[symbol=USDINR=X].value
+        try {
+          const mres = await fetch('/api/market/macro', { cache: 'no-store' });
+          if (mres.ok) {
+            const mj = await mres.json();
+            const cur = Array.isArray(mj?.currencies)
+              ? mj.currencies.find((c: any) => c?.symbol === 'USDINR=X' || c?.name === 'USD/INR')
+              : null;
+            const rate = Number(cur?.value);
+            if (Number.isFinite(rate) && rate > 0) return { rate, source: 'live USD/INR (macro feed)', live: true };
+          }
+        } catch { /* ignore */ }
+        return null;
+      };
+      const resolved = await resolveFx();
+      if (cancelled) return;
+      if (resolved) setFx(resolved);
+      else setFx({ rate: FX_FALLBACK, source: `fallback ${FX_FALLBACK} — edit if stale`, live: false });
+
       setLoadingQuotes(false);
     })();
     return () => { cancelled = true; };
@@ -312,7 +366,7 @@ export default function RiskDeskPage() {
           {quotesError}
         </div>
       ) : null}
-      <DeskBody desk={desk} loadingQuotes={loadingQuotes} />
+      <DeskBody desk={desk} loadingQuotes={loadingQuotes} fx={fx} />
     </Page>
   );
 }
@@ -353,7 +407,7 @@ function Header({ updatedAt, loading }: { updatedAt: string; loading: boolean })
 }
 
 // ── the main body (only rendered when we have positions) ─────────────────────
-function DeskBody({ desk, loadingQuotes }: { desk: DeskData; loadingQuotes: boolean }) {
+function DeskBody({ desk, loadingQuotes, fx }: { desk: DeskData; loadingQuotes: boolean; fx: { rate: number; source: string; live: boolean } }) {
   const { positions, totalValue } = desk;
   const n = positions.length;
   const weights = positions.map((p) => p.weight);
@@ -372,6 +426,15 @@ function DeskBody({ desk, loadingQuotes }: { desk: DeskData; loadingQuotes: bool
   const inrPct = totalValue > 0 ? (byRegion.india / totalValue) * 100 : 0;
   const usdPct = totalValue > 0 ? (byRegion.us / totalValue) * 100 : 0;
   const unkPct = totalValue > 0 ? (byRegion.unknown / totalValue) * 100 : 0;
+
+  // ── US sleeve (currency-adjusted) ─────────────────────────────────────────
+  // US names are those matched via the ?market=us feed (marketValue is in USD).
+  const usPositions = positions.filter((p) => p.region === 'us');
+  const usSleeveUsd = usPositions.reduce((a, p) => a + p.marketValue, 0);      // native USD
+  const usSleeveInr = usSleeveUsd * fx.rate;                                    // converted
+  // FX-consistent book value in ₹: India & unmatched are already ₹, US converted.
+  const bookInr = byRegion.india + byRegion.unknown + usSleeveInr;
+  const usSleevePctOfBook = bookInr > 0 ? (usSleeveInr / bookInr) * 100 : 0;
 
   // sector aggregation
   const sectorMap = new Map<string, number>();
@@ -495,6 +558,58 @@ function DeskBody({ desk, loadingQuotes }: { desk: DeskData; loadingQuotes: bool
           {byRegion.unknown > 0 ? <span style={{ color: C.t3 }}>Unmatched · {unkPct.toFixed(1)}%</span> : null}
         </div>
       </Card>
+
+      {/* 4b. CURRENCY-ADJUSTED RETURNS — US SLEEVE (only when US names held) */}
+      {usPositions.length > 0 ? (
+        <Card style={{ marginTop: 16 }}>
+          <SectionTitle
+            hint={`USD→INR ${fx.rate.toFixed(2)} · ${fx.source}. Native return is USD-vs-USD; ₹ value converts at the current rate.`}
+          >
+            Currency-adjusted returns — US sleeve
+          </SectionTitle>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginBottom: 14 }}>
+            <Tile label="US sleeve (USD)" value={money(usSleeveUsd, 'us')} sub={`${usPositions.length} name${usPositions.length === 1 ? '' : 's'}`} tone="info" />
+            <Tile label="US sleeve (INR)" value={money(usSleeveInr, 'india')} sub={`@ ₹${fx.rate.toFixed(2)}/$`} tone="info" />
+            <Tile label="US % of book" value={pct(usSleevePctOfBook, 0)} sub="FX-consistent ₹ basis" />
+            <Tile label="USD/INR" value={fx.rate.toFixed(2)} sub={fx.live ? 'live' : 'fallback — edit if stale'} tone={fx.live ? 'good' : 'warn'} />
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 520 }}>
+              <thead>
+                <tr style={{ background: C.bg3, color: C.t3 }}>
+                  {['Symbol', 'Entry $', 'Live $', 'Native ret%', 'Value $', 'Value ₹'].map((h, i) => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: i === 0 ? 'left' : 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {usPositions.map((p) => (
+                  <tr key={p.symbol} style={{ borderTop: `1px solid ${C.b3}` }}>
+                    <td style={{ padding: '8px 12px', color: C.t1, fontWeight: 600, whiteSpace: 'nowrap' }}>🇺🇸 {p.symbol}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: C.t2, ...NUM }}>{price(p.entryPrice, 'us')}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: p.livePrice == null ? C.t4 : C.t1, ...NUM }}>{p.livePrice == null ? '—' : price(p.livePrice, 'us')}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: p.pnlPct == null ? C.t4 : p.pnlPct >= 0 ? C.bull : C.bear, ...NUM }}>
+                      {p.pnlPct == null ? '—' : `${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct.toFixed(1)}%`}
+                    </td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: C.t1, ...NUM }}>{money(p.marketValue, 'us')}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: C.saffron, ...NUM }}>{money(p.marketValue * fx.rate, 'india')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ marginTop: 12, padding: '10px 12px', background: C.bg2, border: `1px solid ${C.b2}`, borderRadius: 8, fontSize: 11.5, color: C.t3, lineHeight: 1.5 }}>
+            <strong style={{ color: C.t2 }}>FX contribution.</strong> Native returns above are USD-vs-USD and carry no currency effect.
+            Your rupee outcome on this sleeve — worth {money(usSleeveInr, 'india')} today at ₹{fx.rate.toFixed(2)}/$ — also moves with USD/INR:
+            a stronger rupee erodes it, a weaker rupee lifts it, independent of the underlying stocks.
+            We don&apos;t store the exchange rate at purchase, so a precise ₹ P&amp;L (with its FX split) can&apos;t be shown — treat the ₹ figure as a current-rate snapshot, not a locked-in gain.
+            {fx.live ? '' : ` Rate shown is a fallback (${fx.rate.toFixed(2)}) — no live USD/INR was available; edit ${'FX_FALLBACK'} if stale.`}
+          </div>
+        </Card>
+      ) : null}
 
       {/* 5. DRAWDOWN (only if data available) */}
       {hasDrawdown ? (
