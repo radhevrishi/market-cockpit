@@ -104,6 +104,7 @@ export interface PlanInput {
   applyCapTilt: boolean;           // market-cap haircut on/off
   heldWeights: Map<string, number>;// symbol(upper) → current weight FRACTION (0–1)
   heldSymbols: Set<string>;        // symbols the user owns (upper)
+  sectorOf?: Map<string, string>;  // zzz512 — normTicker → sector, from the quotes feed
 }
 
 export type Action = 'BUY' | 'ADD' | 'TRIM' | 'HOLD';
@@ -149,6 +150,14 @@ export function normTicker(s: string): string {
 
 export function buildPlan(input: PlanInput): Plan {
   const { bench, capital, maxSinglePct, numNames, applyCapTilt, heldWeights, heldSymbols } = input;
+  // zzz512 — optional sector resolver (from the quotes feed, which has good
+  // sector labels). Conviction entries often lack a sector, which made the whole
+  // proposed book show as "Unknown". Prefer the resolver, fall back to the entry.
+  const sectorOf = (e: ConvictionEntry): string => {
+    const fromMap = input.sectorOf?.get(normTicker(e.ticker));
+    const s = (fromMap || e.sector || '').trim();
+    return s || 'Unknown';
+  };
   const cap = Math.max(0.001, maxSinglePct / 100);
   const N = Math.max(1, Math.floor(numNames));
 
@@ -189,7 +198,7 @@ export function buildPlan(input: PlanInput): Plan {
       ticker: p.key,
       company: p.e.company || p.key,
       tier: p.e.tier,
-      sector: p.e.sector || 'Unknown',
+      sector: sectorOf(p.e),
       compositeScore: p.e.composite_score ?? 0,
       blended: p.blended,
       sizingScore: p.sizing,

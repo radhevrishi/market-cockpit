@@ -81,18 +81,20 @@ export function toQuoteLite(raw: any, region: Region): QuoteLite | null {
   const sector = pickString(raw, ['sector', 'industry', 'Sector', 'Industry']);
   const week52High = pickNumber(raw, ['week52High', 'yearHigh', 'fiftyTwoWeekHigh', 'high52w', 'week_52_high', '52wHigh']);
 
-  // Distance from 52w high: prefer an explicit field, else derive from price & high.
+  // Distance from 52w high, normalized to a POSITIVE "% off high".
+  // zzz512 — the India quotes feed's `pctOf52wHigh` is a FRACTION of the high
+  // (0.986 = trading at 98.6% of its high = 1.4% off), NOT a percentage. The old
+  // code read 0.986 and computed 100 − 0.986 = 99%, so every holding showed
+  // "−99% off high". Handle each source by its real units.
   let distFromHigh: number | null = null;
-  const explicitPct = pickNumber(raw, ['pct_from_52w_high', 'pctOf52wHigh', 'pctFrom52wHigh', 'distFrom52wHigh', 'from52wHigh']);
-  if (explicitPct != null) {
-    // Field may be expressed as "% of high" (e.g. 82 => 18% off) or as a
-    // signed distance (e.g. -18). Normalize to a positive "% off high".
-    if (explicitPct > 0 && explicitPct <= 100 &&
-        pickNumber(raw, ['pctOf52wHigh']) === explicitPct) {
-      distFromHigh = Math.max(0, 100 - explicitPct); // pctOf52wHigh is "% of high"
-    } else {
-      distFromHigh = Math.abs(explicitPct);
-    }
+  const fracOfHigh = pickNumber(raw, ['pctOf52wHigh']);           // fraction 0..1 ("% of high")
+  const signedPct = pickNumber(raw, ['pct_from_52w_high', 'pctFrom52wHigh', 'distFrom52wHigh', 'from52wHigh']); // signed %, e.g. -18
+  if (fracOfHigh != null && fracOfHigh > 0 && fracOfHigh <= 1.5) {
+    distFromHigh = Math.max(0, (1 - fracOfHigh) * 100);
+  } else if (fracOfHigh != null && fracOfHigh > 1.5 && fracOfHigh <= 100) {
+    distFromHigh = Math.max(0, 100 - fracOfHigh);                 // already a percentage-of-high
+  } else if (signedPct != null) {
+    distFromHigh = Math.abs(signedPct);
   } else if (price != null && week52High != null && week52High > 0 && price > 0) {
     distFromHigh = Math.max(0, ((week52High - price) / week52High) * 100);
   }

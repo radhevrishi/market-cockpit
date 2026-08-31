@@ -215,6 +215,11 @@ export default function CockpitPage() {
     }
 
     // ── 4. Theme rotation ADD / TRIM ─────────────────────────────────────
+    // TRIM signals where you're actually exposed are always shown (they're
+    // decisions). "Rotating in" ADD themes are opportunities — there are dozens
+    // every day, so we keep only the highest-conviction handful rather than
+    // flooding the board (zzz512).
+    const themeAdds: Signal[] = [];
     const pushThemes = (rot: any, region: string) => {
       if (!rot?.themes) return;
       const memberHeld = (members: any): string[] => {
@@ -234,8 +239,9 @@ export default function CockpitPage() {
             });
           }
         } else if (th.action === 'ADD' || th.verdict === 'EARLY BUY' || th.verdict === 'BUY') {
-          sig.push({
-            id: `theme-add-${region}-${th.id}`, sev: 'info', priority: 20 + (th.conviction ? th.conviction / 10 : 0),
+          // Held-in-theme opportunities rank above pure new ones.
+          themeAdds.push({
+            id: `theme-add-${region}-${th.id}`, sev: 'info', priority: (yoursIn.length ? 30 : 20) + (th.conviction ? th.conviction / 10 : 0),
             icon: '➕', kind: 'THEME',
             title: `${th.emoji || ''} ${th.name} rotating in — ${th.verdict}`,
             detail: `${region === 'india' ? '🇮🇳' : '🇺🇸'} conviction ${th.conviction ?? '—'}/100${yoursIn.length ? ` · you hold ${yoursIn.join(', ')}` : ' · new opportunity'}.`,
@@ -246,6 +252,8 @@ export default function CockpitPage() {
     };
     pushThemes(rotIN, 'india');
     pushThemes(rotUS, 'us');
+    themeAdds.sort((a, b) => b.priority - a.priority);
+    for (const s of themeAdds.slice(0, 8)) sig.push(s);   // top 8 rotating-in themes only
 
     // ── 5. Valuation signals (your saved fair values) ────────────────────
     for (const v of vals) {
@@ -267,17 +275,31 @@ export default function CockpitPage() {
     }
 
     // ── 6. New conviction ideas (added in last 7 days) ───────────────────
-    for (const b of bench) {
-      const age = b.added_at ? daysBetween(b.added_at) : null;
-      if (age == null || age > 7 || age < 0) continue;
+    // A whole earnings season can grade hundreds of names in a week, so instead
+    // of one card each (which buried the board under 200+ rows), keep only the
+    // highest-scoring dozen you don't already own, and add a single roll-up
+    // card for the rest (zzz512).
+    const newIdeas = bench
+      .map(b => ({ b, age: b.added_at ? daysBetween(b.added_at) : null }))
+      .filter(({ b, age }) => age != null && age >= 0 && age <= 7 && !held.has(norm(b.ticker)))
+      .sort((a, z) => (z.b.composite_score || 0) - (a.b.composite_score || 0));
+    for (const { b, age } of newIdeas.slice(0, 12)) {
       const tk = norm(b.ticker);
-      if (held.has(tk)) continue; // already own it
       sig.push({
         id: `new-${tk}`, sev: 'info', priority: 15 + (b.composite_score ? b.composite_score / 12 : 0),
         icon: '✨', kind: 'NEW IDEA', ticker: b.ticker,
         title: `New on your bench: ${b.company || tk} — ${b.tier}`,
         detail: `Graded ${age === 0 ? 'today' : age + 'd ago'}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''}. Size it or pass.`,
         href: '/watchlists?tab=conviction',
+      });
+    }
+    if (newIdeas.length > 12) {
+      sig.push({
+        id: 'new-more', sev: 'info', priority: 5,
+        icon: '📋', kind: 'NEW IDEAS',
+        title: `+${newIdeas.length - 12} more freshly-graded names on your bench`,
+        detail: `${newIdeas.length} names graded in the last week. Open Conviction Beats to size the rest, or use Position Sizing for a ranked plan.`,
+        href: '/position-sizing',
       });
     }
 

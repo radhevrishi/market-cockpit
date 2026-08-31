@@ -224,7 +224,8 @@ export default function PositionSizingPage() {
           for (const r of rows) {
             const t = normTicker(String(r?.ticker || ''));
             const p = Number(r?.price);
-            if (t && Number.isFinite(p) && p > 0 && !map.has(t)) map.set(t, { price: p });
+            const sec = String(r?.sector || r?.industry || '').trim() || undefined;  // zzz512 — keep sector
+            if (t && Number.isFinite(p) && p > 0 && !map.has(t)) map.set(t, { price: p, sector: sec } as QuoteLite);
           }
         } catch { /* offline → entry-price fallback */ }
       };
@@ -263,6 +264,10 @@ export default function PositionSizingPage() {
   // 4) build the plan
   const plan: Plan | null = useMemo(() => {
     if (bench.length === 0) return null;
+    // zzz512 — sector resolver from the quotes feed (good sector labels), so the
+    // proposed book isn't one giant "Unknown" bucket.
+    const sectorOf = new Map<string, string>();
+    quotes.forEach((v, k) => { const s = (v as any)?.sector; if (s) sectorOf.set(k, s); });
     return buildPlan({
       bench,
       capital: capital > 0 ? capital : 0,
@@ -271,8 +276,9 @@ export default function PositionSizingPage() {
       applyCapTilt,
       heldWeights: book.heldWeights,
       heldSymbols: book.heldSymbols,
+      sectorOf,
     });
-  }, [bench, capital, maxSinglePct, numNames, applyCapTilt, book.heldWeights, book.heldSymbols]);
+  }, [bench, capital, maxSinglePct, numNames, applyCapTilt, book.heldWeights, book.heldSymbols, quotes]);
 
   // ── empty state ────────────────────────────────────────────────────────────
   if (mounted && bench.length === 0) {
