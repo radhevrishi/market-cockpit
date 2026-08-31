@@ -1138,13 +1138,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v16:';  // zzz505 — v15->v16 to surface OPM + QoQ trend on newly-listed cards  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
+  const LS_PREFIX = 'mc:graded:v17:';  // zzz507 add quarters_pat; zzz505 — v15->v16 to surface OPM + QoQ trend on newly-listed cards  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:') || k.startsWith('mc:graded:v14:') || k.startsWith('mc:graded:v15:')) localStorage.removeItem(k);  // zzz505 — v15 added
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:') || k.startsWith('mc:graded:v14:') || k.startsWith('mc:graded:v15:') || k.startsWith('mc:graded:v16:')) localStorage.removeItem(k);  // zzz507 — v16 added
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
@@ -3946,8 +3946,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
   const _salesPrevQ = _qs.length >= 2 ? _qs[_qs.length - 2] : null;
   const _epsQoQ = (_qe.length >= 2 && _qe[_qe.length - 2] > 0) ? (_qe[_qe.length - 1] / _qe[_qe.length - 2] - 1) * 100 : null;
   const _epsPrevQ = _qe.length >= 2 ? _qe[_qe.length - 2] : null;
+  const _qp: number[] = Array.isArray((stock as any).quarters_pat) ? (stock as any).quarters_pat.filter((x: any) => typeof x === 'number') : [];
+  const _patQoQ = (_qp.length >= 2 && _qp[_qp.length - 2] > 0) ? (_qp[_qp.length - 1] / _qp[_qp.length - 2] - 1) * 100 : null;
+  const _patPrevQ = _qp.length >= 2 ? _qp[_qp.length - 2] : null;
   const _useSalesQoQ = _isNewCard && stock.sales_yoy_pct == null && _salesQoQ != null;
   const _useEpsQoQ = _isNewCard && stock.eps_yoy_pct == null && _epsQoQ != null;
+  const _usePatQoQ = _isNewCard && stock.net_profit_yoy_pct == null && _patQoQ != null;
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
     if (!stock.filing_url) return null;
@@ -4106,7 +4110,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(stock.sales_prev_cr)} />
-        <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={fmtCr(stock.pat_prev_cr)} />
+        <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT'} pct={_usePatQoQ ? _patQoQ : stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(stock.pat_prev_cr)} />
         <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />
         <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
         <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>

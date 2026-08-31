@@ -248,7 +248,7 @@ function gradeRow(row: any): ParsedEarning | null {
       gap_pct: row.gap_pct ?? null, d1_pct: row.d1_pct ?? null, move_pct: move,
       rs_rating: row.rs_rating ?? null, stage: row.stage ?? null, pct_from_52w_high: row.pct_from_52w_high ?? null,
       opm_pct: row.opm_pct ?? null, opm_prev_pct: null,  // zzz505 — surface OPM on newly-listed cards (we had it, were dropping it)
-      quarters_sales: row.quarters_sales ?? null, quarters_eps: row.quarters_eps ?? null,  // zzz505 — QoQ sparkline data
+      quarters_sales: row.quarters_sales ?? null, quarters_eps: row.quarters_eps ?? null, quarters_pat: row.quarters_pat ?? null,  // zzz505/507 — QoQ sparkline data
       composite_score: score, tier,
       methodology_tags: [],
       caveat_tags: hasAnyAbsolute ? [_isNew ? 'newly listed' : 'no YoY yet'] : [],
@@ -632,7 +632,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v12:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
+  const cacheKey = `graded:v13:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
@@ -875,7 +875,7 @@ export async function GET(req: Request) {
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
             eps_curr: e.eps_curr, eps_prev: e.eps_prev, eps_yoy_pct: e.eps_yoy_pct,
             newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
-            quarters_sales: e.quarters_sales ?? null, quarters_eps: e.quarters_eps ?? null,  // zzz505
+            quarters_sales: e.quarters_sales ?? null, quarters_eps: e.quarters_eps ?? null, quarters_pat: e.quarters_pat ?? null,  // zzz505/507
             op_profit_yoy_pct: e.op_profit_yoy_pct, opm_pct: e.opm_pct, opm_prev_pct: e.opm_prev_pct,
             pe: e.pe, current_price: e.current_price ?? c.price,
             gap_pct: e.gap_pct ?? c.gap_pct, d1_pct: e.d1_pct ?? c.d1_pct, move_pct: e.move_pct ?? c.move_pct,
@@ -1445,7 +1445,7 @@ export async function GET(req: Request) {
       pat_yoy_pct: e.pat_yoy_pct ?? null,
       eps_curr: e.eps_curr ?? null, eps_prev: e.eps_prev ?? null, eps_yoy_pct: e.eps_yoy_pct ?? null,
       newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
-      quarters_sales: e.quarters_sales ?? null, quarters_eps: e.quarters_eps ?? null,  // zzz505
+      quarters_sales: e.quarters_sales ?? null, quarters_eps: e.quarters_eps ?? null, quarters_pat: e.quarters_pat ?? null,  // zzz505/507
       op_profit_yoy_pct: e.op_profit_yoy_pct ?? null, opm_pct: e.opm_pct ?? null, opm_prev_pct: e.opm_prev_pct ?? null,
       pe: e.pe ?? null,
       current_price: e.current_price ?? m.cmp ?? null,

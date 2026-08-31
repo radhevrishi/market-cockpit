@@ -506,6 +506,7 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
         const salesQ4 = lastN('Sales', 4).length ? lastN('Sales', 4) : (lastN('Revenue', 4).length ? lastN('Revenue', 4) : lastN('Income', 4));
         const epsQ4 = lastN('EPS', 4);
         const opmQ4 = lastN('OPM', 4).length ? lastN('OPM', 4) : lastN('Financing Margin', 4);
+        const patQ4 = lastN('Net Profit', 4).length ? lastN('Net Profit', 4) : lastN('Profit', 4);  // zzz507 — quarterly PAT for NET PROFIT QoQ on newly-listed cards
         // EBITDA margin from P&L "OPM %" row (annual). Falls back to quarterly OPM.
         const pl = parseSectionTable(html, 'profit-loss');
         const plLatest = pl && pl.labels.length > 0 ? pl.labels.length - 1 : -1;
@@ -532,6 +533,7 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
           quarters_sales: salesQ4.length >= 2 ? salesQ4 : null,
           quarters_eps: epsQ4.length >= 2 ? epsQ4 : null,
           quarters_opm: opmQ4.length >= 2 ? opmQ4 : null,
+          quarters_pat: patQ4.length >= 2 ? patQ4 : null,  // zzz507
           ebitda_margin_pct: opmAnnual,
           receivables_yoy_pct: pct(recvCurr, recvPrev),
           inventory_yoy_pct: pct(invCurr, invPrev),
