@@ -118,6 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/capex-tracker', label: 'Capex Tracker', icon: <Factory className="w-4 h-4" /> },
       { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },
       { href: '/valuation-calc',  label: 'Valuation Calculators', icon: <Star className="w-4 h-4" /> },
+      { href: '/valuation-bands', label: 'Valuation Bands',        icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/portfolio-simulator', label: 'Portfolio Simulator', icon: <LineChart className="w-4 h-4" /> },
       { href: '/winning-playbook', label: 'Winning Playbook', icon: <Star className="w-4 h-4" /> },
       { href: '/auto-valuation',  label: 'Auto-Valuation',        icon: <Star className="w-4 h-4" /> },
