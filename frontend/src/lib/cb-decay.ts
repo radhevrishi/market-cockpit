@@ -130,8 +130,11 @@ export function assessDecay(e: DecayInput): DecayAssessment | null {
       cfoPat = num(e.annual_cfo_pat[e.annual_cfo_pat.length - 1]);
     }
     if (cfoPat != null && cfoPat < 0.3) {
+      // Cash NEVER qualifies a name on its own — CFO/PAT is timing-noisy and
+      // impossible to fully de-financialise by name (opaquely-named NBFCs like
+      // "Paisalo Digital" slip a name filter). It must be corroborated by a
+      // price rollover or a second fundamental. So no `catastrophic` latch here.
       flags.push({ kind: 'cash', label: `CFO/PAT ${cfoPat.toFixed(2)}`, weight: cfoPat < 0 ? 3 : 2 });
-      if (cfoPat < -3) catastrophic = true; // cash wildly divergent from profit
     }
   }
 
