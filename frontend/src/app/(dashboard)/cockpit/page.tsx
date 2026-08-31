@@ -17,6 +17,8 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
+import { getTechBuyZone } from '@/lib/tech-entries';
+import { diffNew, markSeen, getDismissed, dismiss, clearDismissed } from '@/lib/seen-store';
 import { getConvictionList } from '@/lib/conviction-beats';
 import { listAutoValuations } from '@/lib/auto-valuation-store';
 import { getThesisList } from '@/lib/thesis-store';
@@ -88,6 +90,7 @@ export default function CockpitPage() {
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
   const [counts, setCounts] = useState({ held: 0, bench: 0, theses: 0 });
   const [notify, setNotify] = useState(false);
   const [builtAt, setBuiltAt] = useState<string>('');
@@ -303,13 +306,53 @@ export default function CockpitPage() {
       });
     }
 
+    // ── 7. Technical buy-zone (your names set up for an entry) ───────────
+    try {
+      const bz = getTechBuyZone();
+      for (const [tk, info] of bz) {
+        const isHeld = held.has(tk);
+        const isBench = benchSet.has(tk);
+        if (!isHeld && !isBench) continue;
+        sig.push({
+          id: `tech-${tk}`, sev: isHeld ? 'watch' : 'watch', priority: isHeld ? 52 : 48,
+          icon: '🎯', kind: 'ENTRY', ticker: tk,
+          title: `${benchByTicker.get(tk)?.company || tk} is at a technical entry${isHeld ? ' (you hold this)' : ''}`,
+          detail: `${info.market === 'IND' ? '🇮🇳' : '🇺🇸'} ${info.note}. ${isHeld ? 'Add on strength or hold.' : 'On your bench — a clean setup to start a position.'}`,
+          href: `/multibagger?tab=technicals-${info.market === 'IND' ? 'ind' : 'usa'}`,
+        });
+      }
+    } catch { /* tech rows not loaded */ }
+
+    // ── 8. A holding down hard today (needs a look) ──────────────────────
+    for (const tk of held) {
+      const chg = quoteMap[tk]?.chg;
+      if (chg == null || chg > -6) continue;
+      sig.push({
+        id: `drop-${tk}`, sev: chg <= -9 ? 'act' : 'watch', priority: 55 + Math.min(20, Math.abs(chg)),
+        icon: '📉', kind: 'MOVE', ticker: tk,
+        title: `${tk} is down ${Math.abs(chg).toFixed(1)}% today`,
+        detail: `A sharp move on a name you hold. Check the news and your thesis before it becomes an emotional decision.`,
+        href: `/news`,
+      });
+    }
+
     sig.sort((a, b) => {
       const order = { act: 0, watch: 1, info: 2 };
       if (order[a.sev] !== order[b.sev]) return order[a.sev] - order[b.sev];
       return b.priority - a.priority;
     });
 
-    setSignals(sig);
+    // zzz514 — drop anything the user dismissed; flag what's new since last visit.
+    let shown = sig;
+    let freshIds = new Set<string>();
+    try {
+      const dz = getDismissed('cockpit');
+      shown = sig.filter((s) => !dz.has(s.id));
+      freshIds = diffNew('cockpit', shown.map((s) => s.id));
+      markSeen('cockpit', shown.map((s) => s.id));
+    } catch { /* storage unavailable */ }
+    setNewIds(freshIds);
+    setSignals(shown);
     setBuiltAt(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
 
@@ -403,6 +446,10 @@ export default function CockpitPage() {
               style={{ ...MONO, fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${C.border2}`, background: C.card2, color: C.muted }}>
               ↻ REFRESH
             </button>
+            <button onClick={() => { try { clearDismissed('cockpit'); build(); } catch {} }} title="Restore dismissed cards"
+              style={{ ...MONO, fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${C.border2}`, background: C.card2, color: C.dim }}>
+              ↺ RESET
+            </button>
           </div>
         </div>
 
@@ -448,20 +495,28 @@ export default function CockpitPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {grouped[b].map(s => (
-                <Link key={s.id} href={s.href} style={{ textDecoration: 'none' }}>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${SEV_META[s.sev].color}`, borderRadius: 10, padding: '12px 14px' }}>
-                    <div style={{ fontSize: 18, lineHeight: 1.2, marginTop: 1 }}>{s.icon}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ ...MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', color: C.dim, background: C.card2, border: `1px solid ${C.border}`, padding: '1px 6px', borderRadius: 4 }}>{s.kind}</span>
-                        {s.ticker && <span style={{ ...MONO, fontSize: 11, fontWeight: 700, color: C.muted }}>{norm(s.ticker)}</span>}
-                        <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text0 }}>{s.title}</span>
+                <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'stretch', background: C.card, border: `1px solid ${newIds.has(s.id) ? `color-mix(in srgb, ${C.accent} 45%, ${C.border})` : C.border}`, borderLeft: `3px solid ${SEV_META[s.sev].color}`, borderRadius: 10 }}>
+                  <Link href={s.href} style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '12px 4px 12px 14px' }}>
+                      <div style={{ fontSize: 18, lineHeight: 1.2, marginTop: 1 }}>{s.icon}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ ...MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', color: C.dim, background: C.card2, border: `1px solid ${C.border}`, padding: '1px 6px', borderRadius: 4 }}>{s.kind}</span>
+                          {newIds.has(s.id) && <span style={{ ...MONO, fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: C.accent, background: `color-mix(in srgb, ${C.accent} 14%, transparent)`, border: `1px solid color-mix(in srgb, ${C.accent} 40%, transparent)`, padding: '1px 5px', borderRadius: 4 }}>NEW</span>}
+                          {s.ticker && <span style={{ ...MONO, fontSize: 11, fontWeight: 700, color: C.muted }}>{norm(s.ticker)}</span>}
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text0 }}>{s.title}</span>
+                        </div>
+                        <div style={{ fontSize: 12.5, color: C.muted, marginTop: 3, lineHeight: 1.5 }}>{s.detail}</div>
                       </div>
-                      <div style={{ fontSize: 12.5, color: C.muted, marginTop: 3, lineHeight: 1.5 }}>{s.detail}</div>
+                      <div style={{ ...MONO, fontSize: 15, color: C.dim, alignSelf: 'center' }}>›</div>
                     </div>
-                    <div style={{ ...MONO, fontSize: 15, color: C.dim, alignSelf: 'center' }}>›</div>
-                  </div>
-                </Link>
+                  </Link>
+                  <button
+                    onClick={() => { try { dismiss('cockpit', s.id); build(); } catch {} }}
+                    title="Dismiss — I've handled this"
+                    style={{ ...MONO, fontSize: 13, color: C.dim, background: 'transparent', border: 'none', borderLeft: `1px solid ${C.border}`, cursor: 'pointer', padding: '0 12px', flexShrink: 0 }}
+                  >✕</button>
+                </div>
               ))}
             </div>
           </section>

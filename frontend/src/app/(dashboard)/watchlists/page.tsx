@@ -87,6 +87,7 @@ const resolveSector = (e: any): string | null => {
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
 import PortfolioEarningsTab from './PortfolioEarningsTab'; // zzz283
+import DecayWatch from '@/components/DecayWatch'; // zzz514
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import {
@@ -1298,6 +1299,8 @@ export default function WatchlistsPage() {
       </div>
 
       {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
+        <>
+        <DecayWatch />{/* zzz514 */}
         <ConvictionBeatsPanel
           entries={(() => { const map = new Map<string, any>(); for (const e of [...convictionEntries, ...serverBench]) { /* zzz426 merge server bench */ const t = String(e.ticker || '').toUpperCase(); if (!t) continue; const cur = map.get(t); if (!cur) { map.set(t, e); continue; } const eDate = String((e as any).filing_date || ''); const cDate = String((cur as any).filing_date || ''); if (eDate > cDate) { map.set(t, e); continue; } if (eDate < cDate) continue; const eScore = (e as any).composite_score ?? -1; const cScore = (cur as any).composite_score ?? -1; if (eScore > cScore) map.set(t, e); } return Array.from(map.values()); })()}
           onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
@@ -1322,6 +1325,7 @@ export default function WatchlistsPage() {
             setConvictionEntries(getConvictionList());
           }}
         />
+        </>
       ) : (
       <>
       {/* ── Add Ticker Search ──────────────────────────────────────────────── */}

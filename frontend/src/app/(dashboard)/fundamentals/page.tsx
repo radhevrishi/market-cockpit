@@ -17,6 +17,7 @@ import {
   shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
 } from '@/lib/screener-data-loader';
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import PortfolioQualityHeader from '@/components/PortfolioQualityHeader'; // zzz514
 
 // PATCH 1101rrr — IndexedDB fallback for when localStorage hits its 5MB
 // quota. Same key namespace so loads/saves transparently move between the
@@ -713,6 +714,7 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
                 </div>
               </div>
             )}
+            {scope === 'portfolio' && <div style={{ marginBottom: 16 }}><PortfolioQualityHeader /></div>}{/* zzz514 */}
             {market === 'USA' ? (
               <UsaFundamentalsDashboard data={data} onRemove={removeRow} onClear={clearAll} />
             ) : (

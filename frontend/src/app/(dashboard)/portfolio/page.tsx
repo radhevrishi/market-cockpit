@@ -11,6 +11,7 @@ import { PanelFreshness } from '@/components/PanelFreshness';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
 import PortfolioEarningsTab from '../watchlists/PortfolioEarningsTab'; // zzz285
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+import ReturnVsIndexCard from '@/components/ReturnVsIndexCard'; // zzz514
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -2333,6 +2334,7 @@ export default function PortfolioPage() {
 
       {/* ── Summary ─────────────────────────────────────────────────── */}
       <PortfolioSummary rows={sortedRows} holdings={holdings} />
+      <div style={{ marginTop: 16 }}><ReturnVsIndexCard /></div>{/* zzz514 */}
 
       {/* PATCH 1100 — view tabs + market-cap filter */}
       {!loading && holdings.length > 0 && (
