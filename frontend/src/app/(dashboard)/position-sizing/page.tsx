@@ -177,6 +177,17 @@ export default function PositionSizingPage() {
   const [bench, setBench] = useState<ConvictionEntry[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [quotes, setQuotes] = useState<Map<string, QuoteLite>>(new Map());
+  const [screenerSector, setScreenerSector] = useState<Record<string, string>>({});  // zzz513 — Screener Industry Group map
+
+  // zzz513 — load the Screener sector map once (best India sector source)
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/market/sector-map', { cache: 'force-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!cancelled && j?.sectors) setScreenerSector(j.sectors); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // inputs
   const [capital, setCapital] = useState<number>(1_000_000);
@@ -264,10 +275,11 @@ export default function PositionSizingPage() {
   // 4) build the plan
   const plan: Plan | null = useMemo(() => {
     if (bench.length === 0) return null;
-    // zzz512 — sector resolver from the quotes feed (good sector labels), so the
-    // proposed book isn't one giant "Unknown" bucket.
+    // zzz512/513 — sector resolver: Screener "Industry Group" first (covers the
+    // micro-caps the NSE feed calls "Other"), then the quotes-feed sector.
     const sectorOf = new Map<string, string>();
-    quotes.forEach((v, k) => { const s = (v as any)?.sector; if (s) sectorOf.set(k, s); });
+    quotes.forEach((v, k) => { const s = (v as any)?.sector; if (s && s !== 'Other') sectorOf.set(k, s); });
+    for (const [k, v] of Object.entries(screenerSector)) { if (v) sectorOf.set(normTicker(k), v); }
     return buildPlan({
       bench,
       capital: capital > 0 ? capital : 0,
@@ -278,7 +290,7 @@ export default function PositionSizingPage() {
       heldSymbols: book.heldSymbols,
       sectorOf,
     });
-  }, [bench, capital, maxSinglePct, numNames, applyCapTilt, book.heldWeights, book.heldSymbols, quotes]);
+  }, [bench, capital, maxSinglePct, numNames, applyCapTilt, book.heldWeights, book.heldSymbols, quotes, screenerSector]);
 
   // ── empty state ────────────────────────────────────────────────────────────
   if (mounted && bench.length === 0) {

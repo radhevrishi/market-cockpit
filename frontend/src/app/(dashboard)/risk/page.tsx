@@ -316,6 +316,18 @@ export default function RiskDeskPage() {
     return m;
   }, [holdings]);
 
+  // zzz513 — Screener "Industry Group" map: the most reliable India sector
+  // source (covers micro-caps the NSE feed labels "Other"). Fetched once.
+  const [screenerSector, setScreenerSector] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/market/sector-map', { cache: 'force-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!cancelled && j?.sectors) setScreenerSector(j.sectors); })
+      .catch(() => { /* fall back to other sector sources */ });
+    return () => { cancelled = true; };
+  }, []);
+
   // 3) derive the desk model
   const desk: DeskData | null = useMemo(() => {
     if (holdings == null || holdings.length === 0) return null;
@@ -332,11 +344,12 @@ export default function RiskDeskPage() {
       // last resort before 'Unknown'. Prevents a generic "Other" from burying
       // names that have a real sector elsewhere.
       const sector =
+        screenerSector[sym] ||                        // zzz513 — Screener Industry Group (best India source)
         usableSector(quote?.sector) ||
         gradeSector.get(sym) ||
         convictionSector.get(sym) ||
         (quote?.sector || '').trim() ||
-        'Unknown';
+        'Unclassified';
       const pnlPct =
         livePrice != null && livePrice > 0 && h.entryPrice > 0
           ? ((livePrice - h.entryPrice) / h.entryPrice) * 100
@@ -369,7 +382,7 @@ export default function RiskDeskPage() {
     const hasLiquidity = rows.some((r) => r.liquidity != null);
 
     return { positions: rows, totalValue, quoteFields: { hasDrawdown, hasLiquidity }, updatedAt };
-  }, [holdings, quotesBySymbol, gradeSector, convictionSector, updatedAt]);
+  }, [holdings, quotesBySymbol, gradeSector, convictionSector, screenerSector, updatedAt]);
 
   // ── render: empty state ────────────────────────────────────────────────────
   if (holdings != null && holdings.length === 0) {
