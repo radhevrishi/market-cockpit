@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-08-31T15:45:50Z",
+  "lastSync": "2026-08-31T18:19:25Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -35,7 +35,7 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 7088,
+      "size": 7135,
       "displayName": "IPOBASES"
     },
     {
@@ -80,7 +80,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 25261,
+      "size": 25319,
       "displayName": "Latest Portfolio"
     },
     {
