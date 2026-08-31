@@ -2678,8 +2678,18 @@ export default function HomeDashboard() {
           <div style={{ marginBottom: 6 }}>
             <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 8 }}>⭐ Favourites</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
+              {/* zzz511 — roadmap tools pinned to Favourites */}
+              <Link href="/cockpit"                        style={navChip('#F59E0B')}>🛩️ Action Cockpit</Link>
               <Link href="/watchlists?tab=conviction"      style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
               <Link href="/earnings-opportunities"         style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
+              <Link href="/risk"                           style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
+              <Link href="/position-sizing"                style={navChip('#22D3EE')}>📐 Position Sizing</Link>
+              <Link href="/thesis"                         style={navChip('#A78BFA')}>📓 Thesis Tracker</Link>
+              <Link href="/coffee-can"                     style={navChip('#FBBF24')}>🫙 Coffee Can</Link>
+              <Link href="/pead-tracker"                   style={navChip('#10B981')}>📊 PEAD Tracker</Link>
+              <Link href="/monte-carlo"                    style={navChip('#06B6D4')}>🎲 Monte Carlo</Link>
+              <Link href="/tax-planner"                    style={navChip('#F59E0B')}>🧾 Tax Planner</Link>
+              <Link href="/valuation-bands"                style={navChip('#22D3EE')}>📊 Valuation Bands</Link>
               <a
                 href="https://www.ibef.org/news/past-news"
                 target="_blank" rel="noopener noreferrer"

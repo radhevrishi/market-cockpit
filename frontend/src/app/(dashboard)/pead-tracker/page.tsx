@@ -589,8 +589,9 @@ export default function PeadTrackerPage() {
                               fontWeight: 700,
                               color: signColor(r.drift),
                             }}
+                            title={r.driftSource === 'move' ? 'Proxy: cumulative move since filing, net of the day-1 reaction (no 30d close series yet)' : 'From the 30-day close series'}
                           >
-                            {fmtPct(r.drift)}
+                            {r.driftSource === 'move' ? '≈' : ''}{fmtPct(r.drift)}
                           </span>
                         ) : (
                           <span

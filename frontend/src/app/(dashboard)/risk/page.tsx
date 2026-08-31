@@ -61,6 +61,14 @@ const DRAWDOWN_FLAG = 25;        // % off 52w high
 const THIN_LIQUIDITY_ABS = 50_000; // fallback abs threshold for volume-like proxy
 const FX_FALLBACK = 83.5;        // USD→INR fallback when no live rate is available — edit if stale
 
+// Quote sectors that are too generic to trust — a real sector source should win over these.
+const GENERIC_SECTORS = new Set(['other', 'unknown', '-', 'n/a', 'na']);
+/** A quote sector is usable only when non-empty AND not a generic placeholder. */
+function usableSector(s: string | null | undefined): string | null {
+  const v = (s || '').trim();
+  return v && !GENERIC_SECTORS.has(v.toLowerCase()) ? v : null;
+}
+
 // ── formatting ──────────────────────────────────────────────────────────────
 const pct = (n: number | null | undefined, dp = 1) =>
   n == null || !Number.isFinite(n) ? '—' : `${n.toFixed(dp)}%`;
@@ -176,6 +184,7 @@ const REGION_COLORS = [C.accent, C.cyan, C.saffron, C.purple, C.info, C.bull];
 export default function RiskDeskPage() {
   const [holdings, setHoldings] = useState<Holding[] | null>(null); // null = not yet read
   const [quotesBySymbol, setQuotesBySymbol] = useState<Map<string, QuoteLite>>(new Map());
+  const [gradeSector, setGradeSector] = useState<Map<string, string>>(new Map());
   const [loadingQuotes, setLoadingQuotes] = useState(true);
   const [quotesError, setQuotesError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string>('');
@@ -242,6 +251,28 @@ export default function RiskDeskPage() {
       setQuotesBySymbol(map);
       setUpdatedAt(uIndia || uUs || new Date().toISOString());
 
+      // ── earnings-grade sector enrichment (best-effort) ───────────────────
+      // Many holdings get a generic "Other"/"Unknown" sector from the quotes
+      // feed. The graded index carries a real sector for scored names, which
+      // shrinks the "Other" bucket. Failure just falls back to prior behaviour.
+      try {
+        const tks = Array.from(new Set(holdings.map((h) => normalizeSymbol(h.symbol)).filter(Boolean)));
+        if (tks.length > 0) {
+          const gres = await fetch(`/api/v1/portfolio/earnings-grades?tickers=${encodeURIComponent(tks.join(','))}`, { cache: 'no-store' });
+          if (gres.ok) {
+            const gj = await gres.json();
+            const results = gj?.results && typeof gj.results === 'object' ? gj.results : {};
+            const gm = new Map<string, string>();
+            for (const [key, r] of Object.entries(results)) {
+              const rec = r as any;
+              const sec = rec && typeof rec.sector === 'string' ? rec.sector.trim() : '';
+              if (sec) gm.set(normalizeSymbol(rec.ticker || key), sec);
+            }
+            if (!cancelled && gm.size > 0) setGradeSector(gm);
+          }
+        }
+      } catch { /* best-effort — fall back to prior sector sources */ }
+
       // ── resolve USD→INR ─────────────────────────────────────────────────
       // 1) probe the us quotes payload for an embedded FX field;
       // 2) else the app's macro feed (Yahoo USD/INR, already allowed);
@@ -296,7 +327,16 @@ export default function RiskDeskPage() {
       const livePrice = quote?.price ?? null;
       const effPrice = livePrice != null && livePrice > 0 ? livePrice : (h.entryPrice || 0);
       const marketValue = (h.quantity || 0) * effPrice;
-      const sector = quote?.sector || convictionSector.get(sym) || 'Unknown';
+      // Sector priority: a usable (non-generic) quote sector wins; else the
+      // earnings-grade sector, then conviction, then the raw quote sector as a
+      // last resort before 'Unknown'. Prevents a generic "Other" from burying
+      // names that have a real sector elsewhere.
+      const sector =
+        usableSector(quote?.sector) ||
+        gradeSector.get(sym) ||
+        convictionSector.get(sym) ||
+        (quote?.sector || '').trim() ||
+        'Unknown';
       const pnlPct =
         livePrice != null && livePrice > 0 && h.entryPrice > 0
           ? ((livePrice - h.entryPrice) / h.entryPrice) * 100
@@ -329,7 +369,7 @@ export default function RiskDeskPage() {
     const hasLiquidity = rows.some((r) => r.liquidity != null);
 
     return { positions: rows, totalValue, quoteFields: { hasDrawdown, hasLiquidity }, updatedAt };
-  }, [holdings, quotesBySymbol, convictionSector, updatedAt]);
+  }, [holdings, quotesBySymbol, gradeSector, convictionSector, updatedAt]);
 
   // ── render: empty state ────────────────────────────────────────────────────
   if (holdings != null && holdings.length === 0) {

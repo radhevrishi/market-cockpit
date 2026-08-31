@@ -19,8 +19,9 @@ export interface DriftRow {
   d1: number | null;             // day-1 move %
   daysSince: number;             // whole days since filing
   closes: number[];              // sanitized close_30d
-  hasDrift: boolean;             // closes.length >= 2
-  drift: number | null;          // (last/first - 1) * 100, or null
+  hasDrift: boolean;             // a drift value is available (closes OR move_pct)
+  drift: number | null;          // post-earnings drift %, or null
+  driftSource: 'closes' | 'move' | 'none';  // where drift came from
 }
 
 /** Whole days between a YYYY-MM-DD filing date and `now` (>=0). */
@@ -39,14 +40,25 @@ function sanitizeCloses(raw: number[] | null | undefined): number[] {
 /** Build a DriftRow from one conviction entry. */
 export function toDriftRow(entry: ConvictionEntry, now: Date = new Date()): DriftRow {
   const closes = sanitizeCloses(entry.close_30d);
-  const hasDrift = closes.length >= 2;
-  const drift = hasDrift ? (closes[closes.length - 1] / closes[0] - 1) * 100 : null;
   const peadScore =
     typeof entry.pead_score === 'number' && Number.isFinite(entry.pead_score)
       ? entry.pead_score
       : null;
   const d1 =
     typeof entry.d1_pct === 'number' && Number.isFinite(entry.d1_pct) ? entry.d1_pct : null;
+  // zzz511 — drift with a graceful fallback. Preferred source is the 30-day
+  // close series (true path). When it's absent (most bench entries don't carry
+  // close_30d yet), fall back to move_pct — the cumulative move since filing —
+  // and isolate the DRIFT after the day-1 reaction by subtracting d1 when we
+  // have it. This is a proxy (labelled as such in the UI), so the scoreboard is
+  // populated from data we already store instead of sitting empty.
+  const move =
+    typeof entry.move_pct === 'number' && Number.isFinite(entry.move_pct) ? entry.move_pct : null;
+  const closeDrift = closes.length >= 2 ? (closes[closes.length - 1] / closes[0] - 1) * 100 : null;
+  const moveDrift = move != null ? (d1 != null ? move - d1 : move) : null;
+  const drift = closeDrift != null ? closeDrift : moveDrift;
+  const driftSource: 'closes' | 'move' | 'none' =
+    closeDrift != null ? 'closes' : moveDrift != null ? 'move' : 'none';
   return {
     entry,
     ticker: entry.ticker,
@@ -56,8 +68,9 @@ export function toDriftRow(entry: ConvictionEntry, now: Date = new Date()): Drif
     d1,
     daysSince: daysSinceFiling(entry.filing_date, now),
     closes,
-    hasDrift,
+    hasDrift: drift != null,
     drift,
+    driftSource,
   };
 }
 
