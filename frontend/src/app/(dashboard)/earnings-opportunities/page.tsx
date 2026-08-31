@@ -3935,6 +3935,19 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
 
 function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh?: boolean; radar?: { transformation_score: number } | null }) {
   const tierColor = TIER_META[stock.tier].color;
+  // zzz505 — newly-listed companies have no year-ago quarter, so the YoY tiles
+  // render "—". But we now carry their short sequential history, so switch the
+  // Sales/EPS tiles to QUARTER-ON-QUARTER (QoQ) — the correct comparison for an
+  // IPO — and fill them with real momentum instead of a blank.
+  const _isNewCard = (stock.caveat_tags || []).includes('newly listed');
+  const _qs: number[] = Array.isArray((stock as any).quarters_sales) ? (stock as any).quarters_sales.filter((x: any) => typeof x === 'number') : [];
+  const _qe: number[] = Array.isArray((stock as any).quarters_eps) ? (stock as any).quarters_eps.filter((x: any) => typeof x === 'number') : [];
+  const _salesQoQ = (_qs.length >= 2 && _qs[_qs.length - 2] > 0) ? (_qs[_qs.length - 1] / _qs[_qs.length - 2] - 1) * 100 : null;
+  const _salesPrevQ = _qs.length >= 2 ? _qs[_qs.length - 2] : null;
+  const _epsQoQ = (_qe.length >= 2 && _qe[_qe.length - 2] > 0) ? (_qe[_qe.length - 1] / _qe[_qe.length - 2] - 1) * 100 : null;
+  const _epsPrevQ = _qe.length >= 2 ? _qe[_qe.length - 2] : null;
+  const _useSalesQoQ = _isNewCard && stock.sales_yoy_pct == null && _salesQoQ != null;
+  const _useEpsQoQ = _isNewCard && stock.eps_yoy_pct == null && _epsQoQ != null;
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
     if (!stock.filing_url) return null;
@@ -4092,9 +4105,9 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* ── Three metric tiles + score ────────────────────────────────────── */}
       {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-        <MetricTile label="SALES YOY"  pct={stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={fmtCr(stock.sales_prev_cr)} />
+        <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(stock.sales_prev_cr)} />
         <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={fmtCr(stock.pat_prev_cr)} />
-        <MetricTile label="EPS YOY"    pct={stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={fmtPx(stock.eps_prev)} />
+        <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />
         <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
         <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>
           <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
