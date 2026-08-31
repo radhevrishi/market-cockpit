@@ -32,6 +32,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Star className="w-5 h-5" />,
     items: [
       { href: '/',                 label: 'Home Dashboard',     icon: <Star className="w-4 h-4" /> },
+      { href: '/cockpit',          label: 'Action Cockpit',     icon: <Compass className="w-4 h-4" /> },
     ],
   },
   // PATCH 0617 — sidebar reorder per user request:
@@ -60,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/earnings',               label: 'Earnings Scan',          icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/earnings-analysis',      label: 'Earnings Analysis (AI)', icon: <Microscope className="w-4 h-4" /> },
       { href: '/earnings-guidance',      label: 'Earnings Guidance',      icon: <LineChart className="w-4 h-4" /> },
+      { href: '/pead-tracker',           label: 'PEAD Drift Tracker',     icon: <TrendingUp className="w-4 h-4" /> },
       { href: '/calendars',              label: 'Calendar',               icon: <LineChart className="w-4 h-4" /> },
     ],
   },
@@ -152,6 +154,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Briefcase className="w-5 h-5" />,
     items: [
       { href: '/portfolio',     label: 'Portfolio',        icon: <Briefcase className="w-4 h-4" /> },
+      { href: '/risk',          label: 'Risk Desk',        icon: <Shield className="w-4 h-4" /> },
+      { href: '/thesis',        label: 'Thesis Tracker',   icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/coffee-can',    label: 'Coffee Can',       icon: <Star className="w-4 h-4" /> },
       { href: '/watchlists',    label: 'Watchlist',        icon: <BookMarked className="w-4 h-4" /> },
       { href: '/decisions',     label: 'Decision Logbook', icon: <BookMarked className="w-4 h-4" /> },
       { href: '/activity-log',  label: 'Activity Log',     icon: <BookMarked className="w-4 h-4" /> },
