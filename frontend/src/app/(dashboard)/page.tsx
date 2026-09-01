@@ -5356,6 +5356,61 @@ function DailySignalInbox() {
     } catch { setPullbacks([]); }
     setLoading(false);   // instant content is up — stop the "scanning feeds…" spinner
 
+    // ══ PHASE 1.5 · LIVE PULLBACK REFRESH ═══════════════════════════════════
+    // zzz521 — the Phase-1 pullback % came straight off the bench snapshot
+    // (dist_52w_pct_yahoo, which is usually null, so it fell back to move_pct —
+    // a since-filing move captured ONCE at enrichment). That froze the numbers:
+    // they read the same for days because nothing recomputed them against the
+    // current price. Fix: pull the live india quote map (current price + live
+    // 52-week high) and recompute each preset name's correction from TODAY's
+    // price, so the panel actually moves. Snapshot stays as the instant
+    // fallback for any name the live feed doesn't cover.
+    (async () => {
+      const q = await j('/api/market/quotes?market=india&fields=ticker,price,week52High,changePercent', 12000);
+      const stocks: any[] = q && Array.isArray(q.stocks) ? q.stocks : [];
+      if (!stocks.length) return;
+      const live = new Map<string, { price: number; high: number | null; chg: number | null }>();
+      for (const s of stocks) {
+        const t = String(s?.ticker || '').toUpperCase().trim();
+        if (!t) continue;
+        const price = Number(s?.price);
+        const high = Number(s?.week52High);
+        live.set(t, {
+          price: Number.isFinite(price) ? price : NaN,
+          high: Number.isFinite(high) && high > 0 ? high : null,
+          chg: Number.isFinite(Number(s?.changePercent)) ? Number(s.changePercent) : null,
+        });
+      }
+      try {
+        const fresh: InboxPullback[] = getConvictionList()
+          .filter(passesQualityPreset)
+          .map((b: any) => {
+            const sym = String(b.ticker || '').toUpperCase().trim();
+            const lq = live.get(sym);
+            // Live correction from the CURRENT price vs the live 52-week high.
+            let correction: number;
+            let basis: InboxPullback['basis'];
+            if (lq && Number.isFinite(lq.price) && lq.high) {
+              correction = (lq.high - lq.price) / lq.high * 100; // % below 52w high, live
+              basis = '52w high';
+            } else if (typeof b.dist_52w_pct_yahoo === 'number') {
+              correction = -b.dist_52w_pct_yahoo; basis = '52w high';
+            } else if (typeof b.move_pct === 'number') {
+              correction = -b.move_pct; basis = 'since filing';
+            } else {
+              correction = NaN; basis = 'since filing';
+            }
+            return { symbol: b.ticker, company: b.company || '', tier: b.tier,
+              correction, basis, sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct,
+              pead: b.pead_score, mcap: b.market_cap_cr };
+          })
+          .filter((p) => Number.isFinite(p.correction) && p.correction <= 60)
+          .sort((a, b) => b.correction - a.correction)
+          .slice(0, 10);
+        if (fresh.length) setPullbacks(fresh);
+      } catch { /* keep the Phase-1 snapshot */ }
+    })();
+
     // ══ PHASE 2 · NETWORK — each lane fills in independently as it returns ══
     // MOMENTUM = concall score-movers + today's price leaders (needs both).
     Promise.all([
