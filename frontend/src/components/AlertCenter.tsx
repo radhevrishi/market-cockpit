@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertHit, AlertKind, AlertRule,
   addRule, evaluateAlerts, getRules, notify, removeRule, requestNotifyPermission,
+  syncRulesToServer, fetchServerHits,
 } from '@/lib/alerts';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
@@ -66,9 +67,17 @@ export default function AlertCenter() {
     }
     const fired = notify(evaluateAlerts(live));
     setRules(getRules()); // pick up lastFiredAt stamps
-    if (fired.length) {
+    // zzz526 — merge in server-fired hits (the cron that runs with the portal closed)
+    let serverHits: Array<{ at: number; message: string }> = [];
+    try {
+      serverHits = (await fetchServerHits()).map((h) => ({ at: h.ts, message: `☁ ${h.message}` }));
+    } catch { /* offline */ }
+    if (fired.length || serverHits.length) {
       setHits((prev) => {
-        const next = [...fired.map((h: AlertHit) => ({ at: Date.now(), message: h.message })), ...prev].slice(0, 20);
+        const merged = [...fired.map((h: AlertHit) => ({ at: Date.now(), message: h.message })), ...prev];
+        for (const sh of serverHits) if (!merged.some((m) => m.message === sh.message && Math.abs(m.at - sh.at) < 60_000)) merged.push(sh);
+        merged.sort((a, b) => b.at - a.at);
+        const next = merged.slice(0, 20);
         try { localStorage.setItem(HITS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
         return next;
       });
@@ -94,6 +103,7 @@ export default function AlertCenter() {
     addRule({ ticker: t, kind, level: Number.isFinite(lv) ? lv : undefined });
     setRules(getRules());
     setTicker(''); setLevel('');
+    syncRulesToServer(); // zzz526 — mirror to the server so the cron fires with the portal closed
   };
 
   const chip: React.CSSProperties = {
@@ -132,7 +142,7 @@ export default function AlertCenter() {
               <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)' }}>{r.ticker}</span>
               <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--mc-text-3)', flex: 1 }}>{describe(r)}</span>
               <button
-                onClick={() => { removeRule(r.id); setRules(getRules()); }}
+                onClick={() => { removeRule(r.id); setRules(getRules()); syncRulesToServer(); }}
                 title="remove"
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--mc-text-4)', padding: 0 }}
               >

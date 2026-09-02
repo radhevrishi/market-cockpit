@@ -175,3 +175,28 @@ export function requestNotifyPermission(): Promise<NotificationPermission> {
   if (typeof window === 'undefined' || !('Notification' in window)) return Promise.resolve('denied' as NotificationPermission);
   try { return Notification.requestPermission(); } catch { return Promise.resolve('denied' as NotificationPermission); }
 }
+
+// ── zzz526 — server sync ─────────────────────────────────────────────────────
+// Mirror the rules to KV so the GitHub-Actions cron evaluates them with the
+// portal closed and pushes via Telegram/Slack. Best-effort, never throws.
+export async function syncRulesToServer(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  try {
+    const r = await fetch('/api/v1/alerts/rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rules: getRules() }),
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+/** Server-fired hits (from the cron), for display alongside client hits. */
+export async function fetchServerHits(): Promise<Array<{ ruleId: string; ticker: string; message: string; ts: number }>> {
+  if (typeof window === 'undefined') return [];
+  try {
+    const r = await fetch('/api/v1/alerts/rules', { cache: 'no-store' });
+    if (!r.ok) return [];
+    const j = await r.json();
+    return Array.isArray(j?.hits) ? j.hits : [];
+  } catch { return []; }
+}

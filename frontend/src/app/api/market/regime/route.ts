@@ -56,12 +56,14 @@ export interface MarketRegime {
   close: number | null; sma20: number | null; sma50: number | null; sma200: number | null;
   drawdownPct: number | null;         // % below 52-week high (negative number)
   above200: boolean | null; sma20Rising: boolean | null;
+  washout: boolean;                    // zzz526 — capitulation-style stretch seen in last 60 sessions
+  thrust: boolean;                     // zzz526 — demand follow-through present now
   asOfTs: number | null;
   note: string;                        // one-line human explanation
 }
 
 function classify(pts: Pt[] | null): MarketRegime {
-  const empty: MarketRegime = { kind: 'UNKNOWN', close: null, sma20: null, sma50: null, sma200: null, drawdownPct: null, above200: null, sma20Rising: null, asOfTs: null, note: 'index history unavailable' };
+  const empty: MarketRegime = { kind: 'UNKNOWN', close: null, sma20: null, sma50: null, sma200: null, drawdownPct: null, above200: null, sma20Rising: null, washout: false, thrust: false, asOfTs: null, note: 'index history unavailable' };
   if (!pts || pts.length < 210) return empty;
   const i = pts.length - 1;
   const close = pts[i].close;
@@ -73,14 +75,32 @@ function classify(pts: Pt[] | null): MarketRegime {
   const above200 = sma200 != null ? close > sma200 : null;
   const sma20Rising = sma20 != null && sma20Prev != null ? sma20 > sma20Prev : null;
 
+  // zzz526 — capitulation signature from the playbook (§4.3), proxied on the
+  // index's own series (real breadth needs the full universe; this is the
+  // honest single-series approximation and is labeled as such in the docs):
+  //   WASHOUT — some day in the last 60 sessions closed ≥8% under its own
+  //             50DMA while ≥12% off the 52-week high (forced-selling stretch).
+  //   THRUST  — demand follow-through NOW: +4% in 5 sessions, or price back
+  //             above a rising 20DMA.
+  let washout = false;
+  for (let k = Math.max(50, i - 60); k <= i; k++) {
+    const s50k = smaAt(pts, k, 50);
+    if (s50k == null || s50k <= 0) continue;
+    const hiK = Math.max(...pts.slice(Math.max(0, k - 251), k + 1).map((p) => p.close));
+    const ddK = (pts[k].close / hiK - 1) * 100;
+    if (pts[k].close <= s50k * 0.92 && ddK <= -12) { washout = true; break; }
+  }
+  const fiveDayRet = i >= 5 && pts[i - 5].close > 0 ? (close / pts[i - 5].close - 1) * 100 : 0;
+  const thrust = fiveDayRet >= 4 || (sma20 != null && close > sma20 && sma20Rising === true);
+
   let kind: RegimeKind = 'UNKNOWN'; let note = '';
   if (above200 === true && dd > -5) { kind = 'BULL'; note = 'above 200DMA, near highs — dips are buyable'; }
   else if (above200 === true) { kind = 'PULLBACK'; note = `uptrend intact, ${dd.toFixed(1)}% off high — the classic dip-buy zone`; }
   else if (dd > -12) { kind = 'CORRECTION'; note = 'below 200DMA but shallow — whipsaw zone, halve size and demand confirmation'; }
-  else if (sma20 != null && close > sma20 && sma20Rising === true) { kind = 'RECOVERY'; note = `${dd.toFixed(1)}% drawdown but price back above a rising 20DMA — post-capitulation window`; }
-  else { kind = 'BEAR'; note = `${dd.toFixed(1)}% below high and under the 200DMA — oversold readings are continuation signals; single-name bounce lane closed`; }
+  else if (washout && thrust) { kind = 'RECOVERY'; note = `${dd.toFixed(1)}% drawdown, washout seen and demand following through — post-capitulation window (playbook regime 7)`; }
+  else { kind = 'BEAR'; note = `${dd.toFixed(1)}% below high, under the 200DMA${washout ? ', washed out but NO follow-through yet — wait for the thrust' : ''} — oversold readings are continuation signals; single-name bounce lane closed`; }
 
-  return { kind, close, sma20, sma50, sma200, drawdownPct: dd, above200, sma20Rising, asOfTs: pts[i].ts, note };
+  return { kind, close, sma20, sma50, sma200, drawdownPct: dd, above200, sma20Rising, washout, thrust, asOfTs: pts[i].ts, note };
 }
 
 let _cache: { data: any; ts: number } | null = null;

@@ -2684,55 +2684,8 @@ export default function HomeDashboard() {
           */}
           <div style={{ marginBottom: 6 }}>
             <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 8 }}>⭐ Favourites</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
-              {/* zzz511 — roadmap tools pinned to Favourites */}
-              <Link href="/cockpit"                        style={navChip('#F59E0B')}>🛩️ Action Cockpit</Link>
-              {/* zzz522 — Cheat Entry: the timing desk (elite universe × MA pullbacks) */}
-              <Link href="/cheat-entry"                    style={navChip('#10B981')}>🥷 Cheat Entry</Link>
-              {/* zzz524 — Bounce Desk (regime-gated oversold scanner) + Weekly Review ritual */}
-              <Link href="/bounce-desk"                    style={navChip('#A78BFA')}>🌊 Bounce Desk</Link>
-              <Link href="/weekly-review"                  style={navChip('#FBBF24')}>🧘 Weekly Review</Link>
-              <Link href="/watchlists?tab=conviction"      style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
-              <Link href="/earnings-opportunities"         style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
-              <Link href="/risk"                           style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
-              <Link href="/position-sizing"                style={navChip('#22D3EE')}>📐 Position Sizing</Link>
-              <Link href="/thesis"                         style={navChip('#A78BFA')}>📓 Thesis Tracker</Link>
-              <Link href="/coffee-can"                     style={navChip('#FBBF24')}>🫙 Coffee Can</Link>
-              <Link href="/pead-tracker"                   style={navChip('#10B981')}>📊 PEAD Tracker</Link>
-              <Link href="/monte-carlo"                    style={navChip('#06B6D4')}>🎲 Monte Carlo</Link>
-              <Link href="/tax-planner"                    style={navChip('#F59E0B')}>🧾 Tax Planner</Link>
-              <Link href="/valuation-bands"                style={navChip('#22D3EE')}>📊 Valuation Bands</Link>
-              <a
-                href="https://www.ibef.org/news/past-news"
-                target="_blank" rel="noopener noreferrer"
-                style={navChip('#10B981')}
-              >🇮🇳 IBEF</a>
-              <Link href="/movers"                         style={navChip('#10B981')}>📈 Movers</Link>
-              <Link href="/multibagger"                    style={navChip('#10B981')}>🚀 Multibagger</Link>
-              <Link href="/portfolio"                      style={navChip('#22D3EE')}>💼 My Book</Link>
-              <Link href="/news"                           style={navChip('#60A5FA')}>📰 News Feed</Link>
-              <Link href="/fundamentals?scope=portfolio"   style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
-              <Link href="/multibagger?tab=technicals-usa" style={navChip('#22D3EE')}>📈 USA Technicals</Link>
-              <Link href="/valuation-calc"                 style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
-              <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
-              <Link href="/multibagger?tab=theme-rotation" style={navChip('#10B981')}>🔄 Theme Rotation</Link>
-              <Link href="/market-cycles"                  style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
-              <Link href="/news-triage"                    style={navChip('#EF4444')}>📰 News Triage</Link>
-              <Link href="/budget-intel"                   style={navChip('#F59E0B')}>📊 Budget Intel</Link>
-              <Link href="/journey"                       style={navChip('#22D3EE')}>🚀 The Journey</Link>
-              <Link href="/multibagger/screens"           style={navChip('#F59E0B')}>🔍 Auto Screens</Link>
-              <Link href="/learn"                          style={navChip('#A78BFA')}>📚 Learn</Link>
-              <Link href="/smallcap-simulator"             style={navChip('#A78BFA')}>🎲 Smallcap Simulator</Link>
-              <Link href="/qqq-simulator"                  style={navChip('#06B6D4')}>🎲 QQQ Simulator</Link>
-              <Link href="/historical-returns"             style={navChip('#FBBF24')}>📈 Historical Returns</Link>
-              {/* zzz478 — added to Favourites on request */}
-              <Link href="/investing-os"                   style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
-              <Link href="/playbook"                       style={navChip('#F59E0B')}>📚 Playbook</Link>
-              <Link href="/winning-playbook"               style={navChip('#F59E0B')}>🏆 Winning Playbook</Link>
-              <Link href="/playbook#stress"                style={navChip('#38bdf8')}>🧘 Stress</Link>
-              <Link href="/volume-rules"                   style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
-              {/* zzz401 — Book Watch + TheWrap trackers removed from Favourites (still in Event-Driven nav) */}
-            </div>
+            {/* zzz526 — favourites are now data-driven + drag-to-reorder (order persists in localStorage) */}
+            <FavouritesGrid />
           </div>
 
           {/* zzz524 — Next Best Actions: the top 3 things to do right now,
@@ -5805,6 +5758,106 @@ function PipelineHealth() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// zzz526 — FavouritesGrid: the ⭐ chips as data + HTML5 drag-to-reorder.
+// Order persists to localStorage ('mc:favs:order:v1', array of hrefs); chips
+// added in future code releases appear automatically in their default slot.
+// ════════════════════════════════════════════════════════════════════════════
+const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }> = [
+  { href: '/cockpit', label: '🛩️ Action Cockpit', color: '#F59E0B' },
+  { href: '/cheat-entry', label: '🥷 Cheat Entry', color: '#10B981' },
+  { href: '/bounce-desk', label: '🌊 Bounce Desk', color: '#A78BFA' },
+  { href: '/weekly-review', label: '🧘 Weekly Review', color: '#FBBF24' },
+  { href: '/watchlists?tab=conviction', label: '🏆 Conviction Beats', color: '#F59E0B' },
+  { href: '/earnings-opportunities', label: '📅 Earnings Ops', color: '#F59E0B' },
+  { href: '/risk', label: '🛡️ Risk Desk', color: '#EF4444' },
+  { href: '/position-sizing', label: '📐 Position Sizing', color: '#22D3EE' },
+  { href: '/thesis', label: '📓 Thesis Tracker', color: '#A78BFA' },
+  { href: '/coffee-can', label: '🫙 Coffee Can', color: '#FBBF24' },
+  { href: '/pead-tracker', label: '📊 PEAD Tracker', color: '#10B981' },
+  { href: '/monte-carlo', label: '🎲 Monte Carlo', color: '#06B6D4' },
+  { href: '/tax-planner', label: '🧾 Tax Planner', color: '#F59E0B' },
+  { href: '/valuation-bands', label: '📊 Valuation Bands', color: '#22D3EE' },
+  { href: 'https://www.ibef.org/news/past-news', label: '🇮🇳 IBEF', color: '#10B981', ext: true },
+  { href: '/movers', label: '📈 Movers', color: '#10B981' },
+  { href: '/multibagger', label: '🚀 Multibagger', color: '#10B981' },
+  { href: '/portfolio', label: '💼 My Book', color: '#22D3EE' },
+  { href: '/news', label: '📰 News Feed', color: '#60A5FA' },
+  { href: '/fundamentals?scope=portfolio', label: '🔬 Portfolio Fundamentals', color: '#f59e0b' },
+  { href: '/multibagger?tab=technicals-usa', label: '📈 USA Technicals', color: '#22D3EE' },
+  { href: '/valuation-calc', label: '🧮 Valuation Calc', color: '#22D3EE' },
+  { href: '/multibagger?tab=technicals-ind', label: '📈 India Technicals', color: '#22D3EE' },
+  { href: '/multibagger?tab=theme-rotation', label: '🔄 Theme Rotation', color: '#10B981' },
+  { href: '/market-cycles', label: '🎢 Market Cycles', color: '#A78BFA' },
+  { href: '/news-triage', label: '📰 News Triage', color: '#EF4444' },
+  { href: '/budget-intel', label: '📊 Budget Intel', color: '#F59E0B' },
+  { href: '/journey', label: '🚀 The Journey', color: '#22D3EE' },
+  { href: '/multibagger/screens', label: '🔍 Auto Screens', color: '#F59E0B' },
+  { href: '/learn', label: '📚 Learn', color: '#A78BFA' },
+  { href: '/smallcap-simulator', label: '🎲 Smallcap Simulator', color: '#A78BFA' },
+  { href: '/qqq-simulator', label: '🎲 QQQ Simulator', color: '#06B6D4' },
+  { href: '/historical-returns', label: '📈 Historical Returns', color: '#FBBF24' },
+  { href: '/investing-os', label: '🧠 Investing OS', color: '#2dd4bf' },
+  { href: '/playbook', label: '📚 Playbook', color: '#F59E0B' },
+  { href: '/winning-playbook', label: '🏆 Winning Playbook', color: '#F59E0B' },
+  { href: '/playbook#stress', label: '🧘 Stress', color: '#38bdf8' },
+  { href: '/volume-rules', label: '🎯 Volume Rules', color: '#22D3EE' },
+];
+const FAV_ORDER_KEY = 'mc:favs:order:v1';
+
+function FavouritesGrid() {
+  const [order, setOrder] = useState<string[]>(() => FAVS.map((f) => f.href));
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FAV_ORDER_KEY) || 'null');
+      if (Array.isArray(saved) && saved.length) {
+        const known = new Set(FAVS.map((f) => f.href));
+        const kept = saved.filter((h: string) => known.has(h));
+        const missing = FAVS.map((f) => f.href).filter((h) => !kept.includes(h));
+        setOrder([...kept, ...missing]);
+      }
+    } catch { /* default order */ }
+  }, []);
+
+  const items = order.map((h) => FAVS.find((f) => f.href === h)!).filter(Boolean);
+
+  const onDrop = (to: number) => {
+    if (dragFrom == null || dragFrom === to) { setDragFrom(null); return; }
+    setOrder((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(dragFrom, 1);
+      next.splice(to, 0, moved);
+      try { localStorage.setItem(FAV_ORDER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    setDragFrom(null);
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}
+      title="Drag any chip to reorder — the order is remembered on this browser">
+      {items.map((f, i) => {
+        const st: React.CSSProperties = { ...navChip(f.color), opacity: dragFrom === i ? 0.4 : 1, cursor: 'grab' };
+        const dragProps = {
+          draggable: true,
+          onDragStart: () => setDragFrom(i),
+          onDragOver: (e: React.DragEvent) => e.preventDefault(),
+          onDrop: (e: React.DragEvent) => { e.preventDefault(); onDrop(i); },
+          onDragEnd: () => setDragFrom(null),
+        };
+        return f.ext ? (
+          <a key={f.href} href={f.href} target="_blank" rel="noopener noreferrer" style={st} {...dragProps}>{f.label}</a>
+        ) : (
+          <Link key={f.href} href={f.href} style={st} {...dragProps}>{f.label}</Link>
+        );
+      })}
     </div>
   );
 }

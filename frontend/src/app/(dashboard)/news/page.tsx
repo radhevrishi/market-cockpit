@@ -17,6 +17,7 @@ import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL 
 import { detectAllTheWrap } from '@/lib/thewrap-detectors';
 // PATCH 0455 CLEANUP-3 — Centralized vocab.
 import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
+import { openPassport } from '@/lib/engines'; // zzz526 — ticker chip → Stock Passport
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { isInReadingList, toggleReadingList } from '@/lib/reading-list';
 // PATCH 0545 — AUDIT #95 debounced LS writes for thesis-notebook autosave.
@@ -1425,7 +1426,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>RELATED TICKERS</p>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {symbols.map(t => (
-                <span key={t} style={{ fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 9%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 19%, transparent)' }}>
+                <span key={t} onClick={() => openPassport(t)} title="Open Stock Passport" style={{ cursor: 'pointer', fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 9%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 19%, transparent)' }}>
                   {t}
                 </span>
               ))}
@@ -1806,7 +1807,7 @@ function BottleneckDashboard({
                               </span>
                             )}
                             {(signal.tickers ?? []).slice(0, 3).map(t => (  /* zzz381 */
-                              <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 7%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 13%, transparent)' }}>
+                              <span key={t} onClick={(e) => { e.stopPropagation(); openPassport(t); }} title="Open Stock Passport" style={{ cursor: 'pointer', fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 7%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 13%, transparent)' }}>
                                 {t}
                               </span>
                             ))}

@@ -32,6 +32,11 @@ on:
     - cron: '0 12 * * 1-5'     # 17:30 IST Mon-Fri  -> book-watch (post-close)
     - cron: '30 13 * * *'      # 19:00 IST daily    -> eo-blockbuster-alert (evening filings)
     - cron: '0 15 * * 1-6'     # 20:30 IST Mon-Sat  -> book-watch (evening + Sat catch)
+    # zzz526 — user-alerts: evaluate the Alert Center rules server-side so
+    # alerts push (Telegram/Slack) even with the portal closed.
+    - cron: '45 4-9 * * 1-5'   # 10:15-15:15 IST hourly Mon-Fri -> user-alerts (NSE session)
+    - cron: '45 15 * * 1-5'    # 21:15 IST Mon-Fri -> user-alerts (US morning session)
+    - cron: '45 19 * * 1-5'    # 01:15 IST Tue-Sat -> user-alerts (US afternoon session)
   workflow_dispatch:
     inputs:
       endpoint:
@@ -42,6 +47,7 @@ on:
           - book-watch
           - refresh-bench
           - eo-blockbuster-alert
+          - user-alerts
 
 concurrency:
   group: book-watch-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -65,10 +71,13 @@ jobs:
               echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-bb-evening" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
             "30 5 * * 1-5"|"0 12 * * 1-5"|"0 15 * * 1-6")
               echo "path=/api/v1/cron/book-watch" >> "$GITHUB_OUTPUT"; echo "label=book-watch" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT"; PREWARM="yes" ;;
+            "45 4-9 * * 1-5"|"45 15 * * 1-5"|"45 19 * * 1-5")
+              echo "path=/api/v1/cron/user-alerts" >> "$GITHUB_OUTPUT"; echo "label=user-alerts" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
             *)
               case "$INPUT" in
                 refresh-bench)         echo "path=/api/v1/cron/refresh-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-bench" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
                 eo-blockbuster-alert)  echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-bb-manual" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+                user-alerts)           echo "path=/api/v1/cron/user-alerts" >> "$GITHUB_OUTPUT"; echo "label=user-alerts-manual" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
                 *)                     echo "path=/api/v1/cron/book-watch" >> "$GITHUB_OUTPUT"; echo "label=book-watch" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT"; PREWARM="yes" ;;
               esac ;;
           esac

@@ -11,7 +11,8 @@ import { PanelFreshness } from '@/components/PanelFreshness';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
 import PortfolioEarningsTab from '../watchlists/PortfolioEarningsTab'; // zzz285
 import TickerExportToolbar from '@/components/TickerExportToolbar';
-import ReturnVsIndexCard from '@/components/ReturnVsIndexCard'; // zzz514
+import ReturnVsIndexCard from '@/components/ReturnVsIndexCard';
+import { openPassport } from '@/lib/engines'; // zzz526 — symbol → Stock Passport // zzz514
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -2469,7 +2470,7 @@ export default function PortfolioPage() {
                     : false;
                   return (
                     <tr key={r.symbol} style={{ borderBottom: idx < displayRows.length - 1 ? '1px solid var(--mc-bg-2)' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                      <td style={{ padding: '10px 12px', color: 'var(--mc-info)', fontWeight: '700' }}>{r.symbol}</td>
+                      <td onClick={() => openPassport(r.symbol)} title="Open Stock Passport" style={{ padding: '10px 12px', color: 'var(--mc-info)', fontWeight: '700', cursor: 'pointer' }}>{r.symbol}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--mc-text-0)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--mc-text-3)', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
                       <td style={{ padding: '10px 12px' }}>{capBadge(r.cap)}</td>
