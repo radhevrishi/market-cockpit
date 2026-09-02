@@ -2680,6 +2680,8 @@ export default function HomeDashboard() {
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
               {/* zzz511 — roadmap tools pinned to Favourites */}
               <Link href="/cockpit"                        style={navChip('#F59E0B')}>🛩️ Action Cockpit</Link>
+              {/* zzz522 — Cheat Entry: the timing desk (elite universe × MA pullbacks) */}
+              <Link href="/cheat-entry"                    style={navChip('#10B981')}>🥷 Cheat Entry</Link>
               <Link href="/watchlists?tab=conviction"      style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
               <Link href="/earnings-opportunities"         style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
               <Link href="/risk"                           style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
