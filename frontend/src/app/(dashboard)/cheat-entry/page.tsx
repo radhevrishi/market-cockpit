@@ -1,21 +1,30 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════
-// 🥷 CHEAT ENTRY (zzz522) — the timing desk for the whole portal.
+// 🥷 CHEAT ENTRY (zzz522, logic overhaul zzz523) — the timing desk.
 // ────────────────────────────────────────────────────────────────────────────
 // Every other engine answers WHAT to buy: the India/USA Multibagger rankings
 // (fundamental composite + grade), the India/USA Technicals universe (your
 // curated TradingView lists), and the Conviction Beats bench (BB/STRONG
-// earnings winners). This tab answers WHEN: it merges all of those into one
-// elite universe, then ranks the names sitting ON a rising moving average —
-// the institutional add point where the stop is nearest and the risk is
-// smallest. "Cheat entry" = quality name + support underneath + tiny risk.
+// earnings winners). This tab answers WHEN: it merges those into one elite
+// universe and ranks the names sitting ON a rising moving average — the add
+// point where the stop is nearest and the risk smallest.
 //
-// Score = SETUP (0-60: how perfectly it sits on the 200/50/21 pivot, in an
-// uptrend, not extended) + QUALITY (0-40: fundo composite, bench tier, and a
-// multi-engine agreement bonus). Distances use LIVE prices (both markets)
-// against the stored MAs, so the board moves with the market — the MAs
-// themselves refresh whenever you re-sync the Technicals tabs.
+// zzz523 logic fixes (from first live session):
+//   1. Board renders INSTANTLY from synced data, then re-scores when live
+//      quotes land. Quotes get a 25s budget + one retry — the full-universe
+//      build is ~25s on a cold serverless cache, and the old 12s abort meant
+//      "live prices for 0 symbols" right after every deploy.
+//   2. Setup = the NEAREST qualifying pivot (with a mild preference for deeper
+//      MAs), not a fixed 200→50→21 priority — so a name resting exactly on its
+//      21-EMA is called a 21-EMA rest even if it's also within 5% of the 50.
+//   3. The stop belongs to the pivot you are buying: risk = drop to 2% under
+//      THAT MA (floor 0.3%). No more "50DMA pullback, risk→200DMA 36%".
+//   4. Quality gate: a name the Multibagger engine graded < 45 is OFF the
+//      board (unless the Conviction bench vouches) — "good" has to mean good.
+//   5. Support being TESTED (price 1-3% under the pivot) scores a touch lower
+//      than support HELD; very late-stage names (>50% above the 200DMA) give
+//      back a few setup points.
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
@@ -30,25 +39,26 @@ const C = {
   green: 'var(--mc-bullish)', red: 'var(--mc-bearish)', amber: 'var(--mc-warn)', cyan: 'var(--mc-cyan)', accent: 'var(--mc-accent)',
 };
 
-// Index/benchmark ETFs are not cheat-entry candidates.
 const EXCLUDE = new Set(['SPY', 'QQQ', 'QQQM', 'IWM', 'DIA', 'VOO', 'VTI', 'VT', 'SPX', 'NDX', 'RUT', 'NIFTY', 'NIFTYBEES', 'BANKBEES', 'GOLDBEES', 'JUNIORBEES', 'SETFNIF50']);
 
 type Market = 'IND' | 'USA';
 type SetupKind = 'AT_200' | 'AT_50' | 'AT_21' | 'DRIFT' | 'EXTENDED';
+type StopMa = '200DMA' | '50DMA' | '21EMA';
 
 interface Candidate {
   symbol: string; market: Market;
   company: string; sector: string;
   livePrice: number; priceIsLive: boolean; dayChg: number | null;
-  ema21: number | null; sma50: number | null; sma200: number | null;
-  d21: number | null; d50: number | null; d200: number | null;   // % of live price above each MA
-  setup: SetupKind; setupLabel: string; atSupportNow: boolean;
-  stopMa: '50DMA' | '200DMA' | null; riskPct: number | null;      // distance down to the MA under price
+  d21: number | null; d50: number | null; d200: number | null;
+  setup: SetupKind; setupLabel: string; atSupportNow: boolean; testingSupport: boolean;
+  stopMa: StopMa | null; riskPct: number | null;
   fundoScore: number | null; fundoGrade: string | null;
   benchTier: 'BLOCKBUSTER' | 'STRONG' | null;
-  sources: string[];            // which engines vouch
+  sources: string[];
   setupScore: number; qualityScore: number; score: number;
 }
+
+interface LiveQuote { price: number; chg: number | null; company?: string }
 
 const norm = (s: any) => String(s || '').toUpperCase().replace(/\.(NS|BO|NSE|BSE)$/i, '').trim();
 const num = (v: any): number | null => { const n = typeof v === 'number' ? v : parseFloat(String(v)); return Number.isFinite(n) ? n : null; };
@@ -62,149 +72,192 @@ const SETUP_META: Record<SetupKind, { label: string; color: string; blurb: strin
   EXTENDED: { label: '⏳ extended',       color: 'var(--mc-bearish)', blurb: 'Too far above the 50DMA — chasing, not cheating. Let it come back.' },
 };
 
+// ── assemble the board from localStorage engines + an (optionally empty) live
+//    quote map. Pure enough to run twice: instant pass, then the live re-score.
+function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: number } {
+  // 1 · fundamentals (Multibagger rankings)
+  const fundo = new Map<string, { score: number | null; grade: string | null; sector?: string }>();
+  for (const key of ['mb_excel_scored_v2', 'mb_usa_scored_v2']) {
+    const rows = readJSON(key);
+    if (Array.isArray(rows)) for (const r of rows) {
+      const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue;
+      fundo.set(s, { score: num(r?.score), grade: r?.grade ? String(r.grade) : null, sector: r?.sector || r?.industry });
+    }
+  }
+  // 2 · conviction bench
+  const bench = new Map<string, { tier: 'BLOCKBUSTER' | 'STRONG'; company: string; sector?: string }>();
+  try {
+    for (const e of getConvictionList()) {
+      const s = norm(e?.ticker); if (!s || EXCLUDE.has(s)) continue;
+      if (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG') bench.set(s, { tier: e.tier, company: e.company || '', sector: (e as any).sector });
+    }
+  } catch { /* bench unreadable */ }
+  // 3 · technicals universe (the MAs)
+  interface TechRaw { market: Market; price: number | null; ema21: number | null; sma50: number | null; sma200: number | null; sector?: string; company?: string; rs?: number | null }
+  const tech = new Map<string, TechRaw>();
+  for (const [key, market] of [['mb_tech_rows_ind_v1', 'IND'], ['mb_tech_rows_usa_v1', 'USA']] as [string, Market][]) {
+    const rows = readJSON(key);
+    if (Array.isArray(rows)) for (const r of rows) {
+      const s = norm(r?.symbol || r?.ticker); if (!s || EXCLUDE.has(s) || tech.has(s)) continue;
+      tech.set(s, {
+        market, price: num(r?.price), ema21: num(r?.ema21), sma50: num(r?.sma50), sma200: num(r?.sma200),
+        sector: r?.sector || r?.industry, company: r?.description || r?.company || r?.name,
+        rs: num(r?.rsRating ?? r?.rs_rating ?? r?.rs),
+      });
+    }
+  }
+
+  const universe = new Set<string>([...tech.keys(), ...fundo.keys(), ...bench.keys()]);
+  const cands: Candidate[] = [];
+  let skipped = 0;
+  for (const sym of universe) {
+    const t = tech.get(sym);
+    const f = fundo.get(sym) || null;
+    const b = bench.get(sym) || null;
+    if (!t || t.sma50 == null || t.sma200 == null || t.sma50 <= 0 || t.sma200 <= 0) {
+      if (b || (f && (f.score ?? 0) >= 60)) skipped++;
+      continue;
+    }
+    // Quality gate — the portal already graded this name; below 45 it is not
+    // "good", so it has no business on a quality-pullback board. The bench
+    // (a fresh BLOCKBUSTER/STRONG quarter) can overrule an old bad grade.
+    if (f && f.score != null && f.score < 45 && !b) continue;
+
+    const lq = live.get(sym);
+    const livePrice = lq?.price ?? t.price ?? null;
+    if (livePrice == null || livePrice <= 0) continue;
+
+    const d200 = (livePrice - t.sma200) / t.sma200 * 100;
+    const d50 = (livePrice - t.sma50) / t.sma50 * 100;
+    const d21 = t.ema21 != null && t.ema21 > 0 ? (livePrice - t.ema21) / t.ema21 * 100 : null;
+    if (d200 < -3) continue; // clearly below the 200DMA = broken chart, not a dip
+
+    // ── setup: nearest qualifying pivot, mild preference for deeper MAs ──────
+    type Pivot = { kind: SetupKind; stop: StopMa; d: number; base: number; ma: number; pref: number };
+    const pivots: Pivot[] = [];
+    if (d200 >= -3 && d200 <= 5) pivots.push({ kind: 'AT_200', stop: '200DMA', d: d200, base: 60, ma: t.sma200, pref: 1.2 });
+    if (d50 >= -3 && d50 <= 5) pivots.push({ kind: 'AT_50', stop: '50DMA', d: d50, base: 52, ma: t.sma50, pref: 0.6 });
+    if (d21 != null && d21 >= -2 && d21 <= 4 && t.ema21) pivots.push({ kind: 'AT_21', stop: '21EMA', d: d21, base: 44, ma: t.ema21!, pref: 0 });
+
+    let setup: SetupKind; let setupScore: number;
+    let stopMa: StopMa | null = null; let riskPct: number | null = null;
+    let pivotD: number | null = null; let testingSupport = false;
+
+    const nearestBelowStop = (): { stop: StopMa; ma: number } | null => {
+      const below: Array<{ stop: StopMa; ma: number }> = [];
+      if (t.sma50! < livePrice) below.push({ stop: '50DMA', ma: t.sma50! });
+      if (t.sma200! < livePrice) below.push({ stop: '200DMA', ma: t.sma200! });
+      if (!below.length) return null;
+      below.sort((a, bb) => bb.ma - a.ma);
+      return below[0];
+    };
+
+    if (d50 > 15) {
+      setup = 'EXTENDED'; setupScore = 3;
+      const nb = nearestBelowStop();
+      if (nb) { stopMa = nb.stop; riskPct = Math.max(0.3, (livePrice - nb.ma * 0.98) / livePrice * 100); }
+    } else if (pivots.length) {
+      pivots.sort((a, bb) => (Math.abs(a.d - 1) - a.pref) - (Math.abs(bb.d - 1) - bb.pref));
+      const p = pivots[0];
+      setup = p.kind; pivotD = p.d;
+      setupScore = Math.max(20, p.base - Math.abs(p.d - 1) * 4);
+      if (p.d < -1) { setupScore -= 3; testingSupport = true; } // testing, not holding
+      stopMa = p.stop;
+      riskPct = Math.max(0.3, (livePrice - p.ma * 0.98) / livePrice * 100); // stop = 2% under YOUR pivot
+    } else {
+      setup = 'DRIFT';
+      const nearest = Math.min(Math.abs(d50), Math.abs(d200), d21 != null ? Math.abs(d21) : 99);
+      setupScore = Math.max(0, 22 - nearest * 1.5);
+      const nb = nearestBelowStop();
+      if (nb) { stopMa = nb.stop; riskPct = Math.max(0.3, (livePrice - nb.ma * 0.98) / livePrice * 100); }
+    }
+    if (t.sma50 > t.sma200) setupScore += 4;      // golden structure
+    if (d200 > 50) setupScore -= 4;                // very late-stage — give a little back
+    setupScore = Math.max(0, Math.min(60, setupScore));
+
+    // ── quality (0-40) ───────────────────────────────────────────────────────
+    const sources: string[] = [`Tech ${t.market === 'IND' ? '🇮🇳' : '🇺🇸'}`];
+    if (f && f.score != null) sources.push(`Fundo ${Math.round(f.score)}${f.grade ? ` (${f.grade})` : ''}`);
+    if (b) sources.push(b.tier === 'BLOCKBUSTER' ? 'CB · BB' : 'CB · STRONG');
+    let quality = 0;
+    quality += f && f.score != null ? Math.min(22, Math.max(0, ((f.score - 20) / 80) * 22)) : 6; // 45→~7, 60→11, 100→22
+    quality += b ? (b.tier === 'BLOCKBUSTER' ? 10 : 7) : 0;
+    if (t.rs != null && t.rs >= 80) quality += 3;
+    const engineCount = 1 + (f && f.score != null ? 1 : 0) + (b ? 1 : 0);
+    if (engineCount >= 2) quality += engineCount >= 3 ? 8 : 5;
+    quality = Math.min(40, quality);
+
+    const atSupportNow = pivotD != null && Math.abs(pivotD) <= 1 && setup !== 'EXTENDED';
+
+    cands.push({
+      symbol: sym, market: t.market,
+      company: b?.company || live.get(sym)?.company || t.company || '',
+      sector: String(f?.sector || t.sector || b?.sector || ''),
+      livePrice, priceIsLive: !!lq, dayChg: lq?.chg ?? null,
+      d21, d50, d200,
+      setup, setupLabel: SETUP_META[setup].label, atSupportNow, testingSupport,
+      stopMa, riskPct,
+      fundoScore: f?.score ?? null, fundoGrade: f?.grade ?? null,
+      benchTier: b?.tier ?? null, sources,
+      setupScore: Math.round(setupScore), qualityScore: Math.round(quality),
+      score: Math.round(setupScore + quality),
+    });
+  }
+  cands.sort((a, b) => b.score - a.score || (a.riskPct ?? 99) - (b.riskPct ?? 99));
+  return { cands, skipped };
+}
+
+// Live quotes with a realistic budget: the full-universe build is ~25s on a
+// cold serverless cache. First try 25s; if empty, wait 3s (server keeps
+// building after our abort and caches the result) and retry with 20s.
+async function fetchLiveQuotes(): Promise<Map<string, LiveQuote>> {
+  const live = new Map<string, LiveQuote>();
+  const one = async (m: 'india' | 'us', ms: number) => {
+    try {
+      const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
+      const r = await fetch(`/api/market/quotes?market=${m}&fields=ticker,price,changePercent,company`, { cache: 'no-store', signal: ctl.signal });
+      clearTimeout(t);
+      if (!r.ok) return;
+      const j = await r.json();
+      const stocks = Array.isArray(j?.stocks) ? j.stocks : [];
+      for (const s of stocks) {
+        const sym = norm(s?.ticker); const p = num(s?.price);
+        if (sym && p != null && p > 0 && !live.has(sym)) live.set(sym, { price: p, chg: num(s?.changePercent), company: s?.company });
+      }
+    } catch { /* cold / aborted */ }
+  };
+  await Promise.all([one('india', 25000), one('us', 25000)]);
+  if (live.size === 0) {
+    await new Promise((r) => setTimeout(r, 3000));
+    await Promise.all([one('india', 20000), one('us', 20000)]);
+  }
+  return live;
+}
+
 export default function CheatEntryPage() {
   const [cands, setCands] = useState<Candidate[] | null>(null);
-  const [unranked, setUnranked] = useState<{ bench: number; fundo: number }>({ bench: 0, fundo: 0 });
+  const [skipped, setSkipped] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
+  const [quotesState, setQuotesState] = useState<'loading' | 'live' | 'failed'>('loading');
   const [marketF, setMarketF] = useState<'ALL' | Market>('ALL');
   const [setupF, setSetupF] = useState<'ACTIONABLE' | 'ALL' | SetupKind>('ACTIONABLE');
   const [refreshTick, setRefreshTick] = useState(0);
 
   const build = useCallback(async () => {
     if (typeof window === 'undefined') return;
-
-    // ── 1 · fundamentals (Multibagger rankings, both markets) ────────────────
-    const fundo = new Map<string, { score: number | null; grade: string | null; sector?: string; market: Market }>();
-    for (const [key, market] of [['mb_excel_scored_v2', 'IND'], ['mb_usa_scored_v2', 'USA']] as [string, Market][]) {
-      const rows = readJSON(key);
-      if (Array.isArray(rows)) for (const r of rows) {
-        const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue;
-        fundo.set(s, { score: num(r?.score), grade: r?.grade ? String(r.grade) : null, sector: r?.sector || r?.industry, market });
-      }
+    // instant pass — synced prices, board up immediately
+    const base = assemble(new Map());
+    setCands(base.cands); setSkipped(base.skipped);
+    // live pass — re-score once quotes land
+    setQuotesState('loading');
+    const live = await fetchLiveQuotes();
+    if (live.size > 0) {
+      const fresh = assemble(live);
+      setCands(fresh.cands); setSkipped(fresh.skipped);
+      setLiveCount(live.size); setQuotesState('live');
+    } else {
+      setLiveCount(0); setQuotesState('failed');
     }
-
-    // ── 2 · conviction bench (BB / STRONG earnings winners) ──────────────────
-    const bench = new Map<string, { tier: 'BLOCKBUSTER' | 'STRONG'; company: string; sector?: string }>();
-    try {
-      for (const e of getConvictionList()) {
-        const s = norm(e?.ticker); if (!s || EXCLUDE.has(s)) continue;
-        if (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG') bench.set(s, { tier: e.tier, company: e.company || '', sector: (e as any).sector });
-      }
-    } catch { /* bench unreadable */ }
-
-    // ── 3 · technicals universe (carries the MAs — the core of the ranking) ──
-    interface TechRaw { market: Market; price: number | null; ema21: number | null; sma50: number | null; sma200: number | null; sector?: string; company?: string; rs?: number | null; }
-    const tech = new Map<string, TechRaw>();
-    for (const [key, market] of [['mb_tech_rows_ind_v1', 'IND'], ['mb_tech_rows_usa_v1', 'USA']] as [string, Market][]) {
-      const rows = readJSON(key);
-      if (Array.isArray(rows)) for (const r of rows) {
-        const s = norm(r?.symbol || r?.ticker); if (!s || EXCLUDE.has(s) || tech.has(s)) continue;
-        tech.set(s, {
-          market,
-          price: num(r?.price), ema21: num(r?.ema21), sma50: num(r?.sma50), sma200: num(r?.sma200),
-          sector: r?.sector || r?.industry, company: r?.description || r?.company || r?.name,
-          rs: num(r?.rsRating ?? r?.rs_rating ?? r?.rs),
-        });
-      }
-    }
-
-    // ── 4 · live prices, both markets (the lesson from the pullback fix:
-    //        never rank on a frozen snapshot) ─────────────────────────────────
-    const live = new Map<string, { price: number; chg: number | null; company?: string }>();
-    await Promise.all((['india', 'us'] as const).map(async (m) => {
-      try {
-        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 12000);
-        const r = await fetch(`/api/market/quotes?market=${m}&fields=ticker,price,changePercent,company`, { cache: 'no-store', signal: ctl.signal });
-        clearTimeout(t);
-        if (!r.ok) return;
-        const j = await r.json();
-        const stocks = Array.isArray(j?.stocks) ? j.stocks : [];
-        for (const s of stocks) {
-          const sym = norm(s?.ticker); const p = num(s?.price);
-          if (sym && p != null && p > 0 && !live.has(sym)) live.set(sym, { price: p, chg: num(s?.changePercent), company: s?.company });
-        }
-      } catch { /* one market cold — fine */ }
-    }));
-    setLiveCount(live.size);
-
-    // ── 5 · assemble + score ─────────────────────────────────────────────────
-    const universe = new Set<string>([...tech.keys(), ...fundo.keys(), ...bench.keys()]);
-    const out: Candidate[] = [];
-    let unrankedBench = 0, unrankedFundo = 0;
-    for (const sym of universe) {
-      const t = tech.get(sym);
-      const f = fundo.get(sym) || null;
-      const b = bench.get(sym) || null;
-      // MA data is the spine — a name without technicals rows can't be ranked.
-      if (!t || t.sma50 == null || t.sma200 == null || t.sma50 <= 0 || t.sma200 <= 0) {
-        if (b) unrankedBench++; else if (f && (f.score ?? 0) >= 60) unrankedFundo++;
-        continue;
-      }
-      const lq = live.get(sym);
-      const livePrice = lq?.price ?? t.price ?? null;
-      if (livePrice == null || livePrice <= 0) continue;
-
-      const d200 = (livePrice - t.sma200) / t.sma200 * 100;
-      const d50 = (livePrice - t.sma50) / t.sma50 * 100;
-      const d21 = t.ema21 != null && t.ema21 > 0 ? (livePrice - t.ema21) / t.ema21 * 100 : null;
-
-      // Uptrend gate: allow a 3% undercut of the 200DMA (a retest often pierces),
-      // but a name clearly below its 200DMA is a broken chart, not a cheat entry.
-      if (d200 < -3) continue;
-
-      // ── setup classification + setup score (0-60) ──────────────────────────
-      let setup: SetupKind; let setupScore: number;
-      if (d50 > 15) { setup = 'EXTENDED'; setupScore = 3; }
-      else if (d200 >= -3 && d200 <= 5) { setup = 'AT_200'; setupScore = Math.max(30, 60 - Math.abs(d200 - 1) * 4); }
-      else if (d50 >= -3 && d50 <= 5) { setup = 'AT_50'; setupScore = Math.max(26, 52 - Math.abs(d50 - 1) * 4); }
-      else if (d21 != null && d21 >= -2 && d21 <= 4) { setup = 'AT_21'; setupScore = Math.max(22, 44 - Math.abs(d21 - 1) * 4); }
-      else { setup = 'DRIFT'; const nearest = Math.min(Math.abs(d50), Math.abs(d200), d21 != null ? Math.abs(d21) : 99); setupScore = Math.max(0, 22 - nearest * 1.5); }
-      // Golden structure bonus: 50DMA above 200DMA = established uptrend.
-      if (t.sma50 > t.sma200) setupScore = Math.min(60, setupScore + 4);
-
-      // ── quality score (0-40) ───────────────────────────────────────────────
-      const sources: string[] = [];
-      sources.push(`Tech ${t.market === 'IND' ? '🇮🇳' : '🇺🇸'}`);
-      if (f && f.score != null) sources.push(`Fundo ${Math.round(f.score)}${f.grade ? ` (${f.grade})` : ''}`);
-      if (b) sources.push(b.tier === 'BLOCKBUSTER' ? 'CB · BB' : 'CB · STRONG');
-      let quality = 0;
-      quality += f && f.score != null ? Math.min(22, (f.score / 100) * 22) : 6; // tech-only base 6
-      quality += b ? (b.tier === 'BLOCKBUSTER' ? 10 : 7) : 0;
-      if (t.rs != null && t.rs >= 80) quality += 3;                              // momentum leadership
-      const engineCount = 1 + (f && f.score != null ? 1 : 0) + (b ? 1 : 0);
-      if (engineCount >= 2) quality += engineCount >= 3 ? 8 : 5;                 // agreement bonus
-      quality = Math.min(40, quality);
-
-      // ── risk to the MA underneath (the "cheat" = the stop is right there) ──
-      let stopMa: Candidate['stopMa'] = null; let riskPct: number | null = null;
-      const below: Array<['50DMA' | '200DMA', number]> = [];
-      if (t.sma50 < livePrice) below.push(['50DMA', t.sma50]);
-      if (t.sma200 < livePrice) below.push(['200DMA', t.sma200]);
-      if (below.length) {
-        below.sort((a, bb) => bb[1] - a[1]); // highest MA below price = nearest stop
-        stopMa = below[0][0]; riskPct = (livePrice - below[0][1]) / livePrice * 100;
-      }
-
-      const atSupportNow = Math.min(Math.abs(d50), Math.abs(d200), d21 != null ? Math.abs(d21) : 99) <= 1;
-
-      out.push({
-        symbol: sym, market: t.market,
-        company: b?.company || lq?.company || t.company || '',
-        sector: String(f?.sector || t.sector || b?.sector || ''),
-        livePrice, priceIsLive: !!lq, dayChg: lq?.chg ?? null,
-        ema21: t.ema21, sma50: t.sma50, sma200: t.sma200,
-        d21, d50, d200,
-        setup, setupLabel: SETUP_META[setup].label, atSupportNow,
-        stopMa, riskPct,
-        fundoScore: f?.score ?? null, fundoGrade: f?.grade ?? null,
-        benchTier: b?.tier ?? null, sources,
-        setupScore: Math.round(setupScore), qualityScore: Math.round(quality),
-        score: Math.round(setupScore + quality),
-      });
-    }
-    out.sort((a, b) => b.score - a.score || (a.riskPct ?? 99) - (b.riskPct ?? 99));
-    setCands(out);
-    setUnranked({ bench: unrankedBench, fundo: unrankedFundo });
   }, []);
 
   useEffect(() => { build(); }, [build, refreshTick]);
@@ -218,7 +271,7 @@ export default function CheatEntryPage() {
     return r;
   }, [cands, marketF, setupF]);
 
-  const atSupport = useMemo(() => (cands || []).filter((c) => c.atSupportNow && c.setup !== 'EXTENDED').length, [cands]);
+  const atSupport = useMemo(() => (cands || []).filter((c) => c.atSupportNow).length, [cands]);
 
   const chip = (active: boolean, color: string): React.CSSProperties => ({
     padding: '3px 10px', borderRadius: 6, fontSize: 10.5, fontWeight: 800, cursor: 'pointer',
@@ -238,6 +291,9 @@ export default function CheatEntryPage() {
               🔥 {atSupport} at support NOW
             </span>
           )}
+          <span style={{ fontSize: 9.5, fontWeight: 700, color: quotesState === 'live' ? C.green : quotesState === 'loading' ? C.dim : C.amber }}>
+            {quotesState === 'live' ? `● live · ${liveCount.toLocaleString()} px` : quotesState === 'loading' ? '○ fetching live prices…' : '● quotes cold — synced px'}
+          </span>
           <button onClick={() => setRefreshTick((x) => x + 1)} style={{ ...chip(false, C.cyan), background: 'transparent' }}>↻ REFRESH</button>
         </div>
       </div>
@@ -245,8 +301,13 @@ export default function CheatEntryPage() {
         The whole portal votes on <b style={{ color: C.text2 }}>what</b> to buy — Multibagger rankings, your Technicals universe, the Conviction bench.
         This board decides <b style={{ color: C.text2 }}>when</b>: every vetted name sitting on a rising 200 / 50 / 21-day line, ranked by
         <b style={{ color: C.text2 }}> setup + quality</b>. The nearer the line underneath, the smaller the stop — that&rsquo;s the cheat.
-        Distances use live prices; the MAs refresh when you re-sync <Link href="/multibagger?tab=technicals-ind" style={{ color: C.cyan }}>India</Link> / <Link href="/multibagger?tab=technicals-usa" style={{ color: C.cyan }}>USA</Link> Technicals.
+        The MAs refresh when you re-sync <Link href="/multibagger?tab=technicals-ind" style={{ color: C.cyan }}>India</Link> / <Link href="/multibagger?tab=technicals-usa" style={{ color: C.cyan }}>USA</Link> Technicals.
       </div>
+      {quotesState === 'failed' && (
+        <div style={{ marginTop: 8, fontSize: 10.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--mc-warn) 35%, transparent)`, background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', borderRadius: 6, padding: '6px 10px', maxWidth: 900 }}>
+        ⚠ The live quote feed didn&rsquo;t answer in time (cold server cache — common right after a deploy). Distances below use your last Technicals-sync prices. Hit ↻ REFRESH in ~30s; the feed will be warm.
+        </div>
+      )}
 
       {/* ── filters ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
@@ -263,7 +324,7 @@ export default function CheatEntryPage() {
 
       {/* ── body ───────────────────────────────────────────────────────────── */}
       {cands == null ? (
-        <div style={{ marginTop: 24, fontSize: 12, color: C.muted, fontStyle: 'italic' }}>Building the board — merging engines + fetching live prices…</div>
+        <div style={{ marginTop: 24, fontSize: 12, color: C.muted, fontStyle: 'italic' }}>Building the board…</div>
       ) : cands.length === 0 ? (
         <div style={{ marginTop: 24, fontSize: 12, color: C.muted, lineHeight: 1.7, maxWidth: 760 }}>
           No rankable names yet. The board needs your <Link href="/multibagger?tab=technicals-ind" style={{ color: C.cyan }}>India</Link> /{' '}
@@ -274,23 +335,23 @@ export default function CheatEntryPage() {
       ) : (
         <>
           <div style={{ fontSize: 10, color: C.dim, marginTop: 10 }}>
-            {shown.length} of {cands.length} ranked · live prices for {liveCount.toLocaleString()} symbols
-            {(unranked.bench + unranked.fundo) > 0 && (
-              <> · {unranked.bench + unranked.fundo} quality name{unranked.bench + unranked.fundo === 1 ? '' : 's'} skipped (no MA data — add them to a Technicals list to rank them)</>
-            )}
+            {shown.length} of {cands.length} ranked
+            {skipped > 0 && <> · {skipped} quality name{skipped === 1 ? '' : 's'} without MA data (add to a Technicals list to rank)</>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 10 }}>
             {shown.slice(0, 60).map((c, i) => {
               const meta = SETUP_META[c.setup];
               const scoreCol = c.score >= 75 ? C.green : c.score >= 55 ? C.cyan : c.score >= 40 ? C.amber : C.muted;
               return (
-                <div key={c.symbol + c.market} style={{ background: C.bg, border: `1px solid ${c.atSupportNow && c.setup !== 'EXTENDED' ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border}`, borderRadius: 9, padding: '9px 12px' }}>
+                <div key={c.symbol + c.market} style={{ background: C.bg, border: `1px solid ${c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border}`, borderRadius: 9, padding: '9px 12px' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 10, fontWeight: 900, color: C.dim, width: 22 }}>{i + 1}</span>
                     <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{c.symbol}</span>
                     <span style={{ fontSize: 9 }}>{c.market === 'IND' ? '🇮🇳' : '🇺🇸'}</span>
-                    {c.atSupportNow && c.setup !== 'EXTENDED' && (
-                      <span style={{ fontSize: 8.5, fontWeight: 900, color: C.green, letterSpacing: '0.4px' }}>🔥 AT SUPPORT</span>
+                    {c.atSupportNow && (
+                      <span style={{ fontSize: 8.5, fontWeight: 900, color: C.green, letterSpacing: '0.4px' }}>
+                        {c.testingSupport ? '🧪 TESTING SUPPORT' : '🔥 AT SUPPORT'}
+                      </span>
                     )}
                     <span style={{ fontSize: 10, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>{c.company}</span>
                     <span style={{ flex: 1 }} />
@@ -302,12 +363,12 @@ export default function CheatEntryPage() {
                     {c.d200 != null && <span style={{ color: Math.abs(c.d200) <= 4 ? C.cyan : C.muted, fontVariantNumeric: 'tabular-nums' }}>200DMA {c.d200 >= 0 ? '+' : ''}{c.d200.toFixed(1)}%</span>}
                     {c.d21 != null && <span style={{ color: C.dim, fontVariantNumeric: 'tabular-nums' }}>21EMA {c.d21 >= 0 ? '+' : ''}{c.d21.toFixed(1)}%</span>}
                     {c.riskPct != null && c.stopMa && (
-                      <span title={`Stop just under the ${c.stopMa} — the whole point of a cheat entry is that the exit is close`} style={{ fontWeight: 800, color: c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red, fontVariantNumeric: 'tabular-nums' }}>
-                        risk→{c.stopMa} {c.riskPct.toFixed(1)}%
+                      <span title={`Stop 2% under the ${c.stopMa} you are buying against — a cheat entry works because the exit is close`} style={{ fontWeight: 800, color: c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red, fontVariantNumeric: 'tabular-nums' }}>
+                        risk {c.riskPct.toFixed(1)}% (stop&lt;{c.stopMa})
                       </span>
                     )}
                     {c.dayChg != null && <span style={{ color: c.dayChg >= 0 ? C.green : C.red, fontVariantNumeric: 'tabular-nums' }}>{c.dayChg >= 0 ? '+' : ''}{c.dayChg.toFixed(1)}% today</span>}
-                    {!c.priceIsLive && <span title="Live quote unavailable — using the price from your last Technicals sync" style={{ color: C.dim }}>· synced px</span>}
+                    {!c.priceIsLive && quotesState === 'live' && <span title="No live quote for this symbol — using the price from your last Technicals sync" style={{ color: C.dim }}>· synced px</span>}
                   </div>
                   <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5, paddingLeft: 30 }}>
                     {c.sources.map((s, k) => (
@@ -320,12 +381,13 @@ export default function CheatEntryPage() {
             })}
           </div>
           {shown.length > 60 && <div style={{ fontSize: 10, color: C.dim, marginTop: 8 }}>Top 60 shown of {shown.length} — tighten the filters to see the rest.</div>}
-          <div style={{ fontSize: 9.5, color: C.dim, marginTop: 14, lineHeight: 1.6, maxWidth: 860 }}>
-            How to read it: <b style={{ color: C.muted }}>score = setup (0-60) + quality (0-40)</b>. Setup peaks when price sits ~1% above a rising
-            200DMA (deepest pivot), then the 50DMA, then the 21EMA; names &gt;15% above the 50DMA are marked extended. Quality blends the
-            Multibagger composite, Conviction tier, RS leadership, and an agreement bonus when several engines back the same name.
-            <b style={{ color: C.muted }}> risk→MA</b> is the drop to the nearest average below price — your natural stop distance. Nothing here is a
-            recommendation; it&rsquo;s your own research, sorted by where the entry is cheapest.
+          <div style={{ fontSize: 9.5, color: C.dim, marginTop: 14, lineHeight: 1.6, maxWidth: 880 }}>
+            How to read it: <b style={{ color: C.muted }}>score = setup (0-60) + quality (0-40)</b>. The setup is the NEAREST qualifying pivot
+            (200DMA scores highest, then 50DMA, then 21EMA); names &gt;15% above the 50DMA are extended, names graded &lt;45 by the Multibagger
+            engine are excluded outright unless the Conviction bench vouches for a fresh quarter. <b style={{ color: C.muted }}>risk</b> is the drop
+            to a stop placed 2% under the pivot you&rsquo;re buying against — the whole cheat is that this number is small. 🧪 = price is 1-3% under the
+            pivot (support being tested, slightly discounted); 🔥 = sitting within ±1% of it. Nothing here is a recommendation; it&rsquo;s your own
+            research, sorted by where the entry is cheapest.
           </div>
         </>
       )}
