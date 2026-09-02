@@ -20,6 +20,8 @@ import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getTechBuyZone } from '@/lib/tech-entries';
 import { diffNew, markSeen, getDismissed, dismiss, clearDismissed } from '@/lib/seen-store';
 import { logSignals } from '@/lib/signal-log'; // zzz524 — feed the Signal Scoreboard
+import { getEngineViews, openPassport } from '@/lib/engines'; // zzz525 — conflicts panel
+import { computeVerdict } from '@/lib/verdict';
 import { getConvictionList } from '@/lib/conviction-beats';
 import { listAutoValuations } from '@/lib/auto-valuation-store';
 import { getThesisList } from '@/lib/thesis-store';
@@ -476,6 +478,9 @@ export default function CockpitPage() {
           ))}
         </div>
 
+        {/* zzz525 — ⚔️ engine conflicts: where your judgment is needed */}
+        <ConflictsPanel />
+
         {/* Loading */}
         {loading && (
           <div style={{ ...MONO, fontSize: 13, color: C.muted, padding: '40px 0', textAlign: 'center' }}>Assembling signals from your book…</div>
@@ -533,6 +538,47 @@ export default function CockpitPage() {
         <div style={{ ...MONO, fontSize: 10.5, color: C.dim, marginTop: 34, borderTop: `1px solid ${C.border}`, paddingTop: 14, lineHeight: 1.7 }}>
           Sources: your holdings, Conviction bench, thesis triggers, portfolio earnings grades, theme rotation (IN + US), earnings calendar, saved valuations. Nothing is scraped here — the cockpit only routes signals the terminal already produces. Morning briefing fires a browser notification once/day while the app is open.
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// zzz525 — ⚔️ CONFLICTS PANEL. The Cockpit Verdict's disagreement list, on the
+// cockpit itself: names you hold or bench where one engine says quality and
+// another says decay/rich/broken chart. Conflicts are where judgment earns its
+// keep — so they live on the action page, not buried in a drilldown.
+// ════════════════════════════════════════════════════════════════════════════
+function ConflictsPanel() {
+  const [rows, setRows] = useState<Array<{ symbol: string; company: string; conflicts: string[]; kind: string }>>([]);
+  useEffect(() => {
+    try {
+      const out: Array<{ symbol: string; company: string; conflicts: string[]; kind: string }> = [];
+      for (const [, v] of getEngineViews()) {
+        if (!v.holding && !v.bench) continue;           // only where it matters
+        const verdict = computeVerdict(v);
+        if (verdict.conflicts.length === 0) continue;
+        out.push({ symbol: v.symbol, company: v.company, conflicts: verdict.conflicts, kind: verdict.kind });
+      }
+      out.sort((a, b) => b.conflicts.length - a.conflicts.length);
+      setRows(out.slice(0, 8));
+    } catch { setRows([]); }
+  }, []);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 5%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderRadius: 10, padding: '11px 14px', margin: '10px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 900, letterSpacing: '0.4px', color: 'var(--mc-warn)' }}>⚔️ ENGINE CONFLICTS · {rows.length}</span>
+        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)' }}>engines disagree on these — your judgment is the tiebreak</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {rows.map((r) => (
+          <div key={r.symbol} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
+            <span onClick={() => openPassport(r.symbol)} title="Open Stock Passport" style={{ fontWeight: 900, color: 'var(--mc-text-1)', cursor: 'pointer' }}>{r.symbol}</span>
+            <span style={{ fontSize: 8.5, fontWeight: 800, color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 40%, transparent)', borderRadius: 3, padding: '0 5px' }}>{r.kind}</span>
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 10.5 }}>{r.conflicts[0]}{r.conflicts.length > 1 ? ` (+${r.conflicts.length - 1} more)` : ''}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

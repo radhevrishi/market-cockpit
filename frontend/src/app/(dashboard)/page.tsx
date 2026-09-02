@@ -92,6 +92,7 @@ import SignalScoreboard from '@/components/SignalScoreboard';
 import FreshnessStrip from '@/components/FreshnessStrip';
 import AlertCenter from '@/components/AlertCenter';
 import { logSignals } from '@/lib/signal-log';
+import { openPassport } from '@/lib/engines'; // zzz525 — pullback ticker → Stock Passport
 // PATCH 0631 — Valuation Quick-Check on Home
 import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
@@ -5601,7 +5602,7 @@ function DailySignalInbox() {
                         <span style={{ fontSize: 11, fontWeight: 900, color: DIM, fontFamily: 'ui-monospace, monospace', width: 20, flexShrink: 0 }}>{i + 1}</span>
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                            <span style={{ fontSize: 13.5, fontWeight: 900, color: TEXT }}>{p.symbol}</span>
+                            <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); openPassport(p.symbol); }} title="Open Stock Passport" style={{ fontSize: 13.5, fontWeight: 900, color: TEXT, cursor: 'pointer' }}>{p.symbol}</span>
                             <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: p.tier === 'BLOCKBUSTER' ? 'rgba(245,158,11,0.18)' : 'rgba(16,185,129,0.18)', color: p.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981' }}>{p.tier === 'BLOCKBUSTER' ? 'BB' : 'STRONG'}</span>
                             <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
                           </div>

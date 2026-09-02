@@ -87,7 +87,8 @@ const resolveSector = (e: any): string | null => {
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
 import PortfolioEarningsTab from './PortfolioEarningsTab'; // zzz283
-import DecayWatch from '@/components/DecayWatch'; // zzz514
+import DecayWatch from '@/components/DecayWatch';
+import { openPassport } from '@/lib/engines'; // zzz525 — 🪪 passport from bench rows // zzz514
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import {
@@ -4907,6 +4908,9 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
             ) : (
               <span style={{ fontWeight: 700 }}>{entry.ticker}</span>
             )}
+            {/* zzz525 — one-click Stock Passport (filing link stays untouched) */}
+            <span onClick={() => openPassport(entry.ticker)} title="Open Stock Passport"
+              style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>🪪</span>
             <span style={{ color: 'var(--mc-text-4)' }}>·</span>
             <span style={{ whiteSpace: 'nowrap' }}>{entry.filing_date}</span>
             {(() => {
