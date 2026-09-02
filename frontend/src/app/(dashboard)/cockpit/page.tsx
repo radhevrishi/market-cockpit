@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getTechBuyZone } from '@/lib/tech-entries';
 import { diffNew, markSeen, getDismissed, dismiss, clearDismissed } from '@/lib/seen-store';
+import { logSignals } from '@/lib/signal-log'; // zzz524 — feed the Signal Scoreboard
 import { getConvictionList } from '@/lib/conviction-beats';
 import { listAutoValuations } from '@/lib/auto-valuation-store';
 import { getThesisList } from '@/lib/thesis-store';
@@ -353,6 +354,13 @@ export default function CockpitPage() {
     } catch { /* storage unavailable */ }
     setNewIds(freshIds);
     setSignals(shown);
+    // zzz524 — track record: log the top tickered signals so the Signal
+    // Scoreboard can grade the Cockpit engine over time.
+    try {
+      logSignals('cockpit', shown.filter((s) => s.ticker).slice(0, 12).map((s) => ({
+        ticker: s.ticker as string, note: `${s.kind}: ${s.title}`.slice(0, 80),
+      })));
+    } catch { /* never load-bearing */ }
     setBuiltAt(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
 

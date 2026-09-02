@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { getConvictionList } from '@/lib/conviction-beats';
 import type { ConvictionEntry } from '@/lib/conviction-beats';
 import { assessDecay, isStale, benchAge } from '@/lib/cb-decay';
+import { openPassport } from '@/lib/engines'; // zzz524 — ticker click → Stock Passport
 import type { DecayAssessment, DecaySeverity } from '@/lib/cb-decay';
 
 const C = {
@@ -144,7 +145,7 @@ export function DecayWatch() {
                   <span style={{ color: C.text, fontWeight: 700, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {r.company}
                   </span>
-                  <span style={{ color: C.muted, fontSize: 10 }}>{r.ticker}</span>
+                  <span onClick={() => openPassport(r.ticker)} title="Open Stock Passport" style={{ color: C.muted, fontSize: 10, cursor: 'pointer' }}>{r.ticker}</span>
                   <span style={{ flex: 1 }} />
                   <span
                     style={{

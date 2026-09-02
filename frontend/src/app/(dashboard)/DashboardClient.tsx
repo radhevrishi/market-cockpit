@@ -13,6 +13,8 @@ import TickerDrawer from '@/components/TickerDrawer';
 import GlobalSearch from '@/components/GlobalSearch';
 import { PdfExportButton } from '@/components/PdfExportButton';
 import MarketHours from '@/components/MarketHours';
+import RegimeBanner from '@/components/RegimeBanner'; // zzz524 — portal-wide market regime
+import StockPassport from '@/components/StockPassport'; // zzz524 — global one-symbol overlay
 // PATCH 0283 — Surface Conviction Beats count in the global header.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { scheduleBookSync } from '@/lib/book-sync-client';
@@ -707,6 +709,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               <div className="desktop-market-hours">
                 <MarketHours />
               </div>
+              {/* zzz524 — regime pills (🇮🇳/🇺🇸) beside market hours; every
+                  tab inherits one shared read of the market state. */}
+              <RegimeBanner />
 
               {/* PATCH 0283 — Global Conviction Beats count chip. Always
                   visible across every dashboard route so the bench size is
@@ -888,6 +893,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
       {/* Global Search Modal */}
       <GlobalSearch />
+
+      {/* zzz524 — Stock Passport: everything every engine knows about one
+          symbol, openable from anywhere via openPassport(sym). */}
+      <StockPassport />
     </div>
   );
 }

@@ -30,6 +30,8 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { getConvictionList } from '@/lib/conviction-beats';
+import { openPassport } from '@/lib/engines';     // zzz524 — click a ticker → Stock Passport
+import { logSignals } from '@/lib/signal-log';    // zzz524 — feed the Signal Scoreboard
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const C = {
@@ -255,6 +257,13 @@ export default function CheatEntryPage() {
       const fresh = assemble(live);
       setCands(fresh.cands); setSkipped(fresh.skipped);
       setLiveCount(live.size); setQuotesState('live');
+      // zzz524 — log today's top actionable setups for the scoreboard
+      try {
+        logSignals('cheat-entry', fresh.cands
+          .filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50' || c.setup === 'AT_21')
+          .slice(0, 10)
+          .map((c) => ({ ticker: c.symbol, note: `${c.setupLabel} score ${c.score}`, priceAt: c.livePrice })));
+      } catch { /* never load-bearing */ }
     } else {
       setLiveCount(0); setQuotesState('failed');
     }
@@ -346,7 +355,7 @@ export default function CheatEntryPage() {
                 <div key={c.symbol + c.market} style={{ background: C.bg, border: `1px solid ${c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border}`, borderRadius: 9, padding: '9px 12px' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 10, fontWeight: 900, color: C.dim, width: 22 }}>{i + 1}</span>
-                    <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{c.symbol}</span>
+                    <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontSize: 14, fontWeight: 900, color: C.text, cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'transparent' }}>{c.symbol}</span>
                     <span style={{ fontSize: 9 }}>{c.market === 'IND' ? '🇮🇳' : '🇺🇸'}</span>
                     {c.atSupportNow && (
                       <span style={{ fontSize: 8.5, fontWeight: 900, color: C.green, letterSpacing: '0.4px' }}>

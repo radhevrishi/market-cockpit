@@ -86,6 +86,12 @@ import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays, isIndianM
 import { SUPER_INVESTORS } from '@/lib/super-investors';
 // PATCH 0627 — Critical Themes data for Home panel.
 import { getTopThemesForHome } from '@/lib/critical-themes';
+// zzz524 — million-dollar wiring: home intelligence layer
+import NextBestActions from '@/components/NextBestActions';
+import SignalScoreboard from '@/components/SignalScoreboard';
+import FreshnessStrip from '@/components/FreshnessStrip';
+import AlertCenter from '@/components/AlertCenter';
+import { logSignals } from '@/lib/signal-log';
 // PATCH 0631 — Valuation Quick-Check on Home
 import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
@@ -2682,6 +2688,9 @@ export default function HomeDashboard() {
               <Link href="/cockpit"                        style={navChip('#F59E0B')}>🛩️ Action Cockpit</Link>
               {/* zzz522 — Cheat Entry: the timing desk (elite universe × MA pullbacks) */}
               <Link href="/cheat-entry"                    style={navChip('#10B981')}>🥷 Cheat Entry</Link>
+              {/* zzz524 — Bounce Desk (regime-gated oversold scanner) + Weekly Review ritual */}
+              <Link href="/bounce-desk"                    style={navChip('#A78BFA')}>🌊 Bounce Desk</Link>
+              <Link href="/weekly-review"                  style={navChip('#FBBF24')}>🧘 Weekly Review</Link>
               <Link href="/watchlists?tab=conviction"      style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
               <Link href="/earnings-opportunities"         style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
               <Link href="/risk"                           style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
@@ -2725,11 +2734,27 @@ export default function HomeDashboard() {
             </div>
           </div>
 
+          {/* zzz524 — Next Best Actions: the top 3 things to do right now,
+              ranked across every engine. The ten-second open-and-know view. */}
+          <div style={{ marginBottom: 10 }}><NextBestActions /></div>
+
           {/* PATCH 1104 — Daily Signal Inbox (⭐): today's actionable signals across feeds */}
           <DailySignalInbox />
 
           {/* PATCH 1105 — Pipeline Health: freshness of every data feed at a glance */}
           <PipelineHealth />
+
+          {/* zzz524 — local-data freshness: YOUR synced uploads (technicals,
+              multibagger, screener, bench) — the complement of PipelineHealth,
+              which watches the server feeds. */}
+          <div style={{ marginBottom: 10 }}><FreshnessStrip /></div>
+
+          {/* zzz524 — the measurement layer: does the portal make money, and
+              what should fire a notification. */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div style={{ flex: '1.2 1 340px', minWidth: 0 }}><SignalScoreboard /></div>
+            <div style={{ flex: '1 1 300px', minWidth: 0 }}><AlertCenter /></div>
+          </div>
 
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
@@ -5409,7 +5434,18 @@ function DailySignalInbox() {
           .filter((p) => Number.isFinite(p.correction) && p.correction <= 60)
           .sort((a, b) => b.correction - a.correction)
           .slice(0, 10);
-        if (fresh.length) setPullbacks(fresh);
+        if (fresh.length) {
+          setPullbacks(fresh);
+          // zzz524 — track record: log today's quality pullbacks with their
+          // live price so the Signal Scoreboard can grade this engine later.
+          try {
+            logSignals('pullback', fresh.slice(0, 10).map((p) => ({
+              ticker: p.symbol,
+              note: `pullback ${p.correction >= 0 ? '-' : '+'}${Math.abs(p.correction).toFixed(0)}% off ${p.basis}`,
+              priceAt: live.get(String(p.symbol || '').toUpperCase().trim())?.price ?? null,
+            })));
+          } catch { /* logging is never load-bearing */ }
+        }
       } catch { /* keep the Phase-1 snapshot */ }
     })();
 
