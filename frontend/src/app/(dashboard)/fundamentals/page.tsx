@@ -714,7 +714,10 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
                 </div>
               </div>
             )}
-            {scope === 'portfolio' && <div style={{ marginBottom: 16 }}><PortfolioQualityHeader /></div>}{/* zzz514 */}
+            {/* zzz529 — Book Quality is computed from the INDIA book + India
+                Conviction bench, so it only belongs on the India tab; on the
+                USA tab it was showing Indian names (GOODLUCK) out of context. */}
+            {scope === 'portfolio' && market !== 'USA' && <div style={{ marginBottom: 16 }}><PortfolioQualityHeader /></div>}{/* zzz514 */}
             {market === 'USA' ? (
               <UsaFundamentalsDashboard data={data} onRemove={removeRow} onClear={clearAll} />
             ) : (
