@@ -21,6 +21,7 @@ import { getConvictionList } from '@/lib/conviction-beats';
 import type { ConvictionEntry } from '@/lib/conviction-beats';
 import { assessDecay } from '@/lib/cb-decay';
 import type { DecayInput } from '@/lib/cb-decay';
+import { openPassport } from '@/lib/engines'; // zzz528 — drill-down tickers open the Passport
 
 const C = {
   bg: 'var(--mc-bg-1)',
@@ -60,6 +61,10 @@ interface Metrics {
   strongPct: number | null;       // % of covered that are BLOCKBUSTER/STRONG
   deterioratingCount: number;     // held names flagged by assessDecay
   bookQuality: number | null;     // composite 0–100
+  // zzz528 — the NAMES behind the numbers, so every tile can drill down
+  deteriorating: Array<{ symbol: string; company: string; reasons: string[]; severity: string }>;
+  notCashBacked: Array<{ symbol: string; cfoPat: number }>;
+  ungraded: string[];             // holdings not on the bench
 }
 
 function num(v: unknown): number | null {
@@ -102,9 +107,11 @@ function compute(): Metrics {
   for (const e of bench) byTicker.set(String(e.ticker).toUpperCase(), e);
 
   const covered: Covered[] = [];
+  const ungraded: string[] = [];
   for (const h of holdings) {
     const e = byTicker.get(h.symbol.toUpperCase());
     if (e) covered.push({ symbol: h.symbol, entry: e });
+    else ungraded.push(h.symbol.toUpperCase());
   }
 
   const totalHoldings = holdings.length;
@@ -116,11 +123,23 @@ function compute(): Metrics {
 
   const cfoVals = covered.map((c) => cfoPatOf(c.entry)).filter((v): v is number => v != null);
   const cashBackedPct = cfoVals.length ? (cfoVals.filter((v) => v >= 0.8).length / cfoVals.length) * 100 : null;
+  // zzz528 — the names failing the cash-backed test, worst first
+  const notCashBacked = covered
+    .map((c) => ({ symbol: c.symbol.toUpperCase(), cfoPat: cfoPatOf(c.entry) }))
+    .filter((x): x is { symbol: string; cfoPat: number } => x.cfoPat != null && x.cfoPat < 0.8)
+    .sort((a, b) => a.cfoPat - b.cfoPat);
 
   const strongCount = covered.filter((c) => c.entry.tier === 'BLOCKBUSTER' || c.entry.tier === 'STRONG').length;
   const strongPct = coveredCount ? (strongCount / coveredCount) * 100 : null;
 
-  const deterioratingCount = covered.filter((c) => assessDecay(c.entry as DecayInput) != null).length;
+  // zzz528 — deteriorating NAMES with their reasons, not just a count
+  const deteriorating: Metrics['deteriorating'] = [];
+  for (const c of covered) {
+    const d = assessDecay(c.entry as DecayInput);
+    if (d) deteriorating.push({ symbol: c.symbol.toUpperCase(), company: c.entry.company || '', reasons: d.reasons, severity: d.severity });
+  }
+  deteriorating.sort((a, b) => (a.severity === 'high' ? 0 : a.severity === 'med' ? 1 : 2) - (b.severity === 'high' ? 0 : b.severity === 'med' ? 1 : 2));
+  const deterioratingCount = deteriorating.length;
 
   // ── composite book quality (0–100) ─────────────────────────────────────────
   // Simple documented blend over the covered book. Each sub-component is
@@ -153,6 +172,9 @@ function compute(): Metrics {
     strongPct,
     deterioratingCount,
     bookQuality,
+    deteriorating,
+    notCashBacked,
+    ungraded,
   };
 }
 
@@ -177,24 +199,27 @@ function qualityColor(q: number | null): string {
   return C.red;
 }
 
-function Tile(props: { label: string; value: string; sub?: string; color?: string; tip?: string }) {
+function Tile(props: { label: string; value: string; sub?: string; color?: string; tip?: string; onClick?: () => void; active?: boolean }) {
+  const clickable = !!props.onClick;
   return (
     <div
-      title={props.tip}
+      title={props.tip ? props.tip + (clickable ? ' Click to see the names.' : '') : undefined}
+      onClick={props.onClick}
       style={{
         flex: '1 1 96px',
         minWidth: 96,
-        background: C.bg2,
-        border: '1px solid ' + C.border,
+        background: props.active ? C.bg3 : C.bg2,
+        border: '1px solid ' + (props.active ? (props.color || C.border2) : C.border),
         borderRadius: 6,
         padding: '8px 10px',
         display: 'flex',
         flexDirection: 'column',
         gap: 2,
+        cursor: clickable ? 'pointer' : undefined,
       }}
     >
       <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: 0.3, color: C.muted, textTransform: 'uppercase' }}>
-        {props.label}
+        {props.label}{clickable ? ' ▾' : ''}
       </div>
       <div style={{ fontSize: 18, fontWeight: 800, color: props.color || C.text, lineHeight: 1.1 }}>
         {props.value}
@@ -206,6 +231,7 @@ function Tile(props: { label: string; value: string; sub?: string; color?: strin
 
 export function PortfolioQualityHeader() {
   const [m, setM] = useState<Metrics | null>(null);
+  const [open, setOpen] = useState<'deteriorating' | 'cash' | 'coverage' | null>(null); // zzz528 — active drill-down
 
   useEffect(() => {
     const refresh = () => setM(compute());
@@ -281,6 +307,8 @@ export function PortfolioQualityHeader() {
           sub={`${m.coveredCount} on bench`}
           color={C.text}
           tip="Share of your holdings that are on the Conviction bench and therefore graded."
+          onClick={m.ungraded.length ? () => setOpen(open === 'coverage' ? null : 'coverage') : undefined}
+          active={open === 'coverage'}
         />
         <Tile
           label="Median ROCE"
@@ -295,6 +323,8 @@ export function PortfolioQualityHeader() {
           sub="CFO/PAT ≥ 0.8"
           color={m.cashBackedPct != null && m.cashBackedPct >= 60 ? C.green : C.text}
           tip="Share of covered holdings whose cash flow from operations backs at least 80% of reported profit."
+          onClick={m.notCashBacked.length ? () => setOpen(open === 'cash' ? null : 'cash') : undefined}
+          active={open === 'cash'}
         />
         <Tile
           label="Blockbuster / Strong"
@@ -309,8 +339,48 @@ export function PortfolioQualityHeader() {
           sub="held & decaying"
           color={m.deterioratingCount > 0 ? C.red : C.green}
           tip="Held names currently flagged by the decay watch (margins, cash, growth or drift rolling over)."
+          onClick={m.deteriorating.length ? () => setOpen(open === 'deteriorating' ? null : 'deteriorating') : undefined}
+          active={open === 'deteriorating'}
         />
       </div>
+
+      {/* ── zzz528: drill-down panel — the NAMES behind whichever tile is open ── */}
+      {open === 'deteriorating' && m.deteriorating.length > 0 && (
+        <div style={{ marginTop: 8, padding: '8px 10px', background: 'color-mix(in srgb, var(--mc-bearish) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', borderRadius: 6 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: C.red, letterSpacing: 0.3, marginBottom: 5 }}>HELD &amp; DECAYING — click a ticker for its Passport</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {m.deteriorating.map((d) => (
+              <div key={d.symbol} style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap', fontSize: 10.5 }}>
+                <span onClick={() => openPassport(d.symbol)} title="Open Stock Passport" style={{ fontWeight: 900, color: C.text, cursor: 'pointer', textDecoration: 'underline', textDecorationColor: C.border2, textUnderlineOffset: 2 }}>{d.symbol}</span>
+                <span style={{ fontSize: 8.5, fontWeight: 800, color: d.severity === 'high' ? C.red : d.severity === 'med' ? C.amber : C.muted, border: '1px solid currentColor', borderRadius: 3, padding: '0 4px', textTransform: 'uppercase' }}>{d.severity}</span>
+                <span style={{ color: C.muted, fontSize: 10 }}>{d.reasons.slice(0, 3).join(' · ')}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {open === 'cash' && m.notCashBacked.length > 0 && (
+        <div style={{ marginTop: 8, padding: '8px 10px', background: C.bg2, border: '1px solid ' + C.border, borderRadius: 6 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: C.amber, letterSpacing: 0.3, marginBottom: 5 }}>NOT CASH-BACKED (CFO/PAT &lt; 0.8) — worst first</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {m.notCashBacked.map((x) => (
+              <span key={x.symbol} onClick={() => openPassport(x.symbol)} title="Open Stock Passport" style={{ fontSize: 10, fontWeight: 700, color: x.cfoPat < 0 ? C.red : C.text2, background: C.bg3, border: '1px solid ' + C.border2, borderRadius: 4, padding: '2px 7px', cursor: 'pointer' }}>
+                {x.symbol} <span style={{ color: C.dim }}>{x.cfoPat.toFixed(2)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {open === 'coverage' && m.ungraded.length > 0 && (
+        <div style={{ marginTop: 8, padding: '8px 10px', background: C.bg2, border: '1px solid ' + C.border, borderRadius: 6 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: C.cyan, letterSpacing: 0.3, marginBottom: 5 }}>NOT GRADED — holdings without a bench entry ({m.ungraded.length})</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {m.ungraded.map((s) => (
+              <span key={s} onClick={() => openPassport(s)} title="Open Stock Passport" style={{ fontSize: 10, fontWeight: 700, color: C.text2, background: C.bg3, border: '1px solid ' + C.border2, borderRadius: 4, padding: '2px 7px', cursor: 'pointer' }}>{s}</span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── honest caption ──────────────────────────────────────────────────── */}
       <div style={{ fontSize: 9, color: C.dim, marginTop: 8, lineHeight: 1.4 }}>
