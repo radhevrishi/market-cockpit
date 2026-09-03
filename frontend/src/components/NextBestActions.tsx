@@ -121,8 +121,11 @@ function buildActions(regime: any | null): Action[] {
   return deduped.slice(0, 3);
 }
 
+import Sparkline from './Sparkline';
+
 export default function NextBestActions() {
   const [top, setTop] = useState<Action[] | null>(null);
+  const [sparks, setSparks] = useState<Map<string, number[]>>(new Map());
 
   useEffect(() => {
     let alive = true;
@@ -134,6 +137,19 @@ export default function NextBestActions() {
         logSignals('actions', top3.filter((a) => a.ticker).map((a) => ({ ticker: a.ticker!, note: a.text.slice(0, 60) })));
       } catch { /* silent */ }
       if (alive) setTop(top3);
+      // zzz527 — price context: 3-month sparkline per action ticker
+      try {
+        const syms = Array.from(new Set(top3.map((a) => a.ticker).filter(Boolean))) as string[];
+        if (syms.length) {
+          const r = await fetch(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store' });
+          if (r.ok && alive) {
+            const j = await r.json();
+            const m = new Map<string, number[]>();
+            for (const row of (j?.rows || [])) if (Array.isArray(row?.spark)) m.set(String(row.symbol), row.spark);
+            setSparks(m);
+          }
+        }
+      } catch { /* decorative */ }
     })();
     return () => { alive = false; };
   }, []);
@@ -184,6 +200,7 @@ export default function NextBestActions() {
                     a.text
                   )}
                 </span>
+                {t && sparks.get(t) && <Sparkline data={sparks.get(t)} width={58} height={16} />}
                 <a
                   href={a.href}
                   style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, color: 'var(--mc-accent)', textDecoration: 'none', border: '1px solid var(--mc-border-2)', borderRadius: 6, padding: '2px 7px', background: 'var(--mc-bg-2)' }}

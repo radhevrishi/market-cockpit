@@ -93,6 +93,7 @@ import FreshnessStrip from '@/components/FreshnessStrip';
 import AlertCenter from '@/components/AlertCenter';
 import { logSignals } from '@/lib/signal-log';
 import { openPassport } from '@/lib/engines'; // zzz525 — pullback ticker → Stock Passport
+import Sparkline from '@/components/Sparkline'; // zzz527 — price context
 // PATCH 0631 — Valuation Quick-Check on Home
 import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
@@ -5282,6 +5283,7 @@ function passesQualityPreset(b: any): boolean {
 function DailySignalInbox() {
   const [signals, setSignals] = useState<InboxSignal[]>([]);
   const [pullbacks, setPullbacks] = useState<InboxPullback[]>([]);
+  const [pbSparks, setPbSparks] = useState<Map<string, number[]>>(new Map()); // zzz527
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -5401,6 +5403,55 @@ function DailySignalInbox() {
           } catch { /* logging is never load-bearing */ }
         }
       } catch { /* keep the Phase-1 snapshot */ }
+    })();
+
+    // ══ PHASE 1.6 · TRUE 52-WEEK HIGHS (zzz527) ═════════════════════════════
+    // The bulk NSE quote feed has no yearHigh for most names, so Phase 1.5's
+    // "live" pass silently fell back to the frozen since-filing move — the
+    // board LOOKED live but wasn't. This pass asks /api/market/spark (Yahoo
+    // daily bars, server-cached) for each preset name's real 52w high + last
+    // close, recomputes every correction from TODAY's price, flips the basis
+    // to '52w high', and brings back a 3-month sparkline per name.
+    (async () => {
+      try {
+        const preset = getConvictionList().filter(passesQualityPreset);
+        if (!preset.length) return;
+        const syms = Array.from(new Set(preset.map((b: any) => String(b.ticker || '').toUpperCase().trim()).filter(Boolean))).slice(0, 24);
+        const r = await fetch(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        const bySym = new Map<string, any>();
+        for (const row of (j?.rows || [])) if (row?.symbol) bySym.set(String(row.symbol), row);
+        if (!bySym.size) return;
+        const sparkMap = new Map<string, number[]>();
+        const upgraded: InboxPullback[] = preset.map((b: any) => {
+          const sym = String(b.ticker || '').toUpperCase().trim();
+          const row = bySym.get(sym);
+          if (row && Number.isFinite(row.ddPct)) {
+            if (Array.isArray(row.spark)) sparkMap.set(sym, row.spark);
+            return { symbol: b.ticker, company: b.company || '', tier: b.tier,
+              correction: -row.ddPct, basis: '52w high' as InboxPullback['basis'],
+              sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr };
+          }
+          // no bar data — keep the best stale estimate, honestly labeled
+          const corr = typeof b.dist_52w_pct_yahoo === 'number' ? -b.dist_52w_pct_yahoo
+            : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
+          return { symbol: b.ticker, company: b.company || '', tier: b.tier,
+            correction: corr, basis: (typeof b.dist_52w_pct_yahoo === 'number' ? '52w high' : 'since filing') as InboxPullback['basis'],
+            sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr };
+        })
+          .filter((pp) => Number.isFinite(pp.correction) && pp.correction <= 60)
+          .sort((a, bb) => bb.correction - a.correction)
+          .slice(0, 10);
+        if (upgraded.length) { setPullbacks(upgraded); setPbSparks(sparkMap); }
+        try {
+          logSignals('pullback', upgraded.slice(0, 10).map((pp) => ({
+            ticker: pp.symbol,
+            note: `pullback ${pp.correction >= 0 ? '-' : '+'}${Math.abs(pp.correction).toFixed(0)}% off ${pp.basis}`,
+            priceAt: bySym.get(String(pp.symbol || '').toUpperCase().trim())?.last ?? null,
+          })));
+        } catch { /* never load-bearing */ }
+      } catch { /* keep prior pullbacks */ }
     })();
 
     // ══ PHASE 2 · NETWORK — each lane fills in independently as it returns ══
@@ -5560,6 +5611,9 @@ function DailySignalInbox() {
                             <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
                           </div>
                         </div>
+                        {pbSparks.get(String(p.symbol || '').toUpperCase().trim()) && (
+                          <Sparkline data={pbSparks.get(String(p.symbol || '').toUpperCase().trim())} width={62} height={17} />
+                        )}
                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
                           <div style={{ fontSize: 16, fontWeight: 900, color: col, fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>{down ? '−' : '+'}{Math.abs(p.correction).toFixed(0)}%</div>
                           <div style={{ fontSize: 8, color: DIM }}>{down ? `off ${p.basis}` : 'near high'}</div>

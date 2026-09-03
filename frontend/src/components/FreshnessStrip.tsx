@@ -56,7 +56,7 @@ function parseDateish(v: any): number | null {
 /** Defensively pull the newest date-ish value out of the screener manifest. */
 function manifestDate(m: any): number | null {
   if (!m || typeof m !== 'object') return null;
-  const KEYS = ['updatedAt', 'updated', 'updated_at', 'generatedAt', 'generated_at', 'generated', 'date', 'ts', 'timestamp'];
+  const KEYS = ['lastSync', 'updatedAt', 'updated', 'updated_at', 'generatedAt', 'generated_at', 'generated', 'date', 'ts', 'timestamp'];
   let best: number | null = null;
   const consider = (obj: any) => {
     if (!obj || typeof obj !== 'object') return;

@@ -119,7 +119,7 @@ export default function AlertCenter() {
   return (
     <div style={{ background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 9, padding: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ fontFamily: MONO, fontSize: 11, fontWeight: 900, letterSpacing: 1, color: 'var(--mc-text-2)' }}>🔔 ALERTS</div>
+        <div style={{ fontFamily: MONO, fontSize: 11, fontWeight: 900, letterSpacing: 1, color: 'var(--mc-text-2)' }}>🔔 PRICE &amp; MA ALERTS</div>
         {needsPermission && (
           <button
             onClick={() => requestNotifyPermission().then(() => setNeedsPermission(false))}

@@ -80,7 +80,13 @@ export default function SignalScoreboard() {
       setStats(getScoreboard());
       setRecent(getRecentSignals(12));
     })();
-    return () => { alive = false; };
+    // zzz527 — the other home engines log signals AFTER this card mounts, so
+    // re-read the log every 30s (cheap localStorage read) and on tab focus —
+    // no more "no signals logged yet" while pullbacks are visibly logging.
+    const reread = () => { if (alive) { setStats(getScoreboard()); setRecent(getRecentSignals(12)); } };
+    const iv = setInterval(reread, 30_000);
+    window.addEventListener('focus', reread);
+    return () => { alive = false; clearInterval(iv); window.removeEventListener('focus', reread); };
   }, []);
 
   const card: React.CSSProperties = {
