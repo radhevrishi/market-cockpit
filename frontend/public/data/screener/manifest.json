@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-04T09:48:06Z",
+  "lastSync": "2026-09-04T12:26:46Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10950,
+      "size": 10949,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,27 +30,27 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 7557,
+      "size": 8423,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 6914,
+      "size": 7907,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4469,
+      "size": 4468,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 13313,
+      "size": 15024,
       "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 4122,
+      "size": 3666,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19269,
+      "size": 19268,
       "displayName": "Turnarounds"
     },
     {
@@ -85,17 +85,17 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63511,
+      "size": 63514,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65694,
+      "size": 65689,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 9077,
+      "size": 10314,
       "displayName": "Weekly Volume Pockets"
     }
   ]
