@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-04T12:26:46Z",
+  "lastSync": "2026-09-04T15:17:39Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9847,
+      "size": 10260,
       "displayName": "CAPEX"
     },
     {
