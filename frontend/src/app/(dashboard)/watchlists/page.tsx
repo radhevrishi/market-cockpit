@@ -1455,6 +1455,8 @@ type ConvFilters = {
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
   elite: boolean;
   multibagger: boolean;
+  // zzz540 — only entries added to the bench in the last 10 days
+  newOnly?: boolean;
   // USER-REQ — Guidance in Conviction tab. null = no filter; specific label
   // means "only entries whose derived guidance matches this label".
   guidance: 'Positive' | 'Negative' | 'Neutral' | null;
@@ -1485,7 +1487,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, verdicts: null /* zzz362 */, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, newOnly: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, verdicts: null /* zzz362 */, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1910,6 +1912,13 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   }
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters
   if (f.elite && !(e as any).is_elite) return false;
+  // zzz540 — NEW: only entries first added to the bench within the last 10 days
+  if (f.newOnly) {
+    const added = Date.parse((e as any).added_at || '');
+    const filed = e.filing_date ? Date.parse(e.filing_date + 'T00:00:00Z') : NaN;
+    const d = Number.isFinite(added) ? added : filed;
+    if (!Number.isFinite(d) || (Date.now() - d) > 10 * 24 * 60 * 60 * 1000) return false;
+  }
   if (f.multibagger && !(e as any).multibagger_setup) return false;
   // PATCH 1022 — market-cap range filter
   if (f.cap && f.cap !== 'all' && !convCapInRange((e as any).market_cap_cr, f.cap)) return false;
@@ -3295,6 +3304,12 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <button onClick={() => setFilters((f) => ({ ...f, multibagger: !f.multibagger }))}
               style={filters.multibagger ? chipActive('#67E8F9') : chipBase}>
               💎 MULTIBAGGER only {filters.multibagger ? '✓' : ''}
+            </button>
+            {/* zzz540 — new-in-last-10-days filter; the sectioned TradingView copy below then exports ONLY these, grouped by tier */}
+            <button onClick={() => setFilters((f) => ({ ...f, newOnly: !f.newOnly }))}
+              title="Show only companies added to the bench in the last 10 days. With this on, the Copy → TradingView button copies just these names, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG."
+              style={filters.newOnly ? chipActive('#34D399') : chipBase}>
+              🆕 NEW · 10d {filters.newOnly ? '✓' : ''}
             </button>
             {/* ── ADDITIVE zzzUP1 — On Radar toggle (transformation screener overlay) */}
             <button onClick={() => setOnRadarOnly((v) => !v)}

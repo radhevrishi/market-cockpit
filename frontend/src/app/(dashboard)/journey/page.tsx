@@ -366,6 +366,9 @@ export default function JourneyPage() {
         <ReturnJourneyTarget cfg={JOURNEY_BASE} showRules={false} />
         <div style={{ height: 14 }} />
         <ReturnJourneyTarget cfg={JOURNEY_CYCLE} showRules={true} />
+        <div style={{ height: 14 }} />
+        {/* zzz539 — the multibagger math: why a few winners carry an equal-weight book */}
+        <MultibaggerMath />
 
         {/* ─── PERSONAL TARGET SETTER ──────────────────────────────── */}
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
@@ -599,6 +602,90 @@ export default function JourneyPage() {
         {/* ─── FOOTER ─────────────────────────────────────────────── */}
         <div style={{ fontSize: 11, color: C.dim, textAlign: 'center', padding: '14px 0', fontStyle: 'italic' }}>
           &ldquo;The journey of a thousand crores begins with a single conviction held with patience.&rdquo;
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// zzz539 — THE MULTIBAGGER MATH — why a few winners carry an equal-weight book.
+// Illustrative 10-stock, equal-weighted basket. Two 5-baggers and three doublers
+// do all the lifting; five names lose 20% and the book STILL doubles. The point:
+// return is asymmetric (max loss −100%, upside unbounded), so a handful of
+// winners swamp a pile of small losers — the whole case for holding multibaggers.
+// ════════════════════════════════════════════════════════════════════════════
+const MB_BUCKETS = [
+  { label: '5-baggers', n: 2, retPct: 400, mult: 5,   color: C.green },
+  { label: 'doubled',   n: 3, retPct: 100, mult: 2,   color: C.cyan },
+  { label: 'down 20%',  n: 5, retPct: -20, mult: 0.8, color: C.red },
+];
+const MB_PER = 10000; // ₹ per equal-weighted slot
+
+function MultibaggerMath() {
+  const inr = (v: number) => '₹' + Math.round(v).toLocaleString('en-IN');
+  const totalNames = MB_BUCKETS.reduce((s, b) => s + b.n, 0);              // 10
+  const startVal = totalNames * MB_PER;                                    // ₹1,00,000
+  const endVal = MB_BUCKETS.reduce((s, b) => s + b.n * MB_PER * b.mult, 0); // ₹2,00,000
+  const totRetPct = (endVal / startVal - 1) * 100;                         // +100%
+  const winners = MB_BUCKETS.filter((b) => b.mult > 1).reduce((s, b) => s + b.n, 0);
+  const cagrFor = (n: number) => (Math.pow(endVal / startVal, 1 / n) - 1) * 100;
+  const HZ = [1, 2, 3, 5, 7, 10];
+
+  return (
+    <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: C.saffron, letterSpacing: 0.3 }}>🎲 THE MULTIBAGGER MATH · why a few winners carry the book</div>
+      <div style={{ fontSize: 10, color: C.dim, marginTop: 2, marginBottom: 14, ...MONO }}>
+        illustrative · one equal-weighted basket of {totalNames} stocks · {inr(MB_PER)} in each · same holding period
+      </div>
+
+      {/* the blend */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+        {MB_BUCKETS.map((b) => {
+          const contrib = b.n * MB_PER * b.mult;
+          return (
+            <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '8px 12px' }}>
+              <span style={{ fontSize: 12, fontWeight: 900, color: b.color, width: 34, ...MONO }}>{b.n}×</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: C.text, minWidth: 78 }}>{b.label}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: b.color, ...MONO, width: 64 }}>{b.retPct >= 0 ? '+' : ''}{b.retPct}%</span>
+              <span style={{ fontSize: 10, color: C.muted, ...MONO }}>{b.mult}× per ₹1</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 10, color: C.dim, ...MONO }}>{b.n} × {inr(MB_PER)} → </span>
+              <span style={{ fontSize: 11.5, fontWeight: 900, color: b.color, ...MONO, width: 78, textAlign: 'right' }}>{inr(contrib)}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* result */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 14 }}>
+        <StatTile label="You put in" value={inr(startVal)} sub={`${totalNames} names, equal weight`} color={C.text} />
+        <StatTile label="You end with" value={inr(endVal)} sub={`${winners} winners did the lifting`} color={C.green} />
+        <StatTile label="Portfolio return" value={`+${totRetPct.toFixed(0)}%`} sub="the book doubled" color={C.green} />
+        <StatTile label="Losers' drag" value="−₹10,000" sub="5 names down 20% — barely dented it" color={C.red} />
+      </div>
+
+      {/* CAGR depends on holding period */}
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 6 }}>
+        Same {totRetPct.toFixed(0)}% — but the <span style={{ color: C.saffron }}>CAGR depends entirely on how long you held</span>:
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        {HZ.map((n) => (
+          <div key={n} style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '6px 10px', textAlign: 'center', minWidth: 64 }}>
+            <div style={{ fontSize: 9, color: C.muted, fontWeight: 800 }}>{n}Y hold</div>
+            <div style={{ fontSize: 14, fontWeight: 900, color: n <= 2 ? C.green : n <= 5 ? C.cyan : C.muted, ...MONO }}>{cagrFor(n).toFixed(1)}%</div>
+          </div>
+        ))}
+      </div>
+
+      {/* insight */}
+      <div style={{ background: C.bg, border: '1px solid ' + C.border, borderLeft: '3px solid ' + C.saffron, borderRadius: 6, padding: '10px 12px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.amber, marginBottom: 6 }}>⚡ Why this is the whole game</div>
+        <div style={{ fontSize: 11.5, color: C.text, lineHeight: 1.6 }}>
+          Half the basket <strong style={{ color: C.red }}>lost money</strong> — and the book still <strong style={{ color: C.green }}>doubled.</strong> That is the asymmetry: a loser can only cost you <strong style={{ color: C.text }}>−100%</strong>, but a winner can return <strong style={{ color: C.green }}>+400%, +900%, more</strong>. So two or three multibaggers swamp a pile of small losers.
+        </div>
+        <div style={{ fontSize: 11.5, color: C.text, lineHeight: 1.6, marginTop: 8 }}>
+          <strong style={{ color: C.saffron }}>The rule it forces:</strong> cut the losers small (they cap your downside), and <strong style={{ color: C.text }}>let the winners run</strong> — never trim a 5-bagger back to a double. And it&rsquo;s the same lesson as the journey above: the return is real, but the <strong style={{ color: C.cyan }}>CAGR is a hostage to holding period</strong> — a double in 1 year is 100%, in 10 years just 7%. Great businesses, held for years, not quarters.
         </div>
       </div>
     </div>
