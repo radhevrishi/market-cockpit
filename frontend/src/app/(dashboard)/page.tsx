@@ -26,7 +26,7 @@
 // Those are flagged honestly in the disclosure block at the bottom.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 // PATCH 1101p — Re-score restored multibagger rows on home page. The /multibagger
 // page re-scores on every load (initializer line 5024) so its display reflects
@@ -87,6 +87,7 @@ import { SUPER_INVESTORS } from '@/lib/super-investors';
 // PATCH 0627 — Critical Themes data for Home panel.
 import { getTopThemesForHome } from '@/lib/critical-themes';
 // zzz524 — million-dollar wiring: home intelligence layer
+import CockpitHero from '@/components/CockpitHero'; // zzz532 — premium "wow on open" hero band
 import NextBestActions from '@/components/NextBestActions';
 import SignalScoreboard from '@/components/SignalScoreboard';
 import FreshnessStrip from '@/components/FreshnessStrip';
@@ -2579,13 +2580,14 @@ export default function HomeDashboard() {
               {(() => {
                 let _ccy = '₹';
                 try { _ccy = (typeof window !== 'undefined' && localStorage.getItem('mc-default-currency')) || '₹'; } catch { _ccy = '₹'; }
+                const _grp = _ccy === '₹' ? 'en-IN' : 'en-US';
                 return <span style={{fontSize:13,color:TEXT,fontWeight:800}}>{_ccy}</span>;
               })()}
               <input
                 type="number"
                 value={posCalcCapital}
                 onChange={(e)=>setPosCalcCapital(Math.max(0, Number(e.target.value)||0))}
-                style={{width:120,padding:'5px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,color:TEXT,fontSize:13,fontWeight:700,outline:'none'}}
+                style={{width:120,padding:'5px 8px',backgroundColor:'var(--mc-bg-2)',border:'1px solid var(--mc-border-1)',borderRadius:6,color:TEXT,fontSize:13,fontWeight:700,outline:'none'}}
                 aria-label="Portfolio capital"
               />
               <span style={{fontSize:10,color:DIM}}>· editable, syncs across pages</span>
@@ -2595,12 +2597,13 @@ export default function HomeDashboard() {
               {(() => {
                 let _ccy = '₹';
                 try { _ccy = (typeof window !== 'undefined' && localStorage.getItem('mc-default-currency')) || '₹'; } catch { _ccy = '₹'; }
+                const _grp = _ccy === '₹' ? 'en-IN' : 'en-US';
                 return [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 15, 20].map(pct => {
                   const amt = Math.round(posCalcCapital * pct / 100);
                   return (
-                    <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:62}}>
+                    <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'var(--mc-bg-2)',border:'1px solid var(--mc-border-1)',borderRadius:6,minWidth:62}}>
                       <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
-                      <span style={{fontSize:13,color:'var(--mc-bullish)',fontWeight:800}}>{_ccy}{amt.toLocaleString('en-US')}</span>
+                      <span style={{fontSize:13,color:'var(--mc-bullish)',fontWeight:800}}>{_ccy}{amt.toLocaleString(_grp)}</span>
                     </div>
                   );
                 });
@@ -2611,6 +2614,7 @@ export default function HomeDashboard() {
           {(() => {
             let _ccy = '₹';
             try { _ccy = (typeof window !== 'undefined' && localStorage.getItem('mc-default-currency')) || '₹'; } catch { _ccy = '₹'; }
+                const _grp = _ccy === '₹' ? 'en-IN' : 'en-US';
             const riskBudget = Math.round(posCalcCapital * posRiskPct / 100);
             const perShareRisk = posEntry - posStop;
             const valid = perShareRisk > 0 && posEntry > 0 && riskBudget > 0;
@@ -2621,7 +2625,7 @@ export default function HomeDashboard() {
             const overweight = posPctOfCap > 100;
             const cell = { display:'flex',flexDirection:'column' as const,gap:2 };
             const lab = { fontSize:10,color:DIM,fontWeight:700 };
-            const inp = { width:88,padding:'5px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,color:TEXT,fontSize:13,fontWeight:700,outline:'none' as const };
+            const inp = { width:88,padding:'5px 8px',backgroundColor:'var(--mc-bg-2)',border:'1px solid var(--mc-border-1)',borderRadius:6,color:TEXT,fontSize:13,fontWeight:700,outline:'none' as const };
             return (
               <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(59,130,246,0.06)',border:'1px solid rgba(59,130,246,0.20)',borderRadius:10,marginTop:8}}>
                 <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
@@ -2649,19 +2653,19 @@ export default function HomeDashboard() {
                   </div>
                 </div>
                 <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:70}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'var(--mc-bg-2)',border:'1px solid var(--mc-border-1)',borderRadius:6,minWidth:70}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>Risk budget</span>
-                    <span style={{fontSize:13,color:'#F59E0B',fontWeight:800}}>{_ccy}{riskBudget.toLocaleString('en-US')}</span>
+                    <span style={{fontSize:13,color:'#F59E0B',fontWeight:800}}>{_ccy}{riskBudget.toLocaleString(_grp)}</span>
                   </div>
-                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:`1px solid ${overweight?'rgba(239,68,68,0.5)':'rgba(255,255,255,0.12)'}`,borderRadius:6,minWidth:70}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'var(--mc-bg-2)',border:`1px solid ${overweight?'rgba(239,68,68,0.5)':'rgba(255,255,255,0.12)'}`,borderRadius:6,minWidth:70}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>Shares</span>
-                    <span style={{fontSize:13,color: valid ? 'var(--mc-bullish)' : DIM,fontWeight:800}}>{valid ? qty.toLocaleString('en-US') : '—'}</span>
+                    <span style={{fontSize:13,color: valid ? 'var(--mc-bullish)' : DIM,fontWeight:800}}>{valid ? qty.toLocaleString(_grp) : '—'}</span>
                   </div>
-                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:70}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'var(--mc-bg-2)',border:'1px solid var(--mc-border-1)',borderRadius:6,minWidth:70}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>Position</span>
-                    <span style={{fontSize:13,color: overweight ? '#EF4444' : TEXT,fontWeight:800}}>{_ccy}{posValue.toLocaleString('en-US')}</span>
+                    <span style={{fontSize:13,color: overweight ? '#EF4444' : TEXT,fontWeight:800}}>{_ccy}{posValue.toLocaleString(_grp)}</span>
                   </div>
-                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:70}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 10px',backgroundColor:'var(--mc-bg-2)',border:'1px solid var(--mc-border-1)',borderRadius:6,minWidth:70}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>% of cap</span>
                     <span style={{fontSize:13,color: overweight ? '#EF4444' : '#60A5FA',fontWeight:800}}>{valid ? posPctOfCap.toFixed(0) : '—'}%</span>
                   </div>
@@ -2669,13 +2673,16 @@ export default function HomeDashboard() {
                     {valid
                       ? overweight
                         ? `Stop is only ${stopPct.toFixed(1)}% away — sizing to ${posRiskPct}% risk needs >100% of capital. Widen the stop or accept smaller risk.`
-                        : `A ${stopPct.toFixed(1)}% stop-out loses exactly ${_ccy}${riskBudget.toLocaleString('en-US')} (${posRiskPct}% of book).`
+                        : `A ${stopPct.toFixed(1)}% stop-out loses exactly ${_ccy}${riskBudget.toLocaleString(_grp)} (${posRiskPct}% of book).`
                       : 'Set entry above stop to size the trade.'}
                   </span>
                 </div>
               </div>
             );
           })()}
+
+          {/* zzz532 — Cockpit Hero: the "wow on open" band (book · regime · breadth · positions) */}
+          <CockpitHero />
 
           {/* ═══════════════ zzz239 — FAVOURITES ROW ═══════════════════════
               User-pinned quick-access shortcuts, sits right below "Good morning".
@@ -3862,7 +3869,7 @@ export default function HomeDashboard() {
                     <Link key={(r.ticker || '') + i} href={linkHref}
                       title={isRealTicker ? `Open ${resolvedTicker} stock sheet` : 'No NSE ticker found — open Super Investors tracker'}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
-                      <span style={{ fontSize: 9, color: isRealTicker ? 'var(--mc-state-persistent)' : '#3F4D63', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70, textAlign: 'left' }}>
+                      <span style={{ fontSize: 9, color: isRealTicker ? 'var(--mc-state-persistent)' : DIM, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70, textAlign: 'left' }}>
                         {isRealTicker ? resolvedTicker.slice(0, 10) : '—'}
                       </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -4183,7 +4190,7 @@ export default function HomeDashboard() {
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       minWidth: 0, lineHeight: 1.4,
                     }}>
-                      {primaryDriverText || <em style={{ color: '#3F4D63' }}>analyzing…</em>}
+                      {primaryDriverText || <em style={{ color: DIM }}>analyzing…</em>}
                     </span>
                     {/* Move Quality 0-100 (color-tiered) */}
                     {mq && (
@@ -4812,7 +4819,7 @@ export default function HomeDashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>⚠ ALERTS ({activeAlerts.length} active)</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>📰 NEWS ALERTS ({activeAlerts.length} active)</span>
               <Link href="/news-alerts" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Manage →</Link>
             </div>
             {activeAlerts.length === 0 ? (
@@ -4833,7 +4840,7 @@ export default function HomeDashboard() {
 
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🏗 ACTIVE BOTTLENECK THEMES</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🏗 BOTTLENECK THEMES — FULL LIST</span>
               <Link href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Intel →</Link>
             </div>
             {netLoading.bottleneck ? (
@@ -5284,6 +5291,7 @@ function DailySignalInbox() {
   const [signals, setSignals] = useState<InboxSignal[]>([]);
   const [pullbacks, setPullbacks] = useState<InboxPullback[]>([]);
   const [pbSparks, setPbSparks] = useState<Map<string, number[]>>(new Map()); // zzz527
+  const pbPhaseRef = useRef(0); // zzz530 — highest pullback phase that has written (1.5=1, 1.6=2)
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -5318,7 +5326,7 @@ function DailySignalInbox() {
         benchRows.push({ lane: 'BENCH', symbol: b.ticker, company: b.company || '',
           headline: `${b.tier}${isToday ? ' · NEW today' : ''}`,
           detail: parts.join(' · ') || `score ${b.composite_score}`,
-          score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/conviction-beats', soft: false });
+          score: (isToday ? 1000 : 0) + (b.composite_score || 0), href: '/watchlists?tab=conviction', soft: false });
       });
       setSignals(benchRows);
       setLaneStatus({ momentum: false, warrant: false, transform: false, bench: benchRows.length > 0 });
@@ -5390,18 +5398,10 @@ function DailySignalInbox() {
           .filter((p) => Number.isFinite(p.correction) && p.correction <= 60)
           .sort((a, b) => b.correction - a.correction)
           .slice(0, 10);
-        if (fresh.length) {
-          setPullbacks(fresh);
-          // zzz524 — track record: log today's quality pullbacks with their
-          // live price so the Signal Scoreboard can grade this engine later.
-          try {
-            logSignals('pullback', fresh.slice(0, 10).map((p) => ({
-              ticker: p.symbol,
-              note: `pullback ${p.correction >= 0 ? '-' : '+'}${Math.abs(p.correction).toFixed(0)}% off ${p.basis}`,
-              priceAt: live.get(String(p.symbol || '').toUpperCase().trim())?.price ?? null,
-            })));
-          } catch { /* logging is never load-bearing */ }
-        }
+        // zzz530 — only write if the authoritative spark pass (1.6) hasn't
+        // already landed; and DON'T log here (1.6 logs the final set), so the
+        // slower quote pass can never re-freeze the board to "since filing".
+        if (fresh.length && pbPhaseRef.current < 1) { pbPhaseRef.current = 1; setPullbacks(fresh); }
       } catch { /* keep the Phase-1 snapshot */ }
     })();
 
@@ -5443,7 +5443,7 @@ function DailySignalInbox() {
           .filter((pp) => Number.isFinite(pp.correction) && pp.correction <= 60)
           .sort((a, bb) => bb.correction - a.correction)
           .slice(0, 10);
-        if (upgraded.length) { setPullbacks(upgraded); setPbSparks(sparkMap); }
+        if (upgraded.length) { pbPhaseRef.current = 2; setPullbacks(upgraded); setPbSparks(sparkMap); }
         try {
           logSignals('pullback', upgraded.slice(0, 10).map((pp) => ({
             ticker: pp.symbol,
@@ -5568,13 +5568,13 @@ function DailySignalInbox() {
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={() => load(false)} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(96,165,250,0.4)', background: 'transparent', color: '#60A5FA' }}>{loading ? '⏳' : '↻ Refresh'}</button>
           <button onClick={() => load(true)} disabled={loading} title="Force a fresh server scan (bypasses the cache) — takes ~30-50s" style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(16,185,129,0.5)', background: 'transparent', color: '#10B981' }}>{loading ? '⏳' : '↻ Fresh'}</button>
-          <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
+          <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--mc-border-1)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
         </div>
       </div>
 
       {!collapsed && !loading && total === 0 && pullbacks.length === 0 && (
         <div style={{ fontSize: 11.5, color: DIM, marginTop: 10, lineHeight: 1.6 }}>
-          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar, your bench, and quality pullbacks. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link> / <Link href="/conviction-beats" style={{ color: '#F59E0B' }}>Conviction Beats</Link>.
+          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar, your bench, and quality pullbacks. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link> / <Link href="/watchlists?tab=conviction" style={{ color: '#F59E0B' }}>Conviction Beats</Link>.
         </div>
       )}
 
@@ -5592,7 +5592,7 @@ function DailySignalInbox() {
             </div>
             {pullbacks.length === 0 ? (
               <div style={{ fontSize: 10.5, color: DIM, marginTop: 12, lineHeight: 1.55 }}>
-                No preset winner is in a meaningful pullback right now — your quality names are near their highs, or the bench needs enriching (52-week distance comes from the enrich pass). This lights up the moment a great-earnings name sells off. <Link href="/conviction-beats" style={{ color: '#F59E0B' }}>Open the bench →</Link>
+                No preset winner is in a meaningful pullback right now — your quality names are near their highs, or the bench needs enriching (52-week distance comes from the enrich pass). This lights up the moment a great-earnings name sells off. <Link href="/watchlists?tab=conviction" style={{ color: '#F59E0B' }}>Open the bench →</Link>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 11 }}>
@@ -5601,7 +5601,7 @@ function DailySignalInbox() {
                   const col = !down ? '#10B981' : p.correction >= 20 ? '#EF4444' : p.correction >= 10 ? '#F59E0B' : '#FBBF24';
                   const depth = Math.max(3, Math.min(100, Math.abs(p.correction) * 3));
                   return (
-                    <Link key={p.symbol} href="/conviction-beats" style={{ textDecoration: 'none', display: 'block', background: 'rgba(255,255,255,0.02)', border: `1px solid ${down ? `${col}33` : 'rgba(255,255,255,0.07)'}`, borderRadius: 9, padding: '8px 11px' }}>
+                    <Link key={p.symbol} href="/watchlists?tab=conviction" style={{ textDecoration: 'none', display: 'block', background: 'rgba(255,255,255,0.02)', border: `1px solid ${down ? `${col}33` : 'rgba(255,255,255,0.07)'}`, borderRadius: 9, padding: '8px 11px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                         <span style={{ fontSize: 11, fontWeight: 900, color: DIM, fontFamily: 'ui-monospace, monospace', width: 20, flexShrink: 0 }}>{i + 1}</span>
                         <div style={{ minWidth: 0, flex: 1 }}>
@@ -5634,7 +5634,7 @@ function DailySignalInbox() {
 
           {/* ── RIGHT · the live signal lanes, balanced 2-column masonry so short
                  lanes (e.g. Warrant) don't leave big empty gaps under tall ones ── */}
-          <div style={{ flex: '1.15 1 320px', minWidth: 0, columnCount: 2, columnGap: 9 }}>
+          <div style={{ flex: '1.15 1 320px', minWidth: 0, columns: '150px', columnGap: 9 }}>
             {lanes.map((lane) => {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
@@ -5789,7 +5789,7 @@ function PipelineHealth() {
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={load} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(148,163,184,0.4)', background: 'transparent', color: '#94A3B8' }}>{loading ? '⏳' : '↻'}</button>
-          <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
+          <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--mc-border-1)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
         </div>
       </div>
 
@@ -5907,9 +5907,9 @@ function FavouritesGrid() {
           onDragEnd: () => setDragFrom(null),
         };
         return f.ext ? (
-          <a key={f.href} href={f.href} target="_blank" rel="noopener noreferrer" style={st} {...dragProps}>{f.label}</a>
+          <a key={f.href} className="mc-lift" href={f.href} target="_blank" rel="noopener noreferrer" style={st} {...dragProps}>{f.label}</a>
         ) : (
-          <Link key={f.href} href={f.href} style={st} {...dragProps}>{f.label}</Link>
+          <Link key={f.href} className="mc-lift" href={f.href} style={st} {...dragProps}>{f.label}</Link>
         );
       })}
     </div>

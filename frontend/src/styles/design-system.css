@@ -291,5 +291,49 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+ *  PREMIUM SURFACES (zzz532) — elevated stat cards + hover lift + shimmer.
+ *  Additive + theme-safe (tokens only). Used by the home Cockpit Hero and
+ *  reusable by any tab that wants the institutional card treatment.
+ * ───────────────────────────────────────────────────────────────────────── */
+.mc-stat-card {
+  background: linear-gradient(160deg, var(--mc-bg-1) 0%, var(--mc-bg-2) 100%);
+  border: 1px solid var(--mc-border-1);
+  border-radius: var(--mc-radius-xl);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: transform var(--mc-dur-fast) ease,
+              box-shadow var(--mc-dur-base) ease,
+              border-color var(--mc-dur-base) ease;
+}
+.mc-lift { transition: transform var(--mc-dur-fast) ease, box-shadow var(--mc-dur-base) ease, border-color var(--mc-dur-base) ease; }
+.mc-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+  border-color: var(--mc-border-2);
+}
+/* subtle top accent hairline that colours a card by state */
+.mc-accent-top { position: relative; }
+.mc-accent-top::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 2px;
+  border-radius: var(--mc-radius-xl) var(--mc-radius-xl) 0 0;
+  background: linear-gradient(90deg, var(--mc-accent-top-color, var(--mc-accent)), transparent 85%);
+  opacity: 0.85;
+}
+/* skeleton shimmer block for loading numbers */
+@keyframes mc-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.mc-shimmer {
+  background: linear-gradient(90deg, var(--mc-bg-2) 25%, var(--mc-bg-3) 50%, var(--mc-bg-2) 75%);
+  background-size: 200% 100%;
+  animation: mc-shimmer 1.3s ease-in-out infinite;
+  border-radius: var(--mc-radius-sm);
+  color: transparent !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mc-stat-card, .mc-lift { transition: none; }
+  .mc-lift:hover { transform: none; }
+  .mc-shimmer { animation: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
  *  End design-system.css
  * ───────────────────────────────────────────────────────────────────────── */
