@@ -43,12 +43,16 @@ function readRegime(): { india: MiniRegime; usa: MiniRegime } | null {
     const p = JSON.parse(raw);
     const d = p?.data;
     if (!d?.india || !d?.usa) return null;
-    const norm = (m: any): MiniRegime => ({
-      kind: (['BULL', 'PULLBACK', 'CORRECTION', 'BEAR', 'RECOVERY'].includes(m?.kind) ? m.kind : 'UNKNOWN') as RegimeKind,
-      drawdownPct: typeof m?.drawdownPct === 'number' && Number.isFinite(m.drawdownPct) ? m.drawdownPct : null,
-    });
-    return { india: norm(d.india), usa: norm(d.usa) };
+    return { india: toMini(d.india), usa: toMini(d.usa) };
   } catch { return null; }
+}
+
+// map a raw market-regime object (from cache or the API) to the mini shape
+function toMini(m: any): MiniRegime {
+  return {
+    kind: (['BULL', 'PULLBACK', 'CORRECTION', 'BEAR', 'RECOVERY'].includes(m?.kind) ? m.kind : 'UNKNOWN') as RegimeKind,
+    drawdownPct: typeof m?.drawdownPct === 'number' && Number.isFinite(m.drawdownPct) ? m.drawdownPct : null,
+  };
 }
 
 // ── shape the whole band computes ───────────────────────────────────────────
@@ -175,7 +179,8 @@ export default function CockpitHero() {
           const r = await fetch('/api/market/regime', { signal: ctl!.signal });
           if (!r.ok) return;
           const j = await r.json();
-          if (aliveRef.current && j?.india && j?.usa) setRegime(readRegime() || null);
+          // build from the response directly — our fetch doesn't write RegimeBanner's cache
+          if (aliveRef.current && j?.india && j?.usa) setRegime({ india: toMini(j.india), usa: toMini(j.usa) });
         } catch { /* leave regime null */ }
         finally { clearTimeout(timer); }
       })();
