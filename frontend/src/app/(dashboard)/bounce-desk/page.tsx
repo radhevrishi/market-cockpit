@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { getEngineViews, openPassport, type EngineView, type Market } from '@/lib/engines';
 import { logSignals } from '@/lib/signal-log';
 import { suggestSize, fmtMoney } from '@/lib/sizing';
+import Sparkline from '@/components/Sparkline'; // zzz538 — inline price trend
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -99,7 +100,7 @@ const chip = (color = 'var(--mc-text-3)'): React.CSSProperties => ({
   border: '1px solid var(--mc-border-2)', background: 'var(--mc-bg-2)', color, whiteSpace: 'nowrap',
 });
 
-function MarketSection({ market, regime, cands, rankOffset }: { market: Market; regime: RegimeSide | null; cands: Candidate[]; rankOffset: number }) {
+function MarketSection({ market, regime, cands, rankOffset, sparks }: { market: Market; regime: RegimeSide | null; cands: Candidate[]; rankOffset: number; sparks: Map<string, number[]> }) {
   const label = market === 'IND' ? 'INDIA' : 'USA';
   const kind = regime?.kind || 'UNKNOWN';
 
@@ -161,6 +162,7 @@ function MarketSection({ market, regime, cands, rankOffset }: { market: Market; 
                 {c.chg != null && <span style={chip(c.chg <= 0 ? 'var(--mc-bearish)' : 'var(--mc-bullish)')}>day {c.chg >= 0 ? '+' : ''}{c.chg.toFixed(1)}%</span>}
                 {c.v.fundo?.score != null && <span style={chip('var(--mc-text-2)')}>F{Math.round(c.v.fundo.score)}</span>}
                 {c.v.bench && <span style={chip('var(--mc-accent)')}>{c.v.bench.tier}</span>}
+                {sparks.get(c.v.symbol) && <span title="~3-month price trend" style={{ display: 'inline-flex', alignItems: 'center' }}><Sparkline data={sparks.get(c.v.symbol)} width={64} height={18} /></span>}
                 {size && (
                   <span style={chip('var(--mc-cyan)')}>
                     📐 {size.pctOfPortfolio.toFixed(1)}% · stop {fmtMoney(size.stopPrice, market)}
@@ -180,12 +182,13 @@ export default function BounceDeskPage() {
   const [candIND, setCandIND] = useState<Candidate[]>([]);
   const [candUSA, setCandUSA] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sparks, setSparks] = useState<Map<string, number[]>>(new Map()); // zzz538
 
   useEffect(() => {
     let alive = true;
     (async () => {
       const [reg, liveIND, liveUSA] = await Promise.all([
-        fetch('/api/market/regime').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        (() => { const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000); return fetch('/api/market/regime', { signal: c.signal }).then((r) => (r.ok ? r.json() : null)).catch(() => null).finally(() => clearTimeout(t)); })(),
         fetchQuotes('india'),
         fetchQuotes('us'),
       ]);
@@ -205,6 +208,26 @@ export default function BounceDeskPage() {
         const top = [...ind, ...usaC].sort((a, b) => b.score - a.score).slice(0, 10);
         if (top.length) logSignals('bounce', top.map((c) => ({ ticker: c.v.symbol, note: `bounce ${c.score}`, priceAt: c.livePrice })));
       } catch { /* ignore */ }
+
+      // zzz538 — sparklines for the shown names via the existing spark route (server-cached)
+      try {
+        const syms = [...ind, ...usaC].slice(0, 24).map((c) => c.v.symbol);
+        if (syms.length) {
+          const c = new AbortController();
+          const t = setTimeout(() => c.abort(), 12000);
+          const r = await fetch(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store', signal: c.signal });
+          clearTimeout(t);
+          if (r.ok && alive) {
+            const j = await r.json();
+            const m = new Map<string, number[]>();
+            for (const row of (Array.isArray(j?.rows) ? j.rows : [])) {
+              const sym = String(row?.symbol || '').toUpperCase();
+              if (sym && Array.isArray(row?.spark) && row.spark.length >= 3) m.set(sym, row.spark);
+            }
+            if (alive) setSparks(m);
+          }
+        }
+      } catch { /* sparks are decorative */ }
     })();
     return () => { alive = false; };
   }, []);
@@ -222,8 +245,8 @@ export default function BounceDeskPage() {
         <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--mc-text-4)' }}>scanning… (cold quote cache can take ~25s)</div>
       ) : (
         <>
-          <MarketSection market="IND" regime={regime.india} cands={candIND} rankOffset={0} />
-          <MarketSection market="USA" regime={regime.usa} cands={candUSA} rankOffset={0} />
+          <MarketSection market="IND" regime={regime.india} cands={candIND} rankOffset={0} sparks={sparks} />
+          <MarketSection market="USA" regime={regime.usa} cands={candUSA} rankOffset={0} sparks={sparks} />
         </>
       )}
 
