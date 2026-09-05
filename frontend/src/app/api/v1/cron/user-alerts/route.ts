@@ -87,8 +87,8 @@ export async function GET(request: Request) {
     } else if (r.kind === 'price_above') {
       if (typeof r.level === 'number' && b.last >= r.level) msg = `${r.ticker} above ${r.level} (now ${b.last.toFixed(1)})`;
     } else if (r.kind === 'drop_day') {
-      const lvl = typeof r.level === 'number' ? r.level : 5;
-      if (chg <= -lvl) msg = `${r.ticker} down ${chg.toFixed(1)}% today (limit ${lvl}%)`;
+      const lvl = Math.abs(typeof r.level === 'number' ? r.level : 5) || 5; // zzz530 — a stray "-5" must not fire on every tick
+      if (Number.isFinite(chg) && chg <= -lvl) msg = `${r.ticker} down ${chg.toFixed(1)}% today (limit ${lvl}%)`;
     }
     if (!msg) continue;
     // 20h cooldown per rule via KV NX-style key

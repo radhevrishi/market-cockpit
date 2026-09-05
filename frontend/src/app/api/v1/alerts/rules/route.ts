@@ -43,6 +43,7 @@ export async function POST(request: Request) {
     await kvSet(RULES_KEY, clean);
     return NextResponse.json({ ok: true, count: clean.length });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'save failed' }, { status: 200 });
+    // zzz530 — a real save failure must surface as an error status, not a silent 200 "ok"
+    return NextResponse.json({ ok: false, error: e?.message || 'save failed' }, { status: 500 });
   }
 }

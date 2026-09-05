@@ -2487,8 +2487,11 @@ export default function CompanyIntelligencePage() {
         if (wlData.flags) { flags = wlData.flags; setWatchlistFlags(flags); }
         if (wlData.addedPrices) { prices = wlData.addedPrices; setAddedPrices(prices); }
       } catch {
-        const s = localStorage.getItem('mc_watchlist_tickers') || '[]';
-        watchlist = JSON.parse(s);
+        // zzz530 — this fallback lives inside a catch; a malformed store here would throw uncaught
+        try {
+          const parsed = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]');
+          if (Array.isArray(parsed)) watchlist = parsed;
+        } catch { /* leave watchlist as-is */ }
       }
 
       // ── KEY FIX: merge Excel symbols into the portfolio param ──────────────────

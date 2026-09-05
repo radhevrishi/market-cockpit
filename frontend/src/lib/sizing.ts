@@ -65,9 +65,12 @@ export function suggestSize(opts: { price: number; stopPct?: number | null; atrP
 export function fmtMoney(v: number, market: 'IND' | 'USA' | null | undefined): string {
   const isUS = market === 'USA';
   const sym = isUS ? '$' : '₹';
-  if (!isUS && v >= 1e7) return `${sym}${(v / 1e7).toFixed(2)} Cr`;
-  if (!isUS && v >= 1e5) return `${sym}${(v / 1e5).toFixed(1)} L`;
-  if (v >= 1e6) return `${sym}${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `${sym}${(v / 1e3).toFixed(1)}k`;
-  return `${sym}${v.toFixed(0)}`;
+  if (!Number.isFinite(v)) return `${sym}0`;          // zzz530 — never render "$NaN"
+  const sign = v < 0 ? '-' : '';                       // zzz530 — abbreviate & sign negatives correctly
+  const a = Math.abs(v);
+  if (!isUS && a >= 1e7) return `${sign}${sym}${(a / 1e7).toFixed(2)} Cr`;
+  if (!isUS && a >= 1e5) return `${sign}${sym}${(a / 1e5).toFixed(1)} L`;
+  if (a >= 1e6) return `${sign}${sym}${(a / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `${sign}${sym}${(a / 1e3).toFixed(1)}k`;
+  return `${sign}${sym}${a.toFixed(0)}`;
 }

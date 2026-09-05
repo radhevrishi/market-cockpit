@@ -112,8 +112,8 @@ export default function WeeklyReviewPage() {
 
   // 4 · Conflicts
   const conflicts = st.views
-    .map((v) => ({ v, verdict: computeVerdict(v) }))
-    .filter((x) => x.verdict.conflicts.length > 0 && (x.v.holding || x.v.bench));
+    .map((v) => { try { return { v, verdict: computeVerdict(v) }; } catch { return null; } }) // zzz530 — one bad view can't crash the page
+    .filter((x): x is { v: EngineView; verdict: ReturnType<typeof computeVerdict> } => !!x && x.verdict.conflicts.length > 0 && (!!x.v.holding || !!x.v.bench));
 
   // 5 · Setups
   const setups = st.views

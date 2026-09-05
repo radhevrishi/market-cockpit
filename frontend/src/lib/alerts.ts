@@ -118,20 +118,21 @@ export function evaluateAlerts(live: Map<string, { price: number; chg: number | 
         break;
       }
       case 'price_below': {
-        if (q && typeof rule.level === 'number' && q.price <= rule.level) {
+        // zzz530 — a stale/zero/NaN price must not trip "below X"
+        if (q && Number.isFinite(q.price) && q.price > 0 && typeof rule.level === 'number' && q.price <= rule.level) {
           message = `${t} below ${rule.level} (now ${q.price.toFixed(2)})`;
         }
         break;
       }
       case 'price_above': {
-        if (q && typeof rule.level === 'number' && q.price >= rule.level) {
+        if (q && Number.isFinite(q.price) && q.price > 0 && typeof rule.level === 'number' && q.price >= rule.level) {
           message = `${t} above ${rule.level} (now ${q.price.toFixed(2)})`;
         }
         break;
       }
       case 'drop_day': {
         const threshold = rule.level && rule.level > 0 ? rule.level : 5;
-        if (q && q.chg != null && q.chg <= -threshold) {
+        if (q && q.chg != null && Number.isFinite(q.chg) && q.chg <= -threshold) {
           message = `${t} down ${q.chg.toFixed(1)}% today (alert at −${threshold}%)`;
         }
         break;

@@ -27,7 +27,7 @@
 //      back a few setup points.
 // ════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { getConvictionList } from '@/lib/conviction-beats';
 import { openPassport } from '@/lib/engines';     // zzz524 — click a ticker → Stock Passport
@@ -245,14 +245,19 @@ export default function CheatEntryPage() {
   const [setupF, setSetupF] = useState<'ACTIONABLE' | 'ALL' | SetupKind>('ACTIONABLE');
   const [refreshTick, setRefreshTick] = useState(0);
 
+  const runRef = useRef(0);       // zzz530 — newest build wins; stale async can't clobber
+  const aliveRef = useRef(true);  // zzz530 — no setState after unmount
   const build = useCallback(async () => {
     if (typeof window === 'undefined') return;
+    const run = ++runRef.current;
     // instant pass — synced prices, board up immediately
     const base = assemble(new Map());
+    if (!aliveRef.current || run !== runRef.current) return;
     setCands(base.cands); setSkipped(base.skipped);
     // live pass — re-score once quotes land
     setQuotesState('loading');
     const live = await fetchLiveQuotes();
+    if (!aliveRef.current || run !== runRef.current) return; // a newer REFRESH superseded us
     if (live.size > 0) {
       const fresh = assemble(live);
       setCands(fresh.cands); setSkipped(fresh.skipped);
@@ -269,7 +274,7 @@ export default function CheatEntryPage() {
     }
   }, []);
 
-  useEffect(() => { build(); }, [build, refreshTick]);
+  useEffect(() => { aliveRef.current = true; build(); return () => { aliveRef.current = false; }; }, [build, refreshTick]);
 
   const shown = useMemo(() => {
     if (!cands) return [];
@@ -355,7 +360,7 @@ export default function CheatEntryPage() {
                 <div key={c.symbol + c.market} style={{ background: C.bg, border: `1px solid ${c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border}`, borderRadius: 9, padding: '9px 12px' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 10, fontWeight: 900, color: C.dim, width: 22 }}>{i + 1}</span>
-                    <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontSize: 14, fontWeight: 900, color: C.text, cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'transparent' }}>{c.symbol}</span>
+                    <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontSize: 14, fontWeight: 900, color: C.text, cursor: 'pointer', textDecoration: 'underline', textDecorationColor: C.border, textUnderlineOffset: 2 }}>{c.symbol}</span>
                     <span style={{ fontSize: 9 }}>{c.market === 'IND' ? '🇮🇳' : '🇺🇸'}</span>
                     {c.atSupportNow && (
                       <span style={{ fontSize: 8.5, fontWeight: 900, color: C.green, letterSpacing: '0.4px' }}>
