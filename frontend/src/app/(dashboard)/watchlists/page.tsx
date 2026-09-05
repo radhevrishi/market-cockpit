@@ -1841,6 +1841,14 @@ function cbComputeQuality(e: any): {
 }
 
 function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
+  // zzz541 — NEW·10d is a RECENCY lens, not a quality screen: show every name added
+  // to the bench in the last 10 days and BYPASS the strict quality preset (Sales/EPS/
+  // PEAD/CFO-PAT/etc.), so it isn't crushed to a handful. Copy → TradingView then
+  // exports exactly these, grouped by tier (###ELITE/###BLOCKBUSTER/###STRONG).
+  if (f.newOnly) {
+    const addedMs = Date.parse((e as any).added_at || '');
+    return Number.isFinite(addedMs) && (Date.now() - addedMs) <= 10 * 24 * 60 * 60 * 1000;
+  }
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
@@ -1912,13 +1920,6 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   }
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters
   if (f.elite && !(e as any).is_elite) return false;
-  // zzz540 — NEW: only entries first added to the bench within the last 10 days
-  if (f.newOnly) {
-    const added = Date.parse((e as any).added_at || '');
-    const filed = e.filing_date ? Date.parse(e.filing_date + 'T00:00:00Z') : NaN;
-    const d = Number.isFinite(added) ? added : filed;
-    if (!Number.isFinite(d) || (Date.now() - d) > 10 * 24 * 60 * 60 * 1000) return false;
-  }
   if (f.multibagger && !(e as any).multibagger_setup) return false;
   // PATCH 1022 — market-cap range filter
   if (f.cap && f.cap !== 'all' && !convCapInRange((e as any).market_cap_cr, f.cap)) return false;
