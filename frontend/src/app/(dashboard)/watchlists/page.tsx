@@ -1846,8 +1846,13 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   // PEAD/CFO-PAT/etc.), so it isn't crushed to a handful. Copy → TradingView then
   // exports exactly these, grouped by tier (###ELITE/###BLOCKBUSTER/###STRONG).
   if (f.newOnly) {
-    const addedMs = Date.parse((e as any).added_at || '');
-    return Number.isFinite(addedMs) && (Date.now() - addedMs) <= 10 * 24 * 60 * 60 * 1000;
+    // by RESULT (filing) date, not added_at — added_at is polluted by bulk bench
+    // re-syncs, which made weeks-old results look "new". 30d = the current
+    // results cohort (off-season this can legitimately be small/empty).
+    const fd = String((e as any).filing_date || '');
+    if (!fd) return false;
+    const d = Math.floor((Date.now() - new Date(fd + 'T00:00:00Z').getTime()) / 86400000);
+    return d >= 0 && d <= 30;
   }
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
@@ -3308,9 +3313,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             </button>
             {/* zzz540 — new-in-last-10-days filter; the sectioned TradingView copy below then exports ONLY these, grouped by tier */}
             <button onClick={() => setFilters((f) => ({ ...f, newOnly: !f.newOnly }))}
-              title="Show only companies added to the bench in the last 10 days. With this on, the Copy → TradingView button copies just these names, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG."
+              title="Show only companies whose latest RESULT (filing) date is within the last 30 days — the current earnings cohort (off-season this can be small). With this on, Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Bypasses the quality preset."
               style={filters.newOnly ? chipActive('#34D399') : chipBase}>
-              🆕 NEW · 10d {filters.newOnly ? '✓' : ''}
+              🆕 NEW · 30d {filters.newOnly ? '✓' : ''}
             </button>
             {/* ── ADDITIVE zzzUP1 — On Radar toggle (transformation screener overlay) */}
             <button onClick={() => setOnRadarOnly((v) => !v)}
