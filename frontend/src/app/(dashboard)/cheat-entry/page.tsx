@@ -32,6 +32,7 @@ import Link from 'next/link';
 import { getConvictionList } from '@/lib/conviction-beats';
 import { openPassport } from '@/lib/engines';     // zzz524 — click a ticker → Stock Passport
 import { logSignals } from '@/lib/signal-log';    // zzz524 — feed the Signal Scoreboard
+import Sparkline from '@/components/Sparkline';    // zzz536 — inline price trend
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const C = {
@@ -244,6 +245,7 @@ export default function CheatEntryPage() {
   const [marketF, setMarketF] = useState<'ALL' | Market>('ALL');
   const [setupF, setSetupF] = useState<'ACTIONABLE' | 'ALL' | SetupKind>('ACTIONABLE');
   const [refreshTick, setRefreshTick] = useState(0);
+  const [sparks, setSparks] = useState<Map<string, number[]>>(new Map()); // zzz536 — inline price context
 
   const runRef = useRef(0);       // zzz530 — newest build wins; stale async can't clobber
   const aliveRef = useRef(true);  // zzz530 — no setState after unmount
@@ -269,6 +271,25 @@ export default function CheatEntryPage() {
           .slice(0, 10)
           .map((c) => ({ ticker: c.symbol, note: `${c.setupLabel} score ${c.score}`, priceAt: c.livePrice })));
       } catch { /* never load-bearing */ }
+      // zzz536 — decorate the board with sparklines via the existing /api/market/spark route
+      try {
+        const syms = fresh.cands.slice(0, 24).map((c) => c.symbol);
+        if (syms.length) {
+          const ctl = new AbortController();
+          const to = setTimeout(() => ctl.abort(), 12000);
+          const r = await fetch(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store', signal: ctl.signal });
+          clearTimeout(to);
+          if (r.ok && aliveRef.current && run === runRef.current) {
+            const j = await r.json();
+            const m = new Map<string, number[]>();
+            for (const row of (Array.isArray(j?.rows) ? j.rows : [])) {
+              const sym = String(row?.symbol || '').toUpperCase();
+              if (sym && Array.isArray(row?.spark) && row.spark.length >= 3) m.set(sym, row.spark);
+            }
+            if (aliveRef.current && run === runRef.current) setSparks(m);
+          }
+        }
+      } catch { /* sparks are decorative */ }
     } else {
       setLiveCount(0); setQuotesState('failed');
     }
@@ -369,6 +390,7 @@ export default function CheatEntryPage() {
                     )}
                     <span style={{ fontSize: 10, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>{c.company}</span>
                     <span style={{ flex: 1 }} />
+                    {sparks.get(c.symbol) && <span title="~3-month price trend" style={{ display: 'inline-flex', alignItems: 'center' }}><Sparkline data={sparks.get(c.symbol)} width={72} height={20} /></span>}
                     <span title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40`} style={{ fontSize: 15, fontWeight: 900, color: scoreCol, fontVariantNumeric: 'tabular-nums' }}>{c.score}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6, paddingLeft: 30, fontSize: 9.5 }}>
