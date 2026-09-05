@@ -12,6 +12,7 @@ import FundamentalsAnalyzerPage from '../fundamentals/page';
 import PortfolioEarningsTab from '../watchlists/PortfolioEarningsTab'; // zzz285
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import ReturnVsIndexCard from '@/components/ReturnVsIndexCard';
+import CockpitHero from '@/components/CockpitHero'; // zzz533 — premium market-context band
 import { openPassport } from '@/lib/engines'; // zzz526 — symbol → Stock Passport // zzz514
 
 /* ── Types ──────────────────────────────────────────────────────────── */
@@ -2332,6 +2333,9 @@ export default function PortfolioPage() {
 
       {/* ── Add Form ────────────────────────────────────────────────── */}
       {showAdd && <AddHoldingForm onAdd={handleAdd} onCancel={() => setShowAdd(false)} quotes={quotes} />}
+
+      {/* zzz533 — premium market-context band */}
+      <div style={{ marginBottom: 16 }}><CockpitHero /></div>
 
       {/* ── Summary ─────────────────────────────────────────────────── */}
       <PortfolioSummary rows={sortedRows} holdings={holdings} />
