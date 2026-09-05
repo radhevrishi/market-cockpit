@@ -289,8 +289,14 @@ export default function CockpitHero() {
           <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700 }}>held</span>
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 9, flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 800, color: 'var(--mc-bullish)' }}>▲ {m.winners} up</span>
-          <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 800, color: 'var(--mc-bearish)' }}>▼ {m.losers} down</span>
+          {(m.winners + m.losers) > 0 ? (
+            <>
+              <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 800, color: 'var(--mc-bullish)' }}>▲ {m.winners} up</span>
+              <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 800, color: 'var(--mc-bearish)' }}>▼ {m.losers} down</span>
+            </>
+          ) : (
+            <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--mc-text-4)' }}>P&amp;L pending live prices</span>
+          )}
         </div>
         {m.atSupport > 0 && (
           <div
@@ -311,4 +317,6 @@ const heroGrid: React.CSSProperties = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
   gap: 12,
   marginBottom: 4,
+  width: '100%',        // zzz533 — a grid child in a flex column won't stretch on its own
+  alignSelf: 'stretch',
 };

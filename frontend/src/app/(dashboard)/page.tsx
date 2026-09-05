@@ -2571,6 +2571,9 @@ export default function HomeDashboard() {
               })()}
             </div>
           </div>
+          {/* zzz532 — Cockpit Hero: the "wow on open" band (book · regime · breadth · positions) */}
+          <CockpitHero />
+
           {/* PATCH 1036 — Position Sizing Calculator on home (institutional 1-tap sizing) */}
           <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(168,85,247,0.06)',border:'1px solid rgba(168,85,247,0.20)',borderRadius:10,marginTop:4}}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
@@ -2680,9 +2683,6 @@ export default function HomeDashboard() {
               </div>
             );
           })()}
-
-          {/* zzz532 — Cockpit Hero: the "wow on open" band (book · regime · breadth · positions) */}
-          <CockpitHero />
 
           {/* ═══════════════ zzz239 — FAVOURITES ROW ═══════════════════════
               User-pinned quick-access shortcuts, sits right below "Good morning".
