@@ -81,21 +81,30 @@ function assemble(views: EngineView[], quotes: Map<string, Quote> | null, regime
   let winners = 0, losers = 0, atSupport = 0;
   for (const v of held) {
     const mk: Market = v.market === 'USA' ? 'USA' : 'IND';
-    const cv = v.holding?.currentValue;
     const a = acc[mk];
     a.n += 1;
-    if (typeof cv === 'number' && Number.isFinite(cv) && cv > 0) {
+    const h = v.holding!;
+    const q = quotes?.get(v.symbol);
+    const live = q && Number.isFinite(q.price) && q.price > 0 ? q.price : null;
+    const qty = typeof h.quantity === 'number' && Number.isFinite(h.quantity) ? h.quantity : null;
+    const entry = typeof h.entryPrice === 'number' && Number.isFinite(h.entryPrice) && h.entryPrice > 0 ? h.entryPrice : null;
+    // zzz536 — derive book value from qty × live price when the store has no currentValue
+    // (the user may not have opened /portfolio to populate it), then fall back to cost basis.
+    let cv = typeof h.currentValue === 'number' && Number.isFinite(h.currentValue) && h.currentValue > 0 ? h.currentValue : null;
+    if (cv == null && qty != null && live != null) cv = qty * live;
+    if (cv == null && qty != null && entry != null) cv = qty * entry;
+    // total P&L %: stored, else derived from live vs entry
+    let tot = typeof h.pnlPercent === 'number' && Number.isFinite(h.pnlPercent) ? h.pnlPercent : null;
+    if (tot == null && live != null && entry != null) tot = (live / entry - 1) * 100;
+    if (cv != null && cv > 0) {
       a.v += cv;
-      const tot = v.holding?.pnlPercent;
-      if (typeof tot === 'number' && Number.isFinite(tot)) { a.totW += cv; a.totWv += cv * tot; }
-      const q = quotes?.get(v.symbol);
+      if (tot != null) { a.totW += cv; a.totWv += cv * tot; }
       if (q && q.changePercent != null && Number.isFinite(q.changePercent)) { a.dayW += cv; a.dayWv += cv * q.changePercent; }
     }
-    const pnl = v.holding?.pnlPercent;
-    if (typeof pnl === 'number') { if (pnl >= 0) winners += 1; else losers += 1; }
+    if (tot != null) { if (tot >= 0) winners += 1; else losers += 1; }
     // at rising support: live (or synced) price within 5% ABOVE the 200DMA
     const t = v.tech;
-    const px = quotes?.get(v.symbol)?.price ?? t?.price ?? null;
+    const px = live ?? t?.price ?? null;
     if (t?.sma200 != null && t.sma200 > 0 && px != null && px > t.sma200 && (px - t.sma200) / t.sma200 <= 0.05) atSupport += 1;
   }
   (['IND', 'USA'] as Market[]).forEach((mk) => {
