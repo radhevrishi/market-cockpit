@@ -93,17 +93,26 @@ export default function WeeklyReviewPage() {
 
   // 1 · Book snapshot
   const holdings = st.views.filter((v) => v.holding);
-  const totalValue = holdings.reduce((s, v) => s + (v.holding?.currentValue || 0), 0);
+  // zzz531 — never sum ₹ and $ into one total, nor value-weight an avg across an ~83x FX gap.
+  const mktOf = (v: EngineView): 'IND' | 'USA' => String(v.market || '').toUpperCase().startsWith('US') ? 'USA' : 'IND';
+  const marketTotals: Record<'IND' | 'USA', number> = { IND: 0, USA: 0 };
+  for (const v of holdings) marketTotals[mktOf(v)] += (v.holding?.currentValue || 0);
   const withPnl = holdings.filter((v) => typeof v.holding?.pnlPercent === 'number');
-  const wSum = withPnl.reduce((s, v) => s + (v.holding?.currentValue || 0), 0);
-  const avgPnl = wSum > 0
-    ? withPnl.reduce((s, v) => s + (v.holding!.pnlPercent as number) * (v.holding?.currentValue || 0), 0) / wSum
-    : withPnl.length
-      ? withPnl.reduce((s, v) => s + (v.holding!.pnlPercent as number), 0) / withPnl.length
-      : null;
+  // value-weighted avg WITHIN each currency (weights are same-currency, so undistorted)
+  const perMktAvg = (['IND', 'USA'] as const).map((mk) => {
+    const legs = withPnl.filter((v) => mktOf(v) === mk);
+    if (!legs.length) return null;
+    const w = legs.reduce((s, v) => s + (v.holding?.currentValue || 0), 0);
+    const avg = w > 0
+      ? legs.reduce((s, v) => s + (v.holding!.pnlPercent as number) * (v.holding?.currentValue || 0), 0) / w
+      : legs.reduce((s, v) => s + (v.holding!.pnlPercent as number), 0) / legs.length;
+    return { mk, avg };
+  }).filter((x): x is { mk: 'IND' | 'USA'; avg: number } => !!x);
   const byPnl = [...withPnl].sort((a, b) => (a.holding!.pnlPercent as number) - (b.holding!.pnlPercent as number));
-  const worst3 = byPnl.slice(0, 3);
-  const best3 = byPnl.slice(-3).reverse();
+  // zzz531 — split so the same name can't appear in both worst and best on a small book
+  const worstCount = Math.min(3, Math.floor(byPnl.length / 2));
+  const worst3 = byPnl.slice(0, worstCount);
+  const best3 = byPnl.slice(byPnl.length - Math.min(3, byPnl.length - worstCount)).reverse();
 
   // 2 · Decay grouped by severity
   const bySev: Record<DecaySeverity, Array<{ entry: ConvictionEntry; d: DecayAssessment }>> = { high: [], med: [], low: [] };
@@ -148,8 +157,14 @@ export default function WeeklyReviewPage() {
           <>
             <div style={{ ...row, marginBottom: 4 }}>
               <span style={chip('var(--mc-text-1)')}>{holdings.length} holdings</span>
-              {totalValue > 0 && <span style={chip('var(--mc-text-1)')}>{fmtMoney(totalValue, holdings[0]?.market)}</span>}
-              {avgPnl != null && <span style={chip(avgPnl >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)')}>avg {avgPnl >= 0 ? '+' : ''}{avgPnl.toFixed(1)}%</span>}
+              {(['IND', 'USA'] as const).map((mk) => marketTotals[mk] > 0 ? (
+                <span key={mk} style={chip('var(--mc-text-1)')}>{fmtMoney(marketTotals[mk], mk)}</span>
+              ) : null)}
+              {perMktAvg.map(({ mk, avg }) => (
+                <span key={mk} style={chip(avg >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)')}>
+                  {perMktAvg.length > 1 ? (mk === 'USA' ? '$ ' : '₹ ') : ''}avg {avg >= 0 ? '+' : ''}{avg.toFixed(1)}%
+                </span>
+              ))}
             </div>
             {worst3.length > 0 && (
               <div style={row}>

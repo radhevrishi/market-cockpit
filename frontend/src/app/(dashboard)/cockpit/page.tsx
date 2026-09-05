@@ -14,7 +14,7 @@
 // so one dead feed never blanks the board.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getTechBuyZone } from '@/lib/tech-entries';
@@ -100,7 +100,10 @@ export default function CockpitPage() {
 
   useEffect(() => { setMounted(true); }, []);
 
+  const runRef = useRef(0);      // zzz531 — newest build wins; a slow concurrent build can't clobber it
+  const aliveRef = useRef(true); // zzz531 — no setState after unmount
   const build = useMemo(() => async () => {
+    const run = ++runRef.current;
     setLoading(true);
     const sig: Signal[] = [];
 
@@ -354,6 +357,7 @@ export default function CockpitPage() {
       freshIds = diffNew('cockpit', shown.map((s) => s.id));
       markSeen('cockpit', shown.map((s) => s.id));
     } catch { /* storage unavailable */ }
+    if (!aliveRef.current || run !== runRef.current) return; // zzz531 — a newer build superseded this one
     setNewIds(freshIds);
     setSignals(shown);
     // zzz524 — track record: log the top tickered signals so the Signal
@@ -386,6 +390,7 @@ export default function CockpitPage() {
 
   useEffect(() => {
     if (!mounted) return;
+    aliveRef.current = true;
     build();
     setNotify(typeof window !== 'undefined' && localStorage.getItem('mc:cockpit:notify') === '1');
     const onChange = () => build();
@@ -393,6 +398,7 @@ export default function CockpitPage() {
     window.addEventListener('thesis:updated', onChange);
     window.addEventListener('mc:auto-val:updated', onChange);
     return () => {
+      aliveRef.current = false; // zzz531 — stop any in-flight build from setState-ing after unmount
       window.removeEventListener('conviction-beats:updated', onChange);
       window.removeEventListener('thesis:updated', onChange);
       window.removeEventListener('mc:auto-val:updated', onChange);

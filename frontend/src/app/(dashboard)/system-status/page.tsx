@@ -137,7 +137,7 @@ export default function SystemStatusPage() {
       ))}
 
       <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 16, fontStyle: 'italic' }}>
-        Probes refresh every 30s. Cached at edge for 60s. Built {new Date(data.generated_at).toLocaleString('en-IN')}.
+        Probes refresh every 30s. Cached at edge for 60s. Built {data.generated_at ? new Date(data.generated_at).toLocaleString('en-IN') : '—'}.
       </div>
     </div>
   );

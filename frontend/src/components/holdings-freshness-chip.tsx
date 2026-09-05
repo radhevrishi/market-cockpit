@@ -26,7 +26,7 @@
 //   const holdings = live?.holdings ?? selected.topHoldings;
 // ─────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '@/components/design-system';
 
 interface DisclosedHolding {
@@ -87,19 +87,29 @@ export function HoldingsFreshnessChip({
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // zzz531 — keep onData out of `refresh`'s deps: an inline on  (see this file's own
+  // docstring example) would otherwise give `refresh` a new identity every render and
+  // the mount effect below would refetch on every render → unbounded network loop.
+  const onDataRef = useRef(onData);
+  onDataRef.current = onData;
+  const aliveRef = useRef(true); // zzz531 — no setState after unmount
+
   const refresh = useCallback(
     async (silent = false) => {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 15000); // zzz531 — 15s budget, no hung request
       setRefreshing(true);
       setError(null);
       try {
         const r = await fetch(
           `/api/v1/super-investor-holdings/${encodeURIComponent(investorId)}`,
-          { cache: 'no-store' },
+          { cache: 'no-store', signal: ctl.signal },
         );
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = (await r.json()) as HoldingsResponse;
+        if (!aliveRef.current) return;
         setData(j);
-        onData?.(j);
+        onDataRef.current?.(j);
         if (!silent) {
           toast({
             title:
@@ -114,19 +124,23 @@ export function HoldingsFreshnessChip({
           });
         }
       } catch (e: any) {
+        if (!aliveRef.current) return;
         setError(String(e?.message || e));
         if (!silent) {
           toast({ title: 'Refresh failed', description: String(e), tone: 'err' });
         }
       } finally {
-        setRefreshing(false);
+        clearTimeout(timer);
+        if (aliveRef.current) setRefreshing(false);
       }
     },
-    [investorId, onData, toast],
+    [investorId, toast],
   );
 
   useEffect(() => {
+    aliveRef.current = true;
     refresh(true);
+    return () => { aliveRef.current = false; };
   }, [refresh]);
 
   useEffect(() => {

@@ -245,7 +245,7 @@ export default function SystemHealthPage() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 4 }}>
             {data.sections.length} sections checked · {data.sections.flatMap(s => s.items).length} probes ·{' '}
-            generated at {new Date(data.generated_at).toLocaleTimeString()}
+            generated at {data.generated_at ? new Date(data.generated_at).toLocaleTimeString() : '—'}
           </div>
         </div>
       </div>

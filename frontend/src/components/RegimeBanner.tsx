@@ -35,7 +35,7 @@ const KIND_COLOR: Record<RegimeKind, string> = {
   PULLBACK: 'var(--mc-cyan)',
   CORRECTION: 'var(--mc-warn)',
   BEAR: 'var(--mc-bearish)',
-  RECOVERY: '#A78BFA',
+  RECOVERY: 'var(--mc-state-persistent, #A78BFA)', // zzz530 — theme token w/ hex fallback
   UNKNOWN: 'var(--mc-text-4)',
 };
 
@@ -47,7 +47,8 @@ function readCache(): RegimePayload | null {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.ts !== 'number' || !parsed.data) return null;
+    // zzz531 — also require the market sub-objects, or Pill/DetailRow would read .kind of undefined
+    if (!parsed || typeof parsed.ts !== 'number' || !parsed.data || !parsed.data.india || !parsed.data.usa) return null;
     if (Date.now() - parsed.ts > CACHE_TTL_MS) return null;
     return parsed.data as RegimePayload;
   } catch { return null; }
@@ -107,17 +108,22 @@ export default function RegimeBanner() {
     let alive = true;
     const cached = readCache();
     if (cached) { setData(cached); return; }
+    const ctl = new AbortController();                              // zzz531 — no hung request / unmount leak
+    const timer = setTimeout(() => ctl.abort(), 15000);            // zzz531 — 15s budget
     (async () => {
+      const UNKNOWN = { kind: 'UNKNOWN' as RegimeKind, close: null, sma20: null, sma50: null, sma200: null, drawdownPct: null, above200: null, sma20Rising: null, washout: false, thrust: false, asOfTs: null, note: 'regime feed unavailable' };
+      const degraded: RegimePayload = { india: UNKNOWN, usa: UNKNOWN };
       try {
-        const res = await fetch('/api/market/regime');
-        if (!res.ok) return;
+        const res = await fetch('/api/market/regime', { signal: ctl.signal });
+        if (!res.ok) { if (alive) setData(degraded); return; }
         const json = (await res.json()) as RegimePayload;
-        if (!json || !json.india || !json.usa) return;
+        if (!json || !json.india || !json.usa) { if (alive) setData(degraded); return; }
         writeCache(json);
         if (alive) setData(json);
-      } catch { /* render nothing */ }
+      } catch { if (alive) setData(degraded); /* keep the strip visible as UNKNOWN */ }
+      finally { clearTimeout(timer); }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; clearTimeout(timer); ctl.abort(); };
   }, []);
 
   // Close the dropdown on any outside click.
