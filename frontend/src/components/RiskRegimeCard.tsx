@@ -107,7 +107,7 @@ export default function RiskRegimeCard() {
   const inCap = indiaComposite != null ? `market breadth ${Math.round(indiaComposite)}/100` : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 10, marginTop: 4 }}>
       <RegimeBlock flag="🇺🇸" title="US RISK REGIME" idxLong="S&P 500" idxShort="S&P"
         ruleIndex="SPY" secondary="QQQ" reg={reg?.usa ?? null} breadth={usTri} breadthCap={usCap} />
       <RegimeBlock flag="🇮🇳" title="INDIA RISK REGIME" idxLong="NIFTY 50" idxShort="NIFTY"
@@ -166,7 +166,7 @@ function RegimeBlock({ flag, title, idxLong, idxShort, ruleIndex, secondary, reg
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 11, alignItems: 'start' }}>
         <RuleColumn title="RISK ON" color="var(--mc-bullish)" rows={[
           { t: `${ruleIndex} > 200-day SMA`, s: above },
           { t: `${secondary} > 200-day SMA`, s: null },
@@ -197,7 +197,7 @@ function SignalChip({ label, state }: { label: string; state: Tri }) {
 
 function RuleColumn({ title, color, rows }: { title: string; color: string; rows: Array<{ t: string; s: Tri; action?: boolean }> }) {
   return (
-    <div style={{ borderRadius: 9, padding: '8px 10px', border: `1px solid color-mix(in srgb, ${color} 22%, var(--mc-border))`, background: `color-mix(in srgb, ${color} 4%, transparent)` }}>
+    <div style={{ borderRadius: 9, padding: '8px 10px', minWidth: 0, height: '100%', border: `1px solid color-mix(in srgb, ${color} 22%, var(--mc-border))`, background: `color-mix(in srgb, ${color} 4%, transparent)` }}>
       <div style={{ fontSize: 9.5, fontWeight: 900, letterSpacing: '0.8px', color, marginBottom: 6 }}>{title}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {rows.map((r, i) => {
