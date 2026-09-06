@@ -88,6 +88,7 @@ import { SUPER_INVESTORS } from '@/lib/super-investors';
 import { getTopThemesForHome } from '@/lib/critical-themes';
 // zzz524 — million-dollar wiring: home intelligence layer
 import CockpitHero from '@/components/CockpitHero'; // zzz532 — premium "wow on open" hero band
+import RiskRegimeCard from '@/components/RiskRegimeCard'; // zzz547 — US Risk ON/OFF playbook (live)
 import NextBestActions from '@/components/NextBestActions';
 import SignalScoreboard from '@/components/SignalScoreboard';
 import FreshnessStrip from '@/components/FreshnessStrip';
@@ -2573,6 +2574,9 @@ export default function HomeDashboard() {
           </div>
           {/* zzz532 — Cockpit Hero: the "wow on open" band (book · regime · breadth · positions) */}
           <CockpitHero />
+
+          {/* zzz547 — US Risk ON/OFF regime playbook, graded live against SPY 200-DMA + breadth */}
+          <RiskRegimeCard />
 
           {/* PATCH 1036 — Position Sizing Calculator on home (institutional 1-tap sizing) */}
           <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(168,85,247,0.06)',border:'1px solid rgba(168,85,247,0.20)',borderRadius:10,marginTop:4}}>
