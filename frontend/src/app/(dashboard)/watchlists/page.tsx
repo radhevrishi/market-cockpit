@@ -1489,6 +1489,20 @@ type ConvFilters = {
 
 const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, newOnly: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, verdicts: null /* zzz362 */, cap: 'all' };
 
+// zzz543 — SINGLE source of truth for "days since filing". The NEW·Nd filter and
+// the "·Nd" freshness badge MUST use the exact same formula, or a name can badge
+// "31d" yet still pass a "30d" filter (which is exactly the bug Rishi hit). We
+// anchor to the NSE/BSE trading-day start (09:30 IST) and round — the same way the
+// badge has always displayed it — so what you SEE (·Nd) is what gets filtered.
+// Returns null when there is no parseable filing_date.
+function filingAgeDays(fd?: string | null): number | null {
+  if (!fd) return null;
+  const s = String(fd).slice(0, 10);
+  const ms = Date.parse(s + 'T09:30:00+05:30');
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.round((Date.now() - ms) / 86400000));
+}
+
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
 function convCapInRange(cr: number | null | undefined, f: ConvFilters['cap']): boolean {
@@ -1849,10 +1863,11 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     // by RESULT (filing) date, not added_at — added_at is polluted by bulk bench
     // re-syncs, which made weeks-old results look "new". 30d = the current
     // results cohort (off-season this can legitimately be small/empty).
-    const fd = String((e as any).filing_date || '');
-    if (!fd) return false;
-    const d = Math.floor((Date.now() - new Date(fd + 'T00:00:00Z').getTime()) / 86400000);
-    return d >= 0 && d <= 30;
+    // zzz543 — use the shared badge formula so the filter and the "·Nd" chip
+    // can never disagree (previously floor+UTC-midnight let a badge-"31d" name
+    // slip through a "30d" filter at the boundary).
+    const d = filingAgeDays((e as any).filing_date);
+    return d !== null && d >= 0 && d <= 30;
   }
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
@@ -4948,9 +4963,8 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
             })()}
             {/* zzz250 — days-since-flagged chip. Color-coded freshness. */}
             {entry.filing_date && (() => {
-              const ms = Date.parse(entry.filing_date + 'T09:30:00+05:30');
-              if (!Number.isFinite(ms)) return null;
-              const days = Math.max(0, Math.round((Date.now() - ms) / 86400000));
+              const days = filingAgeDays(entry.filing_date); // zzz543 — shared formula (see filingAgeDays)
+              if (days === null) return null;
               const col = days <= 3 ? 'var(--mc-bullish)' : days <= 14 ? 'var(--mc-warn)' : 'var(--mc-text-4)';
               return (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span title={`${days} day${days===1?'':'s'} since filing — freshness matters for post-earnings drift`} style={{ color: col, fontWeight: 700, whiteSpace: 'nowrap' }}>{days}d</span></>);
             })()}
