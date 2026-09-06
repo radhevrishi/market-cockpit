@@ -1,19 +1,26 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════
-// RiskRegimeCard (zzz547 / zzz548) — Rishi's "Risk ON / Risk OFF" playbook, LIVE,
-// for BOTH the US (SPY/QQQ) and India (NIFTY + small/mid-cap) markets.
+// RiskRegimeCard (zzz547 / zzz548 / zzz549) — Rishi's "Risk ON / Risk OFF"
+// playbook, LIVE, for BOTH the US (S&P 500 / SPY-QQQ) and India (NIFTY +
+// small/mid-cap) markets, shown SIDE BY SIDE at the top of the home page.
 //
-//   Risk ON  → index > 200-DMA · 50-DMA > 200-DMA · breadth healthy
-//   Risk OFF → index < 200-DMA AND 50-DMA < 200-DMA AND breadth deteriorating
-//              → move progressively into cash / T-bills
+//   Risk ON  → index > 200-DMA AND 50-DMA > 200-DMA   (breadth confirms)
+//   Risk OFF → index < 200-DMA AND 50-DMA < 200-DMA   → cash / T-bills
+//   MIXED    → the two moving-average conditions disagree
 //
-// Zero new infrastructure: reads the FULL india+usa regime the RegimeBanner
-// already caches (mc:regime:v1 → above200 / sma50 / sma200 / close), and computes
-// breadth per market from the SHARED, deduped quote feed (getQuoteMap([mkt])).
-// India breadth is naturally small/mid-cap-tilted because that is Rishi's
-// universe. SSR-safe, alive-guarded, abortable, theme-tokenised; degrades to the
-// static rules when data is cold. Educational, not investment advice.
+// zzz549 fixes:
+//  • Verdict is driven by the ROBUST moving-average trend (index vs 200-DMA and
+//    the 50/200 cross), NOT by breadth. Breadth from the user's own universe is
+//    a thin, noisy sample, so it now only CONFIRMS — it no longer flips a clean
+//    uptrend to "MIXED" (that was wrong: S&P above 200-DMA + golden cross = ON).
+//  • Correct index labels: USA = S&P 500 (^GSPC), India = NIFTY 50 (^NSEI) — the
+//    figure is the index level, not the SPY ETF price.
+//  • Two cards forced side by side.
+//
+// Reads the full india+usa regime already cached in mc:regime:v1 (above200 /
+// sma50 / sma200 / close); breadth from the shared quote feed. SSR-safe, alive-
+// guarded, abortable, theme-tokenised. Educational, not investment advice.
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef, useState } from 'react';
@@ -22,11 +29,11 @@ import { getQuoteMap, type Market } from '@/lib/quotes-shared';
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const REGIME_KEY = 'mc:regime:v1';
 
-interface Reg { close: number | null; sma50: number | null; sma200: number | null; above200: boolean | null; drawdownPct: number | null }
+interface Reg { close: number | null; sma50: number | null; sma200: number | null; above200: boolean | null }
 const num = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 function toReg(u: any): Reg | null {
   if (!u) return null;
-  return { close: num(u.close), sma50: num(u.sma50), sma200: num(u.sma200), above200: typeof u.above200 === 'boolean' ? u.above200 : null, drawdownPct: num(u.drawdownPct) };
+  return { close: num(u.close), sma50: num(u.sma50), sma200: num(u.sma200), above200: typeof u.above200 === 'boolean' ? u.above200 : null };
 }
 function readRegimes(): { india: Reg | null; usa: Reg | null } | null {
   if (typeof window === 'undefined') return null;
@@ -62,7 +69,6 @@ export default function RiskRegimeCard() {
         finally { clearTimeout(timer); }
       })();
     }
-    // per-market breadth from the shared quote feed
     const breadthFor = async (mkt: Market, key: 'india' | 'us') => {
       try {
         const qm = await getQuoteMap([mkt]);
@@ -83,63 +89,69 @@ export default function RiskRegimeCard() {
   }, []);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 10, marginTop: 4 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
       <RegimeBlock
-        flag="🇺🇸" title="US RISK REGIME" index="SPY" secondary="QQQ"
-        breadthLabel="US breadth"
+        flag="🇺🇸" title="US RISK REGIME" idxLong="S&P 500" idxShort="S&P"
+        ruleIndex="SPY" secondary="QQQ" breadthLabel="US breadth"
         reg={reg?.usa ?? null} advPct={advPct.us}
       />
       <RegimeBlock
-        flag="🇮🇳" title="INDIA RISK REGIME" index="NIFTY" secondary="Nifty Midcap / Smallcap"
-        breadthLabel="small/mid-cap breadth"
+        flag="🇮🇳" title="INDIA RISK REGIME" idxLong="NIFTY 50" idxShort="NIFTY"
+        ruleIndex="NIFTY" secondary="Nifty Midcap / Smallcap" breadthLabel="small/mid-cap breadth"
         reg={reg?.india ?? null} advPct={advPct.india}
       />
     </div>
   );
 }
 
-function RegimeBlock({ flag, title, index, secondary, breadthLabel, reg, advPct }: {
-  flag: string; title: string; index: string; secondary: string; breadthLabel: string;
+function RegimeBlock({ flag, title, idxLong, idxShort, ruleIndex, secondary, breadthLabel, reg, advPct }: {
+  flag: string; title: string; idxLong: string; idxShort: string; ruleIndex: string; secondary: string; breadthLabel: string;
   reg: Reg | null; advPct: number | null;
 }) {
   const above: Tri = reg ? reg.above200 : null;
   const cross: Tri = reg && reg.sma50 != null && reg.sma200 != null ? reg.sma50 > reg.sma200 : null;
   const breadth: Tri = advPct == null ? null : advPct >= 55 ? true : advPct <= 40 ? false : null;
 
+  // Verdict = the two moving-average trend conditions ONLY. Breadth confirms but
+  // never flips a clean trend (small-universe breadth is too noisy for that).
   let verdict: 'ON' | 'OFF' | 'MIXED' | 'UNKNOWN' = 'UNKNOWN';
-  if (above != null || cross != null) {
-    if (above === true && cross === true && breadth !== false) verdict = 'ON';
-    else if (above === false && cross === false && breadth === false) verdict = 'OFF';
+  if (above != null && cross != null) {
+    if (above && cross) verdict = 'ON';
+    else if (!above && !cross) verdict = 'OFF';
     else verdict = 'MIXED';
+  } else if (above != null || cross != null) {
+    verdict = 'MIXED';
   }
+
+  const breadthTag = breadth === true ? ' · breadth confirms' : breadth === false ? ' · but breadth thin' : '';
   const V = {
-    ON:      { color: 'var(--mc-bullish)', label: 'RISK ON',  sub: 'trend intact — stay invested' },
-    OFF:     { color: 'var(--mc-bearish)', label: 'RISK OFF', sub: 'move progressively to cash / T-bills' },
-    MIXED:   { color: 'var(--mc-warn)',    label: 'MIXED',    sub: 'signals disagree — tighten risk' },
+    ON:      { color: 'var(--mc-bullish)', label: 'RISK ON',  sub: 'index above 200-DMA + golden cross — stay invested' + breadthTag },
+    OFF:     { color: 'var(--mc-bearish)', label: 'RISK OFF', sub: 'below 200-DMA + death cross — move to cash / T-bills' },
+    MIXED:   { color: 'var(--mc-warn)',    label: 'MIXED',    sub: 'trend signals disagree — tighten risk, wait for confirmation' },
     UNKNOWN: { color: 'var(--mc-text-4)',  label: '— —',      sub: 'warming up live signals…' },
   }[verdict];
 
   const ctx = reg && reg.close != null && reg.sma200 != null
-    ? `${index} ${fmt(reg.close)} vs 200-DMA ${fmt(reg.sma200)} (${pct(reg.close, reg.sma200)})`
+    ? `${idxLong} ${fmt(reg.close)} vs 200-DMA ${fmt(reg.sma200)} (${pct(reg.close, reg.sma200)})`
     : null;
 
   return (
     <div className="mc-lift" style={{
-      borderRadius: 12, padding: '13px 15px', fontFamily: MONO,
+      borderRadius: 12, padding: '13px 15px', fontFamily: MONO, minWidth: 0,
       background: `color-mix(in srgb, ${V.color} 7%, var(--mc-surface, transparent))`,
       border: `1px solid color-mix(in srgb, ${V.color} 34%, var(--mc-border))`,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: '1px', color: 'var(--mc-text-4)' }}>{flag} {title}</span>
         <span style={{
           fontSize: 14, fontWeight: 900, letterSpacing: '0.5px', color: V.color, padding: '2px 9px', borderRadius: 6,
           border: `1px solid color-mix(in srgb, ${V.color} 45%, transparent)`, background: `color-mix(in srgb, ${V.color} 12%, transparent)`,
         }}>{V.label}</span>
       </div>
-      <div style={{ marginTop: 4, fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-3)' }}>{V.sub}</div>
+      <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: 'var(--mc-text-3)' }}>{V.sub}</div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 9 }}>
-        <SignalChip label={`${index} > 200`} state={above} />
+        <SignalChip label={`${idxShort} > 200`} state={above} />
         <SignalChip label="50 > 200" state={cross} />
         <SignalChip label="breadth" state={breadth} />
       </div>
@@ -149,15 +161,15 @@ function RegimeBlock({ flag, title, index, secondary, breadthLabel, reg, advPct 
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 11 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
         <RuleColumn title="RISK ON" color="var(--mc-bullish)" rows={[
-          { t: `${index} > 200-day SMA`, s: above },
+          { t: `${ruleIndex} > 200-day SMA`, s: above },
           { t: `${secondary} > 200-day SMA`, s: null },
           { t: '50-day SMA > 200-day SMA', s: cross },
           { t: 'Market breadth healthy', s: breadth },
         ]} />
         <RuleColumn title="RISK OFF" color="var(--mc-bearish)" rows={[
-          { t: `${index} closes below 200-day SMA`, s: above == null ? null : !above },
+          { t: `${ruleIndex} closes below 200-day SMA`, s: above == null ? null : !above },
           { t: 'AND 50-day SMA < 200-day SMA', s: cross == null ? null : !cross },
           { t: 'AND breadth deteriorates', s: breadth == null ? null : !breadth },
           { t: 'Move progressively into cash / T-bills', s: null, action: true },
