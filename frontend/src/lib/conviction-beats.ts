@@ -188,10 +188,66 @@ export function readConvictionBeats(): Record<string, ConvictionEntry> {
   }
 }
 
-/** Persist the full map */
+// zzz545 — cap on live bench entries. The conviction bench grows one entry per
+// graded BLOCKBUSTER/STRONG filing and, over a full season, the whole origin's
+// localStorage (~5 MB) can fill — at which point setItem throws QuotaExceeded and
+// NEW names silently never save (this is why fresh filers like MILKYMIST/LEAPIND
+// stopped auto-appearing). Keep the freshest MAX_BENCH by filing_date.
+const MAX_BENCH = 420;
+
+// Drop stale, regenerable per-date graded caches (mc:graded:v11:<YYYY-MM-DD>)
+// older than the given age. These are ~200 KB each and rebuild on demand, so
+// they are the safest space to reclaim when the bench write is quota-blocked.
+function evictStaleGradedCaches(olderThanDays = 30): number {
+  if (typeof window === 'undefined') return 0;
+  let freed = 0;
+  const cutoff = Date.now() - olderThanDays * 86400000;
+  try {
+    const kill: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const m = k.match(/^mc:graded:v\d+:(\d{4}-\d{2}-\d{2})/);
+      if (!m) continue;
+      const t = Date.parse(m[1] + 'T00:00:00Z');
+      if (Number.isFinite(t) && t < cutoff) kill.push(k);
+    }
+    for (const k of kill) { const v = localStorage.getItem(k); if (v) freed += v.length; localStorage.removeItem(k); }
+  } catch {}
+  return freed;
+}
+
+// Keep only the freshest MAX_BENCH entries by filing_date (bare + composite keys).
+function pruneBenchMap(map: Record<string, ConvictionEntry>, keep = MAX_BENCH): Record<string, ConvictionEntry> {
+  const keys = Object.keys(map);
+  if (keys.length <= keep) return map;
+  keys.sort((a, b) => String(map[b]?.filing_date || '').localeCompare(String(map[a]?.filing_date || '')));
+  const out: Record<string, ConvictionEntry> = {};
+  for (const k of keys.slice(0, keep)) out[k] = map[k];
+  return out;
+}
+
+/** Persist the full map — quota-resilient (zzz545).
+ *  On QuotaExceeded we (1) evict stale graded caches and retry, then
+ *  (2) prune the bench to MAX_BENCH and retry — instead of silently
+ *  dropping the write, which is what stopped fresh filers from saving. */
 function writeConvictionBeats(map: Record<string, ConvictionEntry>) {
   if (typeof window === 'undefined') return;
-  try { localStorage.setItem(LS_KEY, JSON.stringify(map)); } catch {}
+  try { localStorage.setItem(LS_KEY, JSON.stringify(map)); return; } catch {}
+  // Attempt 1 — reclaim regenerable graded caches, retry as-is.
+  try { evictStaleGradedCaches(30); localStorage.setItem(LS_KEY, JSON.stringify(map)); return; } catch {}
+  // Attempt 2 — prune bench to the freshest MAX_BENCH, retry.
+  try {
+    const pruned = pruneBenchMap(map, MAX_BENCH);
+    localStorage.setItem(LS_KEY, JSON.stringify(pruned));
+    return;
+  } catch {}
+  // Attempt 3 — aggressive: evict all graded caches, prune harder, retry once.
+  try {
+    evictStaleGradedCaches(0);
+    const pruned = pruneBenchMap(map, Math.floor(MAX_BENCH * 0.75));
+    localStorage.setItem(LS_KEY, JSON.stringify(pruned));
+  } catch {}
 }
 
 /** Add or update a single entry — newer filing_date wins */
