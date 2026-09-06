@@ -107,7 +107,7 @@ export default function RiskRegimeCard() {
   const inCap = indiaComposite != null ? `market breadth ${Math.round(indiaComposite)}/100` : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 10, marginTop: 4 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
       <RegimeBlock flag="🇺🇸" title="US RISK REGIME" idxLong="S&P 500" idxShort="S&P"
         ruleIndex="SPY" secondary="QQQ" reg={reg?.usa ?? null} breadth={usTri} breadthCap={usCap} />
       <RegimeBlock flag="🇮🇳" title="INDIA RISK REGIME" idxLong="NIFTY 50" idxShort="NIFTY"
