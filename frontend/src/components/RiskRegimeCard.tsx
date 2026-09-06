@@ -1,33 +1,33 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════
-// RiskRegimeCard (zzz547 / zzz548 / zzz549) — Rishi's "Risk ON / Risk OFF"
-// playbook, LIVE, for BOTH the US (S&P 500 / SPY-QQQ) and India (NIFTY +
-// small/mid-cap) markets, shown SIDE BY SIDE at the top of the home page.
+// RiskRegimeCard (…/zzz550) — Rishi's "Risk ON / Risk OFF" playbook, LIVE, for
+// BOTH the US (S&P 500) and India (NIFTY 50) markets, shown side by side atop home.
 //
 //   Risk ON  → index > 200-DMA AND 50-DMA > 200-DMA   (breadth confirms)
 //   Risk OFF → index < 200-DMA AND 50-DMA < 200-DMA   → cash / T-bills
 //   MIXED    → the two moving-average conditions disagree
 //
-// zzz549 fixes:
-//  • Verdict is driven by the ROBUST moving-average trend (index vs 200-DMA and
-//    the 50/200 cross), NOT by breadth. Breadth from the user's own universe is
-//    a thin, noisy sample, so it now only CONFIRMS — it no longer flips a clean
-//    uptrend to "MIXED" (that was wrong: S&P above 200-DMA + golden cross = ON).
-//  • Correct index labels: USA = S&P 500 (^GSPC), India = NIFTY 50 (^NSEI) — the
-//    figure is the index level, not the SPY ETF price.
-//  • Two cards forced side by side.
+// Verdict is driven ONLY by the moving-average trend (index vs 200-DMA + 50/200
+// cross) — the robust signal. Breadth only CONFIRMS, never flips the verdict.
 //
-// Reads the full india+usa regime already cached in mc:regime:v1 (above200 /
-// sma50 / sma200 / close); breadth from the shared quote feed. SSR-safe, alive-
-// guarded, abortable, theme-tokenised. Educational, not investment advice.
+// zzz550 — trustworthy breadth:
+//  • India breadth = the REAL market-breadth composite from /api/v1/breadth
+//    (NSE basket, 0-100) — the same number the portal shows as "breadth NN/100".
+//  • US breadth has no dedicated feed, so it is derived from the live US quote
+//    universe ONLY when the sample is big enough (≥ MIN_BREADTH_N names);
+//    otherwise it shows "·" (n/a) instead of a misleading ✗ off a tiny sample.
+//
+// Reads india+usa regime from mc:regime:v1 (above200/sma50/sma200/close). SSR-
+// safe, alive-guarded, abortable, theme-tokenised. Educational, not advice.
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef, useState } from 'react';
-import { getQuoteMap, type Market } from '@/lib/quotes-shared';
+import { getQuoteMap } from '@/lib/quotes-shared';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const REGIME_KEY = 'mc:regime:v1';
+const MIN_BREADTH_N = 15; // below this, a universe breadth read is too thin to trust
 
 interface Reg { close: number | null; sma50: number | null; sma200: number | null; above200: boolean | null }
 const num = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -45,87 +45,92 @@ function readRegimes(): { india: Reg | null; usa: Reg | null } | null {
 }
 
 type Tri = true | false | null;
+const triFrom = (v: number | null, hi = 55, lo = 40): Tri => (v == null ? null : v >= hi ? true : v <= lo ? false : null);
 
 export default function RiskRegimeCard() {
   const [reg, setReg] = useState<{ india: Reg | null; usa: Reg | null } | null>(null);
-  const [advPct, setAdvPct] = useState<{ india: number | null; us: number | null }>({ india: null, us: null });
+  const [usBreadth, setUsBreadth] = useState<{ pct: number | null; n: number }>({ pct: null, n: 0 });
+  const [indiaComposite, setIndiaComposite] = useState<number | null>(null);
   const aliveRef = useRef(true);
 
   useEffect(() => {
     aliveRef.current = true;
     const cached = readRegimes();
     if (cached) setReg(cached);
-    let ctl: AbortController | null = null;
+    const controllers: AbortController[] = [];
+    const withCtl = () => { const c = new AbortController(); controllers.push(c); setTimeout(() => c.abort(), 15000); return c; };
+
     if (!cached || (!cached.usa && !cached.india)) {
-      ctl = new AbortController();
-      const timer = setTimeout(() => ctl?.abort(), 15000);
+      const c = withCtl();
       (async () => {
         try {
-          const r = await fetch('/api/market/regime', { signal: ctl!.signal });
+          const r = await fetch('/api/market/regime', { signal: c.signal });
           if (!r.ok) return;
           const j = await r.json();
           if (aliveRef.current) setReg({ india: toReg(j?.india), usa: toReg(j?.usa) });
-        } catch { /* leave null → static rules */ }
-        finally { clearTimeout(timer); }
+        } catch { /* static rules */ }
       })();
     }
-    const breadthFor = async (mkt: Market, key: 'india' | 'us') => {
+    // India: REAL breadth composite (0-100) from the portal's breadth engine
+    (async () => {
+      const c = withCtl();
       try {
-        const qm = await getQuoteMap([mkt]);
-        if (!aliveRef.current || !qm || qm.size === 0) return;
+        const r = await fetch('/api/v1/breadth', { signal: c.signal });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (aliveRef.current && Number.isFinite(j?.composite)) setIndiaComposite(Number(j.composite));
+      } catch { /* leave null → n/a */ }
+    })();
+    // US: universe breadth from the shared quote feed (gated by sample size)
+    (async () => {
+      try {
+        const qm = await getQuoteMap(['us']);
+        if (!aliveRef.current || !qm) return;
         let adv = 0, tot = 0;
         for (const q of qm.values()) {
           if (q.changePercent == null || !Number.isFinite(q.changePercent)) continue;
           tot += 1; if (q.changePercent > 0.05) adv += 1;
         }
-        if (tot > 0 && aliveRef.current) setAdvPct((p) => ({ ...p, [key]: (adv / tot) * 100 }));
-      } catch { /* breadth stays null */ }
-    };
-    breadthFor('india', 'india');
-    breadthFor('us', 'us');
-    const onFocus = () => { const c = readRegimes(); if (c && aliveRef.current) setReg(c); };
+        if (aliveRef.current) setUsBreadth({ pct: tot ? (adv / tot) * 100 : null, n: tot });
+      } catch { /* n/a */ }
+    })();
+
+    const onFocus = () => { const cc = readRegimes(); if (cc && aliveRef.current) setReg(cc); };
     window.addEventListener('focus', onFocus);
-    return () => { aliveRef.current = false; ctl?.abort(); window.removeEventListener('focus', onFocus); };
+    return () => { aliveRef.current = false; controllers.forEach((c) => c.abort()); window.removeEventListener('focus', onFocus); };
   }, []);
+
+  // per-market breadth (Tri + caption)
+  const usTri: Tri = usBreadth.n >= MIN_BREADTH_N ? triFrom(usBreadth.pct) : null;
+  const usCap = usBreadth.n >= MIN_BREADTH_N && usBreadth.pct != null ? `US breadth ${usBreadth.pct.toFixed(0)}% adv` : null;
+  const inTri: Tri = triFrom(indiaComposite);
+  const inCap = indiaComposite != null ? `market breadth ${Math.round(indiaComposite)}/100` : null;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
-      <RegimeBlock
-        flag="🇺🇸" title="US RISK REGIME" idxLong="S&P 500" idxShort="S&P"
-        ruleIndex="SPY" secondary="QQQ" breadthLabel="US breadth"
-        reg={reg?.usa ?? null} advPct={advPct.us}
-      />
-      <RegimeBlock
-        flag="🇮🇳" title="INDIA RISK REGIME" idxLong="NIFTY 50" idxShort="NIFTY"
-        ruleIndex="NIFTY" secondary="Nifty Midcap / Smallcap" breadthLabel="small/mid-cap breadth"
-        reg={reg?.india ?? null} advPct={advPct.india}
-      />
+      <RegimeBlock flag="🇺🇸" title="US RISK REGIME" idxLong="S&P 500" idxShort="S&P"
+        ruleIndex="SPY" secondary="QQQ" reg={reg?.usa ?? null} breadth={usTri} breadthCap={usCap} />
+      <RegimeBlock flag="🇮🇳" title="INDIA RISK REGIME" idxLong="NIFTY 50" idxShort="NIFTY"
+        ruleIndex="NIFTY" secondary="Nifty Midcap / Smallcap" reg={reg?.india ?? null} breadth={inTri} breadthCap={inCap} />
     </div>
   );
 }
 
-function RegimeBlock({ flag, title, idxLong, idxShort, ruleIndex, secondary, breadthLabel, reg, advPct }: {
-  flag: string; title: string; idxLong: string; idxShort: string; ruleIndex: string; secondary: string; breadthLabel: string;
-  reg: Reg | null; advPct: number | null;
+function RegimeBlock({ flag, title, idxLong, idxShort, ruleIndex, secondary, reg, breadth, breadthCap }: {
+  flag: string; title: string; idxLong: string; idxShort: string; ruleIndex: string; secondary: string;
+  reg: Reg | null; breadth: Tri; breadthCap: string | null;
 }) {
   const above: Tri = reg ? reg.above200 : null;
   const cross: Tri = reg && reg.sma50 != null && reg.sma200 != null ? reg.sma50 > reg.sma200 : null;
-  const breadth: Tri = advPct == null ? null : advPct >= 55 ? true : advPct <= 40 ? false : null;
 
-  // Verdict = the two moving-average trend conditions ONLY. Breadth confirms but
-  // never flips a clean trend (small-universe breadth is too noisy for that).
+  // Verdict = moving-average trend ONLY. Breadth confirms but never flips it.
   let verdict: 'ON' | 'OFF' | 'MIXED' | 'UNKNOWN' = 'UNKNOWN';
-  if (above != null && cross != null) {
-    if (above && cross) verdict = 'ON';
-    else if (!above && !cross) verdict = 'OFF';
-    else verdict = 'MIXED';
-  } else if (above != null || cross != null) {
-    verdict = 'MIXED';
-  }
+  if (above != null && cross != null) verdict = above && cross ? 'ON' : (!above && !cross ? 'OFF' : 'MIXED');
+  else if (above != null || cross != null) verdict = 'MIXED';
 
-  const breadthTag = breadth === true ? ' · breadth confirms' : breadth === false ? ' · but breadth thin' : '';
+  const tag = breadth === true ? ' · breadth confirms' : breadth === false ? ' · but breadth thin' : '';
   const V = {
-    ON:      { color: 'var(--mc-bullish)', label: 'RISK ON',  sub: 'index above 200-DMA + golden cross — stay invested' + breadthTag },
+    ON:      { color: 'var(--mc-bullish)', label: 'RISK ON',  sub: 'above 200-DMA + golden cross — stay invested' + tag },
     OFF:     { color: 'var(--mc-bearish)', label: 'RISK OFF', sub: 'below 200-DMA + death cross — move to cash / T-bills' },
     MIXED:   { color: 'var(--mc-warn)',    label: 'MIXED',    sub: 'trend signals disagree — tighten risk, wait for confirmation' },
     UNKNOWN: { color: 'var(--mc-text-4)',  label: '— —',      sub: 'warming up live signals…' },
@@ -157,7 +162,7 @@ function RegimeBlock({ flag, title, idxLong, idxShort, ruleIndex, secondary, bre
       </div>
       {ctx && (
         <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-4)' }}>
-          {ctx}{advPct != null && <> · {breadthLabel} {advPct.toFixed(0)}% adv</>}
+          {ctx}{breadthCap && <> · {breadthCap}</>}
         </div>
       )}
 
