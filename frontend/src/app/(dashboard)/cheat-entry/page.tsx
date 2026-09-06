@@ -45,8 +45,8 @@ const C = {
 const EXCLUDE = new Set(['SPY', 'QQQ', 'QQQM', 'IWM', 'DIA', 'VOO', 'VTI', 'VT', 'SPX', 'NDX', 'RUT', 'NIFTY', 'NIFTYBEES', 'BANKBEES', 'GOLDBEES', 'JUNIORBEES', 'SETFNIF50']);
 
 type Market = 'IND' | 'USA';
-type SetupKind = 'AT_200' | 'AT_50' | 'AT_21' | 'DRIFT' | 'EXTENDED';
-type StopMa = '200DMA' | '50DMA' | '21EMA';
+type SetupKind = 'AT_200' | 'AT_50' | 'DRIFT' | 'EXTENDED';
+type StopMa = '200DMA' | '50DMA';
 
 interface Candidate {
   symbol: string; market: Market;
@@ -70,7 +70,6 @@ const readJSON = (k: string): any => { try { return JSON.parse(localStorage.getI
 const SETUP_META: Record<SetupKind, { label: string; color: string; blurb: string }> = {
   AT_200:   { label: '🛡 200DMA retest',  color: 'var(--mc-cyan)',    blurb: 'Deepest institutional add point — long-term trend line holding underneath.' },
   AT_50:    { label: '🎯 50DMA pullback', color: 'var(--mc-bullish)', blurb: 'The classic cheat: quality name resting on its intermediate trend.' },
-  AT_21:    { label: '⚡ 21EMA rest',     color: 'var(--mc-warn)',    blurb: 'Momentum leader pausing at the fast line (Qullamaggie entry).' },
   DRIFT:    { label: '· drifting',        color: 'var(--mc-text-4)',  blurb: 'Between pivots — wait for it to come into a moving average.' },
   EXTENDED: { label: '⏳ extended',       color: 'var(--mc-bearish)', blurb: 'Too far above the 50DMA — chasing, not cheating. Let it come back.' },
 };
@@ -140,7 +139,7 @@ function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: 
     const pivots: Pivot[] = [];
     if (d200 >= -3 && d200 <= 5) pivots.push({ kind: 'AT_200', stop: '200DMA', d: d200, base: 60, ma: t.sma200, pref: 1.2 });
     if (d50 >= -3 && d50 <= 5) pivots.push({ kind: 'AT_50', stop: '50DMA', d: d50, base: 52, ma: t.sma50, pref: 0.6 });
-    if (d21 != null && d21 >= -2 && d21 <= 4 && t.ema21) pivots.push({ kind: 'AT_21', stop: '21EMA', d: d21, base: 44, ma: t.ema21!, pref: 0 });
+    // zzz546 — 21EMA setup removed: board focuses on the 50DMA & 200DMA cheats only.
 
     let setup: SetupKind; let setupScore: number;
     let stopMa: StopMa | null = null; let riskPct: number | null = null;
@@ -169,7 +168,7 @@ function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: 
       riskPct = Math.max(0.3, (livePrice - p.ma * 0.98) / livePrice * 100); // stop = 2% under YOUR pivot
     } else {
       setup = 'DRIFT';
-      const nearest = Math.min(Math.abs(d50), Math.abs(d200), d21 != null ? Math.abs(d21) : 99);
+      const nearest = Math.min(Math.abs(d50), Math.abs(d200));
       setupScore = Math.max(0, 22 - nearest * 1.5);
       const nb = nearestBelowStop();
       if (nb) { stopMa = nb.stop; riskPct = Math.max(0.3, (livePrice - nb.ma * 0.98) / livePrice * 100); }
@@ -267,7 +266,7 @@ export default function CheatEntryPage() {
       // zzz524 — log today's top actionable setups for the scoreboard
       try {
         logSignals('cheat-entry', fresh.cands
-          .filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50' || c.setup === 'AT_21')
+          .filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50')
           .slice(0, 10)
           .map((c) => ({ ticker: c.symbol, note: `${c.setupLabel} score ${c.score}`, priceAt: c.livePrice })));
       } catch { /* never load-bearing */ }
@@ -301,7 +300,7 @@ export default function CheatEntryPage() {
     if (!cands) return [];
     let r = cands;
     if (marketF !== 'ALL') r = r.filter((c) => c.market === marketF);
-    if (setupF === 'ACTIONABLE') r = r.filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50' || c.setup === 'AT_21');
+    if (setupF === 'ACTIONABLE') r = r.filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50');
     else if (setupF !== 'ALL') r = r.filter((c) => c.setup === setupF);
     return r;
   }, [cands, marketF, setupF]);
@@ -334,7 +333,7 @@ export default function CheatEntryPage() {
       </div>
       <div style={{ fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.6, maxWidth: 900 }}>
         The whole portal votes on <b style={{ color: C.text2 }}>what</b> to buy — Multibagger rankings, your Technicals universe, the Conviction bench.
-        This board decides <b style={{ color: C.text2 }}>when</b>: every vetted name sitting on a rising 200 / 50 / 21-day line, ranked by
+        This board decides <b style={{ color: C.text2 }}>when</b>: every vetted name sitting on a rising 200 / 50-day line, ranked by
         <b style={{ color: C.text2 }}> setup + quality</b>. The nearer the line underneath, the smaller the stop — that&rsquo;s the cheat.
         The MAs refresh when you re-sync <Link href="/multibagger?tab=technicals-ind" style={{ color: C.cyan }}>India</Link> / <Link href="/multibagger?tab=technicals-usa" style={{ color: C.cyan }}>USA</Link> Technicals.
       </div>
@@ -351,7 +350,7 @@ export default function CheatEntryPage() {
         ))}
         <span style={{ width: 10 }} />
         <button onClick={() => setSetupF('ACTIONABLE')} style={chip(setupF === 'ACTIONABLE', C.green)}>✅ ACTIONABLE</button>
-        {(['AT_200', 'AT_50', 'AT_21', 'DRIFT', 'EXTENDED'] as SetupKind[]).map((s) => (
+        {(['AT_200', 'AT_50'] as SetupKind[]).map((s) => (
           <button key={s} onClick={() => setSetupF(s)} style={chip(setupF === s, SETUP_META[s].color)}>{SETUP_META[s].label}</button>
         ))}
         <button onClick={() => setSetupF('ALL')} style={chip(setupF === 'ALL', C.muted)}>ALL</button>
@@ -397,7 +396,6 @@ export default function CheatEntryPage() {
                     <span title={meta.blurb} style={{ fontWeight: 800, color: meta.color, border: `1px solid color-mix(in srgb, ${meta.color} 40%, transparent)`, borderRadius: 4, padding: '1px 6px' }}>{meta.label}</span>
                     {c.d50 != null && <span style={{ color: Math.abs(c.d50) <= 3 ? C.green : C.muted, fontVariantNumeric: 'tabular-nums' }}>50DMA {c.d50 >= 0 ? '+' : ''}{c.d50.toFixed(1)}%</span>}
                     {c.d200 != null && <span style={{ color: Math.abs(c.d200) <= 4 ? C.cyan : C.muted, fontVariantNumeric: 'tabular-nums' }}>200DMA {c.d200 >= 0 ? '+' : ''}{c.d200.toFixed(1)}%</span>}
-                    {c.d21 != null && <span style={{ color: C.dim, fontVariantNumeric: 'tabular-nums' }}>21EMA {c.d21 >= 0 ? '+' : ''}{c.d21.toFixed(1)}%</span>}
                     {c.riskPct != null && c.stopMa && (
                       <span title={`Stop 2% under the ${c.stopMa} you are buying against — a cheat entry works because the exit is close`} style={{ fontWeight: 800, color: c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red, fontVariantNumeric: 'tabular-nums' }}>
                         risk {c.riskPct.toFixed(1)}% (stop&lt;{c.stopMa})
@@ -419,7 +417,7 @@ export default function CheatEntryPage() {
           {shown.length > 60 && <div style={{ fontSize: 10, color: C.dim, marginTop: 8 }}>Top 60 shown of {shown.length} — tighten the filters to see the rest.</div>}
           <div style={{ fontSize: 9.5, color: C.dim, marginTop: 14, lineHeight: 1.6, maxWidth: 880 }}>
             How to read it: <b style={{ color: C.muted }}>score = setup (0-60) + quality (0-40)</b>. The setup is the NEAREST qualifying pivot
-            (200DMA scores highest, then 50DMA, then 21EMA); names &gt;15% above the 50DMA are extended, names graded &lt;45 by the Multibagger
+            (200DMA scores highest, then 50DMA); names &gt;15% above the 50DMA are extended, names graded &lt;45 by the Multibagger
             engine are excluded outright unless the Conviction bench vouches for a fresh quarter. <b style={{ color: C.muted }}>risk</b> is the drop
             to a stop placed 2% under the pivot you&rsquo;re buying against — the whole cheat is that this number is small. 🧪 = price is 1-3% under the
             pivot (support being tested, slightly discounted); 🔥 = sitting within ±1% of it. Nothing here is a recommendation; it&rsquo;s your own
