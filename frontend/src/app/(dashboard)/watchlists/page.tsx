@@ -1503,6 +1503,25 @@ function filingAgeDays(fd?: string | null): number | null {
   return Math.max(0, Math.round((Date.now() - ms) / 86400000));
 }
 
+// zzz544 — ADAPTIVE "NEW" window. Rishi wants a 10-day recency lens, but Indian
+// Q1 results season ends ~mid-Aug, so for weeks at a time NOTHING files inside
+// 10 days and a hard 10d filter would render BLANK (his complaint: "even 30d not
+// working"). So: target 10d; if 10d is empty (off-season), widen to the SMALLEST
+// step that captures the freshest cohort, and flag it so the chip can say so.
+// Never blank, never mislabeled. Recomputed each render from the live bench.
+let __NEW_WIN: { days: number; widened: boolean; count: number; base: number } = { days: 10, widened: false, count: 0, base: 10 };
+function computeNewWindow(list: ReadonlyArray<{ filing_date?: string | null }>): typeof __NEW_WIN {
+  const BASE = 10;
+  const STEPS = [10, 14, 21, 30, 45, 60, 90];
+  const ages: number[] = [];
+  for (const e of list) { const a = filingAgeDays(e && e.filing_date); if (a !== null && a >= 0) ages.push(a); }
+  const countLE = (w: number) => ages.reduce((n, a) => (a <= w ? n + 1 : n), 0);
+  const base = countLE(BASE);
+  if (base > 0) return { days: BASE, widened: false, count: base, base };
+  for (const w of STEPS) { const c = countLE(w); if (c > 0) return { days: w, widened: w > BASE, count: c, base: 0 }; }
+  return { days: BASE, widened: false, count: 0, base: 0 };
+}
+
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
 function convCapInRange(cr: number | null | undefined, f: ConvFilters['cap']): boolean {
@@ -1863,11 +1882,10 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     // by RESULT (filing) date, not added_at — added_at is polluted by bulk bench
     // re-syncs, which made weeks-old results look "new". 30d = the current
     // results cohort (off-season this can legitimately be small/empty).
-    // zzz543 — use the shared badge formula so the filter and the "·Nd" chip
-    // can never disagree (previously floor+UTC-midnight let a badge-"31d" name
-    // slip through a "30d" filter at the boundary).
+    // zzz543/zzz544 — shared badge formula + ADAPTIVE window (see computeNewWindow).
+    // Target 10d; auto-widen to the freshest cohort only when 10d is empty.
     const d = filingAgeDays((e as any).filing_date);
-    return d !== null && d >= 0 && d <= 30;
+    return d !== null && d >= 0 && d <= __NEW_WIN.days;
   }
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
@@ -3044,6 +3062,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     return new Set();
   });
 
+  // zzz544 — compute the adaptive NEW window ONCE per render (synchronously)
+  // before any passesConvictionFilter() call reads __NEW_WIN, so the filter, the
+  // chip label, and every count-probe agree on the same effective window.
+  __NEW_WIN = computeNewWindow(entries);
+
   // Apply filters + optional PEAD sort
   let filteredEntries = entries.filter((e) => passesConvictionFilter(e, filters));
   if (filters.sortByPead) {
@@ -3328,9 +3351,12 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             </button>
             {/* zzz540 — new-in-last-10-days filter; the sectioned TradingView copy below then exports ONLY these, grouped by tier */}
             <button onClick={() => setFilters((f) => ({ ...f, newOnly: !f.newOnly }))}
-              title="Show only companies whose latest RESULT (filing) date is within the last 30 days — the current earnings cohort (off-season this can be small). With this on, Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Bypasses the quality preset."
+              title={__NEW_WIN.widened
+                ? `No results filed in the last 10 days (between earnings seasons), so this is showing the freshest cohort available: results filed within ${__NEW_WIN.days} days (${__NEW_WIN.count} names). Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Bypasses the quality preset.`
+                : `Companies whose latest RESULT (filing) date is within the last 10 days — the just-reported cohort. Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Bypasses the quality preset.`}
               style={filters.newOnly ? chipActive('#34D399') : chipBase}>
-              🆕 NEW · 30d {filters.newOnly ? '✓' : ''}
+              {/* zzz544 — label reflects the ACTUAL window used: "10d" normally, "10d→Nd" when auto-widened off-season */}
+              🆕 NEW · {__NEW_WIN.widened ? `10d→${__NEW_WIN.days}d` : '10d'} {filters.newOnly ? '✓' : ''}
             </button>
             {/* ── ADDITIVE zzzUP1 — On Radar toggle (transformation screener overlay) */}
             <button onClick={() => setOnRadarOnly((v) => !v)}
