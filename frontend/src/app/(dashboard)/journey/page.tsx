@@ -769,7 +769,8 @@ const JOURNEY_PATH_13: { y: number; r: number }[] = [
   { y: 2029, r: 160 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 50 },
   { y: 2033, r: 5 },   { y: 2034, r: 100 }, { y: 2035, r: 15 },
   { y: 2036, r: -10 },   // digest / shakeout — patience-through-red year
-  { y: 2037, r: 80 },    // final leg up
+  { y: 2037, r: 80 },    // leg up
+  { y: 2038, r: 15 },    // zzz555 — final digest year (illustrative)
 ];
 
 // zzz553 — WITHDRAW plan: the base path, but I pull a full ₹1 cr OFF the table
@@ -777,9 +778,9 @@ const JOURNEY_PATH_13: { y: number; r: number }[] = [
 // and ride the remaining pot two extra years to 2037. Own capital in is the same
 // ₹63 L (seed ₹43 L + ₹20 L in 2028); the ₹1 cr comes back to me at year 5.
 const JOURNEY_WITHDRAW: JourneyCfg = {
-  key: 'withdraw', label: 'WITHDRAW PLAN · pull ₹1 cr out at year 5 (2030), ride 13 years', blurb: 'withdraw',
+  key: 'withdraw', label: 'WITHDRAW PLAN · pull ₹1 cr out end of 2029, ride to 2038', blurb: 'withdraw',
   path: JOURNEY_PATH_13, startCr: JOURNEY_START_CR, contrib: JOURNEY_CONTRIB,
-  takeOut: { atYear: 2030, amount: 1.0 },
+  takeOut: { atYear: 2029, amount: 1.0 },
 };
 
 // zzz439 — my rulebook. The behaviour that turns the path above into reality —
@@ -870,7 +871,7 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
         {cfg.blurb === 'cycle' ? (
           <>This is the same lumpy path — but instead of adding fresh money, I <strong style={{ color: C.text }}>bank profit and recycle it.</strong> I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025; once the pot hits ~₹90 L in 2026 I pull <strong style={{ color: C.red }}>₹45 L</strong> off the table into a safe <strong style={{ color: C.text }}>5%</strong> parking (so it sits out the 2027 drawdown), then redeploy the grown <strong style={{ color: C.cyan }}>{fmtMoney(parkedBackCr)}</strong> at the end of 2028 — just <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital, <em>no</em> fresh ₹20 L — and it still becomes <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.</>
         ) : cfg.blurb === 'withdraw' ? (
-          <>Same lumpy path and same capital as the base plan — but at <strong style={{ color: C.text }}>year 5 (2030)</strong> I pull a full <strong style={{ color: C.red }}>₹1 cr</strong> permanently <em>off the table</em> — realised, de-risked, gone from the market — and let the rest keep riding for <strong style={{ color: C.text }}>two extra years to 2037</strong>. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>₹20 L</strong> in 2028 ({fmtMoney(totalInvested)} of my own capital); I bank <strong style={{ color: C.red }}>₹1 cr</strong> in hand at year 5 and the pot still finishes at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> — <strong style={{ color: C.text }}>{fmtMoney(outcome)}</strong> of total wealth created. (2036/2037 returns are illustrative, drawn from the same lumpy pattern.)</>
+          <>Same lumpy path and same capital as the base plan — but at the <strong style={{ color: C.text }}>end of 2029</strong>, right after the big <strong style={{ color: C.green }}>+160%</strong> year, I pull a full <strong style={{ color: C.red }}>₹1 cr</strong> permanently <em>off the table</em> — realised, de-risked, gone from the market — and let the rest keep riding out to <strong style={{ color: C.text }}>2038</strong>. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>₹20 L</strong> in 2028 ({fmtMoney(totalInvested)} of my own capital); I bank <strong style={{ color: C.red }}>₹1 cr</strong> in hand at the 2029 high and the pot still finishes at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> — <strong style={{ color: C.text }}>{fmtMoney(outcome)}</strong> of total wealth created. (2036–2038 returns are illustrative, drawn from the same lumpy pattern.)</>
         ) : (
           <>This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole run; the rest are flat, tiny, or red. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>{fmtMoney(cfg.contrib[2028] || 0)}</strong> at the end of 2028 — <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital in total — and living the path turns it into <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.</>
         )}
@@ -950,7 +951,7 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
           ) : cfg.blurb === 'withdraw' ? (
             <>
               <br /><br />
-              <strong style={{ color: C.red }}>The take-out:</strong> pulling <strong style={{ color: C.red }}>₹1 cr</strong> permanently at year 5 (2030) realises life-changing money and de-risks the plan — that cash can never be given back by a later drawdown. It costs some end-value (the pot finishes at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> vs the base plan&rsquo;s bigger number), but you also hold <strong style={{ color: C.red }}>₹1 cr</strong> in hand, so total wealth is <strong style={{ color: C.text }}>{fmtMoney(outcome)}</strong> at a <strong style={{ color: C.green }}>{(irr * 100).toFixed(1)}% IRR</strong>. Taking money <em>early</em> lifts the IRR (each rupee back sooner is worth more) — the discipline is banking the crore and still letting the rest ride the two extra years, not cashing out the whole thing.
+              <strong style={{ color: C.red }}>The take-out:</strong> pulling <strong style={{ color: C.red }}>₹1 cr</strong> permanently at the end of 2029 — at the top of the +160% year — realises life-changing money and de-risks the plan — that cash can never be given back by a later drawdown. It costs some end-value (the pot finishes at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> vs the base plan&rsquo;s bigger number), but you also hold <strong style={{ color: C.red }}>₹1 cr</strong> in hand, so total wealth is <strong style={{ color: C.text }}>{fmtMoney(outcome)}</strong> at a <strong style={{ color: C.green }}>{(irr * 100).toFixed(1)}% IRR</strong>. Taking money <em>early</em> lifts the IRR (each rupee back sooner is worth more) — the discipline is banking the crore and still letting the rest ride the two extra years, not cashing out the whole thing.
             </>
           ) : hasContrib ? (
             <>
