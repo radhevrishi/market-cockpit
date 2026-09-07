@@ -74,17 +74,29 @@ export const US_TAGS: Record<string, string[]> = {
   ],
   operating_income: [
     'OperatingIncomeLoss',
+    // Banks and insurers do not report an operating line at all; pre-tax
+    // income is the nearest honest equivalent (two spellings in the wild).
+    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
     'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
   ],
   net_income: [
-    'NetIncomeLoss',
-    'ProfitLoss',                             // AEIS reports only this one
-    'NetIncomeLossAvailableToCommonStockholdersBasic',
+    'NetIncomeLoss',                                        // attributable to the parent (ex-NCI)
+    'NetIncomeLossAvailableToCommonStockholdersBasic',      // ex-NCI and ex-preferred
+    'ProfitLoss',                                           // INCLUDES noncontrolling interests — last resort only.
+                                                            // REX tags only this + the "available to common" line;
+                                                            // taking ProfitLoss overstated its PAT by 16%.
   ],
   eps: [
     'EarningsPerShareDiluted',
     'EarningsPerShareBasicAndDiluted',
+    'IncomeLossFromContinuingOperationsPerDilutedShare',    // KIM and peers tag only the continuing-ops line
     'EarningsPerShareBasic',
+    'IncomeLossFromContinuingOperationsPerBasicShare',
+  ],
+  diluted_shares: [
+    'WeightedAverageNumberOfDilutedSharesOutstanding',
+    'WeightedAverageNumberOfShareOutstandingBasicAndDiluted',
+    'WeightedAverageNumberOfSharesOutstandingBasic',
   ],
   cfo: [
     'NetCashProvidedByUsedInOperatingActivities',
@@ -92,7 +104,7 @@ export const US_TAGS: Record<string, string[]> = {
   ],
 };
 
-export type UsFactKind = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo';
+export type UsFactKind = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'diluted_shares';
 
 /** Forms whose facts we trust. Excludes 8-K exhibits (untagged/preliminary). */
 const TRUSTED_FORMS = new Set(['10-Q', '10-K', '10-Q/A', '10-K/A', '20-F', '40-F']);
@@ -117,6 +129,7 @@ export function conceptSeries(facts: any, concept: string): DurFact[] {
   const unitKeys = Object.keys(node.units);
   const uk = unitKeys.includes('USD') ? 'USD'
     : unitKeys.includes('USD/shares') ? 'USD/shares'
+    : unitKeys.includes('shares') ? 'shares'
     : unitKeys[0];
   if (!uk) return [];
   const best = new Map<string, any>();
@@ -147,16 +160,37 @@ export function conceptSeries(facts: any, concept: string): DurFact[] {
  */
 export function pickConcept(facts: any, kind: UsFactKind): string | null {
   const cutoffMs = Date.now() - 1200 * dayMs;
+  const list = US_TAGS[kind] || [];
+  // For net income and EPS the ORDER is the meaning: `NetIncomeLoss` is
+  // attributable to the parent, `ProfitLoss` includes noncontrolling
+  // interests. A coverage contest between them is how REX's PAT came out 16%
+  // too high — `ProfitLoss` simply had more quarters tagged. So for these
+  // kinds take the first tag with adequate recent coverage, in order.
+  const priorityFirst = kind === 'net_income' || kind === 'eps' || kind === 'diluted_shares';
   let best: string | null = null;
   let bestScore = -1;
-  const list = US_TAGS[kind] || [];
+  const info: Array<{ c: string; latest: string; nq: number }> = [];
   for (let i = 0; i < list.length; i++) {
     const rows = conceptSeries(facts, list[i]).filter((r) => dnum(r.end) >= cutoffMs);
     if (!rows.length) continue;
-    const nq = rows.filter((r) => r.days >= 80 && r.days <= 100).length;
+    const qrows = rows.filter((r) => r.days >= 80 && r.days <= 100);
+    const nq = qrows.length;
     const na = rows.filter((r) => r.days >= 330 && r.days <= 380).length;
+    const latest = (qrows.length ? qrows : rows).reduce((m, r) => (r.end > m ? r.end : m), '');
+    info.push({ c: list[i], latest, nq });
     const score = nq * 10 + na * 3 + (list.length - i);
     if (score > bestScore) { best = list[i]; bestScore = score; }
+  }
+  if (priorityFirst && info.length) {
+    // The first tag, in priority order, that is actually populated for the
+    // newest quarter any candidate has. REX tags `NetIncomeLoss` only in old
+    // annual contexts and the current quarter only as "available to common";
+    // a pure coverage contest picked the former and returned null.
+    const newest = info.reduce((m, x) => (x.latest > m ? x.latest : m), '');
+    for (const c of list) {
+      const x = info.find((y) => y.c === c);
+      if (x && x.nq > 0 && Math.abs(diffDays(x.latest, newest)) <= 4) return c;
+    }
   }
   return best;
 }
@@ -170,10 +204,16 @@ export function pickConcept(facts: any, kind: UsFactKind): string | null {
  * cumulative=true (cash flow): the facts are YTD, so de-cumulate consecutive
  *   period-ends that share a fiscal-year start (trap #1).
  */
-export function quarterize(rows: DurFact[], cumulative: boolean): Record<string, number> {
+export function quarterize(rows: DurFact[], cumulative: boolean, additive = true): Record<string, number> {
   const q: Record<string, number> = {};
   if (!cumulative) {
     for (const r of rows) if (r.days >= 80 && r.days <= 100) q[r.end] = r.val;
+    // Q4 = FY − (Q1+Q2+Q3) is only valid for ADDITIVE quantities (dollars).
+    // EPS and share counts are ratios/averages: subtracting quarterly EPS from
+    // annual EPS gave SMCI $1.68 against a reported $1.62, because the diluted
+    // count moved 692m → 705m across the year. For those the caller derives
+    // Q4 from net income ÷ shares instead.
+    if (!additive) return q;
     for (const r of rows) {
       if (!(r.days >= 330 && r.days <= 380)) continue;
       if (q[r.end] !== undefined) continue;
@@ -235,10 +275,18 @@ export function yoyPartner(ends: string[], target: string): string | null {
 export interface UsFundamentals {
   q_end: string | null;
   q_end_prev: string | null;
+  /** Latest `filed` date among the facts that make up the current quarter —
+   *  i.e. when these numbers first became public on EDGAR. */
+  q_filed: string | null;
   revenue: number | null; revenue_prev: number | null;
   operating_income: number | null; operating_income_prev: number | null;
   net_income: number | null; net_income_prev: number | null;
   eps: number | null; eps_prev: number | null;
+  /** True when the current quarter's EPS was computed as net income ÷ diluted
+   *  shares rather than read from the filing (Q4 of a 10-K, or a dual-class
+   *  filer whose per-class EPS the aggregate API hides). Within a few percent
+   *  of the reported figure; shown with ≈ in the UI. */
+  eps_derived?: boolean;
   cfo: number | null; cfo_prev: number | null;
   tags: Partial<Record<UsFactKind, string | null>>;
   quarters_revenue: number[] | null;   // last 4 discrete quarters, oldest → newest
@@ -254,7 +302,7 @@ export interface UsFundamentals {
  */
 export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): UsFundamentals {
   const empty: UsFundamentals = {
-    q_end: null, q_end_prev: null,
+    q_end: null, q_end_prev: null, q_filed: null,
     revenue: null, revenue_prev: null,
     operating_income: null, operating_income_prev: null,
     net_income: null, net_income_prev: null,
@@ -263,13 +311,76 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
   };
   if (!facts?.facts?.['us-gaap']) return { ...empty, error: 'no us-gaap facts' };
 
-  const kinds: UsFactKind[] = ['revenue', 'operating_income', 'net_income', 'eps', 'cfo'];
   const tags: Partial<Record<UsFactKind, string | null>> = {};
   const qs: Record<string, Record<string, number>> = {};
-  for (const kind of kinds) {
+  const seriesCache = new Map<string, DurFact[]>();
+  const ser = (c: string) => {
+    if (!seriesCache.has(c)) seriesCache.set(c, conceptSeries(facts, c));
+    return seriesCache.get(c)!;
+  };
+
+  // Dollar lines first, in the plain way.
+  for (const kind of ['operating_income', 'net_income', 'cfo'] as UsFactKind[]) {
     const c = pickConcept(facts, kind);
     tags[kind] = c;
-    qs[kind] = c ? quarterize(conceptSeries(facts, c), kind === 'cfo') : {};
+    qs[kind] = c ? quarterize(ser(c), kind === 'cfo') : {};
+  }
+  // Ratios / averages: never synthesize Q4 by subtraction.
+  for (const kind of ['eps', 'diluted_shares'] as UsFactKind[]) {
+    const c = pickConcept(facts, kind);
+    tags[kind] = c;
+    qs[kind] = c ? quarterize(ser(c), false, false) : {};
+  }
+
+  // REVENUE — pick by coverage, then SANITY-CHECK the winner against net
+  // income and operating income for the latest quarter. For a bank the
+  // ASC-606 tag (`RevenueFromContractWithCustomer…`) captures only fee income
+  // and drops all net interest income: CFG came out at $451m against a true
+  // $2,283m, ESS (a REIT, rent is ASC 842 not 606) at $2.3m against $489m,
+  // AXP at $11.2bn against $19.6bn. A revenue line that is smaller than the
+  // quarter's net income, or that implies a >200% operating margin, is the
+  // wrong line — fall through to the next candidate.
+  {
+    const cutoffMs = Date.now() - 1200 * dayMs;
+    const cands: Array<{ c: string; score: number; q: Record<string, number> }> = [];
+    const list = US_TAGS.revenue;
+    for (let i = 0; i < list.length; i++) {
+      const rows = ser(list[i]).filter((r) => dnum(r.end) >= cutoffMs);
+      if (!rows.length) continue;
+      const nq = rows.filter((r) => r.days >= 80 && r.days <= 100).length;
+      const na = rows.filter((r) => r.days >= 330 && r.days <= 380).length;
+      cands.push({ c: list[i], score: nq * 10 + na * 3 + (list.length - i), q: quarterize(ser(list[i]), false) });
+    }
+    cands.sort((a, b) => b.score - a.score);
+    const sane = (q: Record<string, number>): boolean => {
+      const ends = Object.keys(q).sort();
+      if (!ends.length) return false;
+      const e = ends[ends.length - 1];
+      const rev = q[e];
+      if (!(rev > 0)) return false;
+      const near = (m: Record<string, number>) => {
+        if (m[e] !== undefined) return m[e];
+        for (const k of Object.keys(m)) if (Math.abs(diffDays(k, e)) <= 4) return m[k];
+        return undefined;
+      };
+      const ni = near(qs.net_income), oi = near(qs.operating_income);
+      if (ni !== undefined && Math.abs(ni) > rev * 1.05) return false;
+      if (oi !== undefined && Math.abs(oi) > rev * 2) return false;
+      return true;
+    };
+    let chosen = cands.find((x) => sane(x.q)) || cands[0] || null;
+    // When several candidates are sane, the LARGEST latest-quarter figure is
+    // the total-revenue line (fee income is a subset of total revenue).
+    if (chosen) {
+      const saneOnes = cands.filter((x) => sane(x.q) && x.score >= chosen!.score * 0.5);
+      if (saneOnes.length > 1) {
+        const latestVal = (q: Record<string, number>) => { const k = Object.keys(q).sort(); return q[k[k.length - 1]]; };
+        saneOnes.sort((a, b) => latestVal(b.q) - latestVal(a.q));
+        chosen = saneOnes[0];
+      }
+    }
+    tags.revenue = chosen ? chosen.c : null;
+    qs.revenue = chosen ? chosen.q : {};
   }
 
   const revEnds = Object.keys(qs.revenue).sort();
@@ -296,10 +407,51 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     return null;
   };
 
-  const last4 = (kind: UsFactKind): number[] | null => {
+  // EPS for a quarter, with a fallback of net income ÷ diluted shares. Needed in
+  // two real cases: (a) Q4, which is never tagged as a quarter and must not be
+  // derived by subtraction; (b) dual-class filers (BRC, TLYS) who tag EPS only
+  // per share class, which the aggregate API hides — they were coming back
+  // blank against real $0.96 / $0.27. For Q4 the share count is the fiscal
+  // year's average, taken as FY net income ÷ FY EPS (both are always tagged).
+  const fyShares = (): number | null => {
+    const niC = tags.net_income ? ser(tags.net_income) : [];
+    const epC = tags.eps ? ser(tags.eps) : [];
+    const fy = niC.filter((r) => r.days >= 330 && r.days <= 380).sort((a, b) => b.end.localeCompare(a.end))[0];
+    if (!fy) return null;
+    const fe = epC.find((r) => r.days >= 330 && r.days <= 380 && Math.abs(diffDays(r.end, fy.end)) <= 4);
+    if (!fe || !fe.val) return null;
+    return fy.val / fe.val;
+  };
+  let epsDerived = false;
+  const epsAt = (end: string | null, isCur = false): number | null => {
+    if (!end) return null;
+    const direct = at('eps', end);
+    if (direct != null) return direct;
+    const ni = at('net_income', end);
+    if (ni == null) return null;
+    // Prefer the quarter's own diluted count; else the latest quarterly count
+    // on file (share counts drift slowly); else the fiscal-year average.
+    let sh = at('diluted_shares', end);
+    if (sh == null) {
+      const ends = Object.keys(qs.diluted_shares).filter((e) => e <= end).sort();
+      if (ends.length) sh = qs.diluted_shares[ends[ends.length - 1]];
+    }
+    if (sh == null) sh = fyShares();
+    if (!sh || sh <= 0) return null;
+    if (isCur) epsDerived = true;
+    return Math.round((ni / sh) * 100) / 100;
+  };
+
+  const last4 = (kind: UsFactKind, scale: number): number[] | null => {
     const ends = Object.keys(qs[kind]).filter((e) => e <= cur).sort().slice(-4);
     if (ends.length < 2) return null;
-    return ends.map((e) => Math.round(qs[kind][e] / 1e6 * 100) / 100);
+    return ends.map((e) => Math.round(qs[kind][e] / scale * 100) / 100);
+  };
+  const last4Eps = (): number[] | null => {
+    const ends = Object.keys(qs.revenue).filter((e) => e <= cur).sort().slice(-4);
+    const out: number[] = [];
+    for (const e of ends) { const v = epsAt(e); if (v != null) out.push(v); }
+    return out.length >= 2 ? out : null;
   };
   const opmSeries = (): number[] | null => {
     const ends = Object.keys(qs.revenue).filter((e) => e <= cur).sort().slice(-4);
@@ -312,14 +464,30 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     return out.length >= 2 ? out : null;
   };
 
+  // When did the current quarter's numbers first hit EDGAR? Latest `filed`
+  // among the revenue / net-income facts for that period end.
+  const qFiled = (): string | null => {
+    let best: string | null = null;
+    for (const c of [tags.revenue, tags.net_income]) {
+      if (!c) continue;
+      for (const r of ser(c)) {
+        if (Math.abs(diffDays(r.end, cur)) > 4) continue;
+        if (r.days < 80) continue;
+        if (r.filed && (!best || r.filed < best)) best = r.filed;   // EARLIEST filing that carried it
+      }
+    }
+    return best;
+  };
+
   return {
-    q_end: cur, q_end_prev: prev, tags,
+    q_end: cur, q_end_prev: prev, q_filed: qFiled(), tags,
     revenue: at('revenue', cur), revenue_prev: at('revenue', prev),
     operating_income: at('operating_income', cur), operating_income_prev: at('operating_income', prev),
     net_income: at('net_income', cur), net_income_prev: at('net_income', prev),
-    eps: at('eps', cur), eps_prev: at('eps', prev),
+    eps: epsAt(cur, true), eps_prev: epsAt(prev),
+    eps_derived: epsDerived,
     cfo: at('cfo', cur), cfo_prev: at('cfo', prev),
-    quarters_revenue: last4('revenue'), quarters_eps: last4('eps'), quarters_opm: opmSeries(),
+    quarters_revenue: last4('revenue', 1e6), quarters_eps: last4Eps(), quarters_opm: opmSeries(),
   };
 }
 
@@ -396,6 +564,7 @@ export interface UsGradedRow {
   net_income_prev_musd: number | null;
   eps_curr: number | null;
   eps_prev: number | null;
+  eps_derived?: boolean;
   cfo_curr_musd: number | null;
 
   sales_yoy_pct: number | null;
@@ -649,8 +818,17 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     : uniqMeth.length >= 2 ? ` and ${uniqMeth.join('/')} all passing.` : '.';
   const narrative = `${head} (${metrics || 'figures pending'})${flavor}`;
 
-  const mcap = (input.shares_outstanding != null && p?.price != null)
-    ? (input.shares_outstanding * p.price) / 1e6 : null;
+  // Share count cross-check. The cover-page count can be stale (see
+  // sharesOutstandingFromFacts); the count implied by net income ÷ EPS is
+  // always current for the quarter. If the two disagree by more than 25%,
+  // trust the implied figure. Verified to fire on exactly CME, NKE, MA and
+  // BRK-B across an 80-name test, and on nothing that was already right.
+  let shares = input.shares_outstanding ?? null;
+  if (niC != null && f.eps != null && f.eps !== 0 && niC / f.eps > 0) {
+    const implied = niC / f.eps;
+    if (shares == null || shares / implied < 0.8 || shares / implied > 1.25) shares = implied;
+  }
+  const mcap = (shares != null && p?.price != null) ? (shares * p.price) / 1e6 : null;
   const ttmEps = null; // trailing EPS needs 4 clean quarters; P/E below uses them when available
   const pe = (() => {
     const qe = f.quarters_eps;
@@ -672,7 +850,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     revenue_prev_musd: revP != null ? Math.round(revP / 1e4) / 100 : null,
     net_income_curr_musd: niC != null ? Math.round(niC / 1e4) / 100 : null,
     net_income_prev_musd: niP != null ? Math.round(niP / 1e4) / 100 : null,
-    eps_curr: f.eps, eps_prev: f.eps_prev,
+    eps_curr: f.eps, eps_prev: f.eps_prev, eps_derived: !!f.eps_derived,
     cfo_curr_musd: f.cfo != null ? Math.round(f.cfo / 1e4) / 100 : null,
     sales_yoy_pct: salesY, net_profit_yoy_pct: patY, eps_yoy_pct: epsY,
     opm_pct: opm != null ? Math.round(opm * 100) / 100 : null,

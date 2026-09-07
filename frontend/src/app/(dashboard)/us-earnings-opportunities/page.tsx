@@ -29,7 +29,7 @@ import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
-  filing_url: string; reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price';
+  filing_url: string; reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price' | 'reported-earlier';
 }
 
 interface UsPayload {
@@ -47,9 +47,10 @@ interface UsPayload {
   notes: string[];
 }
 
+interface CalendarTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string; }
 interface CalendarDay {
   date: string; weekend: boolean; count: number;
-  tickers: string[]; eightK: number; periodic: number;
+  tickers: string[]; entries?: CalendarTicker[]; eightK: number; periodic: number;
 }
 interface CalendarPayload {
   from: string; to: string; total: number; days: CalendarDay[]; generated_at: string;
@@ -62,9 +63,27 @@ const TIER_META: Record<EarningsTier, { label: string; color: string; icon: stri
   AVOID: { label: 'AVOID', color: '#EF4444', icon: '⛔', tagline: 'Fails the bar on growth, quality or trend' },
 };
 
-const LS_PREFIX = 'mc:graded-us:v1:';
+// v2 — the v1 namespace could hold a scan that returned 0 of N filers (a
+// transient price-source failure) and then serve it back for a quarter of an
+// hour, which looked exactly like a broken engine. Bumping the prefix orphans
+// every such entry instantly; the scrub below reclaims their space.
+const LS_PREFIX = 'mc:graded-us:v2:';
 const LS_DATE = 'mc:us-eo:v1:date';
 const LS_DAYS = 'mc:us-eo:v1:days';
+const LS_SCRUB = 'mc:graded-us:scrub:v2';
+
+function scrubOldCaches() {
+  try {
+    if (localStorage.getItem(LS_SCRUB) === '1') return;
+    const kill: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('mc:graded-us:v1:')) kill.push(k);
+    }
+    for (const k of kill) localStorage.removeItem(k);
+    localStorage.setItem(LS_SCRUB, '1');
+  } catch { /* storage unavailable */ }
+}
 
 /** ET-anchored today. US markets close at 16:00 ET; anchoring at UTC-4 keeps
  *  "today" correct for anyone loading the page from Europe after the close. */
@@ -81,8 +100,18 @@ function readCache(key: string, isToday: boolean): UsPayload | null {
     const maxAge = isToday ? 15 * 60_000 : 7 * 24 * 3600_000;
     if (!Number.isFinite(age) || age > maxAge) return null;
     if (!o?.by_tier) return null;
+    // A scan that found filers but graded NONE of them is a failed scan, not a
+    // result. Never serve it from cache — refetch.
+    if ((o.raw_items_total ?? 0) > 0 && (o.candidates_total ?? 0) === 0) return null;
     return o as UsPayload;
   } catch { return null; }
+}
+
+/** Only cache a payload worth keeping — see readCache. */
+function cacheable(p: UsPayload): boolean {
+  if (!p?.by_tier) return false;
+  if ((p.raw_items_total ?? 0) > 0 && (p.candidates_total ?? 0) === 0) return false;
+  return true;
 }
 
 export default function UsEarningsOpportunitiesPage() {
@@ -105,7 +134,10 @@ export default function UsEarningsOpportunitiesPage() {
     elite: false, pead70: false, multibagger: false, beatCheap: false,
   });
   const [showPending, setShowPending] = useState(false);
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
+  const [calSearch, setCalSearch] = useState('');
 
+  useEffect(() => { scrubOldCaches(); }, []);
   useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
   useEffect(() => { try { debouncedSetItem(LS_DAYS, String(days)); } catch {} }, [days]);
 
@@ -128,9 +160,11 @@ export default function UsEarningsOpportunitiesPage() {
         );
         if (!res.ok) throw new Error(`Grading failed (HTTP ${res.status})`);
         const payload = await res.json();
-        try {
-          debouncedSetItem(LS_PREFIX + cacheKey, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() }));
-        } catch { /* quota — the payload still renders, it just isn't cached */ }
+        if (cacheable(payload)) {
+          try {
+            debouncedSetItem(LS_PREFIX + cacheKey, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() }));
+          } catch { /* quota — the payload still renders, it just isn't cached */ }
+        }
         return payload;
       } finally { clearTimeout(timer); }
     },
@@ -430,13 +464,13 @@ export default function UsEarningsOpportunitiesPage() {
             background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left',
           }}>
             {showPending ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            <span style={{ fontWeight: 800, color: 'var(--mc-text-0)' }}>📋 ANNOUNCED · NUMBERS PENDING</span>
+            <span style={{ fontWeight: 800, color: 'var(--mc-text-0)' }}>📋 IN THE WINDOW BUT NOT GRADED</span>
             <span style={{
               fontWeight: 800, fontSize: 'var(--mc-text-xs)', padding: '2px 8px', borderRadius: 999,
               backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-1)',
             }}>{data.pending!.length}</span>
             <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
-              filed a result but the XBRL isn&apos;t on EDGAR yet — nothing was dropped
+              numbers not posted yet, or already announced before the window — nothing was dropped silently
             </span>
           </button>
           {showPending && (
@@ -447,20 +481,36 @@ export default function UsEarningsOpportunitiesPage() {
                 move into a grade tier automatically as soon as their numbers post. Widening the window to 10d
                 usually picks up most of them.
               </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {data.pending!.map((p) => (
-                  <a key={`${p.ticker}-${p.filed}`} href={p.filing_url} target="_blank" rel="noreferrer"
-                    title={`${p.company} · ${p.form} filed ${p.filed} · ${
-                      p.reason === 'no-price' ? 'no price history (OTC / newly listed)'
-                        : p.reason === 'quarter-stale' ? 'only the previous quarter is on file'
-                        : 'XBRL not posted yet'}`}
-                    style={{
-                      fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
-                      border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)',
-                      textDecoration: 'none', backgroundColor: 'var(--mc-bg-2)',
-                    }}>{p.ticker}</a>
-                ))}
-              </div>
+              {([
+                ['xbrl', 'Numbers not on EDGAR yet', (p: PendingFiler) => p.reason === 'xbrl-not-posted' || p.reason === 'quarter-stale'],
+                ['earlier', 'Announced before this window — only the 10-Q or a follow-up 8-K landed here', (p: PendingFiler) => p.reason === 'reported-earlier'],
+                ['price', 'No usable price history', (p: PendingFiler) => p.reason === 'no-price'],
+              ] as Array<[string, string, (p: PendingFiler) => boolean]>).map(([k, label, pred]) => {
+                const list = data.pending!.filter(pred);
+                if (!list.length) return null;
+                return (
+                  <div key={k} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3, marginBottom: 5 }}>
+                      {label.toUpperCase()} · {list.length}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {list.map((p) => (
+                        <a key={`${p.ticker}-${p.filed}`} href={p.filing_url} target="_blank" rel="noreferrer"
+                          title={`${p.company} · ${p.form} filed ${p.filed} · ${
+                            p.reason === 'no-price' ? 'no price history (OTC / newly listed)'
+                              : p.reason === 'quarter-stale' ? 'only the previous quarter is on file'
+                              : p.reason === 'reported-earlier' ? `announced ${p.filed} — before this window`
+                              : 'XBRL not posted yet'}`}
+                          style={{
+                            fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
+                            border: '1px solid var(--mc-bg-4)', color: k === 'earlier' ? 'var(--mc-text-3)' : 'var(--mc-text-2)',
+                            textDecoration: 'none', backgroundColor: 'var(--mc-bg-2)',
+                          }}>{p.ticker}{k === 'earlier' ? <span style={{ fontWeight: 500, color: 'var(--mc-text-4)' }}> {p.filed.slice(5)}</span> : null}</a>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -469,21 +519,31 @@ export default function UsEarningsOpportunitiesPage() {
       {/* ── calendar ── */}
       {viewMode === 'CALENDAR' && (
         <div style={{ marginBottom: 18 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>Range</span>
-            {[14, 30, 60, 90].map((d) => (
-              <button key={d} onClick={() => setCalDays(d)} style={btn(calDays === d)}>{d}d</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+            <button onClick={() => shiftDate(-calDays)} style={btn()} title={`Back ${calDays} days`}>⇤ {calDays}d</button>
+            <button onClick={() => shiftDate(-1)} style={btn()} title="Back one day">←</button>
+            <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)}
+              style={{ ...btn(), padding: '6px 10px', colorScheme: 'light dark' }} />
+            <button onClick={() => shiftDate(1)} style={btn()} title="Forward one day">→</button>
+            <button onClick={() => shiftDate(calDays)} style={btn()} title={`Forward ${calDays} days`}>{calDays}d ⇥</button>
+            <button onClick={() => setDate(today)} style={btn(date === today)}>Today</button>
+            <span style={{ width: 1, height: 22, backgroundColor: 'var(--mc-bg-4)', margin: '0 4px' }} />
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>Show</span>
+            {[1, 7, 14, 30, 60, 90].map((d) => (
+              <button key={d} onClick={() => setCalDays(d)} style={btn(calDays === d)}>{d === 1 ? 'Day' : `${d}d`}</button>
             ))}
-            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
-              {calFrom} → {calTo}{cal ? ` · ${cal.total} filings` : ''}
-            </span>
-            {calFetching && <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>loading…</span>}
+            <input value={calSearch} onChange={(e) => setCalSearch(e.target.value.toUpperCase())}
+              placeholder="Find ticker…"
+              style={{ ...btn(), padding: '6px 10px', minWidth: 120, fontWeight: 600 }} />
             <span style={{ flex: 1 }} />
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
+              {calFrom} → {calTo}{cal ? ` · ${cal.total} companies` : ''}{calFetching ? ' · loading…' : ''}
+            </span>
             {cal && (
               <>
                 <button style={btn()} onClick={() => {
-                  const lines = ['Date,Filings,Tickers'];
-                  for (const d of cal.days) if (d.count) lines.push(`${d.date},${d.count},"${d.tickers.join(' ')}"`);
+                  const lines = ['Date,Ticker,Company,Form,Filing'];
+                  for (const d of cal.days) for (const e of (d.entries || [])) lines.push(`${d.date},${e.ticker},"${e.company.replace(/"/g, '""')}",${e.form},${e.filing_url}`);
                   download(`us-earnings-calendar-${cal.from}_${cal.to}.csv`, lines.join('\n'));
                 }}>📋 CSV</button>
                 <button style={btn()} onClick={() => {
@@ -493,51 +553,85 @@ export default function UsEarningsOpportunitiesPage() {
               </>
             )}
           </div>
+          <div style={{ color: 'var(--mc-text-4)', fontSize: 'var(--mc-text-xs)', marginBottom: 12 }}>
+            A company is listed on the day it <b>announced</b> (its 8-K press release). A 10-Q that follows is the
+            same result, not a new event, so it is folded into the announcement day; the few names tagged{' '}
+            <span style={{ padding: '0 4px', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>10-Q</span> filed
+            no press release — the 10-Q was their first disclosure. Click a day to grade it; click a ticker to open
+            the SEC filing.
+          </div>
 
           {!cal && !calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Loading the filing calendar…</span></div>}
+          {!cal && calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Sweeping EDGAR for {calFrom} → {calTo}… (first load of a range takes 10–40s; it is cached after that)</span></div>}
 
           {cal && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {cal.days.slice().reverse().map((d) => {
+              {cal.days.slice().reverse().filter((d) => !calSearch || d.tickers.some((t) => t.includes(calSearch))).map((d) => {
                 const dt = new Date(d.date + 'T00:00:00Z');
                 const label = dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
                 const isSel = d.date === date;
+                const entries: CalendarTicker[] = d.entries
+                  || d.tickers.map((t) => ({ ticker: t, company: t, form: '8-K' as const, filing_url: '' }));
+                const shown = calSearch ? entries.filter((e) => e.ticker.includes(calSearch)) : entries;
+                const open = !!openDays[d.date] || !!calSearch || calDays === 1;
+                const LIMIT = 30;
+                const visible = open ? shown : shown.slice(0, LIMIT);
+                const hidden = shown.length - visible.length;
                 return (
                   <div key={d.date} style={{
-                    display: 'flex', gap: 12, alignItems: 'flex-start', padding: '10px 12px',
-                    borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)',
+                    padding: '10px 12px', borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)',
                     border: `1px solid ${isSel ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                    borderLeft: `4px solid ${d.count ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
                   }}>
-                    <button onClick={() => { setDate(d.date); setViewMode('GRADED'); }}
-                      title="Grade this date"
-                      style={{
-                        minWidth: 116, textAlign: 'left', background: 'transparent', border: 'none',
-                        cursor: 'pointer', color: isSel ? 'var(--mc-cyan)' : 'var(--mc-text-0)',
-                        fontWeight: 800, fontSize: 'var(--mc-text-sm)', padding: 0,
-                      }}>{label}</button>
-                    <span style={{
-                      fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
-                      backgroundColor: d.count ? 'color-mix(in srgb, var(--mc-cyan) 12%, transparent)' : 'var(--mc-bg-3)',
-                      color: d.count ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
-                    }}>{d.count ? `📋 ${d.count}` : (d.weekend ? 'weekend' : 'no filings')}</span>
-                    {d.count > 0 && (
-                      <span style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap' }}>
-                        {d.eightK} earnings 8-K · {d.periodic} 10-Q/K
-                      </span>
-                    )}
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1 }}>
-                      {d.tickers.slice(0, 24).map((t) => (
-                        <span key={t} style={{
-                          fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 5,
-                          border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)',
-                        }}>{t}</span>
-                      ))}
-                      {d.tickers.length > 24 && (
-                        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', alignSelf: 'center' }}>
-                          +{d.tickers.length - 24} more
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: shown.length ? 8 : 0 }}>
+                      <span style={{ minWidth: 110, color: isSel ? 'var(--mc-cyan)' : 'var(--mc-text-0)', fontWeight: 800, fontSize: 'var(--mc-text-sm)' }}>{label}</span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
+                        backgroundColor: d.count ? 'color-mix(in srgb, var(--mc-cyan) 12%, transparent)' : 'var(--mc-bg-3)',
+                        color: d.count ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
+                      }}>{d.count ? `📋 ${d.count} reported` : (d.weekend ? 'weekend' : 'no filings')}</span>
+                      {d.count > 0 && (
+                        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap' }}>
+                          {d.eightK} press release{d.eightK === 1 ? '' : 's'}{d.periodic ? ` · ${d.periodic} 10-Q only` : ''}
                         </span>
                       )}
+                      <span style={{ flex: 1 }} />
+                      {d.count > 0 && (
+                        <button onClick={() => { setDate(d.date); setDays(1); setViewMode('GRADED'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                          style={btn(false, '#F59E0B')} title="Grade every company that reported this day">
+                          ⭐ Grade this day →
+                        </button>
+                      )}
+                      {shown.length > LIMIT && (
+                        <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: !o[d.date] }))} style={btn(open)}>
+                          {open ? '▴ Collapse' : `▾ Show all ${shown.length}`}
+                        </button>
+                      )}
                     </div>
+                    {shown.length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {visible.map((e) => (
+                          <a key={e.ticker} href={e.filing_url || undefined} target="_blank" rel="noreferrer"
+                            title={`${e.company} · ${e.form}${e.filing_url ? ' · open SEC filing' : ''}`}
+                            style={{
+                              fontSize: 11, fontWeight: 700, padding: '3px 7px', borderRadius: 5, textDecoration: 'none',
+                              border: '1px solid var(--mc-bg-4)',
+                              color: e.form === '8-K' ? 'var(--mc-text-1)' : 'var(--mc-text-3)',
+                              backgroundColor: e.form === '8-K' ? 'var(--mc-bg-2)' : 'transparent',
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                            }}>
+                            {e.ticker}
+                            {e.form !== '8-K' && <span style={{ fontSize: 9, color: 'var(--mc-text-4)', border: '1px solid var(--mc-bg-4)', borderRadius: 3, padding: '0 3px' }}>{e.form}</span>}
+                          </a>
+                        ))}
+                        {hidden > 0 && (
+                          <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: true }))}
+                            style={{ ...btn(), fontSize: 11, padding: '3px 8px' }}>
+                            +{hidden} more ▾
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -672,7 +766,7 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
         <Tile label="REVENUE" value={fmtPct(r.sales_yoy_pct)} color={growthColor(r.sales_yoy_pct)}
           sub={`${fmtUsd(r.revenue_prev_musd)} → ${fmtUsd(r.revenue_curr_musd)}`} />
         <Tile label="EPS" value={fmtPct(r.eps_yoy_pct)} color={growthColor(r.eps_yoy_pct)}
-          sub={r.eps_prev != null && r.eps_curr != null ? `$${r.eps_prev.toFixed(2)} → $${r.eps_curr.toFixed(2)}` : 'n/m — negative base'} />
+          sub={r.eps_prev != null && r.eps_curr != null ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}` : r.eps_curr == null ? 'EPS not tagged' : 'n/m — negative base'} />
         <Tile label="OPM" value={r.opm_pct != null ? `${r.opm_pct.toFixed(1)}%` : '—'}
           color={opmD == null ? undefined : opmD >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
           sub={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp YoY` : 'no prior margin'} />

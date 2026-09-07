@@ -1,18 +1,29 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/v1/earnings/calendar-us?from=YYYY-MM-DD&to=YYYY-MM-DD
 //
-// The US equivalent of the India earnings calendar: which companies filed
-// results on each date across a range. Cheap by design — it touches ONLY the
-// EDGAR full-text index (no companyfacts, no prices), so a two-month sweep is
-// ~90 requests and every completed date is cached for a month afterwards.
+// The US equivalent of the India earnings calendar: which companies ANNOUNCED
+// results on each date. Cheap by design — it touches the EDGAR full-text index
+// plus one `submissions` lookup per 10-Q-only filer (cached 6h), never
+// companyfacts or prices — so a two-month sweep is ~100–150 requests once, and
+// every completed date is cached for a month afterwards.
+//
+// WHAT "ANNOUNCED" MEANS HERE
+// ────────────────────────────
+// The announcement is the 8-K Item 2.02 (the press release). A 10-Q or 10-K
+// that lands later is the same result's detail, not a new event — an audit
+// found HD, CSCO, KEYS, WMT, TGT and LOW all listed 1–3 weeks after they had
+// actually reported, purely because their 10-Q fell in the range. So a 10-Q
+// filer is re-dated to its 8-K when one exists in the prior 30 days; if that
+// 8-K is before the range it is dropped from the range; only issuers with NO
+// 8-K (small companies often skip it) keep the 10-Q date and are tagged so.
 //
 // EDGAR generates no index on weekends or market holidays, so a date with no
-// filings is genuinely empty rather than missing. We mark weekends explicitly
-// so the UI can say "weekend" instead of the ambiguous "no filings".
+// filings is genuinely empty rather than missing. Weekends are marked
+// explicitly so the UI can say "weekend" instead of the ambiguous "no filings".
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { earningsFilersOn, cikTickerMap } from '@/lib/us-edgar';
+import { earningsFilersOn, announcementDateFor, type EdgarFiling } from '@/lib/us-edgar';
 import { pooled } from '@/lib/us-prices';
 
 export const runtime = 'nodejs';
@@ -22,13 +33,15 @@ export const dynamic = 'force-dynamic';
 const dayMs = 86_400_000;
 const MAX_DAYS = 95;
 
+interface DayTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string; }
 interface DayEntry {
   date: string;
   weekend: boolean;
   count: number;
-  tickers: string[];
-  eightK: number;      // earnings releases (8-K Item 2.02)
-  periodic: number;    // 10-Q / 10-K
+  tickers: string[];             // kept for backwards compatibility
+  entries: DayTicker[];
+  eightK: number;
+  periodic: number;
 }
 
 const _cache = new Map<string, { at: number; data: any }>();
@@ -48,13 +61,12 @@ export async function GET(req: Request) {
     from = new Date(Date.parse(to + 'T00:00:00Z') - 29 * dayMs).toISOString().slice(0, 10);
   }
   if (from > to) [from, to] = [to, from];
-  // Clamp the span so one request can never sweep a year of EDGAR.
   const span = Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / dayMs);
   if (span > MAX_DAYS) {
     from = new Date(Date.parse(to + 'T00:00:00Z') - MAX_DAYS * dayMs).toISOString().slice(0, 10);
   }
 
-  const key = `${from}|${to}`;
+  const key = `v2|${from}|${to}`;
   const hit = _cache.get(key);
   const ttl = to >= today ? 10 * 60_000 : 24 * 3600_000;
   if (hit && Date.now() - hit.at < ttl && searchParams.get('force') !== '1') {
@@ -72,34 +84,59 @@ export async function GET(req: Request) {
     };
     const workDates = dates.filter((d) => !isWeekend(d));
 
-    await cikTickerMap();     // warm once so per-date resolution is free
-    const cikMap = await cikTickerMap();
-
     const results = await pooled(workDates, 4, async (d) => {
       try { return { d, list: await earningsFilersOn(d) }; }
-      catch { return { d, list: [] as any[] }; }
+      catch { return { d, list: [] as EdgarFiling[] }; }
     });
+
+    // Collapse to one event per company: the 8-K wins; a 10-Q/10-K is
+    // re-dated to its announcement or dropped if that was before the range.
+    type Ev = { f: EdgarFiling; date: string; form: DayTicker['form'] };
+    const byCik = new Map<number, Ev>();
+    const periodicOnly: EdgarFiling[] = [];
+    for (const r of results) {
+      if (!r) continue;
+      for (const f of r.list) {
+        if (!f.ticker) continue;
+        if (f.form === '8-K') {
+          const prev = byCik.get(f.cikNum);
+          if (!prev || prev.form !== '8-K' || f.filed > prev.date) byCik.set(f.cikNum, { f, date: f.filed, form: '8-K' });
+        } else {
+          periodicOnly.push(f);
+        }
+      }
+    }
+    const redated = await pooled(periodicOnly, 5, async (f) => ({ f, a: await announcementDateFor(f.cikNum, f.filed) }));
+    for (const x of redated) {
+      if (!x) continue;
+      const { f, a } = x;
+      if (byCik.has(f.cikNum) && byCik.get(f.cikNum)!.form === '8-K') continue;   // already have the release
+      if (a.via === '8-K') {
+        if (a.date < from) continue;                                              // announced before the range
+        byCik.set(f.cikNum, { f, date: a.date, form: '8-K' });
+      } else {
+        byCik.set(f.cikNum, { f, date: f.filed, form: f.form === '10-K' ? '10-K' : '10-Q' });
+      }
+    }
 
     const byDate = new Map<string, DayEntry>();
     for (const d of dates) {
-      byDate.set(d, { date: d, weekend: isWeekend(d), count: 0, tickers: [], eightK: 0, periodic: 0 });
+      byDate.set(d, { date: d, weekend: isWeekend(d), count: 0, tickers: [], entries: [], eightK: 0, periodic: 0 });
     }
     let total = 0;
-    for (const r of results) {
-      if (!r) continue;
-      const entry = byDate.get(r.d)!;
-      const seen = new Set<string>();
-      for (const f of r.list) {
-        const tk = f.ticker || cikMap.get(f.cikNum) || null;
-        if (!tk || seen.has(tk)) continue;
-        seen.add(tk);
-        entry.tickers.push(tk);
-        if (f.form === '8-K' || f.form === '8-K/A') entry.eightK++; else entry.periodic++;
-      }
-      entry.tickers.sort();
-      entry.count = entry.tickers.length;
+    byCik.forEach((ev) => {
+      const entry = byDate.get(ev.date);
+      if (!entry) return;
+      entry.entries.push({ ticker: ev.f.ticker!, company: ev.f.company, form: ev.form, filing_url: ev.f.filing_url });
+    });
+    byDate.forEach((entry) => {
+      entry.entries.sort((a, b) => (a.form === '8-K' ? 0 : 1) - (b.form === '8-K' ? 0 : 1) || a.ticker.localeCompare(b.ticker));
+      entry.tickers = entry.entries.map((e) => e.ticker);
+      entry.eightK = entry.entries.filter((e) => e.form === '8-K').length;
+      entry.periodic = entry.entries.length - entry.eightK;
+      entry.count = entry.entries.length;
       total += entry.count;
-    }
+    });
 
     const payload = {
       from, to, total,

@@ -29,7 +29,7 @@
 
 import { NextResponse } from 'next/server';
 import {
-  earningsFilersOn, companyFacts, cikTickerMap,
+  earningsFilersOn, companyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
   type EdgarFiling,
 } from '@/lib/us-edgar';
@@ -58,7 +58,7 @@ interface PendingFiler {
   form: string;
   filed: string;
   filing_url: string;
-  reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price';
+  reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price' | 'reported-earlier';
 }
 
 interface UsGradedPayload {
@@ -130,25 +130,36 @@ export async function GET(req: Request) {
     // ── 1. gather the filer set ──────────────────────────────────────────
     let filings: EdgarFiling[] = [];
     let windowStart: string | null = null;
+    let reportedEarlier: EdgarFiling[] = [];
 
     if (explicit) {
       // Debug / verification path: grade an explicit ticker list off each
       // company's most recent filing. Used to eyeball the engine against a
       // known source without waiting for a filing day.
       const wanted = explicit.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 25);
-      const byCik = await cikTickerMap();
-      const tickerToCik = new Map<string, number>();
-      byCik.forEach((tk, cik) => { if (!tickerToCik.has(tk)) tickerToCik.set(tk, cik); });
-      filings = wanted
-        .filter((t) => tickerToCik.has(t))
-        .map((t) => ({
-          cik: String(tickerToCik.get(t)).padStart(10, '0'),
-          cikNum: tickerToCik.get(t)!,
-          ticker: t, company: t, form: '10-Q', items: [],
-          accession: '', filed: date, period: null, sic: null,
-          filing_url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${t}&type=8-K`,
-        }));
-      notes.push('explicit-ticker mode: filing dates are not authoritative');
+      const resolved = await pooled(wanted, 6, async (t) => ({ t, cik: await tickerToCik(t) }));
+      const unresolved: string[] = [];
+      const subs = await pooled(resolved.filter((r) => r?.cik), 5, async (r) => ({ r, s: await submissions(r!.cik!) }));
+      for (const r of resolved) if (r && !r.cik) unresolved.push(r.t);
+      for (const x of subs) {
+        if (!x?.r?.cik) continue;
+        // Use the company's most recent earnings 8-K as the event so the
+        // reaction window is real, not today's date.
+        let filed = date;
+        const last202 = x.s?.recent.find((f) => f.form === '8-K' && f.items.includes('2.02'));
+        if (last202?.filingDate) filed = last202.filingDate;
+        filings.push({
+          cik: String(x.r.cik).padStart(10, '0'), cikNum: x.r.cik!,
+          ticker: x.r.t, company: x.s?.name || x.r.t, form: last202 ? '8-K' : '10-Q',
+          items: last202?.items || [], accession: last202?.accession || '',
+          filed, period: null, sic: x.s?.sic || null,
+          filing_url: last202
+            ? `https://www.sec.gov/Archives/edgar/data/${x.r.cik}/${last202.accession.replace(/-/g, '')}/${last202.accession}-index.htm`
+            : `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${x.r.t}&type=8-K`,
+        });
+      }
+      if (unresolved.length) notes.push(`unresolved tickers (no SEC match): ${unresolved.join(', ')}`);
+      notes.push('explicit-ticker mode: each name is graded off its most recent earnings 8-K');
     } else {
       const dates: string[] = [];
       for (let i = 0; i < days; i++) {
@@ -161,10 +172,33 @@ export async function GET(req: Request) {
       for (const list of perDay) {
         for (const f of (list || [])) {
           const prev = byCik.get(f.cikNum);
-          if (!prev || f.filed > prev.filed) byCik.set(f.cikNum, f);
+          // An 8-K in the window beats a 10-Q in the window for the same company.
+          if (!prev) { byCik.set(f.cikNum, f); continue; }
+          const prevIs8K = prev.form === '8-K', curIs8K = f.form === '8-K';
+          if (curIs8K && !prevIs8K) byCik.set(f.cikNum, f);
+          else if (curIs8K === prevIs8K && f.filed > prev.filed) byCik.set(f.cikNum, f);
         }
       }
       filings = Array.from(byCik.values());
+
+      // A 10-Q/10-K is usually NOT the announcement — the press release (8-K
+      // Item 2.02) came days or weeks earlier. HD, CSCO and KEYS were showing
+      // up 1–3 weeks after the market had traded their prints because their
+      // 10-Q landed in the window. Re-date each periodic filer to its real
+      // announcement; if that falls before the window, it was reported earlier
+      // and is listed as such rather than graded as fresh.
+      const periodic = filings.filter((f) => f.form !== '8-K');
+      const redated = await pooled(periodic, 5, async (f) => ({ f, a: await announcementDateFor(f.cikNum, f.filed) }));
+      const dropEarlier = new Set<number>();
+      for (const x of redated) {
+        if (!x) continue;
+        if (x.a.via === '8-K') {
+          if (x.a.date < windowStart!) { dropEarlier.add(x.f.cikNum); x.f.filed = x.a.date; }
+          else { x.f.filed = x.a.date; x.f.form = '8-K'; x.f.items = ['2.02']; }
+        }
+      }
+      reportedEarlier = filings.filter((f) => dropEarlier.has(f.cikNum));
+      filings = filings.filter((f) => !dropEarlier.has(f.cikNum));
     }
 
     const rawTotal = filings.length;
@@ -192,6 +226,7 @@ export async function GET(req: Request) {
         filed: f.filed, filing_url: f.filing_url, reason,
       });
     };
+    for (const f of reportedEarlier) addPending(f, 'reported-earlier');
 
     const withPrice: Array<{ f: EdgarFiling; t: UsTechnicals }> = [];
     let noPrice = 0;
@@ -223,7 +258,15 @@ export async function GET(req: Request) {
       if (daysBetween(f.filed, fund.q_end) > MAX_QUARTER_LAG_DAYS) {
         pendingXbrl++; addPending(f, 'quarter-stale'); continue;
       }
-      prepared.push({ f, t, shares: sharesOutstandingFromFacts(fx), fundamentals: fund });
+      // Already-public guard. If the quarter's figures reached EDGAR more than
+      // 7 days BEFORE the filing we are crediting, this filing is not the
+      // announcement. AIN's 1 Sep 8-K carried an Item 2.02 header for a
+      // strategic-review update; its Q2 numbers had been on EDGAR since the
+      // 4 Aug 10-Q, and the market had traded the print four weeks earlier.
+      if (!explicit && fund.q_filed && daysBetween(f.filed, fund.q_filed) > 7) {
+        addPending(f, 'reported-earlier'); continue;
+      }
+      prepared.push({ f, t, shares: sharesOutstandingFromFacts(fx, fund.q_end), fundamentals: fund });
     }
 
     // ── 4. cohort RS, then grade ─────────────────────────────────────────
@@ -272,6 +315,8 @@ export async function GET(req: Request) {
     if (pendingXbrl > 0) {
       notes.push(`${pendingXbrl} filer${pendingXbrl > 1 ? 's' : ''} announced but XBRL not yet posted (the 10-Q usually follows the 8-K by days to weeks)`);
     }
+    const earlierN = pending.filter((p) => p.reason === 'reported-earlier').length;
+    if (earlierN > 0) notes.push(`${earlierN} filing(s) in the window were 10-Qs or follow-up 8-Ks for results already announced before the window — not re-graded as fresh`);
     if (noPrice > 0) {
       // Name the actual upstream failure. Without this, a Yahoo-side block from
       // the deploy host is indistinguishable from "these are all OTC tickers",
