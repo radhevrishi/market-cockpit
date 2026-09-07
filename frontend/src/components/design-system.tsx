@@ -284,6 +284,8 @@ const DEFAULT_PAGES: CommandItem[] = [
   { label: 'Critical Themes',      url: '/critical-themes' },
   { label: 'Earnings Hub',         url: '/earnings-hub' },
   { label: 'Earnings Opportunities', url: '/earnings-opportunities' },
+  { label: 'US Earnings Opportunities', url: '/us-earnings-opportunities', keywords: 'us usa america nyse nasdaq sec edgar' },
+  { label: 'US Conviction Beats', url: '/us-conviction-beats', keywords: 'us usa america nyse nasdaq bench conviction' },
   { label: 'Earnings Calendar',    url: '/calendars' },
   { label: 'Earnings Analysis',    url: '/earnings-analysis' },
   { label: 'Earnings Trigger',     url: '/earnings-trigger' },

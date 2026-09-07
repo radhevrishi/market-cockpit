@@ -60,6 +60,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/earnings-hub',           label: 'Earnings Hub',           icon: <LineChart className="w-4 h-4" /> },
       { href: '/earnings-opportunities', label: 'Earnings Opportunities', icon: <Star className="w-4 h-4" /> },
+      // US market engine — same grading, fed by SEC EDGAR instead of NSE/Screener.
+      { href: '/us-earnings-opportunities', label: 'US Earnings Opportunities', icon: <Globe className="w-4 h-4" /> },
+      { href: '/us-conviction-beats',       label: 'US Conviction Beats',       icon: <Globe className="w-4 h-4" /> },
       { href: '/earnings',               label: 'Earnings Scan',          icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/earnings-analysis',      label: 'Earnings Analysis (AI)', icon: <Microscope className="w-4 h-4" /> },
       { href: '/earnings-guidance',      label: 'Earnings Guidance',      icon: <LineChart className="w-4 h-4" /> },
