@@ -77,6 +77,17 @@ export interface UsConvictionEntry {
   pead_score?: number | null;
   multibagger_setup?: boolean;
   is_financial?: boolean;
+  /** Graded on street-basis EPS + consensus + reaction before the 10-Q posted;
+   *  flips false (and revenue/margins/cash fill in) when the full grade lands. */
+  prelim?: boolean;
+  eps_estimate?: number | null;
+  eps_adj?: number | null;
+  eps_surprise_pct?: number | null;
+  eps_basis?: string | null;
+  guidance?: 'RAISED' | 'MAINTAINED' | 'LOWERED' | 'PROVIDED' | 'WITHDRAWN' | null;
+  guidance_score?: number | null;
+  guidance_snippets?: string[] | null;
+  guidance_url?: string | null;
   caveat_tags?: string[];
   methodology_tags?: string[];
   narrative?: string;
@@ -256,7 +267,11 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
           if ((cur as any)[k] == null && (e as any)[k] != null) patch[k] = (e as any)[k];
         }
         // Price-derived fields must REFRESH, not merely fill — they move daily.
-        for (const k of ['price', 'move_pct', 'pead_score', 'rs_rating', 'stage', 'pct_from_52w_high', 'pe', 'market_cap_musd', 'close_30d']) {
+        for (const k of ['price', 'move_pct', 'pead_score', 'rs_rating', 'stage', 'pct_from_52w_high', 'pe', 'market_cap_musd', 'close_30d',
+          // a PRELIM entry must be fully overwritten by the GAAP grade of the same filing
+          'prelim', 'tier', 'composite_score', 'sales_yoy_pct', 'net_profit_yoy_pct', 'eps_yoy_pct', 'eps_curr', 'eps_prev', 'eps_basis',
+          'opm_pct', 'opm_prev_pct', 'cfo_to_pat_ratio', 'caveat_tags', 'methodology_tags', 'narrative', 'quarters_revenue', 'quarters_eps', 'quarters_opm',
+          'guidance', 'guidance_score', 'guidance_snippets', 'guidance_url', 'eps_adj', 'eps_estimate', 'eps_surprise_pct']) {
           if ((e as any)[k] != null && (e as any)[k] !== (cur as any)[k]) patch[k] = (e as any)[k];
         }
         if (Object.keys(patch).length) { map[ticker] = { ...cur, ...patch }; count++; }
@@ -416,6 +431,9 @@ export function usVerdict(e: UsConvictionEntry): { score: number; verdictLabel: 
   const c = e.cfo_to_pat_ratio;
   if (!e.is_financial && c != null) { score += c >= 1 ? 8 : c >= 0.7 ? 4 : c >= 0.5 ? 0 : -12; if (c < 0.5) reasons.push('earnings not cash-backed'); }
   if (e.tier === 'BLOCKBUSTER') score += 6;
+  if (e.guidance === 'RAISED') { score += 8; reasons.push('guidance raised'); }
+  else if (e.guidance === 'LOWERED' || e.guidance === 'WITHDRAWN') { score -= 12; reasons.push('guidance cut'); }
+  if (e.eps_surprise_pct != null) { score += e.eps_surprise_pct >= 10 ? 5 : e.eps_surprise_pct >= 0 ? 2 : e.eps_surprise_pct <= -10 ? -8 : -3; }
   if (e.pead_score != null) score += e.pead_score >= 75 ? 6 : e.pead_score >= 60 ? 3 : e.pead_score >= 40 ? 0 : -4;
   if (e.stage === 4) { score -= 12; reasons.push('stage 4 downtrend'); }
   if ((e.caveat_tags || []).includes('ocf divergence')) reasons.push('CFO/PAT divergence');

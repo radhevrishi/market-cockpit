@@ -62,8 +62,11 @@ async function yahooChart(symbol: string, range = '1y'): Promise<Bars | null> {
   const hit = _bars.get(key);
   if (hit && Date.now() - hit.at < (hit.data ? BARS_TTL_MS : BARS_FAIL_TTL_MS)) return hit.data;
 
-  const hosts = ['query1', 'query2'];
-  let lastErr = 'unknown';
+  // Escape hatch so the fallback path can actually be exercised: set
+  // MC_US_PRICE_SOURCE=nasdaq to skip Yahoo entirely. A fallback nobody has
+  // ever run is not a fallback.
+  const hosts = process.env.MC_US_PRICE_SOURCE === 'nasdaq' ? [] : ['query1', 'query2'];
+  let lastErr = process.env.MC_US_PRICE_SOURCE === 'nasdaq' ? 'yahoo skipped by env' : 'unknown';
   for (const host of hosts) {
     try {
       const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
@@ -104,9 +107,78 @@ async function yahooChart(symbol: string, range = '1y'): Promise<Bars | null> {
       lastErr = `${host} ${String(e?.name === 'TimeoutError' ? 'timeout' : (e?.message || e)).slice(0, 60)}`;
     }
   }
+
+  // Yahoo refused or timed out — fall back to Nasdaq before giving up.
+  // A single upstream deciding it dislikes the deploy host must not be able to
+  // blank the entire page, which is precisely what happened on the first
+  // production run: 113 of 124 filers came back with no price, so nothing
+  // could be graded even though EDGAR had delivered every filing correctly.
+  const nd = await nasdaqChart(symbol);
+  if (nd) {
+    _bars.set(key, { at: Date.now(), data: nd });
+    yahooLastError.set(symbol, `${lastErr} → served by nasdaq fallback`);
+    return nd;
+  }
+
   _bars.set(key, { at: Date.now(), data: null });
   yahooLastError.set(symbol, lastErr);
   return null;
+}
+
+/** Fallback daily OHLCV from Nasdaq. Same `Bars` shape as the Yahoo path. */
+async function nasdaqChart(symbol: string, lookbackDays = 400): Promise<Bars | null> {
+  try {
+    const to = new Date();
+    const from = new Date(to.getTime() - lookbackDays * 86400_000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/chart`
+      + `?assetclass=stocks&fromdate=${iso(from)}&todate=${iso(to)}`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': BROWSER_UA, 'Accept': 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!res.ok) return null;
+    const j: any = await res.json();
+    const pts: any[] = j?.data?.chart || [];
+    if (!pts.length) return null;
+
+    const num = (v: any) => {
+      const n = parseFloat(String(v ?? '').replace(/,/g, ''));
+      return Number.isFinite(n) ? n : null;
+    };
+    // Nasdaq dates come as M/D/YYYY strings.
+    const toIso = (s: string): string | null => {
+      const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim());
+      if (!m) return null;
+      return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+    };
+
+    const rows: Array<{ d: string; o: number; h: number; l: number; c: number; v: number }> = [];
+    for (const p of pts) {
+      const z = p?.z || {};
+      const d = toIso(z.dateTime);
+      const c = num(z.close ?? p.y);
+      if (!d || c == null) continue;
+      rows.push({
+        d, c,
+        o: num(z.open) ?? c, h: num(z.high) ?? c, l: num(z.low) ?? c,
+        v: num(z.volume) ?? 0,
+      });
+    }
+    if (!rows.length) return null;
+    rows.sort((a, b) => a.d.localeCompare(b.d));
+    return {
+      symbol,
+      price: rows[rows.length - 1].c,
+      dates: rows.map((r) => r.d),
+      open: rows.map((r) => r.o),
+      high: rows.map((r) => r.h),
+      low: rows.map((r) => r.l),
+      close: rows.map((r) => r.c),
+      volume: rows.map((r) => r.v),
+    };
+  } catch { return null; }
 }
 
 export interface UsTechnicals {
@@ -259,6 +331,57 @@ export async function spyReturn12m(): Promise<number | null> {
   }
   _spy = { at: Date.now(), ret };
   return ret;
+}
+
+// ─── Yahoo earnings history: actual vs consensus EPS, adjusted basis ─────────
+// quoteSummary needs a cookie + crumb handshake; the chart API does not. This is
+// the surprise source because it matched EarningsHub's actual adjusted EPS 16/16
+// in a live cross-check, where Nasdaq's surprise table returned the GAAP figure
+// for AVGO / IOT / PATH and something else entirely for ZS and DOCU.
+export interface EpsHistoryRow { quarter: string | null; eps_estimate: number | null; eps_actual: number | null; surprise_pct: number | null; }
+let _crumb: { at: number; cookie: string; crumb: string } | null = null;
+async function yahooCrumb(): Promise<{ cookie: string; crumb: string } | null> {
+  if (_crumb && Date.now() - _crumb.at < 50 * 60_000) return _crumb;
+  try {
+    const r1 = await fetch('https://fc.yahoo.com/', { headers: { 'User-Agent': BROWSER_UA }, redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(9000) });
+    const raw = (r1.headers as any).getSetCookie ? (r1.headers as any).getSetCookie() as string[] : [r1.headers.get('set-cookie') || ''];
+    const cookie = raw.map((c) => c.split(';')[0]).filter(Boolean).join('; ');
+    if (!cookie) return null;
+    const r2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', { headers: { 'User-Agent': BROWSER_UA, 'Cookie': cookie }, cache: 'no-store', signal: AbortSignal.timeout(9000) });
+    if (!r2.ok) return null;
+    const crumb = (await r2.text()).trim();
+    if (!crumb || crumb.includes('<')) return null;
+    _crumb = { at: Date.now(), cookie, crumb };
+    return _crumb;
+  } catch { return null; }
+}
+const _eh = new Map<string, { at: number; data: EpsHistoryRow[] }>();
+export async function yahooEarningsHistory(ticker: string): Promise<EpsHistoryRow[]> {
+  const t = ticker.toUpperCase();
+  const hit = _eh.get(t);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.data;
+  let out: EpsHistoryRow[] = [];
+  try {
+    const c = await yahooCrumb();
+    if (c) {
+      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=earningsHistory&crumb=${encodeURIComponent(c.crumb)}`;
+      const res = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, 'Cookie': c.cookie }, cache: 'no-store', signal: AbortSignal.timeout(9000) });
+      if (res.ok) {
+        const j: any = await res.json();
+        const hist: any[] = j?.quoteSummary?.result?.[0]?.earningsHistory?.history || [];
+        out = hist.map((h) => ({
+          quarter: h?.quarter?.fmt ?? null,
+          eps_estimate: typeof h?.epsEstimate?.raw === 'number' ? h.epsEstimate.raw : null,
+          eps_actual: typeof h?.epsActual?.raw === 'number' ? h.epsActual.raw : null,
+          surprise_pct: typeof h?.surprisePercent?.raw === 'number' ? Math.round(h.surprisePercent.raw * 1000) / 10 : null,
+        }));
+      } else if (res.status === 401) { _crumb = null; }
+    }
+  } catch { out = []; }
+  if (_eh.size > 2000) { const oldest = Array.from(_eh.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 400); for (const [k] of oldest) _eh.delete(k); }
+  // Cache failures briefly only.
+  _eh.set(t, { at: out.length ? Date.now() : Date.now() - 6 * 3600_000 + 60_000, data: out });
+  return out;
 }
 
 /** Small concurrency-limited map — keeps us polite to both Yahoo and SEC. */

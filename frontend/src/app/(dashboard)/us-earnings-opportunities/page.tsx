@@ -42,15 +42,21 @@ interface UsPayload {
   no_price_total: number;
   by_tier: Record<EarningsTier, UsGradedRow[]>;
   pending?: PendingFiler[];
+  scheduled?: Expected[];
   generated_at: string;
   truncated: boolean;
   notes: string[];
 }
 
 interface CalendarTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string; }
+interface Expected {
+  ticker: string; company: string; time: 'pre-market' | 'after-hours' | 'unknown';
+  market_cap_musd: number | null; fiscal_quarter: string | null;
+  eps_estimate: number | null; estimates_n: number | null; eps_last_year: number | null;
+}
 interface CalendarDay {
-  date: string; weekend: boolean; count: number;
-  tickers: string[]; entries?: CalendarTicker[]; eightK: number; periodic: number;
+  date: string; weekend: boolean; future?: boolean; count: number;
+  tickers: string[]; entries?: CalendarTicker[]; expected?: Expected[]; eightK: number; periodic: number;
 }
 interface CalendarPayload {
   from: string; to: string; total: number; days: CalendarDay[]; generated_at: string;
@@ -199,6 +205,11 @@ export default function UsEarningsOpportunitiesPage() {
           is_elite: c.is_elite, pead_score: c.pead_score, multibagger_setup: c.multibagger_setup,
           is_financial: (c as any).is_financial,
           caveat_tags: c.caveat_tags, methodology_tags: c.methodology_tags, narrative: c.narrative,
+          prelim: !!(c as any).prelim, eps_estimate: (c as any).eps_estimate ?? null,
+          eps_adj: (c as any).eps_adj ?? null,
+          guidance: (c as any).guidance ?? null, guidance_score: (c as any).guidance_score ?? null,
+          guidance_snippets: (c as any).guidance_snippets ?? null, guidance_url: (c as any).guidance_url ?? null,
+          eps_surprise_pct: (c as any).eps_surprise_pct ?? null, eps_basis: (c as any).eps_basis ?? null,
           source_url: c.filing_url,
         });
       }
@@ -206,12 +217,19 @@ export default function UsEarningsOpportunitiesPage() {
     if (entries.length) syncUsConviction(entries);
   }, [data]);
 
-  // Calendar sweep — EDGAR index only (no XBRL, no prices), so it is cheap and
-  // only fetched when the calendar tab is actually open.
-  const calTo = date;
+  // Calendar sweep — EDGAR index for the past, Nasdaq schedule for today and
+  // ahead. Cheap (no XBRL, no prices) and only fetched when the tab is open.
+  // The range runs `calDays` back from the selected date and up to 14 days
+  // forward so upcoming reporters are always in view.
   const calFrom = useMemo(
     () => new Date(Date.parse(date + 'T00:00:00Z') - (calDays - 1) * 86400000).toISOString().slice(0, 10),
     [date, calDays]);
+  const calTo = useMemo(() => {
+    const ahead = calDays === 1 ? 0 : 14;
+    const t = new Date(Date.parse(date + 'T00:00:00Z') + ahead * 86400000).toISOString().slice(0, 10);
+    const cap = new Date(Date.parse(today + 'T00:00:00Z') + 45 * 86400000).toISOString().slice(0, 10);
+    return t > cap ? cap : t;
+  }, [date, calDays, today]);
   const { data: cal, isFetching: calFetching } = useQuery<CalendarPayload>({
     queryKey: ['calendar-us', calFrom, calTo],
     queryFn: async () => {
@@ -307,7 +325,11 @@ export default function UsEarningsOpportunitiesPage() {
   const shiftDate = (n: number) => {
     const d = new Date(Date.parse(date + 'T00:00:00Z') + n * 86400000);
     const iso = d.toISOString().slice(0, 10);
-    setDate(iso > today ? today : iso);
+    // The calendar may look ahead (Nasdaq schedule); grading never goes past today.
+    const cap = viewMode === 'CALENDAR'
+      ? new Date(Date.parse(today + 'T00:00:00Z') + 45 * 86400000).toISOString().slice(0, 10)
+      : today;
+    setDate(iso > cap ? cap : iso);
   };
 
   return (
@@ -452,6 +474,34 @@ export default function UsEarningsOpportunitiesPage() {
         </div>
       )}
 
+      {/* ── scheduled today, not yet filed (India's "results pending" flow) ── */}
+      {viewMode === 'GRADED' && data && (data.scheduled?.length ?? 0) > 0 && (
+        <div style={{
+          marginBottom: 16, borderRadius: 'var(--mc-radius)', padding: '12px 14px',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '4px solid #8B5CF6',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            <span style={{ fontWeight: 800, color: 'var(--mc-text-0)' }}>🗓 SCHEDULED {date === today ? 'TODAY' : date} · RESULTS PENDING</span>
+            <span style={{ fontWeight: 800, fontSize: 'var(--mc-text-xs)', padding: '2px 8px', borderRadius: 999, backgroundColor: 'color-mix(in srgb, #8B5CF6 14%, transparent)', color: '#8B5CF6' }}>{data.scheduled!.length}</span>
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
+              expected to report (Nasdaq schedule) but no 8-K on EDGAR yet — each moves into a tier as it files
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {data.scheduled!.slice(0, 80).map((e) => (
+              <span key={e.ticker}
+                title={`${e.company}${e.market_cap_musd ? ` · ${fmtUsd(e.market_cap_musd)}` : ''}${e.eps_estimate != null ? ` · consensus EPS $${e.eps_estimate.toFixed(2)}${e.estimates_n ? ` (${e.estimates_n} est.)` : ''}` : ''}${e.eps_last_year != null ? ` · last year $${e.eps_last_year.toFixed(2)}` : ''}`}
+                style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6, border: '1px dashed #8B5CF6', color: 'var(--mc-text-2)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                {e.ticker}
+                <span style={{ fontSize: 9, color: '#8B5CF6' }}>{e.time === 'pre-market' ? '☀ pre' : e.time === 'after-hours' ? '🌙 post' : ''}</span>
+                {e.market_cap_musd != null && <span style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>{fmtUsd(e.market_cap_musd)}</span>}
+              </span>
+            ))}
+            {data.scheduled!.length > 80 && <span style={{ fontSize: 10, color: 'var(--mc-text-4)', alignSelf: 'center' }}>+{data.scheduled!.length - 80} more — see Calendar</span>}
+          </div>
+        </div>
+      )}
+
       {/* ── announced but not yet gradeable ── */}
       {viewMode === 'GRADED' && data && (data.pending?.length ?? 0) > 0 && (
         <div style={{
@@ -522,7 +572,7 @@ export default function UsEarningsOpportunitiesPage() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
             <button onClick={() => shiftDate(-calDays)} style={btn()} title={`Back ${calDays} days`}>⇤ {calDays}d</button>
             <button onClick={() => shiftDate(-1)} style={btn()} title="Back one day">←</button>
-            <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)}
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
               style={{ ...btn(), padding: '6px 10px', colorScheme: 'light dark' }} />
             <button onClick={() => shiftDate(1)} style={btn()} title="Forward one day">→</button>
             <button onClick={() => shiftDate(calDays)} style={btn()} title={`Forward ${calDays} days`}>{calDays}d ⇥</button>
@@ -572,44 +622,64 @@ export default function UsEarningsOpportunitiesPage() {
                 const isSel = d.date === date;
                 const entries: CalendarTicker[] = d.entries
                   || d.tickers.map((t) => ({ ticker: t, company: t, form: '8-K' as const, filing_url: '' }));
+                const expected: Expected[] = d.expected || [];
                 const shown = calSearch ? entries.filter((e) => e.ticker.includes(calSearch)) : entries;
+                const shownExp = calSearch ? expected.filter((e) => e.ticker.includes(calSearch)) : expected;
                 const open = !!openDays[d.date] || !!calSearch || calDays === 1;
                 const LIMIT = 30;
                 const visible = open ? shown : shown.slice(0, LIMIT);
                 const hidden = shown.length - visible.length;
+                const visibleExp = open ? shownExp : shownExp.slice(0, LIMIT);
+                const hiddenExp = shownExp.length - visibleExp.length;
+                const isFuture = !!d.future;
+                const isToday = d.date === today;
+                const accent = isFuture ? '#8B5CF6' : 'var(--mc-cyan)';
                 return (
                   <div key={d.date} style={{
                     padding: '10px 12px', borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)',
                     border: `1px solid ${isSel ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
-                    borderLeft: `4px solid ${d.count ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                    borderLeft: `4px solid ${d.count ? accent : 'var(--mc-bg-4)'}`,
+                    opacity: isFuture ? 0.95 : 1,
                   }}>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: shown.length ? 8 : 0 }}>
-                      <span style={{ minWidth: 110, color: isSel ? 'var(--mc-cyan)' : 'var(--mc-text-0)', fontWeight: 800, fontSize: 'var(--mc-text-sm)' }}>{label}</span>
-                      <span style={{
-                        fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
-                        backgroundColor: d.count ? 'color-mix(in srgb, var(--mc-cyan) 12%, transparent)' : 'var(--mc-bg-3)',
-                        color: d.count ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
-                      }}>{d.count ? `📋 ${d.count} reported` : (d.weekend ? 'weekend' : 'no filings')}</span>
-                      {d.count > 0 && (
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: (shown.length || shownExp.length) ? 8 : 0 }}>
+                      <span style={{ minWidth: 110, color: isSel ? 'var(--mc-cyan)' : 'var(--mc-text-0)', fontWeight: 800, fontSize: 'var(--mc-text-sm)' }}>
+                        {label}{isToday ? ' · today' : ''}
+                      </span>
+                      {shown.length > 0 && (
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 12%, transparent)', color: 'var(--mc-cyan)' }}>
+                          📋 {shown.length} reported
+                        </span>
+                      )}
+                      {shownExp.length > 0 && (
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', backgroundColor: 'color-mix(in srgb, #8B5CF6 12%, transparent)', color: '#8B5CF6' }}>
+                          🗓 {shownExp.length} {isFuture ? 'scheduled' : 'still to report'}
+                        </span>
+                      )}
+                      {!shown.length && !shownExp.length && (
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-4)' }}>
+                          {d.weekend ? 'weekend' : isFuture ? 'nothing scheduled yet' : 'no filings'}
+                        </span>
+                      )}
+                      {shown.length > 0 && (
                         <span style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap' }}>
                           {d.eightK} press release{d.eightK === 1 ? '' : 's'}{d.periodic ? ` · ${d.periodic} 10-Q only` : ''}
                         </span>
                       )}
                       <span style={{ flex: 1 }} />
-                      {d.count > 0 && (
+                      {shown.length > 0 && (
                         <button onClick={() => { setDate(d.date); setDays(1); setViewMode('GRADED'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                           style={btn(false, '#F59E0B')} title="Grade every company that reported this day">
                           ⭐ Grade this day →
                         </button>
                       )}
-                      {shown.length > LIMIT && (
+                      {(shown.length > LIMIT || shownExp.length > LIMIT) && (
                         <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: !o[d.date] }))} style={btn(open)}>
-                          {open ? '▴ Collapse' : `▾ Show all ${shown.length}`}
+                          {open ? '▴ Collapse' : `▾ Show all ${shown.length + shownExp.length}`}
                         </button>
                       )}
                     </div>
                     {shown.length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: shownExp.length ? 6 : 0 }}>
                         {visible.map((e) => (
                           <a key={e.ticker} href={e.filing_url || undefined} target="_blank" rel="noreferrer"
                             title={`${e.company} · ${e.form}${e.filing_url ? ' · open SEC filing' : ''}`}
@@ -625,9 +695,30 @@ export default function UsEarningsOpportunitiesPage() {
                           </a>
                         ))}
                         {hidden > 0 && (
-                          <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: true }))}
-                            style={{ ...btn(), fontSize: 11, padding: '3px 8px' }}>
+                          <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: true }))} style={{ ...btn(), fontSize: 11, padding: '3px 8px' }}>
                             +{hidden} more ▾
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {shownExp.length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {visibleExp.map((e) => (
+                          <span key={e.ticker}
+                            title={`${e.company}${e.market_cap_musd ? ` · ${fmtUsd(e.market_cap_musd)}` : ''}${e.fiscal_quarter ? ` · quarter ending ${e.fiscal_quarter}` : ''}${e.eps_estimate != null ? ` · consensus EPS $${e.eps_estimate.toFixed(2)}${e.estimates_n ? ` (${e.estimates_n} est.)` : ''}` : ''}${e.eps_last_year != null ? ` · last year $${e.eps_last_year.toFixed(2)}` : ''}`}
+                            style={{
+                              fontSize: 11, fontWeight: 700, padding: '3px 7px', borderRadius: 5,
+                              border: '1px dashed #8B5CF6', color: 'var(--mc-text-2)', backgroundColor: 'transparent',
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                            }}>
+                            {e.ticker}
+                            <span style={{ fontSize: 9, color: '#8B5CF6' }}>{e.time === 'pre-market' ? '☀ pre' : e.time === 'after-hours' ? '🌙 post' : ''}</span>
+                            {e.eps_estimate != null && <span style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>est ${e.eps_estimate.toFixed(2)}</span>}
+                          </span>
+                        ))}
+                        {hiddenExp > 0 && (
+                          <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: true }))} style={{ ...btn(), fontSize: 11, padding: '3px 8px' }}>
+                            +{hiddenExp} more ▾
                           </button>
                         )}
                       </div>
@@ -697,8 +788,11 @@ export default function UsEarningsOpportunitiesPage() {
         up. Operating margin uses GAAP <code>OperatingIncomeLoss</code>, which is why it can differ from a
         screener&apos;s &quot;normalized&quot; operating income. Market cap is SEC cover-page shares × last
         price. RS is a cohort percentile blended with performance versus SPY — it is our construction, not
-        an IBD rating. Analyst-consensus &quot;beat vs estimate&quot; is not available free, so the grade is
-        built on absolute growth, margins, cash conversion and the market&apos;s own reaction.
+        an IBD rating. <b>Consensus</b> comes from Nasdaq&apos;s free earnings calendar: each card shows actual EPS
+        against the analyst estimate and the surprise. A name that has reported but whose 10-Q hasn&apos;t
+        reached EDGAR yet gets a <b>PRELIM</b> grade on adjusted (street-basis) EPS, consensus and the price
+        reaction; the full GAAP grade replaces it automatically when the filing posts. Upcoming dates in the
+        calendar are Nasdaq&apos;s schedule and update as companies confirm.
       </div>
       <style>{'@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}'}</style>
     </div>
@@ -754,9 +848,18 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
       </div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0 9px' }}>
+        {(r as any).prelim && <Chip text="PRELIM · GAAP pending" color="#8B5CF6" />}
         <Chip text={r.quarter} />
         {r.sector && <Chip text={r.sector} />}
-        <Chip text={fmtUsd(r.market_cap_musd)} />
+        {r.market_cap_musd != null && <Chip text={fmtUsd(r.market_cap_musd)} />}
+        {(r as any).eps_surprise_pct != null && (
+          <Chip text={`vs est ${(r as any).eps_surprise_pct >= 0 ? '+' : ''}${Number((r as any).eps_surprise_pct).toFixed(0)}%`}
+            color={(r as any).eps_surprise_pct >= 5 ? '#10B981' : (r as any).eps_surprise_pct <= -5 ? '#EF4444' : undefined} />
+        )}
+        {(r as any).guidance && (
+          <Chip text={`📣 Guidance ${String((r as any).guidance).toLowerCase()}`}
+            color={(r as any).guidance === 'RAISED' ? '#10B981' : (r as any).guidance === 'LOWERED' || (r as any).guidance === 'WITHDRAWN' ? '#EF4444' : (r as any).guidance === 'MAINTAINED' ? '#FACC15' : undefined} />
+        )}
         {r.is_elite && <Chip text="⭐ ELITE" color="#F59E0B" />}
         {r.multibagger_setup && <Chip text="💎 MULTIBAGGER" color="#8B5CF6" />}
         {(r.pead_score ?? 0) >= 70 && <Chip text={`🔥 PEAD ${r.pead_score}`} color="#EF4444" />}
@@ -765,8 +868,12 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
         <Tile label="REVENUE" value={fmtPct(r.sales_yoy_pct)} color={growthColor(r.sales_yoy_pct)}
           sub={`${fmtUsd(r.revenue_prev_musd)} → ${fmtUsd(r.revenue_curr_musd)}`} />
-        <Tile label="EPS" value={fmtPct(r.eps_yoy_pct)} color={growthColor(r.eps_yoy_pct)}
-          sub={r.eps_prev != null && r.eps_curr != null ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}` : r.eps_curr == null ? 'EPS not tagged' : 'n/m — negative base'} />
+        <Tile label={(r as any).eps_basis ? 'ADJ. EPS' : 'EPS'} value={fmtPct(r.eps_yoy_pct)} color={growthColor(r.eps_yoy_pct)}
+          sub={r.eps_prev != null && r.eps_curr != null
+            ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}${(r as any).eps_estimate != null ? ` · est $${Number((r as any).eps_estimate).toFixed(2)}` : ''}`
+            : r.eps_curr == null ? 'EPS not tagged'
+            : (r as any).eps_estimate != null ? `$${r.eps_curr.toFixed(2)} vs est $${Number((r as any).eps_estimate).toFixed(2)}`
+            : 'n/m — negative base'} />
         <Tile label="OPM" value={r.opm_pct != null ? `${r.opm_pct.toFixed(1)}%` : '—'}
           color={opmD == null ? undefined : opmD >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
           sub={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp YoY` : 'no prior margin'} />
@@ -787,6 +894,21 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
       <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginTop: 9, lineHeight: 1.5 }}>
         {r.narrative}
       </div>
+      {Array.isArray((r as any).guidance_snippets) && (r as any).guidance_snippets.length > 0 && (
+        <details style={{ marginTop: 7 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>
+            📣 GUIDANCE · from the press release{(r as any).guidance_url ? '' : ''}
+          </summary>
+          <div style={{ marginTop: 5, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(r as any).guidance_snippets.map((q: string, i: number) => (
+              <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.45, borderLeft: '2px solid var(--mc-bg-4)', paddingLeft: 8 }}>“{q}”</div>
+            ))}
+            {(r as any).guidance_url && (
+              <a href={(r as any).guidance_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>read the release ↗</a>
+            )}
+          </div>
+        </details>
+      )}
 
       {(r.methodology_tags.length > 0 || r.caveat_tags.length > 0) && (
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 8 }}>

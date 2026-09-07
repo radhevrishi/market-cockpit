@@ -25,6 +25,7 @@
 import { NextResponse } from 'next/server';
 import { earningsFilersOn, announcementDateFor, type EdgarFiling } from '@/lib/us-edgar';
 import { pooled } from '@/lib/us-prices';
+import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -37,9 +38,12 @@ interface DayTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '1
 interface DayEntry {
   date: string;
   weekend: boolean;
+  future: boolean;
   count: number;
   tickers: string[];             // kept for backwards compatibility
-  entries: DayTicker[];
+  entries: DayTicker[];          // ACTUAL filings (EDGAR)
+  expected: ExpectedReporter[];  // SCHEDULED reporters (Nasdaq) — the whole list for future dates,
+                                 // the not-yet-filed remainder for today, empty for the past
   eightK: number;
   periodic: number;
 }
@@ -56,7 +60,9 @@ export async function GET(req: Request) {
   let to = (searchParams.get('to') || '').slice(0, 10);
   let from = (searchParams.get('from') || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(to)) to = today;
-  if (to > today) to = today;
+  // Future dates are allowed now (Nasdaq schedule), up to 45 days ahead.
+  const maxFuture = new Date(Date.parse(today + 'T00:00:00Z') + 45 * dayMs).toISOString().slice(0, 10);
+  if (to > maxFuture) to = maxFuture;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
     from = new Date(Date.parse(to + 'T00:00:00Z') - 29 * dayMs).toISOString().slice(0, 10);
   }
@@ -66,7 +72,7 @@ export async function GET(req: Request) {
     from = new Date(Date.parse(to + 'T00:00:00Z') - MAX_DAYS * dayMs).toISOString().slice(0, 10);
   }
 
-  const key = `v2|${from}|${to}`;
+  const key = `v3|${from}|${to}`;
   const hit = _cache.get(key);
   const ttl = to >= today ? 10 * 60_000 : 24 * 3600_000;
   if (hit && Date.now() - hit.at < ttl && searchParams.get('force') !== '1') {
@@ -83,11 +89,19 @@ export async function GET(req: Request) {
       return d === 0 || d === 6;
     };
     const workDates = dates.filter((d) => !isWeekend(d));
+    const pastDates = workDates.filter((d) => d <= today);
+    const scheduleDates = workDates.filter((d) => d >= today);
 
-    const results = await pooled(workDates, 4, async (d) => {
-      try { return { d, list: await earningsFilersOn(d) }; }
-      catch { return { d, list: [] as EdgarFiling[] }; }
-    });
+    const [results, schedules] = await Promise.all([
+      pooled(pastDates, 4, async (d) => {
+        try { return { d, list: await earningsFilersOn(d) }; }
+        catch { return { d, list: [] as EdgarFiling[] }; }
+      }),
+      pooled(scheduleDates, 4, async (d) => {
+        try { return { d, list: await nasdaqEarningsOn(d) }; }
+        catch { return { d, list: [] as ExpectedReporter[] }; }
+      }),
+    ]);
 
     // Collapse to one event per company: the 8-K wins; a 10-Q/10-K is
     // re-dated to its announcement or dropped if that was before the range.
@@ -121,7 +135,7 @@ export async function GET(req: Request) {
 
     const byDate = new Map<string, DayEntry>();
     for (const d of dates) {
-      byDate.set(d, { date: d, weekend: isWeekend(d), count: 0, tickers: [], entries: [], eightK: 0, periodic: 0 });
+      byDate.set(d, { date: d, weekend: isWeekend(d), future: d > today, count: 0, tickers: [], entries: [], expected: [], eightK: 0, periodic: 0 });
     }
     let total = 0;
     byCik.forEach((ev) => {
@@ -129,12 +143,23 @@ export async function GET(req: Request) {
       if (!entry) return;
       entry.entries.push({ ticker: ev.f.ticker!, company: ev.f.company, form: ev.form, filing_url: ev.f.filing_url });
     });
+    // Schedule: whole list for future dates; for today only the ones that
+    // have not filed yet (so the row empties as the day goes on).
+    for (const s of schedules) {
+      if (!s) continue;
+      const entry = byDate.get(s.d);
+      if (!entry) continue;
+      const filed = new Set(entry.entries.map((e) => e.ticker));
+      entry.expected = s.list
+        .filter((r) => !filed.has(r.ticker))
+        .sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0));
+    }
     byDate.forEach((entry) => {
       entry.entries.sort((a, b) => (a.form === '8-K' ? 0 : 1) - (b.form === '8-K' ? 0 : 1) || a.ticker.localeCompare(b.ticker));
       entry.tickers = entry.entries.map((e) => e.ticker);
       entry.eightK = entry.entries.filter((e) => e.form === '8-K').length;
       entry.periodic = entry.entries.length - entry.eightK;
-      entry.count = entry.entries.length;
+      entry.count = entry.entries.length + entry.expected.length;
       total += entry.count;
     });
 

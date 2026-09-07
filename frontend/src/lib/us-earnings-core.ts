@@ -611,6 +611,13 @@ export interface UsGradeInput {
     addv_musd: number | null; vol_ratio_20d: number | null;
   } | null;
   shares_outstanding?: number | null;
+  /** True when the press release RAISED guidance — feeds Path A of the
+   *  BLOCKBUSTER gate exactly as India's guidance-text scan does. */
+  positive_guidance?: boolean;
+  /** PRELIM mode: the street-basis EPS surprise (%) for a print whose XBRL has
+   *  not posted. Stands in for the growth axis so the reaction + surprise can be
+   *  graded now; the full YoY grade replaces it when the 10-Q lands. */
+  prelim_surprise_pct?: number | null;
 }
 
 /** Calendar-quarter label from a period end, e.g. 2026-06-30 → "Q2 CY26". */
@@ -654,8 +661,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const opmPrev = (f.operating_income_prev != null && revP) ? (f.operating_income_prev / revP) * 100 : null;
   const opmExp = (opm != null && opmPrev != null) ? opm - opmPrev : null;
 
+  const prelimS = input.prelim_surprise_pct ?? null;
   const hasFin = salesY != null || patY != null || epsY != null;
-  if (!hasFin) return null;                    // no gradeable quarter → not a candidate
+  if (!hasFin && prelimS == null) return null; // no gradeable quarter → not a candidate
 
   const rs = p?.rs_rating ?? null;
   const stage = p?.stage ?? null;
@@ -671,6 +679,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   if (stage === 2 && rs != null && rs >= 80 && epsY != null && epsY >= 25 && pct52 != null && pct52 >= -15) methodology_tags.push('sepa');
   if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 20 && rs != null && rs >= 70) methodology_tags.push('canslim');
   if (epsY != null && epsY >= 20 && (salesY == null || salesY >= 5)) methodology_tags.push('bonde ep');
+  // Beating the street by ≥5% is a methodology in its own right for a US
+  // print; for a PRELIM row it is the only growth evidence we have.
+  if (prelimS != null && prelimS >= 5) methodology_tags.push('consensus beat');
 
   // Caveats.
   if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push('optical eps');
@@ -702,7 +713,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   if (salesY != null) { magS += scoreYoy(salesY) * 0.35; magW += 0.35; }
   if (patY != null) { magS += scoreYoy(patY) * 0.30; magW += 0.30; }
   if (epsY != null) { magS += scoreYoy(epsY) * 0.35; magW += 0.35; }
-  const magnitude = magW > 0 ? magS / magW : 30;
+  const scoreSurprise = (s: number) =>
+    s >= 30 ? 100 : s >= 15 ? 90 : s >= 8 ? 75 : s >= 3 ? 60 : s >= 0 ? 45 : s >= -5 ? 25 : Math.max(0, 25 + s);
+  const magnitude = magW > 0 ? magS / magW : (prelimS != null ? scoreSurprise(prelimS) : 30);
 
   let quality = 100;
   for (const tag of caveat_tags) quality -= (CAVEAT_PENALTY[tag] ?? CAVEAT_PENALTY_DEFAULT);
@@ -746,7 +759,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     cleanMag, exceptMag, megaMag,
     marginInflection, marginInflectionLoose,
     tier1MethodCount: t1,
-    positiveGuidance: false,      // no free US guidance-text feed; never inflates a tier
+    positiveGuidance: !!input.positive_guidance,   // from the 8-K press release (lib/us-guidance)
     chartOk,
   }).tier;
 

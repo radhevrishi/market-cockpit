@@ -33,7 +33,9 @@ import {
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
   type EdgarFiling,
 } from '@/lib/us-edgar';
-import { usTechnicals, spyReturn12m, pooled, yahooLastError, type UsTechnicals } from '@/lib/us-prices';
+import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, type UsTechnicals, type EpsHistoryRow } from '@/lib/us-prices';
+import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
+import { guidanceFromFiling, type Guidance } from '@/lib/us-guidance';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
@@ -71,6 +73,9 @@ interface UsGradedPayload {
   no_price_total: number;
   by_tier: Record<EarningsTier, UsGradedRow[]>;
   pending: PendingFiler[];
+  /** Names Nasdaq expects to report on `filing_date` that have not filed yet —
+   *  the India "scheduled today · results pending" list. Empties as 8-Ks land. */
+  scheduled: ExpectedReporter[];
   generated_at: string;
   sources_polled: number;
   truncated: boolean;
@@ -92,6 +97,12 @@ const isoAddDays = (iso: string, n: number) =>
   new Date(Date.parse(iso + 'T00:00:00Z') + n * dayMs).toISOString().slice(0, 10);
 const daysBetween = (a: string, b: string) =>
   Math.round((Date.parse(a + 'T00:00:00Z') - Date.parse(b + 'T00:00:00Z')) / dayMs);
+
+function fmtYoy(cur: number, prev: number): string {
+  if (prev <= 0) return 'n/m';
+  const p = ((cur - prev) / Math.abs(prev)) * 100;
+  return `${p >= 0 ? '+' : ''}${Math.round(p)}%`;
+}
 
 function isWeekend(iso: string): boolean {
   const d = new Date(iso + 'T00:00:00Z').getUTCDay();
@@ -244,19 +255,21 @@ export async function GET(req: Request) {
       fundamentals: ReturnType<typeof extractFundamentals>;
     }
     const prepared: Prepared[] = [];
+    const awaitingXbrl: Array<{ f: EdgarFiling; t: UsTechnicals }> = [];   // candidates for a PRELIM grade
     let pendingXbrl = 0;
     for (let i = 0; i < withPrice.length; i++) {
       const fx = facts[i];
       const { f, t } = withPrice[i];
-      if (!fx) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); continue; }
+      if (!fx) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t }); continue; }
       // For a 10-Q/10-K the reported period IS the fiscal period; for an 8-K,
       // `period_ending` is the event date, so let the extractor take the newest.
       const asOf = /^10-/.test(f.form) && f.period ? f.period : null;
       const fund = extractFundamentals(fx, asOf);
-      if (!fund.q_end) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); continue; }
-      // Stale-quarter guard — see header note.
+      if (!fund.q_end) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t }); continue; }
+      // Stale-quarter guard — see header note. The 8-K is real but the XBRL on
+      // file is last quarter's: a PRELIM candidate too.
       if (daysBetween(f.filed, fund.q_end) > MAX_QUARTER_LAG_DAYS) {
-        pendingXbrl++; addPending(f, 'quarter-stale'); continue;
+        pendingXbrl++; addPending(f, 'quarter-stale'); awaitingXbrl.push({ f, t }); continue;
       }
       // Already-public guard. If the quarter's figures reached EDGAR more than
       // 7 days BEFORE the filing we are crediting, this filing is not the
@@ -269,11 +282,30 @@ export async function GET(req: Request) {
       prepared.push({ f, t, shares: sharesOutstandingFromFacts(fx, fund.q_end), fundamentals: fund });
     }
 
-    // ── 4. cohort RS, then grade ─────────────────────────────────────────
+    // ── 4. cohort RS, consensus, then grade ──────────────────────────────
     assignRsRatings(prepared.map((p) => p.t), spy12);
+    // Surprise must be like-for-like: Nasdaq's ADJUSTED actual vs ADJUSTED
+    // consensus. Comparing the filing's GAAP EPS to a street estimate made
+    // Toro look like a 38% miss on a quarter it beat on the basis analysts
+    // actually use. The GAAP figure stays in the YoY tile; the surprise chip
+    // is street vs street.
+    const [surprises, guidances] = await Promise.all([
+      pooled(prepared, 6, (p) => yahooEarningsHistory(p.f.ticker!)),
+      // Guidance lives in the 8-K's press-release exhibit; a 10-Q-only filer
+      // has no release to read.
+      pooled(prepared, 4, (p) => (p.f.form === '8-K' && p.f.accession)
+        ? guidanceFromFiling(p.f.cikNum, p.f.accession, p.f.filing_url)
+        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null })),
+    ]);
 
     const graded: UsGradedRow[] = [];
-    for (const p of prepared) {
+    for (let pi = 0; pi < prepared.length; pi++) {
+      const p = prepared[pi];
+      const sRows: EpsHistoryRow[] = surprises[pi] || [];
+      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null };
+      // Yahoo keys the row by fiscal-quarter END; take the row whose quarter is
+      // within 45 days of the quarter we graded (52/53-week calendars shift it).
+      const sLatest = sRows.find((r) => r.quarter && p.fundamentals.q_end && Math.abs(daysBetween(r.quarter, p.fundamentals.q_end)) <= 45 && r.eps_actual != null) || null;
       const row = gradeUsRow({
         ticker: p.f.ticker!,
         company: p.f.company,
@@ -290,15 +322,132 @@ export async function GET(req: Request) {
           addv_musd: p.t.addv_musd, vol_ratio_20d: p.t.vol_ratio_20d,
         },
         shares_outstanding: p.shares,
+        positive_guidance: g.label === 'RAISED',
       });
       if (!row) { pendingXbrl++; addPending(p.f, 'xbrl-not-posted'); continue; }
+      (row as any).guidance = g.label;
+      (row as any).guidance_score = g.score;
+      (row as any).guidance_snippets = g.snippets;
+      (row as any).guidance_url = g.source_url;
+      if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
+      if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
       // CFO/PAT is a funding artefact for banks, insurers and REITs — flag the
       // sector so the client preset can skip that gate, exactly as India does
       // for NBFCs.
       (row as any).is_financial = isFinancialSic(p.f.sic);
       (row as any).close_30d = p.t.close_30d;
       (row as any).reaction_date = p.t.reaction_date;
+      // Consensus surprise (street basis, both sides) — tagged so it shows up
+      // beside the methodology / caveat chips like every other signal.
+      if (sLatest && sLatest.eps_actual != null) {
+        (row as any).eps_adj = sLatest.eps_actual;
+        (row as any).eps_estimate = sLatest.eps_estimate;
+        (row as any).eps_surprise_pct = sLatest.surprise_pct;
+        if (sLatest.surprise_pct != null) {
+          if (sLatest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
+          if (sLatest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+        }
+      }
       graded.push(row);
+    }
+
+    // ── 5. PRELIMINARY grades for fresh prints whose XBRL hasn't posted ───
+    // DELL, AVGO, PANW report on day D; the 10-Q with the GAAP numbers can be
+    // a week or more behind. Nasdaq's surprise table carries the street-basis
+    // EPS the same evening, so we grade on EPS growth + surprise + reaction,
+    // mark the row PRELIM, and let the full grade replace it when the filing
+    // lands. Only for 8-K filers whose surprise row matches the filing date.
+    if (!explicit && awaitingXbrl.length) {
+      const sur = await pooled(awaitingXbrl, 6, (x) => yahooEarningsHistory(x.f.ticker!));
+      const prelimCiks = new Set<number>();
+      let dbgRows = 0, dbgMatch = 0, dbgEps = 0, dbgRow = 0;
+      for (let i = 0; i < awaitingXbrl.length; i++) {
+        const { f, t } = awaitingXbrl[i];
+        const rows = sur[i] || [];
+        if (rows.length) dbgRows++;
+        if (!rows.length || f.form !== '8-K') continue;
+        // The freshest row whose quarter ended in the ~110 days before the
+        // filing and that already carries an actual — i.e. this print.
+        const latest = rows.slice().reverse().find((r) => r.quarter && r.eps_actual != null
+          && daysBetween(f.filed, r.quarter) >= 0 && daysBetween(f.filed, r.quarter) <= 110) || null;
+        if (!latest) continue;
+        dbgMatch++;
+        dbgEps++;
+        // Year-ago adjusted EPS is not in a 4-quarter history; PRELIM grades on
+        // surprise + reaction instead (see gradeUsRow.prelim_surprise_pct).
+        const fund = {
+          q_end: latest.quarter, q_end_prev: null, q_filed: null,
+          revenue: null, revenue_prev: null, operating_income: null, operating_income_prev: null,
+          net_income: null, net_income_prev: null,
+          eps: latest.eps_actual, eps_prev: null, eps_derived: false,
+          cfo: null, cfo_prev: null, tags: {}, quarters_revenue: null,
+          quarters_eps: rows.map((r) => r.eps_actual).filter((v): v is number => v != null),
+          quarters_opm: null,
+        };
+        const row = gradeUsRow({
+          ticker: f.ticker!, company: f.company, sector: sectorFromSic(f.sic),
+          filing_date: f.filed, form: f.form, items: f.items, filing_url: f.filing_url,
+          fundamentals: fund,
+          price: {
+            price: t.price, d1_pct: t.d1_pct, gap_pct: t.gap_pct, move_pct: t.move_pct,
+            pct_from_52w_high: t.pct_from_52w_high, stage: t.stage, rs_rating: t.rs_rating,
+            addv_musd: t.addv_musd, vol_ratio_20d: t.vol_ratio_20d,
+          },
+          shares_outstanding: null,
+          prelim_surprise_pct: latest.surprise_pct,
+        });
+        if (!row) continue;
+        dbgRow++;
+        // PRELIM never outranks a full GAAP grade.
+        if (row.tier === 'BLOCKBUSTER') row.tier = 'STRONG';
+        try {
+          const g = f.accession ? await guidanceFromFiling(f.cikNum, f.accession, f.filing_url) : null;
+          if (g) {
+            (row as any).guidance = g.label; (row as any).guidance_score = g.score;
+            (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
+            if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
+            if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
+          }
+        } catch { /* guidance is additive; never blocks a grade */ }
+        (row as any).prelim = true;
+        (row as any).is_financial = isFinancialSic(f.sic);
+        (row as any).close_30d = t.close_30d;
+        (row as any).reaction_date = t.reaction_date;
+        (row as any).eps_basis = 'adjusted (street)';
+        (row as any).eps_adj = latest.eps_actual;
+        (row as any).eps_estimate = latest.eps_estimate;
+        (row as any).eps_surprise_pct = latest.surprise_pct;
+        if (latest.surprise_pct != null) {
+          if (latest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
+          if (latest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+        }
+        if (!row.caveat_tags.includes('prelim · GAAP pending')) row.caveat_tags.push('prelim · GAAP pending');
+        row.narrative = `${f.company} reported ${row.quarter}: adjusted EPS $${latest.eps_actual!.toFixed(2)}${latest.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus (${latest.surprise_pct != null ? `${latest.surprise_pct >= 0 ? '+' : ''}${latest.surprise_pct.toFixed(0)}%` : 'n/a'})` : ''}. Revenue, margins and cash flow will fill in when the 10-Q posts to EDGAR.`;
+        graded.push(row);
+        prelimCiks.add(f.cikNum);
+      }
+      // A name with a PRELIM grade is no longer "pending".
+      if (prelimCiks.size) {
+        const prelimTickers = new Set(awaitingXbrl.filter((x) => prelimCiks.has(x.f.cikNum)).map((x) => x.f.ticker));
+        for (let i = pending.length - 1; i >= 0; i--) {
+          if (prelimTickers.has(pending[i].ticker) && (pending[i].reason === 'xbrl-not-posted' || pending[i].reason === 'quarter-stale')) {
+            pending.splice(i, 1); pendingXbrl = Math.max(0, pendingXbrl - 1);
+          }
+        }
+        notes.push(`${prelimCiks.size} fresh print(s) graded PRELIM on adjusted EPS + consensus + reaction — full GAAP grade follows when the 10-Q posts`);
+      } else if (awaitingXbrl.length) {
+        notes.push(`prelim: ${awaitingXbrl.length} awaiting XBRL, ${dbgRows} had a Nasdaq surprise history, ${dbgMatch} matched the filing date, ${dbgEps} with EPS, ${dbgRow} graded`);
+      }
+    }
+
+    // Scheduled on `date` but not yet filed — the "results pending" list.
+    let scheduled: ExpectedReporter[] = [];
+    if (!explicit) {
+      try {
+        const filedSet = new Set(filings.map((f) => f.ticker).filter(Boolean) as string[]);
+        const exp = await nasdaqEarningsOn(date);
+        scheduled = exp.filter((e) => !filedSet.has(e.ticker));
+      } catch { scheduled = []; }
     }
 
     const by_tier: Record<EarningsTier, UsGradedRow[]> = {
@@ -344,6 +493,7 @@ export async function GET(req: Request) {
       pending: pending
         .filter((p) => p.ticker)
         .sort((a, b) => b.filed.localeCompare(a.filed) || a.ticker.localeCompare(b.ticker)),
+      scheduled: scheduled.sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0)),
       generated_at: new Date().toISOString(),
       sources_polled: 3,
       truncated,
@@ -376,6 +526,7 @@ export async function GET(req: Request) {
       no_price_total: 0,
       by_tier: { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] },
       pending: [],
+      scheduled: [],
       generated_at: new Date().toISOString(),
       sources_polled: 0,
       truncated: false,
