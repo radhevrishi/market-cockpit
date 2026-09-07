@@ -365,7 +365,10 @@ export default function JourneyPage() {
         {/* ─── zzz435/zzz498 — THE JOURNEY, two capital plans on the same path ─── */}
         <ReturnJourneyTarget cfg={JOURNEY_BASE} showRules={false} />
         <div style={{ height: 14 }} />
-        <ReturnJourneyTarget cfg={JOURNEY_CYCLE} showRules={true} />
+        <ReturnJourneyTarget cfg={JOURNEY_CYCLE} showRules={false} />
+        <div style={{ height: 14 }} />
+        {/* zzz553 — third plan: pull ₹1 cr out at year 5, ride 13 years */}
+        <ReturnJourneyTarget cfg={JOURNEY_WITHDRAW} showRules={true} />
         <div style={{ height: 14 }} />
         {/* zzz539 — the multibagger math: why a few winners carry an equal-weight book */}
         <MultibaggerMath />
@@ -736,10 +739,14 @@ const JOURNEY_CONTRIB: Record<number, number> = { 2028: 0.20 };
 // redeploy the grown ₹49.6 L at the end of 2028 — no fresh ₹20 L). Same path, two
 // behaviours, so the difference in outcome is purely the capital decision.
 type Withdrawal = { atYear: number; amount: number; parkRate: number; backInYear: number };
+// zzz553 — a PERMANENT take-out: money realised and removed from the market for
+// good (unlike Withdrawal, which parks and redeploys). It is a positive cash
+// flow back to the investor (lifts IRR) and the remaining pot keeps compounding.
+type TakeOut = { atYear: number; amount: number };
 interface JourneyCfg {
-  key: string; label: string; blurb: 'base' | 'cycle';
+  key: string; label: string; blurb: 'base' | 'cycle' | 'withdraw';
   path: { y: number; r: number }[]; startCr: number;
-  contrib: Record<number, number>; withdraw?: Withdrawal;
+  contrib: Record<number, number>; withdraw?: Withdrawal; takeOut?: TakeOut;
 }
 const JOURNEY_BASE: JourneyCfg = {
   key: 'base', label: 'BASE PLAN · seed ₹43 L, add ₹20 L in 2028', blurb: 'base',
@@ -749,6 +756,25 @@ const JOURNEY_CYCLE: JourneyCfg = {
   key: 'cycle', label: 'PROFIT-CYCLE PLAN · bank ₹45 L at ~₹90 L, redeploy in 2028', blurb: 'cycle',
   path: JOURNEY_PATH, startCr: JOURNEY_START_CR, contrib: {},
   withdraw: { atYear: 2026, amount: 0.45, parkRate: 0.05, backInYear: 2028 },
+};
+
+// zzz553 — 13-YEAR variant: the same lumpy path with TWO more years appended,
+// simulated in the same lumpy character as the rest (a red digest year, then a
+// final leg up — not smooth). Used by the WITHDRAW plan below.
+const JOURNEY_PATH_13: { y: number; r: number }[] = [
+  ...JOURNEY_PATH,
+  { y: 2036, r: -10 },   // digest / shakeout — patience-through-red year
+  { y: 2037, r: 100 },   // final leg up
+];
+
+// zzz553 — WITHDRAW plan: the base path, but I pull a full ₹1 cr OFF the table
+// permanently at year 5 (2030) — realised and de-risked, gone from the market —
+// and ride the remaining pot two extra years to 2037. Own capital in is the same
+// ₹63 L (seed ₹43 L + ₹20 L in 2028); the ₹1 cr comes back to me at year 5.
+const JOURNEY_WITHDRAW: JourneyCfg = {
+  key: 'withdraw', label: 'WITHDRAW PLAN · pull ₹1 cr out at year 5 (2030), ride 13 years', blurb: 'withdraw',
+  path: JOURNEY_PATH_13, startCr: JOURNEY_START_CR, contrib: JOURNEY_CONTRIB,
+  takeOut: { atYear: 2030, amount: 1.0 },
 };
 
 // zzz439 — my rulebook. The behaviour that turns the path above into reality —
@@ -776,23 +802,28 @@ function fmtMoney(cr: number): string {
 function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: JourneyCfg; showRules?: boolean }) {
   const startCr = cfg.startCr;
   const parkedBackCr = cfg.withdraw ? cfg.withdraw.amount * Math.pow(1 + cfg.withdraw.parkRate, cfg.withdraw.backInYear - cfg.withdraw.atYear) : 0;
-  const { rows, endValue, totalInvested, irr, flows } = useMemo(() => {
+  const { rows, endValue, totalInvested, irr, flows, takenOutTotal } = useMemo(() => {
     let value = startCr;
     const cfs: { t: number; cf: number }[] = [{ t: 0, cf: -startCr }];  // seed at t=0
     let invested = startCr;   // OWN capital only; a profit withdrawal/redeploy is recycled money, not new capital
+    let takenOut = 0;         // zzz553 — running total of PERMANENT take-outs (money realised out)
     const wd = cfg.withdraw;
+    const to = cfg.takeOut;
     const rws = cfg.path.map((p, i) => {
       const startVal = value;
       value = value * (1 + p.r / 100);
       const contrib = cfg.contrib[p.y] || 0;
-      let withdraw = 0, parkedBack = 0;
+      let withdraw = 0, parkedBack = 0, takeOut = 0;
       // bank profit off the table — leaves the invested pot but stays your money (parked @ rate)
       if (wd && p.y === wd.atYear) { withdraw = wd.amount; value -= wd.amount; }
       // redeploy the parked money, grown at its safe rate for the years it sat out
       if (wd && p.y === wd.backInYear) { parkedBack = wd.amount * Math.pow(1 + wd.parkRate, wd.backInYear - wd.atYear); value += parkedBack; }
+      // PERMANENT take-out — money realised and removed for good. Positive flow back
+      // to the investor (counts in IRR); the remaining pot keeps compounding.
+      if (to && p.y === to.atYear) { takeOut = to.amount; value -= to.amount; takenOut += to.amount; cfs.push({ t: i + 1, cf: to.amount }); }
       // fresh EXTERNAL capital is the only thing that counts toward own-capital & IRR flows
       if (contrib) { value += contrib; invested += contrib; cfs.push({ t: i + 1, cf: -contrib }); }
-      return { ...p, startVal, value, contrib, withdraw, parkedBack };
+      return { ...p, startVal, value, contrib, withdraw, parkedBack, takeOut };
     });
     const endVal = value;
     cfs.push({ t: rws.length, cf: endVal });   // realise at end
@@ -801,12 +832,14 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
     const npv = (r: number) => cfs.reduce((s, f) => s + f.cf / Math.pow(1 + r, f.t), 0);
     let lo = -0.9, hi = 3;
     for (let k = 0; k < 200; k++) { const m = (lo + hi) / 2; if (npv(m) > 0) lo = m; else hi = m; }
-    return { rows: rws, endValue: endVal, totalInvested: invested, irr: (lo + hi) / 2, flows: cfs };
+    return { rows: rws, endValue: endVal, totalInvested: invested, irr: (lo + hi) / 2, flows: cfs, takenOutTotal: takenOut };
   }, [startCr, cfg]);
 
   const n = rows.length;
-  const valueMultiple = totalInvested > 0 ? endValue / totalInvested : 0;  // ×on invested capital
-  const gainCr = endValue - totalInvested;
+  // total wealth realised = final pot still invested + any cash already taken out
+  const outcome = endValue + takenOutTotal;
+  const valueMultiple = totalInvested > 0 ? outcome / totalInvested : 0;  // ×on invested capital
+  const gainCr = outcome - totalInvested;
   const maxAbs = Math.max(...cfg.path.map((p) => Math.abs(p.r)), 1);
   const hasContrib = flows.length > 2;
 
@@ -831,6 +864,8 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
       <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55, marginBottom: 16, maxWidth: 780 }}>
         {cfg.blurb === 'cycle' ? (
           <>This is the same lumpy path — but instead of adding fresh money, I <strong style={{ color: C.text }}>bank profit and recycle it.</strong> I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025; once the pot hits ~₹90 L in 2026 I pull <strong style={{ color: C.red }}>₹45 L</strong> off the table into a safe <strong style={{ color: C.text }}>5%</strong> parking (so it sits out the 2027 drawdown), then redeploy the grown <strong style={{ color: C.cyan }}>{fmtMoney(parkedBackCr)}</strong> at the end of 2028 — just <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital, <em>no</em> fresh ₹20 L — and it still becomes <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.</>
+        ) : cfg.blurb === 'withdraw' ? (
+          <>Same lumpy path and same capital as the base plan — but at <strong style={{ color: C.text }}>year 5 (2030)</strong> I pull a full <strong style={{ color: C.red }}>₹1 cr</strong> permanently <em>off the table</em> — realised, de-risked, gone from the market — and let the rest keep riding for <strong style={{ color: C.text }}>two extra years to 2037</strong>. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>₹20 L</strong> in 2028 ({fmtMoney(totalInvested)} of my own capital); I bank <strong style={{ color: C.red }}>₹1 cr</strong> in hand at year 5 and the pot still finishes at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> — <strong style={{ color: C.text }}>{fmtMoney(outcome)}</strong> of total wealth created. (2036/2037 returns are illustrative, drawn from the same lumpy pattern.)</>
         ) : (
           <>This is how the money actually compounds — <strong style={{ color: C.text }}>lumpy, not smooth.</strong> A couple of explosive years carry the whole run; the rest are flat, tiny, or red. I seed <strong style={{ color: C.text }}>{fmtMoney(startCr)}</strong> in 2025 and add <strong style={{ color: C.cyan }}>{fmtMoney(cfg.contrib[2028] || 0)}</strong> at the end of 2028 — <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of my own capital in total — and living the path turns it into <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong>.</>
         )}
@@ -840,7 +875,7 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
         {[
           { label: 'MONEY-WEIGHTED CAGR (IRR)', val: `${(irr * 100).toFixed(1)}%`, c: C.green },
-          { label: `${fmtMoney(totalInvested)} INVESTED BECOMES`, val: fmtMoney(endValue), c: C.text },
+          { label: takenOutTotal > 0 ? `${fmtMoney(totalInvested)} BECOMES (pot + banked)` : `${fmtMoney(totalInvested)} INVESTED BECOMES`, val: fmtMoney(outcome), c: C.text },
           { label: 'GAIN (× ON CAPITAL)', val: `${valueMultiple.toFixed(1)}×`, c: C.saffron },
           { label: 'NET GAIN', val: `+${fmtMoney(gainCr)}`, c: C.cyan },
         ].map((t) => (
@@ -862,12 +897,13 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
             return (
               <div key={r.y} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 {/* value on top */}
-                <div style={{ fontSize: 9.5, color: (r.contrib || r.parkedBack) ? C.cyan : r.withdraw ? C.red : C.dim, fontWeight: (r.contrib || r.parkedBack || r.withdraw) ? 800 : 400, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtMoney(r.value)}</div>
+                <div style={{ fontSize: 9.5, color: (r.contrib || r.parkedBack) ? C.cyan : (r.withdraw || r.takeOut) ? C.red : C.dim, fontWeight: (r.contrib || r.parkedBack || r.withdraw || r.takeOut) ? 800 : 400, ...MONO, marginBottom: 4, whiteSpace: 'nowrap' }}>{fmtMoney(r.value)}</div>
                 {/* injection / withdrawal badge */}
                 <div style={{ height: 14, marginBottom: 2 }}>
                   {r.contrib > 0 && <span style={{ fontSize: 8, fontWeight: 800, color: C.cyan, background: 'color-mix(in srgb, var(--mc-cyan) 15%, transparent)', border: '1px solid ' + C.cyan + '66', borderRadius: 3, padding: '1px 4px', whiteSpace: 'nowrap' }}>+{fmtMoney(r.contrib)} in</span>}
                   {r.parkedBack > 0 && <span title="parked profit redeployed (grown at 5%)" style={{ fontSize: 8, fontWeight: 800, color: C.cyan, background: 'color-mix(in srgb, var(--mc-cyan) 15%, transparent)', border: '1px solid ' + C.cyan + '66', borderRadius: 3, padding: '1px 4px', whiteSpace: 'nowrap' }}>+{fmtMoney(r.parkedBack)} in</span>}
                   {r.withdraw > 0 && <span title="profit banked to safe 5% parking" style={{ fontSize: 8, fontWeight: 800, color: C.red, background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', border: '1px solid ' + C.red + '66', borderRadius: 3, padding: '1px 4px', whiteSpace: 'nowrap' }}>−{fmtMoney(r.withdraw)} out</span>}
+                  {r.takeOut > 0 && <span title="₹1 cr taken out permanently — realised & removed from the market" style={{ fontSize: 8, fontWeight: 800, color: C.red, background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', border: '1px solid ' + C.red + '66', borderRadius: 3, padding: '1px 4px', whiteSpace: 'nowrap' }}>−{fmtMoney(r.takeOut)} out</span>}
                 </div>
                 {/* positive zone */}
                 <div style={{ height: barMax, width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
@@ -898,13 +934,18 @@ function ReturnJourneyTarget({ cfg = JOURNEY_BASE, showRules = true }: { cfg?: J
       <div style={{ marginTop: 16, background: 'color-mix(in srgb, var(--mc-warn) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 32%, transparent)', borderLeft: '3px solid ' + C.amber, borderRadius: 6, padding: '13px 15px' }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: C.amber, marginBottom: 6 }}>⚡ The discipline this path demands</div>
         <div style={{ fontSize: 12, color: C.text, lineHeight: 1.65 }}>
-          Just <strong style={{ color: C.green }}>3 years</strong> ({heavy.slice(0, 3).map((h) => `${h.y} +${cfg.path.find((p) => p.y === h.y)?.r}%`).join(', ')}) did <strong style={{ color: C.green }}>{topThreeShare.toFixed(0)}%</strong> of the work. The other seven were flat, tiny, or red — and in <em>those</em> years the winning move was to <strong style={{ color: C.text }}>do nothing</strong>. The money is made in the holding, not the trading.
+          Just <strong style={{ color: C.green }}>3 years</strong> ({heavy.slice(0, 3).map((h) => `${h.y} +${cfg.path.find((p) => p.y === h.y)?.r}%`).join(', ')}) did <strong style={{ color: C.green }}>{topThreeShare.toFixed(0)}%</strong> of the work. The other <strong style={{ color: C.text }}>{n - 3}</strong> were flat, tiny, or red — and in <em>those</em> years the winning move was to <strong style={{ color: C.text }}>do nothing</strong>. The money is made in the holding, not the trading.
           <br /><br />
           <strong style={{ color: C.amber }}>The rule:</strong> in a flat or bear market, take <strong style={{ color: C.text }}>fewer</strong> trades, not more. Overtrade the boring years — chase, churn, get shaken out — and you won't be holding when the <strong style={{ color: C.green }}>+200%</strong> year prints. Patience through the red is the entire edge.
           {cfg.blurb === 'cycle' ? (
             <>
               <br /><br />
               <strong style={{ color: C.cyan }}>The cycle move:</strong> banking <strong style={{ color: C.red }}>₹45 L</strong> at ~₹90 L in 2026 pulls profit to safety <em>before</em> the 2027 drawdown, then redeploys the grown <strong style={{ color: C.cyan }}>{fmtMoney(parkedBackCr)}</strong> ahead of the +200% year. It ends at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> — a touch below the base plan&rsquo;s outcome, but on <strong style={{ color: C.text }}>{fmtMoney(totalInvested)}</strong> of your own money instead of ₹63 L, so it&rsquo;s the higher <strong style={{ color: C.saffron }}>{valueMultiple.toFixed(1)}×</strong> and <strong style={{ color: C.green }}>{(irr * 100).toFixed(1)}% IRR</strong> — the more capital-efficient path.
+            </>
+          ) : cfg.blurb === 'withdraw' ? (
+            <>
+              <br /><br />
+              <strong style={{ color: C.red }}>The take-out:</strong> pulling <strong style={{ color: C.red }}>₹1 cr</strong> permanently at year 5 (2030) realises life-changing money and de-risks the plan — that cash can never be given back by a later drawdown. It costs some end-value (the pot finishes at <strong style={{ color: C.green }}>{fmtMoney(endValue)}</strong> vs the base plan&rsquo;s bigger number), but you also hold <strong style={{ color: C.red }}>₹1 cr</strong> in hand, so total wealth is <strong style={{ color: C.text }}>{fmtMoney(outcome)}</strong> at a <strong style={{ color: C.green }}>{(irr * 100).toFixed(1)}% IRR</strong>. Taking money <em>early</em> lifts the IRR (each rupee back sooner is worth more) — the discipline is banking the crore and still letting the rest ride the two extra years, not cashing out the whole thing.
             </>
           ) : hasContrib ? (
             <>
