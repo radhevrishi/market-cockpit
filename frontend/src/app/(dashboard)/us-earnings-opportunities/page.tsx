@@ -27,6 +27,11 @@ import {
 } from '@/lib/us-earnings-core';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 
+interface PendingFiler {
+  ticker: string; company: string; form: string; filed: string;
+  filing_url: string; reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price';
+}
+
 interface UsPayload {
   filing_date: string | null;
   window_days: number;
@@ -36,9 +41,18 @@ interface UsPayload {
   pending_xbrl_total: number;
   no_price_total: number;
   by_tier: Record<EarningsTier, UsGradedRow[]>;
+  pending?: PendingFiler[];
   generated_at: string;
   truncated: boolean;
   notes: string[];
+}
+
+interface CalendarDay {
+  date: string; weekend: boolean; count: number;
+  tickers: string[]; eightK: number; periodic: number;
+}
+interface CalendarPayload {
+  from: string; to: string; total: number; days: CalendarDay[]; generated_at: string;
 }
 
 const TIER_META: Record<EarningsTier, { label: string; color: string; icon: string; tagline: string }> = {
@@ -83,8 +97,14 @@ export default function UsEarningsOpportunitiesPage() {
     BLOCKBUSTER: true, STRONG: true, MIXED: false, AVOID: false,
   });
   const [minCap, setMinCap] = useState<number | null>(null);
-  const [smidOnly, setSmidOnly] = useState(false);
+  const [capBucket, setCapBucket] = useState<string>('all');
   const [forceKey, setForceKey] = useState(0);
+  const [viewMode, setViewMode] = useState<'GRADED' | 'CALENDAR'>('GRADED');
+  const [calDays, setCalDays] = useState(30);
+  const [quality, setQuality] = useState<{ elite: boolean; pead70: boolean; multibagger: boolean; beatCheap: boolean }>({
+    elite: false, pead70: false, multibagger: false, beatCheap: false,
+  });
+  const [showPending, setShowPending] = useState(false);
 
   useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
   useEffect(() => { try { debouncedSetItem(LS_DAYS, String(days)); } catch {} }, [days]);
@@ -152,23 +172,103 @@ export default function UsEarningsOpportunitiesPage() {
     if (entries.length) syncUsConviction(entries);
   }, [data]);
 
+  // Calendar sweep — EDGAR index only (no XBRL, no prices), so it is cheap and
+  // only fetched when the calendar tab is actually open.
+  const calTo = date;
+  const calFrom = useMemo(
+    () => new Date(Date.parse(date + 'T00:00:00Z') - (calDays - 1) * 86400000).toISOString().slice(0, 10),
+    [date, calDays]);
+  const { data: cal, isFetching: calFetching } = useQuery<CalendarPayload>({
+    queryKey: ['calendar-us', calFrom, calTo],
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/earnings/calendar-us?from=${calFrom}&to=${calTo}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Calendar failed (HTTP ${res.status})`);
+      return res.json();
+    },
+    enabled: viewMode === 'CALENDAR',
+    staleTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const allRows = useMemo(() => {
+    if (!data?.by_tier) return [] as UsGradedRow[];
+    return US_TIER_ORDER.flatMap((t) => data.by_tier[t] || []);
+  }, [data]);
+
+  const passes = (r: UsGradedRow) => {
+    if (minCap != null && (r.market_cap_musd == null || r.market_cap_musd < minCap)) return false;
+    if (capBucket !== 'all') {
+      const b = r.market_cap_bucket;
+      if (capBucket === 'smid') { if (b !== 'small' && b !== 'mid') return false; }
+      else if (b !== capBucket) return false;
+    }
+    if (quality.elite && !r.is_elite) return false;
+    if (quality.pead70 && (r.pead_score ?? 0) < 70) return false;
+    if (quality.multibagger && !r.multibagger_setup) return false;
+    // "Beat + Cheap" — real growth that the market has not yet re-rated.
+    if (quality.beatCheap) {
+      if ((r.sales_yoy_pct ?? -1) < 15) return false;
+      if (r.pe == null || r.pe <= 0 || r.pe > 30) return false;
+    }
+    return true;
+  };
+
   const view = useMemo(() => {
     const out: Record<EarningsTier, UsGradedRow[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
     if (!data?.by_tier) return out;
-    for (const t of US_TIER_ORDER) {
-      out[t] = (data.by_tier[t] || []).filter((r) => {
-        if (minCap != null && (r.market_cap_musd == null || r.market_cap_musd < minCap)) return false;
-        if (smidOnly) {
-          const b = r.market_cap_bucket;
-          if (b !== 'small' && b !== 'mid') return false;
-        }
-        return true;
-      });
-    }
+    for (const t of US_TIER_ORDER) out[t] = (data.by_tier[t] || []).filter(passes);
     return out;
-  }, [data, minCap, smidOnly]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, minCap, capBucket, quality]);
 
   const shownTotal = US_TIER_ORDER.reduce((n, t) => n + view[t].length, 0);
+
+  const counts = useMemo(() => {
+    const c = {
+      BLOCKBUSTER: 0, STRONG: 0, MIXED: 0, AVOID: 0,
+      elite: 0, pead70: 0, multibagger: 0, beatCheap: 0,
+      mega: 0, large: 0, mid: 0, small: 0, micro: 0,
+    } as Record<string, number>;
+    for (const r of allRows) {
+      c[r.tier]++;
+      if (r.is_elite) c.elite++;
+      if ((r.pead_score ?? 0) >= 70) c.pead70++;
+      if (r.multibagger_setup) c.multibagger++;
+      if ((r.sales_yoy_pct ?? -1) >= 15 && r.pe != null && r.pe > 0 && r.pe <= 30) c.beatCheap++;
+      if (r.market_cap_bucket) c[r.market_cap_bucket]++;
+    }
+    return c;
+  }, [allRows]);
+
+  const download = (name: string, text: string, mime = 'text/csv') => {
+    try {
+      const blob = new Blob([text], { type: `${mime};charset=utf-8;` });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    } catch { /* download blocked — nothing else to do */ }
+  };
+
+  const exportCsv = () => {
+    const rows = US_TIER_ORDER.flatMap((t) => view[t]);
+    const head = ['Ticker', 'Company', 'Tier', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'EPS YoY %',
+      'OPM %', 'OPM prev %', 'CFO/NI', 'PEAD', 'RS', 'Stage', 'Mkt cap $M', 'Price', 'P/E', 'D1 %', 'Sector', 'Filing'];
+    const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const body = rows.map((r) => [r.ticker, r.company, r.tier, r.composite_score, r.quarter, r.filing_date,
+      r.sales_yoy_pct?.toFixed(1) ?? '', r.eps_yoy_pct?.toFixed(1) ?? '',
+      r.opm_pct?.toFixed(2) ?? '', r.opm_prev_pct?.toFixed(2) ?? '',
+      r.cfo_to_pat_ratio?.toFixed(2) ?? '', r.pead_score, r.rs_rating ?? '', r.stage ?? '',
+      r.market_cap_musd?.toFixed(0) ?? '', r.price?.toFixed(2) ?? '', r.pe ?? '',
+      r.d1_pct?.toFixed(2) ?? '', r.sector ?? '', r.filing_url ?? ''].map(esc).join(','));
+    download(`us-earnings-${date}-${days}d.csv`, [head.map(esc).join(','), ...body].join('\n'));
+  };
+
+  const exportTradingView = () => {
+    const rows = US_TIER_ORDER.flatMap((t) => view[t]);
+    download(`us-earnings-${date}-tradingview.txt`, rows.map((r) => r.ticker).join(','), 'text/plain');
+  };
 
   const shiftDate = (n: number) => {
     const d = new Date(Date.parse(date + 'T00:00:00Z') + n * 86400000);
@@ -218,9 +318,6 @@ export default function UsEarningsOpportunitiesPage() {
         ))}
 
         <span style={{ width: 1, height: 22, backgroundColor: 'var(--mc-bg-4)', margin: '0 4px' }} />
-        <button onClick={() => setSmidOnly((v) => !v)} style={btn(smidOnly, '#8B5CF6')}>
-          Small + Mid only
-        </button>
         {[null, 300, 1000, 5000].map((c) => (
           <button key={String(c)} onClick={() => setMinCap(c)} style={btn(minCap === c)}>
             {c == null ? 'Any cap' : `≥ $${c >= 1000 ? `${c / 1000}B` : `${c}M`}`}
@@ -228,12 +325,44 @@ export default function UsEarningsOpportunitiesPage() {
         ))}
 
         <span style={{ flex: 1 }} />
+        <button onClick={exportCsv} style={btn()}>📊 CSV</button>
+        <button onClick={exportTradingView} style={btn()}>📈 TradingView</button>
         <button onClick={() => { setForceKey((k) => k + 1); setTimeout(() => refetch(), 0); }}
           disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <RefreshCw className="w-3 h-3" style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
           {isFetching ? 'Scanning…' : 'Force re-scan'}
         </button>
       </div>
+
+      {/* ── tier + quality + cap chips (counts are pre-filter, like India) ── */}
+      {data && allRows.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+          {US_TIER_ORDER.map((t) => (
+            <span key={t} style={{
+              fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '5px 10px', borderRadius: 999,
+              border: `1px solid ${TIER_META[t].color}`, color: TIER_META[t].color,
+              backgroundColor: `color-mix(in srgb, ${TIER_META[t].color} 10%, transparent)`,
+            }}>{TIER_META[t].icon} {t} {counts[t]}</span>
+          ))}
+          <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
+          <button onClick={() => setQuality((q) => ({ ...q, elite: !q.elite }))} style={btn(quality.elite, '#F59E0B')}>⭐ ELITE {counts.elite}</button>
+          <button onClick={() => setQuality((q) => ({ ...q, pead70: !q.pead70 }))} style={btn(quality.pead70, '#EF4444')}>🔥 PEAD≥70 {counts.pead70}</button>
+          <button onClick={() => setQuality((q) => ({ ...q, multibagger: !q.multibagger }))} style={btn(quality.multibagger, '#8B5CF6')}>💎 MULTIBAGGER {counts.multibagger}</button>
+          <button onClick={() => setQuality((q) => ({ ...q, beatCheap: !q.beatCheap }))} style={btn(quality.beatCheap, '#10B981')}
+            title="Revenue growth ≥15% YoY on a trailing P/E of 30 or less — growth the market has not re-rated yet.">
+            💰 Beat + Cheap {counts.beatCheap}
+          </button>
+          <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
+          {[['all', 'All caps', 0], ['smid', 'Small+Mid', counts.small + counts.mid],
+            ['mega', 'MEGA ≥$200B', counts.mega], ['large', 'LARGE $10–200B', counts.large],
+            ['mid', 'MID $2–10B', counts.mid], ['small', 'SMALL $300M–2B', counts.small],
+            ['micro', 'MICRO <$300M', counts.micro]].map(([v, l, n]) => (
+            <button key={String(v)} onClick={() => setCapBucket(String(v))} style={btn(capBucket === v)}>
+              {l}{v === 'all' ? '' : ` ${n}`}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── coverage strip ── */}
       {data && (
@@ -259,7 +388,21 @@ export default function UsEarningsOpportunitiesPage() {
         </div>
       )}
 
-      {isLoading && (
+      {/* ── view toggle ── */}
+      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--mc-border-2)', marginBottom: 16 }}>
+        {(['GRADED', 'CALENDAR'] as const).map((v) => (
+          <button key={v} onClick={() => setViewMode(v)} style={{
+            padding: '8px 14px', background: 'transparent', cursor: 'pointer',
+            border: 'none', borderBottom: `2px solid ${viewMode === v ? 'var(--mc-cyan)' : 'transparent'}`,
+            color: viewMode === v ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
+            fontWeight: 800, fontSize: 'var(--mc-text-sm)',
+          }}>
+            {v === 'GRADED' ? `Graded Tiers${data ? ` · ${shownTotal}` : ''}` : `Calendar${cal ? ` · ${cal.total} filings` : ''}`}
+          </button>
+        ))}
+      </div>
+
+      {isLoading && viewMode === 'GRADED' && (
         <div style={panel()}>
           <div style={{ color: 'var(--mc-text-2)' }}>
             Pulling the filing list from EDGAR, then the XBRL for each filer. A busy window takes 20–60 seconds.
@@ -275,7 +418,135 @@ export default function UsEarningsOpportunitiesPage() {
         </div>
       )}
 
-      {data && shownTotal === 0 && !isLoading && (
+      {/* ── announced but not yet gradeable ── */}
+      {viewMode === 'GRADED' && data && (data.pending?.length ?? 0) > 0 && (
+        <div style={{
+          marginBottom: 16, borderRadius: 'var(--mc-radius)', overflow: 'hidden',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
+          borderLeft: '4px solid var(--mc-info, #60A5FA)',
+        }}>
+          <button onClick={() => setShowPending((v) => !v)} style={{
+            width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+            background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left',
+          }}>
+            {showPending ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            <span style={{ fontWeight: 800, color: 'var(--mc-text-0)' }}>📋 ANNOUNCED · NUMBERS PENDING</span>
+            <span style={{
+              fontWeight: 800, fontSize: 'var(--mc-text-xs)', padding: '2px 8px', borderRadius: 999,
+              backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-1)',
+            }}>{data.pending!.length}</span>
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
+              filed a result but the XBRL isn&apos;t on EDGAR yet — nothing was dropped
+            </span>
+          </button>
+          {showPending && (
+            <div style={{ padding: '0 14px 14px' }}>
+              <div style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)', marginBottom: 10, lineHeight: 1.6 }}>
+                A US company announces results in an <b>8-K (Item 2.02)</b>, but the tagged financials only reach
+                EDGAR with the <b>10-Q/10-K</b> — sometimes the same day, often days or weeks later. These names
+                move into a grade tier automatically as soon as their numbers post. Widening the window to 10d
+                usually picks up most of them.
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {data.pending!.map((p) => (
+                  <a key={`${p.ticker}-${p.filed}`} href={p.filing_url} target="_blank" rel="noreferrer"
+                    title={`${p.company} · ${p.form} filed ${p.filed} · ${
+                      p.reason === 'no-price' ? 'no price history (OTC / newly listed)'
+                        : p.reason === 'quarter-stale' ? 'only the previous quarter is on file'
+                        : 'XBRL not posted yet'}`}
+                    style={{
+                      fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
+                      border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)',
+                      textDecoration: 'none', backgroundColor: 'var(--mc-bg-2)',
+                    }}>{p.ticker}</a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── calendar ── */}
+      {viewMode === 'CALENDAR' && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>Range</span>
+            {[14, 30, 60, 90].map((d) => (
+              <button key={d} onClick={() => setCalDays(d)} style={btn(calDays === d)}>{d}d</button>
+            ))}
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
+              {calFrom} → {calTo}{cal ? ` · ${cal.total} filings` : ''}
+            </span>
+            {calFetching && <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>loading…</span>}
+            <span style={{ flex: 1 }} />
+            {cal && (
+              <>
+                <button style={btn()} onClick={() => {
+                  const lines = ['Date,Filings,Tickers'];
+                  for (const d of cal.days) if (d.count) lines.push(`${d.date},${d.count},"${d.tickers.join(' ')}"`);
+                  download(`us-earnings-calendar-${cal.from}_${cal.to}.csv`, lines.join('\n'));
+                }}>📋 CSV</button>
+                <button style={btn()} onClick={() => {
+                  const all = Array.from(new Set(cal.days.flatMap((d) => d.tickers)));
+                  download(`us-earnings-calendar-${cal.from}_${cal.to}-tradingview.txt`, all.join(','), 'text/plain');
+                }}>📈 TradingView</button>
+              </>
+            )}
+          </div>
+
+          {!cal && !calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Loading the filing calendar…</span></div>}
+
+          {cal && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {cal.days.slice().reverse().map((d) => {
+                const dt = new Date(d.date + 'T00:00:00Z');
+                const label = dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+                const isSel = d.date === date;
+                return (
+                  <div key={d.date} style={{
+                    display: 'flex', gap: 12, alignItems: 'flex-start', padding: '10px 12px',
+                    borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)',
+                    border: `1px solid ${isSel ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                  }}>
+                    <button onClick={() => { setDate(d.date); setViewMode('GRADED'); }}
+                      title="Grade this date"
+                      style={{
+                        minWidth: 116, textAlign: 'left', background: 'transparent', border: 'none',
+                        cursor: 'pointer', color: isSel ? 'var(--mc-cyan)' : 'var(--mc-text-0)',
+                        fontWeight: 800, fontSize: 'var(--mc-text-sm)', padding: 0,
+                      }}>{label}</button>
+                    <span style={{
+                      fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
+                      backgroundColor: d.count ? 'color-mix(in srgb, var(--mc-cyan) 12%, transparent)' : 'var(--mc-bg-3)',
+                      color: d.count ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
+                    }}>{d.count ? `📋 ${d.count}` : (d.weekend ? 'weekend' : 'no filings')}</span>
+                    {d.count > 0 && (
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap' }}>
+                        {d.eightK} earnings 8-K · {d.periodic} 10-Q/K
+                      </span>
+                    )}
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1 }}>
+                      {d.tickers.slice(0, 24).map((t) => (
+                        <span key={t} style={{
+                          fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 5,
+                          border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)',
+                        }}>{t}</span>
+                      ))}
+                      {d.tickers.length > 24 && (
+                        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', alignSelf: 'center' }}>
+                          +{d.tickers.length - 24} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {viewMode === 'GRADED' && data && shownTotal === 0 && !isLoading && (
         <div style={panel()}>
           <div style={{ fontWeight: 700, color: 'var(--mc-text-0)', marginBottom: 6 }}>Nothing graded in this window</div>
           <div style={{ color: 'var(--mc-text-2)', fontSize: 'var(--mc-text-sm)' }}>
@@ -287,7 +558,7 @@ export default function UsEarningsOpportunitiesPage() {
       )}
 
       {/* ── tier sections ── */}
-      {US_TIER_ORDER.map((tier) => {
+      {viewMode === 'GRADED' && US_TIER_ORDER.map((tier) => {
         const rows = view[tier];
         if (!rows.length) return null;
         const meta = TIER_META[tier];

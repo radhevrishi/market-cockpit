@@ -49,6 +49,18 @@ const MAX_CANDIDATES = 240;
 const MAX_QUARTER_LAG_DAYS = 110;
 const DEFAULT_WINDOW_DAYS = 5;
 
+/** A company that announced in the window but could not be graded yet. Listed
+ *  rather than silently dropped — "nothing was lost, the numbers just aren't
+ *  on EDGAR yet" is very different information from "no results today". */
+interface PendingFiler {
+  ticker: string;
+  company: string;
+  form: string;
+  filed: string;
+  filing_url: string;
+  reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price';
+}
+
 interface UsGradedPayload {
   filing_date: string | null;
   window_days: number;
@@ -58,6 +70,7 @@ interface UsGradedPayload {
   pending_xbrl_total: number;
   no_price_total: number;
   by_tier: Record<EarningsTier, UsGradedRow[]>;
+  pending: PendingFiler[];
   generated_at: string;
   sources_polled: number;
   truncated: boolean;
@@ -172,11 +185,19 @@ export async function GET(req: Request) {
     const spy12 = await spyReturn12m();
     const techs = await pooled(listed, 8, (f) => usTechnicals(f.ticker!, f.filed));
 
+    const pending: PendingFiler[] = [];
+    const addPending = (f: EdgarFiling, reason: PendingFiler['reason']) => {
+      pending.push({
+        ticker: f.ticker || '', company: f.company, form: f.form,
+        filed: f.filed, filing_url: f.filing_url, reason,
+      });
+    };
+
     const withPrice: Array<{ f: EdgarFiling; t: UsTechnicals }> = [];
     let noPrice = 0;
     for (let i = 0; i < listed.length; i++) {
       const t = techs[i];
-      if (!t) { noPrice++; continue; }
+      if (!t) { noPrice++; addPending(listed[i], 'no-price'); continue; }
       withPrice.push({ f: listed[i], t });
     }
 
@@ -192,14 +213,16 @@ export async function GET(req: Request) {
     for (let i = 0; i < withPrice.length; i++) {
       const fx = facts[i];
       const { f, t } = withPrice[i];
-      if (!fx) { pendingXbrl++; continue; }
+      if (!fx) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); continue; }
       // For a 10-Q/10-K the reported period IS the fiscal period; for an 8-K,
       // `period_ending` is the event date, so let the extractor take the newest.
       const asOf = /^10-/.test(f.form) && f.period ? f.period : null;
       const fund = extractFundamentals(fx, asOf);
-      if (!fund.q_end) { pendingXbrl++; continue; }
+      if (!fund.q_end) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); continue; }
       // Stale-quarter guard — see header note.
-      if (daysBetween(f.filed, fund.q_end) > MAX_QUARTER_LAG_DAYS) { pendingXbrl++; continue; }
+      if (daysBetween(f.filed, fund.q_end) > MAX_QUARTER_LAG_DAYS) {
+        pendingXbrl++; addPending(f, 'quarter-stale'); continue;
+      }
       prepared.push({ f, t, shares: sharesOutstandingFromFacts(fx), fundamentals: fund });
     }
 
@@ -225,7 +248,7 @@ export async function GET(req: Request) {
         },
         shares_outstanding: p.shares,
       });
-      if (!row) { pendingXbrl++; continue; }
+      if (!row) { pendingXbrl++; addPending(p.f, 'xbrl-not-posted'); continue; }
       // CFO/PAT is a funding artefact for banks, insurers and REITs — flag the
       // sector so the client preset can skip that gate, exactly as India does
       // for NBFCs.
@@ -273,6 +296,9 @@ export async function GET(req: Request) {
       pending_xbrl_total: pendingXbrl,
       no_price_total: noPrice,
       by_tier,
+      pending: pending
+        .filter((p) => p.ticker)
+        .sort((a, b) => b.filed.localeCompare(a.filed) || a.ticker.localeCompare(b.ticker)),
       generated_at: new Date().toISOString(),
       sources_polled: 3,
       truncated,
@@ -304,6 +330,7 @@ export async function GET(req: Request) {
       pending_xbrl_total: 0,
       no_price_total: 0,
       by_tier: { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] },
+      pending: [],
       generated_at: new Date().toISOString(),
       sources_polled: 0,
       truncated: false,

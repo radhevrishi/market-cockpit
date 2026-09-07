@@ -156,12 +156,24 @@ export async function edgarFilingsOn(date: string, forms: string[]): Promise<Edg
   return out;
 }
 
+// Per-date filer cache. A completed past date is immutable on EDGAR, so it is
+// held effectively forever; today keeps moving as filings land through the
+// session, so it expires in 10 minutes. This is what makes the calendar view
+// affordable: a 60-day sweep costs ~90 requests once, then nothing.
+const _filersByDate = new Map<string, { at: number; data: EdgarFiling[] }>();
+const FILERS_MAX = 400;
+
 /**
  * The day's earnings filers: 8-Ks carrying Item 2.02, plus 10-Q/10-K filers.
  * De-duplicated by CIK, preferring the 8-K (it is the earnings release; the
  * 10-Q that often lands the same day is the same quarter's detail).
  */
 export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
+  const today = new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
+  const ttl = date < today ? 30 * 24 * 3600_000 : 10 * 60_000;
+  const hit = _filersByDate.get(date);
+  if (hit && Date.now() - hit.at < ttl) return hit.data;
+
   const [eightK, periodic] = await Promise.all([
     edgarFilingsOn(date, ['8-K']),
     edgarFilingsOn(date, ['10-Q', '10-K']),
@@ -170,7 +182,14 @@ export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
   const byCik = new Map<number, EdgarFiling>();
   for (const f of results) if (!byCik.has(f.cikNum)) byCik.set(f.cikNum, f);
   for (const f of periodic) if (!byCik.has(f.cikNum)) byCik.set(f.cikNum, f);
-  return Array.from(byCik.values());
+  const out = Array.from(byCik.values());
+
+  if (_filersByDate.size >= FILERS_MAX) {
+    const oldest = Array.from(_filersByDate.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 80);
+    for (const [k] of oldest) _filersByDate.delete(k);
+  }
+  _filersByDate.set(date, { at: Date.now(), data: out });
+  return out;
 }
 
 // ─── companyfacts, cached ─────────────────────────────────────────────────
