@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-06T14:30:59Z",
+  "lastSync": "2026-09-07T08:51:01Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10952,
+      "size": 10951,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 7992,
+      "size": 6305,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 7600,
+      "size": 6943,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 15882,
+      "size": 16306,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 4709,
+      "size": 5156,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -70,32 +70,32 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2812,
+      "size": 2814,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
       "name": "turnarounds.csv",
-      "size": 19268,
+      "size": 19269,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 26162,
+      "size": 26595,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63513,
+      "size": 63517,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65689,
+      "size": 65688,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 10717,
+      "size": 10747,
       "displayName": "Weekly Volume Pockets"
     }
   ]
