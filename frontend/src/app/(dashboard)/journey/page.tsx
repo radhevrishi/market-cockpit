@@ -761,10 +761,15 @@ const JOURNEY_CYCLE: JourneyCfg = {
 // zzz553 — 13-YEAR variant: the same lumpy path with TWO more years appended,
 // simulated in the same lumpy character as the rest (a red digest year, then a
 // final leg up — not smooth). Used by the WITHDRAW plan below.
+// zzz554 — the WITHDRAW plan runs on its OWN (more conservative) return path so
+// Base and Profit-cycle keep the original 200/120 prints. Big years trimmed:
+// 2029 200→160, 2034 120→100, 2037 100→80.
 const JOURNEY_PATH_13: { y: number; r: number }[] = [
-  ...JOURNEY_PATH,
+  { y: 2025, r: 0 },   { y: 2026, r: 110 }, { y: 2027, r: -20 }, { y: 2028, r: 5 },
+  { y: 2029, r: 160 }, { y: 2030, r: -10 }, { y: 2031, r: 5 },   { y: 2032, r: 50 },
+  { y: 2033, r: 5 },   { y: 2034, r: 100 }, { y: 2035, r: 15 },
   { y: 2036, r: -10 },   // digest / shakeout — patience-through-red year
-  { y: 2037, r: 100 },   // final leg up
+  { y: 2037, r: 80 },    // final leg up
 ];
 
 // zzz553 — WITHDRAW plan: the base path, but I pull a full ₹1 cr OFF the table
