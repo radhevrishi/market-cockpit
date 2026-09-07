@@ -24,8 +24,16 @@
 //   invalid: ip mismatch"). It is not a fallback; it is dead for this use.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// EXACTLY the User-Agent the rest of this app uses for Yahoo (see
+// api/market/spark, api/v1/breadth, api/market/regime). Do not "improve" it.
+// A Mac/Chrome-126 UA plus an `Accept: application/json` header — which reads
+// as perfectly reasonable — got every equity request refused from Railway
+// while the identical request from a dev machine succeeded, and the only
+// difference was this string and that extra header. Yahoo's bot filter is
+// arbitrary; match what is known to work in production, send no other headers,
+// and always set a timeout so one slow symbol cannot stall a whole scan.
 const BROWSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 export interface Bars {
   symbol: string;
@@ -40,24 +48,34 @@ export interface Bars {
 
 const _bars = new Map<string, { at: number; data: Bars | null }>();
 const BARS_TTL_MS = 15 * 60_000;
+// A FAILURE is cached only briefly. Caching a transient miss for the full 15
+// minutes would turn one bad moment into a quarter-hour of empty results with
+// no way to retry — the failure mode that made this look permanently broken.
+const BARS_FAIL_TTL_MS = 60_000;
+
+/** Last failure reason per symbol, surfaced in the route's `notes` so a
+ *  production price outage is diagnosable without a redeploy. */
+export const yahooLastError = new Map<string, string>();
 
 async function yahooChart(symbol: string, range = '1y'): Promise<Bars | null> {
   const key = `${symbol}|${range}`;
   const hit = _bars.get(key);
-  if (hit && Date.now() - hit.at < BARS_TTL_MS) return hit.data;
+  if (hit && Date.now() - hit.at < (hit.data ? BARS_TTL_MS : BARS_FAIL_TTL_MS)) return hit.data;
 
   const hosts = ['query1', 'query2'];
+  let lastErr = 'unknown';
   for (const host of hosts) {
     try {
       const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
       const res = await fetch(url, {
-        headers: { 'User-Agent': BROWSER_UA, 'Accept': 'application/json' },   // mandatory — see header note
+        headers: { 'User-Agent': BROWSER_UA },        // this header and nothing else — see note above
         cache: 'no-store',
+        signal: AbortSignal.timeout(9000),
       });
-      if (!res.ok) continue;
+      if (!res.ok) { lastErr = `${host} HTTP ${res.status}`; continue; }
       const j: any = await res.json();
       const r = j?.chart?.result?.[0];
-      if (!r) continue;
+      if (!r) { lastErr = `${host} empty result`; continue; }
       const ts: number[] = r.timestamp || [];
       const q = r.indicators?.quote?.[0] || {};
       const off: number = r.meta?.gmtoffset || 0;
@@ -73,17 +91,21 @@ async function yahooChart(symbol: string, range = '1y'): Promise<Bars | null> {
         close.push(c);
         volume.push(Number.isFinite(q.volume?.[i]) ? q.volume[i] : 0);
       }
-      if (!close.length) continue;
+      if (!close.length) { lastErr = `${host} no closes`; continue; }
       const data: Bars = {
         symbol: r.meta?.symbol || symbol,
         price: Number.isFinite(r.meta?.regularMarketPrice) ? r.meta.regularMarketPrice : close[close.length - 1],
         dates, open, high, low, close, volume,
       };
       _bars.set(key, { at: Date.now(), data });
+      yahooLastError.delete(symbol);
       return data;
-    } catch { /* try the next host */ }
+    } catch (e: any) {
+      lastErr = `${host} ${String(e?.name === 'TimeoutError' ? 'timeout' : (e?.message || e)).slice(0, 60)}`;
+    }
   }
   _bars.set(key, { at: Date.now(), data: null });
+  yahooLastError.set(symbol, lastErr);
   return null;
 }
 

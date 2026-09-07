@@ -5833,6 +5833,11 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/weekly-review', label: '🧘 Weekly Review', color: '#FBBF24' },
   { href: '/watchlists?tab=conviction', label: '🏆 Conviction Beats', color: '#F59E0B' },
   { href: '/earnings-opportunities', label: '📅 Earnings Ops', color: '#F59E0B' },
+  // zzz548 — US market engine, placed next to its India siblings. Note: a user
+  // with a saved drag order gets new chips APPENDED at the end (see the merge
+  // in FavouritesGrid), so these land last until dragged into place.
+  { href: '/us-earnings-opportunities', label: '🇺🇸 US Earnings Ops', color: '#F59E0B' },
+  { href: '/us-conviction-beats', label: '🇺🇸 US Conviction Beats', color: '#F59E0B' },
   { href: '/risk', label: '🛡️ Risk Desk', color: '#EF4444' },
   { href: '/position-sizing', label: '📐 Position Sizing', color: '#22D3EE' },
   { href: '/thesis', label: '📓 Thesis Tracker', color: '#A78BFA' },

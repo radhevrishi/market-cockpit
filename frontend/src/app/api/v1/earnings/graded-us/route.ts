@@ -33,7 +33,7 @@ import {
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
   type EdgarFiling,
 } from '@/lib/us-edgar';
-import { usTechnicals, spyReturn12m, pooled, type UsTechnicals } from '@/lib/us-prices';
+import { usTechnicals, spyReturn12m, pooled, yahooLastError, type UsTechnicals } from '@/lib/us-prices';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
@@ -249,7 +249,20 @@ export async function GET(req: Request) {
     if (pendingXbrl > 0) {
       notes.push(`${pendingXbrl} filer${pendingXbrl > 1 ? 's' : ''} announced but XBRL not yet posted (the 10-Q usually follows the 8-K by days to weeks)`);
     }
-    if (noPrice > 0) notes.push(`${noPrice} filer(s) had no usable price history (OTC / newly listed / delisted)`);
+    if (noPrice > 0) {
+      // Name the actual upstream failure. Without this, a Yahoo-side block from
+      // the deploy host is indistinguishable from "these are all OTC tickers",
+      // and diagnosing it costs a redeploy.
+      const reasons = new Map<string, number>();
+      for (let i = 0; i < listed.length; i++) {
+        if (techs[i]) continue;
+        const r = yahooLastError.get(listed[i].ticker!) || 'insufficient history';
+        reasons.set(r, (reasons.get(r) || 0) + 1);
+      }
+      const top = Array.from(reasons.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([r, n]) => `${r} ×${n}`).join(', ');
+      notes.push(`${noPrice} filer(s) had no usable price history — ${top || 'OTC / newly listed / delisted'}`);
+    }
 
     const payload: UsGradedPayload = {
       filing_date: date,
