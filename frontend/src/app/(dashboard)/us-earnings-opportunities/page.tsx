@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
 import { syncUsConviction } from '@/lib/conviction-beats-us';
 import {
@@ -26,6 +26,7 @@ import {
   type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
+import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
@@ -57,6 +58,7 @@ interface Expected {
 interface CalendarDay {
   date: string; weekend: boolean; future?: boolean; count: number;
   tickers: string[]; entries?: CalendarTicker[]; expected?: Expected[]; eightK: number; periodic: number;
+  reported_elsewhere?: number;
 }
 interface CalendarPayload {
   from: string; to: string; total: number; days: CalendarDay[]; generated_at: string;
@@ -73,10 +75,16 @@ const TIER_META: Record<EarningsTier, { label: string; color: string; icon: stri
 // transient price-source failure) and then serve it back for a quarter of an
 // hour, which looked exactly like a broken engine. Bumping the prefix orphans
 // every such entry instantly; the scrub below reclaims their space.
-const LS_PREFIX = 'mc:graded-us:v2:';
+// v3 — one entry per SESSION rather than per window, so widening 5d → 10d
+// re-uses the five days already on disk and fetches only the new ones.
+const LS_PREFIX = 'mc:graded-us:v3:';
+const LS_CAL_PREFIX = 'mc:cal-us:v1:';
+/** How many day-scans may be in flight at once. Three keeps the first rows on
+ *  screen quickly without asking the server to sweep the whole window at once. */
+const DAY_CONCURRENCY = 3;
 const LS_DATE = 'mc:us-eo:v1:date';
 const LS_DAYS = 'mc:us-eo:v1:days';
-const LS_SCRUB = 'mc:graded-us:scrub:v2';
+const LS_SCRUB = 'mc:graded-us:scrub:v3';
 
 function scrubOldCaches() {
   try {
@@ -84,7 +92,7 @@ function scrubOldCaches() {
     const kill: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith('mc:graded-us:v1:')) kill.push(k);
+      if (k && (k.startsWith('mc:graded-us:v1:') || k.startsWith('mc:graded-us:v2:'))) kill.push(k);
     }
     for (const k of kill) localStorage.removeItem(k);
     localStorage.setItem(LS_SCRUB, '1');
@@ -97,13 +105,15 @@ function etToday(): string {
   return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
 }
 
+/** One cached SESSION. A completed session is immutable on EDGAR, so it is held
+ *  for a day; today's keeps moving as 8-Ks land, so it expires in 10 minutes. */
 function readCache(key: string, isToday: boolean): UsPayload | null {
   try {
     const raw = getItemSync(LS_PREFIX + key);
     if (!raw) return null;
     const o = JSON.parse(raw);
     const age = Date.now() - Date.parse(o?._cachedAt || '');
-    const maxAge = isToday ? 15 * 60_000 : 7 * 24 * 3600_000;
+    const maxAge = isToday ? 10 * 60_000 : 30 * 24 * 3600_000;
     if (!Number.isFinite(age) || age > maxAge) return null;
     if (!o?.by_tier) return null;
     // A scan that found filers but graded NONE of them is a failed scan, not a
@@ -147,37 +157,67 @@ export default function UsEarningsOpportunitiesPage() {
   useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
   useEffect(() => { try { debouncedSetItem(LS_DAYS, String(days)); } catch {} }, [days]);
 
-  const cacheKey = `${date}|${days}`;
   const isToday = date >= today;
+  // One request per session in the window, newest first. Each lands and paints
+  // on its own; a day already in localStorage is never re-fetched (a completed
+  // session cannot change), so only the gaps cost anything.
+  const sessions = useMemo(() => windowSessions(date, days), [date, days]);
+  // How many of those days are allowed to be in flight. Starts at the
+  // concurrency limit and walks forward as days settle (a state value, so the
+  // gate cannot depend on the query results it controls).
+  const [readyUpto, setReadyUpto] = useState(DAY_CONCURRENCY);
+  useEffect(() => { setReadyUpto(DAY_CONCURRENCY); }, [date, days, forceKey]);
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery<UsPayload>({
-    queryKey: ['graded-us', cacheKey, forceKey],
-    queryFn: async () => {
-      if (forceKey === 0) {
-        const cached = readCache(cacheKey, isToday);
-        if (cached) return cached;
-      }
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 280_000);
-      try {
-        const res = await fetch(
-          `/api/v1/earnings/graded-us?date=${date}&days=${days}${forceKey > 0 ? '&force=1' : ''}`,
-          { cache: 'no-store', signal: ctrl.signal },
-        );
-        if (!res.ok) throw new Error(`Grading failed (HTTP ${res.status})`);
-        const payload = await res.json();
-        if (cacheable(payload)) {
-          try {
-            debouncedSetItem(LS_PREFIX + cacheKey, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() }));
-          } catch { /* quota — the payload still renders, it just isn't cached */ }
+  const dayQueries = useQueries({
+    queries: sessions.map((d, i) => ({
+      queryKey: ['graded-us-day', d, forceKey],
+      queryFn: async (): Promise<DayPayload> => {
+        if (forceKey === 0) {
+          const cached = readCache(d, d >= today);
+          if (cached) return cached as unknown as DayPayload;
         }
-        return payload;
-      } finally { clearTimeout(timer); }
-    },
-    staleTime: isToday ? 3 * 60_000 : 60 * 60_000,
-    refetchOnWindowFocus: false,
-    retry: 1,
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 240_000);
+        try {
+          const res = await fetch(
+            `/api/v1/earnings/graded-us?date=${d}&days=1${forceKey > 0 ? '&force=1' : ''}`,
+            { cache: 'no-store', signal: ctrl.signal },
+          );
+          if (!res.ok) throw new Error(`Grading failed for ${d} (HTTP ${res.status})`);
+          const payload = await res.json();
+          if (cacheable(payload)) {
+            try {
+              debouncedSetItem(LS_PREFIX + d, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() }));
+            } catch { /* quota — it still renders, it just isn't cached */ }
+          }
+          return payload;
+        } finally { clearTimeout(timer); }
+      },
+      // Stagger: only the first few days start immediately; the rest queue up as
+      // earlier ones settle, so the server is never asked to sweep the whole
+      // window at once.
+      enabled: i < readyUpto,
+      staleTime: d >= today ? 3 * 60_000 : 24 * 3600_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    })),
   });
+  const settledCount = dayQueries.filter((q: any) => q.isSuccess || q.isError).length;
+  const loadedCount = dayQueries.filter((q: any) => q.isSuccess).length;
+  const failedDays = sessions.filter((_, i) => (dayQueries[i] as any)?.isError);
+  useEffect(() => { setReadyUpto((v) => Math.max(v, settledCount + DAY_CONCURRENCY)); }, [settledCount]);
+
+  const data: UsPayload | undefined = useMemo(() => {
+    const parts = dayQueries.map((q: any) => q.data as DayPayload | undefined).filter(Boolean) as DayPayload[];
+    if (!parts.length) return undefined;
+    return mergeDayPayloads(parts, date, sessions[sessions.length - 1] || date, days) as unknown as UsPayload;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayQueries.map((q: any) => (q.data ? (q.data as any).generated_at : '')).join('|'), date, days]);
+
+  const isLoading = loadedCount === 0 && dayQueries.some((q: any) => q.isFetching);
+  const isFetching = dayQueries.some((q: any) => q.isFetching);
+  const error = loadedCount === 0 ? ((dayQueries.find((q: any) => q.isError) as any)?.error ?? null) : null;
+  const refetch = () => setForceKey((k) => k + 1);
 
   // Push BLOCKBUSTER / STRONG (and demotions) onto the US bench.
   useEffect(() => {
@@ -230,17 +270,55 @@ export default function UsEarningsOpportunitiesPage() {
     const cap = new Date(Date.parse(today + 'T00:00:00Z') + 45 * 86400000).toISOString().slice(0, 10);
     return t > cap ? cap : t;
   }, [date, calDays, today]);
-  const { data: cal, isFetching: calFetching } = useQuery<CalendarPayload>({
-    queryKey: ['calendar-us', calFrom, calTo],
-    queryFn: async () => {
-      const res = await fetch(`/api/v1/earnings/calendar-us?from=${calFrom}&to=${calTo}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`Calendar failed (HTTP ${res.status})`);
-      return res.json();
-    },
-    enabled: viewMode === 'CALENDAR',
-    staleTime: 30 * 60_000,
-    refetchOnWindowFocus: false,
+  // The calendar sweeps a range that can be 90 days long. Fetch it in 10-day
+  // chunks so the grid fills in as they land, and cache each chunk: moving the
+  // range by a week then re-fetches one chunk, not ninety days.
+  const calChunks = useMemo(() => chunkRange(calFrom, calTo, 10), [calFrom, calTo]);
+  const calQueries = useQueries({
+    queries: calChunks.map(([a, b]) => ({
+      queryKey: ['calendar-us', a, b, forceKey],
+      queryFn: async (): Promise<CalendarPayload> => {
+        const key = `${LS_CAL_PREFIX}${a}|${b}`;
+        const chunkHasToday = b >= today;
+        if (forceKey === 0) {
+          try {
+            const raw = getItemSync(key);
+            if (raw) {
+              const o = JSON.parse(raw);
+              const age = Date.now() - Date.parse(o?._cachedAt || '');
+              const maxAge = chunkHasToday ? 10 * 60_000 : 30 * 24 * 3600_000;
+              if (Number.isFinite(age) && age < maxAge && Array.isArray(o?.days)) return o as CalendarPayload;
+            }
+          } catch { /* storage unavailable */ }
+        }
+        const res = await fetch(`/api/v1/earnings/calendar-us?from=${a}&to=${b}${forceKey > 0 ? '&force=1' : ''}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Calendar failed (HTTP ${res.status})`);
+        const payload = await res.json();
+        try { debouncedSetItem(key, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() })); } catch {}
+        return payload;
+      },
+      enabled: viewMode === 'CALENDAR',
+      staleTime: b >= today ? 10 * 60_000 : 24 * 3600_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    })),
   });
+  const calFetching = calQueries.some((q: any) => q.isFetching);
+  const calLoaded = calQueries.filter((q: any) => q.isSuccess).length;
+  const cal: CalendarPayload | undefined = useMemo(() => {
+    const parts = calQueries.map((q: any) => q.data as CalendarPayload | undefined).filter(Boolean) as CalendarPayload[];
+    if (!parts.length) return undefined;
+    const days = parts.flatMap((p) => p.days || []);
+    days.sort((a, b) => a.date.localeCompare(b.date));
+    const seen = new Set<string>();
+    const uniq = days.filter((d) => (seen.has(d.date) ? false : (seen.add(d.date), true)));
+    return {
+      from: calFrom, to: calTo, days: uniq,
+      total: uniq.reduce((n, d) => n + (d.count || 0), 0),
+      generated_at: parts.map((p) => p.generated_at).sort().pop() || new Date().toISOString(),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calQueries.map((q: any) => (q.data ? (q.data as any).generated_at + ':' + (q.data as any).from : '')).join('|'), calFrom, calTo]);
 
   const allRows = useMemo(() => {
     if (!data?.by_tier) return [] as UsGradedRow[];
@@ -386,7 +464,7 @@ export default function UsEarningsOpportunitiesPage() {
         <button onClick={() => { setForceKey((k) => k + 1); setTimeout(() => refetch(), 0); }}
           disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <RefreshCw className="w-3 h-3" style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
-          {isFetching ? 'Scanning…' : 'Force re-scan'}
+          {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Force re-scan'}
         </button>
       </div>
 
@@ -461,8 +539,33 @@ export default function UsEarningsOpportunitiesPage() {
       {isLoading && viewMode === 'GRADED' && (
         <div style={panel()}>
           <div style={{ color: 'var(--mc-text-2)' }}>
-            Pulling the filing list from EDGAR, then the XBRL for each filer. A busy window takes 20–60 seconds.
+            Pulling {sessions[0]} from EDGAR, then the XBRL for each filer. Each session lands on its own —
+            the first names appear in a few seconds, the rest fill in behind them.
           </div>
+        </div>
+      )}
+      {viewMode === 'GRADED' && loadedCount > 0 && loadedCount < sessions.length && (
+        <div style={{
+          marginBottom: 12, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)',
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        }}>
+          <RefreshCw className="w-3 h-3" style={{ color: 'var(--mc-cyan)', animation: 'spin 1s linear infinite' }} />
+          <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
+            <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount} of {sessions.length} sessions</b> loaded —
+            showing {allRows.length} graded so far; the remaining {sessions.filter((d) => !dayQueries[sessions.indexOf(d)]?.isSuccess).slice(0, 4).join(', ')}
+            {sessions.length - loadedCount > 4 ? ' …' : ''} are still coming in. Days already scanned are read from cache and never re-fetched.
+          </span>
+        </div>
+      )}
+      {viewMode === 'GRADED' && failedDays.length > 0 && loadedCount > 0 && (
+        <div style={{
+          marginBottom: 12, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid #F59E0B',
+          fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)',
+        }}>
+          ⚠ {failedDays.join(', ')} could not be scanned (EDGAR or the price source timed out). Everything else is shown.
+          <button onClick={() => setForceKey((k) => k + 1)} style={{ ...btn(), marginLeft: 8 }}>retry those days</button>
         </div>
       )}
       {!!error && (
@@ -589,7 +692,7 @@ export default function UsEarningsOpportunitiesPage() {
               style={{ ...btn(), padding: '6px 10px', minWidth: 120, fontWeight: 600 }} />
             <span style={{ flex: 1 }} />
             <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
-              {calFrom} → {calTo}{cal ? ` · ${cal.total} companies` : ''}{calFetching ? ' · loading…' : ''}
+              {calFrom} → {calTo}{cal ? ` · ${cal.total} companies` : ''}{calFetching ? ` · ${calLoaded}/${calChunks.length} chunks loaded…` : ''}
             </span>
             {cal && (
               <>
@@ -614,7 +717,7 @@ export default function UsEarningsOpportunitiesPage() {
           </div>
 
           {!cal && !calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Loading the filing calendar…</span></div>}
-          {!cal && calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Sweeping EDGAR for {calFrom} → {calTo}… (first load of a range takes 10–40s; it is cached after that)</span></div>}
+          {!cal && calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Sweeping EDGAR for {calFrom} → {calTo} in {calChunks.length} chunks — each fills in as it lands, and each is cached afterwards.</span></div>}
 
           {cal && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -654,7 +757,7 @@ export default function UsEarningsOpportunitiesPage() {
                       )}
                       {shownExp.length > 0 && (
                         <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', backgroundColor: 'color-mix(in srgb, #8B5CF6 12%, transparent)', color: '#8B5CF6' }}>
-                          🗓 {shownExp.length} {isFuture ? 'scheduled' : 'still to report'}
+                          🗓 {shownExp.length} {isFuture ? 'scheduled' : (isToday ? 'still to report' : 'reported without an 8-K')}
                         </span>
                       )}
                       {!shown.length && !shownExp.length && (

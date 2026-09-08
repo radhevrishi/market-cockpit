@@ -42,6 +42,9 @@ interface DayEntry {
   count: number;
   tickers: string[];             // kept for backwards compatibility
   entries: DayTicker[];          // ACTUAL filings (EDGAR)
+  /** On a PAST day: how many of `expected` reported without an 8-K (foreign
+   *  private issuers file a 6-K, which carries no XBRL and is never graded). */
+  reported_elsewhere?: number;
   expected: ExpectedReporter[];  // SCHEDULED reporters (Nasdaq) — the whole list for future dates,
                                  // the not-yet-filed remainder for today, empty for the past
   eightK: number;
@@ -90,7 +93,12 @@ export async function GET(req: Request) {
     };
     const workDates = dates.filter((d) => !isWeekend(d));
     const pastDates = workDates.filter((d) => d <= today);
-    const scheduleDates = workDates.filter((d) => d >= today);
+    // The Nasdaq schedule is fetched for EVERY session in the range, not just
+    // today and ahead. A foreign private issuer (NIO, Grifols, Rezolve) reports
+    // on a 6-K and files no 8-K at all, so EDGAR's earnings index never sees it
+    // and the day would look like it was missing a name the market watched.
+    // Nasdaq's schedule for that past day carries it.
+    const scheduleDates = workDates;
 
     const [results, schedules] = await Promise.all([
       pooled(pastDates, 4, async (d) => {
@@ -135,7 +143,7 @@ export async function GET(req: Request) {
 
     const byDate = new Map<string, DayEntry>();
     for (const d of dates) {
-      byDate.set(d, { date: d, weekend: isWeekend(d), future: d > today, count: 0, tickers: [], entries: [], expected: [], eightK: 0, periodic: 0 });
+      byDate.set(d, { date: d, weekend: isWeekend(d), future: d > today, count: 0, tickers: [], entries: [], expected: [], eightK: 0, periodic: 0, reported_elsewhere: 0 });
     }
     let total = 0;
     byCik.forEach((ev) => {
@@ -150,9 +158,12 @@ export async function GET(req: Request) {
       const entry = byDate.get(s.d);
       if (!entry) continue;
       const filed = new Set(entry.entries.map((e) => e.ticker));
-      entry.expected = s.list
-        .filter((r) => !filed.has(r.ticker))
-        .sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0));
+      const left = s.list.filter((r) => !filed.has(r.ticker));
+      entry.expected = left.sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0));
+      // On a day that has already happened, "expected but no 8-K" means the
+      // company reported some other way — nearly always a 6-K from a foreign
+      // private issuer. Mark it rather than leaving a silent gap.
+      if (s.d < today) entry.reported_elsewhere = entry.expected.length;
     }
     byDate.forEach((entry) => {
       entry.entries.sort((a, b) => (a.form === '8-K' ? 0 : 1) - (b.form === '8-K' ? 0 : 1) || a.ticker.localeCompare(b.ticker));
