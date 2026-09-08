@@ -2742,6 +2742,7 @@ export default function HomeDashboard() {
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
             {/* zzz239 — 🏆 Conviction Beats moved to Favourites row above */}
+            <Link href="/coffee-can"             style={navChip('#FBBF24')}>🫙 Coffee Can</Link>
             <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
             <Link href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</Link>
             <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
@@ -2758,17 +2759,24 @@ export default function HomeDashboard() {
             {/* zzz242 — 🎢 Market Cycles moved to Favourites row above */}
             {/* zzz239 — 📈 Movers, 🚀 Multibagger, 💼 My Book, 📰 News Feed moved to Favourites row above */}
             {/* zzz242 — 📰 News Triage moved to Favourites row above */}
+            <Link href="/monte-carlo"            style={navChip('#06B6D4')}>🎲 Monte Carlo</Link>
             <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
+            <Link href="/pead-tracker"           style={navChip('#10B981')}>📊 PEAD Tracker</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             {/* zzz239 — 🔬 Portfolio Fundamentals moved to Favourites row above */}
+            <Link href="/position-sizing"        style={navChip('#22D3EE')}>📐 Position Sizing</Link>
             <Link href="/portfolio-simulator"     style={navChip('#A78BFA')}>🎲 Portfolio Simulator</Link>
             <Link href="/winning-playbook"      style={navChip('#F59E0B')}>🏆 Winning Playbook</Link>
             <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
+            <Link href="/risk"                   style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
             <Link href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</Link>
             <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
+            <Link href="/tax-planner"            style={navChip('#F59E0B')}>🧾 Tax Planner</Link>
+            <Link href="/thesis"                 style={navChip('#A78BFA')}>📓 Thesis Tracker</Link>
+            <Link href="/valuation-bands"        style={navChip('#22D3EE')}>📊 Valuation Bands</Link>
             {/* zzz239 — duplicate IBEF removed (also moved to Favourites row above) */}
             {/* PATCH 1101eee — Screener.in sync via browser bookmarklet.
                 Server-side fetch is blocked by Cloudflare's data-center IP filter.
@@ -5838,14 +5846,11 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   // in FavouritesGrid), so these land last until dragged into place.
   { href: '/us-earnings-opportunities', label: '🇺🇸 US Earnings Ops', color: '#F59E0B' },
   { href: '/us-conviction-beats', label: '🇺🇸 US Conviction Beats', color: '#F59E0B' },
-  { href: '/risk', label: '🛡️ Risk Desk', color: '#EF4444' },
-  { href: '/position-sizing', label: '📐 Position Sizing', color: '#22D3EE' },
-  { href: '/thesis', label: '📓 Thesis Tracker', color: '#A78BFA' },
-  { href: '/coffee-can', label: '🫙 Coffee Can', color: '#FBBF24' },
-  { href: '/pead-tracker', label: '📊 PEAD Tracker', color: '#10B981' },
-  { href: '/monte-carlo', label: '🎲 Monte Carlo', color: '#06B6D4' },
-  { href: '/tax-planner', label: '🧾 Tax Planner', color: '#F59E0B' },
-  { href: '/valuation-bands', label: '📊 Valuation Bands', color: '#22D3EE' },
+  // zzz559 — Risk Desk, Position Sizing, Thesis Tracker, Coffee Can, PEAD
+  // Tracker, Monte Carlo, Tax Planner and Valuation Bands moved OUT of
+  // Favourites and back into the A–Z strip below. A saved drag order that
+  // still lists them is harmless: FavouritesGrid drops any href it no longer
+  // knows about.
   { href: 'https://www.ibef.org/news/past-news', label: '🇮🇳 IBEF', color: '#10B981', ext: true },
   { href: '/movers', label: '📈 Movers', color: '#10B981' },
   { href: '/multibagger', label: '🚀 Multibagger', color: '#10B981' },

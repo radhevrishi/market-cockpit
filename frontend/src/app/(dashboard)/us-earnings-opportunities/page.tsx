@@ -1173,7 +1173,7 @@ function GuideBlock({ figs, label }: { figs: Array<GuidanceFigure & { est?: numb
     if (!groups.has(f.period_label)) groups.set(f.period_label, []);
     groups.get(f.period_label)!.push(f);
   }
-  const verb = label === 'RAISED' ? 'Raises' : label === 'LOWERED' ? 'Cuts' : label === 'MAINTAINED' ? 'Reaffirms' : 'Guides';
+  const verb = label === 'RAISED' ? 'Raises' : label === 'LOWERED' ? 'Cuts' : label === 'MAINTAINED' ? 'Reaffirms' : 'Guides to';
   return (
     <div style={{
       marginTop: 8, borderRadius: 6, border: '1px solid var(--mc-bg-4)',
@@ -1182,7 +1182,7 @@ function GuideBlock({ figs, label }: { figs: Array<GuidanceFigure & { est?: numb
       {Array.from(groups.entries()).map(([period, list]) => (
         <div key={period} style={{ marginBottom: 4 }}>
           <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', marginBottom: 3 }}>
-            {verb.toUpperCase()} {period.toUpperCase()} GUIDE
+            {verb.toUpperCase()} {period.toUpperCase()}{verb === 'Guides to' ? '' : ' GUIDE'}
           </div>
           {list.map((f, i) => {
             const beat = (f.est != null && f.low != null && f.high != null) ? ((f.low + f.high) / 2) - f.est : null;

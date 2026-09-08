@@ -346,6 +346,12 @@ export async function GET(req: Request) {
       // Yahoo keys the row by fiscal-quarter END; take the row whose quarter is
       // within 45 days of the quarter we graded (52/53-week calendars shift it).
       const sLatest = sRows.find((r) => r.quarter && p.fundamentals.q_end && Math.abs(daysBetween(r.quarter, p.fundamentals.q_end)) <= 45 && r.eps_actual != null) || null;
+      // The year-ago row from the same consensus history — the adjusted basis
+      // needs both ends to produce a growth rate.
+      const sYearAgo = (sLatest && sLatest.quarter)
+        ? (sRows.find((r) => r.quarter && r.eps_actual != null
+            && Math.abs(daysBetween(sLatest.quarter!, r.quarter) - 365) <= 30) || null)
+        : null;
       const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
       const row = gradeUsRow({
         ticker: p.f.ticker!,
@@ -363,6 +369,8 @@ export async function GET(req: Request) {
           addv_musd: p.t.addv_musd, vol_ratio_20d: p.t.vol_ratio_20d,
         },
         shares_outstanding: p.shares,
+        adj_eps: sLatest?.eps_actual ?? null,
+        adj_eps_prev: sYearAgo?.eps_actual ?? null,
         positive_guidance: g.label === 'RAISED',
         // The filer's own words first (press-release headline), then SEC's
         // fy/fp — they disagree often enough to matter (NetApp's July quarter
@@ -474,6 +482,9 @@ export async function GET(req: Request) {
           // it is current even before this quarter's numbers land. Gives the
           // PRELIM card a real market cap instead of a blank.
           shares_outstanding: facts0 ? sharesOutstandingFromFacts(facts0, null) : null,
+          adj_eps: latest.eps_actual,
+          adj_eps_prev: (rows.find((r) => r.quarter && r.eps_actual != null && latest.quarter
+            && Math.abs(daysBetween(latest.quarter, r.quarter) - 365) <= 30)?.eps_actual) ?? null,
           prelim_surprise_pct: latest.surprise_pct,
           fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
           fiscal_year_own: gPre?.fiscal_fy ?? fiscalNow.fy,

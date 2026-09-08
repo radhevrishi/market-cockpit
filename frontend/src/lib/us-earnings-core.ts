@@ -636,6 +636,12 @@ export interface UsGradeInput {
   /** True when the press release RAISED guidance — feeds Path A of the
    *  BLOCKBUSTER gate exactly as India's guidance-text scan does. */
   positive_guidance?: boolean;
+  /** The street (adjusted) EPS for this quarter and the year-ago quarter, when
+   *  the consensus feed carries both. A US software name is priced on this
+   *  basis: Snowflake's GAAP line is a loss while adjusted EPS grew ~50% on
+   *  +35% revenue, and grading only the GAAP line called that "mixed". */
+  adj_eps?: number | null;
+  adj_eps_prev?: number | null;
   /** PRELIM mode: the street-basis EPS surprise (%) for a print whose XBRL has
    *  not posted. Stands in for the growth axis so the reaction + surprise can be
    *  graded now; the full YoY grade replaces it when the 10-Q lands. */
@@ -740,7 +746,15 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const niC = f.net_income, niP = f.net_income_prev;
   const salesY = yoyPct(revC, revP);
   const patY = yoyPct(niC, niP);
-  const epsY = yoyPct(f.eps, f.eps_prev);
+  const epsYGaap = yoyPct(f.eps, f.eps_prev);
+  // When the GAAP line gives no usable growth rate — a loss last year, a loss
+  // this year — fall back to the basis the market actually trades: adjusted
+  // EPS, year over year, from the consensus feed. The GAAP figures stay on the
+  // card untouched; only the GROWTH used for grading changes, and the row is
+  // tagged so the reason is visible.
+  const epsYAdj = yoyPct(input.adj_eps ?? null, input.adj_eps_prev ?? null);
+  const usedAdjEps = epsYGaap == null && epsYAdj != null;
+  const epsY = epsYGaap ?? epsYAdj;
   const opm = (f.operating_income != null && revC) ? (f.operating_income / revC) * 100 : null;
   const opmPrev = (f.operating_income_prev != null && revP) ? (f.operating_income_prev / revP) * 100 : null;
   const opmExp = (opm != null && opmPrev != null) ? opm - opmPrev : null;
@@ -780,9 +794,17 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     const opY = ((f.operating_income - f.operating_income_prev) / Math.abs(f.operating_income_prev)) * 100;
     if (opY < 30) caveat_tags.push('tax distortion');
   }
-  const stillLossMaking = (niC != null && niC <= 0) || (f.eps != null && f.eps <= 0);
+  // A GAAP loss that is profitable on the street's basis is a different animal
+  // from a company that loses money on every measure — stock-based
+  // compensation and acquisition amortisation are the usual gap. Both are
+  // flagged; only the second is treated as a quality failure.
+  const gaapLoss = (niC != null && niC <= 0) || (f.eps != null && f.eps <= 0);
+  const adjProfitable = (input.adj_eps ?? null) != null && (input.adj_eps as number) > 0;
+  const stillLossMaking = gaapLoss && !adjProfitable;
   if (stillLossMaking) caveat_tags.push('low quality');
-  const turnaroundBase = (niP != null && niP < 0) || (f.eps_prev != null && f.eps_prev < 0);
+  else if (gaapLoss && adjProfitable) caveat_tags.push('gaap loss · adj. profitable');
+  if (usedAdjEps) methodology_tags.push('adjusted eps basis');
+  const turnaroundBase = ((niP != null && niP < 0) || (f.eps_prev != null && f.eps_prev < 0)) && !adjProfitable;
   if (turnaroundBase) caveat_tags.push('low quality');
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
   else if (opmExp != null && opmExp <= -0.5) caveat_tags.push('segment mix shift');

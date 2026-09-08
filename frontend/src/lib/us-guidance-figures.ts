@@ -99,13 +99,14 @@ interface Tok { v: number; unit: 'usd' | 'usd_share' | 'pct'; at: number; end: n
 
 function tokens(s: string, scale: number | null, perShare: boolean): Tok[] {
   const out: Tok[] = [];
-  const re = /(\()?\s*(\$)?\s*(-|−|–|—)?\s*(\d[\d,]*(?:\.\d+)?)\s*(\))?\s*(billion|million|thousand|%)?/gi;
+  const re = /(\(\s*)?\$?\s*(\(\s*)?(-|−|–|—)?\s*(\d[\d,]*(?:\.\d+)?)\s*(\))?\s*(billion|million|thousand|%)?/gi;
   let m: RegExpExecArray | null;
   let guard = 0;
   while ((m = re.exec(s)) && guard++ < 60) {
     const raw = m[4].replace(/,/g, '');
     let v = parseFloat(raw);
     if (!Number.isFinite(v)) continue;
+    const openParen = !!(m[1] || m[2]);
     // "24.3% - 25.3%" is a range, not a negative: a dash that FOLLOWS a number,
     // a percent sign or a closing bracket is a separator.
     let signIsMinus = !!m[3];
@@ -113,9 +114,9 @@ function tokens(s: string, scale: number | null, perShare: boolean): Tok[] {
       const before = s.slice(0, m.index + m[0].indexOf(m[3]!)).replace(/[\s$]+$/, '');
       if (/[\d%)]$/.test(before)) signIsMinus = false;
     }
-    const neg = signIsMinus || (!!m[1] && !!m[5]);
+    const neg = signIsMinus || (openParen && !!m[5]);
     const word = (m[6] || '').toLowerCase();
-    const dollar = !!m[2];
+    const dollar = /\$/.test(m[0]);
     let unit: Tok['unit'];
     let scaled = false;
     if (word === '%') unit = 'pct';
@@ -130,12 +131,21 @@ function tokens(s: string, scale: number | null, perShare: boolean): Tok[] {
   return out;
 }
 
-/** Ranges ("A to B") and single points, in order, all of one unit. */
-function ranges(s: string, toks: Tok[]): Array<{ lo: number; hi: number; unit: Tok['unit']; at: number }> {
-  const out: Array<{ lo: number; hi: number; unit: Tok['unit']; at: number }> = [];
+/** Ranges ("A to B"), plus-or-minus bands and single points, in document order. */
+function ranges(s: string, toks: Tok[]): Array<{ lo: number; hi: number; unit: Tok['unit']; at: number; band?: boolean }> {
+  const out: Array<{ lo: number; hi: number; unit: Tok['unit']; at: number; band?: boolean }> = [];
   let i = 0;
   while (i < toks.length) {
     const a = toks[i], b = toks[i + 1];
+    // Ciena and Marvell guide as a MIDPOINT with a tolerance: "$1.75 billion
+    // +/- $50 million", "$3.15 billion +/- 5%". That is a range, and reading
+    // only the midpoint (or, worse, pairing the two numbers) loses the band.
+    if (b && /^\s*(?:\+\/-|\+-|±|plus\s+or\s+minus)\s*\$?\s*$/i.test(s.slice(a.end, b.at))) {
+      const delta = b.unit === 'pct' && a.unit !== 'pct' ? Math.abs(a.v) * (b.v / 100) : Math.abs(b.v);
+      out.push({ lo: a.v - delta, hi: a.v + delta, unit: a.unit, at: a.at, band: true });
+      i += 2;
+      continue;
+    }
     const byIncrease = /\bby\s*[$]?\s*$/i.test(s.slice(Math.max(0, a.at - 12), a.at));
     if (!byIncrease && b && a.unit === b.unit && /^\s*(?:to|-|–|—|and|through)\s*[$+]*\s*$/i.test(s.slice(a.end, b.at)) && b.v >= a.v) {
       out.push({ lo: a.v, hi: b.v, unit: a.unit, at: a.at });
@@ -359,10 +369,27 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
     }
   }
 
-  // A guidance figure is a RANGE. Companies do state single-point guidance, but
-  // a lone number in a release is far more often a reported figure that shares a
-  // row label — and one wrong guidance number costs more than ten missing ones.
-  const ranged = out.filter((f) => (f.low !== f.high) || f.prior_low != null);
+  // A guidance figure is usually a RANGE, and a lone number in a release is
+  // often a reported figure that shares a row label. But plenty of companies do
+  // guide to a point — Dell to "$192 billion", Broadcom to "approximately $34.8
+  // billion", Snowflake to a single product-revenue figure — and dropping those
+  // left their cards looking as if the engine had missed the guidance. So a
+  // point is kept when it is unambiguous: it carries a prior, or its own line
+  // states the forecast in words ("expects…", "outlook", "approximately"),
+  // which is what separates a guided number from a reported one.
+  const POINT_OK = /\b(expects?|expected|anticipates?|guidance|outlook|forecasts?|projects?|now\s+(?:expects|sees))\b/i;
+  // …and never when the same line reads as a REPORTED figure. "GAAP diluted net
+  // EPS of $1.06" and "included a $0.86 per-share tariff benefit" both sit near
+  // an outlook heading in their releases; the tense is what separates them.
+  const POINT_PAST = /\b(was|were|increased|decreased|declined|rose|fell|reported|delivered|included|compared\s+to|versus|in\s+the\s+(?:first|second|third|fourth)\s+quarter|year\s+to\s+date|per-share\s+benefit)\b/i;
+  const ranged = out.filter((f) => {
+    if (f.low !== f.high || f.prior_low != null) return true;
+    // A point under a quarter label with no fiscal year is the shakiest thing
+    // this parser can produce — HPE's reported "$1.06" sat under one. Ranges
+    // from such a section are fine; single numbers are not.
+    if (f.period === 'quarter' && !/FY\d{2}$/.test(f.period_label)) return false;
+    return POINT_OK.test(f.source) && !POINT_PAST.test(f.source);
+  });
   out.length = 0;
   out.push(...ranged);
 

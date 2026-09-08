@@ -744,6 +744,10 @@ export function fmtKeyMetric(m: { value: number; unit: KeyMetric['unit'] }): str
   const body = a >= 1e12 ? `$${(a / 1e12).toFixed(2)}T`
     : a >= 1e9 ? `$${(a / 1e9).toFixed(2)}B`
       : a >= 1e6 ? `$${(a / 1e6).toFixed(1)}M`
-        : `$${Math.round(a).toLocaleString('en-US')}`;
+        // Sportsman's Warehouse reported adjusted EBITDA of $0.6M; printing it
+        // as "$600,000" beside "$122.2M" on the next card reads as a different
+        // unit. Below a million, stay in millions with one decimal.
+        : a >= 1e4 ? `$${(a / 1e6).toFixed(1)}M`
+          : `$${Math.round(a).toLocaleString('en-US')}`;
   return m.value < 0 ? `-${body}` : body;
 }
