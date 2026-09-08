@@ -40,12 +40,14 @@ import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
+import { ownGuideVerdict } from '@/lib/us-guide-verdict';
 import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
   quarterSeries, balanceContext, assignSetupScores, rule40From, roceFrom, splitFactorSince,
-  US_TIER_ORDER, type UsGradedRow, type EarningsTier, type UsBalanceContext,
+  US_TIER_ORDER, composeUsNarrative,
+  type UsGradedRow, type EarningsTier, type UsBalanceContext,
 } from '@/lib/us-earnings-core';
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
 import { quadrantScore } from '@/lib/earnings-grade-shared';
@@ -985,7 +987,17 @@ export async function GET(req: Request) {
           || ((g.fiscal_q && (fq.fy ?? fyEnding) != null)
               ? `Q${g.fiscal_q} FY${String(fq.fy ?? fyEnding).slice(2)}` : null)
           || usFiscalLabel(fq)
-          || (fyEnding != null ? `Q4 FY${String(fyEnding).slice(2)}` : null),
+          || (fyEnding != null ? `Q4 FY${String(fyEnding).slice(2)}` : null)
+          // A QUARTER WITH NO ESTABLISHED YEAR IS LABELLED WITHOUT ONE.
+          //
+          // When the filer named its quarter but nothing — not the release, not
+          // SEC's fy — establishes the fiscal YEAR, the label used to fall
+          // through to a CALENDAR quarter ("Q2 CY26"), which for a filer whose
+          // year does not run with the calendar states a quarter number the
+          // filer itself would dispute. The ordinal is the filer's own word and
+          // is printed on its own; the period end date is on the card beside
+          // it, so nothing is hidden and nothing is invented.
+          || ((g.fiscal_q ?? fq.q) ? `Q${g.fiscal_q ?? fq.q}` : null),
         fiscal_year_own: g.fiscal_fy ?? fq.fy ?? fyEnding,
       });
       if (!row) { pendingXbrl++; addPending(p.f, 'xbrl-not-posted'); continue; }
@@ -1104,21 +1116,50 @@ export async function GET(req: Request) {
         // CHANGE is arithmetic on two stated ranges. When they disagree, the
         // arithmetic wins: Okta's release reads as a cut and every FY line in
         // it went up, and the card said both at once.
-        if (chg.length) {
-          const ups = chg.filter((x) => x.direction === 'raised').length;
-          const downs = chg.filter((x) => x.direction === 'lowered').length;
-          if (ups > downs && (row as any).guidance !== 'RAISED') {
-            (row as any).guidance = 'RAISED';
-            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges';
-            const i = row.caveat_tags.indexOf('guidance cut');
-            if (i >= 0) row.caveat_tags.splice(i, 1);
-            if (!row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
-          } else if (downs > ups && (row as any).guidance !== 'LOWERED') {
-            (row as any).guidance = 'LOWERED';
-            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges';
+        //
+        // A MAJORITY IS NOT A DIRECTION. This used to compare the COUNT of
+        // raised lines against the count of cut lines and take the winner, so
+        // SentinelOne's Q2 FY27 revision \u2014 FY27 revenue and operating income
+        // raised, FY27 adjusted EPS cut 11.4% \u2014 came out "RAISED" (two votes to
+        // one) and put a green "\ud83d\udce3 Own outlook raised" chip on top of a card
+        // whose own guidance block, four lines lower, read "FY27 GUIDE \u00b7 MIXED
+        // VS OWN PRIOR GUIDE". Salesforce and Autodesk sat in the same state.
+        // A revision that went both ways is a THIRD verdict, and it is now
+        // computed by the one function the card's chip and the card's guidance
+        // block also call (`ownGuideVerdict`), so the three cannot disagree.
+        // On MIXED the row keeps its prose label \u2014 that is genuinely what the
+        // release SAYS \u2014 but neither the "guidance raised" methodology tag nor
+        // the "guidance cut" caveat may stand, because neither is true of the
+        // whole revision.
+        const gv = ownGuideVerdict(g.figures || [], chg, null);
+        if (gv?.computed) {
+          (row as any).guidance_verdict = gv.verdict;
+          const dropMeth = () => {
             const i = row.methodology_tags.indexOf('guidance raised');
             if (i >= 0) row.methodology_tags.splice(i, 1);
+          };
+          const dropCav = () => {
+            const i = row.caveat_tags.indexOf('guidance cut');
+            if (i >= 0) row.caveat_tags.splice(i, 1);
+          };
+          if (gv.verdict === 'RAISED') {
+            (row as any).guidance = 'RAISED';
+            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges';
+            dropCav();
+            if (!row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
+          } else if (gv.verdict === 'LOWERED') {
+            (row as any).guidance = 'LOWERED';
+            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges';
+            dropMeth();
             if (!row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
+          } else if (gv.verdict === 'MIXED') {
+            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges \u2014 some lines raised, some cut';
+            // No caveat chip is added in its place: a mixed revision is a fact
+            // the guidance block states in full, and filing it as a caveat
+            // would silently demote the row in every preset that counts
+            // caveats — a second wrong answer to a display problem.
+            dropMeth();
+            dropCav();
           }
         }
       }
@@ -1180,6 +1221,16 @@ export async function GET(req: Request) {
         (row as any).eps_estimate = sLatest.eps_estimate;
         (row as any).eps_basis_note = 'no adjusted EPS in the release; the consensus estimate is on an adjusted basis, so no surprise is shown';
       }
+      // THE NARRATIVE IS REBUILT FROM THE FINAL CAVEAT LIST.
+      //
+      // `gradeUsRow` composed the sentence before this loop attached the tags
+      // only the route can know ("guidance cut", "consensus not on a comparable
+      // basis", the own-guide tags above), so the sentence and the METHODOLOGY
+      // & CAVEATS chips were two lists that had stopped agreeing: Aviat's chips
+      // carried "market rejected print" and its sentence did not; Electromed's
+      // carried "sold off — fundamentals intact". One recomposition here, off
+      // the same arrays the chips render, and there is only one list again.
+      row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags);
       graded.push(row);
     }
 
@@ -1337,7 +1388,11 @@ export async function GET(req: Request) {
             ? adjNowP - (latest!.eps_estimate as number) : null,
           positive_guidance: gPre?.label === 'RAISED',
           close_30d: t.close_30d,
-          fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
+          // Same ladder as the full path: the filer's own label, then the year
+          // implied by the year-ago quarter's XBRL, then the bare ordinal —
+          // never a fiscal year nothing establishes.
+          fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow)
+            || ((gPre?.fiscal_q ?? fiscalNow.q) ? `Q${gPre?.fiscal_q ?? fiscalNow.q}` : null),
           fiscal_year_own: gPre?.fiscal_fy ?? fiscalNow.fy,
         });
         if (!row) continue;
@@ -1478,6 +1533,30 @@ export async function GET(req: Request) {
               );
               const chg = guideChange(gPre?.figures || [], pg.for_year, splitK);
               if (chg.length) (row as any).guide_change = chg;
+              // The arithmetic wins on a PRELIM row too — same function, same
+              // rule as the full path above, so a PRELIM card's chip and its
+              // guidance block cannot disagree either.
+              const gvP = ownGuideVerdict(gPre?.figures || [], chg, null);
+              if (gvP?.computed) {
+                (row as any).guidance_verdict = gvP.verdict;
+                (row as any).guidance_basis = gvP.verdict === 'MIXED'
+                  ? 'computed from the two releases’ own ranges — some lines raised, some cut'
+                  : 'computed from the two releases’ own ranges';
+                const iM = row.methodology_tags.indexOf('guidance raised');
+                const iC = row.caveat_tags.indexOf('guidance cut');
+                if (gvP.verdict === 'RAISED') {
+                  (row as any).guidance = 'RAISED';
+                  if (iC >= 0) row.caveat_tags.splice(iC, 1);
+                  if (iM < 0) row.methodology_tags.push('guidance raised');
+                } else if (gvP.verdict === 'LOWERED') {
+                  (row as any).guidance = 'LOWERED';
+                  if (iM >= 0) row.methodology_tags.splice(iM, 1);
+                  if (iC < 0) row.caveat_tags.push('guidance cut');
+                } else if (gvP.verdict === 'MIXED') {
+                  if (iM >= 0) row.methodology_tags.splice(iM, 1);
+                  if (iC >= 0) row.caveat_tags.splice(iC, 1);
+                }
+              }
             }
           } catch { /* a missing prior release is not an error */ }
         }
@@ -1533,6 +1612,11 @@ export async function GET(req: Request) {
         const adjLine = adjNowP != null
           ? `${paP ? paP.label.toLowerCase() : 'adjusted EPS'} $${adjNowP.toFixed(2)}${consensusLine}`
           : null;
+        // Same rebuild as the full path — the PRELIM branch has been pushing
+        // caveats ("prelim · 10-Q pending", "missed consensus") since the
+        // sentence was composed, and the sentence has to carry the final list
+        // before the PRELIM tail is appended to it.
+        row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags);
         row.narrative = (pr && pr.matched.length)
           // We have the release's own GAAP statement — keep the normal
           // narrative and add the street line plus what is still missing.

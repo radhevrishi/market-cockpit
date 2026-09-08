@@ -104,6 +104,18 @@ function htmlToText(html: string): string {
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&#8217;|&rsquo;/g, "'").replace(/&#8220;|&#8221;|&ldquo;|&rdquo;/g, '"')
     .replace(/&#\d+;/g, ' ')
+    // HEX ENTITIES LEAVE A FOUR-DIGIT NUMBER BEHIND, AND IT READS AS A YEAR.
+    //
+    // Only the DECIMAL form was stripped, so ServiceTitan's release — which
+    // writes its dateline dashes as `&#x2013;` — reached the fiscal-year scan
+    // as "…Announces Fiscal Second Quarter Financial Results LOS ANGELES x2013
+    // September 8, 2026…". The bare-year pattern read the 2013 out of `x2013`
+    // and labelled a quarter that ended in July 2026 "Q2 FY13". Every filer
+    // that types an en-dash, an em-dash or a curly quote (which is most of
+    // them) carries this hazard; it only surfaces on the ones whose entity
+    // digits look like a year. Hex entities are now removed exactly as the
+    // decimal ones are.
+    .replace(/&#x[0-9a-f]+;/gi, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n\s*\n+/g, '\n')
     .trim();
@@ -183,7 +195,10 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
     [/\bQ([1-4])\s*(?:FY|fiscal(?:\s+year)?)\s*'?(\d{4}|\d{2})\b/i,
       (m) => ({ q: Number(m[1]) as 1 | 2 | 3 | 4, fy: yr(m[2]) })],
     // "second quarter 2026 results" (no "fiscal" — calendar-year filers)
-    [/\b(first|second|third|fourth)[\s\-]+quarter\b[^.]{0,40}?(?<!\d)(20\d{2})\b/i,
+    // The year must stand alone: `(?<!\d)` let "x2013" — the tail of an
+    // undecoded `&#x2013;` en-dash — pass as the year 2013. A year glued to any
+    // letter or digit is part of another token, never a fiscal year.
+    [/\b(first|second|third|fourth)[\s\-]+quarter\b[^.]{0,40}?(?<![A-Za-z0-9])(20\d{2})\b/i,
       (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
   ];
   // Position matters more than pattern order. A release names the quarter it is
@@ -222,8 +237,23 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
         if (!got.q || !got.fy) continue;
         if (headQ != null && got.q !== headQ) continue;   // see the headline note above
         // Never take a phrase that is plainly about the period AHEAD.
+        //
+        // "FOR THE SECOND QUARTER OF …" IS NOT A FORWARD-LOOKING PHRASE.
+        //
+        // This test used to carry `for the (third|fourth|first|second) quarter
+        // of` as one of its forward-looking signals, and that string is the
+        // ordinary way an American income-statement paragraph names the quarter
+        // it is REPORTING: The Buckle's release says "Net income for the second
+        // quarter of fiscal 2026 was $44.4 million". No "results/reported/
+        // announce" happened to sit in the surrounding 130 characters, so the
+        // filer's own, correct label was thrown away — and the scan walked on
+        // and took "the second quarter of fiscal 2025" out of a comparative
+        // sentence 1,600 characters further down, which is how a quarter that
+        // ended in August 2026 came out labelled Q2 FY25. The genuinely
+        // forward-looking words below are enough; a quarter ordinal that
+        // disagrees with the headline is already rejected by `headQ`.
         const ctx = window.slice(Math.max(0, m.index - 90), m.index + m[0].length + 40);
-        if (/\b(guidance|outlook|expects?|expected|forecast|anticipat|for the (?:third|fourth|first|second) quarter of)\b/i.test(ctx)
+        if (/\b(guidance|outlook|expects?|expected|forecast|anticipat)\b/i.test(ctx)
           && !/\b(results?|reported?|reports|announce)/i.test(ctx)) continue;
         // A YEAR THAT BELONGS TO THE OUTLOOK IS NOT THE YEAR BEING REPORTED.
         //
@@ -274,6 +304,27 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
         // / compared to names a prior period by construction.
         const before = window.slice(Math.max(0, m.index - 30), m.index);
         if (/\b(?:from|versus|vs\.?|compared\s+(?:to|with)|against|over|than)\s+(?:the\s+)?$/i.test(before)) continue;
+        // THE CONNECTIVE IS RARELY THE WORD IMMEDIATELY BEFORE THE PERIOD.
+        //
+        // The rule above only fires when the comparative word sits directly
+        // against the phrase, and an earnings release almost never writes it
+        // that way: La Rosa Holdings says "Total revenue was $15.1 million,
+        // compared with $20.2 million in the second quarter of 2025", and The
+        // Buckle says "compared with 440 stores in 42 states at the end of the
+        // second quarter of fiscal 2025". Both name a PRIOR period, and both
+        // slipped through with a whole clause between the connective and the
+        // phrase — which is how each of them ended up labelled with a fiscal
+        // year two years stale on a quarter that ended in mid-2026.
+        //
+        // So look back a full clause rather than thirty characters, and stop at
+        // the sentence boundary so a connective belonging to the PREVIOUS
+        // sentence can never condemn this one. Anything introduced by a
+        // comparison — or explicitly named as the year-ago period — is a
+        // comparative and is not the quarter being reported.
+        const clause = window.slice(Math.max(0, m.index - 200), m.index);
+        const sentence = clause.slice(Math.max(
+          clause.lastIndexOf('. ') + 1, Math.max(clause.lastIndexOf(';'), clause.lastIndexOf('•')) + 1));
+        if (/\b(?:compared\s+(?:to|with)|versus|vs\.?|against|than|from|over|up\s+from|down\s+from|prior[-\s]year|year[-\s]ago|same\s+(?:period|quarter)\s+(?:of|in|a\s+year))\b/i.test(sentence)) continue;
         if (!best || m.index < best.at) best = { ...got, at: m.index };
       }
     }

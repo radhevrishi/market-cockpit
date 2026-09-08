@@ -29,6 +29,7 @@ import {
   type UsGradedRow, type EarningsTier, type SwingKind,
 } from '@/lib/us-earnings-core';
 import { fmtGuideRange, GUIDE_METRIC_LABEL, type GuidanceFigure } from '@/lib/us-guidance-figures';
+import { fyLike, ownGuideMove, ownGuideVerdict } from '@/lib/us-guide-verdict';
 import { QUADRANT_META, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { fmtKeyMetric, KEY_METRIC_LABEL, type KeyMetric, type KeyMetricId } from '@/lib/us-key-metrics';
 
@@ -304,11 +305,30 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
             first chip now says whose expectation it is measured against, and
             the second states the street's side, naming the metrics it covers
             so it cannot be read as an all-clear on the ones it does not. */}
-        {(r as any).guidance && (
-          <Chip text={`📣 Own outlook ${String((r as any).guidance).toLowerCase()}`}
-            title="Versus the company's own previous guidance — not versus consensus."
-            color={(r as any).guidance === 'RAISED' ? '#10B981' : (r as any).guidance === 'LOWERED' || (r as any).guidance === 'WITHDRAWN' ? '#EF4444' : (r as any).guidance === 'MAINTAINED' ? '#FACC15' : undefined} />
-        )}
+        {/* THE CHIP AND THE BLOCK BELOW IT NOW SHARE ONE VERDICT.
+            This chip used to print the release's PROSE label while the
+            guidance block twelve lines down printed the arithmetic on the two
+            releases' stated ranges. SentinelOne's Q2 FY27 card said
+            "📣 Own outlook raised" over a block that said "FY27 GUIDE · MIXED
+            VS OWN PRIOR GUIDE", and the block was right: revenue and operating
+            income up, adjusted EPS cut 11.4%. Salesforce and Autodesk sat in
+            the same state; HP Inc. sat in it on a quarter guide. Both now call
+            `ownGuideVerdict` on the same figures and the same changes, so the
+            top of the card cannot say something the middle contradicts. */}
+        {(() => {
+          const gv = ownGuideVerdict((r as any).guidance_figures, (r as any).guide_change, (r as any).guidance);
+          if (!gv) return null;
+          const word = gv.verdict === 'RAISED' ? 'raised' : gv.verdict === 'LOWERED' ? 'cut'
+            : gv.verdict === 'MIXED' ? 'mixed' : 'reiterated';
+          const color = gv.verdict === 'RAISED' ? '#10B981' : gv.verdict === 'LOWERED' ? '#EF4444' : '#FACC15';
+          return (
+            <Chip text={`📣 Own outlook ${word}`} color={color}
+              title={`Versus the company's own previous guidance — not versus consensus. ${
+                gv.computed
+                  ? 'Computed from the two releases’ own stated ranges, line by line; a revision that raised some lines and cut others reads "mixed".'
+                  : 'Read from the release’s own wording — there was no prior stated range to measure it against.'}`} />
+          );
+        })()}
         {(() => {
           const sc = streetChip((r as any).guidance_figures);
           return sc ? <Chip text={sc.text} color={sc.color} title={sc.title} /> : null;
@@ -340,7 +360,24 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         }}>
           <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>STREET BASIS</span>
           <span>adj. EPS <b style={{ color: 'var(--mc-text-0)' }}>${Number((r as any).eps_adj).toFixed(2)}</b></span>
-          {(r as any).eps_estimate != null && <span>vs est ${Number((r as any).eps_estimate).toFixed(2)}</span>}
+          {/* A REFUSED ESTIMATE IS NOT PRINTED AT ALL — not even without a
+              surprise beside it.
+              The engine already declines to compute a surprise when the
+              consensus on file and the actual are struck on different bases
+              (`eps_basis_note`), but this line went on printing "vs est
+              $-0.23" immediately to the right of a +$0.08 actual. Two numbers
+              set side by side on one line ARE a comparison, whatever the
+              footnote underneath says: the owner read SentinelOne's card,
+              subtracted them himself and reported the bug as unfixed. A figure
+              the engine has just declared unusable may not appear where it
+              will be used. The line now states the absence and the note below
+              states the reason. */}
+          {(r as any).eps_estimate != null && !(r as any).eps_basis_note && (
+            <span>vs est ${Number((r as any).eps_estimate).toFixed(2)}</span>
+          )}
+          {(r as any).eps_basis_note && (
+            <span style={{ color: 'var(--mc-text-4)' }}>· no comparable street estimate</span>
+          )}
           {/* The surprise is rendered only when the engine published one. It
               refuses to publish one when the estimate is not on this actual's
               basis, and the note below says so IN PLACE of the beat — two
@@ -509,8 +546,14 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
     tiles.push(
       <Tile key="epsadj" label="EPS · ADJ." {...swingTile(r.eps_adj_yoy_pct ?? null, r.eps_adj_swing ?? null,
         adjEpsCur != null ? `$${adjEpsCur.toFixed(2)}` : '—')}
+        // The same suppression as the STREET BASIS line below the tiles: when
+        // `eps_basis_note` is set the estimate is on a different basis from
+        // this actual, and printing it under the actual is the comparison the
+        // engine just refused to make.
         sub={adjEpsPrev != null && adjEpsCur != null
           ? `$${adjEpsPrev.toFixed(2)} → $${adjEpsCur.toFixed(2)}`
+          : (r as any).eps_basis_note
+          ? 'no comparable street estimate'
           : epsEst != null && adjEpsCur != null
           ? `vs est $${epsEst.toFixed(2)}${surp != null ? ` · ${surp >= 0 ? '+' : ''}${surp.toFixed(0)}%` : ''}`
           : 'no prior base'} />,
@@ -788,16 +831,10 @@ export const EST_ABSENT_NOTE: Record<string, string> = {
   'implausible': 'The only candidate estimate is not the same quantity as this guide — a different basis or a different scale — so it is refused rather than shown.',
 };
 
-/** "FY27", "FY2027", "fiscal 2027" and "Q3 FY27" all reduce to a comparable
- *  key. Two consecutive releases spell the same period differently often
- *  enough that matching on the raw string silently loses the pairing. */
-export const fyLike = (s: string | null | undefined): string => {
-  const t = String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
-  const q = /\bQ([1-4])\b/.exec(t);
-  const y = /(?:FY|FISCAL(?:\s+YEAR)?)?\s*'?(\d{4}|\d{2})\b/.exec(t);
-  const yy = y ? (y[1].length === 4 ? y[1].slice(2) : y[1]) : '';
-  return `${q ? `Q${q[1]}` : 'FY'}:${yy}`;
-};
+/** Re-exported so callers of this module keep their import. The definition now
+ *  lives beside the own-guide verdict it exists to serve — see
+ *  lib/us-guide-verdict.ts. */
+export { fyLike };
 
 /**
  * THE STREET SUMMARY CHIP — scoped to the metrics it actually compared.
@@ -851,16 +888,7 @@ export function GuideBlock({ figs, label, showSource, changes }: {
   /** The own-guide move for one figure: from `guide_change` where the previous
    *  release could be read, else from a "prior" column inside this release's
    *  own table. */
-  const ownMove = (f: GuideFig): { dir: GuideChange['direction']; lo: number | null; hi: number | null } | null => {
-    const c = chg.find((x) => x.metric === f.metric
-      && (x.basis == null || f.basis == null || x.basis === f.basis)
-      && fyLike(x.period_label) === fyLike(f.period_label));
-    if (c) return { dir: c.direction, lo: c.prev_low, hi: c.prev_high };
-    if (f.prior_low != null || f.prior_high != null) {
-      return { dir: f.raised === true ? 'raised' : f.raised === false ? 'lowered' : 'reiterated', lo: f.prior_low, hi: f.prior_high };
-    }
-    return null;
-  };
+  const ownMove = (f: GuideFig) => ownGuideMove(f, chg);
   // A HEADING MAY NOT SPEAK FOR ROWS THAT DISAGREE WITH IT.
   //
   // This block used to head every period group with the release-wide guidance
@@ -885,11 +913,14 @@ export function GuideBlock({ figs, label, showSource, changes }: {
       if (label === 'MAINTAINED') return { text: 'reaffirmed vs own prior guide', color: IN_LINE_COLOR };
       return null;
     }
-    const up = dirs.filter((d) => d === 'raised').length;
-    const down = dirs.filter((d) => d === 'lowered').length;
-    if (up && down) return { text: 'mixed vs own prior guide', color: IN_LINE_COLOR };
-    if (up) return { text: 'raised vs own prior guide', color: 'var(--mc-bullish)' };
-    if (down) return { text: 'cut vs own prior guide', color: 'var(--mc-bearish)' };
+    // Same rule, same function as the chip at the top of the card — see
+    // `ownGuideVerdict`. The figures handed in are this period group's only, so
+    // the heading speaks for the rows beneath it and nothing else.
+    const gv = ownGuideVerdict(list, chg, null);
+    if (!gv) return null;
+    if (gv.verdict === 'MIXED') return { text: 'mixed vs own prior guide', color: IN_LINE_COLOR };
+    if (gv.verdict === 'RAISED') return { text: 'raised vs own prior guide', color: 'var(--mc-bullish)' };
+    if (gv.verdict === 'LOWERED') return { text: 'cut vs own prior guide', color: 'var(--mc-bearish)' };
     return { text: 'reaffirmed vs own prior guide', color: IN_LINE_COLOR };
   };
   return (
@@ -1665,11 +1696,24 @@ export function streetBullet(r: UsRowX): React.ReactNode | null {
   // estimate is not on this actual's basis, the bullet states both figures and
   // the reason, and reaches no verdict.
   if (r.eps_basis_note) {
+    // LEAD WITH THE REFUSAL, AND DO NOT REPEAT THE NUMBER THAT WAS REFUSED.
+    //
+    // This bullet used to open "No comparable street estimate: the consensus on
+    // file is -$0.23, against a reported $0.08 — …", which puts the rejected
+    // figure in the reader's eye first and then sets the actual beside it. That
+    // is the same subtraction the engine refuses to do, performed by the
+    // reader. The wording now states what is missing, states the one figure
+    // this card stands behind (our own actual, on the basis it names), and ends
+    // with the reason. The estimate itself is not printed anywhere on the card:
+    // a number that may not be compared to anything on the page has no job on
+    // the page.
     const m = (v: number): string => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
     return (
       <Bul>
-        No comparable street estimate: the consensus on file is {m(est)}
-        {act != null ? <>, against a reported {m(act)}</> : null}
+        No street comparison is possible for this quarter
+        {act != null
+          ? <>. The company reported <b style={{ color: 'var(--mc-text-0)' }}>{m(act)}</b> on its own adjusted basis</>
+          : null}
         <span style={{ color: 'var(--mc-text-4)' }}> — {r.eps_basis_note}</span>
       </Bul>
     );

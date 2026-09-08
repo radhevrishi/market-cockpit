@@ -437,15 +437,33 @@ export function quadrantScore(i: QuadrantInputs): QuadrantResult {
   // neutral 50 keeps the row in the quadrant its known half implies. Both
   // missing is not, and neither is a quadrant decided by a single component.
   const assessed = (parts: QuadrantResult['quality_parts']) => parts.reduce((s, p) => s + p.of, 0);
-  const tooThin = (qRaw == null && iRaw == null)
-    || assessed(qParts) + assessed(iParts) < 60;
 
-  const hiQ = quality >= 50, hiI = inflection >= 55;
-  const quadrant: EarningsQuadrant | null = tooThin ? null
+  // A NEUTRAL FALLBACK MUST NEVER READ AS A PASS.
+  //
+  // An axis with too little to assess scores 50, and 50 cleared the quality
+  // bar — so Citi Trends, whose quality axis had ZERO assessable points (a
+  // PRELIM row with no balance sheet, no cash flow, and an operating loss),
+  // came out labelled "QUALITY: a genuinely good business". Prospect Capital
+  // did the same on 15 assessable points. The engine was reporting an absence
+  // of evidence as evidence.
+  //
+  // So a fallback axis can no longer be "high". It keeps its 50 for display —
+  // that is honest, it means "not judged" — but the quadrant is decided only
+  // by axes that were actually measured, and where neither was, there is no
+  // quadrant at all and the card shows none.
+  const qMeasured = qRaw != null && assessed(qParts) >= 40;
+  const iMeasured = iRaw != null && assessed(iParts) >= 40;
+  const hiQ = qMeasured && quality >= 50;
+  const hiI = iMeasured && inflection >= 55;
+  const quadrant: EarningsQuadrant | null =
+    (!qMeasured && !iMeasured) ? null
     : hiQ && hiI ? 'COMPOUNDER'
-    : !hiQ && hiI ? 'TURNAROUND ACCELERATOR'
+    : hiI ? 'TURNAROUND ACCELERATOR'
+    // Only a MEASURED quality axis may award the QUALITY label; an unmeasured
+    // one falls through to REJECT's "not enough here", which is what it is.
     : hiQ ? 'QUALITY'
-    : 'REJECT';
+    : qMeasured || iMeasured ? 'REJECT'
+    : null;
 
   return { quality, inflection, quadrant, quality_parts: qParts, inflection_parts: iParts };
 }

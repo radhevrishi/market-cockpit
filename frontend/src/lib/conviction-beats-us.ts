@@ -224,7 +224,9 @@ export interface UsGuideBeatRecord {
   metric: string | null;
   basis: 'gaap' | 'adjusted' | null;
   text: string | null;
-  guide_direction: UsGuideChange['direction'] | null;
+  /** 'mixed' where the revision raised some lines and cut others — see
+   *  `usGuideChangeSummary`. */
+  guide_direction: UsGuideChange['direction'] | 'mixed' | null;
 }
 
 export const US_BENCH_SCHEMA_V = 2;
@@ -1211,7 +1213,9 @@ export function usOwnGuideVerdict(e: UsConvictionEntry): UsOwnGuideVerdict | nul
 }
 
 export interface UsGuideChangeSummary {
-  direction: UsGuideChange['direction'];
+  /** 'mixed' is a verdict in its own right, not a tie to be broken — see
+   *  `usGuideChangeSummary`. */
+  direction: UsGuideChange['direction'] | 'mixed';
   raised: number; lowered: number; other: number;
   period_label: string | null;
   text: string;
@@ -1227,11 +1231,25 @@ export function usGuideChangeSummary(e: UsConvictionEntry): UsGuideChangeSummary
     else if (g.direction === 'lowered') lowered++;
     else other++;
   }
-  const direction: UsGuideChange['direction'] =
-    raised > lowered ? 'raised' : lowered > raised ? 'lowered' : (list[0]?.direction ?? 'reiterated');
-  const named = list
-    .filter((g) => g.direction === direction)
-    .slice(0, 2)
+  // A REVISION THAT WENT BOTH WAYS IS NOT A VOTE TO BE WON.
+  //
+  // This used to be `raised > lowered ? 'raised' : …`, which turns SentinelOne's
+  // Q2 FY27 revision — FY27 revenue and operating income up, FY27 adjusted EPS
+  // cut 11.4% — into an unqualified "FY27 outlook raised" on the bench card,
+  // while the graded card's own guidance block called the same revision mixed.
+  // Same rule as `ownGuideVerdict` in lib/us-guide-verdict.ts, which the card's
+  // chip and guidance block both read.
+  const direction: UsGuideChangeSummary['direction'] =
+    raised && lowered ? 'mixed'
+      : raised ? 'raised' : lowered ? 'lowered' : (list[0]?.direction ?? 'reiterated');
+  // On a mixed revision, name ONE line from each side. Naming the two biggest
+  // movers of the same sign would describe half the revision and read as a
+  // one-way move again.
+  const picked = direction === 'mixed'
+    ? [list.find((g) => g.direction === 'raised'), list.find((g) => g.direction === 'lowered')]
+      .filter((g): g is UsGuideChange => !!g)
+    : list.filter((g) => g.direction === direction).slice(0, 2);
+  const named = picked
     .map((g) => {
       const basis = g.basis ? ` (${g.basis === 'gaap' ? 'GAAP' : 'adjusted'})` : '';
       const d = num(g.delta_pct);
@@ -1522,6 +1540,8 @@ export function usWinnersScorecard(e: UsConvictionEntry, cohort: UsCohort): Winn
   {
     const gc = usGuideChangeSummary(e);
     if (gc) {
+      // 'mixed' scores as 'ok', not 'strong': a revision that cut a line is not
+      // a guidance upgrade, whatever the other lines did.
       const state: FactorState = gc.direction === 'raised' ? 'strong'
         : gc.direction === 'lowered' ? 'weak' : 'ok';
       F.push(factor('guide', 2, 'Guidance upgrade / forward commentary', 18, state,

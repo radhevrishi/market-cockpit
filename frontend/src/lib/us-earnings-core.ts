@@ -3159,6 +3159,11 @@ export interface UsGradedRow {
   methodology_tags: string[];
   caveat_tags: string[];
   narrative: string;
+  /** The narrative WITHOUT its caveat clause. The caveat list is still being
+   *  added to after this row is graded (the route attaches the guidance tags),
+   *  so the sentence has to be recomposable from the final list — see
+   *  `composeUsNarrative`. */
+  narrative_stem: string;
   is_elite: boolean;
   pead_score: number;
   multibagger_setup: boolean;
@@ -3428,8 +3433,22 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   if (stillLossMaking) caveat_tags.push('low quality');
   else if (gaapLoss && adjProfitable) caveat_tags.push('gaap loss · adj. profitable');
   if (usedAdjEps) methodology_tags.push('adjusted eps basis');
+  // A NEGATIVE YEAR-AGO BASE IS NOT A QUALITY PROBLEM ONCE THE COMPANY IS
+  // MAKING MONEY. `turnaroundBase` exists because a growth rate measured off a
+  // loss is meaningless, and that remains true. But it was ALSO stamping "low
+  // quality" on the print, which is the opposite of what a completed turnaround
+  // is: nCino lost $15.3m a year ago, earned $5.1m this quarter on an 8.5%
+  // operating margin with $34m of free cash flow and 6.7x cash conversion, and
+  // the card called it low quality. The percentage is still refused; the
+  // company is not slandered for having recovered.
   const turnaroundBase = ((niP != null && niP < 0) || (f.eps_prev != null && f.eps_prev < 0)) && !adjProfitable;
-  if (turnaroundBase) caveat_tags.push('low quality');
+  const turnaroundCompleted = turnaroundBase
+    && niC != null && niC > 0
+    && (f.cfo == null || f.cfo > 0);
+  if (turnaroundBase && !turnaroundCompleted) caveat_tags.push('low quality');
+  else if (turnaroundCompleted && !methodology_tags.includes('returned to profit')) {
+    methodology_tags.push('returned to profit');
+  }
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
   else if (opmExp != null && opmExp <= -0.5) caveat_tags.push('segment mix shift');
   // Earnings not backed by cash.
@@ -3478,7 +3497,29 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
 
-  const broken = (stage === 4 && (rs == null || rs < 40)) || (epsY != null && epsY < 0 && patY != null && patY < -10);
+  // WHAT "BROKEN" IS ALLOWED TO MEAN.
+  //
+  // This flag routes a row straight to AVOID, and it used to fire on two very
+  // different things at once: a chart in a stage-4 downtrend, and earnings that
+  // actually fell. Those are not the same evidence and they must not have the
+  // same power. Synopsys grew revenue 42%, beat by 6%, raised its guide and
+  // rose 13.7% on the day — and was published as AVOID, the same label as a
+  // company whose business is deteriorating, purely because its chart is 35%
+  // off its high. That is the tape overruling the filing, which the owner has
+  // already ruled against once (see the reaction floor below).
+  //
+  // So the chart no longer makes a row "broken". A stage-4 downtrend still
+  // CAPS the tier at MIXED further down — it is a real risk and the card says
+  // so — but it cannot by itself produce the worst grade the engine gives.
+  //
+  // The earnings half also has to read the basis the company is priced on. HP
+  // beat consensus by 20% with adjusted EPS +11% and raised its outlook, and
+  // was called broken because its GAAP EPS fell 11% — a figure the street was
+  // not measuring it against, on a quarter with no caveats at all.
+  const adjImproving = (input.adj_eps ?? null) != null && (input.adj_eps_prev ?? null) != null
+    && (input.adj_eps as number) > (input.adj_eps_prev as number);
+  const earningsBroken = epsY != null && epsY < 0 && patY != null && patY < -10 && !adjImproving;
+  const broken = earningsBroken;
   const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
   const exceptMag = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
   const megaMag = megaMagFloor;
@@ -3572,7 +3613,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   if (p?.d1_pct != null && p.d1_pct <= -5) capTier('STRONG', 'market rejected the print', false);
 
   // 3. A stage-4 downtrend is not a setup, whatever the quarter looked like.
-  if (stage === 4) capTier('MIXED', 'stage 4 downtrend');
+  //    It is a CEILING, though, not a verdict — the tier below it is decided by
+  //    the filing, exactly as with the price reaction. `fromFiling: false`.
+  if (stage === 4) capTier('MIXED', 'stage 4 downtrend', false);
 
   // 4. Two or more critical quality flags at once — a one-off-driven EPS AND
   //    cash that does not back it, say — is not one caveat, it is a pattern.
@@ -3595,13 +3638,18 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // cash flow, the trend or two quality flags say MIXED, MIXED it is, and the
   // floor never lifts a row above what those allow. This only undoes a
   // demotion the price alone caused.
-  if (reactionDemoted) {
-    const floor = worseOf(worseOf(tierOnFundamentals, filingCap), 'STRONG');
+  const chartDemoted = stage === 4 || reactionDemoted;
+  if (chartDemoted) {
+    // The price may cost the top tier; the FILING sets how far down a row can
+    // go. A stage-4 chart floors at MIXED (it is a genuine risk and the tier
+    // should say so); a price reaction alone floors at STRONG.
+    const priceFloor: EarningsTier = stage === 4 ? 'MIXED' : 'STRONG';
+    const floor = worseOf(worseOf(tierOnFundamentals, filingCap), priceFloor);
     if (TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(floor)) {
       tier = floor;
-      if (!caveat_tags.includes('sold off — fundamentals intact')) {
-        caveat_tags.push('sold off — fundamentals intact');
-      }
+      const why = stage === 4 && !reactionDemoted
+        ? 'downtrend — fundamentals intact' : 'sold off — fundamentals intact';
+      if (!caveat_tags.includes(why)) caveat_tags.push(why);
     }
   }
 
@@ -3699,10 +3747,10 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const metrics = [fmtP('revenue', salesY), fmtP('net income', patY), fmtP('EPS', epsY)].filter(Boolean).join(', ');
   const uniqCav = Array.from(new Set(caveat_tags));
   const uniqMeth = Array.from(new Set(methodology_tags));
-  const flavor = uniqCav.length > 0
-    ? ` with caveat${uniqCav.length > 1 ? 's' : ''}: ${uniqCav.slice(0, 3).join(' + ')}.`
-    : uniqMeth.length >= 2 ? ` and ${uniqMeth.join('/')} all passing.` : '.';
-  const narrative = `${head} (${metrics || 'figures pending'})${flavor}`;
+  // The stem is kept so the narrative can be RECOMPOSED after the route adds
+  // the caveats only it can know about — see `composeUsNarrative`.
+  const narrative_stem = `${head} (${metrics || 'figures pending'})`;
+  const narrative = composeUsNarrative(narrative_stem, uniqCav, uniqMeth);
 
   // Share count cross-check. The cover-page count can be stale (see
   // sharesOutstandingFromFacts); the count implied by net income ÷ EPS is
@@ -3776,7 +3824,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     quarters_ends: f.quarters_ends, opm_basis: f.operating_income_basis,
     composite_score: Math.round(composite), tier,
     methodology_tags: uniqMeth, caveat_tags: uniqCav,
-    narrative, is_elite, pead_score, multibagger_setup,
+    narrative, narrative_stem, is_elite, pead_score, multibagger_setup,
     quality_score: quadrant.quality,
     inflection_score: quadrant.inflection,
     quadrant: quadrant.quadrant,
@@ -3855,6 +3903,52 @@ const SETUP_WEIGHTS: Record<SetupFactorId, number> = {
   margin_slope: 0.12, cash_quality: 0.10, visibility: 0.10, valuation: 0.08,
   ownership: 0,   // carried so the card can say it is missing, never weighted
 };
+
+/**
+ * ONE CAVEAT LIST, TWO PLACES IT IS PRINTED.
+ *
+ * Aviat Networks' card carried a narrative reading "…with caveats: gaap loss ·
+ * adj. profitable + segment mix shift + stage 4 downtrend." while the
+ * METHODOLOGY & CAVEATS chips underneath it listed a FOURTH — "market rejected
+ * print". Electromed showed the same split on "sold off — fundamentals intact".
+ * A reader who trusts the sentence therefore never learns the thing the chips
+ * think is worth a chip, and the card contradicts itself between two lines.
+ *
+ * There were two independent causes and this function closes both:
+ *
+ *  1. The sentence took `caveat_tags.slice(0, 3)` and said nothing about the
+ *     rest. A truncation the reader cannot see is indistinguishable from a
+ *     shorter list. The cut is now stated in the text — "(+2 more under
+ *     METHODOLOGY & CAVEATS)" — so the sentence is never quietly incomplete.
+ *
+ *  2. The sentence was built inside `gradeUsRow`, but the graded-us route goes
+ *     on appending caveats AFTER it returns ("guidance cut", the tags the
+ *     own-guide arithmetic raises). Every one of those reached the chips and
+ *     none of them reached the sentence. The route now recomposes the narrative
+ *     from this function once its own tags are attached, so both readings come
+ *     off the same final array.
+ *
+ * The three that are shown are the three that cost the most — the caveats are
+ * ordered by the quality penalty each carries, so "the first three" means the
+ * three that matter most, not the three that happened to be pushed first.
+ */
+export const NARRATIVE_CAVEAT_LIMIT = 3;
+export function composeUsNarrative(stem: string, caveats: string[], methods: string[]): string {
+  const cav = Array.from(new Set((caveats || []).filter(Boolean)));
+  const meth = Array.from(new Set((methods || []).filter(Boolean)));
+  if (!cav.length) {
+    return `${stem}${meth.length >= 2 ? ` and ${meth.join('/')} all passing.` : '.'}`;
+  }
+  const severity = (t: string) => CAVEAT_PENALTY[t] ?? CAVEAT_PENALTY_DEFAULT;
+  const ordered = cav
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => severity(b.t) - severity(a.t) || a.i - b.i)
+    .map((x) => x.t);
+  const shown = ordered.slice(0, NARRATIVE_CAVEAT_LIMIT);
+  const rest = ordered.length - shown.length;
+  const more = rest > 0 ? ` (+${rest} more under METHODOLOGY & CAVEATS)` : '';
+  return `${stem} with caveat${cav.length > 1 ? 's' : ''}: ${shown.join(' + ')}${more}.`;
+}
 
 /** Linear 0–100 between `lo` (=0) and `hi` (=100), clamped. */
 const band = (v: number, lo: number, hi: number) =>
@@ -3969,12 +4063,36 @@ export function setupScore(r: any, peerMedianPe: number | null): SetupScore {
     const anyRaised = chg.some((x) => x.direction === 'raised');
     const anyCut = chg.some((x) => x.direction === 'lowered');
     const label = String(r.guidance || '');
+    // "RAISED BY −1.6%" IS A CUT.
+    //
+    // Hormel's Setup panel read "FY revenue outlook raised by -1.6%". The verb
+    // and the number had two different authors: the verb came from
+    // `chg.some(direction === 'raised')` — ANY line in the revision — while the
+    // number came from `bestGuidePct`, which ranks REVENUE above every other
+    // guided line regardless of which way it moved. So a filer that trimmed its
+    // revenue range while nudging an earnings line up got a green verb welded
+    // to a red number, and the sentence contradicted itself inside six words.
+    //
+    // A verb attached to a number must follow THAT number's sign. Below a fifth
+    // of a percent a guided range has not moved in any direction a reader
+    // should act on, so it is stated as reiterated — the same tolerance
+    // `guideChange` uses to decide a filer merely re-rounded its range.
+    // The size is stated unsigned because the verb now carries the direction:
+    // "cut by -1.6%" is the same double negative in a different place.
     if (best != null) {
+      const verb = best > 0.2 ? 'raised' : best < -0.2 ? 'cut' : 'reiterated';
+      // "Reiterated by 0.1%" is not a sentence anyone means: below the movement
+      // tolerance the size is the rounding, not the revision, so it is dropped.
+      const size = verb === 'reiterated' ? '' : ` by ${Math.abs(best).toFixed(1)}%`;
+      // When the revision went both ways, the sentence has to say so — the
+      // headline line's own direction is not the whole revision. Same rule as
+      // the card's guidance chip and guidance block (lib/us-guide-verdict.ts).
+      const mixed = anyRaised && anyCut ? ' (a mixed revision — other guided lines moved the other way)' : '';
       push('guidance', 'Guidance direction', band(best, -6, 8),
-        `FY ${String(bc!.metric).replace(/_/g, ' ')} outlook ${anyCut && !anyRaised ? 'cut' : anyRaised ? 'raised' : 'reiterated'} by ${best >= 0 ? '+' : ''}${best.toFixed(1)}%`);
+        `FY ${String(bc!.metric).replace(/_/g, ' ')} outlook ${verb}${size}${mixed}`);
     } else if (chg.length) {
-      push('guidance', 'Guidance direction', anyRaised ? 75 : anyCut ? 15 : 50,
-        `FY outlook ${anyRaised ? 'raised' : anyCut ? 'cut' : 'reiterated'} (no comparable size)`);
+      push('guidance', 'Guidance direction', anyRaised && anyCut ? 45 : anyRaised ? 75 : anyCut ? 15 : 50,
+        `FY outlook ${anyRaised && anyCut ? 'mixed — some lines raised, some cut' : anyRaised ? 'raised' : anyCut ? 'cut' : 'reiterated'} (no comparable size)`);
     } else if (label) {
       push('guidance', 'Guidance direction',
         label === 'RAISED' ? 80 : label === 'MAINTAINED' ? 50 : (label === 'LOWERED' || label === 'WITHDRAWN') ? 10 : 45,
