@@ -41,7 +41,7 @@ import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
-  fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear,
+  fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 
@@ -353,6 +353,7 @@ export async function GET(req: Request) {
             && Math.abs(daysBetween(sLatest.quarter!, r.quarter) - 365) <= 30) || null)
         : null;
       const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
+      const fyEnding = fiscalYearEndingAt(p.facts, p.fundamentals.q_end);
       const row = gradeUsRow({
         ticker: p.f.ticker!,
         company: p.f.company,
@@ -375,12 +376,21 @@ export async function GET(req: Request) {
         // The filer's own words first (press-release headline), then SEC's
         // fy/fp — they disagree often enough to matter (NetApp's July quarter
         // is Q1 FY27 to NetApp and "fy 2026 Q1" to the API).
-        fiscal_label: g.fiscal_label || usFiscalLabel(fq) || null,
-        fiscal_year_own: g.fiscal_fy ?? fq.fy,
+        // Press-release label first, then SEC's fy/fp, then — for a filer whose
+        // only disclosure is the 10-K — Q4 of the fiscal year that just ended.
+        fiscal_label: g.fiscal_label || usFiscalLabel(fq)
+          || (fyEnding != null ? `Q4 FY${String(fyEnding).slice(2)}` : null),
+        fiscal_year_own: g.fiscal_fy ?? fq.fy ?? fyEnding,
       });
       if (!row) { pendingXbrl++; addPending(p.f, 'xbrl-not-posted'); continue; }
-      (row as any).guidance = g.label;
-      (row as any).guidance_score = g.score;
+      // A PROVIDED label with no figures and no numeric snippet is a false
+      // positive off narrative wording ("we remain focused on capturing the
+      // right projects") — Argan and Daktronics both carried it while their
+      // releases give no outlook at all. Say nothing rather than imply one.
+      const emptyProvided = g.label === 'PROVIDED' && (g.figures?.length ?? 0) === 0
+        && !(g.snippets || []).some((sn) => /\$\s?\d|\d+(?:\.\d+)?\s?%/.test(sn));
+      (row as any).guidance = emptyProvided ? null : g.label;
+      (row as any).guidance_score = emptyProvided ? 0 : g.score;
       (row as any).guidance_snippets = g.snippets;
       (row as any).guidance_url = g.source_url;
       (row as any).guidance_figures = withEstimates(g.figures, forwards[pi] || []);

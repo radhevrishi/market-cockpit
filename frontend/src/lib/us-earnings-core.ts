@@ -386,13 +386,19 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     };
     let chosen = cands.find((x) => sane(x.q)) || cands[0] || null;
     // When several candidates are sane, the LARGEST latest-quarter figure is
-    // the total-revenue line (fee income is a subset of total revenue).
+    // the total-revenue line (fee income is a subset of total revenue) — EXCEPT
+    // that "including assessed tax" is not a bigger revenue line, it is the same
+    // revenue with excise tax added back. Brown-Forman's gross figure is $1,181m
+    // against net sales of $911m, and grading the gross line put its margin and
+    // growth 30% out. Net revenue is what the company reports; prefer it.
     if (chosen) {
       const saneOnes = cands.filter((x) => sane(x.q) && x.score >= chosen!.score * 0.5);
       if (saneOnes.length > 1) {
         const latestVal = (q: Record<string, number>) => { const k = Object.keys(q).sort(); return q[k[k.length - 1]]; };
-        saneOnes.sort((a, b) => latestVal(b.q) - latestVal(a.q));
-        chosen = saneOnes[0];
+        const excl = saneOnes.filter((x) => /ExcludingAssessedTax/.test(x.c));
+        const pool = excl.length ? excl : saneOnes;
+        pool.sort((a, b) => latestVal(b.q) - latestVal(a.q));
+        chosen = pool[0];
       }
     }
     tags.revenue = chosen ? chosen.c : null;
@@ -698,6 +704,32 @@ export function fiscalPeriodFromFacts(facts: any, periodEnd: string | null | und
   const [fyS, qS] = best[0].split('|');
   return { fy: Number(fyS), q: Number(qS) as 1 | 2 | 3 | 4 };
 }
+/**
+ * For a filer whose only disclosure is the 10-K, the quarter being reported is
+ * Q4 of the fiscal year that just ended — Ethan Allen's June quarter is Q4 FY26,
+ * not "Q2 CY26". The annual fact whose period END matches the quarter's end
+ * names that fiscal year.
+ */
+export function fiscalYearEndingAt(facts: any, periodEnd: string | null | undefined): number | null {
+  const gaap = facts?.facts?.['us-gaap'];
+  if (!gaap || !periodEnd) return null;
+  for (const c of ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'NetIncomeLoss', 'ProfitLoss']) {
+    const node = gaap[c];
+    if (!node?.units) continue;
+    for (const uk of Object.keys(node.units)) {
+      for (const e of node.units[uk] as any[]) {
+        if (!e?.start || !e?.end) continue;
+        if (Math.abs(diffDays(String(e.end), periodEnd)) > 4) continue;
+        const days = diffDays(String(e.end), String(e.start));
+        if (days < 330 || days > 380) continue;       // an ANNUAL window
+        const fy = Number(e.fy);
+        if (Number.isFinite(fy)) return fy;
+      }
+    }
+  }
+  return null;
+}
+
 /** "Q2 FY27" from a fiscal period; empty string when we don't know it. */
 export function usFiscalLabel(fp: FiscalPeriod | null | undefined): string {
   if (!fp || !fp.q || !fp.fy) return '';
