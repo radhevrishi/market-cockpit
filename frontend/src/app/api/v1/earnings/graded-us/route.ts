@@ -109,35 +109,87 @@ function fmtYoy(cur: number, prev: number): string {
 }
 
 /**
- * Attach the street estimate to each guidance figure.
+ * Attach the street estimate to each guidance figure — matched by WHEN the
+ * guided period ends, never by how close the numbers look.
  *
- * Yahoo's earningsTrend carries an estimate for the current quarter (0q), the
- * next (+1q), this fiscal year (0y) and the next (+1y) — but nothing that maps
- * those to a filer's own "Q3 FY26" label. So the match is made on MAGNITUDE:
- * the candidate estimate closest to the guided midpoint, accepted only when it
- * lands within 25%. That is deliberately conservative — a guidance range shown
- * against the wrong period's consensus is worse than one shown with no
- * consensus at all.
+ * Why this is the only safe rule. Yahoo's estimate feed labels its entries
+ * "0q / +1q / 0y / +1y", and those labels do not mean the same thing for every
+ * filer: for Palo Alto, "0q" is the quarter it just REPORTED, and "0y" and
+ * "+1y" both carry an end date of 2027-07-31 while holding $11.4B and $16.2B of
+ * revenue — two different fiscal years, one date. A matcher that picks the
+ * closest number to the guidance (which is what this did first) quietly chose
+ * $16.19B as the consensus for a $14.1–14.2B guide, and a reader has no way to
+ * see that it is the wrong year.
+ *
+ * So the period is computed from the filer's OWN calendar instead: we know the
+ * quarter it just reported (its fiscal number and the date it ended), and each
+ * guidance figure names the period it guides, so the number of quarters between
+ * them is arithmetic. The estimate must sit on that date (±20 days) or no
+ * estimate is shown. When two entries land on the same date with materially
+ * different values, the feed is contradicting itself and nothing is shown.
+ * Nothing here depends on a particular company, a particular year, or Yahoo's
+ * labelling staying the way it is today.
  */
-function withEstimates(figs: GuidanceFigure[], fwd: ForwardEstimate[]): Array<GuidanceFigure & { est?: number | null }> {
-  if (!figs.length) return figs as any;
-  const pick = (kind: 'revenue' | 'eps', period: 'quarter' | 'year', mid: number): number | null => {
-    const wanted = period === 'quarter' ? ['0q', '+1q'] : ['0y', '+1y'];
-    let best: number | null = null;
-    let bestGap = Infinity;
-    for (const f of fwd) {
-      if (!wanted.includes(f.period)) continue;
-      const v = kind === 'revenue' ? f.revenue : f.eps;
-      if (v == null || !Number.isFinite(v)) continue;
-      const gap = Math.abs(v - mid) / Math.max(1e-9, Math.abs(mid));
-      if (gap < bestGap) { bestGap = gap; best = v; }
+function withEstimates(
+  figs: GuidanceFigure[],
+  fwd: ForwardEstimate[],
+  reported: { period_end: string | null; fiscal_q: number | null; fiscal_fy: number | null },
+): Array<GuidanceFigure & { est?: number | null }> {
+  if (!figs.length || !fwd.length) return figs as any;
+  const { period_end, fiscal_q, fiscal_fy } = reported;
+  if (!period_end || !fiscal_q || !fiscal_fy) return figs as any;
+
+  const QUARTER_DAYS = 91.31;
+  /** How many quarters after the reported one does this figure's period end? */
+  const quartersAhead = (f: GuidanceFigure): number | null => {
+    const m = /^Q([1-4])(?:\s+FY(\d{2}))?$/.exec(f.period_label);
+    const y = /^FY(\d{2})$/.exec(f.period_label);
+    if (m) {
+      const q = Number(m[1]);
+      const fy = m[2] ? 2000 + Number(m[2]) : null;
+      if (fy == null) return q > fiscal_q ? q - fiscal_q : q - fiscal_q + 4;   // unlabelled: the next one round
+      return (fy - fiscal_fy) * 4 + (q - fiscal_q);
     }
-    return bestGap <= 0.25 ? best : null;
+    if (y) {
+      const fy = 2000 + Number(y[1]);
+      // A fiscal year ends with its Q4.
+      return (fy - fiscal_fy) * 4 + (4 - fiscal_q);
+    }
+    if (f.period_label === 'full year') return fiscal_q < 4 ? 4 - fiscal_q : 4;
+    return null;
   };
+
+  const endMs = Date.parse(period_end + 'T00:00:00Z');
   return figs.map((f) => {
     if ((f.metric !== 'revenue' && f.metric !== 'eps') || f.unit === 'pct' || f.low == null || f.high == null) return f;
+    // A published EPS consensus is a NON-GAAP number by convention, so it may
+    // only sit beside the adjusted line. NetApp guides both ($9.73–10.03
+    // adjusted, $7.35–7.65 GAAP); printing the same $10.01 estimate against the
+    // GAAP range invents a miss that nobody is forecasting.
+    if (f.metric === 'eps' && f.basis !== 'adjusted') return f;
+    const qa = quartersAhead(f);
+    if (qa == null || qa < 1 || qa > 8) return f;
+    const wantMs = endMs + qa * QUARTER_DAYS * 86_400_000;
+    const near = fwd.filter((e) => {
+      if (!e.end_date) return false;
+      const v = f.metric === 'revenue' ? e.revenue : e.eps;
+      if (v == null || !Number.isFinite(v)) return false;
+      return Math.abs(Date.parse(e.end_date + 'T00:00:00Z') - wantMs) <= 20 * 86_400_000;
+    });
+    if (near.length !== 1) {
+      // Either nothing lands on that date, or the feed offers two different
+      // numbers for it — in both cases the honest answer is no estimate.
+      if (near.length < 2) return f;
+      const vals = near.map((e) => (f.metric === 'revenue' ? e.revenue! : e.eps!));
+      const spread = (Math.max(...vals) - Math.min(...vals)) / Math.max(1e-9, Math.abs(Math.max(...vals)));
+      if (spread > 0.02) return f;
+    }
+    const v = f.metric === 'revenue' ? near[0].revenue! : near[0].eps!;
+    // A last sanity gate: a consensus more than 3x away from the guide is not
+    // the same period however the dates line up.
     const mid = (f.low + f.high) / 2;
-    return { ...f, est: pick(f.metric, f.period, mid) };
+    if (mid !== 0 && (v / mid > 3 || v / mid < 0.33)) return f;
+    return { ...f, est: v };
   });
 }
 
@@ -393,7 +445,11 @@ export async function GET(req: Request) {
       (row as any).guidance_score = emptyProvided ? 0 : g.score;
       (row as any).guidance_snippets = g.snippets;
       (row as any).guidance_url = g.source_url;
-      (row as any).guidance_figures = withEstimates(g.figures, forwards[pi] || []);
+      (row as any).guidance_figures = withEstimates(g.figures, forwards[pi] || [], {
+        period_end: p.fundamentals.q_end,
+        fiscal_q: g.fiscal_q ?? fq.q ?? null,
+        fiscal_fy: g.fiscal_fy ?? fq.fy ?? null,
+      });
       (row as any).key_metrics = g.metrics;
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
@@ -513,7 +569,11 @@ export async function GET(req: Request) {
           if (g) {
             (row as any).guidance = g.label; (row as any).guidance_score = g.score;
             (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
-            (row as any).guidance_figures = withEstimates(g.figures, await yahooForwardEstimates(f.ticker!).catch(() => []));
+            (row as any).guidance_figures = withEstimates(g.figures, await yahooForwardEstimates(f.ticker!).catch(() => []), {
+              period_end: latest.quarter,
+              fiscal_q: g.fiscal_q ?? fiscalNow.q ?? null,
+              fiscal_fy: g.fiscal_fy ?? fiscalNow.fy ?? null,
+            });
             (row as any).key_metrics = g.metrics;
             if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
             if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
