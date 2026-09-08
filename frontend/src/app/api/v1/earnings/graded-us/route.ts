@@ -486,7 +486,7 @@ export async function GET(req: Request) {
             pending.splice(i, 1); pendingXbrl = Math.max(0, pendingXbrl - 1);
           }
         }
-        notes.push(`${prelimCiks.size} fresh print(s) graded PRELIM on adjusted EPS + consensus + reaction — full GAAP grade follows when the 10-Q posts`);
+        notes.push(`${prelimCiks.size} fresh print(s) graded PRELIM — revenue, margin and GAAP EPS read from the earnings release and validated against the year-ago XBRL; the full grade follows when the 10-Q posts`);
       } else if (awaitingXbrl.length) {
         notes.push(`prelim: ${awaitingXbrl.length} awaiting XBRL, ${dbgRows} had a Nasdaq surprise history, ${dbgMatch} matched the filing date, ${dbgEps} with EPS, ${dbgRow} graded`);
       }

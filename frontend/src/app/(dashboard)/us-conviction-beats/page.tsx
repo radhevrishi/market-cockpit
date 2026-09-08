@@ -497,17 +497,24 @@ function BenchCard({ e, expanded, onToggle, onRemove }: { e: UsConvictionEntry; 
         {age != null && <Tag text={`·${age}d`} />}
         <Tag text={fmtUsd(e.market_cap_musd)} />
         {e.guidance && <Tag text={`📣 ${e.guidance.toLowerCase()}`} color={e.guidance === 'RAISED' ? '#10B981' : (e.guidance === 'LOWERED' || e.guidance === 'WITHDRAWN') ? '#EF4444' : e.guidance === 'MAINTAINED' ? '#FACC15' : undefined} />}
-        {e.eps_surprise_pct != null && <Tag text={`vs est ${e.eps_surprise_pct >= 0 ? '+' : ''}${e.eps_surprise_pct.toFixed(0)}%`} color={e.eps_surprise_pct >= 5 ? '#10B981' : e.eps_surprise_pct <= -5 ? '#EF4444' : undefined} />}
+        {e.eps_surprise_pct != null && <Tag text={benchSurprise(e)} color={e.eps_surprise_pct >= 5 ? '#10B981' : e.eps_surprise_pct <= -5 ? '#EF4444' : undefined} />}
         {e.prelim && <Tag text="PRELIM" color="#8B5CF6" />}
         {e.is_elite && <Tag text="⭐ ELITE" color="#F59E0B" />}
         {e.multibagger_setup && <Tag text="💎" color="#8B5CF6" />}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
         <MiniTile label="REV" value={fmtPct(e.sales_yoy_pct)} good={(e.sales_yoy_pct ?? 0) >= 20} sub={e.revenue_prev_musd != null && e.revenue_curr_musd != null ? `${fmtUsd(e.revenue_prev_musd)}→${fmtUsd(e.revenue_curr_musd)}` : undefined} />
-        <MiniTile label="EPS" value={fmtPct(e.eps_yoy_pct)} good={(e.eps_yoy_pct ?? 0) >= 25} sub={e.eps_prev != null && e.eps_curr != null ? `$${e.eps_prev.toFixed(2)}→$${e.eps_curr.toFixed(2)}` : undefined} />
+        <MiniTile label="EPS · GAAP" value={fmtPct(e.eps_yoy_pct)} good={(e.eps_yoy_pct ?? 0) >= 25} sub={e.eps_prev != null && e.eps_curr != null ? `$${e.eps_prev.toFixed(2)}→$${e.eps_curr.toFixed(2)}` : undefined} />
         <MiniTile label="OPM Δ" value={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp` : '—'} good={(opmD ?? -1) >= 0} sub={e.opm_pct != null ? `${e.opm_pct.toFixed(1)}% now` : undefined} />
         <MiniTile label="PEAD" value={String(e.pead_score ?? '—')} good={(e.pead_score ?? 0) >= 60} sub={`score ${e.composite_score}`} />
       </div>
+      {e.eps_adj != null && (
+        <div style={{ marginTop: 7, fontSize: 10, color: 'var(--mc-text-3)' }}>
+          street basis: adj. EPS <b style={{ color: 'var(--mc-text-1)' }}>${Number(e.eps_adj).toFixed(2)}</b>
+          {e.eps_estimate != null && <> vs est ${Number(e.eps_estimate).toFixed(2)}</>}
+          {e.eps_surprise_pct != null && <> · <b style={{ color: e.eps_surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{benchSurpriseText(e)}</b></>}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
         <div><div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>SCORE {e.composite_score}</div><MiniBar value={e.composite_score} color={tierColor} /></div>
         <div><div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>PEAD {e.pead_score ?? '—'}</div><MiniBar value={e.pead_score} color="#EF4444" /></div>
@@ -580,6 +587,23 @@ function Tag({ text, color }: { text: string; color?: string }) {
   return (
     <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999, border: `1px solid ${color ? c : 'var(--mc-bg-4)'}`, color: c, backgroundColor: color ? `color-mix(in srgb, ${c} 10%, transparent)` : 'transparent', whiteSpace: 'nowrap' }}>{text}</span>
   );
+}
+
+/** Same rule as the opportunities page: a percentage surprise off a near-zero
+ *  estimate is arithmetic noise — state it in cents instead. */
+function benchSurpriseText(e: any): string {
+  const est = e.eps_estimate as number | null;
+  const act = (e.eps_adj ?? e.eps_curr) as number | null;
+  if (est != null && act != null && Math.abs(est) < 0.1) {
+    const d = act - est;
+    return `${d >= 0 ? 'beat by' : 'missed by'} $${Math.abs(d).toFixed(2)}`;
+  }
+  const p = e.eps_surprise_pct as number | null;
+  return p == null ? '' : `${p >= 0 ? '+' : ''}${p.toFixed(0)}%`;
+}
+function benchSurprise(e: any): string {
+  const t = benchSurpriseText(e);
+  return /%$/.test(t) ? `vs est ${t}` : t;
 }
 
 function MiniTile({ label, value, good, sub }: { label: string; value: string; good: boolean; sub?: string }) {

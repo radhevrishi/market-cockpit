@@ -271,7 +271,11 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
           // a PRELIM entry must be fully overwritten by the GAAP grade of the same filing
           'prelim', 'tier', 'composite_score', 'sales_yoy_pct', 'net_profit_yoy_pct', 'eps_yoy_pct', 'eps_curr', 'eps_prev', 'eps_basis',
           'opm_pct', 'opm_prev_pct', 'cfo_to_pat_ratio', 'caveat_tags', 'methodology_tags', 'narrative', 'quarters_revenue', 'quarters_eps', 'quarters_opm',
-          'guidance', 'guidance_score', 'guidance_snippets', 'guidance_url', 'eps_adj', 'eps_estimate', 'eps_surprise_pct']) {
+          'guidance', 'guidance_score', 'guidance_snippets', 'guidance_url', 'eps_adj', 'eps_estimate', 'eps_surprise_pct',
+          // the quarter LABEL can change without the quarter changing: an entry
+          // benched before we read fiscal labels off the release says "Q3 CY26"
+          // where the filer says "Q2 FY27". Same filing, better name.
+          'quarter', 'revenue_curr_musd', 'revenue_prev_musd', 'net_income_curr_musd', 'net_income_prev_musd', 'prelim_matched', 'release_url']) {
           if ((e as any)[k] != null && (e as any)[k] !== (cur as any)[k]) patch[k] = (e as any)[k];
         }
         if (Object.keys(patch).length) { map[ticker] = { ...cur, ...patch }; count++; }
