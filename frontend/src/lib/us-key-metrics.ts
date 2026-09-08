@@ -33,14 +33,29 @@
 //     metric. The one exception is a PERCENTAGE: a dollar amount beside a label
 //     can belong to a subset of it, but "comparable sales increased by 14.1%"
 //     means one thing wherever it sits, so a percentage may be read from mid
-//     sentence when its label is adjacent and nothing disqualifying ("compared
-//     to", "guidance", "we define") stands in front of it. Five Below's only
-//     reported comp is exactly that: mid-sentence, behind a semicolon the
-//     shared htmlToText deletes.
+//     sentence — when the word in front of the label is itself harmless, and
+//     the label is the SUBJECT of a verb. Genesco's headline says "Journeys
+//     Comparable Sales +2%": a name in front of the label makes the number a
+//     banner's, and Genesco's own comp that quarter was down 1%. Five Below's
+//     only reported comp passes: mid-sentence, behind a semicolon the shared
+//     htmlToText deletes, but with nothing in front of it and "increased by"
+//     after it.
+//   • A PRODUCT LINE MAY NAME THE ARR. Palo Alto reports "Next-Generation
+//     Security ARR" and no company total; Samsara reports a plain one. So a
+//     qualifier is allowed in front of ARR when it reads as a NAME — Title Case
+//     or one of a few product words, never a verb, a number or "net new" — and
+//     it is carried into the display label ("NGS ARR") so the card cannot pass
+//     a slice off as the whole. A later plain statement always outranks it.
 //   • ADJACENCY. Between the label and the number there may be a connector
-//     ("of", "was", "totaled", ": ") or a growth clause ("grew 16% YoY to"),
-//     nothing else. "Free cash flow represents net cash from operating
+//     ("of", "was", "totaled", ": "), a growth clause ("grew 16% YoY to") and
+//     at most one phrase naming the period ("for the fiscal fourth quarter
+//     2026"), nothing else. "Free cash flow represents net cash from operating
 //     activities…" is a definition, not a figure.
+//   • NOTHING IS READ BY POSITION. "Gross margin and adjusted gross margin …
+//     were 34.1% and 35.0%, respectively" pairs subjects to numbers by order.
+//     This module does not parse subject lists, so when its label is the second
+//     half of a coordinated subject and the sentence says "respectively", it
+//     takes nothing rather than the 34.1% sitting next to the label.
 //   • NOTHING FORWARD-LOOKING. Guidance uses the same row labels as results —
 //     Zscaler's outlook says "ARR of $4.396 billion to $4.426 billion" nine
 //     lines below the reported "ARR … $3,771 million". Any line carrying a
@@ -70,7 +85,9 @@ export type KeyMetricId =
 
 export interface KeyMetric {
   id: KeyMetricId;
-  label: string;                    // display label, e.g. "ARR", "cRPO"
+  /** Display label: "ARR", "cRPO", "Net revenue retention" — or, when the
+   *  company names its ARR for a product line, that name ("NGS ARR"). */
+  label: string;
   value: number;
   unit: 'usd' | 'pct' | 'count';
   yoy_pct: number | null;           // only when the same line states a YoY change
@@ -112,6 +129,10 @@ interface Spec {
   /** Parenthetical restatements the label is allowed to be followed by,
    *  e.g. Remaining Performance Obligations ("RPO") RPO was $1,519.2 million. */
   alias?: RegExp;
+  /** May the label carry a product-line qualifier ("Next-Generation Security
+   *  ARR")? Only ARR does: it is the one metric companies routinely report per
+   *  product line instead of company-wide. */
+  qualifiable?: boolean;
 }
 
 const SPECS: Spec[] = [
@@ -140,6 +161,7 @@ const SPECS: Spec[] = [
     notAfter: /\b(?:net\s+new|new|incremental)\s*$/i,
     notBefore: /^\s*(?:growth|growth\s+rate)\b/i,
     alias: /arr|annual(?:ized)?\s+recurring\s+revenue/i,
+    qualifiable: true,
   },
   {
     id: 'crpo', units: ['usd'],
@@ -213,6 +235,12 @@ const FORWARD_LINE = /\b(expects?|expected|guidance|outlook|anticipates?|forecas
 const FORWARD_OPEN = /\b(?:outlook|guidance|expects?\s+the\s+following|expects?\s*:?\s*$|is\s+(?:issuing|providing)\s+the\s+following|now\s+(?:expects|sees)|projects?\s+the\s+following)\b/i;
 /** Closes it: we are back in reported results, or out of the narrative. */
 const FORWARD_CLOSE = /\b(?:conference\s+call|webcast|about\s+\w+|forward[-\s]looking\s+statements|safe\s+harbor|investor\s+(?:relations|contact)|media\s+contact|press\s+contact|non-?gaap\s+financial\s+measures|explanation\s+of\s+non-?gaap|use\s+of\s+non-?gaap|statement\s+regarding\s+use|key\s+(?:business\s+)?metrics|operating\s+metrics|condensed\s+consolidated|consolidated\s+(?:statements?|balance)|balance\s+sheets?|statements?\s+of\s+operations|reconciliation|appendix|supplemental\s+(?:financial|information)|financial\s+results\b|results\s+of\s+operations|quarterly\s+results|financial\s+highlights)\b/i;
+/** Back into REPORTED results: a period heading over a results block, or a
+ *  results/highlights heading. Sportsman's Warehouse opens its release with the
+ *  bullet "Reaffirms full-year 2026 Guidance", and without this the whole
+ *  second-quarter block below it counted as forecast and the six-month figures
+ *  were read instead. */
+const RESULTS_LINE = /\bfor\s+the\s+(?:[a-z-]+\s+){0,2}(?:weeks?|months?|quarters?|periods?|years?)\s+ended\b|\b(?:first|second|third|fourth)\s+quarter\s+(?:and\s+)?(?:fiscal\s+)?(?:year\s+)?(?:\d{4}\s+)?(?:financial\s+)?results\b|\bresults\s+of\s+operations\b|\bhighlights?\b/i;
 /** A guidance block is never longer than this; a stale zone is worse than none. */
 const FORWARD_MAX_LINES = 60;
 
@@ -248,13 +276,22 @@ const PREFIX_OK = new Set([
   'total', 'company', "company's", 'group', 'consolidated', 'global', 'worldwide',
   'reported', 'record', 'approximately', 'approx', 'about', 'roughly', 'including',
   'which', 'that', 'gaap', 'non-gaap', 'nongaap', 'adjusted', 'adj', 'current',
-  'committed', 'dollar-based', 'trailing', 'overall', 'ending', 'this',
+  'committed', 'dollar-based', 'trailing', 'overall', 'ending', 'this', 'date',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december',
 ]);
 /** Numeric prefix tokens that are periods, not values. */
 const PREFIX_NUM_OK = /^(?:q[1-4]|h[12]|fy'?\d{0,4}|'?\d{2}|(?:19|20)\d{2})$/i;
 const PREFIX_MAX_WORDS = 6;
 
-function anchorOk(prefix: string): boolean {
+/** One word of a prefix, stripped of punctuation: harmless, or a real word? */
+function harmlessWord(raw: string): boolean {
+  const w = raw.replace(/^[^A-Za-z0-9$]+/, '').replace(/[^A-Za-z0-9'%-]+$/, '').toLowerCase();
+  if (!w) return true;                              // pure punctuation
+  return PREFIX_OK.has(w) || PREFIX_NUM_OK.test(w);
+}
+
+function anchorOk(prefix: string, maxWords = PREFIX_MAX_WORDS): boolean {
   const p = prefix
     .replace(/^[\s•·▪▸○*–—-]+/, '')
     .replace(/^(?:\(\d{1,2}\)|\[\d{1,2}\])\s*/, '')
@@ -262,15 +299,58 @@ function anchorOk(prefix: string): boolean {
   if (!p) return true;
   if (p.length > 70) return false;
   const words = p.split(/\s+/);
-  if (words.length > PREFIX_MAX_WORDS) return false;
-  for (const raw of words) {
-    const w = raw.replace(/^[^A-Za-z0-9$]+/, '').replace(/[^A-Za-z0-9'%-]+$/, '').toLowerCase();
-    if (!w) continue;
-    if (PREFIX_OK.has(w)) continue;
-    if (PREFIX_NUM_OK.test(w)) continue;
-    return false;                                   // a real word: not anchored
-  }
+  if (words.length > maxWords) return false;
+  for (const raw of words) if (!harmlessWord(raw)) return false;
   return true;
+}
+
+// ─── product-qualified ARR ──────────────────────────────────────────────────
+// A company's headline ARR is often named for the product line it comes from,
+// and some names never publish a company total at all: Palo Alto reports
+// "Next-Generation Security ARR", Zscaler and Samsara report a plain one. So a
+// qualifier is allowed in front of ARR — but only when it reads as a NAME.
+// A qualifier word is Title Case (a product line) or one of a few lower-case
+// product words; it is never a verb, a function word or a number. That is what
+// separates "Next-Generation Security ARR" from "which contributed ARR of $141
+// million", "$100,000 of ARR" and "Palo Alto Networks defines … ARR as".
+const QUALIFIER_TITLE = /^[A-Z][A-Za-z0-9]*(?:[-‑][A-Za-z0-9]+)*$/;
+const QUALIFIER_LOWER = new Set([
+  'cloud', 'platform', 'subscription', 'subscriptions', 'software', 'security',
+  'product', 'core', 'saas', 'service', 'services', 'network', 'data', 'digital',
+  'enterprise', 'commercial', 'consumer', 'recurring', 'contracted', 'ending',
+]);
+/** Never part of a product name, however it is capitalised. */
+const QUALIFIER_BLOCK = /^(?:defines?|defined|includes?|included|excludes?|excluded|represents?|contributed?|contributes|generated?|generates|reached|added|adding|delivered|delivers?|reports?|reported|announced|exceeding|had|has|have|with|of|over|above|below|under|than|from|and|or|but|per|customers?|new|net|incremental|target|targets|goal|goals|guidance|outlook|growth|million|billion|thousand)$/i;
+const QUALIFIER_MAX = 3;
+
+/**
+ * The product qualifier standing between a harmless prefix and the label, or
+ * null when the words in front of the label are not a name.
+ */
+function qualifierOf(prefix: string): string | null {
+  // A customers-with-ARR row names ARR to describe a THRESHOLD, never a figure.
+  if (/\bcustomers?\b/i.test(prefix)) return null;
+  const words = prefix.trim().split(/\s+/).filter(Boolean);
+  let n = 0;
+  while (n < QUALIFIER_MAX && n < words.length) {
+    const w = words[words.length - 1 - n];
+    if (QUALIFIER_BLOCK.test(w)) break;
+    if (!(QUALIFIER_TITLE.test(w) || QUALIFIER_LOWER.has(w.toLowerCase()))) break;
+    n++;
+  }
+  if (!n) return null;
+  const head = words.slice(0, words.length - n).join(' ');
+  if (!anchorOk(head)) return null;
+  return words.slice(words.length - n).join(' ');
+}
+
+/** "Next-Generation Security" → "NGS"; "Cloud" → "Cloud". The card has one
+ *  line for the label, and the street writes the long ones as initials. */
+function qualifierLabel(q: string): string {
+  if (q.length <= 18) return q;
+  const parts = q.split(/[\s‑-]+/).filter(Boolean);
+  if (parts.length < 2) return q;
+  return parts.map((p) => p[0].toUpperCase()).join('');
 }
 
 // ─── connectors ─────────────────────────────────────────────────────────────
@@ -284,6 +364,14 @@ const CONNECT_GROWTH = /^[\s:*†‡,]*(?:\(\d{1,2}\)\s*)?(?:(grew|increased|ros
  *  by 14.1%". Never used for a margin or a retention rate — those are levels,
  *  and "gross margin increased 2 points" would read as a 2% gross margin. */
 const CONNECT_PCT_CHANGE = /^[\s:*†‡,]*(?:(increase[ds]?|grew|growth|rose|gain(?:ed)?|up|decrease[ds]?|decline[ds]?|fell|down)\s+)(?:of\s+|by\s+)?(?:approximately\s+|about\s+|roughly\s+)?$/i;
+/** The same, restricted to a finite VERB. An unanchored label followed by the
+ *  noun form is not the subject of its sentence but part of a noun phrase, and
+ *  the number then belongs to whatever the phrase describes: Sportsman's
+ *  Warehouse writes "sales in our Fishing department are up nearly 1%. This
+ *  increase led to a same store sales increase of 1.0% compared to the first
+ *  six months" — a department, over two quarters, while the company's own
+ *  quarterly same-store sales were flat. */
+const CONNECT_PCT_CHANGE_VERB = /^[\s:*†‡,]*(?:(increased|grew|rose|gained|climbed|advanced|improved|decreased|declined|fell|was\s+up|were\s+up|up|was\s+down|were\s+down|down)\s+)(?:of\s+|by\s+)?(?:approximately\s+|about\s+|roughly\s+)?$/i;
 /** value → label: "Ended the quarter with approximately $753.1 million in
  *  Remaining Performance Obligations", "of which $246 million was net new ARR". */
 const NEG_WORD = /\b(decrease[ds]?|decline[ds]?|fell|down|lower|drop(?:ped)?|reduction|loss)\b/i;
@@ -349,14 +437,22 @@ const YOY_CONTEXT = /year[-\s]?over[-\s]?year|\byoy\b|y\/y|prior[-\s]year|year[-
 /** A sequential change is not a YoY change. */
 const NOT_YOY = /sequential|quarter[-\s]over[-\s]quarter|q\/q|\bqoq\b|from\s+(?:the\s+)?(?:first|second|third|fourth)\s+quarter\s+of\s+(?:fiscal\s+)?(?:20\d{2})?\s*$/i;
 
-function yoyFrom(tail: string): number | null {
-  const t = tail.slice(0, 220);
+/** Where a new coordinated statement begins, and this value's clause ends. */
+const YOY_CUT = /;|,\s+(?:and|while|with|of\s+which|which|but)\s/i;
+function yoyFrom(tail: string, context: string): number | null {
+  // "RPO of $1.03 billion, up 11%, and cRPO up 3% year-over-year" states two
+  // changes and only the first is RPO's, so the search stops at the boundary
+  // where the next subject starts. The year-over-year WORDING may still sit
+  // past that boundary and govern the whole sentence, so the context test runs
+  // against the sentence while the number must come from this clause.
+  const cutAt = YOY_CUT.exec(tail);
+  const t = (cutAt ? tail.slice(0, cutAt.index) : tail).slice(0, 220);
   if (NOT_YOY.test(t)) return null;
   let m = YOY_EXPLICIT.exec(t);
   let v: number | null = null;
   let at = -1;
   if (m) { v = parseFloat(m[1].replace(/[−–]/, '-')); at = m.index; }
-  else if (YOY_CONTEXT.test(t)) {
+  else if (YOY_CONTEXT.test(t) || YOY_CONTEXT.test(context)) {
     m = YOY_DIRECTIONAL.exec(t);
     if (m) {
       v = parseFloat(m[2].replace(/[−–]/, '-'));
@@ -437,7 +533,13 @@ function segments(line: string): string[] {
 }
 
 // ─── extraction ─────────────────────────────────────────────────────────────
-interface Found { value: number; unit: Unit; yoy: number | null; source: string; }
+interface Found {
+  value: number; unit: Unit; yoy: number | null; source: string;
+  label: string;
+  /** true when the label carried a product qualifier ("NGS ARR"): a plain,
+   *  company-wide statement of the same metric outranks it. */
+  qualified: boolean;
+}
 interface Got { v: number; unit: Unit; yoy: number | null; end: number; }
 
 /** Everything a spec needs, compiled once — this runs over every line of every
@@ -472,6 +574,10 @@ const COMPILED: Compiled[] = SPECS.map((spec) => {
  *  beside it is not this quarter's figure for this metric. */
 const UNANCHORED_BLOCK = /\b(?:guidance|outlook|expects?|expected|anticipat\w*|forecast\w*|project\w*|target\w*|compared\s+(?:to|with)|versus|vs\.?|prior[-\s]year|year[-\s]ago|excluding|customers?\s+with|defines?|defined|represents?|refers?\s+to|calculat\w*|assum\w*)\b/i;
 const UNANCHORED_GAP = 25;
+/** The marker of a subject-by-position list; see `positional` below. */
+const RESPECTIVELY = /\brespectively\b/i;
+/** Our label is the second half of a coordinated subject ("X and adjusted Y"). */
+const COORDINATED = /\b(?:and|&)\s+\S/i;
 
 /** Strip the label's own restatement — `("RPO") RPO was …` — so the connector
  *  test sees only the gap the writer meant. */
@@ -488,23 +594,50 @@ function skipRestatement(rest: string, c: Compiled): string {
   return r;
 }
 
+/** Opens a phrase that names the period the figure belongs to. */
+const PERIOD_LEAD = /^[\s,]*(?:for|in|during|at|as\s+of|through)\s+/i;
+/**
+ * "Next-Generation Security ARR **for the fiscal fourth quarter 2026** grew 63%
+ * year over year to $9.10 billion" — the period a figure belongs to routinely
+ * sits between the label and its verb, and without this the connector test sees
+ * a gap full of words and refuses the line. The phrase is dropped only when
+ * every word in it is one of the harmless period words `anchorOk` accepts, so
+ * no clause with a subject of its own can hide inside it.
+ */
+function stripPeriodLead(gap: string): string | null {
+  const m = PERIOD_LEAD.exec(gap);
+  if (!m) return null;
+  const tail = gap.slice(m[0].length);
+  const words = tail.split(' ');
+  let taken = 0, chars = 0;
+  for (let k = 0; k < words.length && k < 10; k++) {
+    if (!words[k] || !harmlessWord(words[k])) break;
+    taken++; chars += words[k].length + 1;
+  }
+  return taken ? gap.slice(m[0].length + chars) : null;
+}
+
 function readValue(spec: Spec, rest: string, scale: number | null, allowPctChange: boolean,
-  bareScaled = false, maxGap = 60): Got | null {
+  bareScaled = false, maxGap = 60, base = 0, verbOnly = false): Got | null {
   const toks = tokens(rest, scale, 5, bareScaled);
   for (const t of toks.slice(0, 4)) {
     if (!spec.units.includes(t.unit)) continue;
-    const gap = rest.slice(0, t.at);
-    if (gap.length > maxGap) break;
-    if (CONNECT_DIRECT.test(gap)) return { v: t.v, unit: t.unit, yoy: null, end: t.end };
-    const g = CONNECT_GROWTH.exec(gap);
-    if (g) {
-      let pct = parseFloat(g[2]);
-      if (NEG_WORD.test(g[1])) pct = -pct;
-      return { v: t.v, unit: t.unit, yoy: Number.isFinite(pct) ? pct : null, end: t.end };
-    }
-    if (allowPctChange && t.unit === 'pct') {
-      const c = CONNECT_PCT_CHANGE.exec(gap);
-      if (c) return { v: NEG_WORD.test(c[1]) ? -Math.abs(t.v) : t.v, unit: 'pct', yoy: null, end: t.end };
+    const gap0 = rest.slice(0, t.at);
+    if (gap0.length > maxGap + 45) break;            // +45: room for one period phrase
+    // The gap as written, then the same gap with a leading period phrase off.
+    for (const gap of [gap0, stripPeriodLead(gap0)]) {
+      if (gap == null || gap.length > maxGap) continue;
+      if (CONNECT_DIRECT.test(gap)) return { v: t.v, unit: t.unit, yoy: null, end: base + t.end };
+      const g = CONNECT_GROWTH.exec(gap);
+      if (g) {
+        let pct = parseFloat(g[2]);
+        if (NEG_WORD.test(g[1])) pct = -pct;
+        return { v: t.v, unit: t.unit, yoy: Number.isFinite(pct) ? pct : null, end: base + t.end };
+      }
+      if (allowPctChange && t.unit === 'pct') {
+        const c = (verbOnly ? CONNECT_PCT_CHANGE_VERB : CONNECT_PCT_CHANGE).exec(gap);
+        if (c) return { v: NEG_WORD.test(c[1]) ? -Math.abs(t.v) : t.v, unit: 'pct', yoy: null, end: base + t.end };
+      }
     }
   }
   return null;
@@ -553,7 +686,7 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
       if (pairedSince > PAIRED_MAX_LINES || FORWARD_CLOSE.test(line) || line.length > 260) pairedSince = -1;
     }
 
-    const closesForward = FORWARD_CLOSE.test(line) && line.length < 200;
+    const closesForward = (FORWARD_CLOSE.test(line) && line.length < 200) || RESULTS_LINE.test(line);
     if (forwardSince >= 0) {
       forwardSince++;
       if (forwardSince > FORWARD_MAX_LINES || closesForward) forwardSince = -1;
@@ -589,18 +722,31 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
       // improve it. This is exact, not a heuristic, and it keeps a long
       // document from re-running every pattern on every later line.
       const mayAddYoy = seg.indexOf('%') >= 0;
+      // "Gross margin and adjusted gross margin for the third quarter were
+      // 34.1% and 35.0%, respectively" — "respectively" maps the numbers to the
+      // subjects BY POSITION, and this module does not read position. When our
+      // label is the second half of a coordinated subject, the number nearest
+      // it belongs to the first half. Toro's release says exactly that, and the
+      // adjusted margin there is 35.0%, not the 34.1% sitting next to it.
+      const positional = RESPECTIVELY.test(seg);
 
       for (const c of COMPILED) {
         const spec = c.spec;
         const prev = hits.get(spec.id);
-        if (prev && (prev.yoy != null || !mayAddYoy)) continue;
+        // A settled, company-wide hit is only revisited to pick up a YoY. A
+        // product-qualified one stays live all the way down the document,
+        // because a plain statement further on outranks it.
+        if (prev && !prev.qualified && (prev.yoy != null || !mayAddYoy)) continue;
         if (!spec.gate.test(seg)) continue;
 
         const allowChange = spec.id === 'comparable_sales';
         let got: Got | null = null;
         let source = seg;
+        let qualifier: string | null = null;
+        let labelAt = -1;                           // where the label sits in `seg`
 
-        // ① Anchored label: the first occurrence whose prefix is harmless.
+        // ① Anchored label: the first occurrence whose prefix is harmless — or,
+        //    for ARR, whose prefix is a harmless run plus a product name.
         let at = -1, end = -1;
         c.labelG.lastIndex = 0;
         let m: RegExpExecArray | null;
@@ -609,13 +755,19 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
           const prefix = seg.slice(0, m.index);
           if (spec.notAfter && spec.notAfter.test(prefix)) continue;
           if (spec.notBefore && spec.notBefore.test(seg.slice(m.index + m[0].length))) continue;
-          if (!anchorOk(prefix)) continue;
-          at = m.index; end = m.index + m[0].length; break;
+          let q: string | null = null;
+          if (!anchorOk(prefix)) {
+            if (!spec.qualifiable) continue;
+            q = qualifierOf(prefix);
+            if (!q) continue;
+          }
+          qualifier = q; at = m.index; end = m.index + m[0].length; labelAt = at; break;
         }
 
         if (at >= 0) {
           const rest = skipRestatement(seg.slice(end), c);
-          got = readValue(spec, rest, scale, allowChange);
+          const base = seg.length - rest.length;      // `end` is an offset into seg
+          got = readValue(spec, rest, scale, allowChange, false, 60, base);
 
           // A flattened table row: "Free cash flow" then "$" then "64.7". Only a
           // short label line may borrow the cells below it, and only from lines
@@ -623,10 +775,11 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
           if (!got && wholeLine && seg.length <= 80 && !tokens(rest, scale, 1).length) {
             const cs = rowCells();
             if (cs.length) {
-              got = readValue(spec, `${rest} ${cs.join(' ')}`, scale, allowChange, true);
+              got = readValue(spec, `${rest} ${cs.join(' ')}`, scale, allowChange, true, 60, base);
               if (got) source = `${seg} ${cs.join(' ')}`;
             }
           }
+          if (!got) qualifier = null;
         }
 
         // ② Value before label: "…with approximately $753.1 million in Remaining
@@ -636,7 +789,10 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
           const vm = c.valueFirst.exec(seg);
           if (vm && anchorOk(seg.slice(0, vm.index))) {
             const t = tokens(vm[1], scale, 1)[0];
-            if (t && spec.units.includes(t.unit)) got = { v: t.v, unit: t.unit, yoy: null, end: vm.index + vm[0].length };
+            if (t && spec.units.includes(t.unit)) {
+              got = { v: t.v, unit: t.unit, yoy: null, end: vm.index + vm[0].length };
+              labelAt = vm.index;
+            }
           }
         }
         // A count that leads its own label: "1,571 customers with $100K+ ARR".
@@ -644,7 +800,7 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
           const cm = c.countFirst.exec(seg);
           if (cm && anchorOk(seg.slice(0, cm.index))) {
             const v = parseFloat(cm[1].replace(/,/g, ''));
-            if (Number.isFinite(v) && Number.isInteger(v)) got = { v, unit: 'count', yoy: null, end: cm.index + cm[0].length };
+            if (Number.isFinite(v) && Number.isInteger(v)) { got = { v, unit: 'count', yoy: null, end: cm.index + cm[0].length }; labelAt = cm.index; }
           }
         }
 
@@ -659,37 +815,54 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
           let g2 = 0;
           while ((m = c.labelG.exec(seg)) && g2++ < 6) {
             if (UNANCHORED_BLOCK.test(seg.slice(Math.max(0, m.index - 70), m.index))) continue;
-            const r = readValue(spec, seg.slice(m.index + m[0].length), scale, allowChange, false, UNANCHORED_GAP);
-            if (r) { got = r; break; }
+            // The word in front of an unanchored label must itself be harmless.
+            // Genesco's headline reads "Journeys Comparable Sales +2%, Johnston
+            // & Murphy Comparable Sales +4%" — both are banners, and the
+            // company's own comparable sales that quarter were DOWN 1%. A name
+            // in front of the label means the number is a slice, not the whole.
+            const pw = /(\S+)\s*$/.exec(seg.slice(0, m.index));
+            if (pw && !harmlessWord(pw[1])) continue;
+            const b = m.index + m[0].length;
+            const r = readValue(spec, seg.slice(b), scale, allowChange, false, UNANCHORED_GAP, b, true);
+            if (r) { got = r; labelAt = m.index; break; }
           }
           // "…representing a 76% non-GAAP gross margin"
           if (!got && c.pctFirst) {
             const pm = c.pctFirst.exec(seg);
             if (pm && !UNANCHORED_BLOCK.test(seg.slice(Math.max(0, pm.index - 70), pm.index))) {
               const v = parseFloat(pm[1]);
-              if (Number.isFinite(v)) got = { v, unit: 'pct', yoy: null, end: pm.index + pm[0].length };
+              if (Number.isFinite(v)) { got = { v, unit: 'pct', yoy: null, end: pm.index + pm[0].length }; labelAt = pm.index; }
             }
           }
         }
 
         if (!got) continue;
+        if (positional && labelAt > 0 && COORDINATED.test(seg.slice(0, labelAt))) continue;
         if (got.unit === 'count' && /^(?:19|20)\d{2}$/.test(String(got.v))) continue;  // a year
         if (!sane(spec.id, got.unit, got.v)) continue;
 
-        const yoy = got.yoy ?? yoyFrom(seg.slice(Math.min(got.end, seg.length)));
+        const yoy = got.yoy ?? yoyFrom(seg.slice(Math.min(got.end, seg.length)), seg);
         const cur = hits.get(spec.id);
         if (cur) {
-          // One entry per metric: the first statement (the highlights block)
-          // wins, and is only displaced by a later one that adds the YoY for
-          // the SAME number — a materially different figure is a different
+          // A plain, company-wide statement always beats a product-line one:
+          // "Total ARR" is the company; "Cloud ARR" is a slice of it. Order in
+          // the document does not decide that.
+          const promotes = cur.qualified && !qualifier;
+          // Otherwise one entry per metric: the first statement (the highlights
+          // block) wins, and is only displaced by a later one that adds the YoY
+          // for the SAME number — a materially different figure is a different
           // period or a different basis, not a better version of this one.
           const near = got.unit === 'pct'
             ? Math.abs(cur.value - got.v) <= 0.5
             : Math.abs(cur.value) > 0 && Math.abs(cur.value - got.v) / Math.abs(cur.value) <= 0.02;
-          if (!(cur.yoy == null && yoy != null && near)) continue;
+          const gainsYoy = cur.yoy == null && yoy != null && near;
+          if (!promotes && !gainsYoy) continue;
+          if (!cur.qualified && qualifier) continue;  // never demote to a slice
         }
         hits.set(spec.id, {
           value: got.v, unit: got.unit, yoy,
+          label: qualifier ? `${qualifierLabel(qualifier)} ${KEY_METRIC_LABEL[spec.id]}` : KEY_METRIC_LABEL[spec.id],
+          qualified: !!qualifier,
           source: source.length > 200 ? source.slice(0, 199) + '…' : source,
         });
       }
@@ -713,6 +886,7 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
               const src = `${seg} ${cells.join(' ')}`;
               hits.set(which, {
                 value: t.v, unit: 'pct', yoy: null,
+                label: KEY_METRIC_LABEL[which], qualified: false,
                 source: src.length > 200 ? src.slice(0, 199) + '…' : src,
               });
             }
@@ -731,7 +905,7 @@ export function keyMetricsFromText(text: string): KeyMetric[] {
   for (const id of order) {
     const h = hits.get(id);
     if (!h) continue;
-    out.push({ id, label: KEY_METRIC_LABEL[id], value: h.value, unit: h.unit, yoy_pct: h.yoy, source: h.source });
+    out.push({ id, label: h.label, value: h.value, unit: h.unit, yoy_pct: h.yoy, source: h.source });
   }
   return out;
 }
