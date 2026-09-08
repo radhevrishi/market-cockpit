@@ -484,7 +484,8 @@ export default function UsEarningsOpportunitiesPage() {
             <span style={{ fontWeight: 800, color: 'var(--mc-text-0)' }}>🗓 SCHEDULED {date === today ? 'TODAY' : date} · RESULTS PENDING</span>
             <span style={{ fontWeight: 800, fontSize: 'var(--mc-text-xs)', padding: '2px 8px', borderRadius: 999, backgroundColor: 'color-mix(in srgb, #8B5CF6 14%, transparent)', color: '#8B5CF6' }}>{data.scheduled!.length}</span>
             <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
-              expected to report (Nasdaq schedule) but no 8-K on EDGAR yet — each moves into a tier as it files
+              expected to report (Nasdaq schedule) but no 8-K on EDGAR yet — each moves into a tier as it files.
+              Names marked <b style={{ color: '#F59E0B' }}>6-K</b> are foreign private issuers: they never file an 8-K, so they stay here.
             </span>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -495,6 +496,7 @@ export default function UsEarningsOpportunitiesPage() {
                 {e.ticker}
                 <span style={{ fontSize: 9, color: '#8B5CF6' }}>{e.time === 'pre-market' ? '☀ pre' : e.time === 'after-hours' ? '🌙 post' : ''}</span>
                 {e.market_cap_musd != null && <span style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>{fmtUsd(e.market_cap_musd)}</span>}
+                {(e as any).foreign_filer && <span style={{ fontSize: 9, color: '#F59E0B' }} title="Foreign private issuer — reports on a 6-K, not an 8-K, so it is never graded here">6-K</span>}
               </span>
             ))}
             {data.scheduled!.length > 80 && <span style={{ fontSize: 10, color: 'var(--mc-text-4)', alignSelf: 'center' }}>+{data.scheduled!.length - 80} more — see Calendar</span>}
@@ -788,11 +790,16 @@ export default function UsEarningsOpportunitiesPage() {
         up. Operating margin uses GAAP <code>OperatingIncomeLoss</code>, which is why it can differ from a
         screener&apos;s &quot;normalized&quot; operating income. Market cap is SEC cover-page shares × last
         price. RS is a cohort percentile blended with performance versus SPY — it is our construction, not
-        an IBD rating. <b>Consensus</b> comes from Nasdaq&apos;s free earnings calendar: each card shows actual EPS
-        against the analyst estimate and the surprise. A name that has reported but whose 10-Q hasn&apos;t
-        reached EDGAR yet gets a <b>PRELIM</b> grade on adjusted (street-basis) EPS, consensus and the price
-        reaction; the full GAAP grade replaces it automatically when the filing posts. Upcoming dates in the
-        calendar are Nasdaq&apos;s schedule and update as companies confirm.
+        an IBD rating. The <b>quarter label</b> is the company&apos;s own — read from the release headline, so Dell&apos;s
+        July quarter is Q2 FY27 and Zscaler&apos;s is Q4 FY26, exactly as the street names them.
+        <b> Consensus</b> is the street (adjusted) estimate and the adjusted actual, both on the same basis, shown
+        on their own line so they are never mixed with the GAAP tiles above them; when the estimate is within a
+        dime of zero the beat is stated in cents, because a percentage off $0.00 is meaningless. A name that has
+        reported but whose 10-Q hasn&apos;t reached EDGAR yet gets a <b>PRELIM</b> grade: revenue, operating income,
+        net income and GAAP EPS are read from the earnings release itself and accepted only when the release&apos;s
+        prior-year column reproduces last year&apos;s XBRL figure — otherwise the field stays blank. The full grade
+        replaces it automatically when the 10-Q posts. Upcoming dates in the calendar are Nasdaq&apos;s schedule and
+        update as companies confirm; foreign private issuers (marked 6-K) report without an 8-K and are never graded.
       </div>
       <style>{'@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}'}</style>
     </div>
@@ -828,6 +835,25 @@ function Tile({ label, value, sub, color }: { label: string; value: string; sub?
   );
 }
 
+/** A percentage surprise off a near-zero estimate is noise dressed as signal —
+ *  Domo beat a $0.00 consensus by two cents and the arithmetic reads +5,888%.
+ *  Below a dime of estimate, state the beat in cents instead. */
+function surpriseText(r: any): string {
+  const est = r.eps_estimate as number | null;
+  const act = (r.eps_adj ?? r.eps_curr) as number | null;
+  const pct = r.eps_surprise_pct as number | null;
+  if (est != null && act != null && Math.abs(est) < 0.1) {
+    const d = act - est;
+    return `${d >= 0 ? 'beat by' : 'missed by'} $${Math.abs(d).toFixed(2)}`;
+  }
+  if (pct == null) return '';
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
+}
+function surpriseChip(r: any): string {
+  const t = surpriseText(r);
+  return /%$/.test(t) ? `vs est ${t}` : t;
+}
+
 const growthColor = (v: number | null | undefined) =>
   v == null ? 'var(--mc-text-3)' : v >= 25 ? 'var(--mc-bullish)' : v >= 0 ? 'var(--mc-text-0)' : 'var(--mc-bearish)';
 
@@ -853,7 +879,7 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
         {r.sector && <Chip text={r.sector} />}
         {r.market_cap_musd != null && <Chip text={fmtUsd(r.market_cap_musd)} />}
         {(r as any).eps_surprise_pct != null && (
-          <Chip text={`vs est ${(r as any).eps_surprise_pct >= 0 ? '+' : ''}${Number((r as any).eps_surprise_pct).toFixed(0)}%`}
+          <Chip text={surpriseChip(r)}
             color={(r as any).eps_surprise_pct >= 5 ? '#10B981' : (r as any).eps_surprise_pct <= -5 ? '#EF4444' : undefined} />
         )}
         {(r as any).guidance && (
@@ -868,12 +894,11 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
         <Tile label="REVENUE" value={fmtPct(r.sales_yoy_pct)} color={growthColor(r.sales_yoy_pct)}
           sub={`${fmtUsd(r.revenue_prev_musd)} → ${fmtUsd(r.revenue_curr_musd)}`} />
-        <Tile label={(r as any).eps_basis ? 'ADJ. EPS' : 'EPS'} value={fmtPct(r.eps_yoy_pct)} color={growthColor(r.eps_yoy_pct)}
+        <Tile label="EPS · GAAP" value={fmtPct(r.eps_yoy_pct)} color={growthColor(r.eps_yoy_pct)}
           sub={r.eps_prev != null && r.eps_curr != null
-            ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}${(r as any).eps_estimate != null ? ` · est $${Number((r as any).eps_estimate).toFixed(2)}` : ''}`
-            : r.eps_curr == null ? 'EPS not tagged'
-            : (r as any).eps_estimate != null ? `$${r.eps_curr.toFixed(2)} vs est $${Number((r as any).eps_estimate).toFixed(2)}`
-            : 'n/m — negative base'} />
+            ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}`
+            : r.eps_curr != null ? `${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)} · no prior base`
+            : 'EPS not tagged'} />
         <Tile label="OPM" value={r.opm_pct != null ? `${r.opm_pct.toFixed(1)}%` : '—'}
           color={opmD == null ? undefined : opmD >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
           sub={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp YoY` : 'no prior margin'} />
@@ -881,6 +906,24 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
           color={r.cfo_to_pat_ratio == null ? undefined : r.cfo_to_pat_ratio >= 1 ? 'var(--mc-bullish)' : r.cfo_to_pat_ratio >= 0.5 ? undefined : 'var(--mc-bearish)'}
           sub={r.cfo_curr_musd != null ? `CFO ${fmtUsd(r.cfo_curr_musd)}` : 'cash flow pending'} />
       </div>
+
+      {(r as any).eps_adj != null && (
+        <div style={{
+          marginTop: 7, padding: '5px 8px', borderRadius: 6, backgroundColor: 'var(--mc-bg-1)',
+          border: '1px solid var(--mc-bg-4)', fontSize: 11, color: 'var(--mc-text-2)',
+          display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline',
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>STREET BASIS</span>
+          <span>adj. EPS <b style={{ color: 'var(--mc-text-0)' }}>${Number((r as any).eps_adj).toFixed(2)}</b></span>
+          {(r as any).eps_estimate != null && <span>vs est ${Number((r as any).eps_estimate).toFixed(2)}</span>}
+          {(r as any).eps_surprise_pct != null && (
+            <b style={{ color: (r as any).eps_surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+              {surpriseText(r)}
+            </b>
+          )}
+          <span style={{ color: 'var(--mc-text-4)' }}>· adjusted figures exclude one-offs, so they differ from the GAAP tile</span>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
@@ -914,6 +957,17 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 8 }}>
           {r.methodology_tags.map((t) => <Chip key={t} text={t} color="#10B981" />)}
           {r.caveat_tags.map((t) => <Chip key={t} text={t} color="#EF4444" />)}
+        </div>
+      )}
+
+      {(r as any).prelim && (
+        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 7, lineHeight: 1.5 }}>
+          {Array.isArray((r as any).prelim_matched) && (r as any).prelim_matched.length > 0
+            ? <>Figures read from the earnings release ({(r as any).prelim_matched.map((m: string) => m.replace(/_/g, ' ')).join(', ')}) and checked against last year&apos;s XBRL before display. Cash flow and the full tag set arrive with the 10-Q.</>
+            : <>Consensus and the price reaction only — the release&apos;s statement of operations could not be verified against last year&apos;s filing, so no revenue or margin is shown.</>}
+          {(r as any).release_url && (
+            <> <a href={(r as any).release_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>read the release ↗</a></>
+          )}
         </div>
       )}
 

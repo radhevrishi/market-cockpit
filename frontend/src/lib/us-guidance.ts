@@ -25,6 +25,14 @@ export interface Guidance {
   score: number;                 // −1 … +1
   snippets: string[];            // verbatim sentences, ≤ 3
   source_url: string | null;     // the exhibit we read
+  /** The company's OWN name for the quarter, from the release's headline —
+   *  "Q2 FY27", "Q4 FY26". This is what the street and every earnings site
+   *  call it, and no calendar rule reproduces it: NetApp's July quarter is
+   *  Q1 FY27, Five Below's August quarter is Q2 FY26, and SEC's own fy/fp
+   *  field disagrees with the filer on both. */
+  fiscal_label: string | null;
+  fiscal_q: 1 | 2 | 3 | 4 | null;
+  fiscal_fy: number | null;
 }
 
 const _g = new Map<string, { at: number; data: Guidance }>();
@@ -102,17 +110,82 @@ function classify(sentences: string[]): { label: GuidanceLabel | null; score: nu
   return { label, score, picked: ordered };
 }
 
+// ─── the company's own fiscal-quarter name ────────────────────────────────
+const ORD: Record<string, 1 | 2 | 3 | 4> = {
+  first: 1, second: 2, third: 3, fourth: 4, '1st': 1, '2nd': 2, '3rd': 3, '4th': 4,
+};
 /**
- * Guidance for one earnings 8-K. `filingIndexUrl` is the …-index.htm URL we
- * already carry on every filing; the directory's index.json lists the exhibits.
+ * "…Announces Second Quarter Fiscal 2026 Results" → { q: 2, fy: 2026 }.
+ * Read from the top of the release, where the filer names the period. Falls
+ * back through several phrasings; returns nulls when it cannot be certain.
  */
-export async function guidanceFromFiling(cikNum: number, accession: string, filingIndexUrl: string): Promise<Guidance> {
-  const key = accession || filingIndexUrl;
-  const hit = _g.get(key);
-  if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
+export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy: number | null } {
+  const yr = (s: string): number | null => {
+    const n = parseInt(s, 10);
+    if (!Number.isFinite(n)) return null;
+    if (n >= 1990 && n <= 2100) return n;
+    if (n >= 0 && n <= 99) return 2000 + n;
+    return null;
+  };
+  const pats: Array<[RegExp, (m: RegExpExecArray) => { q: 1 | 2 | 3 | 4 | null; fy: number | null }]> = [
+    // "second quarter of fiscal year 2027", "fourth quarter and full year fiscal 2026"
+    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\b[^.]{0,60}?\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b/i,
+      (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
+    // "Third Fiscal Quarter of 2026" (FuelCell's phrasing)
+    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+fiscal\s+quarter\s+(?:of\s+)?'?(\d{4}|\d{2})\b/i,
+      (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
+    // "fiscal 2027 second quarter"
+    [/\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b[^.]{0,40}?\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\b/i,
+      (m) => ({ q: ORD[m[2].toLowerCase()], fy: yr(m[1]) })],
+    // "Q2 FY27", "Q2 FY2027", "Q2 fiscal 2027"
+    [/\bQ([1-4])\s*(?:FY|fiscal(?:\s+year)?)\s*'?(\d{4}|\d{2})\b/i,
+      (m) => ({ q: Number(m[1]) as 1 | 2 | 3 | 4, fy: yr(m[2]) })],
+    // "second quarter 2026 results" (no "fiscal" — calendar-year filers)
+    [/\b(first|second|third|fourth)\s+quarter\s+(?:of\s+)?(\d{4})\b/i,
+      (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
+  ];
+  // Position matters more than pattern order. A release names the quarter it is
+  // REPORTING in its headline and the quarter it is GUIDING later on — eGain's
+  // release says "Fourth Quarter and Fiscal Year 2026 Results" at the top and
+  // "first quarter of fiscal 2027" in the outlook, and matching by pattern
+  // order picked the outlook. So: take the EARLIEST match in the document,
+  // searching the headline region first.
+  const scan = (window: string): { q: 1 | 2 | 3 | 4 | null; fy: number | null } => {
+    let best: { q: 1 | 2 | 3 | 4 | null; fy: number | null; at: number } | null = null;
+    for (const [re, take] of pats) {
+      const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+      let m: RegExpExecArray | null;
+      let guard = 0;
+      while ((m = g.exec(window)) && guard++ < 20) {
+        const got = take(m);
+        if (!got.q || !got.fy) continue;
+        // Never take a phrase that is plainly about the period AHEAD.
+        const ctx = window.slice(Math.max(0, m.index - 90), m.index + m[0].length + 40);
+        if (/\b(guidance|outlook|expects?|expected|forecast|anticipat|for the (?:third|fourth|first|second) quarter of)\b/i.test(ctx)
+          && !/\b(results?|reported?|reports|announce)/i.test(ctx)) continue;
+        if (!best || m.index < best.at) best = { ...got, at: m.index };
+      }
+    }
+    return best ? { q: best.q, fy: best.fy } : { q: null, fy: null };
+  };
+  const flat = text.replace(/\s+/g, ' ');
+  const near = scan(flat.slice(0, 1500));
+  if (near.q && near.fy) return near;
+  return scan(flat.slice(0, 6000));
+}
 
-  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null };
-  let out = none;
+/**
+ * The earnings press release itself (Exhibit 99.1) for one filing, cached with
+ * the filing (immutable). Shared by the guidance scan and the press-release
+ * income-statement reader so a filing's exhibit is fetched ONCE.
+ */
+export interface ReleaseDoc { url: string | null; html: string | null; }
+const _doc = new Map<string, { at: number; data: ReleaseDoc }>();
+export async function releaseDocument(cikNum: number, accession: string, filingIndexUrl: string): Promise<ReleaseDoc> {
+  const key = accession || filingIndexUrl;
+  const hit = _doc.get(key);
+  if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
+  let out: ReleaseDoc = { url: null, html: null };
   try {
     const dir = filingIndexUrl.replace(/\/[^/]*$/, '');
     const idxTxt = await secGet(`${dir}/index.json`);
@@ -129,15 +202,74 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
       }
       if (pick) {
         const url = `${dir}/${pick.name}`;
-        const html = await secGet(url);
-        if (html) {
+        out = { url, html: await secGet(url) };
+      }
+    }
+  } catch { out = { url: null, html: null }; }
+  if (_doc.size > 600) {
+    const oldest = Array.from(_doc.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 150);
+    for (const [k] of oldest) _doc.delete(k);
+  }
+  _doc.set(key, { at: Date.now(), data: out });
+  return out;
+}
+
+/**
+ * Guidance for one earnings 8-K. `filingIndexUrl` is the …-index.htm URL we
+ * already carry on every filing; the directory's index.json lists the exhibits.
+ */
+export async function guidanceFromFiling(cikNum: number, accession: string, filingIndexUrl: string): Promise<Guidance> {
+  const key = accession || filingIndexUrl;
+  const hit = _g.get(key);
+  if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
+
+  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null };
+  let out = none;
+  try {
+    {
+      const doc = await releaseDocument(cikNum, accession, filingIndexUrl);
+      {
+        const url = doc.url;
+        const html = doc.html;
+        if (html && url) {
           const text = htmlToText(html);
-          // Sentence split, keep only forward-looking ones near a period reference.
-          const sentences = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])/).map((s) => s.replace(/\s+/g, ' ').trim())
-            .filter((s) => s.length >= 40 && s.length <= 600)
-            .filter((s) => FWD.test(s) && (PERIOD.test(s) || /guidance|outlook/i.test(s)));
-          const c = classify(sentences);
-          out = { label: c.label, score: c.score, snippets: c.picked, source_url: url };
+          // Sentence split. A press release is not prose: the guidance line is
+          // as often a bullet ("• Full-year FY27 revenue guidance of $192.0
+          // billion") or a clause inside a long CEO quote as it is a standalone
+          // sentence. Splitting ONLY on ". " missed Dell's "we're raising our
+          // full-year FY27 revenue outlook by $25 billion" because the quote
+          // ran past the 600-character cap. So split on sentence ends, bullets
+          // and line breaks, then split anything still oversized at clause
+          // boundaries before the length filter.
+          const rough = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])|\n+|\s*[•·▪]\s*/);
+          // Also keep the coarse pass (sentence ends only): a guidance TABLE
+          // reaches us as one long line whose pieces, split apart, each lose
+          // either the period reference or the number.
+          const sentences: string[] = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])/)
+            .map((s) => s.replace(/\s+/g, ' ').trim())
+            .filter((s) => s.length >= 40 && s.length <= 600);
+          for (const r0 of rough) {
+            const r = r0.replace(/\s+/g, ' ').trim();
+            if (!r) continue;
+            if (r.length <= 600) { sentences.push(r); continue; }
+            for (const piece of r.split(/(?<=[.;])\s+|\s+(?=and\s+(?:we|the\s+company)\b)/i)) {
+              const p = piece.replace(/\s+/g, ' ').trim();
+              if (p) sentences.push(p.length > 600 ? p.slice(0, 600) : p);
+            }
+          }
+          const kept = Array.from(new Set(sentences))
+            .filter((s) => s.length >= 30 && s.length <= 600)
+            .filter((s) => FWD.test(s) && (PERIOD.test(s) || /guidance|outlook/i.test(s)))
+            // Safe-harbour boilerplate lists every forward-looking verb there
+            // is; it is not guidance.
+            .filter((s) => !/forward[- ]looking statements|safe harbor|private securities litigation|words or expressions that refer to future/i.test(s));
+          const c = classify(kept);
+          const fl = fiscalLabelFromText(text);
+          out = {
+            label: c.label, score: c.score, snippets: c.picked, source_url: url,
+            fiscal_label: (fl.q && fl.fy) ? `Q${fl.q} FY${String(fl.fy).slice(2)}` : null,
+            fiscal_q: fl.q, fiscal_fy: fl.fy,
+          };
         }
       }
     }

@@ -34,6 +34,9 @@ export interface ExpectedReporter {
   estimates_n: number | null;
   eps_last_year: number | null;
   last_year_report_date: string | null;
+  /** A foreign private issuer: reports on a 6-K, never an 8-K Item 2.02, so it
+   *  can never move out of "results pending" into a graded tier. */
+  foreign_filer?: boolean;
 }
 
 const _cal = new Map<string, { at: number; data: ExpectedReporter[] }>();

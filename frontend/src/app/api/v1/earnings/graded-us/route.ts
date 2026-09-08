@@ -35,9 +35,11 @@ import {
 } from '@/lib/us-edgar';
 import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, type UsTechnicals, type EpsHistoryRow } from '@/lib/us-prices';
 import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
-import { guidanceFromFiling, type Guidance } from '@/lib/us-guidance';
+import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
+import { financialsFromReleaseHtml } from '@/lib/us-pr-financials';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
+  fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 
@@ -251,25 +253,25 @@ export async function GET(req: Request) {
     const facts = await pooled(withPrice, 5, (x) => companyFacts(x.f.cikNum));
 
     interface Prepared {
-      f: EdgarFiling; t: UsTechnicals; shares: number | null;
+      f: EdgarFiling; t: UsTechnicals; shares: number | null; facts: any;
       fundamentals: ReturnType<typeof extractFundamentals>;
     }
     const prepared: Prepared[] = [];
-    const awaitingXbrl: Array<{ f: EdgarFiling; t: UsTechnicals }> = [];   // candidates for a PRELIM grade
+    const awaitingXbrl: Array<{ f: EdgarFiling; t: UsTechnicals; facts: any }> = [];   // candidates for a PRELIM grade
     let pendingXbrl = 0;
     for (let i = 0; i < withPrice.length; i++) {
       const fx = facts[i];
       const { f, t } = withPrice[i];
-      if (!fx) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t }); continue; }
+      if (!fx) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t, facts: null }); continue; }
       // For a 10-Q/10-K the reported period IS the fiscal period; for an 8-K,
       // `period_ending` is the event date, so let the extractor take the newest.
       const asOf = /^10-/.test(f.form) && f.period ? f.period : null;
       const fund = extractFundamentals(fx, asOf);
-      if (!fund.q_end) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t }); continue; }
+      if (!fund.q_end) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t, facts: fx }); continue; }
       // Stale-quarter guard — see header note. The 8-K is real but the XBRL on
       // file is last quarter's: a PRELIM candidate too.
       if (daysBetween(f.filed, fund.q_end) > MAX_QUARTER_LAG_DAYS) {
-        pendingXbrl++; addPending(f, 'quarter-stale'); awaitingXbrl.push({ f, t }); continue;
+        pendingXbrl++; addPending(f, 'quarter-stale'); awaitingXbrl.push({ f, t, facts: fx }); continue;
       }
       // Already-public guard. If the quarter's figures reached EDGAR more than
       // 7 days BEFORE the filing we are crediting, this filing is not the
@@ -279,7 +281,7 @@ export async function GET(req: Request) {
       if (!explicit && fund.q_filed && daysBetween(f.filed, fund.q_filed) > 7) {
         addPending(f, 'reported-earlier'); continue;
       }
-      prepared.push({ f, t, shares: sharesOutstandingFromFacts(fx, fund.q_end), fundamentals: fund });
+      prepared.push({ f, t, facts: fx, shares: sharesOutstandingFromFacts(fx, fund.q_end), fundamentals: fund });
     }
 
     // ── 4. cohort RS, consensus, then grade ──────────────────────────────
@@ -295,17 +297,18 @@ export async function GET(req: Request) {
       // has no release to read.
       pooled(prepared, 4, (p) => (p.f.form === '8-K' && p.f.accession)
         ? guidanceFromFiling(p.f.cikNum, p.f.accession, p.f.filing_url)
-        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null })),
+        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null })),
     ]);
 
     const graded: UsGradedRow[] = [];
     for (let pi = 0; pi < prepared.length; pi++) {
       const p = prepared[pi];
       const sRows: EpsHistoryRow[] = surprises[pi] || [];
-      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null };
+      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null };
       // Yahoo keys the row by fiscal-quarter END; take the row whose quarter is
       // within 45 days of the quarter we graded (52/53-week calendars shift it).
       const sLatest = sRows.find((r) => r.quarter && p.fundamentals.q_end && Math.abs(daysBetween(r.quarter, p.fundamentals.q_end)) <= 45 && r.eps_actual != null) || null;
+      const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
       const row = gradeUsRow({
         ticker: p.f.ticker!,
         company: p.f.company,
@@ -323,6 +326,11 @@ export async function GET(req: Request) {
         },
         shares_outstanding: p.shares,
         positive_guidance: g.label === 'RAISED',
+        // The filer's own words first (press-release headline), then SEC's
+        // fy/fp — they disagree often enough to matter (NetApp's July quarter
+        // is Q1 FY27 to NetApp and "fy 2026 Q1" to the API).
+        fiscal_label: g.fiscal_label || usFiscalLabel(fq) || null,
+        fiscal_year_own: g.fiscal_fy ?? fq.fy,
       });
       if (!row) { pendingXbrl++; addPending(p.f, 'xbrl-not-posted'); continue; }
       (row as any).guidance = g.label;
@@ -362,7 +370,7 @@ export async function GET(req: Request) {
       const prelimCiks = new Set<number>();
       let dbgRows = 0, dbgMatch = 0, dbgEps = 0, dbgRow = 0;
       for (let i = 0; i < awaitingXbrl.length; i++) {
-        const { f, t } = awaitingXbrl[i];
+        const { f, t, facts: facts0 } = awaitingXbrl[i];
         const rows = sur[i] || [];
         if (rows.length) dbgRows++;
         if (!rows.length || f.form !== '8-K') continue;
@@ -373,16 +381,45 @@ export async function GET(req: Request) {
         if (!latest) continue;
         dbgMatch++;
         dbgEps++;
-        // Year-ago adjusted EPS is not in a 4-quarter history; PRELIM grades on
-        // surprise + reaction instead (see gradeUsRow.prelim_surprise_pct).
+        // ── the GAAP numbers, read from the press release ──────────────────
+        // The 10-Q is days away, but the statement of operations is in the
+        // 8-K's Exhibit 99.1 right now — and its PRIOR-YEAR column is a figure
+        // we already hold from last year's XBRL. Every value is accepted only
+        // when that prior-year column reproduces the XBRL year-ago number, so a
+        // PRELIM card shows revenue, margin and GAAP EPS that have been checked
+        // against a filing, or shows nothing at all.
+        const yaEnd = isoAddDays(latest.quarter!, -365);
+        const ya = facts0 ? extractFundamentals(facts0, yaEnd) : null;
+        let pr: ReturnType<typeof financialsFromReleaseHtml> | null = null;
+        let relUrl: string | null = null;
+        if (ya && (ya.revenue != null || ya.net_income != null) && f.accession) {
+          try {
+            const doc = await releaseDocument(f.cikNum, f.accession, f.filing_url);
+            relUrl = doc.url;
+            if (doc.html) {
+              pr = financialsFromReleaseHtml(doc.html, {
+                revenue: ya.revenue, operating_income: ya.operating_income,
+                net_income: ya.net_income, eps: ya.eps,
+              });
+            }
+          } catch { pr = null; }
+        }
+        // Guidance first: it also carries the filer's own name for the quarter
+        // ("Q2 FY27"), read from the release headline.
+        let gPre: Guidance | null = null;
+        try { gPre = f.accession ? await guidanceFromFiling(f.cikNum, f.accession, f.filing_url) : null; } catch { gPre = null; }
+        const fiscalPrev = facts0 ? fiscalPeriodFromFacts(facts0, ya?.q_end || yaEnd) : { fy: null, q: null };
+        const fiscalNow = nextFiscalYear(fiscalPrev);
         const fund = {
-          q_end: latest.quarter, q_end_prev: null, q_filed: null,
-          revenue: null, revenue_prev: null, operating_income: null, operating_income_prev: null,
-          net_income: null, net_income_prev: null,
-          eps: latest.eps_actual, eps_prev: null, eps_derived: false,
-          cfo: null, cfo_prev: null, tags: {}, quarters_revenue: null,
-          quarters_eps: rows.map((r) => r.eps_actual).filter((v): v is number => v != null),
-          quarters_opm: null,
+          q_end: latest.quarter, q_end_prev: ya?.q_end ?? null, q_filed: null,
+          revenue: pr?.revenue ?? null, revenue_prev: pr?.revenue_prev ?? null,
+          operating_income: pr?.operating_income ?? null, operating_income_prev: pr?.operating_income_prev ?? null,
+          net_income: pr?.net_income ?? null, net_income_prev: pr?.net_income_prev ?? null,
+          // GAAP diluted EPS from the release when it validated; the street
+          // (adjusted) figure stays on `eps_adj`, never mixed into the YoY tile.
+          eps: pr?.eps ?? null, eps_prev: pr?.eps_prev ?? null, eps_derived: false,
+          cfo: null, cfo_prev: null, tags: {},
+          quarters_revenue: null, quarters_eps: null, quarters_opm: null,
         };
         const row = gradeUsRow({
           ticker: f.ticker!, company: f.company, sector: sectorFromSic(f.sic),
@@ -393,22 +430,32 @@ export async function GET(req: Request) {
             pct_from_52w_high: t.pct_from_52w_high, stage: t.stage, rs_rating: t.rs_rating,
             addv_musd: t.addv_musd, vol_ratio_20d: t.vol_ratio_20d,
           },
-          shares_outstanding: null,
+          // Cover-page share count — filed with every 10-Q/10-K/8-K wrapper, so
+          // it is current even before this quarter's numbers land. Gives the
+          // PRELIM card a real market cap instead of a blank.
+          shares_outstanding: facts0 ? sharesOutstandingFromFacts(facts0, null) : null,
           prelim_surprise_pct: latest.surprise_pct,
+          fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
+          fiscal_year_own: gPre?.fiscal_fy ?? fiscalNow.fy,
         });
         if (!row) continue;
+        if (pr && pr.matched.length) {
+          (row as any).prelim_source = 'press release (EX-99), validated against the year-ago XBRL';
+          (row as any).prelim_matched = pr.matched;
+          (row as any).release_url = relUrl;
+        }
         dbgRow++;
         // PRELIM never outranks a full GAAP grade.
         if (row.tier === 'BLOCKBUSTER') row.tier = 'STRONG';
-        try {
-          const g = f.accession ? await guidanceFromFiling(f.cikNum, f.accession, f.filing_url) : null;
+        {
+          const g = gPre;
           if (g) {
             (row as any).guidance = g.label; (row as any).guidance_score = g.score;
             (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
             if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
             if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
           }
-        } catch { /* guidance is additive; never blocks a grade */ }
+        }
         (row as any).prelim = true;
         (row as any).is_financial = isFinancialSic(f.sic);
         (row as any).close_30d = t.close_30d;
@@ -421,8 +468,13 @@ export async function GET(req: Request) {
           if (latest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
           if (latest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
         }
-        if (!row.caveat_tags.includes('prelim · GAAP pending')) row.caveat_tags.push('prelim · GAAP pending');
-        row.narrative = `${f.company} reported ${row.quarter}: adjusted EPS $${latest.eps_actual!.toFixed(2)}${latest.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus (${latest.surprise_pct != null ? `${latest.surprise_pct >= 0 ? '+' : ''}${latest.surprise_pct.toFixed(0)}%` : 'n/a'})` : ''}. Revenue, margins and cash flow will fill in when the 10-Q posts to EDGAR.`;
+        if (!row.caveat_tags.includes('prelim · 10-Q pending')) row.caveat_tags.push('prelim · 10-Q pending');
+        const adjLine = `adjusted EPS $${latest.eps_actual!.toFixed(2)}${latest.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus (${latest.surprise_pct != null ? `${latest.surprise_pct >= 0 ? '+' : ''}${latest.surprise_pct.toFixed(0)}%` : 'n/a'})` : ''}`;
+        row.narrative = (pr && pr.matched.length)
+          // We have the release's own GAAP statement — keep the normal
+          // narrative and add the street line plus what is still missing.
+          ? `${row.narrative} Read from the earnings release and checked against last year's filing; ${adjLine}. Cash flow arrives with the 10-Q.`
+          : `${f.company} reported ${row.quarter}: ${adjLine}. Revenue, margins and cash flow will fill in when the 10-Q posts to EDGAR.`;
         graded.push(row);
         prelimCiks.add(f.cikNum);
       }
@@ -447,6 +499,27 @@ export async function GET(req: Request) {
         const filedSet = new Set(filings.map((f) => f.ticker).filter(Boolean) as string[]);
         const exp = await nasdaqEarningsOn(date);
         scheduled = exp.filter((e) => !filedSet.has(e.ticker));
+        // A foreign private issuer (Grifols, NIO, Canaan…) reports on a 6-K, not
+        // an 8-K, and files 20-F/40-F annually — it will NEVER move into a tier
+        // off an 8-K, and leaving it sitting in "results pending" for ever looks
+        // like the engine missed it. Mark them so the card can say why. Checked
+        // for the largest names only; `submissions` is cached 6h.
+        const probe = scheduled.slice()
+          .sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0)).slice(0, 20);
+        const marks = await pooled(probe, 5, async (e) => {
+          const cik = await tickerToCik(e.ticker);
+          if (!cik) return { t: e.ticker, foreign: false };
+          const s = await submissions(cik);
+          if (!s) return { t: e.ticker, foreign: false };
+          const recent = s.recent.slice(0, 250);
+          const foreign = recent.some((r) => /^(6-K|20-F|40-F)/.test(r.form))
+            && !recent.some((r) => r.form === '8-K' && r.items.includes('2.02'));
+          return { t: e.ticker, foreign };
+        });
+        const foreignSet = new Set(marks.filter((m) => m?.foreign).map((m) => m!.t));
+        if (foreignSet.size) {
+          scheduled = scheduled.map((e) => foreignSet.has(e.ticker) ? { ...e, foreign_filer: true } as ExpectedReporter : e);
+        }
       } catch { scheduled = []; }
     }
 

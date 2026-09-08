@@ -618,6 +618,68 @@ export interface UsGradeInput {
    *  not posted. Stands in for the growth axis so the reaction + surprise can be
    *  graded now; the full YoY grade replaces it when the 10-Q lands. */
   prelim_surprise_pct?: number | null;
+  /** The filer's own fiscal quarter ("Q2 FY27"), from companyfacts fy/fp. */
+  fiscal_label?: string | null;
+  fiscal_year_own?: number | null;
+}
+
+/**
+ * The company's OWN fiscal quarter for a period end, straight from the fy/fp
+ * fields companyfacts carries on every fact.
+ *
+ * Why this matters: Dell's quarter ending 31 Jul 2026 is "Q2 FY27" to Dell, to
+ * the street and to every earnings site — calling it "Q3 CY26" (which is what a
+ * calendar-quarter label does with an 8-K filed on 1 Sep) is wrong in a way a
+ * user notices immediately. Snowflake's July quarter is Q2 FY27, Zscaler's is
+ * Q4 FY26, Campbell's is Q4 FY26. Only the filer knows; the filer tells us.
+ *
+ * In a 10-K a quarterly-length fact is tagged fp="FY" (there is no Q4 context),
+ * so a ~90-day duration with fp=FY is Q4 of that fiscal year.
+ */
+export interface FiscalPeriod { fy: number | null; q: 1 | 2 | 3 | 4 | null; }
+export function fiscalPeriodFromFacts(facts: any, periodEnd: string | null | undefined): FiscalPeriod {
+  const none: FiscalPeriod = { fy: null, q: null };
+  const gaap = facts?.facts?.['us-gaap'];
+  if (!gaap || !periodEnd) return none;
+  const votes = new Map<string, number>();
+  const concepts = ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'NetIncomeLoss',
+    'RevenueFromContractWithCustomerIncludingAssessedTax', 'SalesRevenueNet', 'OperatingIncomeLoss', 'ProfitLoss'];
+  for (const c of concepts) {
+    const node = gaap[c];
+    if (!node?.units) continue;
+    for (const uk of Object.keys(node.units)) {
+      for (const e of node.units[uk] as any[]) {
+        if (!e?.start || !e?.end) continue;
+        if (Math.abs(diffDays(String(e.end), periodEnd)) > 4) continue;
+        const days = diffDays(String(e.end), String(e.start));
+        if (days < 80 || days > 100) continue;
+        const fy = Number(e.fy);
+        const fpRaw = String(e.fp || '');
+        if (!Number.isFinite(fy)) continue;
+        let q: number | null = null;
+        if (/^Q[1-4]$/.test(fpRaw)) q = Number(fpRaw.slice(1));
+        else if (fpRaw === 'FY') q = 4;
+        if (!q) continue;
+        const key = `${fy}|${q}`;
+        votes.set(key, (votes.get(key) || 0) + 1);
+      }
+    }
+  }
+  if (!votes.size) return none;
+  const [best] = Array.from(votes.entries()).sort((a, b) => b[1] - a[1]);
+  const [fyS, qS] = best[0].split('|');
+  return { fy: Number(fyS), q: Number(qS) as 1 | 2 | 3 | 4 };
+}
+/** "Q2 FY27" from a fiscal period; empty string when we don't know it. */
+export function usFiscalLabel(fp: FiscalPeriod | null | undefined): string {
+  if (!fp || !fp.q || !fp.fy) return '';
+  return `Q${fp.q} FY${String(fp.fy).slice(2)}`;
+}
+/** Same fiscal quarter, one year on — used for a PRELIM row, whose own quarter
+ *  has no XBRL yet but whose year-ago quarter does. */
+export function nextFiscalYear(fp: FiscalPeriod | null | undefined): FiscalPeriod {
+  if (!fp || !fp.q || !fp.fy) return { fy: null, q: null };
+  return { fy: fp.fy + 1, q: fp.q };
 }
 
 /** Calendar-quarter label from a period end, e.g. 2026-06-30 → "Q2 CY26". */
@@ -816,7 +878,11 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     + ((salesY != null && salesY >= 25) ? 1 : 0);
   const multibagger_setup = mbSignals >= 2 && !stillLossMaking;
 
-  const ql = usQuarterLabel(f.q_end, input.filing_date);
+  const qlCal = usQuarterLabel(f.q_end, input.filing_date);
+  // The filer's own label wins when we have it — "Q2 FY27", not "Q3 CY26".
+  const ql = input.fiscal_label
+    ? { label: input.fiscal_label, q: qlCal.q, fy: input.fiscal_year_own ?? qlCal.fy }
+    : qlCal;
   const co = input.company || input.ticker;
   const fmtP = (lbl: string, v: number | null) => v == null ? '' : (v >= 500 ? `${lbl} >500% YoY (low base)` : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`);
   const head = tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${ql.label}`
