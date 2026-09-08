@@ -84,6 +84,19 @@ const LS_CAL_PREFIX = 'mc:cal-us:v1:';
 /** How many day-scans may be in flight at once. Three keeps the first rows on
  *  screen quickly without asking the server to sweep the whole window at once. */
 const DAY_CONCURRENCY = 3;
+/** Selectable windows, in TRADING SESSIONS (weekends are skipped), so 60d is
+ *  roughly three calendar months. Every session is fetched and cached on its
+ *  own, so widening the window only costs the days that are actually missing —
+ *  which is what makes the long ones practical at all. */
+const WINDOWS = [1, 3, 5, 10, 30, 60, 80];
+/** Past this, say plainly that the first sweep takes minutes. */
+const LONG_WINDOW_DAYS = 30;
+/** How many day payloads to keep in localStorage. A day now carries 16 quarters
+ *  of history and a balance sheet for every filer on it, so an 80-session sweep
+ *  would blow the ~5MB quota several times over. Writes fail silently when it
+ *  does — the page still renders, it just stops caching, and every revisit
+ *  re-scans from scratch. So the oldest days are evicted instead. */
+const MAX_CACHED_DAYS = 90;
 /** How many CALENDAR chunks may be in flight. Two, not eight: the calendar
  *  route serialises its EDGAR calls behind one ~6 req/s gate, so running more
  *  chunks at once does not make the sweep faster — it only makes each chunk's
@@ -94,6 +107,40 @@ const CAL_TIMEOUT_MS = 290_000;
 const LS_DATE = 'mc:us-eo:v1:date';
 const LS_DAYS = 'mc:us-eo:v1:days';
 const LS_SCRUB = 'mc:graded-us:scrub:v3';
+
+/**
+ * Keep the day cache under `MAX_CACHED_DAYS`, oldest first.
+ *
+ * The key carries the session date, so "oldest" needs no bookkeeping: the day
+ * furthest in the past is the one least likely to be asked for again.
+ */
+function evictOldestDays(keep = MAX_CACHED_DAYS): number {
+  try {
+    const days: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX)) days.push(k);
+    }
+    if (days.length <= keep) return 0;
+    days.sort();                                   // ISO dates sort chronologically
+    const kill = days.slice(0, days.length - keep);
+    for (const k of kill) localStorage.removeItem(k);
+    return kill.length;
+  } catch { return 0; }
+}
+
+/** Cache one day, making room for it if the quota is already full. */
+function cacheDay(day: string, payload: unknown): void {
+  const body = JSON.stringify({ ...(payload as object), _cachedAt: new Date().toISOString() });
+  try {
+    localStorage.setItem(LS_PREFIX + day, body);
+  } catch {
+    // Quota. Drop the oldest quarter of the cache and try once more; if it
+    // still will not fit, the page renders fine uncached.
+    evictOldestDays(Math.floor(MAX_CACHED_DAYS * 0.75));
+    try { localStorage.setItem(LS_PREFIX + day, body); } catch { /* uncached */ }
+  }
+}
 
 function scrubOldCaches() {
   try {
@@ -179,7 +226,7 @@ export default function UsEarningsOpportunitiesPage() {
     });
   }, []);
 
-  useEffect(() => { scrubOldCaches(); }, []);
+  useEffect(() => { scrubOldCaches(); evictOldestDays(); }, []);
   useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
   useEffect(() => { try { debouncedSetItem(LS_DAYS, String(days)); } catch {} }, [days]);
 
@@ -211,11 +258,7 @@ export default function UsEarningsOpportunitiesPage() {
           );
           if (!res.ok) throw new Error(`Grading failed for ${d} (HTTP ${res.status})`);
           const payload = await res.json();
-          if (cacheable(payload)) {
-            try {
-              debouncedSetItem(LS_PREFIX + d, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() }));
-            } catch { /* quota — it still renders, it just isn't cached */ }
-          }
+          if (cacheable(payload)) cacheDay(d, payload);
           return payload;
         } finally { clearTimeout(timer); }
       },
@@ -538,8 +581,13 @@ export default function UsEarningsOpportunitiesPage() {
         <button onClick={() => setDate(today)} style={btn(date === today)}>Today</button>
 
         <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)', marginLeft: 8 }}>Window</span>
-        {[1, 3, 5, 10].map((d) => (
-          <button key={d} onClick={() => setDays(d)} style={btn(days === d)}>{d}d</button>
+        {WINDOWS.map((d) => (
+          <button key={d} onClick={() => setDays(d)} style={btn(days === d)}
+            title={d >= LONG_WINDOW_DAYS
+              ? `${d} trading sessions. The first sweep of a window this long takes several minutes — days paint as they land and are then cached, so it is only slow once.`
+              : `${d} trading session${d === 1 ? '' : 's'}`}>
+            {d}d
+          </button>
         ))}
 
         <span style={{ width: 1, height: 22, backgroundColor: 'var(--mc-bg-4)', margin: '0 4px' }} />
@@ -653,6 +701,17 @@ export default function UsEarningsOpportunitiesPage() {
             showing {allRows.length} graded so far; the remaining {sessions.filter((d) => !dayQueries[sessions.indexOf(d)]?.isSuccess).slice(0, 4).join(', ')}
             {sessions.length - loadedCount > 4 ? ' …' : ''} are still coming in. Days already scanned are read from cache and never re-fetched.
           </span>
+          {days >= LONG_WINDOW_DAYS && (
+            // A long window is worth waiting for, but only if the wait is
+            // stated. Each session is a separate EDGAR sweep behind a ~6 req/s
+            // gate, so 80 sessions is minutes, not seconds — and only ever
+            // once, because every day is cached the moment it lands.
+            <span style={{ fontSize: 10, color: 'var(--mc-text-4)', width: '100%', lineHeight: 1.5 }}>
+              A {days}-session window is roughly {Math.round(days * 1.4)} calendar days and sweeps EDGAR once per
+              session, so the first pass takes several minutes. Results appear as each day lands, filters and sorting
+              work on what is already here, and nothing is scanned twice — reopening this window later is instant.
+            </span>
+          )}
         </div>
       )}
       {viewMode === 'GRADED' && failedDays.length > 0 && loadedCount > 0 && (
