@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-08T12:31:52Z",
+  "lastSync": "2026-09-08T15:30:44Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 17200,
+      "size": 17199,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -75,17 +75,17 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19271,
+      "size": 19283,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 24418,
+      "size": 24417,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63513,
+      "size": 63525,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 11656,
+      "size": 11655,
       "displayName": "Weekly Volume Pockets"
     }
   ]
