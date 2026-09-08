@@ -33,7 +33,10 @@ import {
 import { fmtUsd, fmtPct } from '@/lib/us-earnings-core';
 // ONE card, shared with /us-earnings-opportunities. See the header of
 // src/components/us-earnings-card.tsx for why it is not two.
-import { UsEarningsCard, Chip } from '@/components/us-earnings-card';
+import {
+  UsEarningsCard, Chip, QuarterBasisBadge, rule40Title, QUADRANT_META, quadrantTitle,
+  type Rule40Like,
+} from '@/components/us-earnings-card';
 import { buildTvExport } from '@/lib/us-tradingview';
 import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 
@@ -271,10 +274,12 @@ export default function UsConvictionBeatsPage() {
 
   const exportCsv = () => {
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['Ticker', 'Company', 'Tier', 'Verdict', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
+    const head = ['Ticker', 'Company', 'Tier', 'Quadrant', 'Quality', 'Inflection', 'Verdict', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
       'OPM %', 'OPM prev %', 'CFO/NI', 'Rule of 40', 'R40 basis', 'ROCE %', 'PEAD', 'RS', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
       'D1 %', 'Since %', 'Sector', 'Caveats', 'SEC'];
-    const body = filtered.map((e) => [e.ticker, e.company, e.tier, usVerdict(e).verdictLabel, e.composite_score, e.quarter, e.filing_date,
+    const body = filtered.map((e) => [e.ticker, e.company, e.tier,
+      e.quadrant ?? '', e.quality_score ?? '', e.inflection_score ?? '',
+      usVerdict(e).verdictLabel, e.composite_score, e.quarter, e.filing_date,
       e.sales_yoy_pct?.toFixed(1), e.net_profit_yoy_pct?.toFixed(1), e.eps_yoy_pct?.toFixed(1),
       e.opm_pct?.toFixed(2), e.opm_prev_pct?.toFixed(2), e.cfo_to_pat_ratio?.toFixed(2),
       usRule40(e)?.score, usRule40(e)?.basis, usRoce(e)?.pct,
@@ -382,6 +387,20 @@ export default function UsConvictionBeatsPage() {
         <button onClick={() => setFilters((p) => ({ ...p, roce20: !p.roce20 }))} style={chip(filters.roce20, '#10B981')}
           title="Trailing-twelve-month operating income ÷ (total assets − current liabilities), at or above 20%. Not computed for a filer with no classified balance sheet — a bank's current liabilities are its deposits.">
           🏭 ROCE ≥20% ({countWith({ roce20: true })})
+        </button>
+        {/* THE SECOND AXIS, as two chips and not four — the same decision as the
+            Opportunities tab, for the same reason. REJECT is a thing you filter
+            OUT rather than in, and QUALITY asks almost exactly what the two
+            chips to the left of it already ask. */}
+        <button onClick={() => setFilters((p) => ({ ...p, turnaround: !p.turnaround }))}
+          style={chip(filters.turnaround, QUADRANT_META['TURNAROUND ACCELERATOR'].color)}
+          title={QUADRANT_META['TURNAROUND ACCELERATOR'].tagline}>
+          {QUADRANT_META['TURNAROUND ACCELERATOR'].icon} TURNAROUND ACCELERATOR ({countWith({ turnaround: true })})
+        </button>
+        <button onClick={() => setFilters((p) => ({ ...p, compounder: !p.compounder }))}
+          style={chip(filters.compounder, QUADRANT_META.COMPOUNDER.color)}
+          title={QUADRANT_META.COMPOUNDER.tagline}>
+          {QUADRANT_META.COMPOUNDER.icon} COMPOUNDER ({countWith({ compounder: true })})
         </button>
         <button onClick={() => setShowAdv((v) => !v)} style={chip(showAdv)}>{showAdv ? '▴ Hide detail filters' : '▾ Detail filters'}</button>
       </div>
@@ -660,10 +679,14 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
   );
   return (
     <div style={{ overflow: 'auto', maxHeight: '75vh', borderRadius: 'var(--mc-radius)', border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1280 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1480 }}>
         <thead>
           <tr>
-            <H label="Ticker" left /><H label="Company" left /><H label="Tier" left /><H label="Verdict" left />
+            <H label="Ticker" left /><H label="Company" left /><H label="Tier" left />
+            <th style={th('Quadrant', undefined, true)}
+              title="Quality × Inflection — what the business IS against what it is BECOMING. Blank on an entry benched before the second axis existed.">Quadrant</th>
+            <th style={th('Q · I')} title="Quality score · Inflection score, each out of 100.">Q · I</th>
+            <H label="Verdict" left />
             <H label="Rev YoY" k="sales" /><H label="EPS YoY" k="eps" /><th style={th('OPM Δ')}>OPM Δ</th><th style={th('CFO/NI')}>CFO/NI</th>
             <th style={th('R40')} title="Revenue growth % + FCF margin %, trailing twelve months. Blank where the filing does not support it.">R40</th>
             <th style={th('ROCE')} title="TTM operating income ÷ (total assets − current liabilities). Blank for a filer with no classified balance sheet.">ROCE</th>
@@ -680,6 +703,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             const ds = driftState(e);
             const r40 = usRule40(e);
             const roce = usRoce(e);
+            const qm = e.quadrant ? QUADRANT_META[e.quadrant] : null;
             return (
               <tr key={`${e.ticker}-${e.filing_date}`} style={{ borderBottom: '1px solid var(--mc-bg-3)' }}>
                 <td style={{ ...td, textAlign: 'left', fontWeight: 800, color: 'var(--mc-text-0)' }}>
@@ -687,6 +711,17 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                 </td>
                 <td style={{ ...td, textAlign: 'left', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }} title={e.company}>{e.company}</td>
                 <td style={{ ...td, textAlign: 'left', color: tierColor, fontWeight: 800 }}>{e.tier}</td>
+                {/* A blank cell is the honest rendering of "this entry carries
+                    no quadrant"; a dash or a zero would both read as a
+                    measurement that was actually taken. */}
+                <td style={{ ...td, textAlign: 'left', fontWeight: 800, color: qm ? qm.color : undefined }}
+                  title={e.quadrant ? quadrantTitle(e.quadrant, e.quality_score ?? null, e.inflection_score ?? null) : undefined}>
+                  {qm ? `${qm.icon} ${e.quadrant}` : ''}
+                </td>
+                <td style={{ ...td, fontVariantNumeric: 'tabular-nums', color: 'var(--mc-text-2)' }}>
+                  {e.quality_score != null || e.inflection_score != null
+                    ? `${e.quality_score ?? '—'} · ${e.inflection_score ?? '—'}` : ''}
+                </td>
                 <td style={{ ...td, textAlign: 'left', color: VERDICT_COLOR[v.verdictLabel], fontWeight: 800 }}>{v.verdictLabel}</td>
                 <td style={td}>{fmtPct(e.sales_yoy_pct)}</td>
                 <td style={td}>{fmtPct(e.eps_yoy_pct)}</td>
@@ -695,9 +730,13 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                 {/* A blank cell is the honest rendering of "the filing does not
                     support this figure"; a zero or a dash would both read as a
                     measurement that was actually taken. */}
+                {/* The quarter/TTM basis is shown with the same superscript badge
+                    and the same words as the card's R40 chip (see
+                    us-earnings-card.tsx) — the "·q" suffix this used to print
+                    read as a typo on both surfaces. */}
                 <td style={{ ...td, color: r40 == null ? undefined : r40.passes ? '#10B981' : undefined, fontWeight: r40?.passes ? 800 : undefined }}
-                  title={r40 == null ? undefined : `${r40.growth_pct}% growth + ${r40.fcf_margin_pct}% FCF margin, ${r40.basis === 'ttm' ? 'trailing twelve months' : 'this quarter only'}`}>
-                  {r40?.score ?? ''}{r40 && r40.basis === 'quarter' ? '·q' : ''}
+                  title={r40 == null ? undefined : rule40Title(r40 as Rule40Like)}>
+                  {r40?.score ?? ''}{r40 && r40.basis === 'quarter' ? <QuarterBasisBadge /> : null}
                 </td>
                 <td style={{ ...td, color: roce == null ? undefined : roce.pct != null && roce.pct >= 20 ? '#10B981' : undefined }}
                   title={roce == null ? undefined : `TTM EBIT $${roce.ebit_ttm_musd}M ÷ capital employed $${roce.capital_employed_musd}M`}>

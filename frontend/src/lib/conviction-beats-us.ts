@@ -41,6 +41,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { rule40From, roceFrom, type SwingKind } from '@/lib/us-earnings-core';
+import type { EarningsQuadrant } from '@/lib/earnings-grade-shared';
 
 export type ConvictionTier = 'BLOCKBUSTER' | 'STRONG';
 
@@ -284,6 +285,17 @@ export interface UsConvictionEntry {
   is_elite?: boolean;
   pead_score?: number | null;
   multibagger_setup?: boolean;
+  /** The second axis — what the business IS (quality) against what it is
+   *  BECOMING (inflection), and the quadrant they define. Carried verbatim from
+   *  the graded payload; null on an entry benched before the axis existed, and
+   *  a null is a genuine absence that no filter treats as a pass. */
+  quality_score?: number | null;
+  inflection_score?: number | null;
+  quadrant?: EarningsQuadrant | null;
+  quadrant_parts?: {
+    quality: Array<{ label: string; points: number; of: number }>;
+    inflection: Array<{ label: string; points: number; of: number }>;
+  } | null;
   is_financial?: boolean;
   /** Graded on street-basis EPS + consensus + reaction before the 10-Q posted;
    *  flips false (and revenue/margins/cash fill in) when the full grade lands. */
@@ -472,6 +484,13 @@ export function usBenchFields(rawIn: Record<string, any>): Record<string, any> {
     is_elite: r.is_elite === true,
     pead_score: num(r.pead_score),
     multibagger_setup: r.multibagger_setup === true,
+    // Carried verbatim, never recomputed on write: the quadrant is finalised by
+    // the graded-us route once ROCE is known, and a bench-side re-derivation off
+    // a truncated series would disagree with the same name on the other tab.
+    quality_score: num(r.quality_score),
+    inflection_score: num(r.inflection_score),
+    quadrant: (typeof r.quadrant === 'string' ? r.quadrant : null) as EarningsQuadrant | null,
+    quadrant_parts: obj<UsConvictionEntry['quadrant_parts']>(r.quadrant_parts) ?? null,
     is_financial: r.is_financial === true,
     prelim: r.prelim === true,
     prelim_matched: arr<string>(r.prelim_matched),
@@ -1894,6 +1913,10 @@ export interface UsConvFilters {
   rule40: boolean;
   /** Trailing-twelve-month EBIT ÷ capital employed at or above 20%. */
   roce20: boolean;
+  /** The second axis. Same refusal rule as `rule40`/`roce20`: an entry with no
+   *  quadrant on it is CUT, not assumed to qualify. */
+  turnaround: boolean;
+  compounder: boolean;
   prelimOnly: boolean;
   newOnly: boolean;
   sector: string | null;
@@ -1907,7 +1930,7 @@ export const US_FILTER_DEFAULT: UsConvFilters = {
   marginSlopeUp: false, shareShrinkOnly: false, thesis: null,
   quarter: null, fy: null, fromDate: null, toDate: null,
   cap: 'all', tiers: null, verdicts: null, elite: false, multibagger: false,
-  rule40: false, roce20: false,
+  rule40: false, roce20: false, turnaround: false, compounder: false,
   prelimOnly: false, newOnly: false, sector: null, q: '',
 };
 
@@ -2024,6 +2047,8 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
     const rc = usRoce(e);
     if (rc == null || rc.pct == null || rc.pct < 20) return false;
   }
+  if (f.turnaround && e.quadrant !== 'TURNAROUND ACCELERATOR') return false;
+  if (f.compounder && e.quadrant !== 'COMPOUNDER') return false;
   if (f.d1Bucket != null) {
     const d1 = num(e.d1_pct);
     if (d1 == null) return false;

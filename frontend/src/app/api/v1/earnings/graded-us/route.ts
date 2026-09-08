@@ -37,6 +37,7 @@ import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistor
 import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
+import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { adjustedEpsFromReleaseHtml, type AdjustedEps } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { type KeyMetric } from '@/lib/us-key-metrics';
@@ -44,9 +45,10 @@ import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
   quarterSeries, balanceContext, assignSetupScores, rule40From, roceFrom, splitFactorSince,
-  US_TIER_ORDER, type UsGradedRow, type EarningsTier,
+  US_TIER_ORDER, type UsGradedRow, type EarningsTier, type UsBalanceContext,
 } from '@/lib/us-earnings-core';
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
+import { quadrantScore } from '@/lib/earnings-grade-shared';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -722,7 +724,7 @@ export async function GET(req: Request) {
       // has no release to read.
       pooled(prepared, 4, (p) => (p.f.form === '8-K' && p.f.accession)
         ? guidanceFromFiling(p.f.cikNum, p.f.accession, p.f.filing_url)
-        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [] })),
+        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [], absent_reason: null, absent_doc_url: null, absent_doc_label: null })),
       // The street's number for the period being guided — the "(Est. $5.54B)"
       // an earnings feed prints beside a raised outlook.
       pooled(prepared, 6, (p) => yahooForwardEstimates(p.f.ticker!)),
@@ -813,7 +815,7 @@ export async function GET(req: Request) {
       const row = gradeUsRow({
         ticker: p.f.ticker!,
         company: p.f.company,
-        sector: sectorFromSic(p.f.sic),
+        sector: sectorFromSic(p.f.sic, p.f.company, { facts: p.facts }),
         filing_date: p.f.filed,
         form: p.f.form,
         items: p.f.items,
@@ -829,6 +831,16 @@ export async function GET(req: Request) {
         adj_eps: adjNow,
         adj_eps_prev: adjPrev,
         positive_guidance: g.label === 'RAISED',
+        // The beat has to reach the GRADE, not just the chip beside it. It used
+        // to be computed after gradeUsRow returned, which is why BJ's Wholesale
+        // — a 17% beat with a raised guide — was graded as though neither had
+        // happened. Same arithmetic as the display path below, and it refuses a
+        // percentage off a base under a dime for the same reason.
+        consensus_beat_pct: (adjNow != null && (sLatest?.eps_estimate ?? null) != null
+          && (sLatest!.eps_estimate as number) >= 0.10)
+          ? ((adjNow - (sLatest!.eps_estimate as number)) / (sLatest!.eps_estimate as number)) * 100
+          : null,
+        close_30d: p.t.close_30d,
         // The filer's own words first (press-release headline), then SEC's
         // fy/fp — they disagree often enough to matter (NetApp's July quarter
         // is Q1 FY27 to NetApp and "fy 2026 Q1" to the API).
@@ -857,6 +869,15 @@ export async function GET(req: Request) {
       (row as any).guidance_score = emptyProvided ? 0 : g.score;
       (row as any).guidance_snippets = g.snippets;
       (row as any).guidance_url = g.source_url;
+      // WHY there is no outlook, when there is none. A company that publishes
+      // its guidance in an image-only shareholder letter and a company that
+      // gave no guidance at all used to look identical on the card — a blank.
+      // See `GuidanceAbsentReason` in lib/us-guidance.ts.
+      if (emptyProvided || !g.label) {
+        (row as any).guidance_absent_reason = g.absent_reason ?? (emptyProvided ? 'none-given' : null);
+        (row as any).guidance_absent_doc_url = g.absent_doc_url;
+        (row as any).guidance_absent_doc_label = g.absent_doc_label;
+      }
       (row as any).guidance_figures = withEstimates(g.figures, forwards[pi] || [], {
         period_end: p.fundamentals.q_end,
         fiscal_q: g.fiscal_q ?? fq.q ?? null,
@@ -898,6 +919,31 @@ export async function GET(req: Request) {
       // working-capital timing.
       (row as any).rule40 = rule40From(ser, row.sales_yoy_pct, row.revenue_curr_musd, row.fcf_curr_musd);
       (row as any).roce = roceFrom(ser, ctx);
+      // The quadrant was computed at grade time without ROCE, because ROCE needs
+      // the balance sheet and the balance sheet is attached here. Recompute it
+      // now that the strongest quality input exists — same function, one more
+      // fact — so the badge on the card reflects everything known about the row.
+      {
+        const q = quadrantScore({
+          roce_pct: (row as any).roce?.unavailable ? null : ((row as any).roce?.pct ?? null),
+          fcf_margin_pct: (row.fcf_curr_musd != null && row.revenue_curr_musd)
+            ? (row.fcf_curr_musd / row.revenue_curr_musd) * 100 : null,
+          cfo_to_ni: row.cfo_to_pat_ratio ?? null,
+          opm_pct: row.opm_pct ?? null,
+          profitable: row.net_income_curr_musd != null ? row.net_income_curr_musd > 0 : null,
+          sales_yoy_pct: row.sales_yoy_pct,
+          opm_delta_pp: (row.opm_pct != null && row.opm_prev_pct != null) ? row.opm_pct - row.opm_prev_pct : null,
+          eps_improving: row.eps_yoy_pct != null ? row.eps_yoy_pct > 0
+            : (row.eps_swing === 'loss-to-profit' || row.eps_swing === 'loss-narrowed'),
+          guidance_raised: g.label === 'RAISED',
+          guidance_lowered: g.label === 'LOWERED' || g.label === 'WITHDRAWN',
+          loss_narrowing: row.eps_swing === 'loss-narrowed',
+        });
+        (row as any).quality_score = q.quality;
+        (row as any).inflection_score = q.inflection;
+        (row as any).quadrant = q.quadrant;
+        (row as any).quadrant_parts = { quality: q.quality_parts, inflection: q.inflection_parts };
+      }
       const pg = priors[pi] || null;
       if (pg && (pg.for_quarter.length || pg.for_year.length)) {
         const gpNow = ser ? ser.gross_profit[ser.gross_profit.length - 1] : null;
@@ -1046,7 +1092,7 @@ export async function GET(req: Request) {
             pr = financialsFromReleaseHtml(doc.html, {
               revenue: ya.revenue, operating_income: ya.operating_income,
               net_income: ya.net_income, eps: ya.eps,
-            });
+            }, { reportedPeriodEnd: qEnd });
           } catch { pr = null; }
         }
         // Nothing to say: no validated figures AND no consensus. Leave it in
@@ -1083,7 +1129,7 @@ export async function GET(req: Request) {
           quarters_revenue: null, quarters_eps: null, quarters_opm: null,
         };
         const row = gradeUsRow({
-          ticker: f.ticker!, company: f.company, sector: sectorFromSic(f.sic),
+          ticker: f.ticker!, company: f.company, sector: sectorFromSic(f.sic, f.company, { facts: facts0 }),
           filing_date: f.filed, form: f.form, items: f.items, filing_url: f.filing_url,
           fundamentals: fund,
           price: {
@@ -1098,6 +1144,9 @@ export async function GET(req: Request) {
           adj_eps: adjNowP,
           adj_eps_prev: adjPrevP,
           prelim_surprise_pct: latest?.surprise_pct ?? null,
+          consensus_beat_pct: latest?.surprise_pct ?? null,
+          positive_guidance: gPre?.label === 'RAISED',
+          close_30d: t.close_30d,
           fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
           fiscal_year_own: gPre?.fiscal_fy ?? fiscalNow.fy,
         });
@@ -1112,9 +1161,15 @@ export async function GET(req: Request) {
         if (row.tier === 'BLOCKBUSTER') row.tier = 'STRONG';
         {
           const g = gPre;
+          if (!g) (row as any).guidance_absent_reason = 'release-unavailable';
           if (g) {
             (row as any).guidance = g.label; (row as any).guidance_score = g.score;
             (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
+            if (!g.label) {
+              (row as any).guidance_absent_reason = g.absent_reason;
+              (row as any).guidance_absent_doc_url = g.absent_doc_url;
+              (row as any).guidance_absent_doc_label = g.absent_doc_label;
+            }
             (row as any).guidance_figures = withEstimates(g.figures, await yahooForwardEstimates(f.ticker!).catch(() => []), {
               period_end: qEnd,
               fiscal_q: g.fiscal_q ?? fiscalNow.q ?? null,
@@ -1150,14 +1205,61 @@ export async function GET(req: Request) {
           } else if (ser0) {
             (row as any).series = ser0;
           }
-          // The announced quarter's balance sheet is not on EDGAR yet, so this
-          // is the PREVIOUS quarter's — resolved from the newest date on file,
-          // and stamped with `as_of` so the card can say which quarter it is
-          // showing rather than implying it is current.
+          // ── the balance sheet ────────────────────────────────────────────
+          // The announced quarter's is not on EDGAR yet. The PREVIOUS quarter's
+          // XBRL — resolved from the newest date on file and stamped with
+          // `as_of` so the card says which quarter it is showing — is the
+          // floor, and it is what this used to be, full stop.
+          //
+          // But most 8-K releases print the condensed consolidated balance
+          // sheet in full, so the CURRENT cash, debt and total assets are
+          // sitting in the exhibit we have already fetched. `us-pr-balance`
+          // reads it, binding the columns by their headers (two instants, one
+          // of which must name the announced period end) and proving every line
+          // against the comparative column, whose own XBRL we hold. When that
+          // comes back with something, it is strictly better — the announced
+          // quarter instead of the one before it — and when it comes back null
+          // nothing changes.
           const ctx0 = balanceContext(facts0, null);
-          if (ctx0 && ctx0.as_of) (row as any).context = ctx0;
+          let ctxUse: UsBalanceContext | null = (ctx0 && ctx0.as_of) ? { ...ctx0, source: 'xbrl' as const } : null;
+          if (doc?.html) {
+            try {
+              const relBs = balanceSheetFromReleaseHtml(doc.html, {
+                periodEndISO: qEnd,
+                xbrlAt: (iso) => balanceContext(facts0, iso),
+                prior: ctx0,
+              });
+              if (relBs) {
+                // A release's cash-flow statement is year-to-date, exactly as
+                // the 10-Q's is, and the release carries nothing to de-cumulate
+                // it against — so the reader only publishes flows when the
+                // filer prints a three-month column. Where it did not, the
+                // stock comp / buybacks / dividends / share count stay on the
+                // previous quarter's XBRL and `flows_as_of` says so, rather
+                // than the card losing those bullets entirely.
+                const gotGroup = relBs.sbc_musd != null || relBs.buyback_musd != null
+                  || relBs.dividends_musd != null || relBs.diluted_shares_m != null;
+                if (!gotGroup && ctx0?.as_of) {
+                  relBs.sbc_musd = ctx0.sbc_musd;
+                  relBs.buyback_musd = ctx0.buyback_musd;
+                  relBs.dividends_musd = ctx0.dividends_musd;
+                  relBs.diluted_shares_m = ctx0.diluted_shares_m;
+                  relBs.diluted_shares_yoy_pct = ctx0.diluted_shares_yoy_pct;
+                  relBs.flows_as_of = ctx0.as_of;
+                } else if (!relBs.flows_as_of) {
+                  relBs.flows_as_of = relBs.as_of;
+                }
+                ctxUse = relBs;
+                (row as any).balance_source = 'release';
+                if (!row.methodology_tags.includes('balance sheet from the release')) {
+                  row.methodology_tags.push('balance sheet from the release');
+                }
+              }
+            } catch { /* a release we cannot read is not an error — keep the XBRL one */ }
+          }
+          if (ctxUse) (row as any).context = ctxUse;
           (row as any).rule40 = rule40From((row as any).series ?? null, row.sales_yoy_pct, row.revenue_curr_musd, row.fcf_curr_musd);
-          (row as any).roce = roceFrom((row as any).series ?? null, ctx0);
+          (row as any).roce = roceFrom((row as any).series ?? null, ctxUse);
         }
         // Own-guide comparison works on a PRELIM row too: the guide came from
         // last quarter's release and the actuals came from this quarter's.

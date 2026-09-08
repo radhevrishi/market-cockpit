@@ -24,7 +24,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
 // hard-coded 'Q4' that mislabelled every non-Jan–Mar filing (an August/Q1-FY27
@@ -131,6 +131,13 @@ interface ParsedEarning {
   narrative: string;
   filing_url?: string;
   source: string;
+  // Pre-existing gap: the no-financials preview branch already returns these
+  // (PATCH 1015 / zzz505 / zzz507) but the interface never declared them.
+  opm_pct?: number | null;
+  opm_prev_pct?: number | null;
+  quarters_sales?: number[] | null;
+  quarters_eps?: number[] | null;
+  quarters_pat?: number[] | null;
 }
 
 // zzz414 — "Jun 2026" → "2026-06-30" (last day of the labelled month).
@@ -586,6 +593,15 @@ function gradeRow(row: any): ParsedEarning | null {
                    + ((opmExp != null && opmExp >= 1) ? 1 : 0)
                    + ((typeof _prom === 'number' && _prom >= 45) ? 1 : 0);
   const _multibagger = !!(_mbSignals >= 2 && !_stillLoss);
+
+  // ── QUALITY × INFLECTION (the second axis) ────────────────────────────────
+  // Purely ADDITIVE: computed AFTER `tier` is final and never fed back into it.
+  // A company that has not yet proved it can earn a return does not become
+  // BLOCKBUSTER because it is improving quickly, so the quadrant sits BESIDE
+  // the tier rather than adjusting it. The input mapping lives in the shared
+  // module so this server copy and the client gradeRow cannot disagree about
+  // what quadrant a given row is in.
+  const _q = quadrantForIndiaRow(row, { salesY, opmExp });
   return {
     ticker: row.symbol,
     company: row.company || row.symbol,
@@ -625,6 +641,15 @@ function gradeRow(row: any): ParsedEarning | null {
     // cfo_to_pat_ratio (matches downstream sync + display code).
     ocf_to_pat_ratio: row.ocf_to_pat_ratio ?? null,
     cfo_to_pat_ratio: row.ocf_to_pat_ratio ?? null,
+    // QUALITY × INFLECTION — second axis, alongside (never instead of) the tier.
+    quality_score: _q.quality,
+    inflection_score: _q.inflection,
+    quadrant: _q.quadrant,
+    quadrant_parts: { quality: _q.quality_parts, inflection: _q.inflection_parts },
+    // ROCE is a quality input the card should be able to show its work on; the
+    // grader already reads it (multibagger flag) but was dropping it from the
+    // response — the same class of omission as PATCH 1015 / zzz314.
+    roce: (typeof _roce === 'number' && Number.isFinite(_roce)) ? _roce : null,
   } as any;
 }
 

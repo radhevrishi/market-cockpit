@@ -25,7 +25,7 @@ import EarningsSearch, { type EarningsSearchResult } from './EarningsSearch';
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow, QUADRANT_META, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 // PATCH 0715 — centralized IST helpers.
@@ -293,6 +293,21 @@ interface ParsedEarning {
   narrative: string;
   filing_url?: string;
   source: string;
+  // ── QUALITY × INFLECTION — the second axis (see @/lib/earnings-grade-shared).
+  // Absolute quality and rate of change are different questions and one tier
+  // cannot answer both, so every row carries BOTH scores plus the quadrant they
+  // define. All optional: a preview-shape card (a filing with no financials yet)
+  // has no basis for either score and carries none — the card then renders
+  // nothing, never a zero or a placeholder.
+  quality_score?: number | null;
+  inflection_score?: number | null;
+  quadrant?: EarningsQuadrant | null;
+  quadrant_parts?: {
+    quality: Array<{ label: string; points: number; of: number }>;
+    inflection: Array<{ label: string; points: number; of: number }>;
+  } | null;
+  /** Screener's ROCE % — the strongest quality input, shown on the card. */
+  roce?: number | null;
 }
 
 interface OpportunitiesPayload {
@@ -808,6 +823,13 @@ function gradeRow(row: any): ParsedEarning | null {
     methodology_tags.length >= 2 ? ` and ${[...new Set(methodology_tags)].join('/')} all passing.` : '.';
   const narrative = `${head} (${metrics})${flavor}`;
 
+  // ── QUALITY × INFLECTION (the second axis) ────────────────────────────────
+  // Purely ADDITIVE: computed AFTER `tier` is final and never fed back into it.
+  // Delegates to the shared mapper so this client copy and the authoritative
+  // server grader (api/v1/earnings/graded) cannot disagree about the quadrant
+  // for the same row — the exact drift class earnings-grade-shared exists for.
+  const _q = quadrantForIndiaRow(row, { salesY, opmExp });
+
   return {
     ticker: row.symbol,
     company: row.company || row.symbol,
@@ -841,6 +863,12 @@ function gradeRow(row: any): ParsedEarning | null {
     narrative,
     filing_url: row.source_url || row.attachment,
     source: row.financials_source || 'worker',
+    // QUALITY × INFLECTION — second axis, alongside (never instead of) the tier.
+    quality_score: _q.quality,
+    inflection_score: _q.inflection,
+    quadrant: _q.quadrant,
+    quadrant_parts: { quality: _q.quality_parts, inflection: _q.inflection_parts },
+    roce: (typeof row?.roce === 'number' && Number.isFinite(row.roce)) ? row.roce : null,
   };
 }
 
@@ -964,6 +992,11 @@ export default function EarningsOpportunitiesPage() {
   const [eliteOnly, setEliteOnly] = useState(false);
   const [peadOnly, setPeadOnly] = useState(false);
   const [multibaggerOnly, setMultibaggerOnly] = useState(false);
+  // QUALITY × INFLECTION — isolate the highest-variance quadrant. These are the
+  // rows a single tier label buries: low proven quality, exceptional rate of
+  // change. Filtering across ALL tiers (not just the top two) is the point —
+  // most of them sit in MIXED, which is exactly why they were invisible.
+  const [turnaroundOnly, setTurnaroundOnly] = useState(false);
   // Transformation-radar overlay (concall-intel screener) — badge + filter, and
   // "Beat + Cheap" valuation filter (good grade AND trailing PE not expensive).
   type RadarEntry = { symbol: string; transformation_score: number; stage_sweet_spot?: any; velocity?: any };
@@ -2133,6 +2166,17 @@ export default function EarningsOpportunitiesPage() {
       is_elite?: boolean;
       pead_score?: number | null;
       multibagger_setup?: boolean;
+      // QUALITY × INFLECTION — carried onto the bench so a benched row keeps its
+      // second axis across a refresh instead of silently losing it (the same
+      // omission class as the OPM / CFO-ratio fields above).
+      quality_score?: number | null;
+      inflection_score?: number | null;
+      quadrant?: string | null;
+      // Pre-existing gap: both were already being SENT (zzz242 / zzz314) but
+      // never declared here, so the object literal failed its excess-property
+      // check. Declared now that neighbouring fields are being added.
+      pe?: number | null;
+      cfo_to_pat_ratio?: number | null;
     }> = [];
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
       for (const c of (data.by_tier[tier] || [])) {
@@ -2173,6 +2217,10 @@ export default function EarningsOpportunitiesPage() {
           is_elite: (c as any).is_elite === true,
           pead_score: typeof (c as any).pead_score === 'number' ? (c as any).pead_score : null,
           multibagger_setup: (c as any).multibagger_setup === true,
+          // QUALITY × INFLECTION — null when the grader could not score the row.
+          quality_score: typeof (c as any).quality_score === 'number' ? (c as any).quality_score : null,
+          inflection_score: typeof (c as any).inflection_score === 'number' ? (c as any).inflection_score : null,
+          quadrant: typeof (c as any).quadrant === 'string' ? (c as any).quadrant : null,
           // zzz223 — OPM margin for the CB tab (latest + prior-year %)
           opm_pct: typeof (c as any).opm_pct === 'number' ? (c as any).opm_pct : null,
           opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
@@ -3212,7 +3260,11 @@ export default function EarningsOpportunitiesPage() {
             <button
               onClick={() => {
                 const tiers = ['BLOCKBUSTER','STRONG','MIXED','AVOID'] as const;
-                const header = ['Tier','Ticker','Company','Quarter','Score','Sales_YoY','EBITDA_YoY','PAT_YoY','EPS_YoY','Filing_Date','Source'];
+                // QUALITY × INFLECTION columns ride along with the tier so a
+                // desk reading the CSV can sort on rate of change, not only on
+                // the grade. Unscored rows export as an EMPTY cell — never a 0,
+                // which a spreadsheet would happily sort as "worst".
+                const header = ['Tier','Ticker','Company','Quarter','Score','Quadrant','Quality_Score','Inflection_Score','Sales_YoY','EBITDA_YoY','PAT_YoY','EPS_YoY','Filing_Date','Source'];
                 const lines = [header.join(',')];
                 for (const t of tiers) {
                   for (const c of ((view.by_tier?.[t] ?? []) as any[])) {
@@ -3222,6 +3274,9 @@ export default function EarningsOpportunitiesPage() {
                       (c.company_name || c.symbol || '').replace(/,/g,';'),
                       c.quarter || '',
                       c.score ?? '',
+                      c.quadrant ?? '',
+                      typeof c.quality_score === 'number' ? c.quality_score : '',
+                      typeof c.inflection_score === 'number' ? c.inflection_score : '',
                       c.metrics?.sales_yoy ?? c.sales_yoy ?? '',
                       c.metrics?.ebitda_yoy ?? c.ebitda_yoy ?? '',
                       c.metrics?.pat_yoy ?? c.pat_yoy ?? '',
@@ -3328,6 +3383,8 @@ Source label: ${coverageStats.source}`}
             const mbN = allC.filter((s) => s.multibagger_setup).length;
             const radarN = allC.filter((s) => radarMap.has(String(s.ticker || '').toUpperCase())).length;
             const beatCheapN = allC.filter((s) => typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35).length;
+            // Live count across ALL tiers — these rows mostly live in MIXED.
+            const turnaroundN = allC.filter((s) => s.quadrant === 'TURNAROUND ACCELERATOR').length;
             const chip = (active: boolean, color: string, label: string, n: number, onClick: () => void) => (
               <button onClick={onClick} style={{
                 fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
@@ -3339,11 +3396,13 @@ Source label: ${coverageStats.source}`}
             return (
               <>
                 <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
-                {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
-                {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
-                {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
-                {chip(radarOnly, '#34D399', '🚀 On Radar', radarN, () => { setRadarOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setBeatCheapOnly(false); })}
-                {chip(beatCheapOnly, '#A3E635', '💰 Beat + Cheap', beatCheapN, () => { setBeatCheapOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); })}
+                {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
+                {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
+                {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
+                {/* QUALITY × INFLECTION — the quadrant a single tier cannot express. */}
+                {chip(turnaroundOnly, QUADRANT_META['TURNAROUND ACCELERATOR'].color, `${QUADRANT_META['TURNAROUND ACCELERATOR'].icon} TURNAROUND ACCELERATOR`, turnaroundN, () => { setTurnaroundOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); })}
+                {chip(radarOnly, '#34D399', '🚀 On Radar', radarN, () => { setRadarOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
+                {chip(beatCheapOnly, '#A3E635', '💰 Beat + Cheap', beatCheapN, () => { setBeatCheapOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setTurnaroundOnly(false); })}
                 {/* PATCH 1022 — market-cap range selector */}
                 <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 <select
@@ -3866,6 +3925,12 @@ Source label: ${coverageStats.source}`}
           if (eliteOnly) stocks = stocks.filter((s: any) => s.is_elite);
           else if (peadOnly) stocks = stocks.filter((s: any) => (s.pead_score ?? 0) >= 70);
           else if (multibaggerOnly) stocks = stocks.filter((s: any) => s.multibagger_setup);
+          // QUALITY × INFLECTION — sort the survivors by inflection so the fastest
+          // rate of change leads; within this quadrant that IS the ranking.
+          else if (turnaroundOnly) stocks = stocks
+            .filter((s: any) => s.quadrant === 'TURNAROUND ACCELERATOR')
+            .slice()
+            .sort((a: any, b: any) => (b.inflection_score ?? 0) - (a.inflection_score ?? 0));
           else if (radarOnly) stocks = stocks.filter((s: any) => radarMap.has(String(s.ticker || '').toUpperCase()));
           else if (beatCheapOnly) {
             stocks = stocks
@@ -3880,7 +3945,7 @@ Source label: ${coverageStats.source}`}
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
           // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
-          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || radarOnly || beatCheapOnly || capFilter !== 'all';
+          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all';
           const isOpen = _filterActive ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
@@ -3931,6 +3996,45 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
   const r = Number(p.toFixed(digits));
   if (r === 0) return 'flat';
   return `${r > 0 ? '+' : ''}${r.toFixed(digits)}%`;
+}
+
+/**
+ * QUALITY × INFLECTION badge — the second axis, rendered beside the tier.
+ *
+ * The badge shows the quadrant plus BOTH raw scores, because the quadrant alone
+ * hides how close a row is to its boundary: Q48/I72 and Q12/I95 are both
+ * TURNAROUND ACCELERATORs and are not the same bet. The title attribute lists
+ * the components that actually contributed, so the card can show its work
+ * rather than asking to be trusted — and components India could not assess are
+ * simply absent from that list, never listed as zero.
+ */
+function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
+  const q = stock.quadrant;
+  const qual = stock.quality_score;
+  const infl = stock.inflection_score;
+  // Null renders as nothing. A row we could not score gets no badge at all.
+  if (!q || typeof qual !== 'number' || typeof infl !== 'number') return null;
+  const meta = QUADRANT_META[q];
+  if (!meta) return null;
+  const parts = stock.quadrant_parts;
+  const fmtParts = (ps?: Array<{ label: string; points: number; of: number }>) =>
+    (ps && ps.length) ? ps.map((p) => `${p.label} ${p.points}/${p.of}`).join(', ') : 'not assessable from this filing';
+  const title =
+    `${meta.label} — ${meta.tagline}.\n` +
+    `QUALITY ${qual}/100 (what the business IS): ${fmtParts(parts?.quality)}\n` +
+    `INFLECTION ${infl}/100 (what it is BECOMING): ${fmtParts(parts?.inflection)}\n` +
+    `Independent of the tier — the quadrant never promotes a row.`;
+  return (
+    <span title={title} style={{
+      padding: '1px 6px', borderRadius: 3,
+      border: `1px solid ${meta.color}`,
+      backgroundColor: `${meta.color}1F`,
+      color: meta.color, fontWeight: 800, letterSpacing: '0.3px', whiteSpace: 'nowrap',
+    }}>
+      {meta.icon} {meta.label}
+      <span style={{ fontWeight: 700, opacity: 0.85, marginLeft: 5 }}>Q{qual}·I{infl}</span>
+    </span>
+  );
 }
 
 function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh?: boolean; radar?: { transformation_score: number } | null }) {
@@ -3990,6 +4094,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
+        {/* QUALITY × INFLECTION badge. Sits BESIDE the tier, never replacing it:
+            a ⚡ TURNAROUND ACCELERATOR is still whatever tier the grader gave it.
+            Rendered only when the grader actually scored the row — a preview
+            card with no financials has no basis for either number, and showing
+            a 0 or a "—" there would invent a verdict we do not have. */}
+        <QuadrantBadge stock={stock} />
         {radar && typeof radar.transformation_score === 'number' && (
           <span title="On the concall-intel transformation radar — turnaround/re-rating candidate from the transformation screener" style={{
             padding: '1px 6px', borderRadius: 3,
@@ -3999,6 +4109,19 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         {stock.pe != null && (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)', fontWeight: 700 }}>
             PE {stock.pe.toFixed(1)}
+          </span>
+        )}
+        {/* ROCE — the single largest QUALITY input (30 of the axis's points), so
+            the number behind the badge is visible rather than only implied.
+            Mirrors the US card's chip. Absent when the source has no ROCE. */}
+        {typeof stock.roce === 'number' && (
+          <span title="Return on capital employed (Screener, annual) — the largest single input to the QUALITY score"
+            style={{
+              padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)',
+              border: '1px solid var(--mc-bg-4)', fontWeight: 700,
+              color: stock.roce >= 20 ? 'var(--mc-bullish)' : stock.roce < 8 ? 'var(--mc-bearish)' : 'var(--mc-text-2)',
+            }}>
+            ROCE {stock.roce.toFixed(0)}%
           </span>
         )}
         {stock.quarter && (

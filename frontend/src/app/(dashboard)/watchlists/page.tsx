@@ -726,6 +726,12 @@ export default function WatchlistsPage() {
                 opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
                 pe: typeof (c as any).pe === 'number' ? (c as any).pe : null,
                 cfo_to_pat_ratio: typeof (c as any).cfo_to_pat_ratio === 'number' ? (c as any).cfo_to_pat_ratio : null, // zzz304
+                // QUALITY × INFLECTION — the second axis. Carried through this
+                // mapper too, otherwise a bench row refreshed by THIS scan would
+                // lose the quadrant the graded route just computed for it.
+                quality_score: typeof (c as any).quality_score === 'number' ? (c as any).quality_score : null,
+                inflection_score: typeof (c as any).inflection_score === 'number' ? (c as any).inflection_score : null,
+                quadrant: typeof (c as any).quadrant === 'string' ? (c as any).quadrant : null,
               });
             }
           }

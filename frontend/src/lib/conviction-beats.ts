@@ -69,6 +69,13 @@ export interface ConvictionEntry {
   is_elite?: boolean;
   pead_score?: number | null;
   multibagger_setup?: boolean;
+  // QUALITY × INFLECTION — the second axis (see @/lib/earnings-grade-shared).
+  // Carried onto the bench so a benched row keeps its quadrant across a
+  // refresh; null on entries benched before this existed, and on rows the
+  // grader had no basis to score.
+  quality_score?: number | null;
+  inflection_score?: number | null;
+  quadrant?: string | null;
   // zzz242 — trailing P/E (from graded route / enrich Screener path) so
   // CB cards can render a valuation chip alongside OPM + YoY numbers.
   pe?: number | null;
@@ -378,6 +385,10 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct' as any);   // zzz230/231
           fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
           fill('cfo_to_pat_ratio' as any);  // zzz306 — earnings quality (CFO/PAT ratio)
+          // QUALITY × INFLECTION — without these three in the backfill list a
+          // same-filing sync would skip the overwrite path and an entry benched
+          // before this feature could never pick the quadrant up.
+          fill('quality_score' as any); fill('inflection_score' as any); fill('quadrant' as any);
           // zzz257 — institutional-quality fields + 30d sparkline series.
           // Previously the sync payload carried them but this fill() list didn't,
           // so backfills silently dropped them and the ROCE/ROE row never rendered.

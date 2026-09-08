@@ -23,6 +23,28 @@ import { keyMetricsFromText, type KeyMetric } from './us-key-metrics';
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 
 export type GuidanceLabel = 'RAISED' | 'MAINTAINED' | 'LOWERED' | 'PROVIDED' | 'WITHDRAWN';
+
+/**
+ * WHY A CARD SHOWS NO OUTLOOK. Three very different facts used to look
+ * identical to the reader — a blank where the guidance block goes:
+ *
+ *   'unreadable-format'    the company DID publish an outlook, in a document
+ *                          this engine cannot read. Affirm puts its guidance
+ *                          only in a shareholder letter filed as 24 JPEGs
+ *                          wrapped in 7kB of HTML (FQ4 2026, 27 Aug); there is
+ *                          no text to find, and no amount of pattern-matching
+ *                          would ever find it. The document is linked so it can
+ *                          be opened and read by eye.
+ *   'none-given'           the release WAS readable and carries no
+ *                          forward-looking figures. The company gave no
+ *                          outlook, which is itself information.
+ *   'release-unavailable'  the exhibit could not be fetched from EDGAR at all.
+ *
+ * The owner reads this engine as his only source. Saying which of the three it
+ * is costs one line and is the difference between a fact and a silence.
+ */
+export type GuidanceAbsentReason = 'unreadable-format' | 'none-given' | 'release-unavailable';
+
 export interface Guidance {
   label: GuidanceLabel | null;
   score: number;                 // −1 … +1
@@ -41,6 +63,14 @@ export interface Guidance {
   /** REPORTED operating metrics from the same release (ARR, RPO, NRR, FCF…) —
    *  see lib/us-key-metrics. Read here so the exhibit is fetched once. */
   metrics: KeyMetric[];
+  /** Set ONLY when nothing was found — never alongside a label or figures. */
+  absent_reason: GuidanceAbsentReason | null;
+  /** The document the outlook is in, when 'unreadable-format' says there is
+   *  one. Linked on the card so it can be opened directly. */
+  absent_doc_url: string | null;
+  /** What that document is, in the filer's own words where EDGAR carries a
+   *  description ("Shareholder Letter"), else its exhibit number. */
+  absent_doc_label: string | null;
 }
 
 const _g = new Map<string, { at: number; data: Guidance }>();
@@ -329,6 +359,160 @@ export async function releaseDocument(cikNum: number, accession: string, filingI
   return out;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE EXHIBIT SET, AND WHICH OF IT THIS ENGINE CAN READ
+//
+// `index.json` lists a filing's files but types every one of them by the ICON
+// EDGAR draws beside it ("text.gif"), so it cannot say which file is EX-99.2.
+// The filing's own …-index.htm carries the real document table — sequence,
+// description, document, TYPE, size — and that is what is parsed here.
+//
+// Nothing about this is company-specific: an exhibit is unreadable when the
+// text that can be extracted from it is negligible against its own byte size,
+// or when it is a format this engine does not decode at all (a PDF, an image).
+// No OCR is attempted, and none is planned — an OCR'd number is a guess, and a
+// guessed number is worse than an honest blank.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface FilingExhibit {
+  name: string;          // file name
+  url: string;           // absolute
+  type: string;          // "EX-99.1", "EX-99.2", "8-K"…
+  description: string;   // EDGAR's own description, often "Shareholder Letter"
+  size: number;          // bytes, as EDGAR reports them
+}
+
+const _exh = new Map<string, { at: number; data: FilingExhibit[] }>();
+/** The filing's document table, from its …-index.htm. Cached with the filing
+ *  (immutable). One request, and only ever made when guidance came up empty. */
+async function filingExhibits(filingIndexUrl: string): Promise<FilingExhibit[]> {
+  const hit = _exh.get(filingIndexUrl);
+  if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
+  const out: FilingExhibit[] = [];
+  try {
+    const html = await secGet(filingIndexUrl);
+    if (html) {
+      const rows = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+      for (const r of rows.slice(0, 200)) {
+        const cells = (r.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || []);
+        if (cells.length < 4) continue;
+        const href = /<a[^>]+href=["']([^"']+)["']/i.exec(r)?.[1] || '';
+        if (!href) continue;
+        const txt = cells.map((c) => c.replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim());
+        // EDGAR's document table has a fixed shape — seq, description,
+        // DOCUMENT, type, size — so the columns are read relative to the one
+        // carrying the link rather than by guessing which cell looks like a
+        // type. (Affirm's description column repeats the exhibit number, so a
+        // "cell that looks like EX-99.x" rule lands on the wrong column and
+        // then reads the file NAME as the byte size.)
+        const aIdx = cells.findIndex((c) => /<a[^>]+href=/i.test(c));
+        if (aIdx < 0) continue;
+        const size = parseInt((txt[aIdx + 2] || '').replace(/[^\d]/g, ''), 10);
+        const name = href.split('/').pop() || '';
+        const desc = aIdx > 0 ? txt[aIdx - 1] : '';
+        out.push({
+          name,
+          url: href.startsWith('http') ? href : `https://www.sec.gov${href.replace(/^\/ix\?doc=/, '')}`,
+          type: txt[aIdx + 1] || '',
+          description: desc && desc !== name ? desc : '',
+          size: Number.isFinite(size) ? size : 0,
+        });
+      }
+    }
+  } catch { /* an index we cannot read leaves the reason at 'none-given' */ }
+  if (_exh.size > 800) {
+    const oldest = Array.from(_exh.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 200);
+    for (const [k] of oldest) _exh.delete(k);
+  }
+  _exh.set(filingIndexUrl, { at: Date.now(), data: out });
+  return out;
+}
+
+/**
+ * Wording for the card. EDGAR's own description is used when it says something
+ * — many filers write "Shareholder Letter" there — but plenty just repeat the
+ * exhibit number, and "its EX-99.2 carries no extractable text" tells a reader
+ * nothing about what they would be opening. The file name is the fallback:
+ * a document called …shareholderle.htm is a shareholder letter whatever the
+ * description column says.
+ */
+function exhibitLabel(e: FilingExhibit): string {
+  const d = (e.description || '').trim();
+  const bareNumber = /^(?:ex[-\s.]?99[\d.]*|exhibit\s*99[\d.]*|99[\d.]*)$/i.test(d);
+  if (d && !bareNumber && d.length <= 60 && /[A-Za-z]{3}/.test(d)) return d.toLowerCase();
+  const n = `${e.name} ${d}`;
+  if (/shareholder|stockholder/i.test(n)) return 'shareholder letter';
+  if (/letter/i.test(n)) return 'letter to investors';
+  if (/present|slide|deck/i.test(n)) return 'investor presentation';
+  if (/supplement/i.test(n)) return 'supplemental exhibit';
+  return e.type ? `${e.type} exhibit` : 'exhibit';
+}
+
+/**
+ * Is this exhibit readable as TEXT by this engine?
+ *
+ * The rule is a ratio, not a list of file names: a document whose extracted
+ * text is negligible against its own byte size is a picture of a document.
+ * Affirm's FQ4-2026 shareholder letter is 7,678 bytes of HTML that yield 71
+ * characters — the filename, twice — around 24 <img> tags; its FQ3-2026 letter
+ * is the same 24 images WITH a text layer and yields 59,253 characters, and
+ * that one the engine reads normally. Same company, same document, opposite
+ * answers, decided by the file and not by the ticker.
+ */
+function textIsNegligible(html: string, bytes: number): boolean {
+  const text = htmlToText(html);
+  const len = text.replace(/\s+/g, ' ').trim().length;
+  const size = Math.max(bytes || 0, html.length);
+  if (len >= 2000) return false;                    // enough prose to scan either way
+  return len < 600 || (size > 0 && len / size < 0.02);
+}
+const IMAGE_EXT = /\.(?:jpe?g|png|gif|tif{1,2}|bmp|webp)$/i;
+const PDF_EXT = /\.pdf$/i;
+
+/**
+ * The guidance scan over one document's text. Split out of `guidanceFromFiling`
+ * so the SAME scan can be run over a sibling exhibit — a company that files its
+ * outlook in a shareholder letter rather than in the press release is not a
+ * company without an outlook.
+ */
+function scanRelease(text: string): Pick<Guidance, 'label' | 'score' | 'snippets' | 'figures' | 'metrics'> {
+  // A press release is not prose: the guidance line is as often a bullet
+  // ("• Full-year FY27 revenue guidance of $192.0 billion") or a clause inside
+  // a long CEO quote as it is a standalone sentence. Splitting ONLY on ". "
+  // missed Dell's "we're raising our full-year FY27 revenue outlook by $25
+  // billion" because the quote ran past the 600-character cap. So split on
+  // sentence ends, bullets and line breaks, then split anything still oversized
+  // at clause boundaries before the length filter.
+  const rough = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])|\n+|\s*[•·▪]\s*/);
+  // Also keep the coarse pass (sentence ends only): a guidance TABLE reaches us
+  // as one long line whose pieces, split apart, each lose either the period
+  // reference or the number.
+  const sentences: string[] = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])/)
+    .map((x) => x.replace(/\s+/g, ' ').trim())
+    .filter((x) => x.length >= 40 && x.length <= 600);
+  for (const r0 of rough) {
+    const r = r0.replace(/\s+/g, ' ').trim();
+    if (!r) continue;
+    if (r.length <= 600) { sentences.push(r); continue; }
+    for (const piece of r.split(/(?<=[.;])\s+|\s+(?=and\s+(?:we|the\s+company)\b)/i)) {
+      const p = piece.replace(/\s+/g, ' ').trim();
+      if (p) sentences.push(p.length > 600 ? p.slice(0, 600) : p);
+    }
+  }
+  const kept = Array.from(new Set(sentences))
+    .filter((x) => x.length >= 30 && x.length <= 600)
+    .filter((x) => FWD.test(x) && (PERIOD.test(x) || /guidance|outlook/i.test(x)))
+    // Safe-harbour boilerplate lists every forward-looking verb there is; it is
+    // not guidance.
+    .filter((x) => !/forward[- ]looking statements|safe harbor|private securities litigation|words or expressions that refer to future/i.test(x));
+  const c = classify(kept);
+  return {
+    label: c.label, score: c.score, snippets: c.picked,
+    figures: guidanceFiguresFromText(text),
+    metrics: keyMetricsFromText(text),
+  };
+}
+
 /**
  * Guidance for one earnings 8-K. `filingIndexUrl` is the …-index.htm URL we
  * already carry on every filing; the directory's index.json lists the exhibits.
@@ -338,55 +522,66 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
   const hit = _g.get(key);
   if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
 
-  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [] };
+  const none: Guidance = {
+    label: null, score: 0, snippets: [], source_url: null,
+    fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [],
+    absent_reason: null, absent_doc_url: null, absent_doc_label: null,
+  };
   let out = none;
   try {
-    {
-      const doc = await releaseDocument(cikNum, accession, filingIndexUrl);
-      {
-        const url = doc.url;
-        const html = doc.html;
-        if (html && url) {
-          const text = htmlToText(html);
-          // Sentence split. A press release is not prose: the guidance line is
-          // as often a bullet ("• Full-year FY27 revenue guidance of $192.0
-          // billion") or a clause inside a long CEO quote as it is a standalone
-          // sentence. Splitting ONLY on ". " missed Dell's "we're raising our
-          // full-year FY27 revenue outlook by $25 billion" because the quote
-          // ran past the 600-character cap. So split on sentence ends, bullets
-          // and line breaks, then split anything still oversized at clause
-          // boundaries before the length filter.
-          const rough = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])|\n+|\s*[•·▪]\s*/);
-          // Also keep the coarse pass (sentence ends only): a guidance TABLE
-          // reaches us as one long line whose pieces, split apart, each lose
-          // either the period reference or the number.
-          const sentences: string[] = text.split(/(?<=[.!?])\s+(?=[A-Z"“(])/)
-            .map((s) => s.replace(/\s+/g, ' ').trim())
-            .filter((s) => s.length >= 40 && s.length <= 600);
-          for (const r0 of rough) {
-            const r = r0.replace(/\s+/g, ' ').trim();
-            if (!r) continue;
-            if (r.length <= 600) { sentences.push(r); continue; }
-            for (const piece of r.split(/(?<=[.;])\s+|\s+(?=and\s+(?:we|the\s+company)\b)/i)) {
-              const p = piece.replace(/\s+/g, ' ').trim();
-              if (p) sentences.push(p.length > 600 ? p.slice(0, 600) : p);
-            }
+    const doc = await releaseDocument(cikNum, accession, filingIndexUrl);
+    if (!doc.html || !doc.url) {
+      // Nothing was retrieved at all. That is not "the company gave no
+      // outlook"; it is "we could not look".
+      out = { ...none, absent_reason: 'release-unavailable' };
+    } else {
+      const text = htmlToText(doc.html);
+      const scan = scanRelease(text);
+      const fl = fiscalLabelFromText(text);
+      out = {
+        ...scan,
+        source_url: doc.url,
+        fiscal_label: (fl.q && fl.fy) ? `Q${fl.q} FY${String(fl.fy).slice(2)}` : null,
+        fiscal_q: fl.q, fiscal_fy: fl.fy,
+        absent_reason: null, absent_doc_url: null, absent_doc_label: null,
+      };
+
+      // ── nothing found: say WHY ────────────────────────────────────────────
+      // The outlook may be in a SIBLING exhibit — a shareholder letter or a
+      // deck filed as EX-99.2 — and that exhibit may or may not have any text
+      // in it. Both cases are worth the extra request, and this is the only
+      // path that makes one: a filer whose release states its guidance never
+      // reaches here.
+      if (!out.label && !out.figures.length) {
+        const readUrl = doc.url;
+        const readName = readUrl.split('/').pop() || '';
+        const sibs = (await filingExhibits(filingIndexUrl))
+          .filter((e) => /^EX-99/i.test(e.type) && e.name && e.name !== readName)
+          // A letter or a deck is where an outlook hides; plain graphics filed
+          // alongside a release are not exhibits at all and never match.
+          .sort((a, b) => Number(/letter|present|slide|deck|supplement/i.test(b.name + ' ' + b.description))
+            - Number(/letter|present|slide|deck|supplement/i.test(a.name + ' ' + a.description)))
+          .slice(0, 3);
+        let unreadable: FilingExhibit | null = null;
+        for (const e of sibs) {
+          // A format this engine does not decode. No OCR is attempted.
+          if (PDF_EXT.test(e.name) || IMAGE_EXT.test(e.name)) { unreadable = unreadable || e; continue; }
+          if (!/\.(?:html?|txt)$/i.test(e.name) || e.size > 4_000_000) continue;
+          const h = await secGet(e.url);
+          if (!h) continue;
+          if (textIsNegligible(h, e.size)) { unreadable = unreadable || e; continue; }
+          // Readable, and possibly where the outlook actually is.
+          const t2 = htmlToText(h);
+          const s2 = scanRelease(t2);
+          if (s2.label || s2.figures.length) {
+            out = { ...out, ...s2, source_url: e.url };
+            break;
           }
-          const kept = Array.from(new Set(sentences))
-            .filter((s) => s.length >= 30 && s.length <= 600)
-            .filter((s) => FWD.test(s) && (PERIOD.test(s) || /guidance|outlook/i.test(s)))
-            // Safe-harbour boilerplate lists every forward-looking verb there
-            // is; it is not guidance.
-            .filter((s) => !/forward[- ]looking statements|safe harbor|private securities litigation|words or expressions that refer to future/i.test(s));
-          const c = classify(kept);
-          const fl = fiscalLabelFromText(text);
-          out = {
-            label: c.label, score: c.score, snippets: c.picked, source_url: url,
-            fiscal_label: (fl.q && fl.fy) ? `Q${fl.q} FY${String(fl.fy).slice(2)}` : null,
-            fiscal_q: fl.q, fiscal_fy: fl.fy,
-            figures: guidanceFiguresFromText(text),
-            metrics: keyMetricsFromText(text),
-          };
+        }
+        if (!out.label && !out.figures.length) {
+          out = unreadable
+            ? { ...out, absent_reason: 'unreadable-format', absent_doc_url: unreadable.url, absent_doc_label: exhibitLabel(unreadable) }
+            : { ...out, absent_reason: 'none-given' };
         }
       }
     }

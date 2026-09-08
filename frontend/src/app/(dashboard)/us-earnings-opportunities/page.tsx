@@ -29,7 +29,7 @@ import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
 // The card itself — shared with /us-conviction-beats so the two tabs can never
 // drift apart again. See src/components/us-earnings-card.tsx.
-import { UsEarningsCard, TIER_META, rowKey, panelId, num } from '@/components/us-earnings-card';
+import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num } from '@/components/us-earnings-card';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
@@ -197,8 +197,12 @@ export default function UsEarningsOpportunitiesPage() {
   const [forceKey, setForceKey] = useState(0);
   const [viewMode, setViewMode] = useState<'GRADED' | 'CALENDAR'>('GRADED');
   const [calDays, setCalDays] = useState(30);
-  const [quality, setQuality] = useState<{ elite: boolean; pead70: boolean; multibagger: boolean; beatCheap: boolean; rule40: boolean; roce20: boolean }>({
-    elite: false, pead70: false, multibagger: false, beatCheap: false, rule40: false, roce20: false,
+  const [quality, setQuality] = useState<{
+    elite: boolean; pead70: boolean; multibagger: boolean; beatCheap: boolean;
+    rule40: boolean; roce20: boolean; turnaround: boolean; compounder: boolean;
+  }>({
+    elite: false, pead70: false, multibagger: false, beatCheap: false,
+    rule40: false, roce20: false, turnaround: false, compounder: false,
   });
   const [showPending, setShowPending] = useState(false);
   const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
@@ -435,6 +439,11 @@ export default function UsEarningsOpportunitiesPage() {
     // company, and we cannot make it without the numbers.
     if (quality.rule40 && !((r as any).rule40?.passes === true)) return false;
     if (quality.roce20 && !(num((r as any).roce?.pct) != null && (r as any).roce.pct >= 20)) return false;
+    // The quadrant filters. A row with no quadrant on it (an older cached day,
+    // graded before the second axis existed) is cut rather than assumed — the
+    // same rule the Rule-of-40 and ROCE chips above follow.
+    if (quality.turnaround && (r as any).quadrant !== 'TURNAROUND ACCELERATOR') return false;
+    if (quality.compounder && (r as any).quadrant !== 'COMPOUNDER') return false;
     if (quality.pead70 && (r.pead_score ?? 0) < 70) return false;
     if (quality.multibagger && !r.multibagger_setup) return false;
     // "Beat + Cheap" — real growth that the market has not yet re-rated.
@@ -480,6 +489,7 @@ export default function UsEarningsOpportunitiesPage() {
     const c = {
       BLOCKBUSTER: 0, STRONG: 0, MIXED: 0, AVOID: 0,
       elite: 0, pead70: 0, multibagger: 0, beatCheap: 0, rule40: 0, roce20: 0,
+      turnaround: 0, compounder: 0,
       mega: 0, large: 0, mid: 0, small: 0, micro: 0,
     } as Record<string, number>;
     for (const r of allRows) {
@@ -490,6 +500,8 @@ export default function UsEarningsOpportunitiesPage() {
       if ((r.sales_yoy_pct ?? -1) >= 15 && r.pe != null && r.pe > 0 && r.pe <= 30) c.beatCheap++;
       if ((r as any).rule40?.passes === true) c.rule40++;
       if (num((r as any).roce?.pct) != null && (r as any).roce.pct >= 20) c.roce20++;
+      if ((r as any).quadrant === 'TURNAROUND ACCELERATOR') c.turnaround++;
+      if ((r as any).quadrant === 'COMPOUNDER') c.compounder++;
       if (r.market_cap_bucket) c[r.market_cap_bucket]++;
     }
     return c;
@@ -508,10 +520,12 @@ export default function UsEarningsOpportunitiesPage() {
 
   const exportCsv = () => {
     const rows = US_TIER_ORDER.flatMap((t) => view[t]);
-    const head = ['Ticker', 'Company', 'Tier', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'EPS YoY %',
+    const head = ['Ticker', 'Company', 'Tier', 'Quadrant', 'Quality', 'Inflection', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'EPS YoY %',
       'OPM %', 'OPM prev %', 'CFO/NI', 'PEAD', 'RS', 'Stage', 'Mkt cap $M', 'Price', 'P/E', 'D1 %', 'Sector', 'Filing'];
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const body = rows.map((r) => [r.ticker, r.company, r.tier, r.composite_score, r.quarter, r.filing_date,
+    const body = rows.map((r) => [r.ticker, r.company, r.tier,
+      (r as any).quadrant ?? '', (r as any).quality_score ?? '', (r as any).inflection_score ?? '',
+      r.composite_score, r.quarter, r.filing_date,
       r.sales_yoy_pct?.toFixed(1) ?? '', r.eps_yoy_pct?.toFixed(1) ?? '',
       r.opm_pct?.toFixed(2) ?? '', r.opm_prev_pct?.toFixed(2) ?? '',
       r.cfo_to_pat_ratio?.toFixed(2) ?? '', r.pead_score, r.rs_rating ?? '', r.stage ?? '',
@@ -628,6 +642,19 @@ export default function UsEarningsOpportunitiesPage() {
           <button onClick={() => setQuality((q) => ({ ...q, roce20: !q.roce20 }))} style={btn(quality.roce20, '#10B981')}
             title="Trailing-twelve-month operating income ÷ (total assets − current liabilities), at or above 20%">
             🏭 ROCE ≥20% {counts.roce20}</button>
+          {/* THE SECOND AXIS, as two chips and not four.
+              QUALITY and REJECT are not chips anyone reaches for: REJECT is a
+              thing you filter OUT rather than in, and QUALITY overlaps almost
+              exactly with the ROCE ≥20% and RULE OF 40 chips already on this
+              row — a third way of asking the same question is clutter, and this
+              row is already eight chips long. The two that earn their space are
+              the two that cannot be expressed any other way here. */}
+          <button onClick={() => setQuality((q) => ({ ...q, turnaround: !q.turnaround }))} style={btn(quality.turnaround, QUADRANT_META['TURNAROUND ACCELERATOR'].color)}
+            title={QUADRANT_META['TURNAROUND ACCELERATOR'].tagline}>
+            {QUADRANT_META['TURNAROUND ACCELERATOR'].icon} TURNAROUND ACCELERATOR {counts.turnaround}</button>
+          <button onClick={() => setQuality((q) => ({ ...q, compounder: !q.compounder }))} style={btn(quality.compounder, QUADRANT_META.COMPOUNDER.color)}
+            title={QUADRANT_META.COMPOUNDER.tagline}>
+            {QUADRANT_META.COMPOUNDER.icon} COMPOUNDER {counts.compounder}</button>
           <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
           {[['all', 'All caps', 0], ['smid', 'Small+Mid', counts.small + counts.mid],
             ['mega', 'MEGA ≥$200B', counts.mega], ['large', 'LARGE $10–200B', counts.large],

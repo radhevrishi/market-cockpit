@@ -73,8 +73,13 @@ import {
   marginQualityDelta,
   decideTier,
   marketReactionDelta,
+  typicalDailyMovePct,
+  quadrantScore,
   type EarningsTier,
+  type EarningsQuadrant,
+  type QuadrantResult,
 } from './earnings-grade-shared';
+export type { EarningsQuadrant, QuadrantResult };
 
 export type { EarningsTier };
 export const US_TIER_ORDER: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
@@ -1249,6 +1254,12 @@ export interface UsFundamentals {
    *  filer whose per-class EPS the aggregate API hides). Within a few percent
    *  of the reported figure; shown with ≈ in the UI. */
   eps_derived?: boolean;
+  /** Set when `eps_prev` is null because the year-ago quarter and this one are
+   *  on DIFFERENT share counts and the filer's own record does not establish
+   *  the factor between them — a split (usually a reverse split) that no later
+   *  filing re-presented consistently. The per-share comparison is refused
+   *  rather than published on two bases; the dollar lines are unaffected. */
+  eps_compare_blocked?: boolean;
   cfo: number | null; cfo_prev: number | null;
   /** Capital expenditure for the quarter (a positive outflow), de-cumulated
    *  from the year-to-date cash-flow statement like CFO. */
@@ -1306,8 +1317,22 @@ interface UsQuarterGrid {
    *  statement's calendar quirk from blanking another's comparison. */
   atYoy: (kind: UsFactKind, end: string | null) => number | null;
   epsAt: (end: string | null) => { v: number | null; derived: boolean };
-  /** EPS for the year-ago quarter of `end`. */
-  epsYoy: (end: string | null) => number | null;
+  /** EPS for the year-ago quarter of `end`, restated onto `end`'s own
+   *  share-count basis where that is possible and REFUSED where it is not:
+   *  `blocked` is true when the filer's record shows a split between the two
+   *  figures whose size cannot be established. See `epsOnBasis`. */
+  epsYoy: (end: string | null) => { v: number | null; blocked: boolean };
+  /** `end`'s EPS expressed on `ref`'s share-count basis. */
+  /** `end`'s EPS expressed on `ref`'s share-count basis. `verified` is false
+   *  when the two filings could not be chained and no basis change could be
+   *  proven inside the interval — the value is then exactly as filed, but
+   *  nothing has vouched for it. */
+  epsOnBasis: (end: string | null, ref: string | null) => { v: number | null; derived: boolean; blocked: boolean; verified: boolean };
+  /** The filing date that established `end`'s per-share basis. */
+  psVintage: (end: string | null) => string | null;
+  /** False when the share count `end`'s per-share figure asserts is not
+   *  believable against the filer's own neighbouring filings. */
+  countCredible: (end: string | null) => boolean;
   /** How `operating_income` was arrived at — see `OperatingIncomeBasis`. */
   oiBasis: OperatingIncomeBasis;
   /** Up to `n` period ends ending at `cur` that are genuinely CONSECUTIVE
@@ -1369,10 +1394,28 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
   // EPS is a ratio: never synthesize Q4 by subtracting one per-share figure
   // from another. The share count is a time-weighted AVERAGE and de-cumulates
   // by its own arithmetic — see `quarterizeAverage`.
+  // WHICH FILING EACH PER-SHARE FIGURE CAME OUT OF — the fact that decides
+  // whether two of them can be compared at all.
+  //
+  // `conceptSeries` keeps the LATEST restatement of every period, which is
+  // exactly right and is also why the basis moves from quarter to quarter: a
+  // quarter last re-presented in 2024 is on the share count of 2024, a quarter
+  // re-presented in the newest 10-Q is on today's. NVIDIA's July-2023 quarter
+  // is tagged 0.25 (post the June-2024 ten-for-one) and its April-2023 quarter
+  // 0.82 (pre), in one document, because no filing after the split ever
+  // re-presented April-2023. Neither value is wrong; putting them in the same
+  // array, or the same growth rate, is.
+  //
+  // So every per-share quarter carries the FILED date of the fact that
+  // established it, and `perShareBasis` below turns a pair of those into a
+  // yes/no/rescale answer using the filer's own split record.
+  const epsFiled: Record<string, string> = {};
+  const shFiled: Record<string, string> = {};
   {
     const c = pickConcept(facts, 'eps');
     tags.eps = c;
     qs.eps = c ? quarterize(ser(c), false, false) : {};
+    if (c) for (const r of ser(c)) if (r.days >= 80 && r.days <= 100 && r.filed) epsFiled[r.end] = String(r.filed);
   }
   // Share counts, and the scale correction for a filer that tagged them in
   // thousands — see `shareCountScale`. It is applied to the quarterly map AND
@@ -1387,6 +1430,18 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     for (const e of Object.keys(qs.diluted_shares)) {
       const k = shareScaleAt(e);
       if (k !== 1) qs.diluted_shares[e] *= k;
+    }
+    // Provenance for a DERIVED EPS: the count is the denominator, so the count's
+    // vintage is the figure's vintage. A quarter the filer tagged gets that
+    // fact's filing; a quarter built out of the annual count (Q4, which is
+    // never filed as a quarter) gets the annual fact's filing, which is the
+    // same 10-K either way.
+    if (c) {
+      for (const r of ser(c)) {
+        if (!r.filed) continue;
+        if (r.days >= 80 && r.days <= 100) shFiled[r.end] = String(r.filed);
+        else if (r.days >= 330 && r.days <= 380 && !shFiled[r.end]) shFiled[r.end] = String(r.filed);
+      }
     }
   }
   {
@@ -1528,23 +1583,205 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     if (!sh || sh <= 0) return { v: null, derived: false };
     return { v: Math.round((ni / sh) * 100) / 100, derived: true };
   };
-  const epsAt = (end: string | null): { v: number | null; derived: boolean } => {
+
+  // ── THE SHARE COUNT A PER-SHARE FIGURE ACTUALLY ASSERTS ───────────────────
+  // For a tagged EPS that is net income ÷ EPS, which is what the filer's own
+  // two numbers imply whatever it tagged as a count; for a derived one it is
+  // the count we divided by. Small EPS values are excluded because a figure
+  // filed rounded to the cent cannot pin a denominator at all.
+  // ── TWO INDEPENDENT WITNESSES TO THE DENOMINATOR ─────────────────────────
+  // `taggedCount` is the weighted-average count the FILER tagged for that
+  // quarter; `impliedCount` is net income ÷ the per-share figure it published,
+  // which is the count that figure actually asserts. Quarters this module
+  // CONSTRUCTED (a Q4 de-cumulation, an annual average) are deliberately absent
+  // from both: a number we built is not evidence about a number the filer
+  // asserted, and testing our own arithmetic against itself proves nothing.
+
+  /**
+   * THE PLAUSIBILITY GUARD — it can only ever REFUSE a per-share figure, never
+   * change one.
+   *
+   * Virtuix Holdings' 10-Q/A for the June-2026 quarter tags its weighted-average
+   * diluted share count as 0.22 and its EPS as 8,259,732 for the year-ago
+   * quarter and 32,787,960 for this one. The two are internally CONSISTENT with
+   * each other and with net income — 0.22 into $7.17m of loss really is about
+   * 32.6 million — so neither `shareCountScale` (which tests exactly that
+   * arithmetic) nor the split machinery can see anything wrong. What is wrong is
+   * only visible against the filer's OWN other filings: the same company's
+   * December-2025 quarter is 30,839,238 shares and its fiscal year 23,046,654.
+   * A weighted-average share count does not fall eight orders of magnitude in
+   * one quarter.
+   *
+   * So the count a quarter asserts is measured against the MEDIAN of what its
+   * neighbouring quarters assert, and an order of magnitude either way is the
+   * limit. An order of magnitude is not a tuned number — it is the size of the
+   * only error this can be (a units or decimals slip is always a power of ten),
+   * and no genuine issuance moves a count that far inside two years.
+   *
+   * BOTH WITNESSES HAVE TO CONDEMN, because either one alone is wrong often
+   * enough to matter:
+   *  • The TAGGED count alone convicts a filer that simply tags the share row at
+   *    the scale its income statement is printed at. Bruker's June-2023 quarter
+   *    is tagged 147.7 — millions — against 148,000,000 in the quarters either
+   *    side; CoreCivic's and Orthofix's and ACADIA's are in thousands. Their EPS
+   *    is perfectly good; only the share row is at the printed scale.
+   *  • The IMPLIED count alone convicts a filer whose NET INCOME for that
+   *    quarter is the broken number. Steris's fourth quarter carries −$1,377,000
+   *    where $152m belongs, so net income ÷ its filed $1.54 EPS is 894,155
+   *    shares against a real 99 million.
+   * Virtuix fails both at once, which is what an unpublishable per-share figure
+   * looks like and what neither witness could establish alone.
+   *
+   * AND IT STANDS DOWN COMPLETELY IF A SPLIT COULD EXPLAIN THE GAP. A reverse
+   * split moves the count by orders of magnitude legitimately and restates only
+   * the periods a later filing re-presents, so the neighbourhood genuinely
+   * contains two bases. Where the filer's own record shows any split touching
+   * the window this guard says nothing and the split machinery handles it — a
+   * guard that fired on a real split would be a second, conflicting opinion
+   * about the same fact.
+   */
+  // TWO ORDERS OF MAGNITUDE, NOT ONE. One is not enough separation: a genuine
+  // corporate event moves a share count that far without anything being wrong.
+  // Fubo's recapitalisation took its weighted-average count from 342 million to
+  // 31 million (11×) and HMH's reverse merger from 69 million to 12 million
+  // (5.8×), and at a band of ten this guard refused per-share figures for both
+  // that were exactly what the filers filed. Nothing a company can legally do
+  // to its share register inside two years moves the count a hundredfold while
+  // leaving the rest of the filing intact — a split can, and this stands down
+  // for splits — so a hundredfold gap is a broken number and not an event.
+  const CREDIBLE_BAND = 100;
+  const credibleCache = new Map<string, boolean>();
+  const medianOf = (xs: number[]): number | null => {
+    if (xs.length < 3) return null;                      // no majority to be an outlier against
+    const a = xs.slice().sort((x, y) => x - y);
+    return a[Math.floor(a.length / 2)];
+  };
+  const isOutlier = (x: number | null, pop: number[]): boolean => {
+    const med = medianOf(pop);
+    if (x == null || med == null || !(med > 0)) return false;
+    return x < med / CREDIBLE_BAND || x > med * CREDIBLE_BAND;
+  };
+  const countCredible = (end: string | null): boolean => {
+    if (!end) return true;
+    if (credibleCache.has(end)) return credibleCache.get(end)!;
+    credibleCache.set(end, true);                        // provisional; also breaks recursion
+    const obs = denominatorObservations(facts);
+    const mine = obs.filter((o) => o.days <= 100 && Math.abs(diffDays(o.end, end)) <= 4);
+    if (!mine.length) return true;                       // nothing the filer asserted → nothing to test
+    const near = obs.filter((o) => Math.abs(dnum(o.end) - dnum(end)) <= 450 * dayMs
+      && Math.abs(diffDays(o.end, end)) > 4);
+    if (near.length < 3) return true;
+    // ANY SPLIT NEAR THIS NEIGHBOURHOOD → STAND DOWN COMPLETELY.
+    // Asked from `end`'s own filing date this missed the whole point: Inno
+    // Holdings re-presents its June-2025 quarter in the same August-2026 10-Q
+    // that carries June-2026, so there is no split "since" that filing at all,
+    // while the 480-fold gap between 10,738 shares and 2,317,314 is entirely
+    // explained by the reverse splits in between. The window has to be the
+    // NEIGHBOURHOOD's, so it is asked from 450 days before the quarter; and any
+    // proven basis change anywhere in the filer's record disarms this guard too,
+    // because a filer that has restated its share counts once has two bases in
+    // the document and the median of a mixture means nothing.
+    const from = new Date(dnum(end) - 450 * dayMs).toISOString().slice(0, 10);
+    if (splitSince(facts, from).kind !== 'none') return true;
+    if (hasAnyBasisChange(facts)) return true;
+    const tBad = isOutlier(mine[0].shares, near.map((o) => o.shares).filter((x): x is number => x != null));
+    const iBad = isOutlier(mine[0].implied, near.map((o) => o.implied).filter((x): x is number => x != null));
+    const ok = !(tBad && iBad);
+    credibleCache.set(end, ok);
+    return ok;
+  };
+
+  // ── PER-SHARE BASIS: which filing established this quarter's EPS ──────────
+  function psVintage(end: string | null): string | null {
+    if (!end) return null;
+    const pick = (m: Record<string, string>): string | null => {
+      if (m[end!] !== undefined) return m[end!];
+      for (const k of Object.keys(m)) if (Math.abs(diffDays(k, end!)) <= 4) return m[k];
+      return null;
+    };
+    // A tagged EPS is dated by its own fact; a derived one by its denominator.
+    return at('eps', end) != null ? (pick(epsFiled) ?? pick(shFiled)) : (pick(shFiled) ?? pick(epsFiled));
+  }
+
+  /**
+   * `end`'s EPS expressed on `ref`'s share-count basis, or a refusal.
+   *
+   * Order of preference, and it is the order the design demands:
+   *  1. USE A RE-PRESENTED FIGURE. Nothing is done here at all when both
+   *     quarters were last re-presented on the same side of every split — which
+   *     is the ordinary case, because a 10-Q's comparative column restates the
+   *     year-ago quarter. Jaguar Health's April–June 2025 quarter was filed at
+   *     −$10.26 and re-presented a year later at −$358.94 after a 1-for-35
+   *     reverse split; the engine already holds the second because
+   *     `conceptSeries` keeps the latest restatement, and that is the figure to
+   *     compare against this year's −$15.70. Nothing is rescaled.
+   *  2. RESCALE ONLY WITH THE FILER'S OWN FACTOR, when the older figure was
+   *     never re-presented across a split the filer's record does establish.
+   *  3. REFUSE when the record establishes that a split happened but not what
+   *     it was. A blank tile is correct; a −3237% is not.
+   * Nothing here ever infers a split from the size of a discrepancy.
+   */
+  const epsOnBasis = (end: string | null, ref: string | null): { v: number | null; derived: boolean; blocked: boolean; verified: boolean } => {
+    const base = epsAtRaw(end);
+    if (base.refused) return { v: null, derived: false, blocked: true, verified: true };
+    if (base.v == null || !end || !ref || end === ref) return { ...base, blocked: false, verified: true };
+    const vEnd = psVintage(end), vRef = psVintage(ref);
+    if (!vEnd || !vRef || vEnd === vRef) return { ...base, blocked: false, verified: true };
+    const older = vEnd < vRef ? vEnd : vRef;
+    const newer = vEnd < vRef ? vRef : vEnd;
+    // 1. THE ATTRIBUTABLE ANSWER FIRST. `filingBasisRatio` compares the two
+    //    filings on periods they BOTH re-present, so its factor is exactly the
+    //    split between them — nothing to attribute, nothing to double-apply.
+    const w = filingBasisRatio(facts, vEnd, vRef);
+    if (w != null) {
+      if (Math.abs(w - 1) <= 0.01) return { ...base, blocked: false, verified: true };
+      // `w` is the share-count multiplier from `end`'s filing to `ref`'s, so
+      // the per-share figure moves the other way.
+      const v = base.v / w;
+      return { v: Math.round(v * 100) / 100, derived: base.derived, blocked: false, verified: true };
+    }
+    // 2. NO PATH BETWEEN THE TWO FILINGS — which is the ordinary state of most
+    //    filers most of the time, so it must not blank anything by itself. The
+    //    comparison is refused only where a basis change is PROVEN to lie
+    //    inside the interval between the two filings: an edge of the graph,
+    //    corroborated on both the share count and the per-share figure, that
+    //    sits wholly within it. Anything weaker — a split somewhere in the
+    //    filer's history, a ratio that might be on either side of the window —
+    //    leaves the figures exactly as filed. Refusing on suspicion moves
+    //    numbers for companies that never split, which is worse than the bug.
+    if (basisChangedInside(facts, older, newer)) {
+      return { v: null, derived: base.derived, blocked: true, verified: true };
+    }
+    return { ...base, blocked: false, verified: false };
+  };
+
+  const epsAtRaw = (end: string | null): { v: number | null; derived: boolean; refused?: boolean } => {
     if (!end) return { v: null, derived: false };
     const direct = at('eps', end);
-    if (direct != null) return { v: direct, derived: false };
-    return deriveEps(end, at('net_income', end));
+    const built = direct != null ? { v: direct, derived: false } : deriveEps(end, at('net_income', end));
+    // The plausibility guard sits in front of BOTH paths: Virtuix's absurd
+    // figure is tagged, not derived, so guarding only the derived one would
+    // have published it. A REFUSAL is flagged rather than silently blank, so
+    // the card can say why — "not tagged" and "the denominator is not
+    // believable" are different sentences and the reader needs the second one.
+    if (built.v != null && !countCredible(end)) return { v: null, derived: false, refused: true };
+    return built;
   };
-  const epsYoy = (end: string | null): number | null => {
-    if (!end) return null;
-    const direct = atYoy('eps', end);
-    if (direct != null) return direct;
-    const p = yoyPartner(ends, end);
-    return p ? epsAt(p).v : null;
+  const epsAt = (end: string | null): { v: number | null; derived: boolean } => epsAtRaw(end);
+  const epsYoy = (end: string | null): { v: number | null; blocked: boolean } => {
+    if (!end) return { v: null, blocked: false };
+    const p = yoyPartner(Object.keys(qs.eps || {}), end) || yoyPartner(ends, end);
+    if (!p) return { v: null, blocked: false };
+    const r = epsOnBasis(p, end);
+    return { v: r.v, blocked: r.blocked };
   };
 
   const window = (n: number) => consecutiveTail(ends, cur, n);
 
-  return { tags, qs, ser, ends, cur, prev, at, atYoy, epsAt, epsYoy, oiBasis, window };
+  return {
+    tags, qs, ser, ends, cur, prev, at, atYoy, epsAt, epsYoy, epsOnBasis, psVintage,
+    countCredible, oiBasis, window,
+  };
 }
 
 /**
@@ -1584,7 +1821,13 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
   };
   const round2 = (x: number) => Math.round(x * 100) / 100;
   const sRev = strip((e) => { const r = at('revenue', e); return r == null ? null : round2(r / 1e6); });
-  const sEps = strip((e) => g.epsAt(e).v);
+  // EVERY QUARTER IN THE STRIP ON THE CURRENT QUARTER'S SHARE COUNT, or the
+  // strip stops. `strip` already truncates at the first null, which is the
+  // right shape for this: four numbers with no dates cannot be checked by
+  // anyone (trap #8), and four numbers on two different share counts cannot be
+  // summed into a trailing EPS or drawn as a trend. The P/E below is built out
+  // of this array, so a mixed-basis strip was a mixed-basis P/E.
+  const sEps = strip((e) => g.epsOnBasis(e, g.cur).v);
   const sOpm = strip((e) => {
     const r = at('revenue', e); const o = at('operating_income', e);
     return (r && o != null) ? Math.round((o / r) * 1000) / 10 : null;
@@ -1606,14 +1849,22 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     return best;
   };
 
-  const epsCur = g.epsAt(cur);
+  const epsCur = g.epsOnBasis(cur, cur);
+  const epsPrev = g.epsYoy(cur);
   return {
     q_end: cur, q_end_prev: prev, q_filed: qFiled(), tags,
     revenue: at('revenue', cur), revenue_prev: atYoy('revenue', cur),
     operating_income: at('operating_income', cur), operating_income_prev: atYoy('operating_income', cur),
     net_income: at('net_income', cur), net_income_prev: atYoy('net_income', cur),
-    eps: epsCur.v, eps_prev: g.epsYoy(cur),
+    eps: epsCur.v, eps_prev: epsPrev.v,
     eps_derived: epsCur.derived,
+    // Also set when THIS quarter's own per-share figure was refused — Virtuix
+    // has neither side to show, and a card that simply omits the tile owes the
+    // reader the reason.
+    // The comparison was refused, not merely absent. The card needs the
+    // difference: "not tagged" and "the share count changed and the filer's own
+    // record does not say by how much" are two different sentences.
+    eps_compare_blocked: (epsPrev.blocked || epsCur.blocked) || undefined,
     cfo: at('cfo', cur), cfo_prev: atYoy('cfo', cur),
     capex: at('capex', cur), capex_prev: atYoy('capex', cur),
     // Only meaningful when there IS an operating income to describe.
@@ -1692,10 +1943,30 @@ export function quarterSeries(facts: any, asOfPeriodEnd?: string | null, maxQuar
     out.gross_profit.push(musd(gp));
     out.operating_income.push(musd(g.at('operating_income', e)));
     out.net_income.push(musd(g.at('net_income', e)));
-    out.eps.push(g.epsAt(e).v);
+    // ON ONE BASIS OR NOT AT ALL. This array is the multi-quarter chart and
+    // the input to any multi-year earnings comparison, and until now it was a
+    // mixture: each element carried whatever share count the LAST filing to
+    // re-present that quarter was on, so Olenox's ran −0.18, −5.60, −113.82,
+    // −2914.45, −286.83, −298.05, −12.68, −538.13, −4.38, −3.11 across three
+    // reverse splits, and NVIDIA's April-2023 quarter (0.82, pre the June-2024
+    // ten-for-one) sat next to its July-2023 quarter (0.25, post). Each element
+    // is now restated onto the CURRENT quarter's basis where the filer's own
+    // record establishes the factor, and left NULL where it does not. A null
+    // in the middle is honest; a number on the wrong share count is not.
+    out.eps.push(g.epsOnBasis(e, g.cur).v);
     out.cfo.push(musd(cfo));
     out.fcf.push(cfo != null && capex != null ? musd(cfo - Math.abs(capex)) : null);
   }
+  // ONE REFUSAL POISONS EVERYTHING OLDER THAN IT. If the basis changed between
+  // some quarter and today, every quarter BEFORE that one is on the far side of
+  // the same change, and the only reason an older quarter escaped the test is
+  // that its own filing could not be chained to today's — an absence of
+  // evidence, not evidence of comparability. CorVel is the case: its
+  // June-2023 quarter is restated onto today's shares (1.14 → 0.38) while
+  // September-2023, which no chain reaches, kept 1.15 and sat next to a 0.42.
+  // A series that jumps between two bases in the middle is worse than one that
+  // simply starts later, so the array is truncated at the newest refusal.
+
   return out;
 }
 
@@ -1749,6 +2020,17 @@ export interface UsBalanceContext {
    *  ROCE has no accepted meaning for them anyway). */
   total_assets_musd: number | null;
   current_liabilities_musd: number | null;
+  /** Where the balance-sheet instants came from. 'xbrl' (the default, and what
+   *  this function returns) is a filed 10-Q/10-K; 'release' is the condensed
+   *  balance sheet printed in an earnings 8-K, which on a PRELIM row is the
+   *  ONLY place the announced quarter's balance sheet exists yet — see
+   *  lib/us-pr-balance.ts. */
+  source?: 'xbrl' | 'release';
+  /** The period end the FLOW lines (sbc / buyback / dividends) cover, when it
+   *  differs from `as_of`. A release-derived balance sheet is current while its
+   *  cash-flow statement is usually year-to-date and cannot be de-cumulated, so
+   *  the flows stay on the previous quarter's XBRL and say so. */
+  flows_as_of?: string | null;
 }
 
 // Ladders. Cash first, because the "restricted cash" roll-up is a superset and
@@ -2001,13 +2283,37 @@ export function balanceContext(facts: any, periodEnd: string | null | undefined)
 // STOCK SPLITS — the one thing that makes two per-share figures incomparable
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Within 1% of a whole number 2–20, or of its reciprocal. Anything else is
- *  not a split ratio and the answer is "don't know". */
+/**
+ * Within 1% of a whole number 2–1000, or of its reciprocal. Anything else is
+ * not a split ratio and the answer is "don't know".
+ *
+ * WHY THE CEILING IS 1000 AND NOT 20. It was 20 — "every split a US issuer
+ * actually does" — and that is true of any ONE forward split, but it is not
+ * true of the two things this function is actually asked about:
+ *   • A single reverse split done for exchange-listing compliance is routinely
+ *     1-for-50 or 1-for-100, and Inno Holdings' April–June 2025 quarter is
+ *     re-presented a year later at 10,738 weighted shares against the 5,154,308
+ *     it was filed with — one number, 1-for-480.
+ *   • The question is about a WINDOW, and a window can contain several events
+ *     whose ratios multiply. Olenox's June-2025 quarter is re-presented 640×
+ *     smaller; Jaguar Health's 35×.
+ * At 20 all three were silently DISCARDED, which is much worse than reporting
+ * them: with the share-count evidence thrown away, Inno Holdings fell back to
+ * the conversion-ratio tag alone and `splitFactorSince` answered 0.1 — a
+ * 1-for-10 — for a filer whose own share counts say 1-for-480. A wrong factor
+ * rescales real numbers into fiction; "don't know" only blanks a tile.
+ *
+ * The near-integer test is what keeps this from matching ordinary issuance, and
+ * the ratios fed in are always the SAME period's weighted-average share count
+ * re-presented by two different filings — a figure no amount of share issuance
+ * can move, because the period is closed. Only a split (or a reverse
+ * recapitalisation, which is the same arithmetic) restates it.
+ */
 function asSplitRatio(x: number): number | null {
   if (!Number.isFinite(x) || x <= 0) return null;
   const forward = x >= 1 ? x : 1 / x;
   const n = Math.round(forward);
-  if (n < 2 || n > 20) return null;
+  if (n < 2 || n > 1000) return null;
   if (Math.abs(forward / n - 1) > 0.01) return null;
   return x >= 1 ? n : 1 / n;
 }
@@ -2055,8 +2361,469 @@ function asSplitRatio(x: number): number | null {
  * this is for — a split is always carried by both signals at once.
  */
 export function splitFactorSince(facts: any, sinceISO: string): number | null {
+  const v = splitSince(facts, sinceISO);
+  return v.kind === 'factor' ? v.k : null;
+}
+
+/**
+ * WHAT `splitFactorSince` COULD NOT SAY: the difference between "no split" and
+ * "a split I cannot size".
+ *
+ * Both came back as `null`, and every caller read that as "carry on" — which is
+ * right for the first and catastrophic for the second. A per-share comparison
+ * drawn across a split of unknown size is exactly the number this whole module
+ * exists to refuse (design rule: publish nothing rather than a figure known to
+ * be on two share counts), so the two answers have to be distinguishable.
+ *
+ *   'none'    the filer's own record shows no split in the window.
+ *   'factor'  the share-count multiplier, established by the filer's record.
+ *   'unknown' a split IS evidenced but its size or direction cannot be pinned —
+ *             two signals that disagree, or several restatement ratios in one
+ *             document (Inno Holdings, Olenox: three reverse splits inside two
+ *             years, each filing restating for a different subset of them).
+ *
+ * `untilISO` bounds the window at the top. Two figures that are BOTH pre-split
+ * are still comparable with each other, so a split effective after the later of
+ * the two filings must not blank the pair; only a split that landed BETWEEN
+ * them makes the older one stale.
+ */
+/**
+ * HOW TWO FILINGS' SHARE COUNTS RELATE — the only split test that can be
+ * ATTRIBUTED, and therefore the only one a per-share figure may be rescaled by.
+ *
+ * THE PROBLEM WITH EVERY OTHER TEST. `splitSince` answers "did a split happen
+ * after date D", and that is the right question for guidance, where D is the
+ * previous release. It is the wrong question for "are these two quarters on the
+ * same share count", because the ratio it finds between two re-presentations of
+ * one period measures the whole span between those two FILINGS, which is a
+ * superset of the window asked about. NVIDIA's October-2023 quarter is 10×
+ * bigger when the November-2024 10-Q re-presents it; ask whether anything
+ * happened between the August-2024 and August-2026 10-Qs and that ratio answers
+ * "ten-for-one" about a split that was effective in June 2024, ten weeks before
+ * the window even opens. Rescaling on it would divide by ten a figure already
+ * divided by ten.
+ *
+ * WHAT IS ATTRIBUTABLE. A weighted-average share count for a CLOSED period is a
+ * fixed number: no issuance, buyback or lapse of time can move it, because the
+ * period is over. The only thing that restates it is a split. So if two filings
+ * both present the SAME period and give different counts, the ratio between
+ * them is exactly the split factor between those two filings — no more, no
+ * less, nothing to attribute. That is one edge of a graph whose nodes are
+ * filing dates.
+ *
+ * Filings chain even where they do not overlap directly: a 10-Q shares its
+ * year-ago comparative with the 10-Q one year later, and a 10-K its
+ * prior-year columns with the next 10-K, so August-2024 → August-2025 →
+ * August-2026 is a path even though the first and last have no period in
+ * common. The product along the path is the factor; where two edges of a pair
+ * disagree there is no edge at all, and where two paths disagree the answer is
+ * `null` — don't know — and the caller refuses the comparison.
+ *
+ * Returns the multiplier to take a count FROM filing `a` TO filing `b`
+ * (10 for a ten-for-one in between, 1/35 for a one-for-35 reverse), or null.
+ */
+const _basisGraph = new WeakMap<object, Map<string, Map<string, number>>>();
+const _shareByFiling = new WeakMap<object, Map<string, Map<string, number>>>();
+
+/**
+ * Every weighted-average share count in the document, grouped by the FILING it
+ * came out of, and put on real shares first.
+ *
+ * THE SCALE HAS TO BE FIXED BEFORE ANY OF THIS IS COMPARED. `shares` is an
+ * absolute unit in XBRL, but an issuer whose income statement is printed "(in
+ * thousands)" sometimes tags the weighted-average row at the printed scale, and
+ * it does not do so consistently from filing to filing (Nutanix tagged real
+ * counts through FY2023 and thousands from FY2024 on — see `shareCountScale`).
+ * Two filings of the same period that differ only by that switch look exactly
+ * like a one-for-a-thousand reverse split, and once the split-ratio band was
+ * widened past 20 to hold a real 1-for-480, that is precisely what they became:
+ * Vishay Precision Group, Empire Petroleum, ACADIA, Geron and AMSC — none of
+ * which has ever split — all came back as thousand-for-one events.
+ *
+ * The filer's own arithmetic settles it, exactly as `shareCountScale` does:
+ * within one filing, net income ÷ shares ÷ EPS must be 1, and where it is a
+ * clean power of ten instead, that filing's counts are at that scale. A ratio
+ * that is not a clean power of ten is left alone — that is a filer whose EPS
+ * numerator is something other than this net-income line (preferred dividends,
+ * a per-class numerator), not a scale error.
+ */
+function shareFactsByFiling(facts: any): Map<string, Map<string, number>> {
+  const hit = _shareByFiling.get(facts);
+  if (hit) return hit;
+  const gaap = facts?.facts?.['us-gaap'] || {};
+  const byFiled = new Map<string, Map<string, number>>();
+  const epsByFiled = new Map<string, Map<string, number>>();
+  const niByFiled = new Map<string, Map<string, number>>();
+  const collect = (concepts: string[], into: Map<string, Map<string, number>>, keyed: boolean) => {
+    for (const c of concepts) {
+      const node = gaap[c];
+      if (!node?.units) continue;
+      for (const uk of Object.keys(node.units)) {
+        for (const e of node.units[uk] as any[]) {
+          if (!e?.start || !e?.end || !e?.filed) continue;
+          if (!TRUSTED_FORMS.has(e.form)) continue;
+          if (typeof e.val !== 'number' || !Number.isFinite(e.val)) continue;
+          const f = String(e.filed);
+          if (!into.has(f)) into.set(f, new Map());
+          const k = keyed ? `${c}|${e.start}|${e.end}` : `${e.start}|${e.end}`;
+          if (!into.get(f)!.has(k)) into.get(f)!.set(k, e.val);
+        }
+      }
+    }
+  };
+  collect(US_TAGS.diluted_shares, byFiled, true);
+  collect(US_TAGS.eps, epsByFiled, false);
+  collect(US_TAGS.net_income, niByFiled, false);
+
+  byFiled.forEach((counts, f) => {
+    const eps = epsByFiled.get(f), ni = niByFiled.get(f);
+    let scale = 1;
+    if (eps && ni) {
+      const obs: number[] = [];
+      counts.forEach((sh, k) => {
+        const per = k.split('|').slice(1).join('|');
+        const e = eps.get(per), n = ni.get(per);
+        if (!(sh > 0) || e == null || n == null || Math.abs(e) < 0.05) return;
+        obs.push(Math.abs(n / sh / e));
+      });
+      if (obs.length) {
+        for (const k of SHARE_COUNT_SCALES) {
+          if (obs.every((r) => r >= k * 0.85 && r <= k * 1.18)) { scale = k; break; }
+        }
+        // THE WHOLE STATEMENT IN THOUSANDS, NOT JUST THE SHARE ROW. If the
+        // share count is m times its true value and the EPS n times, then net
+        // income ÷ shares ÷ EPS is 1/(m·n). One thousand means the share row
+        // alone is in thousands (Nutanix). A MILLIONTH means both rows are, by
+        // a thousand each — Taboola's August-2026 10-Q tags 313,572,282,000
+        // shares against 313,572,282 the year before and −$10.00 of EPS against
+        // −$0.01, which every test built on those two rows alone reads as a
+        // thousand-for-one reverse split because they agree with each other.
+        // Only the share row is corrected here, which is all this map is for.
+        if (scale === 1 && obs.every((r) => r >= 0.85e-6 && r <= 1.18e-6)) scale = 1 / 1e3;
+      }
+    }
+    counts.forEach((v, k) => { if (!(v > 0)) counts.delete(k); else if (scale !== 1) counts.set(k, v * scale); });
+  });
+  _shareByFiling.set(facts, byFiled);
+  return byFiled;
+}
+
+/**
+ * EVERY DENOMINATOR THE FILER PUBLISHED, for any period it tagged — the
+ * evidence base the plausibility guard measures one quarter against.
+ *
+ * Quarterly AND annual and nine-month windows, because a filer that tags few
+ * quarters still tags a fiscal year, and a weighted-average count for a year is
+ * just as good a witness to the SCALE of this company's share count as one for
+ * a quarter. Virtuix tags only four discrete quarters in three years, two of
+ * them at a broken scale; without its 10-K's 23,046,654 and its nine-month
+ * 20,275,350 there is no majority to call the other two out against.
+ *
+ * `shares` comes from `shareFactsByFiling`, so a filing that tagged the row in
+ * thousands has already been put back on real shares. `implied` is the count the
+ * filer's own per-share figure asserts for the same period.
+ */
+interface DenomObs { end: string; days: number; shares: number | null; implied: number | null }
+const _denomObs = new WeakMap<object, DenomObs[]>();
+function denominatorObservations(facts: any): DenomObs[] {
+  const hit = _denomObs.get(facts);
+  if (hit) return hit;
+  const gaap = facts?.facts?.['us-gaap'] || {};
+  const shares = new Map<string, { val: number; filed: string }>();
+  shareFactsByFiling(facts).forEach((counts, filed) => {
+    counts.forEach((val, k) => {
+      const per = k.split('|').slice(1).join('|');
+      const prev = shares.get(per);
+      if (!prev || filed > prev.filed) shares.set(per, { val, filed });
+    });
+  });
+  const pick = (concepts: string[]) => {
+    const m = new Map<string, { val: number; filed: string }>();
+    for (const c of concepts) {
+      const node = gaap[c];
+      if (!node?.units) continue;
+      for (const uk of Object.keys(node.units)) {
+        for (const e of node.units[uk] as any[]) {
+          if (!e?.start || !e?.end || !e?.filed) continue;
+          if (!TRUSTED_FORMS.has(e.form)) continue;
+          if (typeof e.val !== 'number' || !Number.isFinite(e.val)) continue;
+          const per = `${e.start}|${e.end}`;
+          const prev = m.get(per);
+          if (!prev || String(e.filed) > prev.filed) m.set(per, { val: e.val, filed: String(e.filed) });
+        }
+      }
+    }
+    return m;
+  };
+  const eps = pick(US_TAGS.eps), ni = pick(US_TAGS.net_income);
+  const keys = new Set<string>([...shares.keys(), ...eps.keys()]);
+  const out: DenomObs[] = [];
+  keys.forEach((per) => {
+    const [start, end] = per.split('|');
+    const days = diffDays(end, start);
+    if (days < 80 || days > 400) return;
+    const sh = shares.get(per)?.val ?? null;
+    const e = eps.get(per)?.val ?? null, n = ni.get(per)?.val ?? null;
+    // A per-share figure filed rounded to the cent cannot pin a denominator.
+    const imp = (e != null && Math.abs(e) >= 0.05 && n != null && n !== 0 && Number.isFinite(n / e))
+      ? Math.abs(n / e) : null;
+    out.push({ end, days, shares: sh != null && sh > 0 ? sh : null, implied: imp != null && imp > 0 ? imp : null });
+  });
+  _denomObs.set(facts, out);
+  return out;
+}
+
+/**
+ * A THIRD WITNESS, FROM OUTSIDE THE INCOME STATEMENT: the cover page.
+ *
+ * Taboola's August-2026 10-Q tags its weighted-average share count as
+ * 313,572,282,000 and its EPS as −10.00 where the year before it filed
+ * 313,572,282 and −0.01 — the whole income statement moved by a thousand at
+ * once, so the share count and the per-share figure CORROBORATE each other and
+ * every test built on the two of them reads a thousand-for-one reverse split.
+ * Surrozen is the same. `dei:EntityCommonStockSharesOutstanding` is tagged from
+ * the cover of the filing rather than the statements, and it does not move: a
+ * company that really did a thousand-for-one reverse split has a cover-page
+ * count a thousand times SMALLER, not one nine per cent smaller.
+ *
+ * Only the DIRECTION is used, never the size. A filer that reverse-splits and
+ * then issues heavily — which is the whole life story of the microcaps this
+ * matters most for — has a cover-page count that moved by nothing like the
+ * split ratio, so demanding agreement on magnitude would throw away real
+ * splits. Agreement on direction is nearly free and is what the units artefact
+ * fails: it claims the count grew a thousandfold while the cover page says the
+ * company has fewer shares than it did.
+ *
+ * Returns true when the cover page CONTRADICTS `r`, false when it agrees or is
+ * silent. Silence is not a contradiction.
+ */
+function coverPageContradicts(facts: any, filedA: string, filedB: string, r: number): boolean {
+  const dei = facts?.facts?.dei?.EntityCommonStockSharesOutstanding?.units?.shares;
+  if (!Array.isArray(dei) || !dei.length) return false;
+  const at = (f: string): number | null => {
+    let best: any = null;
+    for (const e of dei) {
+      if (typeof e?.val !== 'number' || !(e.val > 0)) continue;
+      if (String(e.filed || '') !== f) continue;
+      if (!best || String(e.end || '') > String(best.end || '')) best = e;
+    }
+    return best ? best.val : null;
+  };
+  const a = at(filedA), b = at(filedB);
+  if (a == null || b == null) return false;
+  const cover = b / a;
+  if (r > 1.05 && cover < 0.95) return true;
+  if (r < 0.95 && cover > 1.05) return true;
+  return false;
+}
+
+/** EPS by filing, for corroborating a candidate basis edge. */
+function epsFactsByFiling(facts: any): Map<string, Map<string, number>> {
+  const gaap = facts?.facts?.['us-gaap'] || {};
+  const out = new Map<string, Map<string, number>>();
+  for (const c of US_TAGS.eps) {
+    const node = gaap[c];
+    if (!node?.units) continue;
+    for (const uk of Object.keys(node.units)) {
+      for (const e of node.units[uk] as any[]) {
+        if (!e?.start || !e?.end || !e?.filed) continue;
+        if (!TRUSTED_FORMS.has(e.form)) continue;
+        if (typeof e.val !== 'number' || !Number.isFinite(e.val)) continue;
+        const f = String(e.filed);
+        if (!out.has(f)) out.set(f, new Map());
+        const k = `${e.start}|${e.end}`;
+        if (!out.get(f)!.has(k)) out.get(f)!.set(k, e.val);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The graph itself: nodes are filing dates, an edge is "these two filings are
+ * on share-count bases that differ by this factor".
+ *
+ * AN EDGE NEEDS TWO WITNESSES, NOT ONE. A ratio between two re-presentations of
+ * one closed period's share count is necessary evidence of a basis change but
+ * not sufficient, because a filer can also switch the SCALE it tags that row at
+ * — thousands one year, units the next — and `shareFactsByFiling` can only undo
+ * that where the filing also tags an EPS and a net income to check against.
+ * Empire Petroleum is the case that got through: its counts move by exactly
+ * 1000 between two filings that left every re-presented EPS untouched, and the
+ * engine restated a −$0.15 quarter to −$150.00.
+ *
+ * A real split restates the EPS too, and by exactly the reciprocal. So the
+ * period the two filings share must say the same thing twice: the count moved
+ * by r AND the per-share figure moved by 1/r. Where the counts moved and the
+ * EPS did not, the counts are the ones lying, and the two filings are treated
+ * as the same basis. Where they disagree in any other way there is no edge at
+ * all and the answer upstream becomes "don't know".
+ */
+function filingBasisGraph(facts: any): Map<string, Map<string, number>> {
+  const hit = _basisGraph.get(facts);
+  if (hit) return hit;
+  // filed date → (concept|start|end → count). Same-day filings collapse into
+  // one node, which is right: they are one basis.
+  const byFiled = shareFactsByFiling(facts);
+  const epsFiled = epsFactsByFiling(facts);
+  const dates = Array.from(byFiled.keys()).sort();
+  const adj = new Map<string, Map<string, number>>();
+  for (const d of dates) adj.set(d, new Map());
+  for (let i = 0; i < dates.length; i++) {
+    for (let j = i + 1; j < dates.length; j++) {
+      const A = byFiled.get(dates[i])!, B = byFiled.get(dates[j])!;
+      let r: number | null = null; let ok = true; let n = 0;
+      A.forEach((va, k) => {
+        if (!ok) return;
+        const vb = B.get(k);
+        if (vb === undefined || !(va > 0) || !(vb > 0)) return;
+        const x = vb / va;
+        n++;
+        if (r == null) r = x;
+        // Every shared period must tell the SAME story. One that does not is a
+        // filer correcting a number, not a split, and kills the edge.
+        else if (Math.abs(x / r - 1) > 0.01) ok = false;
+      });
+      if (!ok || r == null || n === 0) continue;
+      const rr: number = r;
+      let w: number | null = null;
+      if (Math.abs(rr - 1) <= 0.01) w = 1;
+      else {
+        const cand = asSplitRatio(rr);
+        if (cand == null) continue;                       // not a basis change we understand
+        // ── the second witness: what happened to the EPS of a shared period ──
+        const EA = epsFiled.get(dates[i]), EB = epsFiled.get(dates[j]);
+        let saysSplit = 0, saysFlat = 0;
+        if (EA && EB) {
+          EA.forEach((ea, per) => {
+            const eb = EB.get(per);
+            if (eb === undefined) return;
+            // A per-share figure filed rounded to the cent cannot corroborate
+            // anything when it is near zero.
+            if (Math.abs(ea) < 0.02 && Math.abs(eb) < 0.02) return;
+            const want = ea / cand;
+            if (Math.abs(eb - want) <= Math.max(0.011, Math.abs(want) * 0.03)) saysSplit++;
+            else if (Math.abs(eb - ea) <= Math.max(0.011, Math.abs(ea) * 0.03)) saysFlat++;
+          });
+        }
+        if (saysSplit > 0 && saysFlat === 0 && !coverPageContradicts(facts, dates[i], dates[j], cand)) w = cand;
+        // The counts moved, the per-share figures did not: that is a change of
+        // the units the share row is tagged in, not a split.
+        else if (saysFlat > 0 && saysSplit === 0) w = 1;
+        else continue;                                    // no witness, or they disagree
+      }
+      adj.get(dates[i])!.set(dates[j], w);
+      adj.get(dates[j])!.set(dates[i], 1 / w);
+    }
+  }
+  _basisGraph.set(facts, adj);
+  return adj;
+}
+
+/**
+ * The share-count multiplier between two filings, walked over the graph above.
+ * `null` means "no path, or paths that disagree" — never a guess.
+ */
+/**
+ * Is there a PROVEN basis change strictly inside (a, b]?
+ *
+ * Used only when the two filings cannot be chained at all. A non-unit edge of
+ * the graph — two filings that re-present a period with different share counts
+ * AND different per-share figures — proves the basis changed somewhere between
+ * those two filings, but not where. So it only settles our question when the
+ * whole edge sits inside our interval; an edge that merely overlaps might have
+ * happened on either side of it, and guessing is how a company that never split
+ * gets its numbers moved.
+ *
+ * Deliberately one-directional: it can only ever cause a REFUSAL. Silence here
+ * means "no evidence", which leaves the figures exactly as the filer tagged
+ * them — the behaviour this engine had before any of this existed.
+ */
+function hasAnyBasisChange(facts: any): boolean {
+  let found = false;
+  filingBasisGraph(facts).forEach((nbrs) => {
+    nbrs.forEach((w) => { if (Math.abs(w - 1) > 0.01) found = true; });
+  });
+  return found;
+}
+
+function basisChangedInside(facts: any, a: string, b: string): boolean {
+  if (!a || !b || a >= b) return false;
+  const adj = filingBasisGraph(facts);
+  let found = false;
+  adj.forEach((nbrs, u) => {
+    // `u < a`, not `u <= a`. The edge that STARTS at the older figure's own
+    // filing is the informative one — Chipotle's March-2023 quarter was last
+    // re-presented on 2024-04-25 and the April-2025 10-Q re-presents that same
+    // filing's quarters fifty times smaller, which is precisely the proof that
+    // the fifty-for-one landed after April 2024. Excluding it left a pre-split
+    // 10.50 sitting between a 0.16 and a 0.25.
+    if (found || u < a || u > b) return;
+    nbrs.forEach((w, v) => {
+      if (found) return;
+      if (Math.abs(w - 1) <= 0.01) return;
+      if (v > a && v <= b) found = true;
+    });
+  });
+  return found;
+}
+
+export function filingBasisRatio(facts: any, fromFiled: string, toFiled: string): number | null {
+  if (!fromFiled || !toFiled) return null;
+  if (fromFiled === toFiled) return 1;
+  const adj = filingBasisGraph(facts);
+  if (!adj.has(fromFiled) || !adj.has(toFiled)) return null;
+  const seen = new Map<string, number>([[fromFiled, 1]]);
+  let frontier = [fromFiled];
+  let conflict = false;
+  for (let depth = 0; depth < 64 && frontier.length; depth++) {
+    const next: string[] = [];
+    for (const u of frontier) {
+      const acc = seen.get(u)!;
+      adj.get(u)!.forEach((w, v) => {
+        const val = acc * w;
+        const prev = seen.get(v);
+        if (prev === undefined) { seen.set(v, val); next.push(v); }
+        // TWO PATHS, TWO ANSWERS. That is a filer whose restatements do not
+        // reconcile, and the honest output is "don't know".
+        else if (Math.abs(val / prev - 1) > 0.01) conflict = true;
+      });
+    }
+    frontier = next;
+  }
+  if (conflict) return null;
+  return seen.get(toFiled) ?? null;
+}
+
+export type SplitVerdict =
+  | { kind: 'none' }
+  /** `via` says WHICH signal produced `k`, because only one of them can be
+   *  attributed to a window. The conversion-ratio element's fact date IS the
+   *  split's effective date, so a tag inside (since, until] means exactly one
+   *  event of known size inside that window. A restatement ratio between two
+   *  share counts carries no date at all: it measures the whole span between
+   *  the two FILINGS, which is a superset of the window and, for a filer that
+   *  split three times in two years, a much bigger one — Olenox's June-2025
+   *  quarter is 640× smaller when the August-2026 10-Q re-presents it, and
+   *  none of that 640 need have happened inside the three months since the
+   *  previous 10-Q. Rescaling with a ratio like that DOUBLE-APPLIES splits
+   *  that are already in the figure. So `via: 'counts'` is evidence that a
+   *  split happened — enough to refuse a comparison — and never a licence to
+   *  rescale one. */
+  | { kind: 'factor'; k: number; via: 'tag' | 'counts' | 'both' }
+  | { kind: 'unknown' };
+
+export function splitSince(facts: any, sinceISO: string, untilISO?: string | null): SplitVerdict {
+  const r = splitSinceRaw(facts, sinceISO, untilISO);
+  return r;
+}
+
+function splitSinceRaw(facts: any, sinceISO: string, untilISO?: string | null): SplitVerdict {
+  const NONE: SplitVerdict = { kind: 'none' };
+  const UNKNOWN: SplitVerdict = { kind: 'unknown' };
   const gaap = facts?.facts?.['us-gaap'];
-  if (!gaap || !sinceISO) return null;
+  if (!gaap || !sinceISO) return NONE;
+  const until = untilISO || null;
 
   // ── signal 1: the conversion-ratio element, one entry per split date ──
   let tagRatio: number | null = null;
@@ -2071,6 +2838,9 @@ export function splitFactorSince(facts: any, sinceISO: string): number | null {
           if (typeof e?.val !== 'number' || !Number.isFinite(e.val)) continue;
           const when = String(e.end || '');
           if (!when || when < sinceISO) continue;      // the split predates the comparison
+          // ...and one effective after BOTH figures were filed leaves them on
+          // the same (old) basis as each other, which is all this is asked.
+          if (until && when > until) continue;
           const r = asSplitRatio(e.val);
           if (r == null) continue;
           byDate.set(when, r);
@@ -2095,26 +2865,43 @@ export function splitFactorSince(facts: any, sinceISO: string): number | null {
 
   // ── signal 2: a share count for one period, restated across `sinceISO` ──
   let shareRatio: number | null = null;
+  let ambiguous = false;
   let pairs = 0, flat = 0;
   {
     const votes = new Map<number, number>();
-    for (const c of US_TAGS.diluted_shares) {
-      const node = gaap[c];
-      if (!node?.units) continue;
-      for (const uk of Object.keys(node.units)) {
-        const byWindow = new Map<string, { before: any | null; after: any | null }>();
-        for (const e of node.units[uk] as any[]) {
-          if (!e?.start || !e?.end) continue;
-          if (!TRUSTED_FORMS.has(e.form)) continue;
-          if (typeof e.val !== 'number' || !(e.val > 0)) continue;
-          const key = e.start + '|' + e.end;
+    // The counts come from `shareFactsByFiling`, which has already put a filing
+    // that tagged its share row in thousands back onto real shares. Without
+    // that, Vishay Precision Group's switch of scale between two filings reads
+    // as a one-for-a-thousand reverse split.
+    const shByFiling = shareFactsByFiling(facts);
+    const epsByFiling = epsFactsByFiling(facts);
+    {
+      const byWindow = new Map<string, { before: any | null; after: any | null }>();
+      const rows: Array<{ key: string; val: number; filed: string }> = [];
+      shByFiling.forEach((counts, filed) => {
+        counts.forEach((val, k) => rows.push({ key: k, val, filed }));
+      });
+      {
+        for (const e of rows) {
+          const key = e.key;
           if (!byWindow.has(key)) byWindow.set(key, { before: null, after: null });
           const slot = byWindow.get(key)!;
           const filed = String(e.filed || '');
-          if (filed < sinceISO) { if (!slot.before || filed > String(slot.before.filed)) slot.before = e; }
+          // A re-presentation made after `until` is outside the window being
+          // asked about and says nothing about it.
+          if (until && filed > until) continue;
+          // `<=`, NOT `<`. `sinceISO` is the FILING that established the older
+          // of the two figures being compared, so every restatement that
+          // filing itself performed is already inside that figure. Counting it
+          // as evidence of a split "since" then reports NVIDIA's June-2024
+          // ten-for-one all over again when the window starts at the May-2025
+          // 10-Q that re-presented April-2024 — a split ten months outside the
+          // window, which would have blanked or rescaled a comparison that is
+          // perfectly sound.
+          if (filed <= sinceISO) { if (!slot.before || filed > String(slot.before.filed)) slot.before = e; }
           else if (!slot.after || filed > String(slot.after.filed)) slot.after = e;
         }
-        byWindow.forEach((s) => {
+        byWindow.forEach((s, periodKey) => {
           if (!s.before || !s.after) return;
           const raw = s.after.val / s.before.val;
           // Only a period re-presented in a filing made AFTER the split, from
@@ -2127,22 +2914,47 @@ export function splitFactorSince(facts: any, sinceISO: string): number | null {
           if (Math.abs(raw - 1) <= 0.01) return;
           const r = asSplitRatio(raw);
           if (r == null) return;
+          // THE SAME SECOND WITNESS THE BASIS GRAPH DEMANDS. A share count that
+          // moves by a clean power of ten between two filings is just as likely
+          // to be a filer switching the scale it tags the row at as a split,
+          // and `shareFactsByFiling` can only undo that where the filing also
+          // tags an EPS and a net income to check against. Taboola and Surrozen
+          // both came back as thousand-for-one splits. A real split restates the
+          // per-share figure by the reciprocal; a change of units leaves it
+          // alone. Where the period's EPS is on file in both filings it decides,
+          // and where it is not the ratio still counts — silence is not a
+          // contradiction.
+          const per = periodKey.split('|').slice(1).join('|');
+          const ea = epsByFiling.get(String(s.before.filed))?.get(per);
+          const eb = epsByFiling.get(String(s.after.filed))?.get(per);
+          if (ea != null && eb != null && (Math.abs(ea) >= 0.02 || Math.abs(eb) >= 0.02)) {
+            const want = ea / r;
+            const saysSplit = Math.abs(eb - want) <= Math.max(0.011, Math.abs(want) * 0.03);
+            if (!saysSplit) return;
+          }
+          if (coverPageContradicts(facts, String(s.before.filed), String(s.after.filed), r)) return;
           votes.set(r, (votes.get(r) || 0) + 1);
         });
       }
     }
     if (votes.size) {
       // One split leaves the SAME ratio on every period it restated; two
-      // different ratios in one document is not evidence of anything.
+      // different ratios in one document is not evidence of anything. It used
+      // to fall through to `null` — indistinguishable from "no split" — and
+      // that is the state Olenox and Inno Holdings are in permanently, because
+      // each of their filings restates history for a different subset of three
+      // reverse splits. It is now UNKNOWN, and the per-share tile goes blank.
       const entries = Array.from(votes.entries()).sort((a, b) => b[1] - a[1]);
       if (entries.length === 1) shareRatio = entries[0][0];
+      else ambiguous = true;
     }
   }
 
+  if (ambiguous) return UNKNOWN;
   if (tagRatio != null && shareRatio != null) {
-    if (Math.abs(tagRatio / shareRatio - 1) <= 0.01) return shareRatio;
-    if (Math.abs(tagRatio * shareRatio - 1) <= 0.01) return shareRatio;   // tag stated it inverted
-    return null;                                                          // genuine disagreement
+    if (Math.abs(tagRatio / shareRatio - 1) <= 0.01) return { kind: 'factor', k: shareRatio, via: 'both' };
+    if (Math.abs(tagRatio * shareRatio - 1) <= 0.01) return { kind: 'factor', k: shareRatio, via: 'both' };  // tag stated it inverted
+    return UNKNOWN;                                                       // genuine disagreement
   }
   // SHARE COUNTS THAT DID NOT MOVE ARE EVIDENCE OF NO SPLIT. Citizens
   // Financial tags `…StockSplitConversionRatio1` as 6 at 2021-12-31 and has
@@ -2152,8 +2964,16 @@ export function splitFactorSince(facts: any, sinceISO: string): number | null {
   // is a direct contradiction of the tag and the answer is "don't know". A
   // period the filer simply never re-presented says nothing either way, which
   // is why the window has to straddle the split to be counted at all.
-  if (tagRatio != null && shareRatio == null && pairs >= 3 && flat >= pairs * 0.9) return null;
-  return tagRatio ?? shareRatio;
+  //
+  // NONE, not UNKNOWN, and the distinction matters now that the two are
+  // separable: the share counts here are not silent, they are POSITIVE
+  // evidence that nothing was restated, so a per-share comparison across this
+  // window is sound and must not be blanked. UNKNOWN is for the case where a
+  // split plainly happened and only its size is in doubt.
+  if (tagRatio != null && shareRatio == null && pairs >= 3 && flat >= pairs * 0.9) return NONE;
+  if (tagRatio != null) return { kind: 'factor', k: tagRatio, via: 'tag' };
+  if (shareRatio != null) return { kind: 'factor', k: shareRatio, via: 'counts' };
+  return NONE;
 }
 
 /**
@@ -2271,6 +3091,11 @@ export interface UsGradedRow {
   eps_curr: number | null;
   eps_prev: number | null;
   eps_derived?: boolean;
+  /** True when `eps_prev`, `eps_yoy_pct`, `eps_gaap_yoy_pct` and `eps_swing`
+   *  are all null because a stock split sits between the two quarters whose
+   *  factor the filer's own record does not establish — NOT because the figures
+   *  are missing. `caveat_tags` carries `per-share comparison unavailable`. */
+  eps_compare_blocked?: boolean;
   cfo_curr_musd: number | null;
   /** Free cash flow = CFO − capex, both from the filing's own cash-flow
    *  statement. Null when the filer does not tag capital expenditure. */
@@ -2337,6 +3162,16 @@ export interface UsGradedRow {
   is_elite: boolean;
   pead_score: number;
   multibagger_setup: boolean;
+  /** The second axis — what the business IS vs what it is BECOMING. See
+   *  `quadrantScore` in earnings-grade-shared.ts. */
+  quality_score: number;
+  inflection_score: number;
+  /** null when too little was assessable to place the row honestly. */
+  quadrant: EarningsQuadrant | null;
+  quadrant_parts: {
+    quality: Array<{ label: string; points: number; of: number }>;
+    inflection: Array<{ label: string; points: number; of: number }>;
+  };
   filing_url?: string;
   source: string;
   tags_used?: Partial<Record<UsFactKind, string | null>>;
@@ -2369,6 +3204,12 @@ export interface UsGradeInput {
   /** The filer's own fiscal quarter ("Q2 FY27"), from companyfacts fy/fp. */
   fiscal_label?: string | null;
   fiscal_year_own?: number | null;
+  /** Street-basis consensus surprise (%), available at GRADE time. Feeds the
+   *  beat-and-raise STRONG path in `decideTier`. */
+  consensus_beat_pct?: number | null;
+  /** Daily closes behind the print, used to size the market reaction against
+   *  the stock's OWN volatility rather than a fixed percentage. */
+  close_30d?: number[] | null;
 }
 
 /**
@@ -2484,6 +3325,9 @@ export function usQuarterLabel(periodEnd?: string | null, filingDate?: string | 
  *  • RS rating is supplied by the caller as a cohort percentile (see
  *    `assignRsRatings`) because there is no free US RS-rating feed.
  */
+/** The chip a card shows where an EPS growth rate would have been. */
+export const PER_SHARE_BLOCKED_TAG = 'per-share comparison unavailable';
+
 export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const f = input.fundamentals;
   const p = input.price || null;
@@ -2525,6 +3369,15 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
 
   const methodology_tags: string[] = [];
   const caveat_tags: string[] = [];
+
+  // THE REFUSAL, SAID OUT LOUD. `eps_prev` is null here not because the filer
+  // tagged nothing but because this quarter and the year-ago quarter are on
+  // different share counts — a split whose factor the filer's own record does
+  // not pin down. The card shows the chip instead of a percentage; the dollar
+  // lines (revenue, net income, FCF) are untouched, because a split cannot move
+  // them.
+  const perShareBlocked = !!f.eps_compare_blocked;
+  if (perShareBlocked) caveat_tags.push(PER_SHARE_BLOCKED_TAG);
 
   // Methodology overlays — same thresholds as India.
   const ttPass = stage === 2 && rs != null && rs >= 70 && pct52 != null && pct52 >= -15;
@@ -2634,13 +3487,18 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     composite, broken, stillLossMaking, turnaroundBase,
     marginContracting: opmExp != null && opmExp <= -0.5,
     marginSevereContraction: opmExp != null && opmExp <= -1.5,
-    caveatCount: caveat_tags.length, mCount, stage,
+    // The measurement refusal is not a caveat about the BUSINESS, so it is not
+    // counted towards the caveat budget the BLOCKBUSTER gates are scored on.
+    caveatCount: caveat_tags.filter((t) => t !== PER_SHARE_BLOCKED_TAG).length, mCount, stage,
     salesY, patY, epsY, opmExp,
     cleanMag, exceptMag, megaMag,
     marginInflection, marginInflectionLoose,
     tier1MethodCount: t1,
     positiveGuidance: !!input.positive_guidance,   // from the 8-K press release (lib/us-guidance)
     chartOk,
+    consensusBeatPct: input.consensus_beat_pct ?? null,
+    guidanceRaised: !!input.positive_guidance,
+    cfoToNi: cfoPat,
   }).tier;
 
   const TIER_ORDER: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
@@ -2651,7 +3509,10 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // floor below can tell a bad quarter from a good quarter the market disliked.
   const tierOnFundamentals = tier;
   {
-    const mr = marketReactionDelta(tier, p?.d1_pct, p?.gap_pct);
+    const mr = marketReactionDelta(
+      tier, p?.d1_pct, p?.gap_pct,
+      typicalDailyMovePct(input.close_30d ?? null),
+    );
     tier = mr.tier;
     for (const c of mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
@@ -2779,7 +3640,41 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     + ((opmExp != null && opmExp >= 1) ? 1 : 0)
     + ((cfoPat != null && cfoPat >= 1) ? 1 : 0)
     + ((salesY != null && salesY >= 25) ? 1 : 0);
-  const multibagger_setup = mbSignals >= 2 && !stillLossMaking;
+  // MULTIBAGGER HAS TO MEAN SOMETHING. Two of four signals and a profit was too
+  // low a bar: Dick's Sporting Goods carried the badge into a stage-4 downtrend
+  // after a 30.7% one-day fall, and Advance Auto Parts carried it on a Rule-of-40
+  // score of −2.6. A multibagger is a compounding machine, and a company cannot
+  // be compounding while it burns cash, earns nothing on its capital, or sits in
+  // a confirmed downtrend. These are disqualifiers, not scoring inputs — each is
+  // a fact that makes the label false, so any one of them removes it.
+  const fcfMarginPct = (fcfC != null && revC != null && revC > 0) ? (fcfC / revC) * 100 : null;
+  const ruleOf40 = (salesY != null && fcfMarginPct != null) ? salesY + fcfMarginPct : null;
+  const mbDisqualified =
+    stage === 4                                                   // confirmed downtrend
+    || (fcfC != null && fcfC < 0)                                 // burning cash
+    || (cfoPat != null && cfoPat < 0.5)                           // profit the business didn't collect
+    || (ruleOf40 != null && ruleOf40 < 0)                         // growth + FCF margin negative
+    || criticals >= 2;                                            // quality flags in pairs
+  const multibagger_setup = mbSignals >= 2 && !stillLossMaking && !mbDisqualified;
+
+  // ── QUALITY × INFLECTION ───────────────────────────────────────────────────
+  // The second axis (see `quadrantScore`). ROCE is not computed here — it needs
+  // the balance sheet, which the route attaches afterwards — so the route
+  // recomputes this with `roce_pct` filled in. What is produced here is the
+  // complete answer for every input available at grade time, so a caller that
+  // never enriches still gets a usable quadrant rather than nothing.
+  const epsSwingNow = swingKind(f.eps, f.eps_prev);
+  const quadrant = quadrantScore({
+    fcf_margin_pct: fcfMarginPct,
+    cfo_to_ni: cfoPat,
+    opm_pct: opm,
+    profitable: niC != null ? niC > 0 : null,
+    sales_yoy_pct: salesY,
+    opm_delta_pp: opmExp,
+    eps_improving: epsY != null ? epsY > 0 : (epsSwingNow === 'loss-to-profit' || epsSwingNow === 'loss-narrowed'),
+    guidance_raised: !!input.positive_guidance,
+    loss_narrowing: epsSwingNow === 'loss-narrowed',
+  });
 
   const qlCal = usQuarterLabel(f.q_end, input.filing_date);
   // The filer's own label wins when we have it — "Q2 FY27", not "Q3 CY26".
@@ -2843,6 +3738,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     net_income_curr_musd: niC != null ? Math.round(niC / 1e4) / 100 : null,
     net_income_prev_musd: niP != null ? Math.round(niP / 1e4) / 100 : null,
     eps_curr: f.eps, eps_prev: f.eps_prev, eps_derived: !!f.eps_derived,
+    eps_compare_blocked: perShareBlocked || undefined,
     cfo_curr_musd: f.cfo != null ? Math.round(f.cfo / 1e4) / 100 : null,
     fcf_curr_musd: fcfC != null ? Math.round(fcfC / 1e4) / 100 : null,
     fcf_prev_musd: fcfP != null ? Math.round(fcfP / 1e4) / 100 : null,
@@ -2872,6 +3768,10 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     composite_score: Math.round(composite), tier,
     methodology_tags: uniqMeth, caveat_tags: uniqCav,
     narrative, is_elite, pead_score, multibagger_setup,
+    quality_score: quadrant.quality,
+    inflection_score: quadrant.inflection,
+    quadrant: quadrant.quadrant,
+    quadrant_parts: { quality: quadrant.quality_parts, inflection: quadrant.inflection_parts },
     filing_url: input.filing_url, source: 'SEC EDGAR XBRL',
     tags_used: f.tags,
   };
