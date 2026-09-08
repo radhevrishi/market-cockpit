@@ -33,7 +33,7 @@
 // Anything that fails a rule is dropped silently.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type GuideMetric = 'revenue' | 'eps' | 'operating_income' | 'net_income' | 'comparable_sales' | 'gross_margin' | 'operating_margin' | 'free_cash_flow';
+export type GuideMetric = 'revenue' | 'eps' | 'operating_income' | 'net_income' | 'comparable_sales' | 'gross_margin' | 'operating_margin' | 'free_cash_flow' | 'ebitda';
 export type GuidePeriod = 'quarter' | 'year';
 
 export interface GuidanceFigure {
@@ -51,6 +51,9 @@ export interface GuidanceFigure {
 }
 
 const METRIC_RE: Array<[GuideMetric, RegExp]> = [
+  // EBITDA first: "Adjusted EBITDA of $415 million to $430 million" is not
+  // revenue guidance, and Petco's card said it was until this line existed.
+  ['ebitda', /\bebitda\b/i],
   ['comparable_sales', /^(?:total\s+)?comp(?:arable)?(?:\s+store)?\s+sales|^same[- ]store\s+sales/i],
   ['gross_margin', /gross\s+margins?\b/i],
   ['operating_margin', /operating\s+margins?\b/i],
@@ -151,6 +154,7 @@ function sane(metric: GuideMetric, unit: Tok['unit'], lo: number, hi: number): b
     return unit === 'pct' && Math.abs(lo) <= 200 && Math.abs(hi) <= 200;
   }
   if (metric === 'eps') return unit === 'usd_share' && Math.abs(lo) < 1000 && Math.abs(hi) < 1000;
+  if (metric === 'ebitda' && unit === 'usd_share') return false;
   if (unit === 'pct') return Math.abs(lo) <= 200 && Math.abs(hi) <= 200;   // "revenue growth of 6% to 8%"
   if (lo > 0 && hi / lo > 4) return false;                                  // a guidance band is never 8x wide
   return unit === 'usd' && Math.abs(hi) >= 1e4 && Math.abs(hi) <= 2e12;
@@ -362,7 +366,21 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
   out.length = 0;
   out.push(...ranged);
 
-  const mOrder: GuideMetric[] = ['revenue', 'eps', 'operating_income', 'operating_margin', 'net_income', 'comparable_sales', 'gross_margin', 'free_cash_flow'];
+  // "full year" and "FY26" are the same period stated two ways; when a document
+  // uses both, keep one label so the card does not print the guide twice.
+  const fyLabels = Array.from(new Set(out.filter((f) => /^FY\d{2}$/.test(f.period_label)).map((f) => f.period_label)));
+  if (fyLabels.length === 1) {
+    for (const f of out) if (f.period_label === 'full year') f.period_label = fyLabels[0];
+    const kept = new Map<string, GuidanceFigure>();
+    for (const f of out) {
+      const k = `${f.metric}|${f.period_label}|${f.basis}`;
+      const prev = kept.get(k);
+      if (!prev || (prev.low === prev.high && f.low !== f.high) || (prev.prior_low == null && f.prior_low != null)) kept.set(k, f);
+    }
+    out.length = 0; out.push(...Array.from(kept.values()));
+  }
+
+  const mOrder: GuideMetric[] = ['revenue', 'eps', 'ebitda', 'operating_income', 'operating_margin', 'net_income', 'comparable_sales', 'gross_margin', 'free_cash_flow'];
   out.sort((a, b) =>
     (a.period === b.period ? 0 : a.period === 'year' ? -1 : 1) ||
     (mOrder.indexOf(a.metric) - mOrder.indexOf(b.metric)) ||
@@ -392,5 +410,5 @@ export const GUIDE_METRIC_LABEL: Record<GuideMetric, string> = {
   revenue: 'Revenue', eps: 'EPS', operating_income: 'Operating income',
   operating_margin: 'Operating margin', net_income: 'Net income',
   comparable_sales: 'Comparable sales', gross_margin: 'Gross margin',
-  free_cash_flow: 'Free cash flow',
+  free_cash_flow: 'Free cash flow', ebitda: 'EBITDA',
 };
