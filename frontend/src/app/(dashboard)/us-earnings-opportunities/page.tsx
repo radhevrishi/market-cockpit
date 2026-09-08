@@ -83,6 +83,7 @@ const LS_PREFIX = 'mc:graded-us:v3:';
 const LS_CAL_PREFIX = 'mc:cal-us:v1:';
 /** How many day-scans may be in flight at once. Three keeps the first rows on
  *  screen quickly without asking the server to sweep the whole window at once. */
+const IN_LINE_COLOR = '#FACC15';
 const DAY_CONCURRENCY = 3;
 /** Selectable windows, in TRADING SESSIONS (weekends are skipped), so 60d is
  *  roughly three calendar months. Every session is fetched and cached on its
@@ -202,8 +203,8 @@ export default function UsEarningsOpportunitiesPage() {
   const [forceKey, setForceKey] = useState(0);
   const [viewMode, setViewMode] = useState<'GRADED' | 'CALENDAR'>('GRADED');
   const [calDays, setCalDays] = useState(30);
-  const [quality, setQuality] = useState<{ elite: boolean; pead70: boolean; multibagger: boolean; beatCheap: boolean }>({
-    elite: false, pead70: false, multibagger: false, beatCheap: false,
+  const [quality, setQuality] = useState<{ elite: boolean; pead70: boolean; multibagger: boolean; beatCheap: boolean; rule40: boolean; roce20: boolean }>({
+    elite: false, pead70: false, multibagger: false, beatCheap: false, rule40: false, roce20: false,
   });
   const [showPending, setShowPending] = useState(false);
   const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
@@ -446,6 +447,11 @@ export default function UsEarningsOpportunitiesPage() {
       else if (b !== capBucket) return false;
     }
     if (quality.elite && !r.is_elite) return false;
+    // Rule of 40 and ROCE filters. A row whose score could not be computed is
+    // excluded rather than assumed to pass — the filter is a claim about the
+    // company, and we cannot make it without the numbers.
+    if (quality.rule40 && !((r as any).rule40?.passes === true)) return false;
+    if (quality.roce20 && !(num((r as any).roce?.pct) != null && (r as any).roce.pct >= 20)) return false;
     if (quality.pead70 && (r.pead_score ?? 0) < 70) return false;
     if (quality.multibagger && !r.multibagger_setup) return false;
     // "Beat + Cheap" — real growth that the market has not yet re-rated.
@@ -490,7 +496,7 @@ export default function UsEarningsOpportunitiesPage() {
   const counts = useMemo(() => {
     const c = {
       BLOCKBUSTER: 0, STRONG: 0, MIXED: 0, AVOID: 0,
-      elite: 0, pead70: 0, multibagger: 0, beatCheap: 0,
+      elite: 0, pead70: 0, multibagger: 0, beatCheap: 0, rule40: 0, roce20: 0,
       mega: 0, large: 0, mid: 0, small: 0, micro: 0,
     } as Record<string, number>;
     for (const r of allRows) {
@@ -499,6 +505,8 @@ export default function UsEarningsOpportunitiesPage() {
       if ((r.pead_score ?? 0) >= 70) c.pead70++;
       if (r.multibagger_setup) c.multibagger++;
       if ((r.sales_yoy_pct ?? -1) >= 15 && r.pe != null && r.pe > 0 && r.pe <= 30) c.beatCheap++;
+      if ((r as any).rule40?.passes === true) c.rule40++;
+      if (num((r as any).roce?.pct) != null && (r as any).roce.pct >= 20) c.roce20++;
       if (r.market_cap_bucket) c[r.market_cap_bucket]++;
     }
     return c;
@@ -631,6 +639,12 @@ export default function UsEarningsOpportunitiesPage() {
             title="Revenue growth ≥15% YoY on a trailing P/E of 30 or less — growth the market has not re-rated yet.">
             💰 Beat + Cheap {counts.beatCheap}
           </button>
+          <button onClick={() => setQuality((q) => ({ ...q, rule40: !q.rule40 }))} style={btn(quality.rule40, '#10B981')}
+            title="Revenue growth % + free-cash-flow margin %, both trailing twelve months, at or above 40">
+            ⚡ RULE OF 40 {counts.rule40}</button>
+          <button onClick={() => setQuality((q) => ({ ...q, roce20: !q.roce20 }))} style={btn(quality.roce20, '#10B981')}
+            title="Trailing-twelve-month operating income ÷ (total assets − current liabilities), at or above 20%">
+            🏭 ROCE ≥20% {counts.roce20}</button>
           <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
           {[['all', 'All caps', 0], ['smid', 'Small+Mid', counts.small + counts.mid],
             ['mega', 'MEGA ≥$200B', counts.mega], ['large', 'LARGE $10–200B', counts.large],
@@ -1114,7 +1128,7 @@ function panel(): React.CSSProperties {
   };
 }
 
-function Tile({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function Tile({ label, value, sub, color }: { label: string; value: string; sub?: React.ReactNode; color?: string }) {
   return (
     <div style={{
       backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
@@ -1211,7 +1225,7 @@ function UsEarningsCard({ r, open, onToggle, panelId: pid }: {
         {r.sector && <Chip text={r.sector} />}
         {r.market_cap_musd != null && <Chip text={fmtUsd(r.market_cap_musd)} />}
         {(r as any).eps_surprise_pct != null && (
-          <Chip text={surpriseChip(r)}
+          <Chip text={`EPS beat ${surpriseChip(r).replace(/^vs est\s*/, '')}`}
             color={(r as any).eps_surprise_pct >= 5 ? '#10B981' : (r as any).eps_surprise_pct <= -5 ? '#EF4444' : undefined} />
         )}
         {(r as any).guidance && (
@@ -1220,6 +1234,14 @@ function UsEarningsCard({ r, open, onToggle, panelId: pid }: {
         )}
         {r.is_elite && <Chip text="⭐ ELITE" color="#F59E0B" />}
         {r.multibagger_setup && <Chip text="💎 MULTIBAGGER" color="#8B5CF6" />}
+        {num((r as any).rule40?.score) != null && (
+          <Chip text={`R40 ${(r as any).rule40.score >= 0 ? '' : ''}${(r as any).rule40.score}${(r as any).rule40.basis === 'quarter' ? '·q' : ''}`}
+            color={(r as any).rule40.passes ? 'var(--mc-bullish)' : undefined} />
+        )}
+        {num((r as any).roce?.pct) != null && (
+          <Chip text={`ROCE ${(r as any).roce.pct.toFixed(0)}%`}
+            color={(r as any).roce.pct >= 20 ? 'var(--mc-bullish)' : (r as any).roce.pct < 8 ? 'var(--mc-bearish)' : undefined} />
+        )}
         {num((r as any).setup?.score) != null && (
           <Chip text={`SETUP ${(r as any).setup.score} · ${(r as any).setup.verdict}`}
             color={SETUP_VERDICT_COLOR[(r as any).setup.verdict] || undefined} />
@@ -1340,6 +1362,65 @@ function moreStrip(open: boolean): React.CSSProperties {
  * for the companies that report them and are simply absent for the rest; a tile
  * is never invented. At most four are shown, most decision-relevant first.
  */
+
+/**
+ * What the number was expected to be, printed under the tile that shows it.
+ *
+ * An earnings feed writes "Adj Gross Margin: 75.0% (Est. 75%)". That estimate is
+ * bought from a consensus vendor; no free source carries a consensus gross
+ * margin, EBITDA or free cash flow, and even revenue and EPS are dropped as soon
+ * as the feed rolls to the next quarter. What we always have instead, for every
+ * metric a company chose to guide, is the range the company itself put its name
+ * to a quarter ago — the number management was actually measured against. So
+ * the tile shows whichever exists and says which of the two it is.
+ *
+ * The colour is the same three-state rule as everywhere else: inside the range
+ * is IN LINE and reads yellow, not red.
+ */
+interface TileRef {
+  low: number | null; high: number | null; unit: string;
+  basis: 'gaap' | 'adjusted' | null;
+  source: 'guide' | 'estimate';
+  verdict: 'above' | 'below' | 'in-line' | null;
+  actual: number | null;
+}
+const REF_COLOR: Record<string, string> = {
+  above: 'var(--mc-bullish)', below: 'var(--mc-bearish)', 'in-line': IN_LINE_COLOR,
+};
+const REF_GLYPH: Record<string, string> = { above: '\u25B2', below: '\u25BC', 'in-line': '\u2248' };
+
+function refFor(r: UsGradedRow, ...keys: string[]): TileRef | null {
+  const refs = (r as any).tile_refs as Record<string, TileRef> | undefined;
+  if (!refs) return null;
+  for (const k of keys) {
+    const v = refs[k];
+    if (v && (v.low != null || v.high != null)) return v;
+  }
+  return null;
+}
+
+/** "(Est. $92.2B) \u25B2" / "(Guide 74.9\u201375.1%) \u2248" — or nothing. */
+function RefSub({ ref: rf }: { ref: TileRef | null }) {
+  if (!rf) return null;
+  const one = (v: number): string => {
+    if (rf.unit === 'pct') return `${Math.round(v * 10) / 10}%`;
+    if (rf.unit === 'usd_share') return `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
+    const a = Math.abs(v);
+    const body = a >= 1e9 ? `$${(a / 1e9).toFixed(2)}B` : a >= 1e6 ? `$${(a / 1e6).toFixed(0)}M` : `$${Math.round(a).toLocaleString()}`;
+    return v < 0 ? `-${body}` : body;
+  };
+  const lo = rf.low, hi = rf.high;
+  const body = lo == null ? one(hi as number) : hi == null || hi === lo ? one(lo) : `${one(lo)}\u2013${one(hi)}`;
+  const word = rf.source === 'estimate' ? 'Est.' : 'Guide';
+  const c = rf.verdict ? REF_COLOR[rf.verdict] : 'var(--mc-text-4)';
+  return (
+    <span style={{ color: 'var(--mc-text-4)' }}>
+      {' \u00b7 '}{word} {body}
+      {rf.verdict && <b style={{ color: c }}>{' '}{REF_GLYPH[rf.verdict]}</b>}
+    </span>
+  );
+}
+
 function SecondaryTiles({ r }: { r: UsGradedRow }) {
   const metrics: KeyMetric[] = ((r as any).key_metrics || []) as KeyMetric[];
   const by = new Map<KeyMetricId, KeyMetric>();
@@ -1361,13 +1442,22 @@ function SecondaryTiles({ r }: { r: UsGradedRow }) {
     tiles.push(
       <Tile key="fcf" label="FREE CASH FLOW" value={fmtKeyMetric(relFcf)}
         color={relFcf.value >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
-        sub={relFcf.yoy_pct != null ? `${fmtPct(relFcf.yoy_pct)} YoY · as reported` : 'as reported'} />,
+        sub={<>{relFcf.yoy_pct != null ? `${fmtPct(relFcf.yoy_pct)} YoY · as reported` : 'as reported'}
+          <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />,
     );
   } else if (fcf != null) {
     tiles.push(
       <Tile key="fcf" label="FREE CASH FLOW" value={fmtUsd(fcf)}
         color={fcf >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
-        sub={fcfY != null ? `${fmtPct(fcfY)} YoY · CFO − capex` : fcfPrev != null ? `was ${fmtUsd(fcfPrev)}` : 'CFO − capex'} />,
+        sub={<>{fcfY != null
+            // A four-figure percentage says only that last year's base was
+            // near zero — Dollar Tree's "+4,228%" is $15.6M going to $675M.
+            // The two figures say it better than the ratio does.
+            ? (Math.abs(fcfY) >= 300 && fcfPrev != null
+                ? `${fmtUsd(fcfPrev)} → ${fmtUsd(fcf as number)} · low base`
+                : `${fmtPct(fcfY)} YoY · CFO − capex`)
+            : fcfPrev != null ? `was ${fmtUsd(fcfPrev)}` : 'CFO − capex'}
+          <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />,
     );
   }
 
@@ -1378,14 +1468,26 @@ function SecondaryTiles({ r }: { r: UsGradedRow }) {
     ['operating_margin_adj', 'ADJ. OPM'], ['gross_margin_adj', 'ADJ. GROSS MARGIN'],
     ['customers_100k', 'CUSTOMERS >$100K'],
   ];
+  // Which guided line, if any, each reported metric should be measured against.
+  // Only pairings that are the SAME measure on the SAME basis — an adjusted
+  // gross margin against an adjusted gross-margin guide, never against a GAAP
+  // one and never against a different line.
+  const REF_KEYS: Partial<Record<KeyMetricId, string[]>> = {
+    adj_ebitda: ['ebitda:adjusted'],
+    operating_margin_adj: ['operating_margin:adjusted'],
+    gross_margin_adj: ['gross_margin:adjusted'],
+    comparable_sales: ['comparable_sales'],
+    subscription_revenue: ['subscription_revenue'],
+  };
   for (const [id, label] of order) {
     if (tiles.length >= 4) break;
     const m = by.get(id);
     if (!m) continue;
+    const rf = refFor(r, ...(REF_KEYS[id] || []));
     tiles.push(
       <Tile key={id} label={label} value={fmtKeyMetric(m)}
         color={m.yoy_pct == null ? undefined : m.yoy_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
-        sub={m.yoy_pct != null ? `${fmtPct(m.yoy_pct)} YoY` : 'reported'} />,
+        sub={<>{m.yoy_pct != null ? `${fmtPct(m.yoy_pct)} YoY` : 'reported'}<RefSub ref={rf} /></>} />,
     );
   }
   if (!tiles.length) return null;
@@ -1398,7 +1500,6 @@ function SecondaryTiles({ r }: { r: UsGradedRow }) {
 
 // ── guide vs. the street: a bracketing range is NOT a miss ─────────────────
 /** The neutral third state. Same yellow the MIXED tier and the setup bar use. */
-const IN_LINE_COLOR = '#FACC15';
 
 interface GuideStance {
   stance: 'above' | 'in-line' | 'below';
@@ -2444,6 +2545,22 @@ function DetailPanel({ r }: { r: UsRowX }) {
               ? <span style={{ color: 'var(--mc-text-4)' }}> (share of free cash flow n/m — FCF was not positive)</span>
               : null)}
           .
+        </Bul>,
+      );
+    }
+    // Free cash flow PER SHARE. The headline figure can rise while the owner's
+    // claim on it falls, because the share count rose faster — which is the
+    // whole point of tracking dilution beside stock comp.
+    const fcfPs = (fcfNow != null && num(ctx.diluted_shares_m) != null && (ctx.diluted_shares_m as number) > 0)
+      ? fcfNow / (ctx.diluted_shares_m as number) : null;
+    if (fcfPs != null) {
+      ctxBullets.push(
+        <Bul key="fcfps">
+          Free cash flow of <b style={{ color: fcfPs >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+            ${Math.abs(fcfPs).toFixed(2)}</b> per diluted share this quarter
+          {num(ctx.diluted_shares_yoy_pct) != null && (ctx.diluted_shares_yoy_pct as number) > 0.5
+            ? <span style={{ color: 'var(--mc-text-4)' }}> — on a share count {fmtPct(ctx.diluted_shares_yoy_pct, 1)} higher than a year ago, so the per-share claim grows more slowly than the total.</span>
+            : '.'}
         </Bul>,
       );
     }

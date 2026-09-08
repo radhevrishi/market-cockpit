@@ -43,7 +43,7 @@ import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
-  quarterSeries, balanceContext, assignSetupScores,
+  quarterSeries, balanceContext, assignSetupScores, rule40From, roceFrom,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
@@ -296,6 +296,93 @@ function perShareSplitFactor(current: GuidanceFigure[], prior: GuideVsActual[]):
     }
   }
   return null;
+}
+
+/**
+ * The benchmark to print beside a tile: what the number was expected to be.
+ *
+ * An earnings feed writes "Adj Gross Margin: 75.0% (Est. 75%)". That estimate is
+ * bought from a consensus vendor, and no free source carries a consensus gross
+ * margin, EBITDA or free cash flow — only revenue and EPS, and even those only
+ * until the feed rolls to the next quarter (Yahoo still holds NetApp's July
+ * quarter and has already dropped NVIDIA's).
+ *
+ * What IS always available, for every metric a company chose to guide, is the
+ * range the company itself put its name to a quarter ago. That is a better
+ * benchmark than consensus, not a worse one: it is the number management was
+ * measured against. So each tile gets whichever exists — the street's estimate
+ * where the feed still points at the reported quarter, the filer's own guide
+ * otherwise — and is explicit about which of the two it is showing.
+ */
+interface TileRef {
+  low: number | null; high: number | null; unit: string;
+  basis: 'gaap' | 'adjusted' | null;
+  source: 'guide' | 'estimate';
+  /** in-line when the actual lands inside the range; a point range gets ±0.5%. */
+  verdict: 'above' | 'below' | 'in-line' | null;
+  actual: number | null;
+}
+function tileVerdict(low: number | null, high: number | null, actual: number | null): TileRef['verdict'] {
+  if (actual == null || low == null && high == null) return null;
+  const lo = Math.min(low ?? high!, high ?? low!);
+  const hi = Math.max(low ?? high!, high ?? low!);
+  if (lo === hi) {
+    const tol = Math.abs(lo) * 0.005;
+    return actual > hi + tol ? 'above' : actual < lo - tol ? 'below' : 'in-line';
+  }
+  return actual > hi ? 'above' : actual < lo ? 'below' : 'in-line';
+}
+
+
+/**
+ * Build the per-tile benchmarks. Keyed by the metric the tile shows, so the
+ * card can look one up without knowing where it came from.
+ */
+function tileRefs(
+  forQuarter: Array<GuideVsActual & { actual: number | null }>,
+  streetRevenue: { est: number | null; actual: number | null },
+): Record<string, TileRef> {
+  const out: Record<string, TileRef> = {};
+  for (const g of forQuarter) {
+    // One entry per metric; a GAAP guide is the honest benchmark for a GAAP
+    // tile and an adjusted guide for an adjusted one, so both are kept under
+    // distinct keys rather than one overwriting the other.
+    const key = g.basis === 'adjusted' ? `${g.metric}:adjusted` : g.metric;
+    if (out[key]) continue;
+    out[key] = {
+      low: round6(g.guide_low), high: round6(g.guide_high), unit: g.unit,
+      basis: g.basis, source: 'guide',
+      actual: round6(g.actual), verdict: tileVerdict(g.guide_low, g.guide_high, g.actual),
+    };
+  }
+  // The street's revenue number, but only while the feed still points at the
+  // quarter that was reported. It is a point estimate, so the same ±0.5% band
+  // a point guide gets applies.
+  if (streetRevenue.est != null && streetRevenue.actual != null) {
+    out['revenue:street'] = {
+      low: round6(streetRevenue.est), high: round6(streetRevenue.est), unit: 'usd',
+      basis: null, source: 'estimate',
+      actual: round6(streetRevenue.actual),
+      verdict: tileVerdict(streetRevenue.est, streetRevenue.est, streetRevenue.actual),
+    };
+  }
+  return out;
+}
+
+/**
+ * The street's revenue estimate for the quarter just reported — matched by the
+ * date the estimate's period ends, never by which slot the feed calls "0q".
+ * After a company reports, the feed rolls that slot forward to the NEXT quarter;
+ * taking it regardless would print next quarter's consensus beside this
+ * quarter's revenue. So it is used only when its end date really is this
+ * quarter's, and is simply absent for every filer whose feed has moved on.
+ */
+function streetRevenueFor(fwd: ForwardEstimate[], periodEnd: string | null): number | null {
+  if (!periodEnd || !fwd.length) return null;
+  const hits = fwd.filter((f) => f.end_date && f.revenue != null
+    && Math.abs(daysBetween(periodEnd, f.end_date)) <= 20);
+  if (hits.length !== 1) return null;              // ambiguous or absent → nothing
+  return hits[0].revenue;
 }
 
 /** A guidance item plus the verdict, ready for the card. */
@@ -715,7 +802,26 @@ export async function GET(req: Request) {
         fiscal_q: g.fiscal_q ?? fq.q ?? null,
         fiscal_fy: g.fiscal_fy ?? fq.fy ?? null,
       });
-      (row as any).key_metrics = g.metrics;
+      // A company-reported free-cash-flow figure that EXCEEDS the same quarter's
+      // operating cash flow cannot be that quarter's free cash flow — free cash
+      // flow is CFO less capex, so it is bounded above by CFO. Analog Devices'
+      // card carried $4.94B beside a CFO of $1.6B: the release's figure is a
+      // trailing-twelve-month or year-to-date number, and printing it under a
+      // quarterly label is simply wrong. Drop it and let our own CFO − capex
+      // stand.
+      (row as any).key_metrics = (g.metrics || []).filter((m: KeyMetric) => {
+        if (m.id !== 'free_cash_flow') return true;
+        const cfo = p.fundamentals.cfo;
+        if (cfo == null || !Number.isFinite(m.value)) return true;
+        // Free cash flow is operating cash flow less capital expenditure, so it
+        // is bounded above by operating cash flow — whatever the sign of the
+        // latter. GitLab's release states an ADJUSTED free cash flow of $9.8m
+        // against a quarter whose operating cash flow was negative; that is a
+        // non-GAAP construction, not this quarter's free cash flow, and putting
+        // it under a "FREE CASH FLOW" tile makes the company look cash-positive
+        // when it was not.
+        return !(m.value > cfo + Math.abs(cfo) * 0.05);
+      });
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
 
@@ -727,6 +833,11 @@ export async function GET(req: Request) {
       if (ser) (row as any).series = ser;
       const ctx = balanceContext(p.facts, p.fundamentals.q_end);
       if (ctx) (row as any).context = ctx;
+      // The owner's Rule of 40 (revenue growth % + FCF margin %) and ROCE, both
+      // on a trailing-twelve-month basis so neither is decided by one quarter's
+      // working-capital timing.
+      (row as any).rule40 = rule40From(ser, row.sales_yoy_pct, row.revenue_curr_musd, row.fcf_curr_musd);
+      (row as any).roce = roceFrom(ser, ctx);
       const pg = priors[pi] || null;
       if (pg && (pg.for_quarter.length || pg.for_year.length)) {
         const gpNow = ser ? ser.gross_profit[ser.gross_profit.length - 1] : null;
@@ -745,6 +856,10 @@ export async function GET(req: Request) {
           for_quarter: withActual(pg.for_quarter, p.fundamentals, extra, !!splitK),
           for_year: withActual(pg.for_year, p.fundamentals, extra, !!splitK),
         };
+        (row as any).tile_refs = tileRefs(
+          (row as any).vs_guide.for_quarter,
+          { est: streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end), actual: p.fundamentals.revenue },
+        );
         const chg = guideChange(g.figures || [], pg.for_year);
         if (chg.length) (row as any).guide_change = chg;
         // A guidance LABEL is read from prose ("we now expect…"); a guidance
@@ -981,6 +1096,8 @@ export async function GET(req: Request) {
           // showing rather than implying it is current.
           const ctx0 = balanceContext(facts0, null);
           if (ctx0 && ctx0.as_of) (row as any).context = ctx0;
+          (row as any).rule40 = rule40From((row as any).series ?? null, row.sales_yoy_pct, row.revenue_curr_musd, row.fcf_curr_musd);
+          (row as any).roce = roceFrom((row as any).series ?? null, ctx0);
         }
         // Own-guide comparison works on a PRELIM row too: the guide came from
         // last quarter's release and the actuals came from this quarter's.
@@ -1002,6 +1119,11 @@ export async function GET(req: Request) {
                 for_quarter: withActual(pg.for_quarter, fund, extra, !!splitK),
                 for_year: withActual(pg.for_year, fund, extra, !!splitK),
               };
+              (row as any).tile_refs = tileRefs(
+                (row as any).vs_guide.for_quarter,
+                { est: streetRevenueFor(await yahooForwardEstimates(f.ticker!).catch(() => []), qEnd),
+                  actual: pr?.revenue ?? null },
+              );
               const chg = guideChange(gPre?.figures || [], pg.for_year);
               if (chg.length) (row as any).guide_change = chg;
             }

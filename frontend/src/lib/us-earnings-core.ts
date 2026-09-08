@@ -1562,6 +1562,12 @@ export interface UsBalanceContext {
   diluted_shares_m: number | null;      // weighted-average diluted shares this quarter, millions
   diluted_shares_yoy_pct: number | null;// negative = net buyback shrinking the count
   as_of: string | null;                 // the instant date the balance-sheet figures came from
+  /** Total assets and total current liabilities — the two halves of capital
+   *  employed, which is what ROCE is measured against. Null when the filer does
+   *  not present a classified balance sheet (banks and many REITs do not, and
+   *  ROCE has no accepted meaning for them anyway). */
+  total_assets_musd: number | null;
+  current_liabilities_musd: number | null;
 }
 
 // Ladders. Cash first, because the "restricted cash" roll-up is a superset and
@@ -1620,6 +1626,7 @@ export function balanceContext(facts: any, periodEnd: string | null | undefined)
     cash_musd: null, cash_incl_st_inv: false, debt_musd: null,
     sbc_musd: null, buyback_musd: null, dividends_musd: null,
     diluted_shares_m: null, diluted_shares_yoy_pct: null, as_of: null,
+    total_assets_musd: null, current_liabilities_musd: null,
   };
 
   const instCache = new Map<string, InstFact[]>();
@@ -1628,7 +1635,8 @@ export function balanceContext(facts: any, periodEnd: string | null | undefined)
     return instCache.get(c)!;
   };
   const balanceTags = [...CASH_TAGS, ...ST_INVESTMENT_TAGS, DEBT_CURRENT_TOTAL,
-    ...DEBT_CURRENT_PARTS, ...DEBT_SHORT_TERM_BORROWINGS, ...DEBT_NONCURRENT_TAGS, DEBT_TOTAL_TAG];
+    ...DEBT_CURRENT_PARTS, ...DEBT_SHORT_TERM_BORROWINGS, ...DEBT_NONCURRENT_TAGS, DEBT_TOTAL_TAG,
+    'Assets', 'LiabilitiesCurrent'];
 
   // ── the balance-sheet date this filer used for this quarter ──
   // With no quarter named, "the balance sheet" means the LATEST one on file —
@@ -1719,6 +1727,14 @@ export function balanceContext(facts: any, periodEnd: string | null | undefined)
   // "the latest" still gets that quarter's stock comp and buybacks instead of
   // nulls.
   const flowEnd: string | null = asOf || periodAnchor || null;
+
+  // ── capital employed: total assets less current liabilities ──
+  {
+    const ta = atInstant('Assets');
+    const cl = atInstant('LiabilitiesCurrent');
+    if (ta != null) out.total_assets_musd = Math.round(ta / 1e4) / 100;
+    if (cl != null) out.current_liabilities_musd = Math.round(cl / 1e4) / 100;
+  }
 
   // ── flows: SBC, buybacks, dividends (year-to-date → this quarter) ──
   const serCache = new Map<string, DurFact[]>();
@@ -2340,10 +2356,25 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   if (prelimS != null && prelimS >= 5) methodology_tags.push('consensus beat');
 
   // Caveats.
-  if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push('optical eps');
-  if (epsY != null && epsY >= 200 && !caveat_tags.includes('optical eps')) caveat_tags.push('optical eps');
+  // "OPTICAL EPS" NAMED, NOT JUST FLAGGED.
+  //
+  // The tag was right — EPS running three times revenue growth is rarely
+  // operating leverage — but "optical eps" told a reader nothing about WHY.
+  // Where the company published an adjusted EPS, the gap between the two IS
+  // the one-off, per share, stated by the company itself: Abercrombie's GAAP
+  // $4.17 against an adjusted $4.17 is clean, while Dollar Tree's GAAP $2.70
+  // carries $1.31 of tariff refunds. So the caveat carries the number when the
+  // number is knowable, and stays generic only when it is not.
+  const adjNowV = (input.adj_eps ?? null);
+  const gaapVsAdj = (f.eps != null && adjNowV != null) ? f.eps - adjNowV : null;
+  const oneOffTag = (gaapVsAdj != null && Math.abs(gaapVsAdj) >= 0.02 && f.eps != null && Math.abs(f.eps) > 0.05
+      && Math.abs(gaapVsAdj) >= Math.abs(f.eps) * 0.15)
+    ? `gaap ${gaapVsAdj > 0 ? 'above' : 'below'} adjusted by $${Math.abs(gaapVsAdj).toFixed(2)}/sh`
+    : 'optical eps';
+  if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push(oneOffTag);
+  if (epsY != null && epsY >= 200 && !caveat_tags.includes(oneOffTag)) caveat_tags.push(oneOffTag);
   if (f.eps_prev != null && f.eps != null && Math.abs(f.eps_prev) < 0.05 && Math.abs(f.eps) > 0.2
-      && !caveat_tags.includes('optical eps')) caveat_tags.push('optical eps');
+      && !caveat_tags.includes(oneOffTag)) caveat_tags.push('low base · prior-year EPS near zero');
   // A PAT that doubles while operating profit barely moves is below-the-line
   // (tax / other income), not operating performance.
   if (patY != null && patY >= 100 && f.operating_income != null && f.operating_income_prev != null && f.operating_income_prev > 0) {
@@ -2437,6 +2468,53 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     for (const c of mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // HARD QUALITY CAPS — the caveats have to cost something.
+  //
+  // Every warning below this engine raises was, until now, narrative only: it
+  // printed a red chip and the composite score carried on regardless. So
+  // Movado reached BLOCKBUSTER — the tier the page defines as "explosive
+  // growth, CLEAN QUALITY, MARKET CONFIRMING" — on a quarter with NEGATIVE
+  // operating cash flow, negative free cash flow and a negative price
+  // reaction. Everpure reached STRONG on −$136m of operating cash flow against
+  // $74m of reported profit. A grade that a reader cannot rely on to mean what
+  // it says is worse than no grade.
+  //
+  // These are ceilings, never promotions: a row can always be graded lower on
+  // its own merits, and none of them invents a number. Each is a fact the
+  // filing itself establishes.
+  const criticals = caveat_tags.filter((t) =>
+    t === 'low quality' || t === 'ocf divergence' || t === 'optical eps' || t.startsWith('gaap ')).length;
+  const capTier = (max: EarningsTier, why: string) => {
+    const order: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
+    if (order.indexOf(tier) < order.indexOf(max)) {
+      tier = max;
+      if (!caveat_tags.includes(why)) caveat_tags.push(why);
+    }
+  };
+
+  // 1. Profit the business did not collect. Reported earnings with cash going
+  //    the other way is the oldest warning in accounting, and it is not a
+  //    footnote on a "clean quality" print.
+  if (f.cfo != null && f.cfo < 0 && niC != null && niC > 0) {
+    capTier('MIXED', 'profit without operating cash');
+  } else if (fcfC != null && fcfC < 0 && niC != null && niC > 0) {
+    // Free cash flow can be negative for a genuinely investing business, so
+    // this is one step, not two.
+    capTier('STRONG', 'free cash flow negative on a reported profit');
+  }
+
+  // 2. "Market confirming" has to mean the market confirmed it. A print the
+  //    tape rejected on the day cannot be the top tier by definition.
+  if (p?.d1_pct != null && p.d1_pct <= -5) capTier('STRONG', 'market rejected the print');
+
+  // 3. A stage-4 downtrend is not a setup, whatever the quarter looked like.
+  if (stage === 4) capTier('MIXED', 'stage 4 downtrend');
+
+  // 4. Two or more critical quality flags at once — a one-off-driven EPS AND
+  //    cash that does not back it, say — is not one caveat, it is a pattern.
+  if (criticals >= 2) capTier('STRONG', 'multiple quality flags');
+
   // US thin-float gate — dollar volume, not ₹Cr. Missing ADDV is NOT punished.
   const addv = p?.addv_musd ?? null;
   const thinFloat = addv != null && addv < 2;      // < $2M traded/day
@@ -2465,7 +2543,6 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     : Math.round(salesS * 0.25 + surS * 0.50 + volS * 0.25);
   const pead_score = Math.max(0, Math.min(100, peadRaw));
 
-  const criticals = caveat_tags.filter((t) => t === 'low quality' || t === 'ocf divergence' || t === 'optical eps').length;
   const is_elite = !!(
     !stillLossMaking && !turnaroundBase
     && niC != null && niC > 0 && f.eps != null && f.eps > 0
@@ -2523,7 +2600,14 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     if (!qe || qe.length < 4 || p?.price == null) return null;
     const sum = qe.reduce((s, x) => s + (Number.isFinite(x) ? x : 0), 0);
     if (!(sum > 0)) return null;
-    return Math.round((p.price / sum) * 10) / 10;
+    const v = p.price / sum;
+    // A P/E off near-zero trailing earnings is arithmetic, not a valuation.
+    // CrowdStrike earned $0.01 of GAAP EPS in the quarter and the card read
+    // "P/E 1,299.5", a number no one can act on and which crowds out the
+    // measures that do work for a company like that (EV/revenue, FCF yield,
+    // ARR growth). Above 300x it is reported as not meaningful.
+    if (!Number.isFinite(v) || v > 300) return null;
+    return Math.round(v * 10) / 10;
   })();
   void ttmEps;
 
@@ -2944,6 +3028,119 @@ export function assignSetupScores(rows: any[]): void {
     ? (pes.length % 2 ? pes[(pes.length - 1) / 2] : (pes[pes.length / 2 - 1] + pes[pes.length / 2]) / 2)
     : null;
   for (const r of rows) r.setup = setupScore(r, median);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RULE OF 40 AND ROCE
+//
+// The Rule of 40 is the owner's own screen: revenue growth % + free-cash-flow
+// margin %. A company at 10% growth and 70% FCF margin scores 80; so does one
+// at 70% growth burning 30%. Forty is the line.
+//
+// Both halves are measured on a TRAILING TWELVE MONTHS basis, not on one
+// quarter. A single quarter's FCF margin swings on the timing of a tax payment
+// or an inventory build — Dollar Tree's quarterly FCF grew 4,228% against a
+// near-zero base — and a rule read off that number would rank companies by
+// their working-capital calendar. Four quarters cancels the seasonality out.
+// The quarter's own YoY growth is used only when there is not yet a full year
+// of history, and the row says which basis it used.
+//
+// ROCE is EBIT ÷ capital employed (total assets − current liabilities), with
+// EBIT on the same trailing-twelve-month basis. It is deliberately NOT computed
+// for a filer with no classified balance sheet: a bank's "current liabilities"
+// are its deposits, and the ratio that comes out of that arithmetic is not a
+// return on capital employed by any definition.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface Rule40 {
+  score: number | null;          // growth% + fcf margin%
+  growth_pct: number | null;
+  fcf_margin_pct: number | null;
+  basis: 'ttm' | 'quarter';
+  passes: boolean | null;        // score >= 40
+}
+
+/** Sum the last `n` finite values of a series, or null if fewer than n exist. */
+function tailSum(arr: Array<number | null> | null | undefined, n: number): number | null {
+  if (!Array.isArray(arr)) return null;
+  const v = arr.slice(-n);
+  if (v.length < n) return null;
+  let s = 0;
+  for (const x of v) { if (typeof x !== 'number' || !Number.isFinite(x)) return null; s += x; }
+  return s;
+}
+
+export function rule40From(
+  series: UsQuarterSeries | null | undefined,
+  quarterGrowthPct: number | null,
+  quarterRevenueMusd: number | null,
+  quarterFcfMusd: number | null,
+): Rule40 {
+  const none: Rule40 = { score: null, growth_pct: null, fcf_margin_pct: null, basis: 'quarter', passes: null };
+  if (series) {
+    const rev4 = tailSum(series.revenue, 4);
+    const fcf4 = tailSum(series.fcf, 4);
+    // The prior four quarters, for a like-for-like growth rate.
+    const prior = series.revenue.length >= 8
+      ? tailSum(series.revenue.slice(0, -4), 4) : null;
+    if (rev4 != null && rev4 > 0 && fcf4 != null) {
+      const margin = (fcf4 / rev4) * 100;
+      const growth = (prior != null && prior > 0) ? ((rev4 - prior) / prior) * 100 : quarterGrowthPct;
+      if (growth != null && Number.isFinite(growth)) {
+        const score = growth + margin;
+        return {
+          score: Math.round(score * 10) / 10,
+          growth_pct: Math.round(growth * 10) / 10,
+          fcf_margin_pct: Math.round(margin * 10) / 10,
+          basis: 'ttm', passes: score >= 40,
+        };
+      }
+    }
+  }
+  // Fall back to the quarter, and say so.
+  if (quarterGrowthPct != null && quarterRevenueMusd != null && quarterRevenueMusd > 0 && quarterFcfMusd != null) {
+    const margin = (quarterFcfMusd / quarterRevenueMusd) * 100;
+    const score = quarterGrowthPct + margin;
+    return {
+      score: Math.round(score * 10) / 10,
+      growth_pct: Math.round(quarterGrowthPct * 10) / 10,
+      fcf_margin_pct: Math.round(margin * 10) / 10,
+      basis: 'quarter', passes: score >= 40,
+    };
+  }
+  return none;
+}
+
+export interface Roce {
+  pct: number | null;
+  ebit_ttm_musd: number | null;
+  capital_employed_musd: number | null;
+  basis: 'ttm' | null;
+  /** Why it is null, when it is. */
+  unavailable?: string;
+}
+
+export function roceFrom(series: UsQuarterSeries | null | undefined, ctx: UsBalanceContext | null | undefined): Roce {
+  if (!series || !ctx) return { pct: null, ebit_ttm_musd: null, capital_employed_musd: null, basis: null, unavailable: 'no history or balance sheet' };
+  const ebit = tailSum(series.operating_income, 4);
+  if (ebit == null) return { pct: null, ebit_ttm_musd: null, capital_employed_musd: null, basis: null, unavailable: 'no four full quarters of operating income' };
+  const ta = ctx.total_assets_musd, cl = ctx.current_liabilities_musd;
+  if (ta == null || cl == null) {
+    return { pct: null, ebit_ttm_musd: Math.round(ebit * 100) / 100, capital_employed_musd: null, basis: null,
+      unavailable: 'the filer does not present a classified balance sheet' };
+  }
+  const cap = ta - cl;
+  if (!(cap > 0)) {
+    return { pct: null, ebit_ttm_musd: Math.round(ebit * 100) / 100, capital_employed_musd: Math.round(cap * 100) / 100, basis: null,
+      unavailable: 'capital employed is zero or negative' };
+  }
+  return {
+    pct: Math.round((ebit / cap) * 1000) / 10,
+    ebit_ttm_musd: Math.round(ebit * 100) / 100,
+    capital_employed_musd: Math.round(cap * 100) / 100,
+    basis: 'ttm',
+  };
 }
 
 export function assignRsRatings(
