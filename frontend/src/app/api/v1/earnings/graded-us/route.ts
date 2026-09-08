@@ -38,6 +38,7 @@ import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml } from '@/lib/us-pr-financials';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
+import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear,
@@ -331,7 +332,7 @@ export async function GET(req: Request) {
       // has no release to read.
       pooled(prepared, 4, (p) => (p.f.form === '8-K' && p.f.accession)
         ? guidanceFromFiling(p.f.cikNum, p.f.accession, p.f.filing_url)
-        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [] })),
+        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [] })),
       // The street's number for the period being guided — the "(Est. $5.54B)"
       // an earnings feed prints beside a raised outlook.
       pooled(prepared, 6, (p) => yahooForwardEstimates(p.f.ticker!)),
@@ -341,7 +342,7 @@ export async function GET(req: Request) {
     for (let pi = 0; pi < prepared.length; pi++) {
       const p = prepared[pi];
       const sRows: EpsHistoryRow[] = surprises[pi] || [];
-      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [] };
+      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [] };
       // Yahoo keys the row by fiscal-quarter END; take the row whose quarter is
       // within 45 days of the quarter we graded (52/53-week calendars shift it).
       const sLatest = sRows.find((r) => r.quarter && p.fundamentals.q_end && Math.abs(daysBetween(r.quarter, p.fundamentals.q_end)) <= 45 && r.eps_actual != null) || null;
@@ -375,6 +376,7 @@ export async function GET(req: Request) {
       (row as any).guidance_snippets = g.snippets;
       (row as any).guidance_url = g.source_url;
       (row as any).guidance_figures = withEstimates(g.figures, forwards[pi] || []);
+      (row as any).key_metrics = g.metrics;
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
       // CFO/PAT is a funding artefact for banks, insurers and REITs — flag the
@@ -456,7 +458,7 @@ export async function GET(req: Request) {
           // GAAP diluted EPS from the release when it validated; the street
           // (adjusted) figure stays on `eps_adj`, never mixed into the YoY tile.
           eps: pr?.eps ?? null, eps_prev: pr?.eps_prev ?? null, eps_derived: false,
-          cfo: null, cfo_prev: null, tags: {},
+          cfo: null, cfo_prev: null, capex: null, capex_prev: null, tags: {},
           quarters_revenue: null, quarters_eps: null, quarters_opm: null,
         };
         const row = gradeUsRow({
@@ -491,6 +493,7 @@ export async function GET(req: Request) {
             (row as any).guidance = g.label; (row as any).guidance_score = g.score;
             (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
             (row as any).guidance_figures = withEstimates(g.figures, await yahooForwardEstimates(f.ticker!).catch(() => []));
+            (row as any).key_metrics = g.metrics;
             if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
             if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
           }

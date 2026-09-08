@@ -102,9 +102,21 @@ export const US_TAGS: Record<string, string[]> = {
     'NetCashProvidedByUsedInOperatingActivities',
     'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations',
   ],
+  // Capital expenditure, so the card can show FREE cash flow — the number a
+  // capital-intensive print lives or dies on, and the one every earnings feed
+  // prints next to revenue. Tag names vary by filer; coverage picks the one
+  // this company actually uses.
+  capex: [
+    'PaymentsToAcquirePropertyPlantAndEquipment',
+    'PaymentsToAcquireProductiveAssets',
+    'PaymentsToAcquirePropertyAndEquipment',
+    'PaymentsForCapitalImprovements',
+    'PaymentsToAcquireMachineryAndEquipment',
+    'PaymentsToAcquireOtherPropertyPlantAndEquipment',
+  ],
 };
 
-export type UsFactKind = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'diluted_shares';
+export type UsFactKind = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'diluted_shares' | 'capex';
 
 /** Forms whose facts we trust. Excludes 8-K exhibits (untagged/preliminary). */
 const TRUSTED_FORMS = new Set(['10-Q', '10-K', '10-Q/A', '10-K/A', '20-F', '40-F']);
@@ -288,6 +300,9 @@ export interface UsFundamentals {
    *  of the reported figure; shown with ≈ in the UI. */
   eps_derived?: boolean;
   cfo: number | null; cfo_prev: number | null;
+  /** Capital expenditure for the quarter (a positive outflow), de-cumulated
+   *  from the year-to-date cash-flow statement like CFO. */
+  capex: number | null; capex_prev: number | null;
   tags: Partial<Record<UsFactKind, string | null>>;
   quarters_revenue: number[] | null;   // last 4 discrete quarters, oldest → newest
   quarters_eps: number[] | null;
@@ -306,7 +321,7 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     revenue: null, revenue_prev: null,
     operating_income: null, operating_income_prev: null,
     net_income: null, net_income_prev: null,
-    eps: null, eps_prev: null, cfo: null, cfo_prev: null,
+    eps: null, eps_prev: null, cfo: null, cfo_prev: null, capex: null, capex_prev: null,
     tags: {}, quarters_revenue: null, quarters_eps: null, quarters_opm: null,
   };
   if (!facts?.facts?.['us-gaap']) return { ...empty, error: 'no us-gaap facts' };
@@ -320,10 +335,11 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
   };
 
   // Dollar lines first, in the plain way.
-  for (const kind of ['operating_income', 'net_income', 'cfo'] as UsFactKind[]) {
+  for (const kind of ['operating_income', 'net_income', 'cfo', 'capex'] as UsFactKind[]) {
     const c = pickConcept(facts, kind);
     tags[kind] = c;
-    qs[kind] = c ? quarterize(ser(c), kind === 'cfo') : {};
+    // Cash-flow lines are year-to-date in every filing; de-cumulate them.
+    qs[kind] = c ? quarterize(ser(c), kind === 'cfo' || kind === 'capex') : {};
   }
   // Ratios / averages: never synthesize Q4 by subtraction.
   for (const kind of ['eps', 'diluted_shares'] as UsFactKind[]) {
@@ -487,6 +503,7 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     eps: epsAt(cur, true), eps_prev: epsAt(prev),
     eps_derived: epsDerived,
     cfo: at('cfo', cur), cfo_prev: at('cfo', prev),
+    capex: at('capex', cur), capex_prev: at('capex', prev),
     quarters_revenue: last4('revenue', 1e6), quarters_eps: last4Eps(), quarters_opm: opmSeries(),
   };
 }
@@ -566,6 +583,11 @@ export interface UsGradedRow {
   eps_prev: number | null;
   eps_derived?: boolean;
   cfo_curr_musd: number | null;
+  /** Free cash flow = CFO − capex, both from the filing's own cash-flow
+   *  statement. Null when the filer does not tag capital expenditure. */
+  fcf_curr_musd: number | null;
+  fcf_prev_musd: number | null;
+  fcf_yoy_pct: number | null;
 
   sales_yoy_pct: number | null;
   net_profit_yoy_pct: number | null;
@@ -731,6 +753,8 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const stage = p?.stage ?? null;
   const pct52 = p?.pct_from_52w_high ?? null;
   const cfoPat = (f.cfo != null && niC != null && niC > 0) ? f.cfo / niC : null;
+  const fcfC = (f.cfo != null && f.capex != null) ? f.cfo - Math.abs(f.capex) : null;
+  const fcfP = (f.cfo_prev != null && f.capex_prev != null) ? f.cfo_prev - Math.abs(f.capex_prev) : null;
 
   const methodology_tags: string[] = [];
   const caveat_tags: string[] = [];
@@ -931,6 +955,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     net_income_prev_musd: niP != null ? Math.round(niP / 1e4) / 100 : null,
     eps_curr: f.eps, eps_prev: f.eps_prev, eps_derived: !!f.eps_derived,
     cfo_curr_musd: f.cfo != null ? Math.round(f.cfo / 1e4) / 100 : null,
+    fcf_curr_musd: fcfC != null ? Math.round(fcfC / 1e4) / 100 : null,
+    fcf_prev_musd: fcfP != null ? Math.round(fcfP / 1e4) / 100 : null,
+    fcf_yoy_pct: yoyPct(fcfC, fcfP),
     sales_yoy_pct: salesY, net_profit_yoy_pct: patY, eps_yoy_pct: epsY,
     opm_pct: opm != null ? Math.round(opm * 100) / 100 : null,
     opm_prev_pct: opmPrev != null ? Math.round(opmPrev * 100) / 100 : null,

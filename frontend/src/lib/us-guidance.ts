@@ -18,6 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { guidanceFiguresFromText, type GuidanceFigure } from './us-guidance-figures';
+import { keyMetricsFromText, type KeyMetric } from './us-key-metrics';
 
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 
@@ -37,6 +38,9 @@ export interface Guidance {
   fiscal_fy: number | null;
   /** The guided numbers themselves — see lib/us-guidance-figures. */
   figures: GuidanceFigure[];
+  /** REPORTED operating metrics from the same release (ARR, RPO, NRR, FCF…) —
+   *  see lib/us-key-metrics. Read here so the exhibit is fetched once. */
+  metrics: KeyMetric[];
 }
 
 const _g = new Map<string, { at: number; data: Guidance }>();
@@ -227,7 +231,7 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
   const hit = _g.get(key);
   if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
 
-  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [] };
+  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [], metrics: [] };
   let out = none;
   try {
     {
@@ -274,6 +278,7 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
             fiscal_label: (fl.q && fl.fy) ? `Q${fl.q} FY${String(fl.fy).slice(2)}` : null,
             fiscal_q: fl.q, fiscal_fy: fl.fy,
             figures: guidanceFiguresFromText(text),
+            metrics: keyMetricsFromText(text),
           };
         }
       }

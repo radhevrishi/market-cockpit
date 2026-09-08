@@ -26,6 +26,7 @@ import {
   type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 import { fmtGuideRange, GUIDE_METRIC_LABEL, type GuidanceFigure } from '@/lib/us-guidance-figures';
+import { fmtKeyMetric, type KeyMetric, type KeyMetricId } from '@/lib/us-key-metrics';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
 
@@ -1011,6 +1012,8 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
           sub={r.cfo_curr_musd != null ? `CFO ${fmtUsd(r.cfo_curr_musd)}` : 'cash flow pending'} />
       </div>
 
+      <SecondaryTiles r={r} />
+
       {(r as any).eps_adj != null && (
         <div style={{
           marginTop: 7, padding: '5px 8px', borderRadius: 6, backgroundColor: 'var(--mc-bg-1)',
@@ -1088,6 +1091,69 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
           </a>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The second row of tiles: the numbers that decide a print for the kind of
+ * company being graded, in the same grammar as revenue/EPS/OPM/CFO above.
+ *
+ * Free cash flow is computed from the filing itself (CFO − capex, both from the
+ * cash-flow statement). The rest — ARR, RPO/cRPO, net revenue retention,
+ * backlog, adjusted EBITDA — exist only in the press release, so they appear
+ * for the companies that report them and are simply absent for the rest; a tile
+ * is never invented. At most four are shown, most decision-relevant first.
+ */
+function SecondaryTiles({ r }: { r: UsGradedRow }) {
+  const metrics: KeyMetric[] = ((r as any).key_metrics || []) as KeyMetric[];
+  const by = new Map<KeyMetricId, KeyMetric>();
+  for (const m of metrics) if (!by.has(m.id)) by.set(m.id, m);
+
+  const tiles: React.ReactNode[] = [];
+  const fcf = (r as any).fcf_curr_musd as number | null | undefined;
+  const fcfPrev = (r as any).fcf_prev_musd as number | null | undefined;
+  const fcfY = (r as any).fcf_yoy_pct as number | null | undefined;
+  // The COMPANY's own free-cash-flow figure wins when it published one: many
+  // filers deduct capitalised software or finance-lease payments as well as
+  // property capex, so our CFO − capex can differ from the number the market
+  // saw. Ours is the fallback, and it says which one is on screen.
+  const relFcf = by.get('free_cash_flow');
+  if (relFcf) {
+    tiles.push(
+      <Tile key="fcf" label="FREE CASH FLOW" value={fmtKeyMetric(relFcf)}
+        color={relFcf.value >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
+        sub={relFcf.yoy_pct != null ? `${fmtPct(relFcf.yoy_pct)} YoY · as reported` : 'as reported'} />,
+    );
+  } else if (fcf != null) {
+    tiles.push(
+      <Tile key="fcf" label="FREE CASH FLOW" value={fmtUsd(fcf)}
+        color={fcf >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
+        sub={fcfY != null ? `${fmtPct(fcfY)} YoY · CFO − capex` : fcfPrev != null ? `was ${fmtUsd(fcfPrev)}` : 'CFO − capex'} />,
+    );
+  }
+
+  const order: Array<[KeyMetricId, string]> = [
+    ['arr', 'ARR'], ['rpo', 'RPO'], ['crpo', 'cRPO'], ['nrr', 'NET RETENTION'],
+    ['backlog', 'BACKLOG'], ['adj_ebitda', 'ADJ. EBITDA'], ['comparable_sales', 'COMP SALES'],
+    ['net_new_arr', 'NET NEW ARR'], ['subscription_revenue', 'SUBSCRIPTION REV'],
+    ['operating_margin_adj', 'ADJ. OPM'], ['gross_margin_adj', 'ADJ. GROSS MARGIN'],
+    ['customers_100k', 'CUSTOMERS >$100K'],
+  ];
+  for (const [id, label] of order) {
+    if (tiles.length >= 4) break;
+    const m = by.get(id);
+    if (!m) continue;
+    tiles.push(
+      <Tile key={id} label={label} value={fmtKeyMetric(m)}
+        color={m.yoy_pct == null ? undefined : m.yoy_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
+        sub={m.yoy_pct != null ? `${fmtPct(m.yoy_pct)} YoY` : 'reported'} />,
+    );
+  }
+  if (!tiles.length) return null;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, tiles.length)}, 1fr)`, gap: 6, marginTop: 6 }}>
+      {tiles}
     </div>
   );
 }
