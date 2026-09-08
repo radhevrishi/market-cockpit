@@ -258,6 +258,23 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
       {topRight && <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 2 }}>{topRight}</div>}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', paddingRight: topRight ? 18 : 0 }}>
         <span style={{ fontWeight: 800, fontSize: 15, color: 'var(--mc-text-0)' }}>{r.ticker}</span>
+        {/* THE TIER TRAVELS WITH THE TICKER. On the Opportunities tab the tier is
+            a section heading, so once you have scrolled a few cards down there is
+            nothing on screen saying which section you are in — the owner's words:
+            "when i scrol down with many comoany names i need to go page uptto
+            check which set strong lkike taht". A compact tier tag on every card
+            header answers that without scrolling, and it costs one line. */}
+        <span
+          title={`${meta.label} — ${meta.tagline}`}
+          style={{
+            fontSize: 9, fontWeight: 800, letterSpacing: 0.4, lineHeight: 1,
+            padding: '3px 5px', borderRadius: 3, whiteSpace: 'nowrap',
+            color: meta.color, border: `1px solid ${meta.color}55`,
+            background: `${meta.color}14`, alignSelf: 'center',
+          }}
+        >
+          {meta.icon} {meta.label}
+        </span>
         <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {r.company}
         </span>
@@ -278,10 +295,24 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           <Chip text={`EPS beat ${surpriseChip(r).replace(/^vs est\s*/, '')}`}
             color={(r as any).eps_surprise_pct >= 5 ? '#10B981' : (r as any).eps_surprise_pct <= -5 ? '#EF4444' : undefined} />
         )}
+        {/* TWO CHIPS, BECAUSE THERE ARE TWO QUESTIONS.
+            "Guidance raised" compares the new outlook to the company's OWN
+            previous one; whether the outlook clears CONSENSUS is a separate
+            fact that can point the other way — SentinelOne's Q2 FY27 release
+            raised its own FY27 outlook and guided adjusted EPS below the
+            street, and one green chip stated only the flattering half. The
+            first chip now says whose expectation it is measured against, and
+            the second states the street's side, naming the metrics it covers
+            so it cannot be read as an all-clear on the ones it does not. */}
         {(r as any).guidance && (
-          <Chip text={`📣 Guidance ${String((r as any).guidance).toLowerCase()}`}
+          <Chip text={`📣 Own outlook ${String((r as any).guidance).toLowerCase()}`}
+            title="Versus the company's own previous guidance — not versus consensus."
             color={(r as any).guidance === 'RAISED' ? '#10B981' : (r as any).guidance === 'LOWERED' || (r as any).guidance === 'WITHDRAWN' ? '#EF4444' : (r as any).guidance === 'MAINTAINED' ? '#FACC15' : undefined} />
         )}
+        {(() => {
+          const sc = streetChip((r as any).guidance_figures);
+          return sc ? <Chip text={sc.text} color={sc.color} title={sc.title} /> : null;
+        })()}
         {r.is_elite && <Chip text="⭐ ELITE" color="#F59E0B" />}
         {r.multibagger_setup && <Chip text="💎 MULTIBAGGER" color="#8B5CF6" />}
         {num((r as any).rule40?.score) != null && <Rule40Chip r40={(r as any).rule40 as Rule40Like} />}
@@ -310,12 +341,19 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>STREET BASIS</span>
           <span>adj. EPS <b style={{ color: 'var(--mc-text-0)' }}>${Number((r as any).eps_adj).toFixed(2)}</b></span>
           {(r as any).eps_estimate != null && <span>vs est ${Number((r as any).eps_estimate).toFixed(2)}</span>}
-          {(r as any).eps_surprise_pct != null && (
+          {/* The surprise is rendered only when the engine published one. It
+              refuses to publish one when the estimate is not on this actual's
+              basis, and the note below says so IN PLACE of the beat — two
+              figures side by side with nothing between them is an invitation to
+              subtract, which is the mistake this whole guard exists to stop. */}
+          {!(r as any).eps_basis_note && (r as any).eps_surprise_pct != null && (
             <b style={{ color: (r as any).eps_surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
               {surpriseText(r)}
             </b>
           )}
-          <span style={{ color: 'var(--mc-text-4)' }}>· adjusted figures exclude one-offs, so they differ from the GAAP tile</span>
+          {(r as any).eps_basis_note
+            ? <span style={{ color: 'var(--mc-caution, #F59E0B)' }}>· {(r as any).eps_basis_note}</span>
+            : <span style={{ color: 'var(--mc-text-4)' }}>· adjusted figures exclude one-offs, so they differ from the GAAP tile</span>}
         </div>
       )}
 
@@ -732,57 +770,183 @@ export function guideVsStreet(
  * Everything except "(Est. …)" is read from the company's own press release;
  * the estimate is the street's consensus for that period.
  */
-export function GuideBlock({ figs, label, showSource }: {
-  figs: Array<GuidanceFigure & { est?: number | null }>;
+/** A guided figure as the route publishes it: the company's own range, plus the
+ *  street's number for that period when one could be matched, plus the reason
+ *  when one could not. See `withEstimates` in the graded-us route. */
+export type GuideFig = GuidanceFigure & {
+  est?: number | null;
+  est_absent?: string | null;
+};
+
+/** Said in words on hover, so "no street est." is never mistaken for an
+ *  oversight. Every one of these is a refusal, and each is correct. */
+export const EST_ABSENT_NOTE: Record<string, string> = {
+  'metric-not-covered': 'No consensus is published for this metric in the estimate feed this engine uses (it carries revenue and EPS only), so no street verdict can be drawn.',
+  'basis-mismatch': 'A published EPS consensus is a non-GAAP number; this guide is stated on a GAAP basis, and the two may not be compared.',
+  'period-unmatched': 'No consensus estimate lands on the end date of the period this figure guides.',
+  'ambiguous-feed': 'The estimate feed carries two materially different numbers for this period, so neither can be used.',
+  'implausible': 'The only candidate estimate is not the same quantity as this guide — a different basis or a different scale — so it is refused rather than shown.',
+};
+
+/** "FY27", "FY2027", "fiscal 2027" and "Q3 FY27" all reduce to a comparable
+ *  key. Two consecutive releases spell the same period differently often
+ *  enough that matching on the raw string silently loses the pairing. */
+export const fyLike = (s: string | null | undefined): string => {
+  const t = String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const q = /\bQ([1-4])\b/.exec(t);
+  const y = /(?:FY|FISCAL(?:\s+YEAR)?)?\s*'?(\d{4}|\d{2})\b/.exec(t);
+  const yy = y ? (y[1].length === 4 ? y[1].slice(2) : y[1]) : '';
+  return `${q ? `Q${q[1]}` : 'FY'}:${yy}`;
+};
+
+/**
+ * THE STREET SUMMARY CHIP — scoped to the metrics it actually compared.
+ *
+ * The owner's complaint, verbatim: "i see guidance down but in your tool
+ * wrong… in your logic it says guidance raised above mine it shows gudiance
+ * mised". Both halves were true of SentinelOne's Q2 FY27 print: it raised its
+ * own FY27 outlook AND guided below the street. The header chip said only the
+ * first, in green, so the card read as unambiguously good news.
+ *
+ * This chip states the OTHER comparison, and it names the metrics it covers so
+ * it can never be read as an all-clear on the ones it does not. A guide below
+ * consensus outranks a guide above it in the wording, because a miss is the
+ * half a reader must not have to hunt for.
+ */
+export function streetChip(figs: GuideFig[] | null | undefined): { text: string; color: string; title: string } | null {
+  const list = (Array.isArray(figs) ? figs : []).filter((f) => f && f.est != null);
+  if (!list.length) return null;
+  const name = (f: GuideFig) =>
+    `${f.basis === 'adjusted' ? 'adj. ' : ''}${(GUIDE_METRIC_LABEL[f.metric] || f.metric).toLowerCase()}`;
+  const scored = list.map((f) => ({ f, vs: guideVsStreet(f.low, f.high, f.est) })).filter((x) => x.vs);
+  if (!scored.length) return null;
+  const pick = (s: 'above' | 'below' | 'in-line') =>
+    Array.from(new Set(scored.filter((x) => x.vs!.stance === s).map((x) => name(x.f)))).slice(0, 2).join(', ');
+  const below = pick('below'), above = pick('above'), inline = pick('in-line');
+  const covered = Array.from(new Set(scored.map((x) => name(x.f)))).join(', ');
+  const title = `Compared against the street for ${covered} only. Every other guided figure on this card has no consensus to meet — see the outlook block.`;
+  if (below) return { text: `🎯 Guide below street: ${below}`, color: 'var(--mc-bearish)', title };
+  if (above) return { text: `🎯 Guide above street: ${above}`, color: 'var(--mc-bullish)', title };
+  return { text: `🎯 Guide in line w/ street: ${inline}`, color: IN_LINE_COLOR, title };
+}
+
+export function GuideBlock({ figs, label, showSource, changes }: {
+  figs: GuideFig[];
   label?: string | null;
   /** Panel-only: print the sentence each figure was parsed out of, so the
    *  number can be checked against the release without leaving the card. */
   showSource?: boolean;
+  /** This release's ranges against the PREVIOUS release's ranges, from the
+   *  route's `guide_change`. It is the only place the own-guide direction can
+   *  come from for a filer whose outlook table has no "prior" column — which is
+   *  most of them, SentinelOne included. */
+  changes?: GuideChange[] | null;
 }) {
-  const groups = new Map<string, Array<GuidanceFigure & { est?: number | null }>>();
+  const groups = new Map<string, GuideFig[]>();
   for (const f of figs) {
     if (!groups.has(f.period_label)) groups.set(f.period_label, []);
     groups.get(f.period_label)!.push(f);
   }
-  const verb = label === 'RAISED' ? 'Raises' : label === 'LOWERED' ? 'Cuts' : label === 'MAINTAINED' ? 'Reaffirms' : 'Guides to';
+  const chg = Array.isArray(changes) ? changes : [];
+  /** The own-guide move for one figure: from `guide_change` where the previous
+   *  release could be read, else from a "prior" column inside this release's
+   *  own table. */
+  const ownMove = (f: GuideFig): { dir: GuideChange['direction']; lo: number | null; hi: number | null } | null => {
+    const c = chg.find((x) => x.metric === f.metric
+      && (x.basis == null || f.basis == null || x.basis === f.basis)
+      && fyLike(x.period_label) === fyLike(f.period_label));
+    if (c) return { dir: c.direction, lo: c.prev_low, hi: c.prev_high };
+    if (f.prior_low != null || f.prior_high != null) {
+      return { dir: f.raised === true ? 'raised' : f.raised === false ? 'lowered' : 'reiterated', lo: f.prior_low, hi: f.prior_high };
+    }
+    return null;
+  };
+  // A HEADING MAY NOT SPEAK FOR ROWS THAT DISAGREE WITH IT.
+  //
+  // This block used to head every period group with the release-wide guidance
+  // label — "RAISES FY27 GUIDE" — and SentinelOne's Q2 FY27 release is exactly
+  // the case that breaks: it raised its FY27 revenue and operating-income guide
+  // and CUT its FY27 adjusted-EPS guide, in the same table. One green verb over
+  // all three rows states something the company did not say. The heading is now
+  // computed from the rows underneath it, so a mixed revision reads "mixed".
+  const ownVerb = (list: GuideFig[]): { text: string; color: string } | null => {
+    const dirs = list.map(ownMove).filter(Boolean).map((m) => m!.dir);
+    if (!dirs.length) {
+      // A QUARTER'S GUIDE HAS NOTHING TO BE RAISED FROM. The engine compares
+      // full-year outlooks across two releases because both releases guide the
+      // same year; the quarter this release guides was not guided last time, so
+      // no own-guide verb may sit over it — the release-wide "RAISED" word is
+      // about the year and would be a claim about the quarter that nobody made.
+      if (list.some((f) => f.period !== 'year')) return null;
+      // Nothing to compare against. Fall back to the release's own WORDS, which
+      // is a statement about its own outlook and is labelled as such.
+      if (label === 'RAISED') return { text: 'raised vs own prior guide', color: 'var(--mc-bullish)' };
+      if (label === 'LOWERED') return { text: 'cut vs own prior guide', color: 'var(--mc-bearish)' };
+      if (label === 'MAINTAINED') return { text: 'reaffirmed vs own prior guide', color: IN_LINE_COLOR };
+      return null;
+    }
+    const up = dirs.filter((d) => d === 'raised').length;
+    const down = dirs.filter((d) => d === 'lowered').length;
+    if (up && down) return { text: 'mixed vs own prior guide', color: IN_LINE_COLOR };
+    if (up) return { text: 'raised vs own prior guide', color: 'var(--mc-bullish)' };
+    if (down) return { text: 'cut vs own prior guide', color: 'var(--mc-bearish)' };
+    return { text: 'reaffirmed vs own prior guide', color: IN_LINE_COLOR };
+  };
   return (
     <div style={{
       marginTop: 8, borderRadius: 6, border: '1px solid var(--mc-bg-4)',
       backgroundColor: 'var(--mc-bg-1)', padding: '7px 9px',
     }}>
-      {Array.from(groups.entries()).map(([period, list]) => (
+      {Array.from(groups.entries()).map(([period, list]) => {
+        const ov = ownVerb(list);
+        return (
         <div key={period} style={{ marginBottom: 4 }}>
           <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', marginBottom: 3 }}>
-            {verb.toUpperCase()} {period.toUpperCase()}{verb === 'Guides to' ? '' : ' GUIDE'}
+            {period.toUpperCase()} GUIDE
+            {ov && <span style={{ color: ov.color }}> · {ov.text.toUpperCase()}</span>}
           </div>
           {list.map((f, i) => {
             const vs = guideVsStreet(f.low, f.high, f.est);
+            const mv = ownMove(f);
             return (
               <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 11, lineHeight: 1.6 }}>
                 <span style={{ color: 'var(--mc-text-3)', minWidth: 96 }}>
                   {f.basis === 'adjusted' ? 'Adj. ' : ''}{GUIDE_METRIC_LABEL[f.metric]}
                 </span>
                 <b style={{ color: 'var(--mc-text-0)' }}>{fmtGuideRange(f)}</b>
-                {f.est != null && (
-                  <span style={{ color: 'var(--mc-text-4)' }}>
-                    (Est. {fmtGuideRange({ low: f.est, high: f.est, unit: f.unit })})
-                  </span>
+                {/* ── THE STREET COMPARISON, on its own, for every row that has
+                    one. Two different questions used to share one green arrow
+                    here: "did the company raise its own outlook" and "does the
+                    outlook clear consensus". SentinelOne answered yes to the
+                    first and NO to the second on adjusted EPS, and the card
+                    showed a street verdict on revenue alone — so the miss was
+                    invisible. They are now printed as two separate, separately
+                    labelled statements, and a row that has no consensus says so
+                    rather than borrowing the other one's arrow. */}
+                {f.est != null && vs != null ? (
+                  <>
+                    <span style={{ color: 'var(--mc-text-4)' }}>
+                      (Est. {fmtGuideRange({ low: f.est, high: f.est, unit: f.unit })})
+                    </span>
+                    <span title={`This guide is ${vs.word}`} style={{ color: vs.color, fontWeight: 800 }}>
+                      {vs.glyph}
+                      <span style={{ fontWeight: 700, fontSize: 10 }}>
+                        {vs.stance === 'in-line' ? ' in line w/ street'
+                          : vs.stance === 'above' ? ' above street' : ' below street'}
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <span title={EST_ABSENT_NOTE[f.est_absent || 'period-unmatched']}
+                    style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>no street est.</span>
                 )}
-                {vs != null ? (
-                  <span title={`The guide is ${vs.word}`} style={{ color: vs.color, fontWeight: 800 }}>
-                    {vs.glyph}
-                    {vs.stance === 'in-line' && (
-                      <span style={{ fontWeight: 700, fontSize: 10 }}> in line</span>
-                    )}
-                  </span>
-                ) : f.raised === true ? (
-                  // No estimate to compare with — this arrow is about the
-                  // company's OWN prior guide, not the street, and says so.
-                  <span title="Raised versus the company's prior guide" style={{ color: 'var(--mc-bullish)', fontWeight: 800 }}>▲</span>
-                ) : null}
-                {f.prior_low != null && (
-                  <span style={{ color: 'var(--mc-text-4)' }}>
-                    from {fmtGuideRange({ low: f.prior_low, high: f.prior_high, unit: f.unit })}
+                {mv && (
+                  <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>
+                    ·{' '}
+                    <b style={{ color: mv.dir === 'raised' ? 'var(--mc-bullish)' : mv.dir === 'lowered' ? 'var(--mc-bearish)' : 'var(--mc-text-3)' }}>
+                      {mv.dir === 'raised' ? '↑ raised' : mv.dir === 'lowered' ? '↓ cut' : `= ${mv.dir}`}
+                    </b>{' '}vs own guide
+                    {mv.lo != null && <> of {fmtGuideRange({ low: mv.lo, high: mv.hi, unit: f.unit })}</>}
                   </span>
                 )}
                 {showSource && f.source && (
@@ -794,7 +958,8 @@ export function GuideBlock({ figs, label, showSource }: {
             );
           })}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -985,7 +1150,7 @@ export type UsRowX = UsGradedRow & {
   vs_guide?: VsGuide | null;
   guide_change?: GuideChange[] | null;
   guidance?: string | null;
-  guidance_figures?: Array<GuidanceFigure & { est?: number | null }> | null;
+  guidance_figures?: GuideFig[] | null;
   guidance_snippets?: string[] | null;
   guidance_url?: string | null;
   guidance_absent_reason?: 'unreadable-format' | 'none-given' | 'release-unavailable' | null;
@@ -997,6 +1162,14 @@ export type UsRowX = UsGradedRow & {
   eps_estimate?: number | null;
   eps_surprise_pct?: number | null;
   eps_basis?: string | null;
+  /** WHY NO SURPRISE IS SHOWN BESIDE AN ESTIMATE THAT PLAINLY EXISTS.
+   *  Set by the engine whenever the consensus on file and the actual we publish
+   *  are on different bases — the feed's estimate is the GAAP one and the
+   *  actual is the filer's adjusted EPS, or the reverse. SentinelOne's Q2 FY27
+   *  is the case that produced it: a GAAP-basis −$0.23 estimate against a
+   *  non-GAAP +$0.08 actual, which this card was rendering as a "$0.31 beat".
+   *  When this is set, NOTHING on the card may subtract one from the other. */
+  eps_basis_note?: string | null;
   prelim?: boolean;
   prelim_matched?: string[] | null;
   release_url?: string | null;
@@ -1483,6 +1656,24 @@ export function streetBullet(r: UsRowX): React.ReactNode | null {
   const act = num(r.eps_adj);
   const pct = num(r.eps_surprise_pct);
   if (est == null || (act == null && pct == null)) return null;
+  // TWO BOOKS, NO SUBTRACTION. This bullet computes `act - est` itself rather
+  // than reading the engine's surprise, so suppressing `eps_surprise_pct`
+  // upstream was not enough to stop it: SentinelOne's card still read "Beat the
+  // -$0.23 street EPS estimate (adjusted basis) by $0.31. Reported $0.08."
+  // Every word of that is wrong — the −$0.23 is a GAAP-basis consensus, and the
+  // real adjusted street number was about $0.07. When the engine says the
+  // estimate is not on this actual's basis, the bullet states both figures and
+  // the reason, and reaches no verdict.
+  if (r.eps_basis_note) {
+    const m = (v: number): string => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
+    return (
+      <Bul>
+        No comparable street estimate: the consensus on file is {m(est)}
+        {act != null ? <>, against a reported {m(act)}</> : null}
+        <span style={{ color: 'var(--mc-text-4)' }}> — {r.eps_basis_note}</span>
+      </Bul>
+    );
+  }
   const d = act != null ? act - est : null;
   const verdict: 'beat' | 'missed' | 'in-line' =
     d != null
@@ -1847,7 +2038,7 @@ export function Band({ kind, source }: {
 // item is simply absent. That is the whole discipline of this section: an
 // implied number we cannot derive is not shown, ever.
 
-type Fig = GuidanceFigure & { est?: number | null };
+type Fig = GuideFig;
 
 /** The midpoint of a guided range, or the single value of a one-sided guide. */
 function figMid(f: Fig): number | null {
@@ -2505,7 +2696,7 @@ export function DetailPanel({ r }: { r: UsRowX }) {
           {changes.length > 0
             ? changes.map((g) => guideChangeBullet(g, estFor(figs, g)))
             : <Quiet>No prior guide to compare against — the figures below are this release&apos;s outlook as given.</Quiet>}
-          {figs.length > 0 && <GuideBlock figs={figs} label={r.guidance} showSource />}
+          {figs.length > 0 && <GuideBlock figs={figs} label={r.guidance} changes={changes} showSource />}
         </>
       )}
 

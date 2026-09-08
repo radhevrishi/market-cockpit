@@ -204,7 +204,29 @@ eps_compare_blocked?: boolean;
 
 // ── 5. Already on the row today (do not re-derive) ──────────────────────────
 // guidance, guidance_score, guidance_snippets, guidance_url,
-// guidance_figures: Array<GuidanceFigure & { est?: number | null }>,
+// guidance_figures: Array<GuidanceFigure & {
+//     est?: number | null,          // the street's number for the period this
+//                                   //   figure guides, matched by fiscal-end
+//                                   //   date AND by period kind (a quarterly
+//                                   //   guide may only meet a quarterly
+//                                   //   estimate). Null whenever the pairing
+//                                   //   could not be proved.
+//     est_absent?:                  // WHY there is no `est`, so a bare row is
+//                                   //   never mistaken for an unchecked one.
+//         | 'metric-not-covered'    //   the feed carries revenue and EPS only
+//         | 'basis-mismatch'        //   a GAAP guide against a non-GAAP consensus
+//         | 'period-unmatched'      //   no estimate lands on that period's end
+//         | 'ambiguous-feed'        //   two different numbers for one date
+//         | 'implausible'           //   the candidate is not the same quantity
+//         | null,                   //   (set to null when `est` is present)
+//   }>,
+//   Rendering rule: a figure with `est` carries its OWN three-way street
+//   verdict (above = bullish, below = bearish, inside the range = in-line, in
+//   IN_LINE_COLOR); a figure without one prints "no street est." and no verdict.
+//   The own-guide direction (`guide_change`) is printed as a SEPARATE, labelled
+//   token on the same row and never shares the street's glyph or colour —
+//   "raised its own outlook" and "guides above consensus" are two facts and one
+//   may point up while the other points down.
 // key_metrics: KeyMetric[],
 // eps_adj, eps_estimate, eps_surprise_pct, eps_basis,
 // prelim, prelim_matched, release_url,

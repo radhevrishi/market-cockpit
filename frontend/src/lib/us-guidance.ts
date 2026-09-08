@@ -340,15 +340,56 @@ export async function releaseDocument(cikNum: number, accession: string, filingI
       // The press release: EX-99 / ex99 / "pressrelease" / "earnings" .htm; fall
       // back to the largest .htm that is not the 8-K wrapper or an XML/graphic.
       const htm = items.filter((it) => /\.htm(l)?$/i.test(String(it.name)) && !/^R\d+\.htm/i.test(String(it.name)));
-      let pick = htm.find((it) => /ex[-_]?99|ex99|exhibit\s*99|press|earnings|release|results/i.test(String(it.name)));
-      if (!pick) {
-        const sorted = htm.slice().sort((a, b) => (parseInt(b.size, 10) || 0) - (parseInt(a.size, 10) || 0));
-        pick = sorted[0];
+      // THE FIRST NAME THAT MATCHES IS NOT THE PRESS RELEASE.
+      //
+      // The old rule was `find(name matches ex99|press|earnings|release|results)`
+      // over EDGAR's directory listing, which is alphabetical. SentinelOne
+      // (ticker S) files two EX-99 documents with every print: the release
+      // (…q127exhibit991.htm) and an earnings SLIDE DECK whose wrapper is
+      // …q1fy27earningspresenta.htm — 40 .jpg files behind 45kB of HTML. The
+      // word "earnings" matches both, "s-q1…" sorts before "sentinelone…", and
+      // so every SentinelOne quarter was read out of a picture of a deck. The
+      // deck's thin text still yielded a guidance LABEL, which suppressed the
+      // sibling-exhibit fallback below, so `priorGuidanceFor` came back "no
+      // parseable guidance figures" and the card said "No prior guide to compare
+      // against" for a company that had guided the quarter explicitly.
+      //
+      // So: RANK, then VERIFY. A name that says press/news release outranks a
+      // bare "ex99", which outranks a name that merely contains "earnings"; a
+      // name that says presentation, deck, slides, transcript or letter is
+      // pushed behind all of them, because those documents exist ALONGSIDE a
+      // release rather than instead of one. Then the winner is fetched and its
+      // text measured: a wrapper around images yields almost nothing against its
+      // own byte size, and the next candidate is tried instead. Both halves are
+      // generic — the ranking reads words every filer uses, and the verification
+      // reads the file, not the filer.
+      const DECKISH = /present|slide|deck|infograph|prepared[-_\s]*remarks|transcript|script|supplement|letter|webcast|graphic|logo/i;
+      const rank = (name: string): number => {
+        const n = name.toLowerCase();
+        let base = 5;
+        if (/press[-_]?release|news[-_]?release|earnings[-_]?release/.test(n)) base = 0;
+        else if (/ex[-_.]?99[-_.]?1(?![0-9])|exhibit[-_]?99[-_.]?1(?![0-9])/.test(n)) base = 1;
+        else if (/ex[-_.]?99|exhibit[-_]?99/.test(n)) base = 2;
+        else if (/earnings|results|release/.test(n)) base = 3;
+        return base + (DECKISH.test(n) ? 10 : 0);
+      };
+      const ranked = htm.slice().sort((a, b) =>
+        rank(String(a.name)) - rank(String(b.name))
+        || (parseInt(String(b.size), 10) || 0) - (parseInt(String(a.size), 10) || 0));
+      let firstTried: ReleaseDoc | null = null;
+      for (const cand of ranked.slice(0, 3)) {
+        const url = `${dir}/${cand.name}`;
+        const html = await secGet(url);
+        if (!html) continue;
+        const doc: ReleaseDoc = { url, html };
+        if (!firstTried) firstTried = doc;
+        // A picture of a document is not a document. Same ratio test the
+        // sibling-exhibit scan uses, so the two agree on what "readable" means.
+        if (!textIsNegligible(html, parseInt(String(cand.size), 10) || 0)) { out = doc; break; }
       }
-      if (pick) {
-        const url = `${dir}/${pick.name}`;
-        out = { url, html: await secGet(url) };
-      }
+      // Every candidate was a picture. Hand back the best-ranked one anyway, so
+      // the caller still reports 'unreadable-format' rather than a blank.
+      if (!out.html && firstTried) out = firstTried;
     }
   } catch { out = { url: null, html: null }; }
   if (_doc.size > 600) {
@@ -552,7 +593,18 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
       // in it. Both cases are worth the extra request, and this is the only
       // path that makes one: a filer whose release states its guidance never
       // reaches here.
-      if (!out.label && !out.figures.length) {
+      // A LABEL WITHOUT FIGURES IS NOT A REASON TO STOP LOOKING.
+      //
+      // This used to require BOTH to be empty, and that conjunction is what
+      // turned SentinelOne's mis-picked slide deck (see `releaseDocument`) into
+      // a silent dead end: the deck's boilerplate scored a 'PROVIDED' label, the
+      // label satisfied `!out.label`, and the real EX-99.1 sitting beside it in
+      // the same filing was never opened. The numbers are the whole point of
+      // this module — a "raised guidance" verdict with nothing under it cannot
+      // be compared to a prior guide or to the street — so the sibling scan now
+      // runs whenever the FIGURES are missing, and any label already found is
+      // kept unless the sibling produces one of its own.
+      if (!out.figures.length) {
         const readUrl = doc.url;
         const readName = readUrl.split('/').pop() || '';
         const sibs = (await filingExhibits(filingIndexUrl))
@@ -574,7 +626,14 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
           const t2 = htmlToText(h);
           const s2 = scanRelease(t2);
           if (s2.label || s2.figures.length) {
-            out = { ...out, ...s2, source_url: e.url };
+            out = {
+              ...out, ...s2, source_url: e.url,
+              // The release's own directional wording outranks a sibling's when
+              // the release had one and the sibling only carries the table.
+              label: out.label ?? s2.label,
+              snippets: out.snippets.length ? out.snippets : s2.snippets,
+              metrics: out.metrics.length ? out.metrics : s2.metrics,
+            };
             break;
           }
         }

@@ -304,6 +304,11 @@ export interface UsConvictionEntry {
   release_url?: string | null;
 
   eps_estimate?: number | null;
+  /** Set by the engine when the consensus on file is not on the same basis as
+   *  the EPS beside it (a GAAP-basis estimate against an adjusted actual, or
+   *  the reverse). While it is set, no factor here may subtract one from the
+   *  other — see `epsEstimateBasisConflict` in lib/us-pr-adjusted.ts. */
+  eps_basis_note?: string | null;
   eps_adj?: number | null;
   eps_adj_curr?: number | null;
   eps_adj_prev?: number | null;
@@ -497,6 +502,7 @@ export function usBenchFields(rawIn: Record<string, any>): Record<string, any> {
     release_url: str(r.release_url),
 
     eps_estimate: num(r.eps_estimate),
+    eps_basis_note: typeof r.eps_basis_note === 'string' ? r.eps_basis_note : null,
     eps_adj: adjCurr,
     eps_adj_curr: adjCurr,
     eps_adj_prev: num(r.eps_adj_prev),
@@ -1478,12 +1484,22 @@ export function usWinnersScorecard(e: UsConvictionEntry, cohort: UsCohort): Winn
   // 1 — EARNINGS SURPRISE VS EXPECTATIONS (the framework's first separator).
   {
     const s = num(e.eps_surprise_pct);
-    const est = num(e.eps_estimate);
+    // THE ESTIMATE IS UNUSABLE WHEN IT IS NOT ON THE ACTUAL'S BASIS. The
+    // cents branch below subtracts the two directly, so leaving the estimate
+    // in place here would have reinstated SentinelOne's fabricated
+    // thirty-one-cent "beat" on the conviction scorecard after the card itself
+    // stopped showing it. No consensus is the honest state, and this factor
+    // already knows how to say so.
+    const est = e.eps_basis_note ? null : num(e.eps_estimate);
     const act = num(e.eps_adj_curr) ?? num(e.eps_adj) ?? num(e.eps_curr);
     if (s == null && !(est != null && act != null)) {
       F.push(factor('surprise', 1, 'Earnings surprise vs consensus', 20, 'unavailable',
-        'no published consensus estimate for this quarter',
-        'Without a street number there is no gap to price. Not substituted with YoY growth — that is a different question.'));
+        e.eps_basis_note
+          ? 'the consensus on file is not on the same basis as this quarter\u2019s EPS'
+          : 'no published consensus estimate for this quarter',
+        e.eps_basis_note
+          ? 'A gap measured across two different bases is not a gap. The estimate is shown on the card with the reason; it is not scored here.'
+          : 'Without a street number there is no gap to price. Not substituted with YoY growth — that is a different question.'));
     } else if (est != null && act != null && Math.abs(est) < 0.1) {
       // A percentage off a near-zero estimate is arithmetic noise — cents instead.
       const d = act - est;

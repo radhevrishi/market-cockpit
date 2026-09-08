@@ -103,8 +103,20 @@ export interface DecideTierInputs {
   positiveGuidance: boolean;
   chartOk: boolean;
   // ── BEAT-AND-RAISE ingredients (see the STRONG path below) ──
-  /** Consensus surprise on the basis the street actually quotes, in %. */
+  /** Consensus surprise on the basis the street actually quotes, in %. Null
+   *  whenever the estimate is under a dime, because a percentage off a base
+   *  that small is arithmetic noise — `consensusBeatAbs` carries those. */
   consensusBeatPct?: number | null;
+  /** The same surprise in dollars per share. The ONLY signal for a company the
+   *  street expected to earn a few cents: Rubrik beat a $0.04 estimate with
+   *  $0.20 — a fourfold beat that the percentage path refuses to express. */
+  consensusBeatAbs?: number | null;
+  /** Earnings are moving the right way. Separate from `patY > 0` because a
+   *  company whose year-ago base was NEGATIVE has no growth percentage at all
+   *  (`yoyPct` refuses a negative base, correctly), and requiring one excluded
+   *  every turnaround from this path — which is exactly the population it was
+   *  most needed for. */
+  earningsImproving?: boolean;
   /** The filer RAISED its own outlook in this release (not merely gave one). */
   guidanceRaised?: boolean;
   /** Cash flow backs the profit: CFO ÷ net income, when both exist. */
@@ -168,8 +180,16 @@ export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveat
   // profit, no critical caveat and a chart that is not broken, that is STRONG —
   // and never more than STRONG, because BLOCKBUSTER is reserved for magnitude
   // this path deliberately does not have.
+  //
+  // THE BEAT IS MEASURED THE SAME WAY THE CARD MEASURES IT. Rubrik beat a $0.04
+  // consensus with $0.20 on +38% revenue, +13.7pp of margin, $65.7m of free
+  // cash flow and a raised guide — and this path did not fire, because a
+  // percentage off a four-cent base is refused everywhere in this engine as
+  // noise. The cents figure is what the card already prints for exactly those
+  // companies, so it is what the grade reads too.
   else if (
-    (i.consensusBeatPct != null && i.consensusBeatPct >= 3) &&
+    ((i.consensusBeatPct != null && i.consensusBeatPct >= 3)
+      || (i.consensusBeatPct == null && i.consensusBeatAbs != null && i.consensusBeatAbs >= 0.03)) &&
     i.guidanceRaised === true &&
     !i.stillLossMaking && !i.turnaroundBase &&
     !i.marginContracting &&
@@ -178,7 +198,7 @@ export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveat
     (i.cfoToNi == null || i.cfoToNi >= 1) &&
     i.caveatCount <= 2 && i.stage !== 4 &&
     i.salesY != null && i.salesY > 0 &&
-    i.patY != null && i.patY > 0
+    (i.earningsImproving === true || (i.patY != null && i.patY > 0))
   ) tier = 'STRONG';
   else if (i.composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';

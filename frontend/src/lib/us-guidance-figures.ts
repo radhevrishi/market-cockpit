@@ -348,8 +348,33 @@ function tokens(s: string, scale: number | null, perShare: boolean): Tok[] {
     else if (perShare && dollar) unit = 'usd_share';
     else if (dollar && scale) { unit = 'usd'; mult = scale; v *= scale; }
     else if (dollar) unit = 'usd_share';
-    else continue;                                   // a bare number: a year, a store count
+    else unit = null as unknown as Unit;             // a bare number: decided below
     const digitsAt = m.index + m[0].indexOf(m[4]);
+    // A RANGE END INHERITS THE CURRENCY OF THE END THAT OPENED IT.
+    //
+    // The mirror image of the "trailing scale word governs both ends" rule two
+    // functions down, and it is what a filer's own typography means. SentinelOne
+    // (ticker S, Q2 FY27, 8-K of 27 Aug 2026) prints its per-share guidance row
+    // as the cells "$0.08 - 0.09" and "$0.30 - 0.32": the dollar sign is written
+    // ONCE, on the low end, exactly as "$309 - 311 million" writes its scale word
+    // once, on the high end. Without this rule the high end of a per-share range
+    // is not a token at all — there is no "$" and no "million" to give it a
+    // unit — so the range collapsed to two lone points, the point rule refused
+    // them (correctly: two bare numbers under one label prove nothing), and the
+    // EPS guide vanished from the card while revenue and operating income, whose
+    // high ends carry the scale word, came through. The one metric on which
+    // SentinelOne guided BELOW the street was therefore the one metric the card
+    // could not show. Nothing here is company-specific: a bare number is adopted
+    // only when a range connector joins it directly to a $-marked number on its
+    // left, and it takes that number's unit and scale and nothing else.
+    if (unit == null) {
+      const prev = out[out.length - 1];
+      const join = prev && prev.end <= digitsAt ? s.slice(prev.end, digitsAt) : null;
+      if (prev && join != null && /^\s*(?:to|and|through|or|-|–|—|−)\s*$/i.test(join)) {
+        unit = prev.unit;
+        if (prev.unit !== 'pct') { mult = prev.mult; v *= prev.mult; }
+      } else continue;                               // a year, a store count, a share count
+    }
     out.push({ v: neg ? -v : v, raw: neg ? -parseFloat(raw) : parseFloat(raw), mult, worded: !!word && word !== '%', unit, at: digitsAt, end: m.index + m[0].length });
   }
   return out;
@@ -911,12 +936,25 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
       const put = (r: Rng, b: 'gaap' | 'adjusted', p: Period, pr?: Rng) => {
         const isPoint = r.lo === r.hi;
         if (isPoint) {
+          // A RANGE WITH A WORDED END IS NEVER A POINT, PRIOR GUIDANCE OR NOT.
+          //
+          // The three tests below are relaxed when a PRIOR range is present,
+          // because "…to X, up from Y" proves the clause is a guide. This one
+          // is about something else — whether the number is the whole guide or
+          // half of it — and relaxing it published a fabricated figure. Gap's
+          // release reads "…now assumes Old Navy comparable sales of flat to
+          // down 1%, compared with the prior range of flat to up 1%": both
+          // ranges have a WORD at one end, "prior range" satisfied the
+          // prior-guidance test, and the card printed a comps guide of +1% for
+          // a company guiding comps DOWN as much as 1%. The sign was inverted
+          // and the number was one end of a range. Tested first, for every
+          // point, so no later relaxation can reach past it.
+          if (WORDED_END.test(slice)) return;
           // A point may only stand when the clause holds exactly one number of
           // its unit AND states a forecast. Everything else is a range end, a
           // component, or a reported figure.
           if (!pr) {
             if (inSlice.filter((x) => x.unit === r.unit && sane(metric!, x.unit, x.lo, x.hi)).length > 1) return;
-            if (WORDED_END.test(slice)) return;
             if (!FORWARD_VERB.test(l) && !leadIn && !fromCells) return;
             if (POINT_PAST.test(l) && !fromCells) return;
           }

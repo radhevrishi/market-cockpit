@@ -3207,6 +3207,9 @@ export interface UsGradeInput {
   /** Street-basis consensus surprise (%), available at GRADE time. Feeds the
    *  beat-and-raise STRONG path in `decideTier`. */
   consensus_beat_pct?: number | null;
+  /** The same surprise in dollars per share — the only form available when the
+   *  estimate is under a dime. */
+  consensus_beat_abs?: number | null;
   /** Daily closes behind the print, used to size the market reaction against
    *  the stock's OWN volatility rather than a fixed percentage. */
   close_30d?: number[] | null;
@@ -3497,6 +3500,12 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     positiveGuidance: !!input.positive_guidance,   // from the 8-K press release (lib/us-guidance)
     chartOk,
     consensusBeatPct: input.consensus_beat_pct ?? null,
+    consensusBeatAbs: input.consensus_beat_abs ?? null,
+    // A GAAP loss that NARROWED, or turned into a profit, is earnings moving the
+    // right way even though `yoyPct` refuses to put a percentage on it.
+    earningsImproving: (patY != null && patY > 0)
+      || swingKind(niC, niP) === 'loss-to-profit'
+      || swingKind(niC, niP) === 'loss-narrowed',
     guidanceRaised: !!input.positive_guidance,
     cfoToNi: cfoPat,
   }).tier;
@@ -3920,7 +3929,16 @@ export function setupScore(r: any, peerMedianPe: number | null): SetupScore {
     // $0.01 estimate met by $0.52 is "+5,100%", which says nothing about how
     // big the beat was. Below a dime of estimate the beat is scored — and
     // stated — in cents, the same rule the surprise chip already uses.
-    const est = fin(r.eps_estimate);
+    // AN ESTIMATE THE ENGINE REFUSED TO MEASURE AGAINST IS NOT AN INPUT HERE
+    // EITHER. `eps_basis_note` is set when the consensus on file and the actual
+    // are on different bases (SentinelOne's Q2 FY27: a GAAP-basis −$0.23
+    // consensus beside a non-GAAP +$0.08 actual). The row still carries the
+    // estimate, deliberately, so the reader can see one exists — and this
+    // factor used to pick it straight back up and score a fabricated
+    // thirty-one-cent beat as the maximum on the surprise axis, which then fed
+    // the Setup verdict and the PEAD panel. The suppression has to hold
+    // wherever the two numbers are within reach of each other.
+    const est = r.eps_basis_note ? null : fin(r.eps_estimate);
     const act = fin(r.eps_adj ?? r.eps_adj_curr);
     const pennyBase = est != null && Math.abs(est) < 0.10;
     const cents = (pennyBase && act != null && est != null) ? (act - est) : null;

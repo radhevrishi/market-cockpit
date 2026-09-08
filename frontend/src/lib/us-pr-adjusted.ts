@@ -1059,3 +1059,255 @@ function priorFor(chosen: Candidate, siblings: Candidate[]): number | null {
   if (!matches.length) return null;
   return new Set(matches.map((c) => c.value.toFixed(4))).size === 1 ? matches[0].value : null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IS THE VENDOR'S *ESTIMATE* ON THE SAME BASIS AS THE ACTUAL WE PUBLISH?
+//
+// WHY THIS EXISTS — THE FILER THAT EXPOSED IT
+// ────────────────────────────────────────────
+// SentinelOne (S), Q2 FY27, filed 27 Aug 2026. The release states non-GAAP
+// diluted EPS of +$0.08; the 10-Q's XBRL states GAAP diluted EPS of −$0.27.
+// Yahoo's earningsHistory returned, for that same quarter, actual −$0.27 (the
+// GAAP line, to the cent) and estimate −$0.23174 — and its three prior rows are
+// the same story: actual −0.18 / −0.33 / −0.23 against XBRL GAAP of
+// −0.18 / −0.33 / −0.23. For this filer that feed publishes a GAAP-basis
+// consensus end to end. The engine resolved the ADJUSTED actual correctly from
+// the release (+$0.08) and then paired it with that GAAP-basis estimate, and
+// the card announced a "+$0.31 beat" against a "$-0.23 street estimate". Both
+// halves of that sentence are false: the real adjusted street number for the
+// quarter was around $0.07, so the print was a penny beat, not a thirty-one
+// cent one, and no such estimate was ever published by anyone.
+//
+// The route already refused the MIRROR of this — `vendorLooksGaap` stops the
+// feed's "adjusted actual" being used when it is really the GAAP figure, with a
+// comment saying a surprise must never be struck across two bases. That guard
+// was one-sided: it policed the ACTUAL and never the ESTIMATE. This closes the
+// other half, and it is the same principle, so it reads the same way: an
+// estimate and an actual must be on one basis or NO surprise is published.
+//
+// HOW IT DECIDES — EVIDENCE, NEVER SIZE
+// ──────────────────────────────────────
+// "These two numbers are far apart, so one of them must be wrong" is the
+// reasoning that manufactures wrong numbers; a genuine 80% miss looks exactly
+// like that. So nothing here keys on the size of the surprise. It keys on WHERE
+// THE ESTIMATE SITS between two figures we hold hard evidence for:
+//
+//   • GAAP diluted EPS for the quarter — the filer's own XBRL;
+//   • the adjusted EPS we are about to publish — read out of the filer's own
+//     release by `adjustedEpsFromReleaseHtml` above.
+//
+// When those two differ materially, the interval between them IS the basis
+// question, and the estimate's position in it is the answer. An estimate lying
+// on top of the GAAP end of that interval, while the actual we publish is the
+// adjusted end, is a mismatch. Two worked cases from one week of filings:
+//
+//   S     GAAP −0.27  adj +0.08  spread 0.35 — estimate −0.232 sits 11% of the
+//         way from the GAAP end. GAAP-basis estimate. Refuse.
+//   GAP   GAAP  1.38  adj  0.52  spread 0.86 — estimate 0.491 sits 103% of the
+//         way from the GAAP end, i.e. hard against the ADJUSTED end. Gap's
+//         estimate really is the adjusted consensus (the feed's ACTUAL is the
+//         GAAP one — the mirror defect), so Gap keeps its real +$0.03 beat.
+//
+// Position alone is not enough: a company can genuinely miss by an amount that
+// happens to land the estimate near its GAAP line (Workday's Q2 FY27 estimate
+// 2.612 sits between a 2.57 GAAP line and a 2.75 adjusted actual, and that is a
+// real 5% beat, not a basis error). So a position finding must be CORROBORATED
+// by direct evidence about what basis this feed is publishing for this filer:
+//
+//   W1 — the feed's own ACTUAL for this same quarter reproduces the filer's
+//        XBRL GAAP EPS. The estimate beside it is then being quoted off the
+//        same book. This is the SentinelOne signature, and Aptera Motors' —
+//        an estimate of −0.30 settled against a −0.30 GAAP actual while the
+//        release states an adjusted −0.20.
+//   W2 — the feed's prior quarters do the same thing: its estimate and its
+//        actual agree with each other AND its actual reproduces that quarter's
+//        XBRL GAAP EPS. Two such quarters is the witness (one is coincidence —
+//        SAIC has exactly one, because adjusted and GAAP happened to coincide
+//        in that quarter, and SAIC's estimate is a perfectly good adjusted
+//        one).
+//
+// EVERY THRESHOLD BELOW IS A RATIO OF THE GAAP↔ADJUSTED SPREAD OR OF THE FIGURE
+// ITSELF — never an absolute cent count tuned to a filer, never a rule about
+// the sign of the estimate. A negative estimate against a profitable adjusted
+// actual is suspicious (it is what made this bug visible) but plenty of issuers
+// are genuinely expected to lose money, so the sign is not evidence and is not
+// consulted. Companies whose adjusted EPS equals their GAAP EPS have no basis
+// question to answer and are never touched.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The two bases must differ by at least this much before the question "which
+ * basis is this estimate on?" is even meaningful. Below it, GAAP and adjusted
+ * are the same number for practical purposes and any estimate is on both.
+ * A nickel, i.e. the smallest gap at which a mis-basing could move a verdict.
+ */
+const BASIS_SPREAD_FLOOR = 0.05;
+/**
+ * How close to the GAAP end of the GAAP↔adjusted interval an estimate must sit
+ * before we will say it is quoted on the GAAP basis, as a fraction of that
+ * interval. A quarter of the way is deliberately conservative: in a full week
+ * of filings the flagged cases sat at 0.09 and 0.11 while the nearest genuine
+ * adjusted estimate sat at 0.61, so the boundary is in open space and not
+ * fitted to anything.
+ */
+const BASIS_HUG = 0.25;
+
+export interface VendorEpsRow {
+  /** The feed's consensus estimate for that quarter. */
+  estimate: number | null;
+  /** The feed's "actual" for that quarter. */
+  actual: number | null;
+  /** The filer's OWN GAAP diluted EPS for that same quarter, from XBRL. */
+  gaapEps: number | null;
+}
+
+export interface EpsEstimateBasisInput {
+  /** The vendor consensus we would publish a surprise against. */
+  estimate: number | null;
+  /** The actual we are publishing — normally the release's adjusted EPS. */
+  actual: number | null;
+  /** The filer's own GAAP diluted EPS for the reported quarter, from XBRL. */
+  gaapEps: number | null;
+  /** The feed's own "actual" for the reported quarter, if it carries one. */
+  vendorActual?: number | null;
+  /** Earlier quarters from the same feed, each paired with that quarter's XBRL GAAP EPS. */
+  history?: VendorEpsRow[];
+}
+
+export interface EpsEstimateBasisVerdict {
+  /** True when estimate and actual are demonstrably on DIFFERENT bases. */
+  conflict: boolean;
+  /** A short, honest sentence for the card when `conflict` — else null. */
+  note: string | null;
+  /** The witnesses, for the route's notes and for anyone auditing a refusal. */
+  evidence: string[];
+}
+
+/** Two figures the same to within a cent, or to within 1% of the larger — a
+ *  feed rounds to the cent and a filer does not always. */
+function sameFigure(a: number, b: number): boolean {
+  return Math.abs(a - b) <= Math.max(0.011, 0.01 * Math.max(Math.abs(a), Math.abs(b)));
+}
+
+/** Which book a per-share figure is quoted from, when the two books are far
+ *  enough apart for the question to have an answer. */
+export type EpsBasis = 'gaap' | 'adjusted' | 'indeterminate';
+
+/**
+ * Attribute one per-share figure to the GAAP or the adjusted book, using the
+ * gap between the filer's OWN two figures as the ruler.
+ *
+ * This is the whole detection primitive, and it is deliberately about position,
+ * not about size: a figure is called GAAP only when it sits within a quarter of
+ * the gap from the GAAP end, and adjusted only when it sits that close to the
+ * adjusted end. Anything in between — which is where an ordinary beat or miss
+ * lives — is `indeterminate`, and an indeterminate answer never suppresses
+ * anything.
+ *
+ * When the filer's adjusted EPS IS its GAAP EPS (retailers frequently report
+ * one number on both bases) there is no gap to measure against and every figure
+ * is indeterminate, which is correct: no basis mistake is possible.
+ */
+export function attributeEpsBasis(
+  value: number | null | undefined,
+  gaapEps: number | null | undefined,
+  adjustedEps: number | null | undefined,
+): EpsBasis {
+  if (value == null || gaapEps == null || adjustedEps == null) return 'indeterminate';
+  if (!Number.isFinite(value) || !Number.isFinite(gaapEps) || !Number.isFinite(adjustedEps)) return 'indeterminate';
+  const spread = Math.abs(gaapEps - adjustedEps);
+  if (spread < BASIS_SPREAD_FLOOR) return 'indeterminate';
+  if (Math.abs(value - gaapEps) <= BASIS_HUG * spread) return 'gaap';
+  if (Math.abs(value - adjustedEps) <= BASIS_HUG * spread) return 'adjusted';
+  return 'indeterminate';
+}
+
+export function epsEstimateBasisConflict(i: EpsEstimateBasisInput): EpsEstimateBasisVerdict {
+  const ok = (): EpsEstimateBasisVerdict => ({ conflict: false, note: null, evidence: [] });
+  const { estimate: est, actual: act, gaapEps: gaap } = i;
+  if (est == null || act == null || gaap == null) return ok();
+
+  // WHERE THE ESTIMATE SITS. Only an estimate hugging the GAAP end of the
+  // GAAP↔adjusted gap is a finding; the middle of that gap is what an ordinary
+  // beat or miss looks like, and a filer whose two bases coincide has no gap.
+  if (attributeEpsBasis(est, gaap, act) !== 'gaap') return ok();
+  const spread = Math.abs(gaap - act);
+
+  // CORROBORATION. What basis is this feed actually publishing for this filer?
+  const evidence: string[] = [];
+  const vAct = i.vendorActual ?? null;
+  if (vAct != null && sameFigure(vAct, gaap)) {
+    evidence.push(`the feed's own actual for this quarter (${vAct.toFixed(2)}) is the filer's GAAP diluted EPS (${gaap.toFixed(2)})`);
+  }
+  // Prior quarters where the feed's estimate and actual agree with EACH OTHER
+  // and its actual reproduces that quarter's XBRL GAAP EPS: a feed quoting a
+  // GAAP consensus and settling it against the GAAP result.
+  let gaapQuarters = 0;
+  for (const h of i.history || []) {
+    if (h.estimate == null || h.actual == null || h.gaapEps == null) continue;
+    // "Agree with each other" is generous — a consensus mean is never exactly
+    // the print — but it must be far tighter than the basis spread it is being
+    // used to argue about.
+    const close = Math.abs(h.estimate - h.actual) <= Math.max(0.02, 0.05 * Math.abs(h.actual));
+    if (close && sameFigure(h.actual, h.gaapEps)) gaapQuarters++;
+  }
+  if (gaapQuarters >= 2) {
+    evidence.push(`${gaapQuarters} earlier quarters where this feed's estimate, its actual and the filer's XBRL GAAP EPS all agree`);
+  }
+  if (!evidence.length) return ok();
+
+  evidence.unshift(
+    `the estimate (${est.toFixed(2)}) sits on the GAAP end of a ${spread.toFixed(2)} gap between GAAP EPS (${gaap.toFixed(2)}) and the release's adjusted EPS (${act.toFixed(2)})`,
+  );
+  return {
+    conflict: true,
+    note: 'the consensus estimate on file is struck on the GAAP basis while the actual here is the company\u2019s own adjusted EPS — a surprise across two bases would not be a real one, so none is shown',
+    evidence,
+  };
+}
+
+/**
+ * THE VENDOR'S OWN SURPRISE PERCENTAGE, judged by the same rule.
+ *
+ * The PRELIM path (a print whose 10-Q has not posted) does not compute its own
+ * surprise — it forwards the feed's `surprisePercent`. That figure is only as
+ * sound as the feed's own pairing, and the feed does mix its books: for Gap's
+ * Q2 FY27 it published an estimate of $0.491 beside an actual of $1.38 — the
+ * GAAP line to the cent, where the release's adjusted diluted EPS is $0.52 —
+ * and called it +180.9%. The truth is about +6%. Williams-Sonoma (a $2.84 GAAP
+ * actual against a filed non-GAAP $2.10) and TJX ($1.36 GAAP against a filed
+ * $1.22) are the same shape.
+ *
+ * THIS ONE REFUSES ONLY ON AN EQUALITY, NEVER ON A POSITION. `attributeEpsBasis`
+ * is safe for the ESTIMATE only because `epsEstimateBasisConflict` corroborates
+ * it; used bare it mistakes an ordinary miss for a basis error — Workday's
+ * 2.612 estimate sits a nickel from its 2.57 GAAP line and 0.14 from its 2.75
+ * adjusted actual, and it is a perfectly good adjusted estimate. So the test
+ * here is the one thing that cannot be a coincidence: the feed's actual
+ * REPRODUCES the filer's GAAP diluted EPS while the figure the card is
+ * displaying is the filer's adjusted EPS. The feed settled on one book and the
+ * card is narrating the other, so its percentage is not the card's surprise —
+ * whichever book its estimate came from.
+ */
+export function vendorSurpriseUsable(i: {
+  /** The feed's estimate for the quarter (kept for callers; not itself evidence). */
+  estimate: number | null;
+  /** The feed's actual for the quarter — the other half of its own surprise. */
+  vendorActual: number | null;
+  /** The filer's GAAP diluted EPS for the quarter. */
+  gaapEps: number | null;
+  /** The adjusted EPS the card is displaying, when one was read from the release. */
+  adjustedEps: number | null;
+}): { usable: boolean; reason: string | null } {
+  const { vendorActual: vAct, gaapEps: gaap, adjustedEps: adj } = i;
+  if (vAct == null || gaap == null || adj == null) return { usable: true, reason: null };
+  // The filer's two bases coincide: no mistake is possible, and no refusal.
+  if (Math.abs(gaap - adj) < BASIS_SPREAD_FLOOR) return { usable: true, reason: null };
+  if (sameFigure(vAct, gaap) && !sameFigure(vAct, adj)) {
+    return {
+      usable: false,
+      reason: `the feed settled its surprise against the GAAP figure (${gaap.toFixed(2)}) while the EPS shown here is the company\u2019s own adjusted ${adj.toFixed(2)}`,
+    };
+  }
+  return { usable: true, reason: null };
+}

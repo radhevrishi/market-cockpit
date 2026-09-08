@@ -38,7 +38,7 @@ import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
-import { adjustedEpsFromReleaseHtml, type AdjustedEps } from '@/lib/us-pr-adjusted';
+import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
@@ -107,6 +107,42 @@ const isoAddDays = (iso: string, n: number) =>
 const daysBetween = (a: string, b: string) =>
   Math.round((Date.parse(a + 'T00:00:00Z') - Date.parse(b + 'T00:00:00Z')) / dayMs);
 
+/**
+ * Pair each of the consensus feed's EARLIER quarters with the filer's own GAAP
+ * diluted EPS for that same quarter, from XBRL.
+ *
+ * This is the witness list `epsEstimateBasisConflict` uses to establish which
+ * basis a feed publishes for a given company. SentinelOne's feed returns
+ * −0.18 / −0.33 / −0.23 as its "actuals" for three prior quarters and the
+ * filer's XBRL says −0.18 / −0.33 / −0.23 — that feed is quoting and settling
+ * on GAAP, which is why its estimate for the graded quarter is a GAAP estimate
+ * and not the adjusted one the card was pairing it with.
+ *
+ * The vendor keys a row by fiscal-quarter END and a 52/53-week filer's quarter
+ * ends drift, so a row is matched to the nearest series quarter within 45 days
+ * — the same tolerance the current quarter is matched on — and left unpaired
+ * when nothing is that close. An unpaired row is simply not a witness.
+ */
+function vendorRowsWithGaap(
+  rows: EpsHistoryRow[],
+  exclude: EpsHistoryRow | null,
+  series: { ends: string[]; eps: (number | null)[] } | null,
+): VendorEpsRow[] {
+  if (!series) return [];
+  const out: VendorEpsRow[] = [];
+  for (const r of rows) {
+    if (r === exclude || !r.quarter) continue;
+    let gaap: number | null = null;
+    let best = 46;
+    for (let i = 0; i < series.ends.length; i++) {
+      const d = Math.abs(daysBetween(series.ends[i], r.quarter));
+      if (d < best && series.eps[i] != null) { best = d; gaap = series.eps[i]; }
+    }
+    out.push({ estimate: r.eps_estimate, actual: r.eps_actual, gaapEps: gaap });
+  }
+  return out;
+}
+
 function fmtYoy(cur: number, prev: number): string {
   if (prev <= 0) return 'n/m';
   const p = ((cur - prev) / Math.abs(prev)) * 100;
@@ -135,14 +171,48 @@ function fmtYoy(cur: number, prev: number): string {
  * Nothing here depends on a particular company, a particular year, or Yahoo's
  * labelling staying the way it is today.
  */
+/**
+ * WHY EVERY FIGURE NOW CARRIES A REASON WHEN IT CARRIES NO ESTIMATE.
+ *
+ * SentinelOne's Q2 FY27 card showed six guided lines and exactly one street
+ * comparison ("Revenue $309.0M–$311.0M (Est. $310M) ≈ in line"). The other five
+ * rows were bare, and a bare row is ambiguous in the worst possible direction:
+ * a reader cannot tell "the street had nothing for this" from "nobody checked",
+ * and next to a green "Guidance raised" chip the silence reads as agreement.
+ * It was not — SentinelOne guided FY27 adjusted EPS BELOW the street.
+ *
+ * So the absence is now a value, not a gap. Nothing is invented: where the feed
+ * has no number for a metric, the card says so and shows no verdict.
+ */
+type EstAbsentReason =
+  | 'metric-not-covered'    // the consensus feed carries revenue and EPS only
+  | 'basis-mismatch'        // a published EPS consensus may only meet an adjusted guide
+  | 'period-unmatched'      // no estimate lands on the guided period's end date
+  | 'ambiguous-feed'        // two different numbers for the same date
+  | 'implausible';          // the only candidate is not the same quantity (see the 3x gate)
+
+// NOT EXPORTED, DELIBERATELY. A Next.js route module may only export the HTTP
+// handlers and the route config; anything else makes the generated route type
+// fail to satisfy its constraint, which is one of the errors `tsc` reports for
+// this file. Nothing outside this module has ever imported it — the two
+// references to it elsewhere are prose in comments — so file-local is what it
+// always meant to be.
 function withEstimates(
   figs: GuidanceFigure[],
   fwd: ForwardEstimate[],
   reported: { period_end: string | null; fiscal_q: number | null; fiscal_fy: number | null },
-): Array<GuidanceFigure & { est?: number | null }> {
-  if (!figs.length || !fwd.length) return figs as any;
+): Array<GuidanceFigure & { est?: number | null; est_absent?: EstAbsentReason | null }> {
+  const bare = (f: GuidanceFigure, why: EstAbsentReason) => ({ ...f, est: null, est_absent: why });
+  // The feed itself carries only the two series below; a guide to operating
+  // income, EBITDA, margins or free cash flow has no consensus here to meet,
+  // and inventing one would be the worst defect this file could ship.
+  const covered = (f: GuidanceFigure) =>
+    (f.metric === 'revenue' || f.metric === 'eps') && f.unit !== 'pct' && f.low != null && f.high != null;
+  if (!figs.length || !fwd.length) return figs.map((f) => bare(f, covered(f) ? 'period-unmatched' : 'metric-not-covered'));
   const { period_end, fiscal_q, fiscal_fy } = reported;
-  if (!period_end || !fiscal_q || !fiscal_fy) return figs as any;
+  if (!period_end || !fiscal_q || !fiscal_fy) {
+    return figs.map((f) => bare(f, covered(f) ? 'period-unmatched' : 'metric-not-covered'));
+  }
 
   const QUARTER_DAYS = 91.31;
   /** How many quarters after the reported one does this figure's period end? */
@@ -166,17 +236,35 @@ function withEstimates(
 
   const endMs = Date.parse(period_end + 'T00:00:00Z');
   return figs.map((f) => {
-    if ((f.metric !== 'revenue' && f.metric !== 'eps') || f.unit === 'pct' || f.low == null || f.high == null) return f;
+    if (!covered(f)) return bare(f, 'metric-not-covered');
     // A published EPS consensus is a NON-GAAP number by convention, so it may
     // only sit beside the adjusted line. NetApp guides both ($9.73–10.03
     // adjusted, $7.35–7.65 GAAP); printing the same $10.01 estimate against the
     // GAAP range invents a miss that nobody is forecasting.
-    if (f.metric === 'eps' && f.basis !== 'adjusted') return f;
+    if (f.metric === 'eps' && f.basis !== 'adjusted') return bare(f, 'basis-mismatch');
     const qa = quartersAhead(f);
-    if (qa == null || qa < 1 || qa > 8) return f;
+    if (qa == null || qa < 1 || qa > 8) return bare(f, 'period-unmatched');
     const wantMs = endMs + qa * QUARTER_DAYS * 86_400_000;
+    // A QUARTER AND A YEAR CAN END ON THE SAME DAY, AND USUALLY DO.
+    //
+    // The feed's period token says which of the two an entry is ("+1q" vs
+    // "0y"), and a fiscal year always ends on the last day of its fourth
+    // quarter — so for any January filer the Q4 estimate and the FY estimate
+    // carry the identical end date. Matching on the date alone made those two
+    // entries look like the feed contradicting itself, and the whole comparison
+    // was refused: SentinelOne's FY27 revenue guide of $1.202–$1.207B found
+    // "+1q" ($325.8M) and "0y" ($1.2049B) both sitting on 2027-01-31, 73% apart,
+    // and came back with no estimate at all — which is why the card carried a
+    // street verdict on the quarter's revenue and on nothing else. A figure that
+    // guides a quarter may only meet a quarterly estimate, and a figure that
+    // guides a year may only meet an annual one. The ambiguity test below still
+    // stands for the case it was written for — Palo Alto's "0y" and "+1y" BOTH
+    // ending 2027-07-31 with $11.4B and $16.2B, two years on one date, which no
+    // rule can separate and which is therefore still refused.
+    const wantKind = f.period === 'year' ? 'y' : 'q';
     const near = fwd.filter((e) => {
       if (!e.end_date) return false;
+      if (!String(e.period || '').endsWith(wantKind)) return false;
       const v = f.metric === 'revenue' ? e.revenue : e.eps;
       if (v == null || !Number.isFinite(v)) return false;
       return Math.abs(Date.parse(e.end_date + 'T00:00:00Z') - wantMs) <= 20 * 86_400_000;
@@ -184,17 +272,25 @@ function withEstimates(
     if (near.length !== 1) {
       // Either nothing lands on that date, or the feed offers two different
       // numbers for it — in both cases the honest answer is no estimate.
-      if (near.length < 2) return f;
+      if (near.length < 2) return bare(f, 'period-unmatched');
       const vals = near.map((e) => (f.metric === 'revenue' ? e.revenue! : e.eps!));
       const spread = (Math.max(...vals) - Math.min(...vals)) / Math.max(1e-9, Math.abs(Math.max(...vals)));
-      if (spread > 0.02) return f;
+      if (spread > 0.02) return bare(f, 'ambiguous-feed');
     }
     const v = f.metric === 'revenue' ? near[0].revenue! : near[0].eps!;
     // A last sanity gate: a consensus more than 3x away from the guide is not
-    // the same period however the dates line up.
-    const mid = (f.low + f.high) / 2;
-    if (mid !== 0 && (v / mid > 3 || v / mid < 0.33)) return f;
-    return { ...f, est: v };
+    // the same quantity however the dates line up. It is not always a period
+    // error: for SentinelOne (ticker S) the feed's per-share series is GAAP —
+    // its "actual" for the July 2026 quarter is −$0.27, the release's GAAP EPS,
+    // not the $0.08 non-GAAP figure the company guides on — so a −$0.79 FY27
+    // estimate arrives against a $0.30–$0.32 adjusted guide. The two numbers
+    // are on different bases and no verdict may be drawn between them. The
+    // ratio catches every sign flip and every order-of-magnitude mismatch this
+    // produces, and refusing is the only correct answer: the real non-GAAP
+    // consensus is not in any source this engine holds.
+    const mid = ((f.low as number) + (f.high as number)) / 2;
+    if (mid !== 0 && (v / mid > 3 || v / mid < 0.33)) return bare(f, 'implausible');
+    return { ...f, est: v, est_absent: null };
   });
 }
 
@@ -810,6 +906,35 @@ export async function GET(req: Request) {
       const adjNow = pa ? pa.value : (vendorUsable ? vendorAdj : null);
       const adjPrev = pa ? (pa.prior ?? null) : (vendorUsable ? (sYearAgo?.eps_actual ?? null) : null);
       const adjProvenance: 'filing' | 'vendor' | null = pa ? 'filing' : (adjNow != null ? 'vendor' : null);
+      // ── THE OTHER HALF OF THE SAME RULE ────────────────────────────────
+      // `vendorLooksGaap` above refuses a vendor ACTUAL that is really the GAAP
+      // figure. Nothing refused a vendor ESTIMATE that is really the GAAP
+      // consensus, and that asymmetry is what put "adj. EPS $0.08 vs est
+      // $-0.23 … beat by $0.31" on SentinelOne's card: the actual was resolved
+      // correctly from the release (+$0.08 non-GAAP) and then measured against
+      // a feed whose estimate for that quarter, and whose actual, and whose
+      // three prior quarters, are all the GAAP line (−$0.27). The real adjusted
+      // street number was about $0.07 — a penny beat. See
+      // `epsEstimateBasisConflict` for how the two bases are told apart on
+      // evidence rather than on how far apart the numbers happen to be.
+      //
+      // The verdict is computed HERE, before `gradeUsRow`, because the beat
+      // does not only decorate the card: it feeds `consensus_beat_pct`, which
+      // feeds `decideTier`'s beat-and-raise STRONG path. A fabricated beat that
+      // is suppressed on the card but still promotes the tier is not suppressed.
+      const gaapSeries = quarterSeries(p.facts, p.fundamentals.q_end);
+      const estBasis = epsEstimateBasisConflict({
+        estimate: sLatest?.eps_estimate ?? null,
+        actual: adjNow,
+        gaapEps: gaapNow,
+        vendorActual: vendorAdj,
+        history: vendorRowsWithGaap(sRows, sLatest, gaapSeries),
+      });
+      // The estimate is still SHOWN when the bases conflict — a reader is
+      // entitled to know a consensus exists — but nothing may be computed from
+      // it, here or anywhere downstream.
+      const estUsable = !estBasis.conflict;
+      const estForSurprise = estUsable ? (sLatest?.eps_estimate ?? null) : null;
       const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
       const fyEnding = fiscalYearEndingAt(p.facts, p.fundamentals.q_end);
       const row = gradeUsRow({
@@ -836,10 +961,15 @@ export async function GET(req: Request) {
         // — a 17% beat with a raised guide — was graded as though neither had
         // happened. Same arithmetic as the display path below, and it refuses a
         // percentage off a base under a dime for the same reason.
-        consensus_beat_pct: (adjNow != null && (sLatest?.eps_estimate ?? null) != null
-          && (sLatest!.eps_estimate as number) >= 0.10)
-          ? ((adjNow - (sLatest!.eps_estimate as number)) / (sLatest!.eps_estimate as number)) * 100
+        consensus_beat_pct: (adjNow != null && estForSurprise != null && estForSurprise >= 0.10)
+          ? ((adjNow - estForSurprise) / estForSurprise) * 100
           : null,
+        // The cents beat reads `estForSurprise`, NOT the raw vendor estimate —
+        // an estimate refused for a basis conflict must be refused here too, or
+        // the fabricated beat the guard just removed walks straight back into
+        // the grade through the cents door.
+        consensus_beat_abs: (adjNow != null && estForSurprise != null)
+          ? adjNow - estForSurprise : null,
         close_30d: p.t.close_30d,
         // The filer's own words first (press-release headline), then SEC's
         // fy/fp — they disagree often enough to matter (NetApp's July quarter
@@ -910,7 +1040,9 @@ export async function GET(req: Request) {
       // All three are additive and independently optional — a filer with a
       // short history, no tagged debt or no prior outlook simply carries fewer
       // of them, and the card renders what is there.
-      const ser = quarterSeries(p.facts, p.fundamentals.q_end);
+      // Already built above for the EPS-basis witnesses — same grid, same
+      // quarter selection, so it is reused rather than rebuilt.
+      const ser = gaapSeries;
       if (ser) (row as any).series = ser;
       const ctx = balanceContext(p.facts, p.fundamentals.q_end);
       if (ctx) (row as any).context = ctx;
@@ -999,7 +1131,7 @@ export async function GET(req: Request) {
       // Consensus surprise (street basis, both sides) — tagged so it shows up
       // beside the methodology / caveat chips like every other signal.
       if (adjNow != null) {
-        const est = sLatest?.eps_estimate ?? null;
+        const est = estForSurprise;
         (row as any).eps_adj = adjNow;
         (row as any).eps_adj_source = adjProvenance;
         (row as any).eps_adj_label = pa?.label ?? null;
@@ -1023,6 +1155,23 @@ export async function GET(req: Request) {
           const miss = pct != null ? pct <= -5 : cents <= -0.03;
           if (beat && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
           if (miss && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+        } else if (estBasis.conflict && sLatest?.eps_estimate != null) {
+          // THE ESTIMATE IS SHOWN, THE SURPRISE IS NOT. The mirror of the
+          // branch below: there we have a street estimate and no adjusted
+          // actual, here we have an adjusted actual and a street estimate that
+          // is not on its basis. Either way the honest output is the estimate
+          // plus the reason no surprise accompanies it — never a subtraction
+          // across two books.
+          (row as any).eps_estimate = sLatest.eps_estimate;
+          (row as any).eps_basis_note = estBasis.note;
+          (row as any).eps_basis_evidence = estBasis.evidence;
+          // A METHODOLOGY tag, not a caveat: nothing is wrong with the company
+          // or with this print — the feed's estimate is simply not measurable
+          // against it. Filing it as a caveat would silently demote the row in
+          // every preset that counts caveats, which is a second wrong answer.
+          if (!row.methodology_tags.includes('consensus not on a comparable basis')) {
+            row.methodology_tags.push('consensus not on a comparable basis');
+          }
         }
       } else if (sLatest && sLatest.eps_actual != null && vendorLooksGaap) {
         // The feed's "adjusted actual" is the GAAP figure. Show the estimate so
@@ -1111,6 +1260,43 @@ export async function GET(req: Request) {
           : ((latest?.quarter ? rows.find((r) => r.quarter && r.eps_actual != null
               && Math.abs(daysBetween(latest.quarter!, r.quarter) - 365) <= 30)?.eps_actual : null) ?? null));
         if ((!pr || !pr.matched.length) && adjNowP == null) continue;
+        // Same basis guard as the full path, on the evidence a PRELIM row has:
+        // the GAAP EPS comes from the release's own statement of operations
+        // (validated against last year's XBRL) rather than from this quarter's
+        // 10-Q, which has not posted — and the prior quarters' GAAP EPS still
+        // comes from XBRL, because those quarters have long since been filed.
+        // A PRELIM card is the FIRST thing the owner sees on the evening of a
+        // print, so it is exactly where a fabricated beat does the most damage.
+        const estBasisP = epsEstimateBasisConflict({
+          estimate: latest?.eps_estimate ?? null,
+          actual: adjNowP,
+          gaapEps: pr?.eps ?? null,
+          vendorActual: vendorAdjP,
+          history: vendorRowsWithGaap(rows, latest, facts0 ? quarterSeries(facts0, null) : null),
+        });
+        const estUsableP = !estBasisP.conflict;
+        // The feed's OWN surprise percentage is what a PRELIM row forwards, so
+        // it is judged on the same rule — see `vendorSurpriseUsable`. Gap's
+        // +180.9% is an adjusted estimate paired with a GAAP actual, by the
+        // feed itself.
+        const vendorSurpP = vendorSurpriseUsable({
+          estimate: latest?.eps_estimate ?? null,
+          vendorActual: vendorAdjP,
+          gaapEps: pr?.eps ?? null,
+          adjustedEps: paP ? paP.value : null,
+        });
+        // OUR OWN ARITHMETIC FIRST, the feed's percentage only as a fallback.
+        // When we hold both a release-read adjusted EPS and a usable estimate,
+        // the surprise is ours to compute and is on one stated basis; the feed's
+        // number is a black box that has been caught pairing two books. This
+        // also means refusing the feed's figure costs nothing where we can do
+        // the sum ourselves — TJX keeps its real +$0.03 while losing the feed's
+        // +14.5%, which was struck against the GAAP actual.
+        const ownSurprisePct = (adjNowP != null && estUsableP && (latest?.eps_estimate ?? null) != null
+          && (latest!.eps_estimate as number) >= 0.10)
+          ? ((adjNowP - (latest!.eps_estimate as number)) / (latest!.eps_estimate as number)) * 100
+          : null;
+        const vendorSurprisePct = ownSurprisePct ?? (vendorSurpP.usable ? (latest?.surprise_pct ?? null) : null);
         // Guidance first: it also carries the filer's own name for the quarter
         // ("Q2 FY27"), read from the release headline.
         let gPre: Guidance | null = null;
@@ -1143,8 +1329,12 @@ export async function GET(req: Request) {
           shares_outstanding: facts0 ? sharesOutstandingFromFacts(facts0, null) : null,
           adj_eps: adjNowP,
           adj_eps_prev: adjPrevP,
-          prelim_surprise_pct: latest?.surprise_pct ?? null,
-          consensus_beat_pct: latest?.surprise_pct ?? null,
+          prelim_surprise_pct: vendorSurprisePct,
+          consensus_beat_pct: vendorSurprisePct,
+          // Same rule as the full path: only an estimate that survived the
+          // basis guard may produce a cents beat.
+          consensus_beat_abs: (adjNowP != null && estUsableP && (latest?.eps_estimate ?? null) != null)
+            ? adjNowP - (latest!.eps_estimate as number) : null,
           positive_guidance: gPre?.label === 'RAISED',
           close_30d: t.close_30d,
           fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
@@ -1296,7 +1486,9 @@ export async function GET(req: Request) {
         (row as any).close_30d = t.close_30d;
         (row as any).reaction_date = t.reaction_date;
         if (adjNowP != null) {
-          const estP = latest?.eps_estimate ?? null;
+          // Same rule as the full path: an estimate that is not on this
+          // actual's basis is shown, never subtracted from it.
+          const estP = estUsableP ? (latest?.eps_estimate ?? null) : null;
           (row as any).eps_basis = paP ? `adjusted (${paP.label})` : 'adjusted (street)';
           (row as any).eps_adj = adjNowP;
           (row as any).eps_adj_source = paP ? 'filing' : 'vendor';
@@ -1312,6 +1504,13 @@ export async function GET(req: Request) {
             const miss = pct != null ? pct <= -5 : cents <= -0.03;
             if (beat && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
             if (miss && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+          } else if (estBasisP.conflict && latest?.eps_estimate != null) {
+            (row as any).eps_estimate = latest.eps_estimate;
+            (row as any).eps_basis_note = estBasisP.note;
+            (row as any).eps_basis_evidence = estBasisP.evidence;
+            if (!row.methodology_tags.includes('consensus not on a comparable basis')) {
+              row.methodology_tags.push('consensus not on a comparable basis');
+            }
           }
         } else if (!row.methodology_tags.includes('no analyst coverage')) {
           // Not a defect — most listed US companies have no consensus at all.
@@ -1323,8 +1522,16 @@ export async function GET(req: Request) {
           row.methodology_tags.push('quarter read from the release');
         }
         const surpP = (row as any).eps_surprise_pct as number | null | undefined;
+        // The sentence must not pair the two figures either. Writing "adjusted
+        // EPS $0.08 vs $-0.23 consensus" invites the reader to do the
+        // subtraction the engine just refused to do, so when the bases differ
+        // the narrative states the adjusted figure alone and says why the
+        // consensus is missing from it.
+        const consensusLine = (latest?.eps_estimate != null && estUsableP)
+          ? ` vs $${latest.eps_estimate.toFixed(2)} consensus${surpP != null ? ` (${surpP >= 0 ? '+' : ''}${surpP.toFixed(0)}%)` : ''}`
+          : (estBasisP.conflict ? ' (the consensus on file is struck on the GAAP basis, so no surprise is shown)' : '');
         const adjLine = adjNowP != null
-          ? `${paP ? paP.label.toLowerCase() : 'adjusted EPS'} $${adjNowP.toFixed(2)}${latest?.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus${surpP != null ? ` (${surpP >= 0 ? '+' : ''}${surpP.toFixed(0)}%)` : ''}` : ''}`
+          ? `${paP ? paP.label.toLowerCase() : 'adjusted EPS'} $${adjNowP.toFixed(2)}${consensusLine}`
           : null;
         row.narrative = (pr && pr.matched.length)
           // We have the release's own GAAP statement — keep the normal
