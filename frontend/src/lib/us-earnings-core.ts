@@ -23,7 +23,7 @@
 //     will NOT match a stockanalysis screenshot for those names. That is
 //     correct, not a bug.
 //
-// THE FOUR TRAPS THIS MODULE HANDLES (all verified on real filings)
+// THE TRAPS THIS MODULE HANDLES (all verified on real filings)
 // ─────────────────────────────────────────────────────────────────
 //  1. CASH FLOW IS YEAR-TO-DATE. A 10-Q's cash-flow statement is cumulative
 //     from the fiscal-year start, not for the quarter. Q3 CFO must be derived
@@ -42,6 +42,29 @@
 //     52/53-week (year-ago quarter ended 2025-06-28) to calendar (current
 //     quarter ends 2026-06-30). Year-ago matching is therefore a ±25-day
 //     nearest-neighbour search around T−365, never an exact date lookup.
+//  5. A TAG CAN BE A SUBSET OF THE LINE IT LOOKS LIKE. Affirm tags both an
+//     ASC-606 revenue ($387.5m for its June-2026 quarter) and `Revenues`
+//     ($1,166.0m); American Express tags fee income and revenue-net-of-
+//     interest-expense. The ASC-606 element is a COMPONENT for those filers.
+//     `chooseRevenue` therefore ends with a floor: a chosen revenue more than
+//     a tenth short of another total-revenue element for the SAME quarter is
+//     re-picked. The exception, and the reason the floor has a filter in front
+//     of it, is Brown-Forman: "including assessed tax" is not a bigger revenue
+//     line, it is net sales with excise tax added back.
+//  6. A PRE-TAX INCOME LINE IS NOT AN OPERATING MARGIN. It is struck after
+//     interest and other income. It used to be this module's fallback when a
+//     filer tagged no `OperatingIncomeLoss`, and it published REX's October
+//     quarter as $35.5m of operating income against a true $27.9m. See
+//     `deriveOperatingIncome` and `OperatingIncomeBasis`.
+//  7. AVERAGES DO NOT DE-CUMULATE BY SUBTRACTION, AND NEITHER DOES EPS. Both
+//     traps live in the same place: the fourth quarter's diluted share count.
+//     See `quarterizeAverage` and `dilutedByQuarter`.
+//  8. A FOUR-ELEMENT ARRAY WITH NO DATES CANNOT BE CHECKED BY ANYONE. Four
+//     period ends 365 days apart look exactly like four consecutive quarters
+//     once the dates are dropped. See `consecutiveTail` and `quarters_ends`.
+//  9. A STOCK SPLIT MAKES TWO PER-SHARE FIGURES INCOMPARABLE, and EDGAR
+//     restates only the periods a later filing re-presents, so both bases sit
+//     in the same document. See `splitFactorSince`.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
@@ -72,12 +95,19 @@ export const US_TAGS: Record<string, string[]> = {
     'SalesRevenueServicesNet',
     'TotalRevenuesAndOtherIncome',            // energy majors
   ],
+  // ONE tag, because there is only one element that means "operating income".
+  // A pre-tax income line is NOT an operating margin — it is struck after
+  // interest and other income — and it used to sit in this ladder as a
+  // fallback. REX tags no `OperatingIncomeLoss`, so its October-2025 quarter
+  // was published as $35.46m of "operating income" when the true figure is
+  // $27.92m (36,132 gross profit − 8,214 SG&A); the $7.5m difference is
+  // interest income. Deere's 14.93% "operating margin" came from the same
+  // substitution and is only close to its 14.4% segment operating profit by
+  // luck. What replaces the fallback is `deriveOperatingIncome` below: the
+  // filer's own gross profit less its own operating expenses, published only
+  // when that arithmetic RECONCILES to the pre-tax line the filer also tags.
   operating_income: [
     'OperatingIncomeLoss',
-    // Banks and insurers do not report an operating line at all; pre-tax
-    // income is the nearest honest equivalent (two spellings in the wild).
-    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
-    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
   ],
   net_income: [
     'NetIncomeLoss',                                        // attributable to the parent (ex-NCI)
@@ -147,6 +177,76 @@ export const US_TAGS: Record<string, string[]> = {
 export type UsFactKind =
   | 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'diluted_shares' | 'capex'
   | 'gross_profit' | 'cost_of_revenue' | 'sbc' | 'buyback' | 'dividends';
+
+// ─── operating income, when the filer never tags the subtotal ──────────────
+// Two spellings of the pre-tax line. It is NEVER an operating margin; it is
+// kept only as the reconciliation target for a derived operating income and,
+// for the one issuer class whose revenue is itself struck after financing cost
+// (see `PRETAX_IS_OPERATING_REVENUE_TAGS`), as a marked last resort.
+const PRETAX_INCOME_TAGS = [
+  'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
+  'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
+];
+/**
+ * The revenue lines that are ALREADY net of financing cost. For a bank, a
+ * thrift or a BDC, interest expense is a cost of revenue rather than a
+ * below-the-line item, there is no operating subtotal on the face of the
+ * statement, and pre-tax income is the nearest honest equivalent — the margin
+ * a bank analyst actually quotes. For an industrial such as REX or Deere,
+ * whose revenue is gross and whose interest sits below the operating line, it
+ * is not, which is why the fallback is tied to the revenue line rather than
+ * offered to everybody.
+ */
+const PRETAX_IS_OPERATING_REVENUE_TAGS = new Set([
+  'RevenuesNetOfInterestExpense',
+  'InterestIncomeExpenseNet',
+  'GrossInvestmentIncomeOperating',
+  'InvestmentIncomeOperating',
+  'InterestAndDividendIncomeOperating',
+  'InvestmentIncomeInterest',
+  'InterestIncomeOperating',
+]);
+
+// Operating expense components for the derivation ladder. Three DISJOINT
+// slots — selling/administrative, research, other operating — because the
+// income statement itself is built that way, and because a ladder may only
+// contain totals: `GeneralAndAdministrativeExpense` is a component of
+// `SellingGeneralAndAdministrativeExpense`, so the roll-up is taken alone
+// wherever the filer tags it and the components only when it does not.
+//
+// DELIBERATELY ABSENT: `OperatingExpenses`. Some filers mean by it the total
+// of everything below gross profit and others the total INCLUDING cost of
+// revenue; an element whose meaning depends on the filer cannot be subtracted
+// from anything. Same reason `CostsAndExpenses` is absent: for Chevron and
+// Burlington `Revenues − CostsAndExpenses` is exactly the pre-tax line,
+// because it swallows interest expense too.
+const OPEX_SGA_TOTAL = ['SellingGeneralAndAdministrativeExpense'];
+const OPEX_SGA_PARTS: string[][] = [
+  ['GeneralAndAdministrativeExpense'],
+  ['SellingAndMarketingExpense', 'SellingExpense', 'MarketingExpense'],
+];
+const OPEX_OTHER_SLOTS: string[][] = [
+  ['ResearchAndDevelopmentExpense'],
+  ['OtherCostAndExpenseOperating'],
+];
+/** Non-operating items, used ONLY to bound how far a derived operating income
+ *  may sit ABOVE the filer's pre-tax line. `NonoperatingIncomeExpense` is the
+ *  roll-up of the rest; the interest elements are alternative spellings of one
+ *  charge, so the largest is taken rather than their sum. */
+const NONOPERATING_NET_TAG = 'NonoperatingIncomeExpense';
+const NONOPERATING_EXPENSE_TAGS = [
+  'InterestExpense', 'InterestExpenseNonoperating', 'InterestAndDebtExpense',
+  'InterestExpenseDebt', 'InterestExpenseBorrowings',
+];
+const NONOPERATING_INCOME_TAGS = [
+  'InvestmentIncomeInterest', 'InterestAndOtherIncome', 'OtherNonoperatingIncomeExpense',
+  'OtherNonoperatingIncome', 'InvestmentIncomeNonoperating', 'IncomeLossFromEquityMethodInvestments',
+];
+/** A lender's fee and commission income. Net interest income is only half of
+ *  a thrift's or a bank's top line — Provident Financial's June quarter is
+ *  $9,311k of net interest income PLUS $1,283k of noninterest income. This is
+ *  the total element only; the fee-by-fee components are never summed. */
+const NONINTEREST_INCOME_TAGS = ['NoninterestIncome'];
 
 // ─── archetype ladders (LAST RESORT ONLY) ──────────────────────────────────
 // These are never consulted for a filer whose ordinary revenue ladder above
@@ -294,6 +394,23 @@ function looksLikeInterestSpreadLender(facts: any): boolean {
 }
 
 /**
+ * A bank, thrift, insurer, BDC or mortgage REIT — an issuer whose income
+ * statement has NO operating subtotal because interest expense is a cost of
+ * its revenue rather than a below-the-line item. Detected from the elements the
+ * filer itself uses, never from a list of names, so any bank that lists in 2040
+ * is covered and no industrial ever is.
+ */
+function looksLikeFinancialIssuer(facts: any): boolean {
+  if (looksLikeInvestmentCompany(facts) || looksLikeInterestSpreadLender(facts)) return true;
+  for (const c of ['RevenuesNetOfInterestExpense', 'NoninterestIncome', 'NoninterestExpense',
+    'InterestIncomeExpenseNet', 'InterestIncomeExpenseAfterProvisionForLoanLoss',
+    'PremiumsEarnedNet', 'PolicyholderBenefitsAndClaimsIncurredNet']) {
+    if (hasRecentQuarterly(facts, c, 4)) return true;
+  }
+  return false;
+}
+
+/**
  * Choose the tag that this filer actually uses, by coverage — not by hoping the
  * first name in the list exists. Scores quarterly windows 10x, annual 3x, with
  * a small nudge for priority order. Restricted to the last ~3.3 years so a tag
@@ -421,12 +538,214 @@ export function quarterize(rows: DurFact[], cumulative: boolean, additive = true
   return q;
 }
 
+/**
+ * Duration facts that are a TIME-WEIGHTED AVERAGE — the weighted-average share
+ * count — → discrete quarterly values.
+ *
+ * Dollars de-cumulate by subtraction; an average does not. What is additive is
+ * the average times its own length, so the quarter that a longer window adds to
+ * a shorter one is
+ *
+ *     Qn = (avg(long) × days(long) − avg(short) × days(short)) ÷ (days difference)
+ *
+ * which is exact for a time-weighted mean and handles 52/53-week quarters
+ * without special-casing them. It matters because Q4 is never filed as a
+ * quarter (trap #2) and the Q4 share count is what a Q4 EPS must be divided by:
+ * ScanSource's FY26 count is 21,692k and its nine-month count 22,013k, so the
+ * fourth quarter averaged (21,692×364 − 22,013×273)/91 = 20,729k. Dividing the
+ * quarter's $25.6m of net income by that gives $1.24 — the figure ScanSource
+ * filed. Dividing by the third quarter's 21,578k instead gives $1.19.
+ *
+ * TWO GUARDS, because the identity assumes the DILUTIVE securities counted in
+ * the long window were counted in the short one too:
+ *  • ASC 260 excludes them from any period with a LOSS. Regis had a loss
+ *    quarter inside a profitable FY25, so its annual count (2,680k) includes
+ *    equivalents that its nine-month count (2,350k) does not, and the identity
+ *    returns 3,670k against a filed 2,736k. A sign change between any quarter
+ *    of the year and the year itself therefore disqualifies the derivation —
+ *    which is why `signCheck` is passed in.
+ *  • The answer must sit inside the range of counts the filer actually tagged
+ *    for that same year, widened 10%. A count outside the year's own range is
+ *    not a share count, it is the residue of a broken assumption.
+ * Both are conservative: they leave the value missing, never wrong.
+ */
+export function quarterizeAverage(
+  rows: DurFact[],
+  signCheck?: (start: string, end: string) => boolean,
+): Record<string, number> {
+  const q: Record<string, number> = {};
+  // A tagged quarter is 80–100 days, the same definition the rest of the module
+  // uses. The GAPS below are allowed out to 130 because a 52/53-week filer's
+  // fourth quarter can be 16 or 17 weeks long (Bridgford Foods' is 112 days)
+  // even though its tagged quarters are 84.
+  const discrete = rows.filter((r) => r.days >= 80 && r.days <= 100);
+  for (const r of discrete) q[r.end] = r.val;
+
+  const plausible = (v: number, within: DurFact[]): boolean => {
+    if (!(v > 0) || !Number.isFinite(v)) return false;
+    const vals = within.map((x) => x.val).filter((x) => x > 0);
+    if (!vals.length) return false;
+    return v >= Math.min(...vals) * 0.9 && v <= Math.max(...vals) * 1.1;
+  };
+
+  // (a) consecutive year-to-date windows sharing a fiscal-year start.
+  const byStart = new Map<string, DurFact[]>();
+  for (const r of rows) {
+    if (!byStart.has(r.start)) byStart.set(r.start, []);
+    byStart.get(r.start)!.push(r);
+  }
+  byStart.forEach((rs) => {
+    const dedup = new Map<string, DurFact>();
+    for (const x of rs) dedup.set(x.end, x);
+    const ordered = Array.from(dedup.values()).sort((a, b) => a.end.localeCompare(b.end));
+    for (let i = 1; i < ordered.length; i++) {
+      const a = ordered[i - 1], b = ordered[i];
+      const gap = b.days - a.days;
+      if (gap < 80 || gap > 130) continue;
+      if (q[b.end] !== undefined) continue;
+      if (signCheck && !signCheck(b.start, b.end)) continue;
+      const v = (b.val * b.days - a.val * a.days) / gap;
+      const peers = rows.filter((x) =>
+        dnum(x.start) >= dnum(b.start) - 5 * dayMs && dnum(x.end) <= dnum(b.end) + 5 * dayMs);
+      if (plausible(v, peers)) q[b.end] = v;
+    }
+  });
+
+  // (b) an annual window whose three discrete quarters are tagged but whose
+  //     nine-month window is not.
+  for (const r of rows) {
+    if (!(r.days >= 330 && r.days <= 380)) continue;
+    if (q[r.end] !== undefined) continue;
+    if (signCheck && !signCheck(r.start, r.end)) continue;
+    const inner = discrete.filter((x) =>
+      dnum(x.start) >= dnum(r.start) - 5 * dayMs && dnum(x.end) <= dnum(r.end) + 5 * dayMs);
+    const seen = new Set<string>();
+    const keep: DurFact[] = [];
+    for (const x of inner.sort((a, b) => a.end.localeCompare(b.end))) {
+      if (seen.has(x.end)) continue;
+      seen.add(x.end); keep.push(x);
+    }
+    if (keep.length !== 3) continue;
+    const d3 = keep.reduce((s, x) => s + x.days, 0);
+    const gap = r.days - d3;
+    if (gap < 80 || gap > 130) continue;
+    const v = (r.val * r.days - keep.reduce((s, x) => s + x.val * x.days, 0)) / gap;
+    if (plausible(v, [...keep, r])) q[r.end] = v;
+  }
+  return q;
+}
+
+const BASIC_SHARE_TAGS = ['WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted'];
+
+/**
+ * WEIGHTED-AVERAGE DILUTED SHARES, BY QUARTER — the denominator every derived
+ * EPS depends on, and the reason ScanSource's Q4 read $1.19 against a filed
+ * $1.24.
+ *
+ * A quarter the filer tags is used as tagged. For the quarter it never tags —
+ * Q4, which exists only inside the 10-K — the count is BUILT rather than
+ * borrowed from the quarter before, in two pieces, because only one of them is
+ * additive over time:
+ *
+ *   • BASIC shares are a plain time-weighted mean of the shares outstanding, so
+ *     the fourth quarter's is exactly (FY × FY days − 9M × 9M days) ÷ the days
+ *     between. No approximation.
+ *   • The DILUTIVE increment is not: ASC 260 computes it with the treasury
+ *     stock method against the AVERAGE SHARE PRICE OF THE PERIOD, so a year in
+ *     which the price fell carries a smaller increment than any of its
+ *     quarters. Veeva's FY26 diluted count (166,995k) sits BELOW its nine-month
+ *     count (167,953k) for exactly that reason, and de-cumulating the diluted
+ *     line directly returns 164,162k against a real ~168,400k — an EPS of $1.49
+ *     against the $1.45 Veeva filed. So the increment is carried from the
+ *     nearest quarter the filer did tag, where it is a few per cent of the
+ *     count rather than the whole of it.
+ *
+ * Measured against the eight filed Q4 figures used to design this (ScanSource,
+ * Strattec, Regis, Veeva, Microsoft, Ulta, Abercrombie, Dell) the sum of
+ * absolute error is 3 cents, against 6 for de-cumulating the diluted line and
+ * 28 for borrowing the previous quarter's count.
+ */
+function dilutedByQuarter(
+  ser: (c: string) => DurFact[],
+  concept: string,
+  qNet: Record<string, number>,
+): Record<string, number> {
+  // ASC 260 also drops antidilutive securities from any period with a LOSS, so
+  // a year containing a loss quarter has no consistent increment at all. Regis
+  // is that case, and both constructions below are refused for it — the EPS
+  // ladder then falls back to the fiscal-year average, which is 2% from the
+  // filed figure where the previous quarter's count was 9% away.
+  const signCheck = (start: string, end: string): boolean => {
+    const inner = Object.keys(qNet).filter((e) => dnum(e) > dnum(start) && dnum(e) <= dnum(end) + 4 * dayMs);
+    if (inner.length < 2) return true;                     // nothing to contradict
+    const total = inner.reduce((s, e) => s + qNet[e], 0);
+    return inner.every((e) => (qNet[e] >= 0) === (total >= 0));
+  };
+
+  const dilRows = ser(concept);
+  const out: Record<string, number> = quarterizeAverage(dilRows, signCheck);
+
+  const basicC = BASIC_SHARE_TAGS.find((b) => b !== concept && ser(b).length > 0);
+  if (basicC) {
+    const basRows = ser(basicC);
+    const decumBas = quarterizeAverage(basRows, signCheck);
+    const discDil: Record<string, number> = {};
+    for (const r of dilRows) if (r.days >= 80 && r.days <= 100) discDil[r.end] = r.val;
+    const discBas: Record<string, number> = {};
+    for (const r of basRows) if (r.days >= 80 && r.days <= 100) discBas[r.end] = r.val;
+    // A filer whose diluted count EQUALS its basic count over the year has no
+    // dilutive securities in the numbers at all — the usual case for a company
+    // running losses, where ASC 260 excludes every one of them. MongoDB tags
+    // only an annual diluted count and a quarterly basic one, and its FY2023
+    // figures are the same 68,628,267 to the share; its October-2022 quarter is
+    // then simply the basic count it tagged, 68,916,813, and $1.23 of loss per
+    // share rather than the $1.24 the annual average gives.
+    const annualInc = (e: string): number | null => {
+      const fyD = dilRows.find((r) => r.days >= 330 && r.days <= 380
+        && dnum(r.start) <= dnum(e) + 4 * dayMs && dnum(r.end) >= dnum(e) - 4 * dayMs);
+      const fyB = fyD ? basRows.find((r) => r.start === fyD.start && r.end === fyD.end) : null;
+      if (!fyD || !fyB || !(fyB.val > 0)) return null;
+      return Math.abs(fyD.val / fyB.val - 1) <= 0.005 ? 0 : null;
+    };
+    for (const e of Object.keys(decumBas)) {
+      if (discDil[e] !== undefined) continue;              // the filer tagged it; nothing to build
+      // The increment from the nearest EARLIER quarter that has both lines.
+      const src = Object.keys(discDil).filter((k) => k < e && discBas[k] !== undefined).sort().pop();
+      let inc: number | null = src ? discDil[src] - discBas[src] : annualInc(e);
+      if (inc == null || !(inc >= 0)) continue;
+      if (src && inc > discBas[src] * 0.5) continue;
+      out[e] = decumBas[e] + inc;
+    }
+  }
+  // A tagged quarter always wins over anything built.
+  for (const r of dilRows) if (r.days >= 80 && r.days <= 100) out[r.end] = r.val;
+  return out;
+}
+
 /** A value out of a quarter map, tolerating the 1–3 day drift between the
  *  period ends different statements inside one filing are tagged to. */
 function atMap(m: Record<string, number>, end: string | null | undefined): number | null {
   if (!end) return null;
   if (m[end] !== undefined) return m[end];
   for (const k of Object.keys(m)) if (Math.abs(diffDays(k, end)) <= 4) return m[k];
+  return null;
+}
+
+/**
+ * The first element of a ladder that is actually populated with a recent
+ * quarter. PRIORITY order, not coverage — every ladder that uses this is
+ * ordered by MEANING (a roll-up before its components, a total before a part),
+ * so "whichever has more quarters tagged" is the wrong question.
+ */
+function firstPopulated(
+  ser: (c: string) => DurFact[],
+  list: string[],
+): { c: string; q: Record<string, number> } | null {
+  const cutoffMs = Date.now() - RECENT_MS;
+  for (const c of list) {
+    const q = quarterize(ser(c), false);
+    if (Object.keys(q).some((e) => dnum(e) >= cutoffMs)) return { c, q };
+  }
   return null;
 }
 
@@ -517,6 +836,48 @@ function chooseRevenue(
       if (pool.length) chosen = pool[0];
     }
   }
+
+  // THE CHOSEN LINE MUST BE THE WHOLE TOP LINE.
+  //
+  // The rule above only ran when at least two candidates passed the sanity
+  // test, and that is exactly the case a filer whose profit exceeds its revenue
+  // fails. Affirm's June-2026 quarter carried $1.62bn of net income — a
+  // deferred-tax valuation-allowance release — against any revenue line, so
+  // every candidate was "insane", the re-pick never ran, and the ASC-606 line
+  // ($387.5m, 34% of the total) won on tag priority while the filer's own
+  // `Revenues` element said $1,166.0m. American Express failed the same way in
+  // the other direction: its $11.2bn of fee income beat its $19.6bn of
+  // revenue-net-of-interest-expense purely because "excluding assessed tax"
+  // sorted first.
+  //
+  // So the size test is applied unconditionally, as a floor rather than a
+  // preference: a revenue that is more than a tenth short of another
+  // total-revenue element covering THE SAME QUARTER is a component of that
+  // element, not the top line. A profit larger than revenue stays what it
+  // always was — a tripwire that the line is a subset — but it now re-picks
+  // instead of disabling the choice.
+  //
+  // THE ONE ELEMENT THAT MAY NEVER WIN THIS TEST is the gross "including
+  // assessed tax" spelling. It is not a broader aggregation of revenue, it is
+  // the SAME revenue with excise or sales tax added back — Brown-Forman's
+  // $1,181m against the $911m of net sales it reports — so a bigger number
+  // there is not evidence of anything. (It can still be the chosen line for a
+  // filer that tags nothing else; it simply cannot displace one.)
+  if (chosen) {
+    const curEnd = Object.keys(chosen.q).sort().pop();
+    const mine = curEnd ? chosen.q[curEnd] : null;
+    if (curEnd && mine != null) {
+      let alt: typeof chosen | null = null;
+      let altVal = mine;
+      for (const x of cands.filter((y) => !/IncludingAssessedTax/.test(y.c))) {
+        if (x.c === chosen.c) continue;
+        const v = atMap(x.q, curEnd);                  // same quarter, or not comparable at all
+        if (v == null || !(v > altVal)) continue;
+        alt = x; altVal = v;
+      }
+      if (alt && mine < altVal * 0.9) chosen = alt;
+    }
+  }
   if (chosen && Object.keys(chosen.q).length) {
     // TAG MIGRATION. A filer that renames its revenue element leaves a hole:
     // Streamex tagged its March quarter `Revenues` and its June quarter
@@ -552,10 +913,137 @@ function chooseRevenue(
   for (const tier of tiers) {
     for (const c of tier) {
       const q = quarterize(ser(c), false);
-      if (Object.keys(q).some((e) => dnum(e) >= cutoffMs)) return { concept: c, q };
+      if (Object.keys(q).some((e) => dnum(e) >= cutoffMs)) {
+        // A LENDER'S REVENUE IS NEVER ONE COMPONENT. Net interest income is
+        // half of a bank's or a thrift's top line; the other half is the fee
+        // and commission income it tags as `NoninterestIncome`. Provident
+        // Financial's June quarter is $9,311k of net interest income and
+        // $1,283k of noninterest income — $10,594k of revenue, which is what
+        // its own income statement totals. Added only where the filer tags the
+        // TOTAL element and only for the quarters it covers, so an issuer that
+        // has no fee income (an agency mortgage REIT tags none) is unchanged.
+        const fee = firstPopulated(ser, NONINTEREST_INCOME_TAGS);
+        if (fee) {
+          const merged: Record<string, number> = {};
+          for (const e of Object.keys(q)) {
+            const f = atMap(fee.q, e);
+            merged[e] = f == null ? q[e] : q[e] + f;
+          }
+          return { concept: `${c} + ${fee.c}`, q: merged };
+        }
+        return { concept: c, q };
+      }
     }
   }
   return { concept: chosen ? chosen.c : null, q: chosen ? chosen.q : {} };
+}
+
+/** How the operating income on a row was arrived at. `derived` and `pretax`
+ *  exist so a caller can LABEL the number instead of pretending it is the
+ *  filer's own subtotal — the whole point of removing the silent pre-tax
+ *  fallback. */
+export type OperatingIncomeBasis = 'reported' | 'derived' | 'pretax';
+
+/**
+ * OPERATING INCOME WHEN THE FILER NEVER TAGS THE SUBTOTAL.
+ *
+ * The ladder, in order:
+ *   1. `OperatingIncomeLoss` — the filer's own line (handled by the caller).
+ *   2. gross profit − operating expenses, where gross profit is `GrossProfit`.
+ *   3. the same, with gross profit as revenue − cost of revenue. The revenue in
+ *      that subtraction is the SAME series `chooseRevenue` picked, never a
+ *      different tag.
+ *   4. nothing.
+ *
+ * WHY 2 AND 3 ARE VERIFIED RATHER THAN TRUSTED. A subtraction is only an
+ * operating income if the expenses subtracted are ALL of them, and XBRL gives
+ * no way to know that a priori — Burlington's gross profit less SG&A is $369m,
+ * against a true ~$256m, because its depreciation and amortisation is a
+ * separate line on the face of the statement.
+ *
+ * The check is ONE-SIDED, and that asymmetry is the whole trick. Missing an
+ * operating expense can only push the answer UP, so a derived operating income
+ * is refused when it sits ABOVE the pre-tax line by more than the filer's own
+ * tagged non-operating charges can account for. Sitting BELOW is normal and
+ * carries no information: interest and other income are struck between the two
+ * lines and are routinely tagged annually or not at all — REX's October-2025
+ * quarter derives to $27,918k against a $35,457k pre-tax line, and the $7,539k
+ * of interest income that explains the gap appears in its 10-K and nowhere
+ * else. A two-sided test would have thrown REX away, which is the defect this
+ * whole ladder exists to fix.
+ *
+ * Burlington fails by $127m against $20m of tagged interest, and Chevron by
+ * $13.6bn against nothing; both are refused. Gold.com fails by $9.4m, which is
+ * to the dollar the depreciation and amortisation it shows as its own line
+ * between SG&A and interest — a good demonstration that the test catches the
+ * thing it is for. (Subtracting a tagged `DepreciationDepletionAndAmortization`
+ * would have rescued Gold.com and Burlington and broken every filer whose
+ * depreciation sits inside cost of sales, where the only D&A on file is the
+ * cash-flow add-back. There is no way to tell those apart in companyfacts, so
+ * the margin is left blank instead.) Realty Income, W. P. Carey, GE and Exxon
+ * never reach the test — they tag no gross profit and no cost of revenue, so
+ * there is nothing to derive from, and their margin is simply blank.
+ */
+function deriveOperatingIncome(
+  ser: (c: string) => DurFact[],
+  qRev: Record<string, number>,
+  gpQ: Record<string, number>,
+): Record<string, number> {
+  if (!Object.keys(gpQ).length) return {};
+
+  // ── operating expenses: one figure per disjoint slot ──
+  const slots: Array<{ c: string; q: Record<string, number> }> = [];
+  const sga = firstPopulated(ser, OPEX_SGA_TOTAL);
+  if (sga) slots.push(sga);
+  else for (const g of OPEX_SGA_PARTS) { const p = firstPopulated(ser, g); if (p) slots.push(p); }
+  for (const g of OPEX_OTHER_SLOTS) { const p = firstPopulated(ser, g); if (p) slots.push(p); }
+  if (!slots.length) return {};
+  const opexQ: Record<string, number> = {};
+  for (const e of Object.keys(gpQ)) {
+    let sum: number | null = null;
+    for (const p of slots) { const v = atMap(p.q, e); if (v != null) sum = (sum ?? 0) + v; }
+    if (sum != null) opexQ[e] = sum;
+  }
+
+  const derived: Record<string, number> = {};
+  for (const e of Object.keys(opexQ)) derived[e] = gpQ[e] - opexQ[e];
+  if (!Object.keys(derived).length) return {};
+
+  // ── the one-sided check against the filer's own pre-tax line ──
+  const pretax = firstPopulated(ser, PRETAX_INCOME_TAGS);
+  if (!pretax) return {};                           // nothing to check it against
+  const nonOpNetQ = quarterize(ser(NONOPERATING_NET_TAG), false);
+  const nonOpExpQ = NONOPERATING_EXPENSE_TAGS.map((c) => quarterize(ser(c), false));
+  const nonOpIncQ = NONOPERATING_INCOME_TAGS.map((c) => quarterize(ser(c), false));
+  const cutoffMs = Date.now() - RECENT_MS;
+  let checked = 0;
+  for (const e of Object.keys(derived).sort()) {
+    if (dnum(e) < cutoffMs) continue;
+    const px = atMap(pretax.q, e);
+    if (px == null) continue;
+    // Operating income sits above the pre-tax line by exactly (charges below
+    // it − income below it). `NonoperatingIncomeExpense` is the roll-up of
+    // both; failing that, the interest elements are alternative spellings of
+    // ONE charge so the largest stands in for them, while the income elements
+    // are genuinely different lines and are summed.
+    let charge = 0, income = 0;
+    const net = atMap(nonOpNetQ, e);
+    if (net != null) { if (net < 0) charge = -net; else income = net; }
+    else {
+      for (const m of nonOpExpQ) { const v = atMap(m, e); if (v != null) charge = Math.max(charge, Math.abs(v)); }
+      for (const m of nonOpIncQ) { const v = atMap(m, e); if (v != null) income += v; }
+    }
+    const tol = Math.max(Math.abs(derived[e]) * 0.02, Math.abs(px) * 0.02, 1);
+    // Clamped at zero: where the filer's tagged non-operating items net to
+    // INCOME rather than a charge, operating income has no licence to exceed
+    // the pre-tax line at all. It is a one-sided bound either way — a charge
+    // the filer never tagged quarterly (REX's is annual-only) leaves the bound
+    // at zero and the derivation, which sits BELOW the pre-tax line, unharmed.
+    const allowed = Math.max(0, charge - income) + tol;
+    if (derived[e] - px > allowed) return {};   // one failure kills it
+    checked++;
+  }
+  return checked >= 2 ? derived : {};
 }
 
 /**
@@ -595,9 +1083,28 @@ export interface UsFundamentals {
    *  from the year-to-date cash-flow statement like CFO. */
   capex: number | null; capex_prev: number | null;
   tags: Partial<Record<UsFactKind, string | null>>;
-  quarters_revenue: number[] | null;   // last 4 discrete quarters, oldest → newest
+  /** How `operating_income` was arrived at. `reported` is the filer's own
+   *  `OperatingIncomeLoss`; `derived` is gross profit less operating expenses,
+   *  reconciled to the filer's pre-tax line; `pretax` is the pre-tax line
+   *  itself, which happens only for issuers whose revenue is already net of
+   *  financing cost (banks, thrifts, BDCs) and MUST be labelled as such — it is
+   *  a pre-tax margin, not an operating one. */
+  operating_income_basis?: OperatingIncomeBasis;
+  /** Last ≤4 CONSECUTIVE quarters, oldest → newest. Never spans a gap: see
+   *  `consecutiveTail`. Pair each value with `quarters_ends`. */
+  quarters_revenue: number[] | null;
   quarters_eps: number[] | null;
   quarters_opm: number[] | null;
+  /** The period end of every point in the arrays above, same order and same
+   *  length. Three lists because a metric missing in the middle of the window
+   *  truncates its own strip and not the others. A caller that reads a strip
+   *  without its ends is pairing numbers by position across filers whose
+   *  calendars do not line up. */
+  quarters_ends?: {
+    revenue: string[] | null;
+    eps: string[] | null;
+    opm: string[] | null;
+  };
   error?: string;
 }
 
@@ -630,6 +1137,43 @@ interface UsQuarterGrid {
   epsAt: (end: string | null) => { v: number | null; derived: boolean };
   /** EPS for the year-ago quarter of `end`. */
   epsYoy: (end: string | null) => number | null;
+  /** How `operating_income` was arrived at — see `OperatingIncomeBasis`. */
+  oiBasis: OperatingIncomeBasis;
+  /** Up to `n` period ends ending at `cur` that are genuinely CONSECUTIVE
+   *  quarters of this filer's own calendar. See `consecutiveTail`. */
+  window: (n: number) => string[];
+}
+
+/**
+ * THE LAST `n` CONSECUTIVE QUARTERS, ending at `cur`.
+ *
+ * A four-element array carrying no dates cannot be checked by anyone
+ * downstream, so it must be right here. Walking the newest `n` ends is not
+ * enough: Sanctuary Cognitive's `quarters_eps` came out as [−4.08, −7.14,
+ * −2.62] for June-2025, March-2026 and June-2026 — a 274-day step presented as
+ * one quarter — and Prospect Bancshares' and Qumulus's four-element arrays
+ * stepped a full 365 days between neighbours. Each of those had a quarter the
+ * filer simply had not tagged, and the array silently closed the hole.
+ *
+ * So the window is built by walking BACK from the current quarter and stopping
+ * at the first gap that is not a quarter. The band is deliberately wide enough
+ * for a real fiscal calendar and no wider: 13-week quarters are 91 days,
+ * 52/53-week filers run 84 to 98, and Bridgford Foods' 12/12/12/16-week year
+ * gives a legitimate 112 (119 in a 53-week year). A missing quarter is 180+ and
+ * is never inside the band, so the array stops rather than lying.
+ */
+const Q_GAP_MIN = 75;
+const Q_GAP_MAX = 130;
+function consecutiveTail(ends: string[], cur: string, n: number): string[] {
+  const asc = ends.filter((e) => e <= cur).sort();
+  if (!asc.length) return [];
+  const out = [asc[asc.length - 1]];
+  for (let i = asc.length - 2; i >= 0 && out.length < n; i--) {
+    const gap = diffDays(out[0], asc[i]);
+    if (gap < Q_GAP_MIN || gap > Q_GAP_MAX) break;
+    out.unshift(asc[i]);
+  }
+  return out;
 }
 
 function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | null {
@@ -637,6 +1181,7 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
 
   const tags: Partial<Record<UsFactKind, string | null>> = {};
   const qs: Record<string, Record<string, number>> = {};
+  let oiBasis: OperatingIncomeBasis = 'reported';
   const seriesCache = new Map<string, DurFact[]>();
   const ser = (c: string) => {
     if (!seriesCache.has(c)) seriesCache.set(c, conceptSeries(facts, c));
@@ -650,16 +1195,72 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     // Cash-flow lines are year-to-date in every filing; de-cumulate them.
     qs[kind] = c ? quarterize(ser(c), kind === 'cfo' || kind === 'capex') : {};
   }
-  // Ratios / averages: never synthesize Q4 by subtraction.
-  for (const kind of ['eps', 'diluted_shares'] as UsFactKind[]) {
-    const c = pickConcept(facts, kind);
-    tags[kind] = c;
-    qs[kind] = c ? quarterize(ser(c), false, false) : {};
+  // EPS is a ratio: never synthesize Q4 by subtracting one per-share figure
+  // from another. The share count is a time-weighted AVERAGE and de-cumulates
+  // by its own arithmetic — see `quarterizeAverage`.
+  {
+    const c = pickConcept(facts, 'eps');
+    tags.eps = c;
+    qs.eps = c ? quarterize(ser(c), false, false) : {};
   }
   {
-    const r = chooseRevenue(facts, ser, qs.net_income, qs.operating_income);
+    const c = pickConcept(facts, 'diluted_shares');
+    tags.diluted_shares = c;
+    qs.diluted_shares = c ? dilutedByQuarter(ser, c, qs.net_income || {}) : {};
+  }
+  {
+    // The profit proxy the revenue chooser sanity-tests against. `pickConcept`
+    // no longer offers a pre-tax line as operating income, but the pre-tax line
+    // is still the best evidence that a candidate revenue is too small for the
+    // profit the filer reported, so it fills the gaps here.
+    const px = firstPopulated(ser, PRETAX_INCOME_TAGS);
+    const qOpProxy: Record<string, number> = { ...(px ? px.q : {}), ...qs.operating_income };
+    const r = chooseRevenue(facts, ser, qs.net_income, qOpProxy);
     tags.revenue = r.concept;
     qs.revenue = r.q;
+  }
+  // Gross profit lives on the grid so the margin ladder, the derived operating
+  // income and the multi-period table can never quote three different ones.
+  {
+    const gp: Record<string, number> = { ...quarterize(ser('GrossProfit'), false) };
+    const cost = firstPopulated(ser, US_TAGS.cost_of_revenue);
+    tags.gross_profit = Object.keys(gp).length ? 'GrossProfit' : (cost ? `${tags.revenue} − ${cost.c}` : null);
+    if (cost) for (const e of Object.keys(qs.revenue)) {
+      if (gp[e] !== undefined) continue;
+      const c = atMap(cost.q, e);
+      if (c != null) gp[e] = qs.revenue[e] - c;
+    }
+    qs.gross_profit = gp;
+    tags.cost_of_revenue = cost ? cost.c : null;
+  }
+  // ── operating income: reported → derived-and-reconciled → marked pre-tax ──
+  {
+    const reported = qs.operating_income;
+    const derived = deriveOperatingIncome(ser, qs.revenue, qs.gross_profit);
+    const merged: Record<string, number> = { ...derived, ...reported };   // reported always wins
+    const cutoffMs = Date.now() - RECENT_MS;
+    const live = Object.keys(merged).some((e) => dnum(e) >= cutoffMs);
+    if (live) {
+      qs.operating_income = merged;
+      if (!Object.keys(reported).length && Object.keys(derived).length) {
+        tags.operating_income = 'derived: gross profit − operating expenses';
+        oiBasis = 'derived';
+      }
+    } else {
+      // NOTHING left. Pre-tax income is an operating margin for exactly one
+      // class of issuer — the one whose revenue line is already struck after
+      // financing cost — and is marked even there.
+      const px = firstPopulated(ser, PRETAX_INCOME_TAGS);
+      const allowed = px && (looksLikeFinancialIssuer(facts)
+        || (tags.revenue != null && PRETAX_IS_OPERATING_REVENUE_TAGS.has(String(tags.revenue).split(' ')[0])));
+      if (allowed && px) {
+        qs.operating_income = px.q;
+        tags.operating_income = px.c;
+        oiBasis = 'pretax';
+      } else {
+        qs.operating_income = merged;
+      }
+    }
   }
 
   // The quarter universe is every period end that carries a revenue OR a
@@ -692,27 +1293,57 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
   // two real cases: (a) Q4, which is never tagged as a quarter and must not be
   // derived by subtraction; (b) dual-class filers (BRC, TLYS) who tag EPS only
   // per share class, which the aggregate API hides — they were coming back
-  // blank against real $0.96 / $0.27. For Q4 the share count is the fiscal
-  // year's average, taken as FY net income ÷ FY EPS (both are always tagged).
-  const fyShares = (): number | null => {
+  // blank against real $0.96 / $0.27.
+  //
+  // THE DENOMINATOR IS THE WHOLE PROBLEM. EPS is not additive across quarters
+  // because the share count moves, so an FY-minus-nine-months EPS drifts and
+  // must never be taken; but dividing by the WRONG quarter's count drifts just
+  // as far. ScanSource's fourth quarter came out at $1.19 against a filed
+  // $1.24, and Regis's at $38.81 against $42.58, purely from borrowing the
+  // previous quarter's count. So the ladder is, strictly:
+  //   1. the quarter's own weighted-average diluted count, tagged;
+  //   2. that count de-cumulated from the year-to-date one — exact for a
+  //      time-weighted mean, and guarded (see `quarterizeAverage`); both of
+  //      those arrive already merged in `qs.diluted_shares`;
+  //   3. the fiscal-year average for the year the quarter belongs to, from the
+  //      tagged annual count, else FY net income ÷ FY EPS;
+  //   4. the nearest earlier quarterly count — the old behaviour, kept as the
+  //      last resort for a filer that tags nothing annual either.
+  // Rung 3 is where Regis lands: 2,680k gives $43.47 against the filed $42.58,
+  // two per cent out rather than nine, and the row still carries its ≈ flag.
+  const annualShares = (end: string): number | null => {
+    const shC = tags.diluted_shares ? ser(tags.diluted_shares) : [];
+    const fyRows = shC.filter((r) => r.days >= 330 && r.days <= 380
+      && dnum(r.end) >= dnum(end) - 4 * dayMs && dnum(r.start) <= dnum(end) + 4 * dayMs);
+    if (fyRows.length) return fyRows[0].val;
+    // No annual share count tagged: FY net income ÷ FY EPS is the count the
+    // filing itself implies.
     const niC = tags.net_income ? ser(tags.net_income) : [];
     const epC = tags.eps ? ser(tags.eps) : [];
-    const fy = niC.filter((r) => r.days >= 330 && r.days <= 380).sort((a, b) => b.end.localeCompare(a.end))[0];
+    const fy = niC.filter((r) => r.days >= 330 && r.days <= 380
+      && dnum(r.end) >= dnum(end) - 4 * dayMs && dnum(r.start) <= dnum(end) + 4 * dayMs)[0]
+      || niC.filter((r) => r.days >= 330 && r.days <= 380).sort((a, b) => b.end.localeCompare(a.end))[0];
     if (!fy) return null;
     const fe = epC.find((r) => r.days >= 330 && r.days <= 380 && Math.abs(diffDays(r.end, fy.end)) <= 4);
     if (!fe || !fe.val) return null;
     return fy.val / fe.val;
   };
-  const deriveEps = (end: string, ni: number | null): { v: number | null; derived: boolean } => {
+  // THE NUMERATOR IS INCOME AVAILABLE TO COMMON SHAREHOLDERS, not net income.
+  // ASC 260 strikes preferred dividends before the division, and for a filer
+  // with preferred stock the difference is not small: JPMorgan's December-2025
+  // quarter is $14.4bn of net income and $13.4bn available to common, which is
+  // 8 cents a share. The P&L line `net_income` stays what it is — attributable
+  // to the parent — and only the EPS denominator's partner changes.
+  const availQ = quarterize(ser('NetIncomeLossAvailableToCommonStockholdersBasic'), false);
+  const deriveEps = (end: string, niIn: number | null): { v: number | null; derived: boolean } => {
+    const ni = atMap(availQ, end) ?? niIn;
     if (ni == null) return { v: null, derived: false };
-    // Prefer the quarter's own diluted count; else the latest quarterly count
-    // on file (share counts drift slowly); else the fiscal-year average.
     let sh = at('diluted_shares', end);
+    if (sh == null) sh = annualShares(end);
     if (sh == null) {
       const es = Object.keys(qs.diluted_shares).filter((e) => e <= end).sort();
       if (es.length) sh = qs.diluted_shares[es[es.length - 1]];
     }
-    if (sh == null) sh = fyShares();
     if (!sh || sh <= 0) return { v: null, derived: false };
     return { v: Math.round((ni / sh) * 100) / 100, derived: true };
   };
@@ -730,7 +1361,9 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     return p ? epsAt(p).v : null;
   };
 
-  return { tags, qs, ser, ends, cur, prev, at, atYoy, epsAt, epsYoy };
+  const window = (n: number) => consecutiveTail(ends, cur, n);
+
+  return { tags, qs, ser, ends, cur, prev, at, atYoy, epsAt, epsYoy, oiBasis, window };
 }
 
 /**
@@ -752,31 +1385,30 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
   if (!g) return { ...empty, error: 'no quarterly revenue or net income' };
   const { tags, qs, ser, ends, cur, prev, at, atYoy } = g;
 
-  const last4 = (kind: UsFactKind, scale: number): number[] | null => {
-    const es = Object.keys(qs[kind]).filter((e) => e <= cur).sort().slice(-4);
-    if (es.length < 2) return null;
-    return es.map((e) => Math.round(qs[kind][e] / scale * 100) / 100);
-  };
-  const last4Eps = (): number[] | null => {
-    const es = ends.filter((e) => e <= cur).slice(-4);
-    const out: number[] = [];
-    for (const e of es) { const v = g.epsAt(e).v; if (v != null) out.push(v); }
-    return out.length >= 2 ? out : null;
-  };
-  const opmSeries = (): number[] | null => {
-    // Margin needs revenue, so this walks the REVENUE quarters, not the wider
-    // revenue-or-net-income universe — otherwise a filer whose net income is
-    // tagged for more quarters than its revenue loses the series entirely.
-    const revEnds = Object.keys(qs.revenue).sort();
-    const es = (revEnds.length ? revEnds : ends).filter((e) => e <= cur).slice(-4);
-    const out: number[] = [];
-    for (const e of es) {
-      const r = at('revenue', e); const o = at('operating_income', e);
-      if (!r || o == null) continue;
-      out.push(Math.round((o / r) * 1000) / 10);
+  // THE FOUR-QUARTER STRIPS. Built on ONE window of genuinely consecutive
+  // quarter ends (see `consecutiveTail`) and returned with those ends attached,
+  // so a caller can never pair a value with the wrong period. A metric missing
+  // in the middle of the window TRUNCATES the strip rather than closing the
+  // hole: an array that silently drops a quarter is the same lie as an array
+  // that spans a year, only harder to see.
+  const win = g.window(4);
+  const strip = (val: (e: string) => number | null): { v: number[]; ends: string[] } => {
+    const v: number[] = []; const es: string[] = [];
+    for (let i = win.length - 1; i >= 0; i--) {
+      const x = val(win[i]);
+      if (x == null || !Number.isFinite(x)) break;      // contiguous suffix only
+      v.unshift(x); es.unshift(win[i]);
     }
-    return out.length >= 2 ? out : null;
+    return { v, ends: es };
   };
+  const round2 = (x: number) => Math.round(x * 100) / 100;
+  const sRev = strip((e) => { const r = at('revenue', e); return r == null ? null : round2(r / 1e6); });
+  const sEps = strip((e) => g.epsAt(e).v);
+  const sOpm = strip((e) => {
+    const r = at('revenue', e); const o = at('operating_income', e);
+    return (r && o != null) ? Math.round((o / r) * 1000) / 10 : null;
+  });
+  const keep = (s: { v: number[]; ends: string[] }) => (s.v.length >= 2 ? s : null);
 
   // When did the current quarter's numbers first hit EDGAR? Earliest `filed`
   // among the revenue / net-income facts for that period end.
@@ -803,7 +1435,16 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     eps_derived: epsCur.derived,
     cfo: at('cfo', cur), cfo_prev: atYoy('cfo', cur),
     capex: at('capex', cur), capex_prev: atYoy('capex', cur),
-    quarters_revenue: last4('revenue', 1e6), quarters_eps: last4Eps(), quarters_opm: opmSeries(),
+    // Only meaningful when there IS an operating income to describe.
+    operating_income_basis: at('operating_income', cur) != null ? g.oiBasis : undefined,
+    quarters_revenue: keep(sRev)?.v ?? null,
+    quarters_eps: keep(sEps)?.v ?? null,
+    quarters_opm: keep(sOpm)?.v ?? null,
+    quarters_ends: {
+      revenue: keep(sRev)?.ends ?? null,
+      eps: keep(sEps)?.ends ?? null,
+      opm: keep(sOpm)?.ends ?? null,
+    },
   };
 }
 
@@ -856,21 +1497,14 @@ export function quarterSeries(facts: any, asOfPeriodEnd?: string | null, maxQuar
   // series the grid chose, never a different tag. Mixing a gross ("including
   // assessed tax") revenue line with a net cost line, or an ASC-606 fee line
   // with total cost of sales, produces a margin that is simply invented.
-  const gpC = pickConcept(facts, 'gross_profit');
-  const gpQ = gpC ? quarterize(g.ser(gpC), false) : {};
-  const costC = pickConcept(facts, 'cost_of_revenue');
-  const costQ = costC ? quarterize(g.ser(costC), false) : {};
-
+  // Resolved ON the grid, so the gross profit shown here is the same one the
+  // derived operating income was struck from.
   const out: UsQuarterSeries = {
     ends, revenue: [], gross_profit: [], operating_income: [], net_income: [], eps: [], cfo: [], fcf: [],
   };
   for (const e of ends) {
     const rev = g.at('revenue', e);
-    let gp = atMap(gpQ, e);
-    if (gp == null) {
-      const cost = atMap(costQ, e);
-      if (rev != null && cost != null) gp = rev - cost;
-    }
+    const gp = g.at('gross_profit', e);
     const cfo = g.at('cfo', e);
     const capex = g.at('capex', e);
     out.revenue.push(musd(rev));
@@ -1113,11 +1747,13 @@ export function balanceContext(facts: any, periodEnd: string | null | undefined)
   {
     const c = pickConcept(facts, 'diluted_shares');
     if (c) {
-      const q = quarterize(ser(c), false, false);
       const niC = pickConcept(facts, 'net_income');
       const epsC = pickConcept(facts, 'eps');
       const qNi = niC ? quarterize(ser(niC), false) : {};
       const qEps = epsC ? quarterize(ser(epsC), false, false) : {};
+      // The SAME construction the EPS denominator uses, so a Q4 row's share
+      // count and its EPS can never come from two different arithmetics.
+      const q = dilutedByQuarter(ser, c, qNi);
       // A filer can simply get the SCALE wrong: Anavex's own 10-Q tags its June
       // quarter's weighted-average diluted count as 92,899,536,000 against a
       // real 92.9m — a decimals slip, the same class of error that already
@@ -1162,6 +1798,165 @@ export function balanceContext(facts: any, periodEnd: string | null | undefined)
     }
   }
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STOCK SPLITS — the one thing that makes two per-share figures incomparable
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Within 1% of a whole number 2–20, or of its reciprocal. Anything else is
+ *  not a split ratio and the answer is "don't know". */
+function asSplitRatio(x: number): number | null {
+  if (!Number.isFinite(x) || x <= 0) return null;
+  const forward = x >= 1 ? x : 1 / x;
+  const n = Math.round(forward);
+  if (n < 2 || n > 20) return null;
+  if (Math.abs(forward / n - 1) > 0.01) return null;
+  return x >= 1 ? n : 1 / n;
+}
+
+/**
+ * Ratio by which per-share figures published before `sinceISO` must be
+ * restated to compare with today's, or null when no split is evidenced.
+ *
+ * The number returned is the SHARE-COUNT multiplier: 4 for a four-for-one
+ * forward split, 1/10 for a one-for-ten reverse. An old EPS is therefore
+ * divided by it and an old share count multiplied by it. Two consecutive
+ * splits multiply.
+ *
+ * WHY THIS EXISTS. CrowdStrike split four-for-one on 3 June 2026, between two
+ * releases. Every per-share comparison across that date — EPS growth, a
+ * year-ago EPS column, a P/E built from four quarters — is nonsense unless one
+ * side is restated, and EDGAR only restates the periods a later filing
+ * re-presents, so the two bases sit side by side in the same companyfacts
+ * document.
+ *
+ * TWO INDEPENDENT SIGNALS, both taken from the filer's own tagging:
+ *  • `StockholdersEquityNoteStockSplitConversionRatio1`, whose fact DATE is the
+ *    split's effective date — CrowdStrike tags 4 at 2026-06-03. Its weakness is
+ *    direction: a one-for-ten reverse split is tagged "10" by some filers and
+ *    "0.1" by others, and the element alone cannot tell them apart.
+ *  • The same prior period's weighted-average diluted share count, restated by
+ *    the filing that followed the split: CrowdStrike's May–July 2025 quarter is
+ *    249,909,000 as filed on 2025-08-28 and 999,634,000 as re-presented on
+ *    2026-08-27 — exactly 4.00×. This one carries the direction unambiguously.
+ *
+ * So the conversion-ratio tag is used where present, the restated share count
+ * otherwise, and where BOTH exist they must agree: on magnitude and direction,
+ * or on magnitude with the tag stating the ratio the other way round (in which
+ * case the share counts settle the direction). A genuine disagreement returns
+ * null — the caller refuses the comparison rather than rescaling on a guess.
+ * REX is that case over a long horizon: it tags only its 2025 two-for-one, but
+ * its FY2022 share count was also restated 3× by a filing in 2024, so asking
+ * about a two-year window gets "don't know" rather than either half-answer.
+ *
+ * KNOWN LIMIT. Over a horizon of several years the answer can only be as good
+ * as the tagging: a filer that used the conversion-ratio element for something
+ * that is not a common-stock split (Citizens Financial carries a 6 at
+ * 2021-12-31 and has never split) is caught only when a period straddling that
+ * date was re-presented unchanged. Across two adjacent releases — which is what
+ * this is for — a split is always carried by both signals at once.
+ */
+export function splitFactorSince(facts: any, sinceISO: string): number | null {
+  const gaap = facts?.facts?.['us-gaap'];
+  if (!gaap || !sinceISO) return null;
+
+  // ── signal 1: the conversion-ratio element, one entry per split date ──
+  let tagRatio: number | null = null;
+  let splitFirst: string | null = null, splitLast: string | null = null;
+  {
+    const byDate = new Map<string, number>();
+    for (const c of ['StockholdersEquityNoteStockSplitConversionRatio1', 'StockholdersEquityNoteStockSplitConversionRatio']) {
+      const node = gaap[c];
+      if (!node?.units) continue;
+      for (const uk of Object.keys(node.units)) {
+        for (const e of node.units[uk] as any[]) {
+          if (typeof e?.val !== 'number' || !Number.isFinite(e.val)) continue;
+          const when = String(e.end || '');
+          if (!when || when < sinceISO) continue;      // the split predates the comparison
+          const r = asSplitRatio(e.val);
+          if (r == null) continue;
+          byDate.set(when, r);
+        }
+      }
+    }
+    // ONE SPLIT, TWO DATES. REX tags its 2-for-1 at both 2025-08-26 and
+    // 2025-09-15 — the record date and the distribution date — and multiplying
+    // them would report a 4-for-1 that never happened. Dates within six months
+    // of each other are the same event; two genuine splits that close together
+    // do not happen, and if they ever did, under-reporting is the safe error.
+    const dates = Array.from(byDate.keys()).sort();
+    let p = 1;
+    let clusterStart: string | null = null;
+    for (const d of dates) {
+      if (clusterStart && diffDays(d, clusterStart) <= 180) continue;
+      clusterStart = d;
+      p *= byDate.get(d)!;
+    }
+    if (dates.length) { tagRatio = p; splitFirst = dates[0]; splitLast = dates[dates.length - 1]; }
+  }
+
+  // ── signal 2: a share count for one period, restated across `sinceISO` ──
+  let shareRatio: number | null = null;
+  let pairs = 0, flat = 0;
+  {
+    const votes = new Map<number, number>();
+    for (const c of US_TAGS.diluted_shares) {
+      const node = gaap[c];
+      if (!node?.units) continue;
+      for (const uk of Object.keys(node.units)) {
+        const byWindow = new Map<string, { before: any | null; after: any | null }>();
+        for (const e of node.units[uk] as any[]) {
+          if (!e?.start || !e?.end) continue;
+          if (!TRUSTED_FORMS.has(e.form)) continue;
+          if (typeof e.val !== 'number' || !(e.val > 0)) continue;
+          const key = e.start + '|' + e.end;
+          if (!byWindow.has(key)) byWindow.set(key, { before: null, after: null });
+          const slot = byWindow.get(key)!;
+          const filed = String(e.filed || '');
+          if (filed < sinceISO) { if (!slot.before || filed > String(slot.before.filed)) slot.before = e; }
+          else if (!slot.after || filed > String(slot.after.filed)) slot.after = e;
+        }
+        byWindow.forEach((s) => {
+          if (!s.before || !s.after) return;
+          const raw = s.after.val / s.before.val;
+          // Only a period re-presented in a filing made AFTER the split, from
+          // one made before it, can say anything about that split.
+          if (splitFirst && splitLast
+            && String(s.before.filed || '') < splitFirst && String(s.after.filed || '') > splitLast) {
+            pairs++;
+            if (Math.abs(raw - 1) <= 0.01) flat++;
+          }
+          if (Math.abs(raw - 1) <= 0.01) return;
+          const r = asSplitRatio(raw);
+          if (r == null) return;
+          votes.set(r, (votes.get(r) || 0) + 1);
+        });
+      }
+    }
+    if (votes.size) {
+      // One split leaves the SAME ratio on every period it restated; two
+      // different ratios in one document is not evidence of anything.
+      const entries = Array.from(votes.entries()).sort((a, b) => b[1] - a[1]);
+      if (entries.length === 1) shareRatio = entries[0][0];
+    }
+  }
+
+  if (tagRatio != null && shareRatio != null) {
+    if (Math.abs(tagRatio / shareRatio - 1) <= 0.01) return shareRatio;
+    if (Math.abs(tagRatio * shareRatio - 1) <= 0.01) return shareRatio;   // tag stated it inverted
+    return null;                                                          // genuine disagreement
+  }
+  // SHARE COUNTS THAT DID NOT MOVE ARE EVIDENCE OF NO SPLIT. Citizens
+  // Financial tags `…StockSplitConversionRatio1` as 6 at 2021-12-31 and has
+  // never split its common stock — the element is being used for something
+  // else, as filers periodically do. Where several periods that were filed
+  // before the split date and re-presented after it came back UNCHANGED, that
+  // is a direct contradiction of the tag and the answer is "don't know". A
+  // period the filer simply never re-presented says nothing either way, which
+  // is why the window has to straddle the split to be counted at all.
+  if (tagRatio != null && shareRatio == null && pairs >= 3 && flat >= pairs * 0.9) return null;
+  return tagRatio ?? shareRatio;
 }
 
 /**
@@ -1326,9 +2121,16 @@ export interface UsGradedRow {
   addv_musd: number | null;         // 20-day median dollar volume, $M
   vol_ratio_20d: number | null;
 
+  /** Last ≤4 CONSECUTIVE quarters, oldest → newest, each paired with its own
+   *  period end in `quarters_ends`. */
   quarters_revenue: number[] | null;
   quarters_eps: number[] | null;
   quarters_opm: number[] | null;
+  quarters_ends?: { revenue: string[] | null; eps: string[] | null; opm: string[] | null };
+  /** How `opm_pct` was struck. `pretax` means the filer tags no operating line
+   *  at all and this is a PRE-TAX margin — label it, never print it as an
+   *  operating margin. */
+  opm_basis?: OperatingIncomeBasis;
 
   composite_score: number;
   tier: EarningsTier;
@@ -1513,7 +2315,14 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const rs = p?.rs_rating ?? null;
   const stage = p?.stage ?? null;
   const pct52 = p?.pct_from_52w_high ?? null;
-  const cfoPat = (f.cfo != null && niC != null && niC > 0) ? f.cfo / niC : null;
+  // CFO ÷ net income, but only where net income is big enough to divide by.
+  // CrowdStrike earned $5.3m on $1.47bn of revenue and the tile read "99.94",
+  // which is arithmetically true and tells a reader nothing about cash
+  // conversion. Below 1% of revenue the denominator is noise, so the ratio is
+  // refused rather than printed.
+  const niMeaningful = niC != null && niC > 0
+    && (revC == null || revC <= 0 || niC >= revC * 0.01);
+  const cfoPat = (f.cfo != null && niMeaningful) ? (f.cfo as number) / (niC as number) : null;
   const fcfC = (f.cfo != null && f.capex != null) ? f.cfo - Math.abs(f.capex) : null;
   const fcfP = (f.cfo_prev != null && f.capex_prev != null) ? f.cfo_prev - Math.abs(f.capex_prev) : null;
 
@@ -1558,8 +2367,12 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // Earnings not backed by cash.
   if (cfoPat != null && cfoPat < 0.6) caveat_tags.push('ocf divergence');
   if (f.cfo != null && f.cfo < 0 && niC != null && niC > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
-  if (stage === 4) caveat_tags.push('low quality');
-  else if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
+  // These two are TREND problems, not accounting ones. Filing them under
+  // "low quality" put an identical chip on a company with a downtrend and on
+  // one whose profits are an illusion — Argan's +62% revenue quarter carried
+  // "low quality" purely because the stock sat 25% off its high.
+  if (stage === 4) caveat_tags.push('stage 4 downtrend');
+  else if (pct52 != null && pct52 < -25) caveat_tags.push('well off its highs');
 
   // ── composite (identical weights + ladders to the India engine) ──
   const scoreYoy = (y: number) =>
@@ -1703,6 +2516,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const mcap = (shares != null && p?.price != null) ? (shares * p.price) / 1e6 : null;
   const ttmEps = null; // trailing EPS needs 4 clean quarters; P/E below uses them when available
   const pe = (() => {
+    // Four quarters, and — since `quarters_eps` is now built on a consecutive
+    // window — four CONSECUTIVE quarters, which is what makes the sum trailing
+    // twelve months rather than four quarters that happen to be on file.
     const qe = f.quarters_eps;
     if (!qe || qe.length < 4 || p?.price == null) return null;
     const sum = qe.reduce((s, x) => s + (Number.isFinite(x) ? x : 0), 0);
@@ -1748,6 +2564,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     rs_rating: rs, stage, pct_from_52w_high: pct52,
     addv_musd: addv, vol_ratio_20d: p?.vol_ratio_20d ?? null,
     quarters_revenue: f.quarters_revenue, quarters_eps: f.quarters_eps, quarters_opm: f.quarters_opm,
+    quarters_ends: f.quarters_ends, opm_basis: f.operating_income_basis,
     composite_score: Math.round(composite), tier,
     methodology_tags: uniqMeth, caveat_tags: uniqCav,
     narrative, is_elite, pead_score, multibagger_setup,
@@ -1766,6 +2583,369 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
  * alone would hand a rating of 99 to the best name on a day when every filer is
  * falling. Mutates `rows` in place.
  */
+// ═══════════════════════════════════════════════════════════════════════════
+// POST-EARNINGS SETUP SCORE — why some great prints compound and others don't
+//
+// A grade answers "was this a good quarter". It does not answer the question
+// the owner actually cares about, which his own post-mortem of ~42 beats put
+// like this: half compounded 30–100%, half went nowhere, and *the difference is
+// never the beat itself — it's what surrounds the beat*. The separators his
+// framework ranks, in its own order of importance:
+//
+//   1  earnings surprise vs EXPECTATIONS (not vs last year)
+//   2  guidance upgrade / forward commentary
+//   3  institutional accumulation                    ← not available free (US)
+//   4  breakout from a multi-month base
+//   5  volume expansion (the institutional footprint)
+//   6  operating cash-flow improvement
+//   7  order book / forward visibility
+//   8  valuation vs sector — "at or above the median and the beat is priced in"
+//   9  margin trajectory: *the market ignores the level and prices the SLOPE*
+//
+// Two disciplines make this honest rather than decorative:
+//
+//   • Every factor shows the input it scored, so the number can be argued with.
+//   • A factor we cannot source is UNAVAILABLE, never a proxy and never a
+//     neutral 50 quietly averaged in. Institutional ownership and promoter
+//     behaviour have no free US equivalent, so they are reported as missing and
+//     the composite says how many factors it actually had. Substituting
+//     something "close" for them is how a framework stops meaning anything.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SetupFactorId =
+  | 'surprise' | 'guidance' | 'breakout' | 'volume'
+  | 'margin_slope' | 'cash_quality' | 'visibility' | 'valuation' | 'ownership';
+
+export interface SetupFactor {
+  id: SetupFactorId;
+  label: string;
+  /** 0–100, or null when the input does not exist for this filer. */
+  score: number | null;
+  weight: number;
+  /** The input, in words — "beat consensus by 16%", "OPM +2.1pp, accelerating". */
+  input: string;
+  /** Why it is null. Only set when `score` is null. */
+  unavailable?: string;
+}
+
+export interface SetupScore {
+  score: number | null;               // 0–100, weighted over the factors we had
+  factors: SetupFactor[];
+  factors_scored: number;
+  factors_total: number;
+  /** One line: what this setup is, in the framework's vocabulary. */
+  verdict: 'compounder setup' | 'needs a pullback' | 'beat already priced' | 'thin evidence' | null;
+}
+
+const SETUP_WEIGHTS: Record<SetupFactorId, number> = {
+  surprise: 0.18, guidance: 0.18, breakout: 0.14, volume: 0.10,
+  margin_slope: 0.12, cash_quality: 0.10, visibility: 0.10, valuation: 0.08,
+  ownership: 0,   // carried so the card can say it is missing, never weighted
+};
+
+/** Linear 0–100 between `lo` (=0) and `hi` (=100), clamped. */
+const band = (v: number, lo: number, hi: number) =>
+  Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+
+/**
+ * Is a percentage change off THIS base worth reading?
+ *
+ * MongoDB guided $0.08–$0.12 of GAAP EPS and delivered $0.50. That is a 455%
+ * beat and it is a meaningless number: the base is a rounding error, and the
+ * same arithmetic makes a one-cent move look like a landslide. The company's
+ * revenue beat over the same quarter was 5.5%, which is the fact worth scoring.
+ *
+ * So a percentage is trusted only where its base is big enough to carry one:
+ * a quarter of a dollar for a per-share figure, a million dollars for a dollar
+ * figure. Percentage-unit guides (margins, comps) move in points and are never
+ * read as a percentage OF a percentage at all.
+ */
+function pctIsMeaningful(unit: string | null | undefined, midpoint: number | null): boolean {
+  if (midpoint == null || !Number.isFinite(midpoint)) return false;
+  const m = Math.abs(midpoint);
+  if (unit === 'usd_share') return m >= 0.25;
+  if (unit === 'pct') return false;
+  return m >= 1e6;
+}
+/** Rank of a guided metric as evidence of a beat — the top line first. */
+const GUIDE_METRIC_RANK: Record<string, number> = {
+  revenue: 0, product_revenue: 1, subscription_revenue: 1,
+  operating_income: 2, ebitda: 2, net_income: 2, free_cash_flow: 3, eps: 4,
+};
+/**
+ * The best trustworthy percentage among a set of guided lines, with the metric
+ * it came from. Revenue wins ties: it is the least distortable line on the
+ * statement and the one a reader can check in a second.
+ */
+function bestGuidePct(
+  items: Array<{ metric?: string; unit?: string | null; mid: number | null; pct: number | null }>,
+): { pct: number; metric: string } | null {
+  const ok = items
+    .filter((x) => x.pct != null && Number.isFinite(x.pct) && pctIsMeaningful(x.unit, x.mid))
+    .sort((a, b) =>
+      (GUIDE_METRIC_RANK[a.metric || ''] ?? 9) - (GUIDE_METRIC_RANK[b.metric || ''] ?? 9)
+      || (b.pct as number) - (a.pct as number));
+  if (!ok.length) return null;
+  const topRank = GUIDE_METRIC_RANK[ok[0].metric || ''] ?? 9;
+  const sameRank = ok.filter((x) => (GUIDE_METRIC_RANK[x.metric || ''] ?? 9) === topRank);
+  const best = sameRank.reduce((a, b) => ((b.pct as number) > (a.pct as number) ? b : a));
+  return { pct: best.pct as number, metric: best.metric || 'guided line' };
+}
+
+/**
+ * Score one row. `peerMedianPe` comes from the cohort — see `assignSetupScores`.
+ * Everything else is on the row itself, so this is pure and testable.
+ */
+export function setupScore(r: any, peerMedianPe: number | null): SetupScore {
+  const f: SetupFactor[] = [];
+  const push = (id: SetupFactorId, label: string, score: number | null, input: string, unavailable?: string) =>
+    f.push({ id, label, score, weight: SETUP_WEIGHTS[id], input, ...(unavailable ? { unavailable } : {}) });
+  const fin = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+  // 1 — SURPRISE VS EXPECTATIONS. The street's estimate first; a beat against
+  // the company's OWN guide counts as much, and often more, because it is the
+  // number management put its name to.
+  {
+    const sp = fin(r.eps_surprise_pct);
+    const vg = r.vs_guide;
+    const bg = bestGuidePct(((vg?.for_quarter || []) as any[]).map((it) => ({
+      metric: it?.metric, unit: it?.unit, mid: fin(it?.guide_mid), pct: fin(it?.compare?.delta_pct),
+    })));
+    const bestGuide = bg?.pct ?? null;
+    // A percentage surprise off a near-zero estimate is arithmetic noise: a
+    // $0.01 estimate met by $0.52 is "+5,100%", which says nothing about how
+    // big the beat was. Below a dime of estimate the beat is scored — and
+    // stated — in cents, the same rule the surprise chip already uses.
+    const est = fin(r.eps_estimate);
+    const act = fin(r.eps_adj ?? r.eps_adj_curr);
+    const pennyBase = est != null && Math.abs(est) < 0.10;
+    const cents = (pennyBase && act != null && est != null) ? (act - est) : null;
+    const parts: number[] = [];
+    if (cents != null) parts.push(band(cents, -0.05, 0.25));
+    else if (sp != null) parts.push(band(sp, -10, 25));
+    if (bestGuide != null) parts.push(band(bestGuide, -5, 12));
+    const desc = [
+      cents != null
+        ? `${cents >= 0 ? '+' : '−'}$${Math.abs(cents).toFixed(2)} vs a $${est!.toFixed(2)} consensus`
+        : sp != null ? `${sp >= 0 ? '+' : ''}${sp.toFixed(0)}% vs consensus` : null,
+      bestGuide != null ? `${bestGuide >= 0 ? '+' : ''}${bestGuide.toFixed(1)}% vs its own ${String(bg!.metric).replace(/_/g, ' ')} guide` : null,
+    ].filter(Boolean).join(' · ');
+    if (parts.length) push('surprise', 'Surprise vs expectations', parts.reduce((a, b) => a + b, 0) / parts.length, desc);
+    else push('surprise', 'Surprise vs expectations', null, '—', 'no consensus and no prior guide to measure against');
+  }
+
+  // 2 — GUIDANCE DIRECTION. A raised FY outlook is the framework's second
+  // separator; the size of the raise matters, not just its sign.
+  {
+    const chg = (r.guide_change || []) as any[];
+    const bc = bestGuidePct(chg.map((c) => ({
+      metric: c.metric, unit: c.unit,
+      mid: (fin(c.new_low) != null && fin(c.new_high) != null) ? (c.new_low + c.new_high) / 2 : fin(c.new_low ?? c.new_high),
+      pct: fin(c.delta_pct),
+    })));
+    const best = bc?.pct ?? null;
+    const anyRaised = chg.some((x) => x.direction === 'raised');
+    const anyCut = chg.some((x) => x.direction === 'lowered');
+    const label = String(r.guidance || '');
+    if (best != null) {
+      push('guidance', 'Guidance direction', band(best, -6, 8),
+        `FY ${String(bc!.metric).replace(/_/g, ' ')} outlook ${anyCut && !anyRaised ? 'cut' : anyRaised ? 'raised' : 'reiterated'} by ${best >= 0 ? '+' : ''}${best.toFixed(1)}%`);
+    } else if (chg.length) {
+      push('guidance', 'Guidance direction', anyRaised ? 75 : anyCut ? 15 : 50,
+        `FY outlook ${anyRaised ? 'raised' : anyCut ? 'cut' : 'reiterated'} (no comparable size)`);
+    } else if (label) {
+      push('guidance', 'Guidance direction',
+        label === 'RAISED' ? 80 : label === 'MAINTAINED' ? 50 : (label === 'LOWERED' || label === 'WITHDRAWN') ? 10 : 45,
+        `release guidance ${label.toLowerCase()}`);
+    } else {
+      push('guidance', 'Guidance direction', null, '—', 'the release gives no outlook and there is no prior guide to compare');
+    }
+  }
+
+  // 3 — BREAKOUT STRUCTURE. Stage-2 trend near the highs is the framework's
+  // "earnings became the breakout trigger"; a downtrend is its "earnings
+  // couldn't fight the trend".
+  {
+    const st = fin(r.stage), p52 = fin(r.pct_from_52w_high), rs = fin(r.rs_rating);
+    if (st == null && p52 == null && rs == null) {
+      push('breakout', 'Breakout structure', null, '—', 'no usable price history');
+    } else {
+      const parts: number[] = [];
+      if (st != null) parts.push(st === 2 ? 100 : st === 1 ? 55 : st === 3 ? 30 : 5);
+      if (p52 != null) parts.push(band(p52, -35, -2));
+      if (rs != null) parts.push(band(rs, 30, 90));
+      push('breakout', 'Breakout structure', parts.reduce((a, b) => a + b, 0) / parts.length,
+        [st != null ? `stage ${st}` : null, p52 != null ? `${p52.toFixed(0)}% from 52w high` : null,
+         rs != null ? `RS ${rs}` : null].filter(Boolean).join(' · '));
+    }
+  }
+
+  // 4 — VOLUME EXPANSION: the institutional footprint.
+  {
+    const vr = fin(r.vol_ratio_20d);
+    if (vr == null) push('volume', 'Volume expansion', null, '—', 'no volume history');
+    else push('volume', 'Volume expansion', band(vr, 0.8, 3.5), `${vr.toFixed(1)}× the 20-day average`);
+  }
+
+  // 5 — MARGIN SLOPE, NOT LEVEL. The framework is explicit: "Market ignores
+  // absolute margin levels; it prices the slope." So this scores the CHANGE in
+  // the operating margin and whether that change is accelerating across the
+  // last four quarters — a good margin that stopped improving scores poorly on
+  // purpose.
+  {
+    const s = r.series;
+    const opm: Array<number | null> = [];
+    if (s && Array.isArray(s.revenue) && Array.isArray(s.operating_income)) {
+      for (let i = 0; i < s.revenue.length; i++) {
+        const rev = fin(s.revenue[i]), oi = fin(s.operating_income[i]);
+        opm.push(rev != null && rev > 0 && oi != null ? (oi / rev) * 100 : null);
+      }
+    }
+    const tail = opm.slice(-4).filter((v): v is number => v != null);
+    const yoy = fin(r.opm_pct) != null && fin(r.opm_prev_pct) != null
+      ? (r.opm_pct as number) - (r.opm_prev_pct as number) : null;
+    if (yoy == null && tail.length < 3) {
+      push('margin_slope', 'Margin slope', null, '—', 'not enough margin history');
+    } else {
+      const parts: number[] = [];
+      if (yoy != null) parts.push(band(yoy, -3, 4));
+      let accel: number | null = null;
+      if (tail.length >= 3) {
+        // Is the improvement itself getting bigger? Last step vs the average of
+        // the earlier steps.
+        const steps: number[] = [];
+        for (let i = 1; i < tail.length; i++) steps.push(tail[i] - tail[i - 1]);
+        const last = steps[steps.length - 1];
+        const earlier = steps.slice(0, -1);
+        const avgEarlier = earlier.length ? earlier.reduce((a, b) => a + b, 0) / earlier.length : 0;
+        accel = last - avgEarlier;
+        parts.push(band(accel, -2, 2));
+      }
+      push('margin_slope', 'Margin slope', parts.reduce((a, b) => a + b, 0) / parts.length,
+        [yoy != null ? `OPM ${yoy >= 0 ? '+' : ''}${yoy.toFixed(1)}pp YoY` : null,
+         accel != null ? (accel >= 0.1 ? 'expansion accelerating' : accel <= -0.1 ? 'expansion slowing' : 'expansion steady') : null,
+        ].filter(Boolean).join(' · '));
+    }
+  }
+
+  // 6 — CASH-FLOW QUALITY. "The market rewards quality of earnings, not
+  // accounting profit."
+  {
+    const c2p = fin(r.cfo_to_pat_ratio);
+    const s = r.series;
+    let fcfTrend: number | null = null;
+    if (s && Array.isArray(s.fcf)) {
+      const v = (s.fcf as Array<number | null>).filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+      if (v.length >= 5) {
+        const last4 = v.slice(-4).reduce((a, b) => a + b, 0);
+        const prev4 = v.slice(-8, -4);
+        if (prev4.length === 4) {
+          const p = prev4.reduce((a, b) => a + b, 0);
+          if (p > 0) fcfTrend = ((last4 - p) / Math.abs(p)) * 100;
+        }
+      }
+    }
+    if (c2p == null && fcfTrend == null) {
+      push('cash_quality', 'Cash-flow quality', null, '—', 'cash-flow statement not on EDGAR yet');
+    } else {
+      const parts: number[] = [];
+      if (c2p != null) parts.push(band(c2p, 0.3, 1.4));
+      if (fcfTrend != null) parts.push(band(fcfTrend, -20, 40));
+      push('cash_quality', 'Cash-flow quality', parts.reduce((a, b) => a + b, 0) / parts.length,
+        [c2p != null ? `CFO/NI ${c2p.toFixed(2)}` : null,
+         fcfTrend != null ? `TTM FCF ${fcfTrend >= 0 ? '+' : ''}${fcfTrend.toFixed(0)}% YoY` : null].filter(Boolean).join(' · '));
+    }
+  }
+
+  // 7 — FORWARD VISIBILITY. The India losers "reported quarterly beats without
+  // a credible multi-year forward guide". The US equivalent of an order book is
+  // RPO / cRPO / backlog / ARR — contracted revenue the filer states itself.
+  {
+    const km = (r.key_metrics || []) as any[];
+    const wanted = new Set(['rpo', 'crpo', 'backlog', 'arr', 'net_new_arr', 'nrr']);
+    const hits = km.filter((m) => wanted.has(String(m?.id)));
+    const growths = hits.map((m) => fin(m?.yoy_pct)).filter((v): v is number => v != null);
+    if (!hits.length) {
+      const nFigs = (r.guidance_figures || []).length;
+      if (nFigs > 0) push('visibility', 'Forward visibility', Math.min(60, 30 + nFigs * 6),
+        `${nFigs} guided line${nFigs > 1 ? 's' : ''}, no contracted-revenue metric disclosed`);
+      else push('visibility', 'Forward visibility', null, '—', 'no backlog, RPO or ARR disclosed and no guided figures');
+    } else if (growths.length) {
+      const best = Math.max(...growths);
+      push('visibility', 'Forward visibility', band(best, 0, 35),
+        hits.map((m) => `${String(m.id).toUpperCase().replace(/_/g, ' ')}${fin(m.yoy_pct) != null ? ` ${m.yoy_pct >= 0 ? '+' : ''}${Number(m.yoy_pct).toFixed(0)}%` : ''}`).join(' · '));
+    } else {
+      push('visibility', 'Forward visibility', 55,
+        `${hits.map((m) => String(m.id).toUpperCase().replace(/_/g, ' ')).join(' · ')} disclosed, no growth rate stated`);
+    }
+  }
+
+  // 8 — VALUATION VS THE COHORT. "Is trailing P/E below the sector median? If
+  // P/E > sector median at earnings, the beat is already priced." The median is
+  // computed across the day's own filer cohort, so it moves with the market
+  // rather than being a number typed in once.
+  {
+    const pe = fin(r.pe);
+    if (pe == null || pe <= 0) {
+      // Don't guess WHY it is missing. A loss makes P/E meaningless; so does a
+      // PRELIM row whose trailing earnings are not yet complete, and the two
+      // are indistinguishable from here.
+      push('valuation', 'Valuation vs cohort', null, '—',
+        pe == null ? 'no P/E on this row — trailing earnings incomplete or the company is loss-making'
+                   : 'negative earnings — P/E is not meaningful');
+    } else if (peerMedianPe == null || peerMedianPe <= 0) {
+      push('valuation', 'Valuation vs cohort', null, '—', 'too few priced peers in this window to form a median');
+    } else {
+      const rel = pe / peerMedianPe;                 // <1 = cheaper than the cohort
+      push('valuation', 'Valuation vs cohort', band(2 - rel, 0.4, 1.4),
+        `P/E ${pe.toFixed(0)} vs cohort median ${peerMedianPe.toFixed(0)} (${rel < 1 ? `${((1 - rel) * 100).toFixed(0)}% below` : `${((rel - 1) * 100).toFixed(0)}% above`})`);
+    }
+  }
+
+  // 9 — INSTITUTIONAL CROWDING. The framework's third-ranked separator and its
+  // single clearest loser signal ("no marginal buyer left"). There is no free
+  // US feed for it — 13F data is quarterly, lagged 45 days and covers only
+  // institutions above $100m, which is not the same question. Reported as
+  // missing rather than approximated by float or liquidity, which measure
+  // something else entirely.
+  push('ownership', 'Institutional crowding', null, '—',
+    'no free US source — 13F is quarterly and lagged, and float or liquidity is not a substitute');
+
+  const scored = f.filter((x) => x.score != null && x.weight > 0);
+  const wsum = scored.reduce((a, x) => a + x.weight, 0);
+  const score = wsum >= 0.45 && scored.length >= 4
+    ? Math.round(scored.reduce((a, x) => a + (x.score as number) * x.weight, 0) / wsum)
+    : null;
+
+  const by = (id: SetupFactorId) => f.find((x) => x.id === id)?.score ?? null;
+  let verdict: SetupScore['verdict'] = null;
+  if (score == null) verdict = 'thin evidence';
+  else if (score >= 70 && (by('breakout') ?? 0) >= 55) verdict = 'compounder setup';
+  // The framework's loser archetype: the numbers were fine, the price already
+  // holds them — rich against the cohort with the trend no longer working.
+  else if ((by('valuation') ?? 100) < 35 && (by('breakout') ?? 100) < 50) verdict = 'beat already priced';
+  else if (score >= 55) verdict = 'needs a pullback';
+  else verdict = 'beat already priced';
+
+  return { score, factors: f, factors_scored: scored.length, factors_total: f.length - 1, verdict };
+}
+
+/**
+ * Score every row against the cohort it reported with. Mutates in place, like
+ * `assignRsRatings` — the cohort median P/E is the piece no single row can
+ * know, and recomputing it per row would be both slower and inconsistent.
+ */
+export function assignSetupScores(rows: any[]): void {
+  const pes = rows.map((r) => (typeof r?.pe === 'number' && Number.isFinite(r.pe) && r.pe > 0 ? r.pe : null))
+    .filter((v): v is number => v != null).sort((a, b) => a - b);
+  // Fewer than five priced names is not a cohort; the factor reports itself
+  // unavailable rather than measuring a stock against two others.
+  const median = pes.length >= 5
+    ? (pes.length % 2 ? pes[(pes.length - 1) / 2] : (pes[pes.length / 2 - 1] + pes[pes.length / 2]) / 2)
+    : null;
+  for (const r of rows) r.setup = setupScore(r, median);
+}
+
 export function assignRsRatings(
   rows: Array<{ ret1m: number | null; ret3m: number | null; ret6m: number | null; ret12m: number | null; rs_rating: number | null }>,
   spyRet12m: number | null,

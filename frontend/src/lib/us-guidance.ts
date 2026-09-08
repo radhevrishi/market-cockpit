@@ -137,19 +137,19 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
   };
   const pats: Array<[RegExp, (m: RegExpExecArray) => { q: 1 | 2 | 3 | 4 | null; fy: number | null }]> = [
     // "second quarter of fiscal year 2027", "fourth quarter and full year fiscal 2026"
-    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\b[^.]{0,60}?\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b/i,
+    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+quarter\b[^.]{0,60}?\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b/i,
       (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
     // "Third Fiscal Quarter of 2026" (FuelCell's phrasing)
-    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+fiscal\s+quarter\s+(?:of\s+)?'?(\d{4}|\d{2})\b/i,
+    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+fiscal[\s\-]+quarter\s+(?:of\s+)?'?(\d{4}|\d{2})\b/i,
       (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
     // "fiscal 2027 second quarter"
-    [/\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b[^.]{0,40}?\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\b/i,
+    [/\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b[^.]{0,40}?\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+quarter\b/i,
       (m) => ({ q: ORD[m[2].toLowerCase()], fy: yr(m[1]) })],
     // "Q2 FY27", "Q2 FY2027", "Q2 fiscal 2027"
     [/\bQ([1-4])\s*(?:FY|fiscal(?:\s+year)?)\s*'?(\d{4}|\d{2})\b/i,
       (m) => ({ q: Number(m[1]) as 1 | 2 | 3 | 4, fy: yr(m[2]) })],
     // "second quarter 2026 results" (no "fiscal" — calendar-year filers)
-    [/\b(first|second|third|fourth)\s+quarter\s+(?:of\s+)?(\d{4})\b/i,
+    [/\b(first|second|third|fourth)[\s\-]+quarter\b[^.]{0,40}?(?<!\d)(20\d{2})\b/i,
       (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
   ];
   // Position matters more than pattern order. A release names the quarter it is
@@ -179,7 +179,42 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
   const flat = text.replace(/\s+/g, ' ');
   const near = scan(flat.slice(0, 1500));
   if (near.q && near.fy) return near;
-  return scan(flat.slice(0, 6000));
+  const wide = scan(flat.slice(0, 6000));
+  if (wide.q && wide.fy) return wide;
+  // THE QUARTER ALONE IS STILL THE FILER'S OWN WORD.
+  //
+  // Requiring the ordinal and the fiscal year to appear in one phrase threw
+  // away the half we can trust. Dick's headline reads "Reports Second Quarter
+  // Results" and puts the year elsewhere, so nothing matched and the label fell
+  // back to SEC's fy/fp — which said Q4. Agilent's Q3 FY26 came out FY25 the
+  // same way. SEC's fiscal YEAR is dependable; its fiscal PERIOD is what
+  // disagrees with the filer. So return the ordinal on its own and let the
+  // caller pair it with the year from XBRL.
+  const q = quarterOrdinalFromText(flat);
+  return { q, fy: null };
+}
+
+/**
+ * The reported quarter's ordinal, from the release's own headline — no fiscal
+ * year required. Guarded the same way as the full parser: a phrase that is
+ * plainly about the period AHEAD is never the quarter being reported.
+ */
+export function quarterOrdinalFromText(text: string): 1 | 2 | 3 | 4 | null {
+  const flat = text.replace(/\s+/g, ' ').slice(0, 2500);
+  const re = /\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+(?:fiscal[\s\-]+)?quarter\b/gi;
+  let m: RegExpExecArray | null, guard = 0;
+  while ((m = re.exec(flat)) && guard++ < 20) {
+    const ctx = flat.slice(Math.max(0, m.index - 90), m.index + m[0].length + 60);
+    if (/\b(guidance|outlook|expects?|expected|forecast|anticipat)\b/i.test(ctx)
+      && !/\b(results?|reported?|reports|announce|ended)/i.test(ctx)) continue;
+    const q = ORD[m[1].toLowerCase()];
+    if (q) return q;
+  }
+  // "…for the fiscal year ended June 30, 2026" with no quarter named at all is
+  // a Q4 release: the fourth quarter is the one that closes the year.
+  if (/\bfull[\s\-]?year\b|\bfiscal year (?:ended|results)\b/i.test(flat)
+    && !/\b(first|second|third)[\s\-]+quarter\b/i.test(flat)) return 4;
+  return null;
 }
 
 /**

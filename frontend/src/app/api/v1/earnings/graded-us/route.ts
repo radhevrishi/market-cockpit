@@ -37,12 +37,13 @@ import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistor
 import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
+import { adjustedEpsFromReleaseHtml, type AdjustedEps } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
-  quarterSeries, balanceContext,
+  quarterSeries, balanceContext, assignSetupScores,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
@@ -258,13 +259,59 @@ function actualForGuide(
   }
 }
 
+/**
+ * Did the shares split between the two releases?
+ *
+ * CrowdStrike split 4-for-1 in July 2026. Its previous release guided FY27
+ * non-GAAP EPS of $4.88–$4.96 on the old share count; this release guides
+ * $1.25–$1.26 on the new one. Both statements are true and the comparison
+ * between them is nonsense — the card said "lowered the FY27 adj. EPS guide by
+ * 74.5%" about a company that raised it, and "missed its guide by $0.85" about
+ * a quarter it beat.
+ *
+ * The proof does not need a corporate-actions feed. Two consecutive guides for
+ * the SAME metric, basis and period that differ by a clean whole-number factor
+ * are the same guide expressed on two share counts: no company revises an
+ * outlook by exactly 4.000×. So the factor is detected from the filer's own two
+ * statements, and every per-share comparison drawn from that prior release is
+ * then refused rather than rescaled — a guide restated by us is no longer the
+ * company's guide.
+ */
+function perShareSplitFactor(current: GuidanceFigure[], prior: GuideVsActual[]): number | null {
+  const mid = (lo: number | null | undefined, hi: number | null | undefined) =>
+    lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi ?? null);
+  for (const c of current) {
+    if (c.unit !== 'usd_share') continue;
+    const p = prior.find((x) => x.unit === 'usd_share' && x.metric === c.metric && x.basis === c.basis
+      && (x.guided_for_label || '').toUpperCase() === (c.period_label || '').toUpperCase());
+    if (!p) continue;
+    const nm = mid(c.low, c.high), pm = mid(p.guide_low, p.guide_high);
+    if (nm == null || pm == null || !(nm > 0) || !(pm > 0)) continue;
+    for (const [a, b] of [[pm, nm], [nm, pm]] as Array<[number, number]>) {
+      const r = a / b;
+      const k = Math.round(r);
+      // 2:1 through 20:1 covers every split a US issuer actually does, forward
+      // or reverse; 1% is far tighter than any real guidance revision is round.
+      if (k >= 2 && k <= 20 && Math.abs(r / k - 1) <= 0.01) return k;
+    }
+  }
+  return null;
+}
+
 /** A guidance item plus the verdict, ready for the card. */
 function withActual(
   items: GuideVsActual[],
   f: { revenue: number | null; operating_income: number | null; net_income: number | null; eps: number | null },
   extra: { adj_eps: number | null; fcf: number | null; gross_profit: number | null },
+  splitBetween = false,
 ) {
   return items.map((g) => {
+    // A per-share guide given before a split cannot be measured against a
+    // post-split actual, and restating it would put our arithmetic in the
+    // company's mouth. Say nothing instead.
+    if (splitBetween && g.unit === 'usd_share') {
+      return { ...g, actual: null, compare: null, refused: 'shares split since this guide was given' };
+    }
     const actual = actualForGuide(g, f, extra);
     const withA = { ...g, actual };
     return { ...withA, compare: actual == null ? null : compareToGuide(withA, actual) };
@@ -280,6 +327,12 @@ function withActual(
  * release's figures for the SAME metric, basis and period label — so nothing is
  * inferred and a company that simply repeated itself reads "reiterated".
  */
+/** Kill float artefacts before publishing: 2075000000.0000002 is $2.075B. */
+const round6 = (v: number | null | undefined): number | null =>
+  (typeof v === 'number' && Number.isFinite(v))
+    ? (Math.abs(v) >= 1 ? Math.round(v * 1e4) / 1e4 : Math.round(v * 1e6) / 1e6)
+    : null;
+
 function guideChange(
   current: GuidanceFigure[],
   priorYear: GuideVsActual[],
@@ -293,8 +346,10 @@ function guideChange(
   const out: ReturnType<typeof guideChange> = [];
   const mid = (lo: number | null, hi: number | null) =>
     lo != null && hi != null ? (lo + hi) / 2 : lo ?? hi ?? null;
+  const split = perShareSplitFactor(current, priorYear);
   for (const c of current) {
     if (c.period !== 'year') continue;                 // only the FY guide is comparable across releases
+    if (split && c.unit === 'usd_share') continue;     // two share counts, not a revision — see above
     const p = priorYear.find((x) => x.metric === c.metric && x.basis === c.basis
       && (x.guided_for_label || '').toUpperCase() === (c.period_label || '').toUpperCase());
     if (!p) continue;
@@ -308,14 +363,22 @@ function guideChange(
     const rel = Math.abs(pm) > 1e-9 ? (nm - pm) / Math.abs(pm) : null;
     const same = rel != null ? Math.abs(rel) < 0.002 : nm === pm;
     let direction: 'raised' | 'lowered' | 'reiterated' | 'narrowed' | 'widened';
-    if (!same) direction = nm > pm ? 'raised' : 'lowered';
-    else if (ns != null && ps != null && ns < ps * 0.9) direction = 'narrowed';
-    else if (ns != null && ps != null && ns > ps * 1.1) direction = 'widened';
+    // A range that moved out at BOTH ends widened; calling that "lowered"
+    // because its midpoint slipped 0.5% (Autodesk: $8.07-8.63 to $7.89-8.72)
+    // describes the arithmetic and misses what the company did.
+    const widened = c.low != null && c.high != null && p.guide_low != null && p.guide_high != null
+      && c.low < p.guide_low && c.high > p.guide_high;
+    const narrowed = c.low != null && c.high != null && p.guide_low != null && p.guide_high != null
+      && c.low > p.guide_low && c.high < p.guide_high;
+    if (widened) direction = 'widened';
+    else if (narrowed && same) direction = 'narrowed';
+    else if (!same) direction = nm > pm ? 'raised' : 'lowered';
+    else if (narrowed) direction = 'narrowed';
     else direction = 'reiterated';
     out.push({
       metric: c.metric, basis: c.basis, period_label: c.period_label,
-      prev_low: p.guide_low, prev_high: p.guide_high,
-      new_low: c.low, new_high: c.high,
+      prev_low: round6(p.guide_low), prev_high: round6(p.guide_high),
+      new_low: round6(c.low), new_high: round6(c.high),
       direction,
       // A percentage change in a percentage guide is meaningless — margins and
       // comps move in points, so the delta stays absolute for them.
@@ -506,7 +569,7 @@ export async function GET(req: Request) {
     // Toro look like a 38% miss on a quarter it beat on the basis analysts
     // actually use. The GAAP figure stays in the YoY tile; the surprise chip
     // is street vs street.
-    const [surprises, guidances, forwards, priors] = await Promise.all([
+    const [surprises, guidances, forwards, prAdj] = await Promise.all([
       pooled(prepared, 6, (p) => yahooEarningsHistory(p.f.ticker!)),
       // Guidance lives in the 8-K's press-release exhibit; a 10-Q-only filer
       // has no release to read.
@@ -516,21 +579,54 @@ export async function GET(req: Request) {
       // The street's number for the period being guided — the "(Est. $5.54B)"
       // an earnings feed prints beside a raised outlook.
       pooled(prepared, 6, (p) => yahooForwardEstimates(p.f.ticker!)),
-      // Last quarter's outlook for the quarter that just landed — the half of
-      // "beat expectations" that no free feed carries, and the half the owner
-      // asked for: beat the street AND beat its own guide.
-      pooled(prepared, 4, async (p) => {
-        if (p.f.form !== '8-K' || !p.f.accession) return null;
-        const fq0 = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
+      // THE FILER'S OWN ADJUSTED EPS, read from the release it published.
+      //
+      // The consensus feed's "actual" is not reliably the company's adjusted
+      // figure. For Gap it returns the GAAP $1.38 against an adjusted estimate,
+      // manufacturing a +181% beat where the truth is $0.52 and about +6%; for
+      // SentinelOne it returns GAAP \u2212$0.27 where the company reported
+      // +$0.08, inverting the sign of the verdict and the caveat tag it drives;
+      // and for six filers it returned a modelled number that appears nowhere
+      // in any filing at all. A number narrated as "the company's adjusted EPS"
+      // has to come from the company.
+      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null }> => {
+        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null };
         try {
-          return await priorGuidanceFor({
-            cikNum: p.f.cikNum, currentAccession: p.f.accession, currentFilingDate: p.f.filed,
-            reportedPeriodEnd: p.fundamentals.q_end!,
-            reportedFiscalQ: fq0.q ?? null, reportedFiscalFy: fq0.fy ?? null,
-          });
-        } catch { return null; }
+          const doc = await releaseDocument(p.f.cikNum, p.f.accession, p.f.filing_url);
+          if (!doc.html) return { read: false, adj: null };
+          return {
+            read: true,
+            adj: adjustedEpsFromReleaseHtml(doc.html, {
+              gaapEps: p.fundamentals.eps ?? null,
+              periodEndISO: p.fundamentals.q_end ?? null,
+            }),
+          };
+        } catch { return { read: false, adj: null }; }
       }),
     ]);
+
+    // The prior release's guidance is bound to the reported quarter by the
+    // FILER'S OWN fiscal label, which is why this runs after the guidance
+    // fetch rather than beside it. NetApp's July quarter is "Q1 FY27" to
+    // NetApp and to every figure in both releases, and "fy 2026 Q1" to SEC's
+    // fy/fp fields — binding on the SEC label silently matched nothing, and
+    // NetApp's card showed no own-guide comparison at all despite both
+    // releases carrying one. The press-release headline is the authority; the
+    // XBRL fields are the fallback.
+    const priors = await pooled(prepared.map((p, i) => ({ p, i })), 4, async ({ p, i }) => {
+      if (p.f.form !== '8-K' || !p.f.accession || !p.fundamentals.q_end) return null;
+      const g0 = guidances[i];
+      const fq0 = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
+      const q = g0?.fiscal_q ?? fq0.q ?? null;
+      const fy = g0?.fiscal_fy ?? fq0.fy ?? null;
+      try {
+        return await priorGuidanceFor({
+          cikNum: p.f.cikNum, currentAccession: p.f.accession, currentFilingDate: p.f.filed,
+          reportedPeriodEnd: p.fundamentals.q_end,
+          reportedFiscalQ: q, reportedFiscalFy: fy,
+        });
+      } catch { return null; }
+    });
 
     const graded: UsGradedRow[] = [];
     for (let pi = 0; pi < prepared.length; pi++) {
@@ -546,6 +642,25 @@ export async function GET(req: Request) {
         ? (sRows.find((r) => r.quarter && r.eps_actual != null
             && Math.abs(daysBetween(sLatest.quarter!, r.quarter) - 365) <= 30) || null)
         : null;
+      // Resolve the adjusted basis ONCE: the filing first, the vendor only as a
+      // labelled fallback, and never a vendor number that simply repeats the
+      // GAAP figure — that is the feed carrying GAAP under an adjusted name,
+      // and pairing it with an adjusted estimate invents a beat.
+      const prRead = prAdj[pi] || { read: false, adj: null };
+      const pa = prRead.adj;
+      const vendorAdj = sLatest?.eps_actual ?? null;
+      const gaapNow = p.fundamentals.eps ?? null;
+      const vendorLooksGaap = vendorAdj != null && gaapNow != null && Math.abs(vendorAdj - gaapNow) <= 0.011;
+      // WE READ THE RELEASE AND IT STATES NO ADJUSTED EPS. That is an answer,
+      // not a gap: ChargePoint, Petco, nCino, Phreesia and Gold.com publish
+      // adjusted EBITDA or non-GAAP operating income and no per-share measure
+      // at all, yet the vendor shipped 0.2568, 4.9651, 0.8199 — figures that
+      // appear in no filing, which the card then narrated as the company's own.
+      // Once the release has been read, the vendor cannot overrule it.
+      const vendorUsable = !vendorLooksGaap && !prRead.read;
+      const adjNow = pa ? pa.value : (vendorUsable ? vendorAdj : null);
+      const adjPrev = pa ? (pa.prior ?? null) : (vendorUsable ? (sYearAgo?.eps_actual ?? null) : null);
+      const adjProvenance: 'filing' | 'vendor' | null = pa ? 'filing' : (adjNow != null ? 'vendor' : null);
       const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
       const fyEnding = fiscalYearEndingAt(p.facts, p.fundamentals.q_end);
       const row = gradeUsRow({
@@ -564,15 +679,23 @@ export async function GET(req: Request) {
           addv_musd: p.t.addv_musd, vol_ratio_20d: p.t.vol_ratio_20d,
         },
         shares_outstanding: p.shares,
-        adj_eps: sLatest?.eps_actual ?? null,
-        adj_eps_prev: sYearAgo?.eps_actual ?? null,
+        adj_eps: adjNow,
+        adj_eps_prev: adjPrev,
         positive_guidance: g.label === 'RAISED',
         // The filer's own words first (press-release headline), then SEC's
         // fy/fp — they disagree often enough to matter (NetApp's July quarter
         // is Q1 FY27 to NetApp and "fy 2026 Q1" to the API).
         // Press-release label first, then SEC's fy/fp, then — for a filer whose
         // only disclosure is the 10-K — Q4 of the fiscal year that just ended.
-        fiscal_label: g.fiscal_label || usFiscalLabel(fq)
+        // The quarter is the FILER'S word wherever it said one; the fiscal
+        // YEAR falls back to SEC's fy, which is dependable (it is SEC's fiscal
+        // PERIOD that disagrees with filers). Dick's "Reports Second Quarter
+        // Results" was being labelled Q4 purely because the year sat in a
+        // different sentence.
+        fiscal_label: g.fiscal_label
+          || ((g.fiscal_q && (fq.fy ?? fyEnding) != null)
+              ? `Q${g.fiscal_q} FY${String(fq.fy ?? fyEnding).slice(2)}` : null)
+          || usFiscalLabel(fq)
           || (fyEnding != null ? `Q4 FY${String(fyEnding).slice(2)}` : null),
         fiscal_year_own: g.fiscal_fy ?? fq.fy ?? fyEnding,
       });
@@ -608,20 +731,43 @@ export async function GET(req: Request) {
       if (pg && (pg.for_quarter.length || pg.for_year.length)) {
         const gpNow = ser ? ser.gross_profit[ser.gross_profit.length - 1] : null;
         const extra = {
-          adj_eps: sLatest?.eps_actual ?? null,
+          adj_eps: adjNow,
           fcf: (p.fundamentals.cfo != null && p.fundamentals.capex != null)
             ? p.fundamentals.cfo - Math.abs(p.fundamentals.capex) : null,
           // `series` carries gross profit in $M; the guidance side is in dollars.
           gross_profit: gpNow != null ? gpNow * 1e6 : null,
         };
+        const splitK = perShareSplitFactor(g.figures || [], pg.for_year);
         (row as any).vs_guide = {
           prior_filing_date: pg.prior_filing_date,
           prior_filing_url: pg.prior_filing_url,
-          for_quarter: withActual(pg.for_quarter, p.fundamentals, extra),
-          for_year: withActual(pg.for_year, p.fundamentals, extra),
+          split_factor: splitK,
+          for_quarter: withActual(pg.for_quarter, p.fundamentals, extra, !!splitK),
+          for_year: withActual(pg.for_year, p.fundamentals, extra, !!splitK),
         };
         const chg = guideChange(g.figures || [], pg.for_year);
         if (chg.length) (row as any).guide_change = chg;
+        // A guidance LABEL is read from prose ("we now expect…"); a guidance
+        // CHANGE is arithmetic on two stated ranges. When they disagree, the
+        // arithmetic wins: Okta's release reads as a cut and every FY line in
+        // it went up, and the card said both at once.
+        if (chg.length) {
+          const ups = chg.filter((x) => x.direction === 'raised').length;
+          const downs = chg.filter((x) => x.direction === 'lowered').length;
+          if (ups > downs && (row as any).guidance !== 'RAISED') {
+            (row as any).guidance = 'RAISED';
+            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges';
+            const i = row.caveat_tags.indexOf('guidance cut');
+            if (i >= 0) row.caveat_tags.splice(i, 1);
+            if (!row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
+          } else if (downs > ups && (row as any).guidance !== 'LOWERED') {
+            (row as any).guidance = 'LOWERED';
+            (row as any).guidance_basis = 'computed from the two releases\u2019 own ranges';
+            const i = row.methodology_tags.indexOf('guidance raised');
+            if (i >= 0) row.methodology_tags.splice(i, 1);
+            if (!row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
+          }
+        }
       }
       // CFO/PAT is a funding artefact for banks, insurers and REITs — flag the
       // sector so the client preset can skip that gate, exactly as India does
@@ -631,14 +777,38 @@ export async function GET(req: Request) {
       (row as any).reaction_date = p.t.reaction_date;
       // Consensus surprise (street basis, both sides) — tagged so it shows up
       // beside the methodology / caveat chips like every other signal.
-      if (sLatest && sLatest.eps_actual != null) {
-        (row as any).eps_adj = sLatest.eps_actual;
-        (row as any).eps_estimate = sLatest.eps_estimate;
-        (row as any).eps_surprise_pct = sLatest.surprise_pct;
-        if (sLatest.surprise_pct != null) {
-          if (sLatest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
-          if (sLatest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+      if (adjNow != null) {
+        const est = sLatest?.eps_estimate ?? null;
+        (row as any).eps_adj = adjNow;
+        (row as any).eps_adj_source = adjProvenance;
+        (row as any).eps_adj_label = pa?.label ?? null;
+        (row as any).eps_adj_quote = pa?.source ?? null;
+        (row as any).eps_estimate = est;
+        (row as any).eps_basis = adjProvenance === 'filing'
+          ? `adjusted (${pa!.label})` : 'adjusted (street)';
+        // Recomputed against the actual we resolved, not the one the feed
+        // shipped with its own estimate — and refused entirely when the
+        // estimate is within a dime of zero, because a percentage off $0.00 is
+        // arithmetic noise (Domo "+5,888%"). The cents delta is kept instead.
+        if (est != null) {
+          const cents = adjNow - est;
+          (row as any).eps_surprise_abs = Math.round(cents * 1000) / 1000;
+          // A surprise percentage needs a POSITIVE base. SentinelOne's
+          // consensus was −$0.23 and its actual +$0.08 — a real and important
+          // swing, but "+134%" off a negative estimate is not a number.
+          const pct = est >= 0.10 ? (cents / est) * 100 : null;
+          (row as any).eps_surprise_pct = pct != null ? Math.round(pct * 10) / 10 : null;
+          const beat = pct != null ? pct >= 5 : cents >= 0.03;
+          const miss = pct != null ? pct <= -5 : cents <= -0.03;
+          if (beat && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
+          if (miss && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
         }
+      } else if (sLatest && sLatest.eps_actual != null && vendorLooksGaap) {
+        // The feed's "adjusted actual" is the GAAP figure. Show the estimate so
+        // the reader knows one exists, but never a surprise computed across two
+        // different bases.
+        (row as any).eps_estimate = sLatest.eps_estimate;
+        (row as any).eps_basis_note = 'no adjusted EPS in the release; the consensus estimate is on an adjusted basis, so no surprise is shown';
       }
       graded.push(row);
     }
@@ -706,7 +876,20 @@ export async function GET(req: Request) {
         }
         // Nothing to say: no validated figures AND no consensus. Leave it in
         // the pending list, where it honestly belongs.
-        if ((!pr || !pr.matched.length) && !latest) continue;
+        // The filer's own adjusted EPS, from the same release — see the note on
+        // the full-graded path. The vendor figure stands in only when the
+        // release states none, and never when it merely repeats GAAP.
+        const paP = doc?.html
+          ? adjustedEpsFromReleaseHtml(doc.html, { gaapEps: pr?.eps ?? null, periodEndISO: qEnd })
+          : null;
+        const vendorAdjP = latest?.eps_actual ?? null;
+        const vendorLooksGaapP = vendorAdjP != null && pr?.eps != null && Math.abs(vendorAdjP - pr.eps) <= 0.011;
+        const vendorUsableP = !vendorLooksGaapP && !doc?.html;
+        const adjNowP = paP ? paP.value : (vendorUsableP ? vendorAdjP : null);
+        const adjPrevP = paP ? (paP.prior ?? null) : (!vendorUsableP ? null
+          : ((latest?.quarter ? rows.find((r) => r.quarter && r.eps_actual != null
+              && Math.abs(daysBetween(latest.quarter!, r.quarter) - 365) <= 30)?.eps_actual : null) ?? null));
+        if ((!pr || !pr.matched.length) && adjNowP == null) continue;
         // Guidance first: it also carries the filer's own name for the quarter
         // ("Q2 FY27"), read from the release headline.
         let gPre: Guidance | null = null;
@@ -737,11 +920,8 @@ export async function GET(req: Request) {
           // it is current even before this quarter's numbers land. Gives the
           // PRELIM card a real market cap instead of a blank.
           shares_outstanding: facts0 ? sharesOutstandingFromFacts(facts0, null) : null,
-          adj_eps: latest?.eps_actual ?? null,
-          adj_eps_prev: (latest?.quarter
-            ? rows.find((r) => r.quarter && r.eps_actual != null
-                && Math.abs(daysBetween(latest.quarter!, r.quarter) - 365) <= 30)?.eps_actual
-            : null) ?? null,
+          adj_eps: adjNowP,
+          adj_eps_prev: adjPrevP,
           prelim_surprise_pct: latest?.surprise_pct ?? null,
           fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
           fiscal_year_own: gPre?.fiscal_fy ?? fiscalNow.fy,
@@ -813,12 +993,14 @@ export async function GET(req: Request) {
               reportedFiscalFy: gPre?.fiscal_fy ?? fiscalNow.fy ?? null,
             });
             if (pg && (pg.for_quarter.length || pg.for_year.length)) {
-              const extra = { adj_eps: latest?.eps_actual ?? null, fcf: null, gross_profit: null };
+              const extra = { adj_eps: adjNowP, fcf: null, gross_profit: null };
+              const splitK = perShareSplitFactor(gPre?.figures || [], pg.for_year);
               (row as any).vs_guide = {
                 prior_filing_date: pg.prior_filing_date,
                 prior_filing_url: pg.prior_filing_url,
-                for_quarter: withActual(pg.for_quarter, fund, extra),
-                for_year: withActual(pg.for_year, fund, extra),
+                split_factor: splitK,
+                for_quarter: withActual(pg.for_quarter, fund, extra, !!splitK),
+                for_year: withActual(pg.for_year, fund, extra, !!splitK),
               };
               const chg = guideChange(gPre?.figures || [], pg.for_year);
               if (chg.length) (row as any).guide_change = chg;
@@ -829,14 +1011,23 @@ export async function GET(req: Request) {
         (row as any).is_financial = isFinancialSic(f.sic);
         (row as any).close_30d = t.close_30d;
         (row as any).reaction_date = t.reaction_date;
-        if (latest && latest.eps_actual != null) {
-          (row as any).eps_basis = 'adjusted (street)';
-          (row as any).eps_adj = latest.eps_actual;
-          (row as any).eps_estimate = latest.eps_estimate;
-          (row as any).eps_surprise_pct = latest.surprise_pct;
-          if (latest.surprise_pct != null) {
-            if (latest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
-            if (latest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+        if (adjNowP != null) {
+          const estP = latest?.eps_estimate ?? null;
+          (row as any).eps_basis = paP ? `adjusted (${paP.label})` : 'adjusted (street)';
+          (row as any).eps_adj = adjNowP;
+          (row as any).eps_adj_source = paP ? 'filing' : 'vendor';
+          (row as any).eps_adj_label = paP?.label ?? null;
+          (row as any).eps_adj_quote = paP?.source ?? null;
+          (row as any).eps_estimate = estP;
+          if (estP != null) {
+            const cents = adjNowP - estP;
+            (row as any).eps_surprise_abs = Math.round(cents * 1000) / 1000;
+            const pct = estP >= 0.10 ? (cents / estP) * 100 : null;
+            (row as any).eps_surprise_pct = pct != null ? Math.round(pct * 10) / 10 : null;
+            const beat = pct != null ? pct >= 5 : cents >= 0.03;
+            const miss = pct != null ? pct <= -5 : cents <= -0.03;
+            if (beat && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
+            if (miss && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
           }
         } else if (!row.methodology_tags.includes('no analyst coverage')) {
           // Not a defect — most listed US companies have no consensus at all.
@@ -847,8 +1038,9 @@ export async function GET(req: Request) {
         if (qEndFromRelease && !row.methodology_tags.includes('quarter read from the release')) {
           row.methodology_tags.push('quarter read from the release');
         }
-        const adjLine = (latest && latest.eps_actual != null)
-          ? `adjusted EPS $${latest.eps_actual.toFixed(2)}${latest.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus (${latest.surprise_pct != null ? `${latest.surprise_pct >= 0 ? '+' : ''}${latest.surprise_pct.toFixed(0)}%` : 'n/a'})` : ''}`
+        const surpP = (row as any).eps_surprise_pct as number | null | undefined;
+        const adjLine = adjNowP != null
+          ? `${paP ? paP.label.toLowerCase() : 'adjusted EPS'} $${adjNowP.toFixed(2)}${latest?.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus${surpP != null ? ` (${surpP >= 0 ? '+' : ''}${surpP.toFixed(0)}%)` : ''}` : ''}`
           : null;
         row.narrative = (pr && pr.matched.length)
           // We have the release's own GAAP statement — keep the normal
@@ -902,6 +1094,11 @@ export async function GET(req: Request) {
         }
       } catch { scheduled = []; }
     }
+
+    // The post-earnings setup score needs the whole cohort (its valuation
+    // factor is measured against the day's own median P/E), so it runs once
+    // over every graded row — full and PRELIM alike — after grading is done.
+    assignSetupScores(graded as any[]);
 
     const by_tier: Record<EarningsTier, UsGradedRow[]> = {
       BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],

@@ -84,6 +84,13 @@ const LS_CAL_PREFIX = 'mc:cal-us:v1:';
 /** How many day-scans may be in flight at once. Three keeps the first rows on
  *  screen quickly without asking the server to sweep the whole window at once. */
 const DAY_CONCURRENCY = 3;
+/** How many CALENDAR chunks may be in flight. Two, not eight: the calendar
+ *  route serialises its EDGAR calls behind one ~6 req/s gate, so running more
+ *  chunks at once does not make the sweep faster — it only makes each chunk's
+ *  own 300s ceiling arrive before its data does. */
+const CAL_CONCURRENCY = 2;
+/** Give a chunk the whole of the route's budget, then give up on it. */
+const CAL_TIMEOUT_MS = 290_000;
 const LS_DATE = 'mc:us-eo:v1:date';
 const LS_DAYS = 'mc:us-eo:v1:days';
 const LS_SCRUB = 'mc:graded-us:scrub:v3';
@@ -292,9 +299,33 @@ export default function UsEarningsOpportunitiesPage() {
   // The calendar sweeps a range that can be 90 days long. Fetch it in 10-day
   // chunks so the grid fills in as they land, and cache each chunk: moving the
   // range by a week then re-fetches one chunk, not ninety days.
-  const calChunks = useMemo(() => chunkRange(calFrom, calTo, 10), [calFrom, calTo]);
+  //
+  // ORDER AND CONCURRENCY — why this is gated the same way the day scans are
+  // ──────────────────────────────────────────────────────────────────────────
+  // Every chunk used to be `enabled` at once. That looks like parallelism and
+  // is not: the calendar route funnels every EDGAR call through one process-wide
+  // ~6 req/s gate, so eight simultaneous chunks do not divide the work, they
+  // queue behind each other while each one's own clock keeps running. Measured
+  // against the live route, the 2026-07-29 → 2026-08-07 chunk (peak earnings
+  // season, 2,367 filings) returns in 100s on its own and DIED at 301s — past
+  // the route's 300s ceiling — when it was one of eight in flight. The result
+  // on screen was exactly what was reported: "1/8 chunks loaded…" that never
+  // moved, one day of names, and every other day rendered empty because its
+  // chunk had never landed.
+  //
+  // So the chunks are run a couple at a time, newest first (the selected date
+  // sits at the far end of the range, and that is the part a reader looks at),
+  // with the same `readyUpto` state-plus-effect the day loader uses — a state
+  // value, so the gate never depends on the query results it controls.
+  const calChunks = useMemo(
+    // newest chunk first: `calFrom` is ~two months back, `calTo` two weeks ahead,
+    // so descending order paints the days around the selected date immediately.
+    () => chunkRange(calFrom, calTo, 10).slice().reverse(),
+    [calFrom, calTo]);
+  const [calReadyUpto, setCalReadyUpto] = useState(CAL_CONCURRENCY);
+  useEffect(() => { setCalReadyUpto(CAL_CONCURRENCY); }, [calFrom, calTo, forceKey, viewMode]);
   const calQueries = useQueries({
-    queries: calChunks.map(([a, b]) => ({
+    queries: calChunks.map(([a, b], i) => ({
       queryKey: ['calendar-us', a, b, forceKey],
       queryFn: async (): Promise<CalendarPayload> => {
         const key = `${LS_CAL_PREFIX}${a}|${b}`;
@@ -310,20 +341,40 @@ export default function UsEarningsOpportunitiesPage() {
             }
           } catch { /* storage unavailable */ }
         }
-        const res = await fetch(`/api/v1/earnings/calendar-us?from=${a}&to=${b}${forceKey > 0 ? '&force=1' : ''}`, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`Calendar failed (HTTP ${res.status})`);
-        const payload = await res.json();
-        try { debouncedSetItem(key, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() })); } catch {}
-        return payload;
+        // A chunk that has not answered inside the route's own ceiling is not
+        // going to; aborting turns it into a named failure the strip can report
+        // and retry, instead of a pending query that pins the counter forever.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), CAL_TIMEOUT_MS);
+        try {
+          const res = await fetch(
+            `/api/v1/earnings/calendar-us?from=${a}&to=${b}${forceKey > 0 ? '&force=1' : ''}`,
+            { cache: 'no-store', signal: ctrl.signal },
+          );
+          if (!res.ok) throw new Error(`Calendar failed for ${a} → ${b} (HTTP ${res.status})`);
+          const payload = await res.json();
+          try { debouncedSetItem(key, JSON.stringify({ ...payload, _cachedAt: new Date().toISOString() })); } catch {}
+          return payload;
+        } finally { clearTimeout(timer); }
       },
-      enabled: viewMode === 'CALENDAR',
+      enabled: viewMode === 'CALENDAR' && i < calReadyUpto,
       staleTime: b >= today ? 10 * 60_000 : 24 * 3600_000,
       refetchOnWindowFocus: false,
-      retry: 1,
+      // One retry for a transient EDGAR 403 — but never for a timeout, which
+      // would simply spend another four minutes holding the gate shut.
+      retry: (n: number, err: any) => n < 1 && err?.name !== 'AbortError',
     })),
   });
   const calFetching = calQueries.some((q: any) => q.isFetching);
   const calLoaded = calQueries.filter((q: any) => q.isSuccess).length;
+  const calSettled = calQueries.filter((q: any) => q.isSuccess || q.isError).length;
+  const calFailed = calChunks
+    .filter((_, i) => (calQueries[i] as any)?.isError)
+    .map(([a, b]) => `${a} → ${b}`);
+  useEffect(() => {
+    if (viewMode !== 'CALENDAR') return;
+    setCalReadyUpto((v) => Math.max(v, calSettled + CAL_CONCURRENCY));
+  }, [calSettled, viewMode]);
   const cal: CalendarPayload | undefined = useMemo(() => {
     const parts = calQueries.map((q: any) => q.data as CalendarPayload | undefined).filter(Boolean) as CalendarPayload[];
     if (!parts.length) return undefined;
@@ -738,7 +789,8 @@ export default function UsEarningsOpportunitiesPage() {
               style={{ ...btn(), padding: '6px 10px', minWidth: 120, fontWeight: 600 }} />
             <span style={{ flex: 1 }} />
             <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
-              {calFrom} → {calTo}{cal ? ` · ${cal.total} companies` : ''}{calFetching ? ` · ${calLoaded}/${calChunks.length} chunks loaded…` : ''}
+              {calFrom} → {calTo}{cal ? ` · ${cal.total} companies` : ''}
+              {calLoaded < calChunks.length ? ` · ${calLoaded}/${calChunks.length} chunks loaded${calFetching ? '…' : ''}` : ''}
             </span>
             {cal && (
               <>
@@ -762,8 +814,29 @@ export default function UsEarningsOpportunitiesPage() {
             the SEC filing.
           </div>
 
-          {!cal && !calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Loading the filing calendar…</span></div>}
-          {!cal && calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Sweeping EDGAR for {calFrom} → {calTo} in {calChunks.length} chunks — each fills in as it lands, and each is cached afterwards.</span></div>}
+          {calFailed.length > 0 && (
+            <div style={{
+              marginBottom: 10, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
+              backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid #F59E0B',
+              fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)',
+            }}>
+              ⚠ {calFailed.join(', ')} could not be swept — EDGAR timed out on{' '}
+              {calFailed.length === 1 ? 'that range' : 'those ranges'}. Those days are simply not listed below;
+              nothing was quietly shown as a quiet day. A narrower window (7d or 14d) almost always lands.
+              <button onClick={() => setForceKey((k) => k + 1)} style={{ ...btn(), marginLeft: 8 }}>retry</button>
+            </div>
+          )}
+          {!cal && calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Sweeping EDGAR for {calFrom} → {calTo} in {calChunks.length} chunks, {CAL_CONCURRENCY} at a time — each fills in as it lands, and each is cached afterwards. A chunk in peak earnings season can take a minute or two on a cold cache.</span></div>}
+          {!cal && !calFetching && calFailed.length === 0 && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Loading the filing calendar…</span></div>}
+          {!cal && !calFetching && calFailed.length > 0 && (
+            <div style={{ ...panel(), borderLeft: '4px solid #EF4444' }}>
+              <div style={{ color: '#EF4444', fontWeight: 700 }}>The calendar sweep failed</div>
+              <div style={{ color: 'var(--mc-text-2)', fontSize: 'var(--mc-text-sm)', marginTop: 4 }}>
+                No chunk of {calFrom} → {calTo} came back. Narrow the range (7d or 14d) and retry — a shorter sweep
+                asks EDGAR for far fewer days and almost always lands.
+              </div>
+            </div>
+          )}
 
           {cal && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1088,6 +1161,10 @@ function UsEarningsCard({ r, open, onToggle, panelId: pid }: {
         )}
         {r.is_elite && <Chip text="⭐ ELITE" color="#F59E0B" />}
         {r.multibagger_setup && <Chip text="💎 MULTIBAGGER" color="#8B5CF6" />}
+        {num((r as any).setup?.score) != null && (
+          <Chip text={`SETUP ${(r as any).setup.score} · ${(r as any).setup.verdict}`}
+            color={SETUP_VERDICT_COLOR[(r as any).setup.verdict] || undefined} />
+        )}
         {(r.pead_score ?? 0) >= 70 && <Chip text={`🔥 PEAD ${r.pead_score}`} color="#EF4444" />}
       </div>
 
@@ -1155,53 +1232,16 @@ function UsEarningsCard({ r, open, onToggle, panelId: pid }: {
       <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginTop: 9, lineHeight: 1.5 }}>
         {r.narrative}
       </div>
-      {Array.isArray((r as any).guidance_figures) && (r as any).guidance_figures.length > 0 && (
-        <GuideBlock figs={(r as any).guidance_figures} label={(r as any).guidance} />
-      )}
-
-      {Array.isArray((r as any).guidance_snippets) && (r as any).guidance_snippets.length > 0 && (
-        <details style={{ marginTop: 7 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>
-            📣 GUIDANCE · from the press release{(r as any).guidance_url ? '' : ''}
-          </summary>
-          <div style={{ marginTop: 5, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {(r as any).guidance_snippets.map((q: string, i: number) => (
-              <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.45, borderLeft: '2px solid var(--mc-bg-4)', paddingLeft: 8 }}>“{q}”</div>
-            ))}
-            {(r as any).guidance_url && (
-              <a href={(r as any).guidance_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>read the release ↗</a>
-            )}
-          </div>
-        </details>
-      )}
-
-      {(r.methodology_tags.length > 0 || r.caveat_tags.length > 0) && (
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 8 }}>
-          {r.methodology_tags.map((t) => <Chip key={t} text={t} color="#10B981" />)}
-          {r.caveat_tags.map((t) => <Chip key={t} text={t} color="#EF4444" />)}
-        </div>
-      )}
-
-      {(r as any).prelim && (
-        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 7, lineHeight: 1.5 }}>
-          {Array.isArray((r as any).prelim_matched) && (r as any).prelim_matched.length > 0
-            ? <>Figures read from the earnings release ({(r as any).prelim_matched.map((m: string) => m.replace(/_/g, ' ')).join(', ')}) and checked against last year&apos;s XBRL before display. Cash flow and the full tag set arrive with the 10-Q.</>
-            : <>Consensus and the price reaction only — the release&apos;s statement of operations could not be verified against last year&apos;s filing, so no revenue or margin is shown.</>}
-          {(r as any).release_url && (
-            <> <a href={(r as any).release_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>read the release ↗</a></>
-          )}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 10, marginTop: 9, alignItems: 'center' }}>
-        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{r.form} · filed {r.filing_date}</span>
-        {r.filing_url && (
-          <a href={r.filing_url} target="_blank" rel="noreferrer"
-            style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            SEC filing <ExternalLink className="w-3 h-3" />
-          </a>
-        )}
-      </div>
+      {/* ── THE COLLAPSED CARD ENDS AT THE NARRATIVE ──────────────────────
+          Everything that used to sit here — the guided ranges, the press-release
+          guidance quotes, the methodology/caveat chips, the PRELIM note and the
+          filing links — now lives in the expand panel below. The card was long
+          enough that a screen held two of them; the point of a tier list is to
+          scan twenty. Nothing was dropped: the panel already rendered the guide
+          ranges (GUIDE VS. EXPECTATIONS), the quotes (GUIDANCE LANGUAGE) and the
+          filing links (its footer), so those collapsed copies were duplicates and
+          are simply gone; the chips and the PRELIM note had no copy there and were
+          moved into the panel's METHODOLOGY & CAVEATS section. ─────────────── */}
 
       {/* ── the expand strip · every card gets one, however sparse the row ── */}
       <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={pid} style={moreStrip(open)}>
@@ -1297,6 +1337,60 @@ function SecondaryTiles({ r }: { r: UsGradedRow }) {
   );
 }
 
+// ── guide vs. the street: a bracketing range is NOT a miss ─────────────────
+/** The neutral third state. Same yellow the MIXED tier and the setup bar use. */
+const IN_LINE_COLOR = '#FACC15';
+
+interface GuideStance {
+  stance: 'above' | 'in-line' | 'below';
+  glyph: '▲' | '≈' | '▼';
+  color: string;
+  /** Mid-sentence phrase: "…the guide is in line with the street." */
+  word: string;
+}
+
+/**
+ * How a guided RANGE stands against the street's point estimate.
+ *
+ * This used to compare the estimate with the range's MIDPOINT alone, which
+ * turned every guide whose midpoint sat a hair under consensus into a red ▼ —
+ * Nutanix guiding revenue to $3.18B–$3.23B against a $3.22B estimate was
+ * printed as a miss even though the street's number is INSIDE the range the
+ * company gave. A company that brackets consensus has guided in line; it has
+ * not guided below.
+ *
+ *   estimate inside [low, high]  → in line          · yellow ≈
+ *   estimate below low           → guide above the street · green ▲
+ *   estimate above high          → guide below the street · red ▼
+ *
+ * A point guide (low === high) has no width to sit inside, so it keeps a 0.5%
+ * tolerance — the same band `compareToGuide` in us-prior-guidance.ts uses when
+ * it measures an actual against a point guide.
+ *
+ * Returns null whenever either side is missing: nothing is coloured on a
+ * comparison that was never made.
+ */
+function guideVsStreet(
+  low: number | null | undefined,
+  high: number | null | undefined,
+  est: number | null | undefined,
+): GuideStance | null {
+  const e = num(est);
+  const a0 = num(low);
+  const b0 = num(high);
+  if (e == null) return null;
+  // A one-sided guide ("at least $3.2B") is treated as the point it states.
+  const lo = a0 != null && b0 != null ? Math.min(a0, b0) : (a0 ?? b0);
+  const hi = a0 != null && b0 != null ? Math.max(a0, b0) : (b0 ?? a0);
+  if (lo == null || hi == null) return null;
+  const tol = lo === hi ? Math.abs(lo) * 0.005 : 0;
+  if (e >= lo - tol && e <= hi + tol) {
+    return { stance: 'in-line', glyph: '≈', color: IN_LINE_COLOR, word: 'in line with the street' };
+  }
+  if (e < lo) return { stance: 'above', glyph: '▲', color: 'var(--mc-bullish)', word: 'above the street' };
+  return { stance: 'below', glyph: '▼', color: 'var(--mc-bearish)', word: 'below the street' };
+}
+
 /**
  * The guided numbers, grouped by period the way an earnings feed prints them:
  *
@@ -1330,8 +1424,7 @@ function GuideBlock({ figs, label, showSource }: {
             {verb.toUpperCase()} {period.toUpperCase()}{verb === 'Guides to' ? '' : ' GUIDE'}
           </div>
           {list.map((f, i) => {
-            const beat = (f.est != null && f.low != null && f.high != null) ? ((f.low + f.high) / 2) - f.est : null;
-            const good = beat != null ? beat > 0 : (f.raised === true ? true : null);
+            const vs = guideVsStreet(f.low, f.high, f.est);
             return (
               <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 11, lineHeight: 1.6 }}>
                 <span style={{ color: 'var(--mc-text-3)', minWidth: 96 }}>
@@ -1343,9 +1436,18 @@ function GuideBlock({ figs, label, showSource }: {
                     (Est. {fmtGuideRange({ low: f.est, high: f.est, unit: f.unit })})
                   </span>
                 )}
-                {good != null && (
-                  <span style={{ color: good ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>{good ? '▲' : '▼'}</span>
-                )}
+                {vs != null ? (
+                  <span title={`The guide is ${vs.word}`} style={{ color: vs.color, fontWeight: 800 }}>
+                    {vs.glyph}
+                    {vs.stance === 'in-line' && (
+                      <span style={{ fontWeight: 700, fontSize: 10 }}> in line</span>
+                    )}
+                  </span>
+                ) : f.raised === true ? (
+                  // No estimate to compare with — this arrow is about the
+                  // company's OWN prior guide, not the street, and says so.
+                  <span title="Raised versus the company's prior guide" style={{ color: 'var(--mc-bullish)', fontWeight: 800 }}>▲</span>
+                ) : null}
                 {f.prior_low != null && (
                   <span style={{ color: 'var(--mc-text-4)' }}>
                     from {fmtGuideRange({ low: f.prior_low, high: f.prior_high, unit: f.unit })}
@@ -1491,6 +1593,11 @@ function panelId(key: string): string {
 const num = (v: unknown): number | null =>
   (typeof v === 'number' && Number.isFinite(v)) ? v : null;
 
+/** A share count, scaled like money. "24285.0M" is a number nobody reads;
+ *  NVIDIA has 24.29 billion shares and that is how it should be written. */
+const fmtShares = (m: number): string =>
+  Math.abs(m) >= 1000 ? `${(m / 1000).toFixed(2)}B` : `${m.toFixed(1)}M`;
+
 /** Read index `i` of one of the series arrays, tolerating a short or absent
  *  array — the arrays are index-aligned by contract but nothing is guaranteed
  *  to be there. */
@@ -1570,7 +1677,29 @@ function buildCols(s: UsSeries & { ends: string[] }, quarterLabel: string | null
 }
 
 // ── the arithmetic discipline ──────────────────────────────────────────────
-type Cell = { text: string; color?: string };
+type Cell = { text: string; color?: string; pill?: 'up' | 'down' | 'flat' };
+
+/**
+ * A change, set in a tinted chip rather than as coloured text.
+ *
+ * When every delta in the table is saturated green or red, the table stops
+ * distinguishing anything — it reads as a wall of traffic lights and the eye
+ * has nowhere to land. A quiet tinted background carries the sign, the number
+ * stays legible, and the sparkline beside it does the work of showing which
+ * direction actually matters.
+ */
+function Pill({ kind, children }: { kind: 'up' | 'down' | 'flat'; children: React.ReactNode }) {
+  const c = kind === 'up' ? 'var(--mc-bullish)' : kind === 'down' ? 'var(--mc-bearish)' : 'var(--mc-text-3)';
+  return (
+    <span style={{
+      display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontWeight: 700,
+      fontSize: 10.5, lineHeight: 1.5, color: c,
+      backgroundColor: 'color-mix(in srgb, currentColor 13%, transparent)',
+      fontVariantNumeric: 'tabular-nums',
+    }}>{children}</span>
+  );
+}
+
 const DASH: Cell = { text: '—' };
 const NM: Cell = { text: 'n/m', color: 'var(--mc-text-4)' };
 
@@ -1601,7 +1730,7 @@ function growthCell(cur: number | null, prev: number | null): Cell {
   if (prev <= 0) return NM;
   const pct = ((cur - prev) / prev) * 100;
   if (!Number.isFinite(pct)) return DASH;
-  return { text: signedPct(pct), color: pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+  return { text: signedPct(pct), pill: pct >= 0 ? 'up' : 'down' };
 }
 
 /**
@@ -1617,7 +1746,7 @@ function cagrCell(latest: number | null, oldest: number | null, gapDays: number 
   if (latest <= 0 || oldest <= 0) return NM;
   const pct = (Math.pow(latest / oldest, 1 / 3) - 1) * 100;
   if (!Number.isFinite(pct)) return DASH;
-  return { text: signedPct(pct), color: pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+  return { text: signedPct(pct), pill: pct >= 0 ? 'up' : 'down' };
 }
 
 /** A margin needs a positive revenue base; a negative margin is fine to show,
@@ -1634,8 +1763,8 @@ function bpsCell(now: number | null, then: number | null): Cell {
   if (now == null || then == null) return DASH;
   const n = Math.round((now - then) * 100);
   if (!Number.isFinite(n)) return DASH;
-  if (n === 0) return { text: '0', color: 'var(--mc-text-2)' };
-  return { text: `${n > 0 ? '+' : '−'}${Math.abs(n)}`, color: n > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+  if (n === 0) return { text: '0', pill: 'flat' };
+  return { text: `${n > 0 ? '+' : '−'}${Math.abs(n)}`, pill: n > 0 ? 'up' : 'down' };
 }
 
 const pctCell = (p: number | null): Cell =>
@@ -1644,6 +1773,78 @@ const usdCell = (v: number | null): Cell =>
   v == null ? DASH : { text: fmtUsdCell(v), color: v < 0 ? 'var(--mc-bearish)' : undefined };
 
 // ── panel chrome ───────────────────────────────────────────────────────────
+/**
+ * "Great earnings only lead to great returns when they meet a hungry
+ * institutional buyer." The setup score is the engine's attempt at what
+ * surrounds the beat, and it is only worth anything if it can be argued with —
+ * so every factor shows the input it scored, and the ones with no free US
+ * source say so instead of being quietly filled in with something adjacent.
+ */
+const SETUP_VERDICT_COLOR: Record<string, string> = {
+  'compounder setup': 'var(--mc-bullish)',
+  'needs a pullback': '#FACC15',
+  'beat already priced': 'var(--mc-bearish)',
+  'thin evidence': 'var(--mc-text-3)',
+};
+
+function SetupBlock({ setup }: { setup: any }) {
+  if (!setup || !Array.isArray(setup.factors) || !setup.factors.length) return null;
+  const total = num(setup.score);
+  const bar = (v: number) => v >= 70 ? 'var(--mc-bullish)' : v >= 45 ? '#FACC15' : 'var(--mc-bearish)';
+  return (
+    <>
+      <PanelH note="what surrounds the beat — the separators, each with its input">
+        POST-EARNINGS SETUP
+      </PanelH>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+        <span style={{ fontSize: 18, fontWeight: 800, color: total == null ? 'var(--mc-text-3)' : bar(total) }}>
+          {total ?? '—'}
+        </span>
+        {setup.verdict && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: SETUP_VERDICT_COLOR[setup.verdict] || 'var(--mc-text-2)' }}>
+            {setup.verdict}
+          </span>
+        )}
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
+          {setup.factors_scored} of {setup.factors_total} factors had data
+          {total == null && ' — too few to score'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {setup.factors.map((f: any) => {
+          const s = num(f.score);
+          return (
+            <div key={f.id} style={{
+              display: 'grid', gridTemplateColumns: 'minmax(96px, 1.1fr) 44px minmax(0, 2fr)',
+              gap: 8, alignItems: 'center', fontSize: 10.5, minWidth: 0,
+            }}>
+              <span style={{ color: s == null ? 'var(--mc-text-4)' : 'var(--mc-text-2)' }}>{f.label}</span>
+              {s == null ? (
+                <span style={{ color: 'var(--mc-text-4)', fontSize: 9.5 }}>n/a</span>
+              ) : (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: 'var(--mc-bg-4)', overflow: 'hidden' }}>
+                    <span style={{ display: 'block', height: '100%', width: `${Math.round(s)}%`, backgroundColor: bar(s) }} />
+                  </span>
+                  <b style={{ color: bar(s), fontSize: 9.5, minWidth: 16, textAlign: 'right' }}>{Math.round(s)}</b>
+                </span>
+              )}
+              <span style={{ color: 'var(--mc-text-4)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {s == null ? (f.unavailable || '—') : f.input}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', marginTop: 5, lineHeight: 1.5 }}>
+        Weighted over the factors that had data; a factor with no free US source is left out of the
+        weighting rather than scored at a neutral value. Margin is scored on its <b>slope</b>, not its
+        level — a good margin that stopped improving scores low on purpose.
+      </div>
+    </>
+  );
+}
+
 function PanelH({ children, note }: { children: React.ReactNode; note?: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap', margin: '12px 0 5px' }}>
@@ -1664,7 +1865,9 @@ function Bul({ children }: { children: React.ReactNode }) {
  *  sentence, exactly the way the write-ups we are competing with do it. */
 function V({ verdict }: { verdict: 'beat' | 'missed' | 'in-line' | null }) {
   if (!verdict) return null;
-  const c = verdict === 'beat' ? 'var(--mc-bullish)' : verdict === 'missed' ? 'var(--mc-bearish)' : 'var(--mc-text-1)';
+  // "In line" is a verdict of its own, not a faded miss — the same neutral
+  // yellow the guide-vs-street glyph uses, so the two read as one vocabulary.
+  const c = verdict === 'beat' ? 'var(--mc-bullish)' : verdict === 'missed' ? 'var(--mc-bearish)' : IN_LINE_COLOR;
   const t = verdict === 'beat' ? 'Beat' : verdict === 'missed' ? 'Missed' : 'In line';
   return <b style={{ color: c }}>{t}</b>;
 }
@@ -1685,8 +1888,92 @@ function Scroller({ children }: { children: React.ReactNode }) {
   );
 }
 
-interface TableRow { label: string; note?: string; cells: Cell[] }
+/**
+ * A row's whole history in 80 pixels.
+ *
+ * Four columns of numbers tell you where a company is; they do not show you
+ * that the last three quarters turned up after a flat year, which is the thing
+ * a reader is actually looking for — and a wall of red and green deltas makes
+ * every row shout equally loudly, so nothing stands out. The sparkline carries
+ * the shape and lets the colour recede.
+ *
+ * Bars for level series (revenue, profit, cash flow), because the comparison is
+ * of magnitudes; a baseline is drawn at zero when the series crosses it, so a
+ * loss reads as a loss rather than as a short bar. The most recent quarter — the
+ * one being graded — is the only one at full strength; everything behind it is
+ * faded, which is what makes the trend legible without a legend.
+ */
+function Spark({ values, height = 20, width = 84 }: { values: Array<number | null>; height?: number; width?: number }) {
+  const pts = values.map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : null));
+  const real = pts.filter((v): v is number => v != null);
+  if (real.length < 3) return <span style={{ color: 'var(--mc-text-4)', fontSize: 9 }}>—</span>;
+  const hi = Math.max(...real, 0);
+  const lo = Math.min(...real, 0);
+  const span = hi - lo || 1;
+  const n = pts.length;
+  const gap = 1;
+  const bw = Math.max(1.5, (width - gap * (n - 1)) / n);
+  const y0 = height - ((0 - lo) / span) * height;      // the zero line
+  const last = pts.reduce<number | null>((acc, v, i) => (v != null ? i : acc), null);
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
+      aria-label={`${real.length}-quarter trend`} style={{ display: 'block' }}>
+      {lo < 0 && <line x1={0} y1={y0} x2={width} y2={y0} stroke="var(--mc-bg-4)" strokeWidth={1} />}
+      {pts.map((v, i) => {
+        if (v == null) return null;
+        const yv = height - ((v - lo) / span) * height;
+        const top = Math.min(yv, y0), h = Math.max(1, Math.abs(y0 - yv));
+        const isLast = i === last;
+        const good = v >= 0;
+        return (
+          <rect key={i} x={i * (bw + gap)} y={top} width={bw} height={h} rx={Math.min(1.2, bw / 2)}
+            fill={good ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
+            opacity={isLast ? 1 : 0.26 + 0.2 * (i / Math.max(1, n - 1))} />
+        );
+      })}
+    </svg>
+  );
+}
+
+/** The same idea for a margin: a line, because a margin is a level, not a size. */
+function SparkLine({ values, height = 20, width = 84 }: { values: Array<number | null>; height?: number; width?: number }) {
+  const pts = values.map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : null));
+  const real = pts.filter((v): v is number => v != null);
+  if (real.length < 3) return <span style={{ color: 'var(--mc-text-4)', fontSize: 9 }}>—</span>;
+  const hi = Math.max(...real), lo = Math.min(...real);
+  const span = hi - lo || 1;
+  const n = pts.length;
+  const x = (i: number) => (n === 1 ? width / 2 : (i / (n - 1)) * (width - 2) + 1);
+  const y = (v: number) => height - 2 - ((v - lo) / span) * (height - 4);
+  // Break the line where the filer tagged nothing rather than drawing through
+  // a quarter that does not exist.
+  const segs: string[] = [];
+  let cur: string[] = [];
+  pts.forEach((v, i) => {
+    if (v == null) { if (cur.length > 1) segs.push(cur.join(' ')); cur = []; return; }
+    cur.push(`${cur.length ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+  });
+  if (cur.length > 1) segs.push(cur.join(' '));
+  const lastI = pts.reduce<number | null>((acc, v, i) => (v != null ? i : acc), null);
+  const lastV = lastI != null ? pts[lastI] : null;
+  const firstV = real[0];
+  const up = lastV != null && lastV >= firstV;
+  const stroke = up ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
+      aria-label={`${real.length}-quarter margin trend`} style={{ display: 'block' }}>
+      {segs.map((d, i) => <path key={i} d={d} fill="none" stroke={stroke} strokeWidth={1.4} opacity={0.7}
+        strokeLinecap="round" strokeLinejoin="round" />)}
+      {lastI != null && lastV != null && (
+        <circle cx={x(lastI)} cy={y(lastV)} r={2.1} fill={stroke} />
+      )}
+    </svg>
+  );
+}
+
+interface TableRow { label: string; note?: string; cells: Cell[]; spark?: React.ReactNode }
 function MiniTable({ head, rows }: { head: Array<{ label: string; sub?: string }>; rows: TableRow[] }) {
+  const hasSpark = rows.some((r) => r.spark != null);
   const th: React.CSSProperties = {
     padding: '5px 8px', textAlign: 'right', fontSize: 9, fontWeight: 800, letterSpacing: 0.3,
     color: 'var(--mc-text-3)', whiteSpace: 'nowrap', borderBottom: '1px solid var(--mc-bg-4)',
@@ -1699,17 +1986,31 @@ function MiniTable({ head, rows }: { head: Array<{ label: string; sub?: string }
     padding: '4px 8px', textAlign: 'right', fontSize: 11, whiteSpace: 'nowrap',
     color: 'var(--mc-text-1)', fontVariantNumeric: 'tabular-nums',
   };
+  /** The quarter being graded, tinted down its whole column. */
+  const curCol: React.CSSProperties = {
+    backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 7%, transparent)',
+    boxShadow: 'inset 2px 0 0 color-mix(in srgb, var(--mc-cyan) 45%, transparent)',
+  };
   return (
     <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 'max-content' }}>
       <thead>
         <tr>
           <th style={{ ...th, ...stick }} />
           {head.map((h, i) => (
-            <th key={i} style={th}>
+            // The first column is the quarter being graded. Marking it once,
+            // in the header and down the column, means a reader never has to
+            // work out which of four near-identical dates is "now".
+            <th key={i} style={i === 0 ? { ...th, ...curCol, color: 'var(--mc-text-1)' } : th}>
               {h.label}
               {h.sub && <div style={{ fontSize: 8, fontWeight: 600, color: 'var(--mc-text-4)' }}>{h.sub}</div>}
             </th>
           ))}
+          {hasSpark && (
+            <th style={{ ...th, textAlign: 'left', paddingLeft: 12 }}>
+              TREND
+              <div style={{ fontSize: 8, fontWeight: 600, color: 'var(--mc-text-4)' }}>every quarter on file</div>
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -1720,8 +2021,16 @@ function MiniTable({ head, rows }: { head: Array<{ label: string; sub?: string }
               {r.note && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--mc-text-4)' }}> {r.note}</span>}
             </th>
             {r.cells.map((c, j) => (
-              <td key={j} style={{ ...td, color: c.color || 'var(--mc-text-1)' }}>{c.text}</td>
+              <td key={j} style={{
+                ...td, color: c.color || 'var(--mc-text-1)',
+                ...(j === 0 ? { ...curCol, color: c.color || 'var(--mc-text-0)', fontWeight: 700 } : null),
+              }}>
+                {c.pill ? <Pill kind={c.pill}>{c.text}</Pill> : c.text}
+              </td>
             ))}
+            {hasSpark && (
+              <td style={{ ...td, textAlign: 'left', paddingLeft: 12, verticalAlign: 'middle' }}>{r.spark ?? null}</td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -1778,7 +2087,7 @@ function HiText({ text, verdict }: { text: string; verdict: 'beat' | 'missed' | 
   const head = i > 0 ? text.slice(0, i) : text;
   const rest = i > 0 ? text.slice(i) : '';
   const c = verdict === 'beat' ? 'var(--mc-bullish)'
-    : verdict === 'missed' ? 'var(--mc-bearish)' : 'var(--mc-text-1)';
+    : verdict === 'missed' ? 'var(--mc-bearish)' : IN_LINE_COLOR;
   return <><b style={{ color: c }}>{head}</b>{rest}</>;
 }
 
@@ -1835,27 +2144,27 @@ function guideChangeBullet(g: GuideChange, est: number | null): React.ReactNode 
   const showDelta = dp != null && g.direction !== 'reiterated' && Math.abs(dp) >= 0.05;
   const mid = (num(g.new_low) != null && num(g.new_high) != null)
     ? ((g.new_low as number) + (g.new_high as number)) / 2 : null;
-  // Only compare against the street off a positive consensus. A guide measured
-  // against a zero or negative estimate is stated as a difference, never a %.
-  const vsStreet: React.ReactNode = est == null || mid == null ? null
-    : est > 0
-      ? (() => {
-        const diff = ((mid - est) / est) * 100;
-        return (
-          <span style={{ color: 'var(--mc-text-4)' }}>
-            {' '}Street had {fmtGuideRange({ low: est, high: est, unit })} — midpoint{' '}
-            <b style={{ color: diff >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
-              {diff >= 0 ? '+' : '−'}{Math.abs(diff).toFixed(1)}%
-            </b>{' '}{diff >= 0 ? 'above' : 'below'} it.
-          </span>
-        )
-      })()
-      : (
-        <span style={{ color: 'var(--mc-text-4)' }}>
-          {' '}Street had {fmtGuideRange({ low: est, high: est, unit })} — a percentage gap off a
-          non-positive estimate would be meaningless, so the two are shown side by side only.
-        </span>
-      );
+  // The verdict is decided by CONTAINMENT, not by the midpoint: a range that
+  // brackets consensus is in line with the street, however its midpoint falls.
+  // The midpoint gap is still printed for an out-of-range guide, because that
+  // is the size of the surprise — but only off a positive consensus, since a
+  // percentage gap measured against a zero or negative estimate is meaningless.
+  const vs = guideVsStreet(g.new_low, g.new_high, est);
+  const midDiff = (est != null && est > 0 && mid != null) ? ((mid - est) / est) * 100 : null;
+  const vsStreet: React.ReactNode = est == null || vs == null ? null : (
+    <span style={{ color: 'var(--mc-text-4)' }}>
+      {' '}Street had {fmtGuideRange({ low: est, high: est, unit })} —{' '}
+      <b style={{ color: vs.color }}>{vs.glyph} {vs.word}</b>
+      {vs.stance === 'in-line'
+        ? (num(g.new_low) !== num(g.new_high)
+          ? ': the estimate sits inside the guided range.'
+          : ': the guide and the estimate are the same number to within half a percent.')
+        : midDiff != null
+          ? <>, midpoint <b style={{ color: vs.color }}>{midDiff >= 0 ? '+' : '−'}{Math.abs(midDiff).toFixed(1)}%</b>{' '}
+            {midDiff >= 0 ? 'above' : 'below'} it.</>
+          : ' — a percentage gap off a non-positive estimate would be meaningless, so the two are shown side by side only.'}
+    </span>
+  );
   return (
     <Bul key={`${g.metric}-${g.period_label}-${g.direction}`}>
       <b style={{ color: good == null ? 'var(--mc-text-1)' : good ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{verb}</b>
@@ -1918,7 +2227,11 @@ function DetailPanel({ r }: { r: UsRowX }) {
     if (cols.prev) cells.push(growthCell(cur, at(arr, cols.prev.idx)));
     if (cols.yr) cells.push(growthCell(cur, at(arr, cols.yr.idx)));
     if (cols.yr3) cells.push(cagrCell(cur, at(arr, cols.yr3.idx), cols.yr3GapDays));
-    return { label, note, cells };
+    // The whole series behind the four columns, so the shape of the last three
+    // years is visible at a glance instead of having to be reconstructed from
+    // three growth rates.
+    const full = Array.isArray(arr) ? (arr as Array<number | null>).map(num) : [];
+    return { label, note, cells, spark: full.length >= 3 ? <Spark values={full} /> : undefined };
   };
 
   const resultRows: TableRow[] = [];
@@ -1943,7 +2256,7 @@ function DetailPanel({ r }: { r: UsRowX }) {
       if (cols.prev) cells.push(DASH);
       if (cols.yr) {
         const y = num(m.yoy_pct) as number;
-        cells.push({ text: signedPct(y), color: y >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' });
+        cells.push({ text: signedPct(y), pill: y >= 0 ? 'up' : 'down' });
       }
       if (cols.yr3) cells.push(DASH);
       resultRows.push({ label: m.label || KEY_METRIC_LABEL[m.id] || m.id, note: 'rel.', cells });
@@ -1964,7 +2277,11 @@ function DetailPanel({ r }: { r: UsRowX }) {
       if (cols.prev) cells.push(bpsCell(cur, marginPct(at(arr, cols.prev.idx), revAt(cols.prev.idx))));
       if (cols.yr) cells.push(bpsCell(cur, marginPct(at(arr, cols.yr.idx), revAt(cols.yr.idx))));
       if (cols.yr3) cells.push(bpsCell(cur, marginPct(at(arr, cols.yr3.idx), revAt(cols.yr3.idx))));
-      return { label, cells };
+      // A margin is a level, so its trend is a line, not bars — and it is drawn
+      // over every quarter on file so "expanding" or "rolling over" is visible
+      // rather than inferred from three basis-point deltas.
+      const full = (s.ends || []).map((_, i) => marginPct(at(arr, i), revAt(i)));
+      return { label, cells, spark: full.filter((v) => v != null).length >= 3 ? <SparkLine values={full} /> : undefined };
     };
     for (const [label, arr] of [
       ['Gross margin', s.gross_profit], ['Operating margin', s.operating_income],
@@ -2042,7 +2359,11 @@ function DetailPanel({ r }: { r: UsRowX }) {
     } else if (debt != null) {
       ctxBullets.push(<Bul key="debt"><b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(debt)}</b> of total debt; no cash line tagged.</Bul>);
     }
-    const bb = num(ctx.buyback_musd), dv = num(ctx.dividends_musd);
+    // A zero is not a capital return. "Bought back $0K of stock" is the filer
+    // tagging the line at nil, not news; the bullet is dropped instead.
+    const bbRaw = num(ctx.buyback_musd), dvRaw = num(ctx.dividends_musd);
+    const bb = bbRaw != null && bbRaw > 0 ? bbRaw : null;
+    const dv = dvRaw != null && dvRaw > 0 ? dvRaw : null;
     if (bb != null || dv != null) {
       ctxBullets.push(
         <Bul key="return">
@@ -2071,7 +2392,7 @@ function DetailPanel({ r }: { r: UsRowX }) {
     if (sh != null || shY != null) {
       ctxBullets.push(
         <Bul key="shares">
-          {sh != null && <>Diluted share count <b style={{ color: 'var(--mc-text-0)' }}>{sh.toFixed(1)}M</b></>}
+          {sh != null && <>Diluted share count <b style={{ color: 'var(--mc-text-0)' }}>{fmtShares(sh)}</b></>}
           {shY != null && <>{sh != null ? ', ' : 'Diluted share count '}
             <b style={{ color: shY <= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(shY, 1)}</b> YoY
             {shY < 0 ? ' (shrinking)' : shY > 0 ? ' (dilution)' : ''}</>}
@@ -2179,6 +2500,37 @@ function DetailPanel({ r }: { r: UsRowX }) {
           {ctxBullets}
         </>
       )}
+
+      {/* ── 5b · what surrounds the beat ── */}
+      <SetupBlock setup={(r as any).setup} />
+
+      {/* ── 5c · methodology, caveats and the PRELIM basis ──────────────────
+          Moved here from the collapsed card. These say HOW the grade was built
+          and what it is allowed to claim — the kind of thing a reader wants once
+          they have decided the name is worth reading, not while scanning a tier. */}
+      {(r.methodology_tags.length > 0 || r.caveat_tags.length > 0 || !!r.prelim) && (
+        <>
+          <PanelH note="how this grade was built, and what it is not allowed to claim">
+            METHODOLOGY &amp; CAVEATS
+          </PanelH>
+          {(r.methodology_tags.length > 0 || r.caveat_tags.length > 0) && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: r.prelim ? 6 : 0 }}>
+              {r.methodology_tags.map((t) => <Chip key={`m-${t}`} text={t} color="#10B981" />)}
+              {r.caveat_tags.map((t) => <Chip key={`c-${t}`} text={t} color="#EF4444" />)}
+            </div>
+          )}
+          {r.prelim && (
+            <Quiet>
+              {Array.isArray(r.prelim_matched) && r.prelim_matched.length > 0
+                ? <>Figures read from the earnings release ({r.prelim_matched.map((m) => m.replace(/_/g, ' ')).join(', ')}) and
+                    checked against last year&apos;s XBRL before display. Cash flow and the full tag set arrive with the 10-Q.</>
+                : <>Consensus and the price reaction only — the release&apos;s statement of operations could not be verified
+                    against last year&apos;s filing, so no revenue or margin is shown.</>}
+            </Quiet>
+          )}
+        </>
+      )}
+
 
       {/* ── 6 · everything the collapsed card hides ── */}
       {metrics.length > 0 && (
