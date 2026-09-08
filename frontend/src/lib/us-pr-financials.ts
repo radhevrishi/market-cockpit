@@ -160,6 +160,73 @@ function matchRow(toks: number[], yearAgo: number, isEps: boolean, preferScale: 
   return null;
 }
 
+// ─── which quarter is this release about? ───────────────────────────────────
+// Needed for the filers no consensus feed covers. A micro-cap announces on an
+// 8-K, its 10-Q is weeks away, and Yahoo has no earnings history for it — so
+// the quarter end (which the consensus row would otherwise have supplied) has
+// to come from the release itself. Every US income statement is headed with
+// the period it covers, in one of a handful of shapes:
+//
+//   Three Months Ended July 31, 2026        (calendar-month filers)
+//   Thirteen Weeks Ended August 2, 2026     (52/53-week retailers)
+//   Quarter Ended June 30, 2026
+//   For the three and six months ended June 30, 2026
+//
+// The rule is only ever "read the date the filer wrote", never arithmetic on a
+// 91-day quarter — a 52/53-week calendar breaks that immediately.
+const MONTHS: Record<string, number> = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7,
+  august: 8, september: 9, october: 10, november: 11, december: 12,
+  jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+};
+const PERIOD_HEAD = new RegExp(
+  String.raw`(?:three|thirteen|3|13)[\s\-]*(?:months?|weeks?)?\s*(?:and\s+(?:\w+|\d+)[\s\-]*(?:months?|weeks?)\s*)?ended?` +
+  String.raw`|quarters?\s+ended?|periods?\s+ended?|(?:months?|weeks?)\s+ended?`,
+  'i');
+const DATE_RE = /\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\b/g;
+
+/**
+ * The period end this release reports on, or null.
+ *
+ * `filedISO` bounds the answer: an earnings release always covers a quarter
+ * that has already ended, and US companies announce within roughly 110 days of
+ * the close. A date outside that window belongs to a comparative column, a
+ * subsequent-event note or a forward-looking sentence, and is discarded. Among
+ * the candidates that survive, the LATEST wins — the current period is always
+ * the most recent date on the page's period headers.
+ */
+export function periodEndFromReleaseHtml(html: string, filedISO: string): string | null {
+  if (!html || !/^\d{4}-\d{2}-\d{2}$/.test(filedISO)) return null;
+  const text = decode(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
+  if (!text) return null;
+  const filedMs = Date.parse(filedISO + 'T00:00:00Z');
+  const lo = filedMs - 110 * 86_400_000;              // oldest plausible quarter end
+  const hi = filedMs;                                  // never after the announcement
+  let best: string | null = null;
+
+  // Only dates that sit just after a period-ended phrase are considered: the
+  // same page carries the release date, the year-ago column and, often, a
+  // conference-call date, and none of those name this quarter.
+  const heads: number[] = [];
+  const headRe = new RegExp(PERIOD_HEAD.source, 'gi');
+  for (let m = headRe.exec(text); m; m = headRe.exec(text)) heads.push(m.index + m[0].length);
+  for (const at of heads) {
+    const window = text.slice(at, at + 60);
+    DATE_RE.lastIndex = 0;
+    const d = DATE_RE.exec(window);
+    if (!d) continue;
+    const mo = MONTHS[d[1].toLowerCase()];
+    if (!mo) continue;
+    const day = parseInt(d[2], 10), yr = parseInt(d[3], 10);
+    if (!(day >= 1 && day <= 31) || !(yr >= 1990 && yr <= 2100)) continue;
+    const iso = `${yr}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const ms = Date.parse(iso + 'T00:00:00Z');
+    if (!Number.isFinite(ms) || ms < lo || ms > hi) continue;
+    if (!best || iso > best) best = iso;
+  }
+  return best;
+}
+
 /**
  * Extract the current quarter's GAAP revenue / operating income / net income /
  * diluted EPS from a press release, each validated against `yearAgo`.

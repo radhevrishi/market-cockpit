@@ -54,6 +54,21 @@
 //     "Q3 FY 2027 | FY 2027"), a row's ranges bind to them positionally. When
 //     the count of ranges does not match the count of period columns, the row is
 //     dropped whole — a mislabelled period is the most expensive error here.
+//     A header that spans the table names the table and not a column, and gives
+//     itself away by repeating one of the columns under it ("Fiscal 2027" over
+//     "Q2 | FY27"); a column that is only a quarter takes its fiscal year from
+//     that spanner. Columns never step BACK a fiscal year: "Q3 FY26 | Q3 FY25"
+//     heads a year-over-year comparison of REPORTED results, not a guide.
+//   • TWO FIGURES ON A ROW ARE TWO COLUMNS. A row of table cells holding two or
+//     more figures may only be read once something has said what its columns
+//     are — periods, GAAP | Non-GAAP, Prior | Current. Keeping the first cell
+//     and stamping it with the section's period is a guess dressed as a fact:
+//     Salesforce's non-GAAP EPS row flattens to "$3.25 - $3.27  $14.06 - $14.12"
+//     and the first cell went out as an FY27 guide of $3.25 — which is the Q2
+//     number, against a true FY27 guide of $14.06 - $14.12. Such a row is now
+//     refused, and every other one it was reading turned out to be a row of
+//     REPORTED results (NetApp's income statement, Ollie's comp-sales history,
+//     HP's quarter-versus-quarter table) rather than a guide.
 //   • A SUBSET IS NOT THE COMPANY. "Subscription revenue" and "Product revenue"
 //     are their own metrics; a segment's revenue (Brady's IPS, Dell's
 //     AI-Optimized Servers, HPE's Networking) is dropped. Sprinklr guides
@@ -84,7 +99,11 @@
 //   • a loss range written without signs ("GAAP loss per share … between $1.47
 //     and $1.27"), where only the word "loss" carries the minus;
 //   • a figure standing behind a comparison ("…compared to a net loss per share
-//     of $4.28 in the third quarter of fiscal 2025"), whatever its label.
+//     of $4.28 in the third quarter of fiscal 2025"), whatever its label;
+//   • a Q + FY table whose column header is split over two ROWS, so that neither
+//     line names a period on its own (Box heads its EPS reconciliation "Three
+//     Months Ended | Fiscal Year Ended" over "October 31, 2026 | January 31,
+//     2027"): flattened to lines, those columns cannot be reassembled.
 //
 // Anything that fails a rule is dropped silently.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -171,8 +190,13 @@ const DATED_YEAR = /\b(?:(?:twelve|12)\s+months|(?:fiscal\s+)?year)\s+end(?:ed|i
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
 const CAPTION_SCALE = /\(\s*(?:\$\s*)?(?:amounts\s+)?in\s+(thousands|millions|billions)/i;
-const COL_GAAP = /^\s*gaap\s*$/i;
-const COL_NONGAAP = /^\s*non-?gaap\s*$/i;
+/** A column header carries the table's footnote marker as often as not —
+ *  Salesforce heads its guidance columns "GAAP" and "Non-GAAP (1)". Anchored
+ *  without room for that marker, the pair went unrecognised and both tables
+ *  silently threw their non-GAAP column away. */
+const COL_MARK = /\s*(?:\((?:\d{1,2}|[a-z])\)|[*†‡])?\s*/.source;
+const COL_GAAP = new RegExp(`^${COL_MARK}gaap${COL_MARK}$`, 'i');
+const COL_NONGAAP = new RegExp(`^${COL_MARK}non-?gaap${COL_MARK}$`, 'i');
 const COL_CURRENT = /\b(current|updated|new)\s+(?:outlook|guidance)\b/i;
 const COL_PRIOR = /\b(prior|previous)\s+(?:outlook|guidance)\b/i;
 /** Dell's guidance table labels its columns just "Previous" and "Updated". */
@@ -566,6 +590,22 @@ function periodOf(l: string, ctx: PeriodCtx, prev: Period | null): Period | null
   return null;
 }
 
+/** A column header that is nothing but a quarter takes its fiscal year from the
+ *  header SPANNING the table above it. Salesforce heads its per-share
+ *  reconciliation "Fiscal 2027 | Q2 | FY27": read on its own the "Q2" column
+ *  names no period at all, and the table then had no columns to bind to. */
+const BARE_QTR = /^[\s(]*(?:q\s*([1-4])|(first|second|third|fourth)[-\s]+quarter)[\s)]*$/i;
+function bareQuarterUnder(line: string, span: Period | null): Period | null {
+  const fy = span ? /FY(\d{2})/.exec(span.label) : null;
+  if (!fy) return null;
+  const m = BARE_QTR.exec(line);
+  if (!m) return null;
+  const n = m[1] ? parseInt(m[1], 10) : { first: 1, second: 2, third: 3, fourth: 4 }[m[2].toLowerCase() as 'first'];
+  return { kind: 'quarter', label: qLabel(n, `20${fy[1]}`) };
+}
+/** The fiscal year a period label names, for ordering a table's columns. */
+const labelFy = (lab: string): number | null => { const m = /FY(\d{2})/.exec(lab); return m ? parseInt(m[1], 10) : null; };
+
 /** The period a guidance CLAUSE names for itself, when it names one before its
  *  first number — Genesco's quote says "full-year adjusted EPS outlook" while
  *  sitting under a "Second Quarter Fiscal 2027" heading. */
@@ -576,7 +616,14 @@ function clausePeriod(clause: string, ctx: PeriodCtx, prev: Period | null): Peri
   // that long is not a period header either way.
   if (clause.length > 240) return null;
   const firstNum = clause.search(/[$(]?\d/);
-  const head = firstNum > 0 ? clause.slice(0, firstNum + 6) : clause;
+  let head = firstNum > 0 ? clause.slice(0, firstNum + 6) : clause;
+  // A fiscal year IS a number, so a head cut six characters past the first digit
+  // can end inside the period phrase: HP's "For the fiscal 2026 fourth quarter,
+  // HP estimates GAAP diluted net EPS to be in the range of $0.74 to $0.84" was
+  // read as "fiscal 2026" alone and its Q4 guide came out labelled FY26. Let the
+  // head run to the end of a quarter phrase that starts inside it.
+  const qm = QTR_HEAD.exec(clause);
+  if (qm && qm.index < head.length && qm.index + qm[0].length > head.length) head = clause.slice(0, qm.index + qm[0].length);
   if ((head.match(/\b(?:first|second|third|fourth)[-\s]+(?:fiscal\s+)?quarter/gi) || []).length > 1) return null;
   if (!/\b(full[- ]year|fiscal|fy\s*'?\d|first|second|third|fourth|q[1-4])\b/i.test(head)
     && !BARE_YEAR_HEAD.test(head)) return null;
@@ -674,18 +721,44 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
         // Quarter Fiscal 2027 Guidance" beside "Full Year Fiscal 2027
         // Guidance", and the row beneath carries one range for each.
         if (!stated && firstOfLine) {
-          const found = [p];
+          let found = [p];
           let last = li;
           for (let k = 1; k <= 4 && li + k < lines.length; k++) {
             const nx = lines[li + k];
             if (nx.length > 70 || /[$%]\s*\d|\d\s*%/.test(nx) || labelHits(nx).length) break;
-            const np = periodOf(nx, ctx, p);
-            if (np && !found.some((f) => f.label === np.label)) { found.push(np); last = li + k; }
+            // Every line down to the table's first row is header, whether it
+            // names a period or not. SentinelOne and CrowdStrike break each
+            // column header over two lines ("Q3 FY27" / "Guidance"), and the
+            // trailing bare "Guidance" read as a NEW, period-less guidance
+            // heading — which wiped the period and the columns, and took the
+            // whole outlook table with them.
+            last = li + k;
+            const np = periodOf(nx, ctx, p) || bareQuarterUnder(nx, p);
+            if (np) found.push(np);              // duplicates kept: see below
           }
+          // A header that SPANS the table names the table, not a column, and
+          // gives itself away by naming the same period as one of the columns
+          // beneath it ("Fiscal 2027" over "Q2 | FY27"). Dropping it is what
+          // puts the columns back in their true left-to-right order.
+          if (found.length >= 3 && found.slice(1).some((f) => f.label === found[0].label)) found = found.slice(1);
+          const labels = found.map((f) => f.label);
+          const fys = labels.map(labelFy);
+          // Columns never step BACK a fiscal year. "Q3 FY26 | Q3 FY25" heads a
+          // year-over-year comparison of REPORTED results — HP prints one two
+          // lines under an "outlook" bullet — and binding its rows positionally
+          // publishes last year's actuals as this year's guide.
+          const forward = fys.every((y, i) => y != null && (i === 0 || y >= fys[i - 1]!));
           // Only a header that names its fiscal year can be bound positionally:
           // PVH's "…full year revenue, operating margin and EPS outlook" sits
           // above "Full Year 2026 Guidance", and those are one period, not two.
-          if (found.length >= 2 && found.every((f) => /FY\d{2}/.test(f.label))) { periodCols = found; colsUntil = last; }
+          if (found.length >= 2 && forward && new Set(labels).size === labels.length) {
+            periodCols = found;
+            colsUntil = last;
+            // These columns name PERIODS; whatever an earlier table said its
+            // columns meant (GAAP | Non-GAAP, Prior | Current) does not apply
+            // here, and Salesforce prints one such table directly after another.
+            cols = null;
+          }
         }
       } else if (opensZone && !hasFigure && l.length < 60) {
         // A new, short guidance heading that names no period must NOT inherit
@@ -875,8 +948,8 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
       const bound = said && said.kind !== period!.kind ? said : period!;
 
       if (prior.length && curr.length) { put(curr[0], basis, bound, prior[0]); return; }
-      // COLUMNS. Two ranges on a row mean whatever the header said they mean;
-      // when nothing said, only the first is kept.
+      // COLUMNS. Two figures on a row of table cells are two COLUMNS, and the
+      // row may only be read once something has said what those columns are.
       if (curr.length >= 2 && periodCols && fromCells) {
         if (curr.length !== periodCols.length) return;            // mapping unclear → nothing
         for (let k = 0; k < curr.length; k++) put(curr[k], basis, periodCols[k]);
@@ -887,6 +960,13 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
         if (cols === 'prevfirst') { put(curr[1], basis, bound, curr[0]); return; }
         if (cols === 'currprior') { put(curr[0], basis, bound, curr[1]); return; }
       }
+      // …and when nothing has, the row states nothing this parser can prove.
+      // Keeping the FIRST cell and stamping it with the section's period is a
+      // guess dressed as a fact: Salesforce's non-GAAP EPS row flattens to
+      // "$3.25 - $3.27  $14.06 - $14.12" under a "Q2 | FY27" header, and the
+      // first cell came out as an FY27 guide of $3.25 — the Q2 number, against
+      // a true FY27 guide of $14.06 - $14.12. Refuse the row instead.
+      if (curr.length >= 2 && fromCells) return;
       put(curr[0], basis, bound);
     };
 

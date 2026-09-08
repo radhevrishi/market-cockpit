@@ -17,16 +17,16 @@
 // XBRL, rather than pretending they don't exist.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
+import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, ChevronUp, Award, AlertTriangle } from 'lucide-react';
 import { syncUsConviction } from '@/lib/conviction-beats-us';
 import {
-  fmtUsd, fmtPx, fmtPct, US_TIER_ORDER,
-  type UsGradedRow, type EarningsTier,
+  fmtUsd, fmtPx, fmtPct, US_TIER_ORDER, SWING_LABEL, SWING_GOOD,
+  type UsGradedRow, type EarningsTier, type SwingKind,
 } from '@/lib/us-earnings-core';
 import { fmtGuideRange, GUIDE_METRIC_LABEL, type GuidanceFigure } from '@/lib/us-guidance-figures';
-import { fmtKeyMetric, type KeyMetric, type KeyMetricId } from '@/lib/us-key-metrics';
+import { fmtKeyMetric, KEY_METRIC_LABEL, type KeyMetric, type KeyMetricId } from '@/lib/us-key-metrics';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
 
@@ -154,6 +154,23 @@ export default function UsEarningsOpportunitiesPage() {
   const [showPending, setShowPending] = useState(false);
   const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
   const [calSearch, setCalSearch] = useState('');
+  // Which cards have their detail panel open.
+  //
+  // Held HERE rather than inside the card, and keyed by ticker + period end
+  // rather than by list position, because the list is rebuilt constantly: each
+  // session's payload merges in as it lands, the rows re-sort, and a PRELIM row
+  // moves from one tier section to another the moment its 10-Q posts (which
+  // unmounts the card and would drop any state it owned). Ticker + period end
+  // is the only identity that survives all three; filing_date stands in for the
+  // handful of rows whose period end is not tagged yet.
+  const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
+  const toggleCard = useCallback((k: string) => {
+    setOpenCards((s) => {
+      const n = new Set(s);
+      if (n.has(k)) n.delete(k); else n.add(k);
+      return n;
+    });
+  }, []);
 
   useEffect(() => { scrubOldCaches(); }, []);
   useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
@@ -355,6 +372,27 @@ export default function UsEarningsOpportunitiesPage() {
 
   const shownTotal = US_TIER_ORDER.reduce((n, t) => n + view[t].length, 0);
 
+  // Expand-all works on every row that passes the filters, whether or not its
+  // tier section happens to be collapsed — the toggle is about the cards, not
+  // about the sections.
+  const visibleKeys = useMemo(
+    () => US_TIER_ORDER.flatMap((t) => view[t].map(rowKey)),
+    [view],
+  );
+  const allCardsOpen = visibleKeys.length > 0 && visibleKeys.every((k) => openCards.has(k));
+  const toggleAllCards = () => {
+    setOpenCards((s) => {
+      if (allCardsOpen) {
+        const n = new Set(s);
+        for (const k of visibleKeys) n.delete(k);
+        return n;
+      }
+      const n = new Set(s);
+      for (const k of visibleKeys) n.add(k);
+      return n;
+    });
+  };
+
   const counts = useMemo(() => {
     const c = {
       BLOCKBUSTER: 0, STRONG: 0, MIXED: 0, AVOID: 0,
@@ -461,6 +499,12 @@ export default function UsEarningsOpportunitiesPage() {
         ))}
 
         <span style={{ flex: 1 }} />
+        {viewMode === 'GRADED' && shownTotal > 0 && (
+          <button onClick={toggleAllCards} style={btn(allCardsOpen)} aria-expanded={allCardsOpen}
+            title="Open the full write-up on every card that passes the filters">
+            {allCardsOpen ? '⊟ Collapse all' : `⊞ Expand all ${shownTotal}`}
+          </button>
+        )}
         <button onClick={exportCsv} style={btn()}>📊 CSV</button>
         <button onClick={exportTradingView} style={btn()}>📈 TradingView</button>
         <button onClick={() => { setForceKey((k) => k + 1); setTimeout(() => refetch(), 0); }}
@@ -877,10 +921,21 @@ export default function UsEarningsOpportunitiesPage() {
             </button>
             {open && (
               <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+                // `min(380px, 100%)` rather than a bare 380px: identical at any
+                // width the card grid actually uses, but on a 360px phone the
+                // track collapses to the viewport instead of overflowing it,
+                // which is what keeps an open panel from scrolling the page
+                // sideways.
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(380px, 100%), 1fr))',
                 gap: 12, padding: '0 14px 14px',
               }}>
-                {rows.map((r) => <UsEarningsCard key={`${r.ticker}:${r.filing_date}`} r={r} />)}
+                {rows.map((r) => {
+                  const k = rowKey(r);
+                  return (
+                    <UsEarningsCard key={`${r.ticker}:${r.filing_date}`} r={r}
+                      open={openCards.has(k)} onToggle={() => toggleCard(k)} panelId={panelId(k)} />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -962,13 +1017,53 @@ function surpriseChip(r: any): string {
 const growthColor = (v: number | null | undefined) =>
   v == null ? 'var(--mc-text-3)' : v >= 25 ? 'var(--mc-bullish)' : v >= 0 ? 'var(--mc-text-0)' : 'var(--mc-bearish)';
 
-function UsEarningsCard({ r }: { r: UsGradedRow }) {
+/**
+ * The value+colour for a growth tile, in one place.
+ *
+ * A percentage is refused when the prior-year base was zero or negative — a
+ * loss of $0.31 turning into $1.59 of profit is not "+613%". That refusal used
+ * to leave a bare dash on the card, which threw away the most important fact
+ * about the quarter (Semtech's Q2 FY27 read "—" on exactly this). So when the
+ * engine names a swing, the swing is printed instead of the percentage: they
+ * are mutually exclusive by construction and neither is ever invented.
+ *
+ * `fallback` is the value shown when there is neither a percentage nor a swing
+ * but the level itself is worth showing (the adjusted-EPS tile in a company's
+ * first year of coverage prints "$0.71" rather than a dash).
+ */
+function swingTile(pct: number | null | undefined, swing: SwingKind, fallback?: string):
+  { value: string; color?: string } {
+  const p = num(pct);
+  if (p != null) return { value: fmtPct(p), color: growthColor(p) };
+  if (swing) return { value: SWING_LABEL[swing], color: SWING_GOOD[swing] ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+  if (fallback) return { value: fallback, color: 'var(--mc-text-0)' };
+  return { value: '—', color: 'var(--mc-text-3)' };
+}
+
+function UsEarningsCard({ r, open, onToggle, panelId: pid }: {
+  r: UsGradedRow; open: boolean; onToggle: () => void; panelId: string;
+}) {
   const meta = TIER_META[r.tier];
   const opmD = (r.opm_pct != null && r.opm_prev_pct != null) ? r.opm_pct - r.opm_prev_pct : null;
+  // GAAP EPS growth only — never the grading axis, which may be the adjusted
+  // basis (see `eps_gaap_yoy_pct` in us-earnings-core).
+  const gaapEpsY = (r as any).eps_gaap_yoy_pct !== undefined
+    ? ((r as any).eps_gaap_yoy_pct as number | null)
+    : (r.eps_prev != null && r.eps_prev > 0 && r.eps_curr != null
+        ? ((r.eps_curr - r.eps_prev) / r.eps_prev) * 100 : null);
+  const adjEpsCur = num((r as any).eps_adj_curr ?? (r as any).eps_adj);
+  const adjEpsPrev = num((r as any).eps_adj_prev);
+  const epsEst = num((r as any).eps_estimate);
+  const surp = num((r as any).eps_surprise_pct);
+  const hasAdjEps = adjEpsCur != null;
   return (
     <div style={{
       backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)',
       borderRadius: 'var(--mc-radius)', padding: 12, borderTop: `3px solid ${meta.color}`,
+      // A grid item defaults to min-width:auto, which lets a wide child (the
+      // panel's tables) push the whole column out. Zero here is what makes the
+      // tables scroll inside themselves instead of scrolling the page.
+      minWidth: 0,
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 800, fontSize: 15, color: 'var(--mc-text-0)' }}>{r.ticker}</span>
@@ -996,14 +1091,30 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
         {(r.pead_score ?? 0) >= 70 && <Chip text={`🔥 PEAD ${r.pead_score}`} color="#EF4444" />}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-        <Tile label="REVENUE" value={fmtPct(r.sales_yoy_pct)} color={growthColor(r.sales_yoy_pct)}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${hasAdjEps ? 5 : 4}, minmax(0, 1fr))`, gap: 6 }}>
+        <Tile label="REVENUE" {...swingTile(r.sales_yoy_pct, null)}
           sub={`${fmtUsd(r.revenue_prev_musd)} → ${fmtUsd(r.revenue_curr_musd)}`} />
-        <Tile label="EPS · GAAP" value={fmtPct(r.eps_yoy_pct)} color={growthColor(r.eps_yoy_pct)}
+        {/* GAAP EPS growth ONLY — `eps_yoy_pct` is the grading axis and falls
+            back to the adjusted basis when the GAAP base was a loss; printing
+            that here would label an adjusted number "GAAP". When the base was
+            a loss there is no percentage, so the swing is named instead. */}
+        <Tile label="EPS · GAAP" {...swingTile(gaapEpsY, r.eps_swing)}
           sub={r.eps_prev != null && r.eps_curr != null
             ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}`
             : r.eps_curr != null ? `${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)} · no prior base`
             : 'EPS not tagged'} />
+        {/* The basis the market actually trades. Shown as its own tile so a
+            company whose GAAP line swung out of a loss still has a growth
+            number on the card, and so the two are never confused. */}
+        {hasAdjEps && (
+          <Tile label="EPS · ADJ." {...swingTile(r.eps_adj_yoy_pct ?? null, r.eps_adj_swing ?? null,
+            adjEpsCur != null ? `$${adjEpsCur.toFixed(2)}` : '—')}
+            sub={adjEpsPrev != null && adjEpsCur != null
+              ? `$${adjEpsPrev.toFixed(2)} → $${adjEpsCur.toFixed(2)}`
+              : epsEst != null && adjEpsCur != null
+              ? `vs est $${epsEst.toFixed(2)}${surp != null ? ` · ${surp >= 0 ? '+' : ''}${surp.toFixed(0)}%` : ''}`
+              : 'no prior base'} />
+        )}
         <Tile label="OPM" value={r.opm_pct != null ? `${r.opm_pct.toFixed(1)}%` : '—'}
           color={opmD == null ? undefined : opmD >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
           sub={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp YoY` : 'no prior margin'} />
@@ -1091,8 +1202,33 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
           </a>
         )}
       </div>
+
+      {/* ── the expand strip · every card gets one, however sparse the row ── */}
+      <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={pid} style={moreStrip(open)}>
+        {open
+          ? <><ChevronUp className="w-3 h-3" /> LESS</>
+          : <><ChevronDown className="w-3 h-3" /> MORE · guidance, trend, context</>}
+      </button>
+      {open && (
+        <div id={pid}>
+          <DetailPanel r={r as UsRowX} />
+          <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={pid} style={moreStrip(true)}>
+            <ChevronUp className="w-3 h-3" /> LESS
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+function moreStrip(open: boolean): React.CSSProperties {
+  return {
+    width: '100%', marginTop: 9, padding: '6px 8px', borderRadius: 6,
+    border: `1px solid ${open ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+    backgroundColor: open ? 'color-mix(in srgb, var(--mc-cyan) 10%, transparent)' : 'var(--mc-bg-1)',
+    color: 'var(--mc-cyan)', fontSize: 'var(--mc-text-xs)', fontWeight: 800, letterSpacing: 0.3,
+    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  };
 }
 
 /**
@@ -1108,7 +1244,10 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
 function SecondaryTiles({ r }: { r: UsGradedRow }) {
   const metrics: KeyMetric[] = ((r as any).key_metrics || []) as KeyMetric[];
   const by = new Map<KeyMetricId, KeyMetric>();
-  for (const m of metrics) if (!by.has(m.id)) by.set(m.id, m);
+  // A metric whose value is not a finite number is not a metric. Without this
+  // guard `fmtKeyMetric` renders the literal string "NaN" into a tile, which
+  // reads as a figure rather than as the absence of one.
+  for (const m of metrics) if (m && Number.isFinite(m.value) && !by.has(m.id)) by.set(m.id, m);
 
   const tiles: React.ReactNode[] = [];
   const fcf = (r as any).fcf_curr_musd as number | null | undefined;
@@ -1167,7 +1306,13 @@ function SecondaryTiles({ r }: { r: UsGradedRow }) {
  * Everything except "(Est. …)" is read from the company's own press release;
  * the estimate is the street's consensus for that period.
  */
-function GuideBlock({ figs, label }: { figs: Array<GuidanceFigure & { est?: number | null }>; label?: string | null }) {
+function GuideBlock({ figs, label, showSource }: {
+  figs: Array<GuidanceFigure & { est?: number | null }>;
+  label?: string | null;
+  /** Panel-only: print the sentence each figure was parsed out of, so the
+   *  number can be checked against the release without leaving the card. */
+  showSource?: boolean;
+}) {
   const groups = new Map<string, Array<GuidanceFigure & { est?: number | null }>>();
   for (const f of figs) {
     if (!groups.has(f.period_label)) groups.set(f.period_label, []);
@@ -1206,6 +1351,11 @@ function GuideBlock({ figs, label }: { figs: Array<GuidanceFigure & { est?: numb
                     from {fmtGuideRange({ low: f.prior_low, high: f.prior_high, unit: f.unit })}
                   </span>
                 )}
+                {showSource && f.source && (
+                  <span style={{ flexBasis: '100%', fontSize: 10, color: 'var(--mc-text-4)', lineHeight: 1.4 }}>
+                    “{f.source}”
+                  </span>
+                )}
               </div>
             );
           })}
@@ -1224,5 +1374,874 @@ function Chip({ text, color }: { text: string; color?: string }) {
       backgroundColor: color ? `color-mix(in srgb, ${c} 10%, transparent)` : 'transparent',
       whiteSpace: 'nowrap',
     }}>{text}</span>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE DETAIL PANEL
+//
+// One card's full earnings write-up, in the order a reader actually wants it:
+// what the quarter did against the two things it was measured on (the street
+// and the company's own guide), where the guide moved to, then the numbers
+// themselves — four periods side by side with growth and margin deltas — then
+// the balance-sheet and capital-return context, then every raw input the
+// collapsed card hides.
+//
+// THE ONE RULE THE WHOLE FILE OBEYS
+// ─────────────────────────────────
+// Nothing here is interpolated, carried forward or back-filled. A quarter the
+// filer did not tag is an em-dash. A growth rate whose base is zero or negative
+// is `n/m`, never a number — a swing from −$40m to +$10m is not "+125% growth",
+// and printing it as one is the single most common way a screen lies. Every
+// section renders only if it has something real to say; a section with nothing
+// says so in a sentence rather than showing a grid of dashes.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── the payload contract (src/lib/us-expand-contract.md) ───────────────────
+// Every field is optional and may be null or absent on any row, which is the
+// steady state for a PRELIM print, a first-year filer or a company that gives
+// no outlook — not an error condition.
+interface UsSeries {
+  ends: string[];
+  revenue: (number | null)[];
+  gross_profit: (number | null)[];
+  operating_income: (number | null)[];
+  net_income: (number | null)[];
+  eps: (number | null)[];
+  cfo: (number | null)[];
+  fcf: (number | null)[];
+}
+interface UsContext {
+  cash_musd: number | null;
+  cash_incl_st_inv: boolean;
+  debt_musd: number | null;
+  sbc_musd: number | null;
+  buyback_musd: number | null;
+  dividends_musd: number | null;
+  diluted_shares_m: number | null;
+  diluted_shares_yoy_pct: number | null;
+  as_of: string | null;
+}
+interface GuidedItem {
+  metric: string;
+  basis: 'gaap' | 'adjusted' | null;
+  period: 'quarter' | 'year';
+  guide_low: number | null;
+  guide_high: number | null;
+  guide_mid: number | null;
+  unit: string;
+  actual: number | null;
+  guided_on: string;
+  guided_for_label: string | null;
+  source_url: string | null;
+  compare: {
+    verdict: 'beat' | 'missed' | 'in-line' | null;
+    delta_pct: number | null;
+    delta_abs: number | null;
+    text: string | null;
+  } | null;
+}
+interface VsGuide {
+  prior_filing_date: string | null;
+  prior_filing_url: string | null;
+  for_quarter: GuidedItem[];
+  for_year: GuidedItem[];
+}
+interface GuideChange {
+  metric: string;
+  basis: 'gaap' | 'adjusted' | null;
+  period_label: string | null;
+  prev_low: number | null; prev_high: number | null;
+  new_low: number | null; new_high: number | null;
+  direction: 'raised' | 'lowered' | 'reiterated' | 'narrowed' | 'widened';
+  delta_pct: number | null;
+  unit: string;
+}
+
+type UsRowX = UsGradedRow & {
+  series?: UsSeries | null;
+  context?: UsContext | null;
+  vs_guide?: VsGuide | null;
+  guide_change?: GuideChange[] | null;
+  guidance?: string | null;
+  guidance_figures?: Array<GuidanceFigure & { est?: number | null }> | null;
+  guidance_snippets?: string[] | null;
+  guidance_url?: string | null;
+  key_metrics?: KeyMetric[] | null;
+  eps_adj?: number | null;
+  eps_estimate?: number | null;
+  eps_surprise_pct?: number | null;
+  eps_basis?: string | null;
+  prelim?: boolean;
+  prelim_matched?: string[] | null;
+  release_url?: string | null;
+  is_financial?: boolean;
+};
+
+/** Identity that survives the list re-sorting, the per-session merges and a row
+ *  moving between tiers when its 10-Q lands. */
+function rowKey(r: UsGradedRow): string {
+  return `${r.ticker}|${r.period_end || r.filing_date}`;
+}
+function panelId(key: string): string {
+  return `us-eo-panel-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+}
+
+// ── tiny numeric guards ────────────────────────────────────────────────────
+const num = (v: unknown): number | null =>
+  (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+
+/** Read index `i` of one of the series arrays, tolerating a short or absent
+ *  array — the arrays are index-aligned by contract but nothing is guaranteed
+ *  to be there. */
+const at = (arr: unknown, i: number | null | undefined): number | null =>
+  (Array.isArray(arr) && i != null && i >= 0 && i < arr.length) ? num(arr[i]) : null;
+
+const DAY_MS = 86_400_000;
+const iso10 = (v: unknown): string => String(v ?? '').slice(0, 10);
+function dayGap(laterIso: string, earlierIso: string): number | null {
+  const a = Date.parse(laterIso + 'T00:00:00Z');
+  const b = Date.parse(earlierIso + 'T00:00:00Z');
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.round((a - b) / DAY_MS);
+}
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function shortEnd(isoDate: string): string {
+  const t = Date.parse(iso10(isoDate) + 'T00:00:00Z');
+  if (!Number.isFinite(t)) return iso10(isoDate) || '—';
+  const d = new Date(t);
+  return `${MON[d.getUTCMonth()]} ’${String(d.getUTCFullYear()).slice(2)}`;
+}
+
+/** Only accept a series that is actually usable: a non-empty array of dates. */
+function normSeries(s: unknown): (UsSeries & { ends: string[] }) | null {
+  const o = s as UsSeries | null | undefined;
+  if (!o || !Array.isArray(o.ends) || o.ends.length === 0) return null;
+  const ends = o.ends.map(iso10);
+  if (!ends.every((e) => Number.isFinite(Date.parse(e + 'T00:00:00Z')))) return null;
+  return { ...o, ends };
+}
+
+/**
+ * Find the quarter that sits ~`targetDays` before `refIdx`, BY DATE.
+ *
+ * Index arithmetic alone is wrong here: filers skip periods (a transition
+ * quarter, a restatement, a year where the 10-K's Q4 could not be derived), so
+ * "twelve back in the array" is only sometimes three years back in time. We
+ * take the closest end date to the target and then refuse it unless the gap is
+ * genuinely within tolerance — which is what stops a two-year-ago quarter being
+ * labelled and compounded as if it were three.
+ */
+function backFrom(ends: string[], refIdx: number, targetDays: number, tolDays: number): number | null {
+  let best = -1, bestErr = Infinity;
+  for (let i = 0; i < refIdx; i++) {
+    const g = dayGap(ends[refIdx], ends[i]);
+    if (g == null || g <= 0) continue;
+    const err = Math.abs(g - targetDays);
+    if (err < bestErr) { bestErr = err; best = i; }
+  }
+  return (best >= 0 && bestErr <= tolDays) ? best : null;
+}
+
+interface PanelCol { idx: number; label: string; sub: string; }
+
+/**
+ * The four period columns: the reported quarter, the one before it, the
+ * year-ago quarter and the quarter three years back.
+ *
+ * Only the reported quarter has a fiscal label we can trust — it is the one the
+ * filer itself used, read off the release. Nothing lets us name the others
+ * (decrementing "Q2 FY27" guesses at a fiscal calendar we have not been told),
+ * so they are headed by their period-end date instead.
+ */
+function buildCols(s: UsSeries & { ends: string[] }, quarterLabel: string | null | undefined) {
+  const ends = s.ends;
+  const last = ends.length - 1;
+  const mk = (i: number | null): PanelCol | null =>
+    i == null ? null : { idx: i, label: shortEnd(ends[i]), sub: ends[i] };
+  const cur: PanelCol = { idx: last, label: quarterLabel || shortEnd(ends[last]), sub: ends[last] };
+  const prevIdx = backFrom(ends, last, 91, 30);
+  const yrIdx = backFrom(ends, last, 365, 45);
+  const yr3Idx = backFrom(ends, last, 1095, 60);
+  return {
+    cur, prev: mk(prevIdx), yr: mk(yrIdx), yr3: mk(yr3Idx),
+    yr3GapDays: yr3Idx == null ? null : dayGap(ends[last], ends[yr3Idx]),
+  };
+}
+
+// ── the arithmetic discipline ──────────────────────────────────────────────
+type Cell = { text: string; color?: string };
+const DASH: Cell = { text: '—' };
+const NM: Cell = { text: 'n/m', color: 'var(--mc-text-4)' };
+
+/** Inside the tables every sign is a real minus (U+2212), not a hyphen: the
+ *  columns are read as a block and `−3720` beside `+950` has to line up. */
+const signedPct = (p: number, d = 1) => `${p >= 0 ? '+' : '−'}${Math.abs(p).toFixed(d)}%`;
+const levelPct = (p: number, d = 1) => `${p < 0 ? '−' : ''}${Math.abs(p).toFixed(d)}%`;
+
+/**
+ * Money in a comparison column, one significant step finer than the card's
+ * `fmtUsd`: rounding $1.66B to "$1.7B" hides exactly the 6% sequential move the
+ * next column claims to report.
+ */
+function fmtUsdCell(musd: number | null): string {
+  if (musd == null || !Number.isFinite(musd)) return '—';
+  const a = Math.abs(musd), sign = musd < 0 ? '−' : '';
+  if (a >= 1_000_000) return `${sign}$${(a / 1_000_000).toFixed(2)}T`;
+  if (a >= 1_000) return `${sign}$${(a / 1_000).toFixed(2)}B`;
+  if (a >= 1) return `${sign}$${a.toFixed(a >= 100 ? 1 : 2)}M`;
+  return `${sign}$${(a * 1000).toFixed(0)}K`;
+}
+
+/** A growth rate is only meaningful off a positive base. Missing is `—`;
+ *  present-but-unusable (zero or negative base) is `n/m`. They are different
+ *  facts and the panel never collapses one into the other. */
+function growthCell(cur: number | null, prev: number | null): Cell {
+  if (cur == null || prev == null) return DASH;
+  if (prev <= 0) return NM;
+  const pct = ((cur - prev) / prev) * 100;
+  if (!Number.isFinite(pct)) return DASH;
+  return { text: signedPct(pct), color: pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+}
+
+/**
+ * 3-year CAGR = (latest / oldest)^(1/3) − 1, and only when
+ *   • both ends exist and are strictly positive, and
+ *   • the gap really is about three years (±60 days).
+ * A company that swung from a loss to a profit has no compound growth rate;
+ * neither does one whose oldest comparable is two years old.
+ */
+function cagrCell(latest: number | null, oldest: number | null, gapDays: number | null): Cell {
+  if (gapDays == null || Math.abs(gapDays - 1095) > 60) return DASH;
+  if (latest == null || oldest == null) return DASH;
+  if (latest <= 0 || oldest <= 0) return NM;
+  const pct = (Math.pow(latest / oldest, 1 / 3) - 1) * 100;
+  if (!Number.isFinite(pct)) return DASH;
+  return { text: signedPct(pct), color: pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+}
+
+/** A margin needs a positive revenue base; a negative margin is fine to show,
+ *  a margin off a zero or negative top line is not a number. */
+function marginPct(v: number | null, rev: number | null): number | null {
+  if (v == null || rev == null || rev <= 0) return null;
+  const p = (v / rev) * 100;
+  return Number.isFinite(p) ? p : null;
+}
+
+/** Margin moves are stated in basis points, never in "%" — a margin going from
+ *  14% to 20% moved 600 bps, not 6% and not 43%. */
+function bpsCell(now: number | null, then: number | null): Cell {
+  if (now == null || then == null) return DASH;
+  const n = Math.round((now - then) * 100);
+  if (!Number.isFinite(n)) return DASH;
+  if (n === 0) return { text: '0', color: 'var(--mc-text-2)' };
+  return { text: `${n > 0 ? '+' : '−'}${Math.abs(n)}`, color: n > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' };
+}
+
+const pctCell = (p: number | null): Cell =>
+  p == null ? DASH : { text: levelPct(p), color: p >= 0 ? undefined : 'var(--mc-bearish)' };
+const usdCell = (v: number | null): Cell =>
+  v == null ? DASH : { text: fmtUsdCell(v), color: v < 0 ? 'var(--mc-bearish)' : undefined };
+
+// ── panel chrome ───────────────────────────────────────────────────────────
+function PanelH({ children, note }: { children: React.ReactNode; note?: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap', margin: '12px 0 5px' }}>
+      <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: 'var(--mc-text-3)' }}>{children}</span>
+      {note && <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{note}</span>}
+    </div>
+  );
+}
+function Bul({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, fontSize: 11, lineHeight: 1.55, color: 'var(--mc-text-2)', marginBottom: 3 }}>
+      <span style={{ color: 'var(--mc-text-4)', flex: '0 0 auto' }}>•</span>
+      <span style={{ minWidth: 0 }}>{children}</span>
+    </div>
+  );
+}
+/** The inline highlighted verdict token — one word, coloured, inside the
+ *  sentence, exactly the way the write-ups we are competing with do it. */
+function V({ verdict }: { verdict: 'beat' | 'missed' | 'in-line' | null }) {
+  if (!verdict) return null;
+  const c = verdict === 'beat' ? 'var(--mc-bullish)' : verdict === 'missed' ? 'var(--mc-bearish)' : 'var(--mc-text-1)';
+  const t = verdict === 'beat' ? 'Beat' : verdict === 'missed' ? 'Missed' : 'In line';
+  return <b style={{ color: c }}>{t}</b>;
+}
+function Quiet({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>{children}</div>;
+}
+
+/** Every table lives in its own horizontal scroller, so a 7-column grid can be
+ *  read on a 360px phone without the card — or the page — moving sideways. */
+function Scroller({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      overflowX: 'auto', maxWidth: '100%', WebkitOverflowScrolling: 'touch',
+      borderRadius: 6, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)',
+    }}>
+      {children}
+    </div>
+  );
+}
+
+interface TableRow { label: string; note?: string; cells: Cell[] }
+function MiniTable({ head, rows }: { head: Array<{ label: string; sub?: string }>; rows: TableRow[] }) {
+  const th: React.CSSProperties = {
+    padding: '5px 8px', textAlign: 'right', fontSize: 9, fontWeight: 800, letterSpacing: 0.3,
+    color: 'var(--mc-text-3)', whiteSpace: 'nowrap', borderBottom: '1px solid var(--mc-bg-4)',
+  };
+  const stick: React.CSSProperties = {
+    position: 'sticky', left: 0, zIndex: 1, textAlign: 'left',
+    backgroundColor: 'var(--mc-bg-1)', boxShadow: '1px 0 0 var(--mc-bg-4)',
+  };
+  const td: React.CSSProperties = {
+    padding: '4px 8px', textAlign: 'right', fontSize: 11, whiteSpace: 'nowrap',
+    color: 'var(--mc-text-1)', fontVariantNumeric: 'tabular-nums',
+  };
+  return (
+    <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 'max-content' }}>
+      <thead>
+        <tr>
+          <th style={{ ...th, ...stick }} />
+          {head.map((h, i) => (
+            <th key={i} style={th}>
+              {h.label}
+              {h.sub && <div style={{ fontSize: 8, fontWeight: 600, color: 'var(--mc-text-4)' }}>{h.sub}</div>}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}>
+            <th style={{ ...td, ...stick, fontWeight: 700, color: 'var(--mc-text-2)' }}>
+              {r.label}
+              {r.note && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--mc-text-4)' }}> {r.note}</span>}
+            </th>
+            {r.cells.map((c, j) => (
+              <td key={j} style={{ ...td, color: c.color || 'var(--mc-text-1)' }}>{c.text}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ── section 1 · results vs expectations ────────────────────────────────────
+/**
+ * The street bullet. Built only when there is a consensus AND something to pair
+ * it with on a stated basis — the estimate is the street's ADJUSTED number, so
+ * silently measuring a GAAP actual against it would be exactly the basis-mixing
+ * the rest of this card refuses to do. When the engine has already computed a
+ * surprise we use its pairing; otherwise we need `eps_adj`.
+ */
+function streetBullet(r: UsRowX): React.ReactNode | null {
+  const est = num(r.eps_estimate);
+  const act = num(r.eps_adj);
+  const pct = num(r.eps_surprise_pct);
+  if (est == null || (act == null && pct == null)) return null;
+  const d = act != null ? act - est : null;
+  const verdict: 'beat' | 'missed' | 'in-line' =
+    d != null
+      ? (Math.abs(d) <= 0.005 ? 'in-line' : d > 0 ? 'beat' : 'missed')
+      : (pct == null || Math.abs(pct) < 0.5 ? 'in-line' : pct > 0 ? 'beat' : 'missed');
+  const basis = r.eps_basis ? String(r.eps_basis) : (act != null ? 'adjusted' : 'street');
+  // Below a dime of estimate a percentage surprise is noise dressed as signal
+  // (a two-cent beat on a $0.00 consensus reads as +5,888%), so it is stated in
+  // cents only — the same rule the collapsed card's chip uses.
+  const nearZero = Math.abs(est) < 0.1;
+  const tail = d != null
+    ? `$${Math.abs(d).toFixed(2)}${(!nearZero && pct != null) ? ` (${Math.abs(pct).toFixed(0)}%)` : ''}`
+    : `${Math.abs(pct as number).toFixed(0)}%`;
+  return (
+    <Bul>
+      <V verdict={verdict} />
+      {verdict === 'in-line' ? ' with' : ''} the ${est.toFixed(2)} street EPS estimate
+      <span style={{ color: 'var(--mc-text-4)' }}> ({basis} basis)</span>
+      {verdict === 'in-line' ? '.' : <> by <b style={{ color: 'var(--mc-text-0)' }}>{tail}</b>.</>}
+      {act != null && <span style={{ color: 'var(--mc-text-4)' }}> Reported ${act.toFixed(2)}.</span>}
+    </Bul>
+  );
+}
+
+/**
+ * The engine's own sentence about a guide ("beat the midpoint of its own guide
+ * by 3.3%"), printed verbatim with its first word — which is always the verdict
+ * — lifted into colour. Highlighting the token inside the sentence is what the
+ * write-ups we are competing with do, and it avoids the "Beat … beat" stutter
+ * that a separate verdict chip in front of the same sentence produces.
+ */
+function HiText({ text, verdict }: { text: string; verdict: 'beat' | 'missed' | 'in-line' | null }) {
+  const i = text.indexOf(' ');
+  const head = i > 0 ? text.slice(0, i) : text;
+  const rest = i > 0 ? text.slice(i) : '';
+  const c = verdict === 'beat' ? 'var(--mc-bullish)'
+    : verdict === 'missed' ? 'var(--mc-bearish)' : 'var(--mc-text-1)';
+  return <><b style={{ color: c }}>{head}</b>{rest}</>;
+}
+
+const GUIDE_LABEL = (metric: string): string =>
+  (GUIDE_METRIC_LABEL as Record<string, string>)[metric] || String(metric).replace(/_/g, ' ');
+/** Lower-case a metric label for mid-sentence use, but never an acronym:
+ *  "Revenue" → "revenue", "EPS" stays "EPS", "EBITDA" stays "EBITDA". */
+const midSentence = (s: string): string => /^[A-Z][a-z]+(?: [a-z]+)*$/.test(s) ? s.toLowerCase() : s;
+
+/** One "vs its own guide" bullet. `compare.text` is written by the engine
+ *  ("beat the midpoint of its own guide by 3.3%") and is used verbatim — its
+ *  first word is the verdict, so it is the token we highlight. */
+function guideBullets(items: GuidedItem[] | undefined | null, scope: string): React.ReactNode[] {
+  if (!Array.isArray(items)) return [];
+  const out: React.ReactNode[] = [];
+  for (const g of items) {
+    const txt = g?.compare?.text;
+    if (!txt) continue;
+    const basis = g.basis === 'adjusted' ? 'adj.' : g.basis === 'gaap' ? 'GAAP' : null;
+    out.push(
+      <Bul key={`${scope}-${g.metric}-${g.guided_on}`}>
+        <b style={{ color: 'var(--mc-text-0)' }}>{GUIDE_LABEL(g.metric)}</b>
+        {basis && <span style={{ color: 'var(--mc-text-4)' }}> ({basis})</span>}
+        {g.guided_for_label ? <span style={{ color: 'var(--mc-text-4)' }}> · {g.guided_for_label}</span> : null}
+        {' — '}<HiText text={txt} verdict={g.compare?.verdict ?? null} />
+        {g.guide_low != null && g.guide_high != null && (
+          <span style={{ color: 'var(--mc-text-4)' }}>
+            {' '}(guided {fmtGuideRange({ low: g.guide_low, high: g.guide_high, unit: guideUnit(g.unit) })}
+            {g.actual != null ? `, came in ${fmtGuideRange({ low: g.actual, high: g.actual, unit: guideUnit(g.unit) })}` : ''})
+          </span>
+        )}
+      </Bul>,
+    );
+  }
+  return out;
+}
+
+const guideUnit = (u: string | null | undefined): GuidanceFigure['unit'] =>
+  u === 'pct' ? 'pct' : u === 'usd_share' ? 'usd_share' : 'usd';
+
+// ── section 2 · guide vs expectations ──────────────────────────────────────
+const DIRECTION_VERB: Record<GuideChange['direction'], string> = {
+  raised: 'Raised', lowered: 'Lowered', reiterated: 'Reiterated',
+  narrowed: 'Narrowed', widened: 'Widened',
+};
+
+function guideChangeBullet(g: GuideChange, est: number | null): React.ReactNode {
+  const verb = DIRECTION_VERB[g.direction] || 'Changed';
+  const good = g.direction === 'raised' ? true : g.direction === 'lowered' ? false : null;
+  const unit = guideUnit(g.unit);
+  const period = g.period_label || 'the next period';
+  const basis = g.basis === 'adjusted' ? 'adj. ' : g.basis === 'gaap' ? 'GAAP ' : '';
+  const dp = num(g.delta_pct);
+  const showDelta = dp != null && g.direction !== 'reiterated' && Math.abs(dp) >= 0.05;
+  const mid = (num(g.new_low) != null && num(g.new_high) != null)
+    ? ((g.new_low as number) + (g.new_high as number)) / 2 : null;
+  // Only compare against the street off a positive consensus. A guide measured
+  // against a zero or negative estimate is stated as a difference, never a %.
+  const vsStreet: React.ReactNode = est == null || mid == null ? null
+    : est > 0
+      ? (() => {
+        const diff = ((mid - est) / est) * 100;
+        return (
+          <span style={{ color: 'var(--mc-text-4)' }}>
+            {' '}Street had {fmtGuideRange({ low: est, high: est, unit })} — midpoint{' '}
+            <b style={{ color: diff >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+              {diff >= 0 ? '+' : '−'}{Math.abs(diff).toFixed(1)}%
+            </b>{' '}{diff >= 0 ? 'above' : 'below'} it.
+          </span>
+        )
+      })()
+      : (
+        <span style={{ color: 'var(--mc-text-4)' }}>
+          {' '}Street had {fmtGuideRange({ low: est, high: est, unit })} — a percentage gap off a
+          non-positive estimate would be meaningless, so the two are shown side by side only.
+        </span>
+      );
+  return (
+    <Bul key={`${g.metric}-${g.period_label}-${g.direction}`}>
+      <b style={{ color: good == null ? 'var(--mc-text-1)' : good ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{verb}</b>
+      {' '}the <b style={{ color: 'var(--mc-text-0)' }}>{period} {basis}{midSentence(GUIDE_LABEL(g.metric))}</b> guide
+      {showDelta ? <> by <b style={{ color: 'var(--mc-text-0)' }}>{Math.abs(dp as number).toFixed(1)}%</b></> : null}
+      {num(g.new_low) != null && num(g.new_high) != null && (
+        <> to <b style={{ color: 'var(--mc-text-0)' }}>{fmtGuideRange({ low: g.new_low, high: g.new_high, unit })}</b></>
+      )}
+      {/* "…to $21%–22% from $21%–22%" is noise on a reiteration; the prior
+          range only earns its space when it actually differs. */}
+      {num(g.prev_low) != null && num(g.prev_high) != null
+        && !(g.prev_low === g.new_low && g.prev_high === g.new_high) && (
+        <span style={{ color: 'var(--mc-text-4)' }}> from {fmtGuideRange({ low: g.prev_low, high: g.prev_high, unit })}</span>
+      )}
+      .{vsStreet}
+    </Bul>
+  );
+}
+
+/** The street's number for the period/metric a guide change refers to, taken
+ *  from the guidance-figure list the engine already matched. Basis must agree
+ *  when both sides state one — an adjusted guide is not measured against a GAAP
+ *  consensus. */
+function estFor(figs: Array<GuidanceFigure & { est?: number | null }> | null | undefined, g: GuideChange): number | null {
+  if (!Array.isArray(figs)) return null;
+  const hit = figs.find((f) =>
+    f && f.metric === g.metric && f.period_label === g.period_label
+    && (g.basis == null || f.basis == null || f.basis === g.basis));
+  return hit ? num(hit.est) : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+function DetailPanel({ r }: { r: UsRowX }) {
+  const s = normSeries(r.series);
+  const cols = s ? buildCols(s, r.quarter) : null;
+  const ctx = (r.context || null) as UsContext | null;
+  const vg = (r.vs_guide || null) as VsGuide | null;
+  const changes: GuideChange[] = Array.isArray(r.guide_change) ? r.guide_change : [];
+  const figs = Array.isArray(r.guidance_figures) ? r.guidance_figures : [];
+  const metrics: KeyMetric[] = (Array.isArray(r.key_metrics) ? r.key_metrics : [])
+    .filter((m) => m && Number.isFinite(m.value));
+  const snippets: string[] = Array.isArray(r.guidance_snippets) ? r.guidance_snippets : [];
+  const tags = (r.tags_used || null) as Record<string, string | null> | null;
+
+  // ── the display columns. A period we could not match by date is not shown at
+  // all, rather than shown as a column of dashes.
+  const displayCols = cols ? [cols.cur, cols.prev, cols.yr, cols.yr3].filter(Boolean) as PanelCol[] : [];
+  const head = displayCols.map((c) => ({ label: c.label, sub: c.sub }));
+  const growthHead: Array<{ label: string; sub?: string }> = [];
+  if (cols?.prev) growthHead.push({ label: 'QoQ' });
+  if (cols?.yr) growthHead.push({ label: 'YoY' });
+  if (cols?.yr3) growthHead.push({ label: '3-YR CAGR' });
+
+  const seriesRow = (label: string, arr: unknown, note?: string): TableRow | null => {
+    if (!s || !cols) return null;
+    const vals = displayCols.map((c) => at(arr, c.idx));
+    if (vals.every((v) => v == null)) return null;         // no row of dashes
+    const cur = at(arr, cols.cur.idx);
+    const cells: Cell[] = vals.map(usdCell);
+    if (cols.prev) cells.push(growthCell(cur, at(arr, cols.prev.idx)));
+    if (cols.yr) cells.push(growthCell(cur, at(arr, cols.yr.idx)));
+    if (cols.yr3) cells.push(cagrCell(cur, at(arr, cols.yr3.idx), cols.yr3GapDays));
+    return { label, note, cells };
+  };
+
+  const resultRows: TableRow[] = [];
+  if (s && cols) {
+    for (const [label, arr] of [
+      ['Revenue', s.revenue], ['Gross profit', s.gross_profit],
+      ['Operating income', s.operating_income], ['Net income', s.net_income],
+      ['Free cash flow', s.fcf],
+    ] as Array<[string, unknown]>) {
+      const row = seriesRow(label, arr, 'GAAP');
+      if (row) resultRows.push(row);
+    }
+    // Press-release operating metrics that carry a genuinely comparable figure
+    // — a dollar value AND the YoY the company itself stated. There is no
+    // quarterly history behind them (they exist only in the release), so the
+    // periods we cannot fill stay empty and the row says where it came from.
+    for (const m of metrics) {
+      if (resultRows.length >= 9) break;
+      if (!m || m.unit !== 'usd' || num(m.yoy_pct) == null || !Number.isFinite(m.value)) continue;
+      if (m.id === 'free_cash_flow' && resultRows.some((x) => x.label === 'Free cash flow')) continue;
+      const cells: Cell[] = displayCols.map((c, i) => i === 0 ? { text: fmtKeyMetric(m) } : DASH);
+      if (cols.prev) cells.push(DASH);
+      if (cols.yr) {
+        const y = num(m.yoy_pct) as number;
+        cells.push({ text: signedPct(y), color: y >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' });
+      }
+      if (cols.yr3) cells.push(DASH);
+      resultRows.push({ label: m.label || KEY_METRIC_LABEL[m.id] || m.id, note: 'rel.', cells });
+    }
+  }
+
+  // ── margins. Each is a % of the same period's revenue; the deltas are basis
+  // points, because a margin move is a percentage-POINT move and calling it "%"
+  // is a different (and wrong) number.
+  const marginRows: TableRow[] = [];
+  if (s && cols) {
+    const revAt = (i: number) => at(s.revenue, i);
+    const mk = (label: string, arr: unknown): TableRow | null => {
+      const vals = displayCols.map((c) => marginPct(at(arr, c.idx), revAt(c.idx)));
+      if (vals.every((v) => v == null)) return null;
+      const cur = marginPct(at(arr, cols.cur.idx), revAt(cols.cur.idx));
+      const cells: Cell[] = vals.map(pctCell);
+      if (cols.prev) cells.push(bpsCell(cur, marginPct(at(arr, cols.prev.idx), revAt(cols.prev.idx))));
+      if (cols.yr) cells.push(bpsCell(cur, marginPct(at(arr, cols.yr.idx), revAt(cols.yr.idx))));
+      if (cols.yr3) cells.push(bpsCell(cur, marginPct(at(arr, cols.yr3.idx), revAt(cols.yr3.idx))));
+      return { label, cells };
+    };
+    for (const [label, arr] of [
+      ['Gross margin', s.gross_profit], ['Operating margin', s.operating_income],
+      ['Net margin', s.net_income], ['FCF margin', s.fcf],
+    ] as Array<[string, unknown]>) {
+      const row = mk(label, arr);
+      if (row) marginRows.push(row);
+    }
+  }
+
+  // ── 3-yr revenue CAGR, and the same figure one and two quarters ago. The
+  // trend in the CAGR is the thing worth reading; a single CAGR is not.
+  const cagrTrend = (() => {
+    if (!s || !cols) return null;
+    const val = (idx: number): number | null => {
+      const j = backFrom(s.ends, idx, 1095, 60);
+      if (j == null) return null;
+      const a = at(s.revenue, idx), b = at(s.revenue, j);
+      if (a == null || b == null || a <= 0 || b <= 0) return null;
+      const p = (Math.pow(a / b, 1 / 3) - 1) * 100;
+      return Number.isFinite(p) ? p : null;
+    };
+    const now = val(cols.cur.idx);
+    if (now == null) return null;
+    const pIdx = cols.prev?.idx ?? null;
+    const p1 = pIdx != null ? val(pIdx) : null;
+    const p2Idx = pIdx != null ? backFrom(s.ends, pIdx, 91, 30) : null;
+    const p2 = p2Idx != null ? val(p2Idx) : null;
+    return { now, p1, p2 };
+  })();
+
+  // ── stock comp as a share of revenue and of free cash flow. Both only off a
+  // positive base: SBC "as 210% of a negative FCF" is not a quality signal, it
+  // is a sign error.
+  const sbc = ctx ? num(ctx.sbc_musd) : null;
+  const revNow = num(r.revenue_curr_musd) ?? (s && cols ? at(s.revenue, cols.cur.idx) : null);
+  const fcfNow = (s && cols ? at(s.fcf, cols.cur.idx) : null) ?? num(r.fcf_curr_musd);
+  const sbcOfRev = (sbc != null && revNow != null && revNow > 0) ? (sbc / revNow) * 100 : null;
+  const sbcOfFcf = (sbc != null && fcfNow != null && fcfNow > 0) ? (sbc / fcfNow) * 100 : null;
+
+  const quarterGuideBullets = guideBullets(vg?.for_quarter, 'quarter');
+  const yearGuideBullets = guideBullets(vg?.for_year, 'year');
+  const street = streetBullet(r);
+  const hasResultsVs = !!street || quarterGuideBullets.length > 0 || yearGuideBullets.length > 0;
+
+  const ctxBullets: React.ReactNode[] = [];
+  // A PRELIM print's balance sheet is not on EDGAR yet, so what we hold is the
+  // PREVIOUS quarter's. Saying so once, at the top, is the difference between
+  // a stale number and a dated one.
+  const ctxStale = (() => {
+    if (!ctx?.as_of || !r.period_end) return false;
+    const a = Date.parse(ctx.as_of + 'T00:00:00Z'), b = Date.parse(r.period_end + 'T00:00:00Z');
+    return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) > 20 * 86_400_000;
+  })();
+  if (ctx) {
+    if (ctxStale) ctxBullets.push(
+      <Bul key="stale"><span style={{ color: 'var(--mc-text-3)' }}>
+        Balance sheet and capital returns below are the <b>previous</b> quarter&apos;s, at {ctx.as_of} — this
+        quarter&apos;s reach EDGAR with the 10-Q.
+      </span></Bul>,
+    );
+    const cash = num(ctx.cash_musd), debt = num(ctx.debt_musd);
+    if (cash != null) {
+      ctxBullets.push(
+        <Bul key="cash">
+          <b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(cash)}</b> in cash
+          {ctx.cash_incl_st_inv ? ' & equivalents, incl. short-term investments' : ' & equivalents'}
+          {debt != null && <> against <b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(debt)}</b> of total debt —{' '}
+            <b style={{ color: cash - debt >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+              {fmtUsd(Math.abs(cash - debt))} net {cash - debt >= 0 ? 'cash' : 'debt'}
+            </b></>}
+          .{ctx.as_of && <span style={{ color: 'var(--mc-text-4)' }}> Balance sheet at {ctx.as_of}.</span>}
+        </Bul>,
+      );
+    } else if (debt != null) {
+      ctxBullets.push(<Bul key="debt"><b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(debt)}</b> of total debt; no cash line tagged.</Bul>);
+    }
+    const bb = num(ctx.buyback_musd), dv = num(ctx.dividends_musd);
+    if (bb != null || dv != null) {
+      ctxBullets.push(
+        <Bul key="return">
+          {bb != null && <>Bought back <b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(bb)}</b> of stock</>}
+          {bb != null && dv != null ? ' and ' : ''}
+          {dv != null && <>{bb == null ? 'Paid ' : 'paid '}<b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(dv)}</b> in dividends</>}
+          {' '}this quarter.
+        </Bul>,
+      );
+    }
+    if (sbc != null) {
+      ctxBullets.push(
+        <Bul key="sbc">
+          Paid out <b style={{ color: 'var(--mc-text-0)' }}>{fmtUsd(sbc)}</b> in stock comp
+          {sbcOfRev != null && <> — <b style={{ color: 'var(--mc-text-0)' }}>{sbcOfRev.toFixed(1)}%</b> of revenue</>}
+          {sbcOfFcf != null
+            ? <> and <b style={{ color: sbcOfFcf > 100 ? 'var(--mc-bearish)' : 'var(--mc-text-0)' }}>{sbcOfFcf.toFixed(0)}%</b> of free cash flow</>
+            : (sbc != null && fcfNow != null && fcfNow <= 0
+              ? <span style={{ color: 'var(--mc-text-4)' }}> (share of free cash flow n/m — FCF was not positive)</span>
+              : null)}
+          .
+        </Bul>,
+      );
+    }
+    const sh = num(ctx.diluted_shares_m), shY = num(ctx.diluted_shares_yoy_pct);
+    if (sh != null || shY != null) {
+      ctxBullets.push(
+        <Bul key="shares">
+          {sh != null && <>Diluted share count <b style={{ color: 'var(--mc-text-0)' }}>{sh.toFixed(1)}M</b></>}
+          {shY != null && <>{sh != null ? ', ' : 'Diluted share count '}
+            <b style={{ color: shY <= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(shY, 1)}</b> YoY
+            {shY < 0 ? ' (shrinking)' : shY > 0 ? ' (dilution)' : ''}</>}
+          .
+        </Bul>,
+      );
+    }
+  }
+  if (cagrTrend) {
+    ctxBullets.push(
+      <Bul key="cagr">
+        <b style={{ color: 'var(--mc-text-0)' }}>{cagrTrend.now.toFixed(1)}%</b> 3-yr revenue CAGR
+        {cagrTrend.p1 != null && <> vs. <b style={{ color: 'var(--mc-text-0)' }}>{cagrTrend.p1.toFixed(1)}%</b> last Q</>}
+        {cagrTrend.p2 != null && <> &amp; <b style={{ color: 'var(--mc-text-0)' }}>{cagrTrend.p2.toFixed(1)}%</b> 2 Qs ago</>}
+        .
+      </Bul>,
+    );
+  }
+
+  const box: React.CSSProperties = {
+    marginTop: 9, padding: '9px 10px', borderRadius: 6,
+    backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
+    borderLeft: '3px solid var(--mc-cyan)', minWidth: 0, overflow: 'hidden',
+  };
+
+  return (
+    <div style={box}>
+      {/* ── 1 · results vs expectations ── */}
+      <PanelH note="the street, and the company's own guide from last quarter">RESULTS VS. EXPECTATIONS</PanelH>
+      {hasResultsVs ? (
+        <>
+          {street}
+          {quarterGuideBullets}
+          {yearGuideBullets}
+          {vg?.prior_filing_date && (
+            <Quiet>
+              Guide read from the {vg.prior_filing_date} release
+              {vg.prior_filing_url && <> · <a href={vg.prior_filing_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>open it ↗</a></>}
+            </Quiet>
+          )}
+        </>
+      ) : (
+        <Quiet>
+          No street estimate and no prior guide on file for this quarter, so there is nothing to measure the
+          print against. The tiles above are the filing&apos;s own numbers versus the year-ago quarter.
+        </Quiet>
+      )}
+      {(r.d1_pct != null || r.move_pct != null) && (
+        <Quiet>
+          Market&apos;s verdict:{' '}
+          <b style={{ color: (r.d1_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b> on the day,{' '}
+          <b style={{ color: (r.move_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.move_pct, 1)}</b> since the print.
+        </Quiet>
+      )}
+
+      {/* ── 2 · guide vs expectations ── */}
+      {(changes.length > 0 || figs.length > 0) && (
+        <>
+          <PanelH note="where the outlook moved, and what the street was carrying">GUIDE VS. EXPECTATIONS</PanelH>
+          {changes.length > 0
+            ? changes.map((g) => guideChangeBullet(g, estFor(figs, g)))
+            : <Quiet>No prior guide to compare against — the figures below are this release&apos;s outlook as given.</Quiet>}
+          {figs.length > 0 && <GuideBlock figs={figs} label={r.guidance} showSource />}
+        </>
+      )}
+
+      {/* ── 3 · results table ── */}
+      {resultRows.length > 0 && displayCols.length > 0 && (
+        <>
+          <PanelH note={`${displayCols.length} period${displayCols.length === 1 ? '' : 's'} matched by period-end date`}>
+            RESULTS
+          </PanelH>
+          <Scroller><MiniTable head={[...head, ...growthHead]} rows={resultRows} /></Scroller>
+          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 4, lineHeight: 1.5 }}>
+            GAAP, from the filer&apos;s own XBRL. Rows marked <b>rel.</b> are press-release operating metrics with no
+            quarterly history behind them — the YoY is the company&apos;s own. A period the filer did not tag is
+            left empty; <b>n/m</b> is a growth rate whose base was zero or negative, which has no meaning.
+          </div>
+        </>
+      )}
+
+      {/* ── 4 · margins ── */}
+      {marginRows.length > 0 && displayCols.length > 0 && (
+        <>
+          <PanelH note="% of revenue · deltas in basis points, not %">MARGINS</PanelH>
+          <Scroller>
+            <MiniTable
+              head={[...head, ...([
+                cols?.prev ? { label: 'QoQ BPS Δ' } : null,
+                cols?.yr ? { label: 'YoY BPS Δ' } : null,
+                cols?.yr3 ? { label: '3-YR BPS Δ' } : null,
+              ].filter(Boolean) as Array<{ label: string }>)]}
+              rows={marginRows} />
+          </Scroller>
+          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 4, lineHeight: 1.5 }}>
+            100 bps = 1 percentage point. A margin is only shown where that period&apos;s revenue was positive.
+          </div>
+        </>
+      )}
+
+      {/* ── 5 · key context ── */}
+      {ctxBullets.length > 0 && (
+        <>
+          <PanelH note="balance sheet, capital returned, dilution">KEY CONTEXT</PanelH>
+          {ctxBullets}
+        </>
+      )}
+
+      {/* ── 6 · everything the collapsed card hides ── */}
+      {metrics.length > 0 && (
+        <>
+          <PanelH note="every figure the release stated, not just the four on the card">REPORTED OPERATING METRICS</PanelH>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {metrics.map((m, i) => (
+              <div key={`${m.id}-${i}`} style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5, minWidth: 0 }}>
+                <span style={{ color: 'var(--mc-text-3)' }}>{m.label || KEY_METRIC_LABEL[m.id] || m.id}</span>{' '}
+                <b style={{ color: 'var(--mc-text-0)' }}>{fmtKeyMetric(m)}</b>
+                {num(m.yoy_pct) != null && (
+                  <b style={{ color: (m.yoy_pct as number) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+                    {' '}{fmtPct(m.yoy_pct, 1)} YoY
+                  </b>
+                )}
+                {m.source && <div style={{ fontSize: 9, color: 'var(--mc-text-4)', lineHeight: 1.4 }}>“{m.source}”</div>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {snippets.length > 0 && (
+        <>
+          <PanelH note="verbatim, from the press release">GUIDANCE LANGUAGE</PanelH>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {snippets.map((q, i) => (
+              <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.45, borderLeft: '2px solid var(--mc-bg-4)', paddingLeft: 8 }}>“{q}”</div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tags && Object.keys(tags).length > 0 && (
+        <>
+          <PanelH note="which XBRL concept each number was read from">TAGS USED</PanelH>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', fontSize: 9, color: 'var(--mc-text-4)', lineHeight: 1.6 }}>
+            {Object.entries(tags).filter(([, v]) => !!v).map(([k, v]) => (
+              <span key={k} style={{ whiteSpace: 'nowrap' }}>
+                {k.replace(/_/g, ' ')} ← <code style={{ color: 'var(--mc-text-3)' }}>{v}</code>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, fontSize: 10 }}>
+        {r.filing_url && (
+          <a href={r.filing_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+            {r.form} on SEC EDGAR <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+        {r.release_url && (
+          <a href={r.release_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>earnings release ↗</a>
+        )}
+        {r.guidance_url && r.guidance_url !== r.release_url && (
+          <a href={r.guidance_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>guidance release ↗</a>
+        )}
+        <span style={{ color: 'var(--mc-text-4)' }}>
+          {r.period_end ? `Quarter ended ${r.period_end} · ` : ''}filed {r.filing_date}
+          {r.prelim ? ' · PRELIM, the 10-Q has not posted yet' : ''}
+        </span>
+      </div>
+    </div>
   );
 }

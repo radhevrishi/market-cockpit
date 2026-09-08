@@ -36,14 +36,16 @@ import {
 import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, yahooForwardEstimates, type UsTechnicals, type EpsHistoryRow, type ForwardEstimate } from '@/lib/us-prices';
 import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
-import { financialsFromReleaseHtml } from '@/lib/us-pr-financials';
+import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
+  quarterSeries, balanceContext,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
+import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -196,6 +198,132 @@ function withEstimates(
 function isWeekend(iso: string): boolean {
   const d = new Date(iso + 'T00:00:00Z').getUTCDay();
   return d === 0 || d === 6;
+}
+
+/**
+ * The actual figure to measure a guidance item against — from the FILING, on
+ * the SAME basis the guide was given on, or nothing at all.
+ *
+ * The temptation is to reach for whatever number is nearest to hand. That is
+ * how a wrong sentence gets printed: Yahoo's "adjusted actual" is not always
+ * the filer's own adjusted EPS (for Burlington it returns the GAAP figure),
+ * and pairing it with an adjusted guide manufactures a beat that did not
+ * happen. So each metric is paired only where the pairing is provable, and the
+ * adjusted-EPS pairing additionally requires the street figure to actually
+ * DIFFER from the GAAP figure — if they are the same number, the feed is
+ * carrying GAAP under an adjusted name and the comparison is refused.
+ */
+function actualForGuide(
+  g: GuideVsActual,
+  f: { revenue: number | null; operating_income: number | null; net_income: number | null; eps: number | null },
+  extra: { adj_eps: number | null; fcf: number | null; gross_profit: number | null },
+): number | null {
+  // A FULL-YEAR guide cannot be scored against one quarter. Dell guided
+  // $165–169B for FY27 and delivered $46.97B in Q2 — a true statement about
+  // the quarter and an absurd one about the guide ("missed by 71.9%"). What a
+  // full-year outlook did is captured by `guideChange` — whether the company
+  // raised it, cut it or left it alone — and that is the only honest reading
+  // until the fourth quarter closes the year.
+  if (g.period !== 'quarter') return null;
+  const fin = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const rev = fin(f.revenue);
+  switch (g.metric) {
+    // Revenue is revenue: a filer that reports a non-GAAP revenue line is rare
+    // enough that the GAAP top line is the honest comparison either way, and
+    // the basis is carried on the row so the reader can see which was guided.
+    case 'revenue': return rev;
+    case 'operating_income': return g.basis === 'gaap' ? fin(f.operating_income) : null;
+    case 'net_income': return g.basis === 'gaap' ? fin(f.net_income) : null;
+    case 'free_cash_flow': return fin(extra.fcf);
+    case 'eps': {
+      if (g.basis === 'gaap') return fin(f.eps);
+      const adj = fin(extra.adj_eps), gaap = fin(f.eps);
+      if (adj == null) return null;
+      // Same number as GAAP → the feed is not carrying an adjusted figure.
+      if (gaap != null && Math.abs(adj - gaap) <= 0.011) return null;
+      return adj;
+    }
+    case 'operating_margin': {
+      const oi = fin(f.operating_income);
+      return (g.basis === 'gaap' && oi != null && rev && rev > 0) ? (oi / rev) * 100 : null;
+    }
+    case 'gross_margin': {
+      const gp = fin(extra.gross_profit);
+      return (g.basis === 'gaap' && gp != null && rev && rev > 0) ? (gp / rev) * 100 : null;
+    }
+    // EBITDA, comparable sales and the revenue subsets are press-release
+    // constructs with no GAAP equivalent to check them against. No comparison
+    // is better than one built on a proxy.
+    default: return null;
+  }
+}
+
+/** A guidance item plus the verdict, ready for the card. */
+function withActual(
+  items: GuideVsActual[],
+  f: { revenue: number | null; operating_income: number | null; net_income: number | null; eps: number | null },
+  extra: { adj_eps: number | null; fcf: number | null; gross_profit: number | null },
+) {
+  return items.map((g) => {
+    const actual = actualForGuide(g, f, extra);
+    const withA = { ...g, actual };
+    return { ...withA, compare: actual == null ? null : compareToGuide(withA, actual) };
+  });
+}
+
+/**
+ * How this quarter's outlook moved against the one given a quarter ago.
+ *
+ * "Raised FY27 revenue guidance by 1.3%" is a different fact from "beat the
+ * quarter", and it is often the one that moves the stock. Both sides come from
+ * the filers' own releases — this release's figures against the previous
+ * release's figures for the SAME metric, basis and period label — so nothing is
+ * inferred and a company that simply repeated itself reads "reiterated".
+ */
+function guideChange(
+  current: GuidanceFigure[],
+  priorYear: GuideVsActual[],
+): Array<{
+  metric: string; basis: string | null; period_label: string | null;
+  prev_low: number | null; prev_high: number | null;
+  new_low: number | null; new_high: number | null;
+  direction: 'raised' | 'lowered' | 'reiterated' | 'narrowed' | 'widened';
+  delta_pct: number | null; unit: string;
+}> {
+  const out: ReturnType<typeof guideChange> = [];
+  const mid = (lo: number | null, hi: number | null) =>
+    lo != null && hi != null ? (lo + hi) / 2 : lo ?? hi ?? null;
+  for (const c of current) {
+    if (c.period !== 'year') continue;                 // only the FY guide is comparable across releases
+    const p = priorYear.find((x) => x.metric === c.metric && x.basis === c.basis
+      && (x.guided_for_label || '').toUpperCase() === (c.period_label || '').toUpperCase());
+    if (!p) continue;
+    const nm = mid(c.low, c.high), pm = mid(p.guide_low, p.guide_high);
+    if (nm == null || pm == null) continue;
+    const span = (lo: number | null, hi: number | null) =>
+      lo != null && hi != null ? Math.abs(hi - lo) : null;
+    const ns = span(c.low, c.high), ps = span(p.guide_low, p.guide_high);
+    // "Unchanged" has to have a tolerance: a filer that rounds $14.06–$14.12 to
+    // $14.05–$14.15 has not raised anything.
+    const rel = Math.abs(pm) > 1e-9 ? (nm - pm) / Math.abs(pm) : null;
+    const same = rel != null ? Math.abs(rel) < 0.002 : nm === pm;
+    let direction: 'raised' | 'lowered' | 'reiterated' | 'narrowed' | 'widened';
+    if (!same) direction = nm > pm ? 'raised' : 'lowered';
+    else if (ns != null && ps != null && ns < ps * 0.9) direction = 'narrowed';
+    else if (ns != null && ps != null && ns > ps * 1.1) direction = 'widened';
+    else direction = 'reiterated';
+    out.push({
+      metric: c.metric, basis: c.basis, period_label: c.period_label,
+      prev_low: p.guide_low, prev_high: p.guide_high,
+      new_low: c.low, new_high: c.high,
+      direction,
+      // A percentage change in a percentage guide is meaningless — margins and
+      // comps move in points, so the delta stays absolute for them.
+      delta_pct: c.unit === 'pct' ? null : rel != null ? rel * 100 : null,
+      unit: c.unit,
+    });
+  }
+  return out;
 }
 
 export async function GET(req: Request) {
@@ -378,7 +506,7 @@ export async function GET(req: Request) {
     // Toro look like a 38% miss on a quarter it beat on the basis analysts
     // actually use. The GAAP figure stays in the YoY tile; the surprise chip
     // is street vs street.
-    const [surprises, guidances, forwards] = await Promise.all([
+    const [surprises, guidances, forwards, priors] = await Promise.all([
       pooled(prepared, 6, (p) => yahooEarningsHistory(p.f.ticker!)),
       // Guidance lives in the 8-K's press-release exhibit; a 10-Q-only filer
       // has no release to read.
@@ -388,6 +516,20 @@ export async function GET(req: Request) {
       // The street's number for the period being guided — the "(Est. $5.54B)"
       // an earnings feed prints beside a raised outlook.
       pooled(prepared, 6, (p) => yahooForwardEstimates(p.f.ticker!)),
+      // Last quarter's outlook for the quarter that just landed — the half of
+      // "beat expectations" that no free feed carries, and the half the owner
+      // asked for: beat the street AND beat its own guide.
+      pooled(prepared, 4, async (p) => {
+        if (p.f.form !== '8-K' || !p.f.accession) return null;
+        const fq0 = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
+        try {
+          return await priorGuidanceFor({
+            cikNum: p.f.cikNum, currentAccession: p.f.accession, currentFilingDate: p.f.filed,
+            reportedPeriodEnd: p.fundamentals.q_end!,
+            reportedFiscalQ: fq0.q ?? null, reportedFiscalFy: fq0.fy ?? null,
+          });
+        } catch { return null; }
+      }),
     ]);
 
     const graded: UsGradedRow[] = [];
@@ -453,6 +595,34 @@ export async function GET(req: Request) {
       (row as any).key_metrics = g.metrics;
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
+
+      // ── the expand panel's data: history, balance sheet, own-guide ────────
+      // All three are additive and independently optional — a filer with a
+      // short history, no tagged debt or no prior outlook simply carries fewer
+      // of them, and the card renders what is there.
+      const ser = quarterSeries(p.facts, p.fundamentals.q_end);
+      if (ser) (row as any).series = ser;
+      const ctx = balanceContext(p.facts, p.fundamentals.q_end);
+      if (ctx) (row as any).context = ctx;
+      const pg = priors[pi] || null;
+      if (pg && (pg.for_quarter.length || pg.for_year.length)) {
+        const gpNow = ser ? ser.gross_profit[ser.gross_profit.length - 1] : null;
+        const extra = {
+          adj_eps: sLatest?.eps_actual ?? null,
+          fcf: (p.fundamentals.cfo != null && p.fundamentals.capex != null)
+            ? p.fundamentals.cfo - Math.abs(p.fundamentals.capex) : null,
+          // `series` carries gross profit in $M; the guidance side is in dollars.
+          gross_profit: gpNow != null ? gpNow * 1e6 : null,
+        };
+        (row as any).vs_guide = {
+          prior_filing_date: pg.prior_filing_date,
+          prior_filing_url: pg.prior_filing_url,
+          for_quarter: withActual(pg.for_quarter, p.fundamentals, extra),
+          for_year: withActual(pg.for_year, p.fundamentals, extra),
+        };
+        const chg = guideChange(g.figures || [], pg.for_year);
+        if (chg.length) (row as any).guide_change = chg;
+      }
       // CFO/PAT is a funding artefact for banks, insurers and REITs — flag the
       // sector so the client preset can skip that gate, exactly as India does
       // for NBFCs.
@@ -487,14 +657,13 @@ export async function GET(req: Request) {
         const { f, t, facts: facts0 } = awaitingXbrl[i];
         const rows = sur[i] || [];
         if (rows.length) dbgRows++;
-        if (!rows.length || f.form !== '8-K') continue;
+        if (f.form !== '8-K') continue;
         // The freshest row whose quarter ended in the ~110 days before the
         // filing and that already carries an actual — i.e. this print.
         const latest = rows.slice().reverse().find((r) => r.quarter && r.eps_actual != null
           && daysBetween(f.filed, r.quarter) >= 0 && daysBetween(f.filed, r.quarter) <= 110) || null;
-        if (!latest) continue;
-        dbgMatch++;
-        dbgEps++;
+        if (latest) { dbgMatch++; dbgEps++; }
+
         // ── the GAAP numbers, read from the press release ──────────────────
         // The 10-Q is days away, but the statement of operations is in the
         // 8-K's Exhibit 99.1 right now — and its PRIOR-YEAR column is a figure
@@ -502,22 +671,42 @@ export async function GET(req: Request) {
         // when that prior-year column reproduces the XBRL year-ago number, so a
         // PRELIM card shows revenue, margin and GAAP EPS that have been checked
         // against a filing, or shows nothing at all.
-        const yaEnd = isoAddDays(latest.quarter!, -365);
+        //
+        // NO CONSENSUS FEED IS REQUIRED. This used to bail out whenever Yahoo
+        // had no earnings history for the ticker, which is the normal state for
+        // micro-caps and recent listings — and those are exactly the names the
+        // owner saw sitting in "numbers not on EDGAR yet" with nothing on the
+        // card. The consensus row was only ever supplying the quarter END, and
+        // the release states that itself, on every US income statement, in the
+        // period header. So: use the consensus quarter when there is one, and
+        // otherwise read the date the filer wrote.
+        let doc: { url: string | null; html: string | null } | null = null;
+        if (f.accession) {
+          try { doc = await releaseDocument(f.cikNum, f.accession, f.filing_url); } catch { doc = null; }
+        }
+        const relUrl: string | null = doc?.url ?? null;
+        const qEnd = latest?.quarter
+          ?? (doc?.html ? periodEndFromReleaseHtml(doc.html, f.filed) : null);
+        if (!qEnd) continue;                       // no quarter to attribute the print to
+        const qEndFromRelease = !latest?.quarter;
+
+        const yaEnd = isoAddDays(qEnd, -365);
         const ya = facts0 ? extractFundamentals(facts0, yaEnd) : null;
+        // A year-ago quarter that is not actually a year ago cannot validate
+        // anything — 52/53-week calendars shift by up to a week, no more.
+        const yaUsable = !!ya && !!ya.q_end && Math.abs(Math.abs(daysBetween(qEnd, ya.q_end)) - 365) <= 25;
         let pr: ReturnType<typeof financialsFromReleaseHtml> | null = null;
-        let relUrl: string | null = null;
-        if (ya && (ya.revenue != null || ya.net_income != null) && f.accession) {
+        if (yaUsable && ya && (ya.revenue != null || ya.net_income != null) && doc?.html) {
           try {
-            const doc = await releaseDocument(f.cikNum, f.accession, f.filing_url);
-            relUrl = doc.url;
-            if (doc.html) {
-              pr = financialsFromReleaseHtml(doc.html, {
-                revenue: ya.revenue, operating_income: ya.operating_income,
-                net_income: ya.net_income, eps: ya.eps,
-              });
-            }
+            pr = financialsFromReleaseHtml(doc.html, {
+              revenue: ya.revenue, operating_income: ya.operating_income,
+              net_income: ya.net_income, eps: ya.eps,
+            });
           } catch { pr = null; }
         }
+        // Nothing to say: no validated figures AND no consensus. Leave it in
+        // the pending list, where it honestly belongs.
+        if ((!pr || !pr.matched.length) && !latest) continue;
         // Guidance first: it also carries the filer's own name for the quarter
         // ("Q2 FY27"), read from the release headline.
         let gPre: Guidance | null = null;
@@ -525,7 +714,7 @@ export async function GET(req: Request) {
         const fiscalPrev = facts0 ? fiscalPeriodFromFacts(facts0, ya?.q_end || yaEnd) : { fy: null, q: null };
         const fiscalNow = nextFiscalYear(fiscalPrev);
         const fund = {
-          q_end: latest.quarter, q_end_prev: ya?.q_end ?? null, q_filed: null,
+          q_end: qEnd, q_end_prev: ya?.q_end ?? null, q_filed: null,
           revenue: pr?.revenue ?? null, revenue_prev: pr?.revenue_prev ?? null,
           operating_income: pr?.operating_income ?? null, operating_income_prev: pr?.operating_income_prev ?? null,
           net_income: pr?.net_income ?? null, net_income_prev: pr?.net_income_prev ?? null,
@@ -548,10 +737,12 @@ export async function GET(req: Request) {
           // it is current even before this quarter's numbers land. Gives the
           // PRELIM card a real market cap instead of a blank.
           shares_outstanding: facts0 ? sharesOutstandingFromFacts(facts0, null) : null,
-          adj_eps: latest.eps_actual,
-          adj_eps_prev: (rows.find((r) => r.quarter && r.eps_actual != null && latest.quarter
-            && Math.abs(daysBetween(latest.quarter, r.quarter) - 365) <= 30)?.eps_actual) ?? null,
-          prelim_surprise_pct: latest.surprise_pct,
+          adj_eps: latest?.eps_actual ?? null,
+          adj_eps_prev: (latest?.quarter
+            ? rows.find((r) => r.quarter && r.eps_actual != null
+                && Math.abs(daysBetween(latest.quarter!, r.quarter) - 365) <= 30)?.eps_actual
+            : null) ?? null,
+          prelim_surprise_pct: latest?.surprise_pct ?? null,
           fiscal_label: gPre?.fiscal_label || usFiscalLabel(fiscalNow) || null,
           fiscal_year_own: gPre?.fiscal_fy ?? fiscalNow.fy,
         });
@@ -570,7 +761,7 @@ export async function GET(req: Request) {
             (row as any).guidance = g.label; (row as any).guidance_score = g.score;
             (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
             (row as any).guidance_figures = withEstimates(g.figures, await yahooForwardEstimates(f.ticker!).catch(() => []), {
-              period_end: latest.quarter,
+              period_end: qEnd,
               fiscal_q: g.fiscal_q ?? fiscalNow.q ?? null,
               fiscal_fy: g.fiscal_fy ?? fiscalNow.fy ?? null,
             });
@@ -579,25 +770,91 @@ export async function GET(req: Request) {
             if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
           }
         }
+        // ── history + context for a PRELIM row ─────────────────────────────
+        // The quarter just announced is not on EDGAR yet, so the XBRL series
+        // stops one quarter short. Rather than show a table whose newest column
+        // is last quarter — which would read as this quarter and be wrong — the
+        // release's own validated figures are appended as the final column, and
+        // the lines the release does not carry (cash flow) stay null.
+        if (facts0) {
+          const ser0 = quarterSeries(facts0, null);
+          if (ser0 && (ser0.ends[ser0.ends.length - 1] || '') < qEnd) {
+            if (pr && pr.matched.length) {
+              ser0.ends.push(qEnd);
+              ser0.revenue.push(pr.revenue != null ? Math.round(pr.revenue / 1e4) / 100 : null);
+              ser0.gross_profit.push(null);
+              ser0.operating_income.push(pr.operating_income != null ? Math.round(pr.operating_income / 1e4) / 100 : null);
+              ser0.net_income.push(pr.net_income != null ? Math.round(pr.net_income / 1e4) / 100 : null);
+              ser0.eps.push(pr.eps ?? null);
+              ser0.cfo.push(null);
+              ser0.fcf.push(null);
+              (row as any).series = ser0;
+            }
+            // No validated release figures → the series would end on the wrong
+            // quarter, so none is sent. Nothing is better than misaligned.
+          } else if (ser0) {
+            (row as any).series = ser0;
+          }
+          // The announced quarter's balance sheet is not on EDGAR yet, so this
+          // is the PREVIOUS quarter's — resolved from the newest date on file,
+          // and stamped with `as_of` so the card can say which quarter it is
+          // showing rather than implying it is current.
+          const ctx0 = balanceContext(facts0, null);
+          if (ctx0 && ctx0.as_of) (row as any).context = ctx0;
+        }
+        // Own-guide comparison works on a PRELIM row too: the guide came from
+        // last quarter's release and the actuals came from this quarter's.
+        if (f.accession) {
+          try {
+            const pg = await priorGuidanceFor({
+              cikNum: f.cikNum, currentAccession: f.accession, currentFilingDate: f.filed,
+              reportedPeriodEnd: qEnd,
+              reportedFiscalQ: gPre?.fiscal_q ?? fiscalNow.q ?? null,
+              reportedFiscalFy: gPre?.fiscal_fy ?? fiscalNow.fy ?? null,
+            });
+            if (pg && (pg.for_quarter.length || pg.for_year.length)) {
+              const extra = { adj_eps: latest?.eps_actual ?? null, fcf: null, gross_profit: null };
+              (row as any).vs_guide = {
+                prior_filing_date: pg.prior_filing_date,
+                prior_filing_url: pg.prior_filing_url,
+                for_quarter: withActual(pg.for_quarter, fund, extra),
+                for_year: withActual(pg.for_year, fund, extra),
+              };
+              const chg = guideChange(gPre?.figures || [], pg.for_year);
+              if (chg.length) (row as any).guide_change = chg;
+            }
+          } catch { /* a missing prior release is not an error */ }
+        }
         (row as any).prelim = true;
         (row as any).is_financial = isFinancialSic(f.sic);
         (row as any).close_30d = t.close_30d;
         (row as any).reaction_date = t.reaction_date;
-        (row as any).eps_basis = 'adjusted (street)';
-        (row as any).eps_adj = latest.eps_actual;
-        (row as any).eps_estimate = latest.eps_estimate;
-        (row as any).eps_surprise_pct = latest.surprise_pct;
-        if (latest.surprise_pct != null) {
-          if (latest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
-          if (latest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+        if (latest && latest.eps_actual != null) {
+          (row as any).eps_basis = 'adjusted (street)';
+          (row as any).eps_adj = latest.eps_actual;
+          (row as any).eps_estimate = latest.eps_estimate;
+          (row as any).eps_surprise_pct = latest.surprise_pct;
+          if (latest.surprise_pct != null) {
+            if (latest.surprise_pct >= 5 && !row.methodology_tags.includes('consensus beat')) row.methodology_tags.push('consensus beat');
+            if (latest.surprise_pct <= -5 && !row.caveat_tags.includes('missed consensus')) row.caveat_tags.push('missed consensus');
+          }
+        } else if (!row.methodology_tags.includes('no analyst coverage')) {
+          // Not a defect — most listed US companies have no consensus at all.
+          // Saying so is more useful than a blank where a surprise would be.
+          row.methodology_tags.push('no analyst coverage');
         }
         if (!row.caveat_tags.includes('prelim · 10-Q pending')) row.caveat_tags.push('prelim · 10-Q pending');
-        const adjLine = `adjusted EPS $${latest.eps_actual!.toFixed(2)}${latest.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus (${latest.surprise_pct != null ? `${latest.surprise_pct >= 0 ? '+' : ''}${latest.surprise_pct.toFixed(0)}%` : 'n/a'})` : ''}`;
+        if (qEndFromRelease && !row.methodology_tags.includes('quarter read from the release')) {
+          row.methodology_tags.push('quarter read from the release');
+        }
+        const adjLine = (latest && latest.eps_actual != null)
+          ? `adjusted EPS $${latest.eps_actual.toFixed(2)}${latest.eps_estimate != null ? ` vs $${latest.eps_estimate.toFixed(2)} consensus (${latest.surprise_pct != null ? `${latest.surprise_pct >= 0 ? '+' : ''}${latest.surprise_pct.toFixed(0)}%` : 'n/a'})` : ''}`
+          : null;
         row.narrative = (pr && pr.matched.length)
           // We have the release's own GAAP statement — keep the normal
           // narrative and add the street line plus what is still missing.
-          ? `${row.narrative} Read from the earnings release and checked against last year's filing; ${adjLine}. Cash flow arrives with the 10-Q.`
-          : `${f.company} reported ${row.quarter}: ${adjLine}. Revenue, margins and cash flow will fill in when the 10-Q posts to EDGAR.`;
+          ? `${row.narrative} Read from the earnings release and checked against last year's filing${adjLine ? `; ${adjLine}` : ' (no analyst consensus covers this name)'}. Cash flow arrives with the 10-Q.`
+          : `${f.company} reported ${row.quarter}: ${adjLine ?? 'no GAAP statement could be verified'}. Revenue, margins and cash flow will fill in when the 10-Q posts to EDGAR.`;
         graded.push(row);
         prelimCiks.add(f.cikNum);
       }

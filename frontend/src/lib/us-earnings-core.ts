@@ -114,9 +114,81 @@ export const US_TAGS: Record<string, string[]> = {
     'PaymentsToAcquireMachineryAndEquipment',
     'PaymentsToAcquireOtherPropertyPlantAndEquipment',
   ],
+  // Gross profit for the margin ladder. Most filers tag it outright; the rest
+  // are derived as revenue − cost of revenue, which is why the cost ladder is
+  // here too (see `quarterSeries`). Never mix the two: the subtraction only
+  // means anything against the SAME revenue series `chooseRevenue` picked.
+  gross_profit: [
+    'GrossProfit',
+  ],
+  cost_of_revenue: [
+    'CostOfRevenue',
+    'CostOfGoodsAndServicesSold',
+    'CostOfGoodsSold',
+    'CostOfServices',
+  ],
+  // Cash-flow-statement context lines. All three are YEAR-TO-DATE in a 10-Q,
+  // exactly like CFO, and must be de-cumulated the same way.
+  sbc: [
+    'ShareBasedCompensation',                       // the cash-flow add-back
+    'AllocatedShareBasedCompensationExpense',       // the income-statement line
+  ],
+  buyback: [
+    'PaymentsForRepurchaseOfCommonStock',
+    'PaymentsForRepurchaseOfEquity',
+    'TreasuryStockValueAcquiredCostMethod',
+  ],
+  dividends: [
+    'PaymentsOfDividendsCommonStock',
+    'PaymentsOfDividends',
+  ],
 };
 
-export type UsFactKind = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'diluted_shares' | 'capex';
+export type UsFactKind =
+  | 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'diluted_shares' | 'capex'
+  | 'gross_profit' | 'cost_of_revenue' | 'sbc' | 'buyback' | 'dividends';
+
+// ─── archetype ladders (LAST RESORT ONLY) ──────────────────────────────────
+// These are never consulted for a filer whose ordinary revenue ladder above
+// produced a usable quarterly series, so nothing that grades today can change.
+// They exist because two whole classes of issuer have no `Revenues`-family tag
+// at all and were coming back with a blank revenue tile:
+//
+//  • INVESTMENT COMPANIES (BDCs, RICs). Their income statement is "total
+//    investment income", tagged `GrossInvestmentIncomeOperating`. Verified as
+//    the top line for 16 of the 17 BDCs sampled (ARCC, MAIN, HTGC, OBDC, FSK,
+//    GBDC, PSEC, GAIN, TSLX, NMFC, BXSL, CSWC, OCSL, PFLT, SLRC, RWAY); TRIN
+//    is the seventeenth and uses `InterestAndDividendIncomeOperating`.
+//  • INTEREST-SPREAD LENDERS (mortgage REITs). Gross interest income is not
+//    revenue for a 7x-levered balance sheet — AGNC's June quarter was $1,014m
+//    gross against $305m of net interest income. We take the NET line, for the
+//    same reason the bank ladder above prefers `RevenuesNetOfInterestExpense`.
+//
+// `InvestmentIncomeInterest` / `InterestIncomeOperating` / `InterestIncome-
+// ExpenseNet` are deliberately NOT in the general ladder: for an ordinary
+// company they are interest earned on the cash pile, and promoting them would
+// have invented $1.07m of "revenue" for Anavex, a pre-revenue biotech.
+const INVESTMENT_COMPANY_REVENUE = [
+  'GrossInvestmentIncomeOperating',
+  'InvestmentIncomeOperating',
+  'InterestAndDividendIncomeOperating',
+  'InvestmentIncomeInterest',
+  'InterestIncomeOperating',
+];
+/** A BDC's "operating profit" is net investment income — total investment
+ *  income less expenses, before realised and unrealised gains. */
+const INVESTMENT_COMPANY_OPERATING_INCOME = [
+  'NetInvestmentIncome',
+  'InvestmentIncomeOperatingAfterExpenseAndTax',
+  'InvestmentIncomeNet',
+];
+const INTEREST_SPREAD_REVENUE = [
+  'InterestIncomeExpenseNet',
+  'InterestIncomeOperating',
+  'InterestAndDividendIncomeOperating',
+];
+const INTEREST_INCOME_TOTALS = ['InterestIncomeOperating', 'InterestAndDividendIncomeOperating'];
+const INTEREST_EXPENSE_TOTALS = ['InterestExpenseOperating', 'InterestExpense', 'InterestExpenseBorrowings', 'InterestExpenseDebt'];
 
 /** Forms whose facts we trust. Excludes 8-K exhibits (untagged/preliminary). */
 const TRUSTED_FORMS = new Set(['10-Q', '10-K', '10-Q/A', '10-K/A', '20-F', '40-F']);
@@ -164,6 +236,63 @@ export function conceptSeries(facts: any, concept: string): DurFact[] {
   return out;
 }
 
+/** How far back a tag still counts as "in use" — ~3.3 years. */
+const RECENT_MS = 1200 * dayMs;
+
+/**
+ * Cheap "does this concept carry recent QUARTERLY durations" probe, without
+ * building and de-duplicating a whole series. Used only by the archetype
+ * detectors below, which have to scan a filer's entire concept list.
+ */
+function hasRecentQuarterly(facts: any, concept: string, min = 1): boolean {
+  const node = facts?.facts?.['us-gaap']?.[concept];
+  if (!node?.units) return false;
+  const cutoff = Date.now() - RECENT_MS;
+  let n = 0;
+  for (const uk of Object.keys(node.units)) {
+    for (const e of node.units[uk] as any[]) {
+      if (!e?.start || !e?.end) continue;
+      if (!TRUSTED_FORMS.has(e.form)) continue;
+      if (typeof e.val !== 'number' || !Number.isFinite(e.val)) continue;
+      if (dnum(String(e.end)) < cutoff) continue;
+      const d = diffDays(String(e.end), String(e.start));
+      if (d >= 80 && d <= 100 && ++n >= min) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A registered investment company / BDC, detected from the taxonomy the filer
+ * itself uses — the `InvestmentCompany…` elements exist for no one else. This
+ * is a structural test, not a list of names: any BDC that lists in 2040 will
+ * tag the same elements, and any operating company that never does keeps the
+ * ordinary ladder. (Insurers tag `NetInvestmentIncome` too, which is why that
+ * element alone is NOT the test.)
+ */
+function looksLikeInvestmentCompany(facts: any): boolean {
+  const gaap = facts?.facts?.['us-gaap'];
+  if (!gaap) return false;
+  if (hasRecentQuarterly(facts, 'GrossInvestmentIncomeOperating')) return true;
+  for (const c of Object.keys(gaap)) {
+    if (!c.startsWith('InvestmentCompany')) continue;
+    if (hasRecentQuarterly(facts, c)) return true;
+  }
+  return false;
+}
+
+/**
+ * A filer whose business IS the interest spread — it tags both a total
+ * interest-income line and a total interest-expense line, quarter after
+ * quarter. Mortgage REITs and thrifts look like this; a biotech earning
+ * interest on its cash does not (it has no interest expense to speak of).
+ */
+function looksLikeInterestSpreadLender(facts: any): boolean {
+  const inc = INTEREST_INCOME_TOTALS.some((c) => hasRecentQuarterly(facts, c, 4));
+  if (!inc) return false;
+  return INTEREST_EXPENSE_TOTALS.some((c) => hasRecentQuarterly(facts, c, 4));
+}
+
 /**
  * Choose the tag that this filer actually uses, by coverage — not by hoping the
  * first name in the list exists. Scores quarterly windows 10x, annual 3x, with
@@ -171,7 +300,12 @@ export function conceptSeries(facts: any, concept: string): DurFact[] {
  * a company abandoned in 2015 can't win.
  */
 export function pickConcept(facts: any, kind: UsFactKind): string | null {
-  const cutoffMs = Date.now() - 1200 * dayMs;
+  // Revenue has its own chooser (coverage + a sanity check against profit +
+  // the archetype fall-back). Delegating rather than duplicating is the only
+  // way `pickConcept(facts,'revenue')` and `extractFundamentals` can never
+  // disagree about which line a company's revenue is.
+  if (kind === 'revenue') return chooseRevenue(facts).concept;
+  const cutoffMs = Date.now() - RECENT_MS;
   const list = US_TAGS[kind] || [];
   // For net income and EPS the ORDER is the meaning: `NetIncomeLoss` is
   // attributable to the parent, `ProfitLoss` includes noncontrolling
@@ -203,6 +337,13 @@ export function pickConcept(facts: any, kind: UsFactKind): string | null {
       const x = info.find((y) => y.c === c);
       if (x && x.nq > 0 && Math.abs(diffDays(x.latest, newest)) <= 4) return c;
     }
+  }
+  // Archetype fall-back, reached ONLY when the ordinary ladder is empty, so a
+  // filer that resolves today cannot be re-pointed by it. A BDC tags no
+  // `OperatingIncomeLoss` and no pre-tax line; net investment income is its
+  // operating profit, and without this its margin column is blank for ever.
+  if (!best && kind === 'operating_income' && looksLikeInvestmentCompany(facts)) {
+    for (const c of INVESTMENT_COMPANY_OPERATING_INCOME) if (hasRecentQuarterly(facts, c)) return c;
   }
   return best;
 }
@@ -241,6 +382,19 @@ export function quarterize(rows: DurFact[], cumulative: boolean, additive = true
       }
       if (keep.length === 3) q[r.end] = r.val - keep.reduce((s, x) => s + x.val, 0);
     }
+    // LAST RESORT: de-cumulate the year-to-date windows. A 10-Q's income
+    // statement carries BOTH a three-month and a year-to-date column, and
+    // plenty of small filers tag only the second — iBio's March quarter exists
+    // solely as a 273-day fact, and Hyperliquid's June quarter solely as the
+    // 364-day one. Both then failed the Q4 = FY − 3Q rule too, because that
+    // needs three tagged quarters and there were only two. Fills gaps ONLY:
+    // anything the discrete or FY − 3Q pass already produced is left alone, so
+    // no filer that resolves today can change. Additive quantities only —
+    // subtracting one year-to-date EPS from another is not the quarter's EPS.
+    if (additive) {
+      const ytd = quarterize(rows, true, true);
+      for (const e of Object.keys(ytd)) if (q[e] === undefined) q[e] = ytd[e];
+    }
     return q;
   }
   const byStart = new Map<string, DurFact[]>();
@@ -265,6 +419,143 @@ export function quarterize(rows: DurFact[], cumulative: boolean, additive = true
     }
   });
   return q;
+}
+
+/** A value out of a quarter map, tolerating the 1–3 day drift between the
+ *  period ends different statements inside one filing are tagged to. */
+function atMap(m: Record<string, number>, end: string | null | undefined): number | null {
+  if (!end) return null;
+  if (m[end] !== undefined) return m[end];
+  for (const k of Object.keys(m)) if (Math.abs(diffDays(k, end)) <= 4) return m[k];
+  return null;
+}
+
+/**
+ * WHICH LINE IS THIS COMPANY'S REVENUE.
+ *
+ * Phase 1 — the ordinary ladder, by coverage, sanity-checked against profit.
+ * For a bank the ASC-606 tag captures only fee income and drops all net
+ * interest income: CFG came out at $451m against a true $2,283m, ESS (a REIT,
+ * rent is ASC 842 not 606) at $2.3m against $489m, AXP at $11.2bn against
+ * $19.6bn. A revenue line SMALLER THAN THE QUARTER'S PROFIT is the wrong line.
+ *
+ * The word PROFIT is load-bearing and is the fix for a whole family of filers
+ * that were coming back a quarter or a year stale. The original test compared
+ * |net income|, so a company whose loss exceeds its revenue — which is the
+ * normal condition of every early-commercial business — had its correct
+ * revenue line rejected: Streamex's June quarter ($0.146m of revenue against a
+ * $15.1m loss) fell back to a $0.012m line from March, and Vyome's June
+ * quarter fell all the way back to June a year earlier. A loss can be
+ * arbitrarily larger than revenue; a PROFIT cannot.
+ *
+ * Phase 2 — the archetype ladders, consulted only when phase 1 yields no
+ * quarters at all, in strict priority order (these ladders are ordered by
+ * meaning: the total-income line first, never "whichever number is biggest").
+ */
+function chooseRevenue(
+  facts: any,
+  serIn?: (c: string) => DurFact[],
+  qNetIn?: Record<string, number>,
+  qOpIn?: Record<string, number>,
+): { concept: string | null; q: Record<string, number> } {
+  const cache = new Map<string, DurFact[]>();
+  const ser = serIn || ((c: string) => {
+    if (!cache.has(c)) cache.set(c, conceptSeries(facts, c));
+    return cache.get(c)!;
+  });
+  const qNet = qNetIn || (() => { const c = pickConcept(facts, 'net_income'); return c ? quarterize(ser(c), false) : {}; })();
+  const qOp = qOpIn || (() => { const c = pickConcept(facts, 'operating_income'); return c ? quarterize(ser(c), false) : {}; })();
+
+  const cutoffMs = Date.now() - RECENT_MS;
+  const list = US_TAGS.revenue;
+  const cands: Array<{ c: string; score: number; q: Record<string, number> }> = [];
+  for (let i = 0; i < list.length; i++) {
+    const rows = ser(list[i]).filter((r) => dnum(r.end) >= cutoffMs);
+    if (!rows.length) continue;
+    const nq = rows.filter((r) => r.days >= 80 && r.days <= 100).length;
+    const na = rows.filter((r) => r.days >= 330 && r.days <= 380).length;
+    cands.push({ c: list[i], score: nq * 10 + na * 3 + (list.length - i), q: quarterize(ser(list[i]), false) });
+  }
+  cands.sort((a, b) => b.score - a.score);
+  const sane = (q: Record<string, number>): boolean => {
+    const ends = Object.keys(q).sort();
+    if (!ends.length) return false;
+    const e = ends[ends.length - 1];
+    const rev = q[e];
+    // Zero is a legitimate revenue for a pre-commercial filer (iBio tags the
+    // line at 0). Negative is not a revenue line at all.
+    if (!(rev >= 0)) return false;
+    const ni = atMap(qNet, e), oi = atMap(qOp, e);
+    if (ni != null && ni > 0 && ni > rev * 1.05) return false;
+    if (oi != null && oi > 0 && oi > rev * 2) return false;
+    return true;
+  };
+  let chosen = cands.find((x) => sane(x.q)) || cands[0] || null;
+  if (chosen) {
+    const saneOnes = cands.filter((x) => sane(x.q) && x.score >= chosen!.score * 0.5);
+    if (saneOnes.length > 1) {
+      const latestEnd = (q: Record<string, number>) => { const k = Object.keys(q).sort(); return k[k.length - 1]; };
+      const latestVal = (q: Record<string, number>) => q[latestEnd(q)];
+      // FRESHNESS BEFORE ANYTHING ELSE. Filers migrate between tags: Alphabet
+      // stopped tagging `RevenueFromContractWithCustomerExcludingAssessedTax`
+      // after Q1-2025 and moved to `Revenues`, and GE Aerospace did the same
+      // after 2024. Preferring a tag on any other ground than "it covers the
+      // quarter being reported" pinned both of them to a year-old quarter.
+      // Comparing the SIZE of two candidates only means anything when both are
+      // quoting the same period anyway.
+      const newest = saneOnes.reduce((m, x) => (latestEnd(x.q) > m ? latestEnd(x.q) : m), '');
+      const fresh = saneOnes.filter((x) => Math.abs(diffDays(latestEnd(x.q), newest)) <= 4);
+      // Among candidates covering that same quarter, the LARGEST figure is the
+      // total-revenue line (fee income is a subset of total revenue) — EXCEPT
+      // that "including assessed tax" is not a bigger revenue line, it is the
+      // same revenue with excise tax added back. Brown-Forman's gross figure is
+      // $1,181m against net sales of $911m, and grading the gross line put its
+      // margin and growth 30% out. Net revenue is what the company reports.
+      const excl = fresh.filter((x) => /ExcludingAssessedTax/.test(x.c));
+      const pool = excl.length ? excl : fresh;
+      pool.sort((a, b) => latestVal(b.q) - latestVal(a.q));
+      if (pool.length) chosen = pool[0];
+    }
+  }
+  if (chosen && Object.keys(chosen.q).length) {
+    // TAG MIGRATION. A filer that renames its revenue element leaves a hole:
+    // Streamex tagged its March quarter `Revenues` and its June quarter
+    // `RevenueFromContractWithCustomerExcludingAssessedTax`, Alphabet moved the
+    // other way in mid-2025, so whichever element wins covers only part of the
+    // history. Two elements that are the same line under two names AGREE
+    // EXACTLY on every quarter they share — that is the test, and it is what
+    // separates a rename (fill the gaps) from two genuinely different lines
+    // (GE Aerospace's contract revenue is $0.9bn below its total revenue, Vyome
+    // changed businesses entirely; neither gets merged). Gaps only: a value the
+    // winning element already has is never overwritten.
+    const merged: Record<string, number> = { ...chosen.q };
+    for (const x of cands) {
+      if (x.c === chosen.c) continue;
+      const shared = Object.keys(x.q).filter((e) => merged[e] !== undefined);
+      if (!shared.length) continue;
+      let identical = true;
+      for (const e of shared) {
+        const a = merged[e], b = x.q[e];
+        if (a === b) continue;
+        const s = Math.max(Math.abs(a), Math.abs(b));
+        if (s === 0 || Math.abs(a - b) > s * 0.01) { identical = false; break; }
+      }
+      if (!identical) continue;
+      for (const e of Object.keys(x.q)) if (merged[e] === undefined) merged[e] = x.q[e];
+    }
+    return { concept: chosen.c, q: merged };
+  }
+
+  const tiers: string[][] = [];
+  if (looksLikeInvestmentCompany(facts)) tiers.push(INVESTMENT_COMPANY_REVENUE);
+  if (looksLikeInterestSpreadLender(facts)) tiers.push(INTEREST_SPREAD_REVENUE);
+  for (const tier of tiers) {
+    for (const c of tier) {
+      const q = quarterize(ser(c), false);
+      if (Object.keys(q).some((e) => dnum(e) >= cutoffMs)) return { concept: c, q };
+    }
+  }
+  return { concept: chosen ? chosen.c : null, q: chosen ? chosen.q : {} };
 }
 
 /**
@@ -311,20 +602,38 @@ export interface UsFundamentals {
 }
 
 /**
- * companyfacts JSON → the current + year-ago quarter for every metric we grade.
- * `asOfPeriodEnd` pins the comparison to a specific quarter (used when the
- * filing we are grading is not the newest one on file).
+ * THE SHARED QUARTERLY GRID.
+ *
+ * Every quarterly consumer in this module — `extractFundamentals`,
+ * `quarterSeries`, `balanceContext` — resolves its concepts, de-cumulates its
+ * series and picks its "current quarter" here, so the multi-period table in
+ * the UI can never disagree with the tile above it about which quarter is
+ * being reported or what revenue was.
  */
-export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): UsFundamentals {
-  const empty: UsFundamentals = {
-    q_end: null, q_end_prev: null, q_filed: null,
-    revenue: null, revenue_prev: null,
-    operating_income: null, operating_income_prev: null,
-    net_income: null, net_income_prev: null,
-    eps: null, eps_prev: null, cfo: null, cfo_prev: null, capex: null, capex_prev: null,
-    tags: {}, quarters_revenue: null, quarters_eps: null, quarters_opm: null,
-  };
-  if (!facts?.facts?.['us-gaap']) return { ...empty, error: 'no us-gaap facts' };
+interface UsQuarterGrid {
+  tags: Partial<Record<UsFactKind, string | null>>;
+  qs: Record<string, Record<string, number>>;
+  ser: (c: string) => DurFact[];
+  /** Period ends carrying a revenue OR a net-income value, ascending. */
+  ends: string[];
+  /** The quarter being reported. */
+  cur: string;
+  /** Its year-ago partner on the grid (for display / labelling). */
+  prev: string | null;
+  at: (kind: UsFactKind, end: string | null) => number | null;
+  /** The same metric one year before `end`, resolved inside that metric's OWN
+   *  grid. The cash-flow statement and the P&L are not always tagged to the
+   *  same day, and a 52/53-week filer's year-ago quarter is never exactly 365
+   *  days back; searching each series independently is what stops one
+   *  statement's calendar quirk from blanking another's comparison. */
+  atYoy: (kind: UsFactKind, end: string | null) => number | null;
+  epsAt: (end: string | null) => { v: number | null; derived: boolean };
+  /** EPS for the year-ago quarter of `end`. */
+  epsYoy: (end: string | null) => number | null;
+}
+
+function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | null {
+  if (!facts?.facts?.['us-gaap']) return null;
 
   const tags: Partial<Record<UsFactKind, string | null>> = {};
   const qs: Record<string, Record<string, number>> = {};
@@ -347,86 +656,36 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     tags[kind] = c;
     qs[kind] = c ? quarterize(ser(c), false, false) : {};
   }
-
-  // REVENUE — pick by coverage, then SANITY-CHECK the winner against net
-  // income and operating income for the latest quarter. For a bank the
-  // ASC-606 tag (`RevenueFromContractWithCustomer…`) captures only fee income
-  // and drops all net interest income: CFG came out at $451m against a true
-  // $2,283m, ESS (a REIT, rent is ASC 842 not 606) at $2.3m against $489m,
-  // AXP at $11.2bn against $19.6bn. A revenue line that is smaller than the
-  // quarter's net income, or that implies a >200% operating margin, is the
-  // wrong line — fall through to the next candidate.
   {
-    const cutoffMs = Date.now() - 1200 * dayMs;
-    const cands: Array<{ c: string; score: number; q: Record<string, number> }> = [];
-    const list = US_TAGS.revenue;
-    for (let i = 0; i < list.length; i++) {
-      const rows = ser(list[i]).filter((r) => dnum(r.end) >= cutoffMs);
-      if (!rows.length) continue;
-      const nq = rows.filter((r) => r.days >= 80 && r.days <= 100).length;
-      const na = rows.filter((r) => r.days >= 330 && r.days <= 380).length;
-      cands.push({ c: list[i], score: nq * 10 + na * 3 + (list.length - i), q: quarterize(ser(list[i]), false) });
-    }
-    cands.sort((a, b) => b.score - a.score);
-    const sane = (q: Record<string, number>): boolean => {
-      const ends = Object.keys(q).sort();
-      if (!ends.length) return false;
-      const e = ends[ends.length - 1];
-      const rev = q[e];
-      if (!(rev > 0)) return false;
-      const near = (m: Record<string, number>) => {
-        if (m[e] !== undefined) return m[e];
-        for (const k of Object.keys(m)) if (Math.abs(diffDays(k, e)) <= 4) return m[k];
-        return undefined;
-      };
-      const ni = near(qs.net_income), oi = near(qs.operating_income);
-      if (ni !== undefined && Math.abs(ni) > rev * 1.05) return false;
-      if (oi !== undefined && Math.abs(oi) > rev * 2) return false;
-      return true;
-    };
-    let chosen = cands.find((x) => sane(x.q)) || cands[0] || null;
-    // When several candidates are sane, the LARGEST latest-quarter figure is
-    // the total-revenue line (fee income is a subset of total revenue) — EXCEPT
-    // that "including assessed tax" is not a bigger revenue line, it is the same
-    // revenue with excise tax added back. Brown-Forman's gross figure is $1,181m
-    // against net sales of $911m, and grading the gross line put its margin and
-    // growth 30% out. Net revenue is what the company reports; prefer it.
-    if (chosen) {
-      const saneOnes = cands.filter((x) => sane(x.q) && x.score >= chosen!.score * 0.5);
-      if (saneOnes.length > 1) {
-        const latestVal = (q: Record<string, number>) => { const k = Object.keys(q).sort(); return q[k[k.length - 1]]; };
-        const excl = saneOnes.filter((x) => /ExcludingAssessedTax/.test(x.c));
-        const pool = excl.length ? excl : saneOnes;
-        pool.sort((a, b) => latestVal(b.q) - latestVal(a.q));
-        chosen = pool[0];
-      }
-    }
-    tags.revenue = chosen ? chosen.c : null;
-    qs.revenue = chosen ? chosen.q : {};
+    const r = chooseRevenue(facts, ser, qs.net_income, qs.operating_income);
+    tags.revenue = r.concept;
+    qs.revenue = r.q;
   }
 
-  const revEnds = Object.keys(qs.revenue).sort();
-  if (!revEnds.length) return { ...empty, tags, error: 'no quarterly revenue' };
+  // The quarter universe is every period end that carries a revenue OR a
+  // net-income figure. Revenue alone was the rule, and it left a pre-revenue
+  // biotech — Anavex, Sana — with no gradeable quarter at all rather than a
+  // quarter whose revenue happens to be blank.
+  const ends = Array.from(new Set([...Object.keys(qs.revenue), ...Object.keys(qs.net_income)])).sort();
+  if (!ends.length) return null;
 
   // Pin to the quarter the filing reports, when we know it; else newest.
-  let cur = revEnds[revEnds.length - 1];
+  let cur = ends[ends.length - 1];
   if (asOfPeriodEnd) {
     let bestGap = Infinity;
-    for (const e of revEnds) {
+    for (const e of ends) {
       const gap = Math.abs(diffDays(e, asOfPeriodEnd));
       if (gap <= 45 && gap < bestGap) { cur = e; bestGap = gap; }
     }
   }
-  const prev = yoyPartner(revEnds, cur);
+  const prev = yoyPartner(ends, cur);
 
-  // Period ends can differ by a day or two between statements within one filing
-  // (e.g. cash-flow tagged to the fiscal month-end, P&L to the 52/53-week end).
-  const at = (kind: UsFactKind, end: string | null): number | null => {
+  const at = (kind: UsFactKind, end: string | null): number | null => atMap(qs[kind] || {}, end);
+  const atYoy = (kind: UsFactKind, end: string | null): number | null => {
     if (!end) return null;
-    const m = qs[kind];
-    if (m[end] !== undefined) return m[end];
-    for (const k of Object.keys(m)) if (Math.abs(diffDays(k, end)) <= 4) return m[k];
-    return null;
+    const m = qs[kind] || {};
+    const p = yoyPartner(Object.keys(m), end);
+    return p ? m[p] : null;
   };
 
   // EPS for a quarter, with a fallback of net income ÷ diluted shares. Needed in
@@ -444,49 +703,82 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     if (!fe || !fe.val) return null;
     return fy.val / fe.val;
   };
-  let epsDerived = false;
-  const epsAt = (end: string | null, isCur = false): number | null => {
-    if (!end) return null;
-    const direct = at('eps', end);
-    if (direct != null) return direct;
-    const ni = at('net_income', end);
-    if (ni == null) return null;
+  const deriveEps = (end: string, ni: number | null): { v: number | null; derived: boolean } => {
+    if (ni == null) return { v: null, derived: false };
     // Prefer the quarter's own diluted count; else the latest quarterly count
     // on file (share counts drift slowly); else the fiscal-year average.
     let sh = at('diluted_shares', end);
     if (sh == null) {
-      const ends = Object.keys(qs.diluted_shares).filter((e) => e <= end).sort();
-      if (ends.length) sh = qs.diluted_shares[ends[ends.length - 1]];
+      const es = Object.keys(qs.diluted_shares).filter((e) => e <= end).sort();
+      if (es.length) sh = qs.diluted_shares[es[es.length - 1]];
     }
     if (sh == null) sh = fyShares();
-    if (!sh || sh <= 0) return null;
-    if (isCur) epsDerived = true;
-    return Math.round((ni / sh) * 100) / 100;
+    if (!sh || sh <= 0) return { v: null, derived: false };
+    return { v: Math.round((ni / sh) * 100) / 100, derived: true };
+  };
+  const epsAt = (end: string | null): { v: number | null; derived: boolean } => {
+    if (!end) return { v: null, derived: false };
+    const direct = at('eps', end);
+    if (direct != null) return { v: direct, derived: false };
+    return deriveEps(end, at('net_income', end));
+  };
+  const epsYoy = (end: string | null): number | null => {
+    if (!end) return null;
+    const direct = atYoy('eps', end);
+    if (direct != null) return direct;
+    const p = yoyPartner(ends, end);
+    return p ? epsAt(p).v : null;
   };
 
+  return { tags, qs, ser, ends, cur, prev, at, atYoy, epsAt, epsYoy };
+}
+
+/**
+ * companyfacts JSON → the current + year-ago quarter for every metric we grade.
+ * `asOfPeriodEnd` pins the comparison to a specific quarter (used when the
+ * filing we are grading is not the newest one on file).
+ */
+export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): UsFundamentals {
+  const empty: UsFundamentals = {
+    q_end: null, q_end_prev: null, q_filed: null,
+    revenue: null, revenue_prev: null,
+    operating_income: null, operating_income_prev: null,
+    net_income: null, net_income_prev: null,
+    eps: null, eps_prev: null, cfo: null, cfo_prev: null, capex: null, capex_prev: null,
+    tags: {}, quarters_revenue: null, quarters_eps: null, quarters_opm: null,
+  };
+  if (!facts?.facts?.['us-gaap']) return { ...empty, error: 'no us-gaap facts' };
+  const g = buildGrid(facts, asOfPeriodEnd);
+  if (!g) return { ...empty, error: 'no quarterly revenue or net income' };
+  const { tags, qs, ser, ends, cur, prev, at, atYoy } = g;
+
   const last4 = (kind: UsFactKind, scale: number): number[] | null => {
-    const ends = Object.keys(qs[kind]).filter((e) => e <= cur).sort().slice(-4);
-    if (ends.length < 2) return null;
-    return ends.map((e) => Math.round(qs[kind][e] / scale * 100) / 100);
+    const es = Object.keys(qs[kind]).filter((e) => e <= cur).sort().slice(-4);
+    if (es.length < 2) return null;
+    return es.map((e) => Math.round(qs[kind][e] / scale * 100) / 100);
   };
   const last4Eps = (): number[] | null => {
-    const ends = Object.keys(qs.revenue).filter((e) => e <= cur).sort().slice(-4);
+    const es = ends.filter((e) => e <= cur).slice(-4);
     const out: number[] = [];
-    for (const e of ends) { const v = epsAt(e); if (v != null) out.push(v); }
+    for (const e of es) { const v = g.epsAt(e).v; if (v != null) out.push(v); }
     return out.length >= 2 ? out : null;
   };
   const opmSeries = (): number[] | null => {
-    const ends = Object.keys(qs.revenue).filter((e) => e <= cur).sort().slice(-4);
+    // Margin needs revenue, so this walks the REVENUE quarters, not the wider
+    // revenue-or-net-income universe — otherwise a filer whose net income is
+    // tagged for more quarters than its revenue loses the series entirely.
+    const revEnds = Object.keys(qs.revenue).sort();
+    const es = (revEnds.length ? revEnds : ends).filter((e) => e <= cur).slice(-4);
     const out: number[] = [];
-    for (const e of ends) {
-      const r = qs.revenue[e]; const o = at('operating_income', e);
+    for (const e of es) {
+      const r = at('revenue', e); const o = at('operating_income', e);
       if (!r || o == null) continue;
       out.push(Math.round((o / r) * 1000) / 10);
     }
     return out.length >= 2 ? out : null;
   };
 
-  // When did the current quarter's numbers first hit EDGAR? Latest `filed`
+  // When did the current quarter's numbers first hit EDGAR? Earliest `filed`
   // among the revenue / net-income facts for that period end.
   const qFiled = (): string | null => {
     let best: string | null = null;
@@ -501,17 +793,375 @@ export function extractFundamentals(facts: any, asOfPeriodEnd?: string | null): 
     return best;
   };
 
+  const epsCur = g.epsAt(cur);
   return {
     q_end: cur, q_end_prev: prev, q_filed: qFiled(), tags,
-    revenue: at('revenue', cur), revenue_prev: at('revenue', prev),
-    operating_income: at('operating_income', cur), operating_income_prev: at('operating_income', prev),
-    net_income: at('net_income', cur), net_income_prev: at('net_income', prev),
-    eps: epsAt(cur, true), eps_prev: epsAt(prev),
-    eps_derived: epsDerived,
-    cfo: at('cfo', cur), cfo_prev: at('cfo', prev),
-    capex: at('capex', cur), capex_prev: at('capex', prev),
+    revenue: at('revenue', cur), revenue_prev: atYoy('revenue', cur),
+    operating_income: at('operating_income', cur), operating_income_prev: atYoy('operating_income', cur),
+    net_income: at('net_income', cur), net_income_prev: atYoy('net_income', cur),
+    eps: epsCur.v, eps_prev: g.epsYoy(cur),
+    eps_derived: epsCur.derived,
+    cfo: at('cfo', cur), cfo_prev: atYoy('cfo', cur),
+    capex: at('capex', cur), capex_prev: atYoy('capex', cur),
     quarters_revenue: last4('revenue', 1e6), quarters_eps: last4Eps(), quarters_opm: opmSeries(),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LONG QUARTERLY HISTORY — the multi-period table
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * A dated, aligned quarterly history. Every array is the same length as `ends`
+ * and index i belongs to the quarter `ends[i]` — `null` where the filer did not
+ * tag that line. Nothing is ever shifted or padded to make a column line up:
+ * fiscal calendars drift (52/53-week filers, calendar switches mid-comparison),
+ * so the caller must match periods BY DATE, never by counting back three or
+ * twelve positions.
+ */
+export interface UsQuarterSeries {
+  ends: string[];                       // period-end ISO dates, oldest → newest
+  revenue: (number | null)[];           // $M
+  gross_profit: (number | null)[];      // $M
+  operating_income: (number | null)[];  // $M
+  net_income: (number | null)[];        // $M
+  /** $/share, diluted GAAP.
+   *  SPLITS: EDGAR restates only the periods a later filing re-presents, so a
+   *  quarter more than ~5 quarters back may still carry a PRE-split figure
+   *  while recent quarters are post-split (NVIDIA's July-2023 quarter is tagged
+   *  0.25 on the post-split basis, its April-2023 quarter 0.82 on the pre-split
+   *  one — no filing after the June-2024 split ever re-presented April-2023).
+   *  Dollar lines are immune. For a 3-year EARNINGS growth rate use
+   *  `net_income`, never the ends of this array. */
+  eps: (number | null)[];
+  cfo: (number | null)[];               // $M
+  fcf: (number | null)[];               // $M (cfo − capex)
+}
+
+const musd = (v: number | null): number | null => (v == null ? null : Math.round(v / 1e4) / 100);
+
+/**
+ * `maxQuarters` quarters ending at (and including) the quarter `asOfPeriodEnd`
+ * selects — the same selection `extractFundamentals` makes, from the same grid.
+ * 16 by default: enough for the quarter three years back and a 3-year CAGR.
+ */
+export function quarterSeries(facts: any, asOfPeriodEnd?: string | null, maxQuarters = 16): UsQuarterSeries | null {
+  const g = buildGrid(facts, asOfPeriodEnd);
+  if (!g) return null;
+  const ends = g.ends.filter((e) => e <= g.cur).slice(-Math.max(1, maxQuarters));
+  if (!ends.length) return null;
+
+  // GROSS PROFIT. Preferred straight from `GrossProfit`; otherwise revenue
+  // less cost of revenue — and the revenue in that subtraction is the SAME
+  // series the grid chose, never a different tag. Mixing a gross ("including
+  // assessed tax") revenue line with a net cost line, or an ASC-606 fee line
+  // with total cost of sales, produces a margin that is simply invented.
+  const gpC = pickConcept(facts, 'gross_profit');
+  const gpQ = gpC ? quarterize(g.ser(gpC), false) : {};
+  const costC = pickConcept(facts, 'cost_of_revenue');
+  const costQ = costC ? quarterize(g.ser(costC), false) : {};
+
+  const out: UsQuarterSeries = {
+    ends, revenue: [], gross_profit: [], operating_income: [], net_income: [], eps: [], cfo: [], fcf: [],
+  };
+  for (const e of ends) {
+    const rev = g.at('revenue', e);
+    let gp = atMap(gpQ, e);
+    if (gp == null) {
+      const cost = atMap(costQ, e);
+      if (rev != null && cost != null) gp = rev - cost;
+    }
+    const cfo = g.at('cfo', e);
+    const capex = g.at('capex', e);
+    out.revenue.push(musd(rev));
+    out.gross_profit.push(musd(gp));
+    out.operating_income.push(musd(g.at('operating_income', e)));
+    out.net_income.push(musd(g.at('net_income', e)));
+    out.eps.push(g.epsAt(e).v);
+    out.cfo.push(musd(cfo));
+    out.fcf.push(cfo != null && capex != null ? musd(cfo - Math.abs(capex)) : null);
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KEY CONTEXT — balance sheet + capital returns
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface InstFact { end: string; val: number; form?: string; filed?: string }
+
+/**
+ * All de-duplicated INSTANT facts for one concept. `conceptSeries` deliberately
+ * skips these (it wants durations); a balance sheet has no start date, only an
+ * "as at". Restatements win the same way: latest `filed` for each instant.
+ */
+export function instantSeries(facts: any, concept: string): InstFact[] {
+  const node = facts?.facts?.['us-gaap']?.[concept];
+  if (!node?.units) return [];
+  const uk = Object.keys(node.units).includes('USD') ? 'USD' : Object.keys(node.units)[0];
+  if (!uk) return [];
+  const best = new Map<string, any>();
+  for (const e of node.units[uk] as any[]) {
+    if (!e?.end || e.start) continue;                 // instants only
+    if (!TRUSTED_FORMS.has(e.form)) continue;
+    if (typeof e.val !== 'number' || !Number.isFinite(e.val)) continue;
+    const prev = best.get(e.end);
+    if (!prev || String(e.filed || '') > String(prev.filed || '')) best.set(e.end, e);
+  }
+  const out: InstFact[] = [];
+  best.forEach((e) => out.push({ end: e.end, val: e.val, form: e.form, filed: e.filed }));
+  out.sort((a, b) => a.end.localeCompare(b.end));
+  return out;
+}
+
+export interface UsBalanceContext {
+  cash_musd: number | null;             // cash + equivalents (+ short-term investments if separately tagged, summed)
+  cash_incl_st_inv: boolean;            // true when short-term investments were included
+  /** Total debt: short-term/current + long-term, from the roll-up elements the
+   *  filer tags. Null when an issuer discloses debt only instrument-by-
+   *  instrument (several REITs) or only inside dimensional contexts (a bank's
+   *  long-term debt), which the aggregate companyfacts API does not expose. */
+  debt_musd: number | null;
+  sbc_musd: number | null;              // share-based compensation, THIS quarter (de-cumulated)
+  buyback_musd: number | null;          // common-stock repurchases, THIS quarter (de-cumulated)
+  dividends_musd: number | null;        // dividends paid, THIS quarter (de-cumulated)
+  diluted_shares_m: number | null;      // weighted-average diluted shares this quarter, millions
+  diluted_shares_yoy_pct: number | null;// negative = net buyback shrinking the count
+  as_of: string | null;                 // the instant date the balance-sheet figures came from
+}
+
+// Ladders. Cash first, because the "restricted cash" roll-up is a superset and
+// only the right answer when the plain tag is absent (Buckle tags only the
+// roll-up; its plain cash fact stopped in 2020 and taking it would have
+// reported a six-year-old balance).
+const CASH_TAGS = [
+  'CashAndCashEquivalentsAtCarryingValue',
+  'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents',
+  'CashAndDueFromBanks',
+];
+const ST_INVESTMENT_TAGS = [
+  'ShortTermInvestments',
+  'AvailableForSaleSecuritiesDebtSecuritiesCurrent',
+  'MarketableSecuritiesCurrent',
+];
+/** `DebtCurrent` is the TOTAL of current debt; the others are its components,
+ *  so it is used alone when present and never added to them. */
+const DEBT_CURRENT_TOTAL = 'DebtCurrent';
+const DEBT_CURRENT_PARTS = ['LongTermDebtCurrent'];
+const DEBT_SHORT_TERM_BORROWINGS = ['ShortTermBorrowings', 'OtherShortTermBorrowings'];
+// `NotesPayable` last: a REIT's unclassified balance sheet has no "non-current"
+// anything, and Realty Income's entire $25.1bn of bonds sits under that one
+// element. Only ever reached when the classified tags are absent.
+//
+// DELIBERATELY NOT HERE: `SeniorNotes`, `UnsecuredDebt`, `SecuredDebt`,
+// `LineOfCredit`. Each is ONE instrument class of several (W. P. Carey tags
+// four of them, Digital Realty three), so using one alone understates and
+// adding them up double-counts against the roll-ups filers also tag. A ladder
+// may only contain elements that are TOTALS. Filers that disclose debt purely
+// instrument-by-instrument therefore return null — see the note on `debt_musd`.
+const DEBT_NONCURRENT_TAGS = ['LongTermDebtNoncurrent', 'ConvertibleDebtNoncurrent', 'SeniorNotesNoncurrent', 'NotesPayable'];
+/** `LongTermDebt` is usually the TOTAL including current maturities — adding
+ *  the current portion to it double-counts (NVIDIA: 33,366 total = 1,000
+ *  current + 32,366 non-current, so 34,366 would be wrong by a billion). */
+const DEBT_TOTAL_TAG = 'LongTermDebt';
+
+/**
+ * The bullets a serious earnings write-up carries: cash, debt, stock-based
+ * compensation, buybacks, dividends, and whether the share count is rising or
+ * falling.
+ *
+ * Balance-sheet figures are INSTANTS and are all read at ONE date — the instant
+ * this filer's own balance sheet is dated, chosen as the one most of these
+ * concepts agree on within ±10 days of the quarter end. Borrowing a cash
+ * balance from a different quarter would be worse than showing nothing, so a
+ * tag whose newest instant is stale (Dollar Tree still tags `LongTermDebt` at
+ * the January year-end six months on) is simply not used.
+ *
+ * The flow figures are year-to-date in every 10-Q and are de-cumulated exactly
+ * as CFO is.
+ */
+export function balanceContext(facts: any, periodEnd: string | null | undefined): UsBalanceContext | null {
+  if (!facts?.facts?.['us-gaap']) return null;
+  const out: UsBalanceContext = {
+    cash_musd: null, cash_incl_st_inv: false, debt_musd: null,
+    sbc_musd: null, buyback_musd: null, dividends_musd: null,
+    diluted_shares_m: null, diluted_shares_yoy_pct: null, as_of: null,
+  };
+
+  const instCache = new Map<string, InstFact[]>();
+  const inst = (c: string) => {
+    if (!instCache.has(c)) instCache.set(c, instantSeries(facts, c));
+    return instCache.get(c)!;
+  };
+  const balanceTags = [...CASH_TAGS, ...ST_INVESTMENT_TAGS, DEBT_CURRENT_TOTAL,
+    ...DEBT_CURRENT_PARTS, ...DEBT_SHORT_TERM_BORROWINGS, ...DEBT_NONCURRENT_TAGS, DEBT_TOTAL_TAG];
+
+  // ── the balance-sheet date this filer used for this quarter ──
+  // With no quarter named, "the balance sheet" means the LATEST one on file —
+  // never the date that happens to be tagged most often. Dell has tagged its
+  // 2018 fiscal year end more times than any recent quarter, so the vote alone
+  // returned an eight-year-old balance sheet ($51.9bn of debt, correct for
+  // 2018, absurd for now). The anchor is always a date; only the tie-break is
+  // a vote.
+  let anchor = periodEnd || null;
+  if (!anchor) {
+    for (const c of balanceTags) for (const f of inst(c)) if (!anchor || f.end > anchor) anchor = f.end;
+    if (!anchor) return out;
+  }
+  const votes = new Map<string, number>();
+  for (const c of balanceTags) {
+    for (const f of inst(c)) {
+      if (Math.abs(diffDays(f.end, anchor)) > 10) continue;
+      votes.set(f.end, (votes.get(f.end) || 0) + 1);
+    }
+  }
+  const periodAnchor: string = anchor;
+  let asOf: string | null = null;
+  votes.forEach((n, e) => {
+    if (!asOf) { asOf = e; return; }
+    const best = votes.get(asOf) || 0;
+    const gapE = Math.abs(diffDays(e, periodAnchor));
+    const gapB = Math.abs(diffDays(asOf, periodAnchor));
+    // most-used instant wins; then the one closest to the quarter end; then the newest
+    if (n > best || (n === best && (gapE < gapB || (gapE === gapB && e > asOf!)))) asOf = e;
+  });
+  out.as_of = asOf;
+
+  const atInstant = (c: string): number | null => {
+    if (!asOf) return null;
+    for (const f of inst(c)) if (f.end === asOf) return f.val;
+    return null;
+  };
+
+  // ── cash (+ short-term investments when separately tagged at the same date) ──
+  let cash: number | null = null;
+  for (const c of CASH_TAGS) { const v = atInstant(c); if (v != null) { cash = v; break; } }
+  if (cash != null) {
+    for (const c of ST_INVESTMENT_TAGS) {
+      const v = atInstant(c);
+      if (v != null && v > 0) { cash += v; out.cash_incl_st_inv = true; break; }
+    }
+    out.cash_musd = Math.round(cash / 1e4) / 100;
+  }
+
+  // ── debt ──
+  {
+    let current: number | null = atInstant(DEBT_CURRENT_TOTAL);
+    if (current == null) {
+      let sum: number | null = null;
+      for (const c of DEBT_CURRENT_PARTS) { const v = atInstant(c); if (v != null) sum = (sum ?? 0) + v; }
+      // Short-term borrowings sit alongside current maturities of long-term
+      // debt, not inside them (Brown-Forman: $0 current LTD, $358m of
+      // commercial paper) — but `OtherShortTermBorrowings` is a component of
+      // `ShortTermBorrowings`, so only the first that exists is added.
+      for (const c of DEBT_SHORT_TERM_BORROWINGS) { const v = atInstant(c); if (v != null) { sum = (sum ?? 0) + v; break; } }
+      current = sum;
+    }
+    let nonCurrent: number | null = null;
+    for (const c of DEBT_NONCURRENT_TAGS) { const v = atInstant(c); if (v != null) { nonCurrent = v; break; } }
+    const total = atInstant(DEBT_TOTAL_TAG);
+    // TOTAL DEBT MUST BE A TOTAL. When the long-term side is missing at this
+    // balance-sheet date, the current portion on its own is not it — GE
+    // Aerospace would have read $2.0bn, Medtronic $2.5bn and JPMorgan $72bn,
+    // each an order of magnitude light, because those issuers tag their
+    // long-term debt only inside dimensional contexts (or only at fiscal year
+    // ends) that the aggregate companyfacts API does not carry. A filer that
+    // has NEVER tagged a long-term-debt element is different: it has no
+    // long-term debt to miss, and its current portion really is the total.
+    const everLongTerm = [...DEBT_NONCURRENT_TAGS, DEBT_TOTAL_TAG].some((c) => inst(c).length > 0);
+    if (nonCurrent == null && total == null && everLongTerm) {
+      out.debt_musd = null;
+    } else {
+      const parts = (current == null && nonCurrent == null) ? null : (current ?? 0) + (nonCurrent ?? 0);
+      // `LongTermDebt` normally already includes the current maturities.
+      const debt = (total != null && (parts == null || total >= parts)) ? total : parts;
+      if (debt != null) out.debt_musd = Math.round(debt / 1e4) / 100;
+    }
+  }
+
+  // The duration end the quarter's flow lines are keyed on. With no quarter
+  // named this is the balance-sheet date that was just resolved — the two are
+  // the same date for every filer, and using it means a caller that says only
+  // "the latest" still gets that quarter's stock comp and buybacks instead of
+  // nulls.
+  const flowEnd: string | null = asOf || periodAnchor || null;
+
+  // ── flows: SBC, buybacks, dividends (year-to-date → this quarter) ──
+  const serCache = new Map<string, DurFact[]>();
+  const ser = (c: string) => {
+    if (!serCache.has(c)) serCache.set(c, conceptSeries(facts, c));
+    return serCache.get(c)!;
+  };
+  // Walk the ladder in PRIORITY order and take the first element that actually
+  // covers the quarter being asked about — coverage over all history is the
+  // wrong question here. NetApp tags stock-based compensation twice, and the
+  // element with the longer history (`AllocatedShareBasedCompensationExpense`)
+  // stops at the previous fiscal year end, so scoring by coverage reported no
+  // SBC at all for a quarter the filing states as $98m.
+  const flow = (kind: UsFactKind): number | null => {
+    for (const c of US_TAGS[kind] || []) {
+      const v = atMap(quarterize(ser(c), true), flowEnd);
+      if (v != null) return Math.round(Math.abs(v) / 1e4) / 100;
+    }
+    return null;
+  };
+  out.sbc_musd = flow('sbc');
+  out.buyback_musd = flow('buyback');
+  out.dividends_musd = flow('dividends');
+
+  // ── diluted share count and its year-on-year direction ──
+  {
+    const c = pickConcept(facts, 'diluted_shares');
+    if (c) {
+      const q = quarterize(ser(c), false, false);
+      const niC = pickConcept(facts, 'net_income');
+      const epsC = pickConcept(facts, 'eps');
+      const qNi = niC ? quarterize(ser(niC), false) : {};
+      const qEps = epsC ? quarterize(ser(epsC), false, false) : {};
+      // A filer can simply get the SCALE wrong: Anavex's own 10-Q tags its June
+      // quarter's weighted-average diluted count as 92,899,536,000 against a
+      // real 92.9m — a decimals slip, the same class of error that already
+      // forces the market-cap cross-check in `gradeUsRow`. Net income ÷ EPS is
+      // the count the filing itself implies, and a decimals slip always shows
+      // up as a clean POWER OF TEN against it, so that is the only discrepancy
+      // corrected, by dividing the slip out rather than by substituting the
+      // imprecise implied figure.
+      //
+      // The power-of-ten test is doing real work, not being fussy. Net income
+      // and EPS often have different numerators — Annaly's `NetIncomeLoss`
+      // includes preferred dividends its EPS excludes, and at $0.03 of EPS that
+      // put the implied count 3x above the true 621m. Any looser rule threw
+      // away a share count that was right.
+      const checked = (end: string | null): number | null => {
+        const sh = atMap(q, end);
+        if (sh == null || !(sh > 0)) return null;
+        const ni = atMap(qNi, end), eps = atMap(qEps, end);
+        if (ni == null || eps == null || eps === 0) return sh;
+        const implied = ni / eps;
+        if (!(implied > 0)) return sh;
+        const ratio = sh / implied;
+        if (ratio < 5 && ratio > 0.2) return sh;
+        const pow = Math.pow(10, Math.round(Math.log10(ratio)));
+        if (Math.abs(pow) < 1e-12) return sh;
+        return Math.abs(ratio / pow - 1) <= 0.25 ? sh / pow : sh;
+      };
+      const now = checked(flowEnd);
+      if (now != null) {
+        out.diluted_shares_m = Math.round(now / 1e4) / 100;
+        // ±25 days around T−365, so a 52/53-week filer still finds its partner.
+        const p = flowEnd ? yoyPartner(Object.keys(q), flowEnd) : null;
+        const then = checked(p);
+        // NOTE: EDGAR only restates the periods a later filing re-presents, so
+        // across a stock split — or a reverse recapitalisation, where the
+        // year-ago count is the accounting acquirer's tiny predecessor share
+        // base — this ratio is a capital-structure artefact, not a buyback. It
+        // is reported exactly as filed; a consumer should treat a triple-digit
+        // move as "restructured", never as issuance.
+        if (then != null && then > 0) out.diluted_shares_yoy_pct = ((now - then) / then) * 100;
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -526,6 +1176,47 @@ export function yoyPct(cur: number | null, prev: number | null): number | null {
   if (prev <= 0) return null;
   return ((cur - prev) / Math.abs(prev)) * 100;
 }
+
+/**
+ * What `yoyPct` refuses to say, said in words.
+ *
+ * Refusing to divide by a negative base is right — a loss of $0.31 becoming a
+ * profit of $1.59 is not "+613% growth" — but a card that then prints a bare
+ * dash throws away the single most important fact about the quarter. Semtech
+ * swung from a loss to $1.59 of GAAP EPS and the tile read "—".
+ *
+ * So every metric that can go negative carries a swing descriptor alongside its
+ * percentage. The percentage stays null; the tile prints the swing instead. The
+ * two are never both shown, and neither is ever invented: both current and
+ * prior must exist for a swing to be named at all.
+ */
+export type SwingKind =
+  | 'loss-to-profit'      // prev ≤ 0, cur > 0  — the turnaround
+  | 'profit-to-loss'      // prev > 0, cur ≤ 0
+  | 'loss-narrowed'       // both ≤ 0, |cur| < |prev|
+  | 'loss-widened'        // both ≤ 0, |cur| ≥ |prev|
+  | null;
+
+export function swingKind(cur: number | null, prev: number | null): SwingKind {
+  if (cur == null || prev == null) return null;
+  if (!Number.isFinite(cur) || !Number.isFinite(prev)) return null;
+  if (prev > 0) return cur > 0 ? null : 'profit-to-loss';   // prev > 0 → yoyPct handles the growth case
+  if (cur > 0) return 'loss-to-profit';
+  return Math.abs(cur) < Math.abs(prev) ? 'loss-narrowed' : 'loss-widened';
+}
+
+/** Short label for a swing, for a tile that has no room for a sentence. */
+export const SWING_LABEL: Record<Exclude<SwingKind, null>, string> = {
+  'loss-to-profit': 'Loss → Profit',
+  'profit-to-loss': 'Profit → Loss',
+  'loss-narrowed': 'Loss narrowed',
+  'loss-widened': 'Loss widened',
+};
+/** Whether a swing is good news — drives the tile colour, nothing else. */
+export const SWING_GOOD: Record<Exclude<SwingKind, null>, boolean> = {
+  'loss-to-profit': true, 'profit-to-loss': false,
+  'loss-narrowed': true, 'loss-widened': false,
+};
 
 // ─── US market-cap buckets (the India ₹Cr ladder has no meaning here) ───────
 export type UsCapBucket = 'mega' | 'large' | 'mid' | 'small' | 'micro';
@@ -601,6 +1292,30 @@ export interface UsGradedRow {
   opm_pct: number | null;
   opm_prev_pct: number | null;
   cfo_to_pat_ratio: number | null;
+
+  /** Set when the YoY percentage is null because the base was a loss — the
+   *  tile prints this instead of a dash. See `swingKind`. */
+  eps_swing: SwingKind;
+  net_income_swing: SwingKind;
+  fcf_swing: SwingKind;
+
+  /** GAAP EPS growth ONLY. `eps_yoy_pct` is the grading axis and silently
+   *  falls back to the adjusted basis when GAAP has a loss base; a tile
+   *  labelled "EPS · GAAP" must never print an adjusted growth rate, so it
+   *  reads this. */
+  eps_gaap_yoy_pct: number | null;
+
+  /** The street (adjusted) basis, carried as first-class row fields so the
+   *  main tile row can always show an EPS: a company whose GAAP line swung out
+   *  of a loss has no GAAP growth rate, but its adjusted EPS almost always
+   *  has one, and that is the number the market traded. Never mixed with the
+   *  GAAP tile — they are two tiles, always labelled. */
+  eps_adj_curr: number | null;
+  eps_adj_prev: number | null;
+  eps_adj_yoy_pct: number | null;
+  eps_adj_swing: SwingKind;
+  /** Which basis the grade's growth axis actually used. */
+  eps_basis_used: 'gaap' | 'adjusted' | null;
 
   gap_pct: number | null;
   d1_pct: number | null;
@@ -1016,6 +1731,19 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     opm_pct: opm != null ? Math.round(opm * 100) / 100 : null,
     opm_prev_pct: opmPrev != null ? Math.round(opmPrev * 100) / 100 : null,
     cfo_to_pat_ratio: cfoPat != null ? Math.round(cfoPat * 100) / 100 : null,
+    // The swings that a percentage cannot express. `eps_yoy_pct` above may
+    // carry the ADJUSTED growth rate when the GAAP line had a loss base
+    // (`usedAdjEps`), so the GAAP swing is computed from the GAAP figures
+    // directly and is what the GAAP tile shows.
+    eps_swing: swingKind(f.eps, f.eps_prev),
+    eps_gaap_yoy_pct: epsYGaap,
+    net_income_swing: swingKind(niC, niP),
+    fcf_swing: swingKind(fcfC, fcfP),
+    eps_adj_curr: input.adj_eps ?? null,
+    eps_adj_prev: input.adj_eps_prev ?? null,
+    eps_adj_yoy_pct: epsYAdj,
+    eps_adj_swing: swingKind(input.adj_eps ?? null, input.adj_eps_prev ?? null),
+    eps_basis_used: epsYGaap != null ? 'gaap' : epsYAdj != null ? 'adjusted' : null,
     gap_pct: p?.gap_pct ?? null, d1_pct: p?.d1_pct ?? null, move_pct: p?.move_pct ?? null,
     rs_rating: rs, stage, pct_from_52w_high: pct52,
     addv_musd: addv, vol_ratio_20d: p?.vol_ratio_20d ?? null,
