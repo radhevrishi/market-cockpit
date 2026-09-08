@@ -33,10 +33,11 @@ import {
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
   type EdgarFiling,
 } from '@/lib/us-edgar';
-import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, type UsTechnicals, type EpsHistoryRow } from '@/lib/us-prices';
+import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, yahooForwardEstimates, type UsTechnicals, type EpsHistoryRow, type ForwardEstimate } from '@/lib/us-prices';
 import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml } from '@/lib/us-pr-financials';
+import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear,
@@ -104,6 +105,39 @@ function fmtYoy(cur: number, prev: number): string {
   if (prev <= 0) return 'n/m';
   const p = ((cur - prev) / Math.abs(prev)) * 100;
   return `${p >= 0 ? '+' : ''}${Math.round(p)}%`;
+}
+
+/**
+ * Attach the street estimate to each guidance figure.
+ *
+ * Yahoo's earningsTrend carries an estimate for the current quarter (0q), the
+ * next (+1q), this fiscal year (0y) and the next (+1y) — but nothing that maps
+ * those to a filer's own "Q3 FY26" label. So the match is made on MAGNITUDE:
+ * the candidate estimate closest to the guided midpoint, accepted only when it
+ * lands within 25%. That is deliberately conservative — a guidance range shown
+ * against the wrong period's consensus is worse than one shown with no
+ * consensus at all.
+ */
+function withEstimates(figs: GuidanceFigure[], fwd: ForwardEstimate[]): Array<GuidanceFigure & { est?: number | null }> {
+  if (!figs.length) return figs as any;
+  const pick = (kind: 'revenue' | 'eps', period: 'quarter' | 'year', mid: number): number | null => {
+    const wanted = period === 'quarter' ? ['0q', '+1q'] : ['0y', '+1y'];
+    let best: number | null = null;
+    let bestGap = Infinity;
+    for (const f of fwd) {
+      if (!wanted.includes(f.period)) continue;
+      const v = kind === 'revenue' ? f.revenue : f.eps;
+      if (v == null || !Number.isFinite(v)) continue;
+      const gap = Math.abs(v - mid) / Math.max(1e-9, Math.abs(mid));
+      if (gap < bestGap) { bestGap = gap; best = v; }
+    }
+    return bestGap <= 0.25 ? best : null;
+  };
+  return figs.map((f) => {
+    if ((f.metric !== 'revenue' && f.metric !== 'eps') || f.unit === 'pct' || f.low == null || f.high == null) return f;
+    const mid = (f.low + f.high) / 2;
+    return { ...f, est: pick(f.metric, f.period, mid) };
+  });
 }
 
 function isWeekend(iso: string): boolean {
@@ -291,20 +325,23 @@ export async function GET(req: Request) {
     // Toro look like a 38% miss on a quarter it beat on the basis analysts
     // actually use. The GAAP figure stays in the YoY tile; the surprise chip
     // is street vs street.
-    const [surprises, guidances] = await Promise.all([
+    const [surprises, guidances, forwards] = await Promise.all([
       pooled(prepared, 6, (p) => yahooEarningsHistory(p.f.ticker!)),
       // Guidance lives in the 8-K's press-release exhibit; a 10-Q-only filer
       // has no release to read.
       pooled(prepared, 4, (p) => (p.f.form === '8-K' && p.f.accession)
         ? guidanceFromFiling(p.f.cikNum, p.f.accession, p.f.filing_url)
-        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null })),
+        : Promise.resolve<Guidance>({ label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [] })),
+      // The street's number for the period being guided — the "(Est. $5.54B)"
+      // an earnings feed prints beside a raised outlook.
+      pooled(prepared, 6, (p) => yahooForwardEstimates(p.f.ticker!)),
     ]);
 
     const graded: UsGradedRow[] = [];
     for (let pi = 0; pi < prepared.length; pi++) {
       const p = prepared[pi];
       const sRows: EpsHistoryRow[] = surprises[pi] || [];
-      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null };
+      const g = guidances[pi] || { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [] };
       // Yahoo keys the row by fiscal-quarter END; take the row whose quarter is
       // within 45 days of the quarter we graded (52/53-week calendars shift it).
       const sLatest = sRows.find((r) => r.quarter && p.fundamentals.q_end && Math.abs(daysBetween(r.quarter, p.fundamentals.q_end)) <= 45 && r.eps_actual != null) || null;
@@ -337,6 +374,7 @@ export async function GET(req: Request) {
       (row as any).guidance_score = g.score;
       (row as any).guidance_snippets = g.snippets;
       (row as any).guidance_url = g.source_url;
+      (row as any).guidance_figures = withEstimates(g.figures, forwards[pi] || []);
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
       // CFO/PAT is a funding artefact for banks, insurers and REITs — flag the
@@ -452,6 +490,7 @@ export async function GET(req: Request) {
           if (g) {
             (row as any).guidance = g.label; (row as any).guidance_score = g.score;
             (row as any).guidance_snippets = g.snippets; (row as any).guidance_url = g.source_url;
+            (row as any).guidance_figures = withEstimates(g.figures, await yahooForwardEstimates(f.ticker!).catch(() => []));
             if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
             if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
           }

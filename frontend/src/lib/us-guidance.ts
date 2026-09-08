@@ -17,6 +17,8 @@
 // User-Agent rule as everything else on sec.gov.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { guidanceFiguresFromText, type GuidanceFigure } from './us-guidance-figures';
+
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 
 export type GuidanceLabel = 'RAISED' | 'MAINTAINED' | 'LOWERED' | 'PROVIDED' | 'WITHDRAWN';
@@ -33,6 +35,8 @@ export interface Guidance {
   fiscal_label: string | null;
   fiscal_q: 1 | 2 | 3 | 4 | null;
   fiscal_fy: number | null;
+  /** The guided numbers themselves — see lib/us-guidance-figures. */
+  figures: GuidanceFigure[];
 }
 
 const _g = new Map<string, { at: number; data: Guidance }>();
@@ -195,7 +199,7 @@ export async function releaseDocument(cikNum: number, accession: string, filingI
       // The press release: EX-99 / ex99 / "pressrelease" / "earnings" .htm; fall
       // back to the largest .htm that is not the 8-K wrapper or an XML/graphic.
       const htm = items.filter((it) => /\.htm(l)?$/i.test(String(it.name)) && !/^R\d+\.htm/i.test(String(it.name)));
-      let pick = htm.find((it) => /ex[-_]?99|ex99|press|earnings|release|results/i.test(String(it.name)));
+      let pick = htm.find((it) => /ex[-_]?99|ex99|exhibit\s*99|press|earnings|release|results/i.test(String(it.name)));
       if (!pick) {
         const sorted = htm.slice().sort((a, b) => (parseInt(b.size, 10) || 0) - (parseInt(a.size, 10) || 0));
         pick = sorted[0];
@@ -223,7 +227,7 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
   const hit = _g.get(key);
   if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
 
-  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null };
+  const none: Guidance = { label: null, score: 0, snippets: [], source_url: null, fiscal_label: null, fiscal_q: null, fiscal_fy: null, figures: [] };
   let out = none;
   try {
     {
@@ -269,6 +273,7 @@ export async function guidanceFromFiling(cikNum: number, accession: string, fili
             label: c.label, score: c.score, snippets: c.picked, source_url: url,
             fiscal_label: (fl.q && fl.fy) ? `Q${fl.q} FY${String(fl.fy).slice(2)}` : null,
             fiscal_q: fl.q, fiscal_fy: fl.fy,
+            figures: guidanceFiguresFromText(text),
           };
         }
       }

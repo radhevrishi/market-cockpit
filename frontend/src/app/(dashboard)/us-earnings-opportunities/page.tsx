@@ -25,6 +25,7 @@ import {
   fmtUsd, fmtPx, fmtPct, US_TIER_ORDER,
   type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
+import { fmtGuideRange, GUIDE_METRIC_LABEL, type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
 
@@ -1040,6 +1041,10 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
       <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginTop: 9, lineHeight: 1.5 }}>
         {r.narrative}
       </div>
+      {Array.isArray((r as any).guidance_figures) && (r as any).guidance_figures.length > 0 && (
+        <GuideBlock figs={(r as any).guidance_figures} label={(r as any).guidance} />
+      )}
+
       {Array.isArray((r as any).guidance_snippets) && (r as any).guidance_snippets.length > 0 && (
         <details style={{ marginTop: 7 }}>
           <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>
@@ -1083,6 +1088,63 @@ function UsEarningsCard({ r }: { r: UsGradedRow }) {
           </a>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The guided numbers, grouped by period the way an earnings feed prints them:
+ *
+ *   Raises FY26 guide   Revenue $5.63B–$5.71B (Est. $5.54B) ▲   from $5.40B–$5.48B
+ *                       Adj. EPS $9.83–$10.31 (Est. $9.25) ▲    from $8.65–$9.05
+ *
+ * Everything except "(Est. …)" is read from the company's own press release;
+ * the estimate is the street's consensus for that period.
+ */
+function GuideBlock({ figs, label }: { figs: Array<GuidanceFigure & { est?: number | null }>; label?: string | null }) {
+  const groups = new Map<string, Array<GuidanceFigure & { est?: number | null }>>();
+  for (const f of figs) {
+    if (!groups.has(f.period_label)) groups.set(f.period_label, []);
+    groups.get(f.period_label)!.push(f);
+  }
+  const verb = label === 'RAISED' ? 'Raises' : label === 'LOWERED' ? 'Cuts' : label === 'MAINTAINED' ? 'Reaffirms' : 'Guides';
+  return (
+    <div style={{
+      marginTop: 8, borderRadius: 6, border: '1px solid var(--mc-bg-4)',
+      backgroundColor: 'var(--mc-bg-1)', padding: '7px 9px',
+    }}>
+      {Array.from(groups.entries()).map(([period, list]) => (
+        <div key={period} style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', marginBottom: 3 }}>
+            {verb.toUpperCase()} {period.toUpperCase()} GUIDE
+          </div>
+          {list.map((f, i) => {
+            const beat = (f.est != null && f.low != null && f.high != null) ? ((f.low + f.high) / 2) - f.est : null;
+            const good = beat != null ? beat > 0 : (f.raised === true ? true : null);
+            return (
+              <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 11, lineHeight: 1.6 }}>
+                <span style={{ color: 'var(--mc-text-3)', minWidth: 96 }}>
+                  {f.basis === 'adjusted' ? 'Adj. ' : ''}{GUIDE_METRIC_LABEL[f.metric]}
+                </span>
+                <b style={{ color: 'var(--mc-text-0)' }}>{fmtGuideRange(f)}</b>
+                {f.est != null && (
+                  <span style={{ color: 'var(--mc-text-4)' }}>
+                    (Est. {fmtGuideRange({ low: f.est, high: f.est, unit: f.unit })})
+                  </span>
+                )}
+                {good != null && (
+                  <span style={{ color: good ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>{good ? '▲' : '▼'}</span>
+                )}
+                {f.prior_low != null && (
+                  <span style={{ color: 'var(--mc-text-4)' }}>
+                    from {fmtGuideRange({ low: f.prior_low, high: f.prior_high, unit: f.unit })}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

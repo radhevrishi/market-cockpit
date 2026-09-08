@@ -384,6 +384,46 @@ export async function yahooEarningsHistory(ticker: string): Promise<EpsHistoryRo
   return out;
 }
 
+// ─── Yahoo forward estimates: the consensus for the period being GUIDED ──────
+// A guidance range means little without the bar it is being measured against.
+// `earningsTrend` carries the street's revenue and EPS estimate for the current
+// quarter (0q), next quarter (+1q), this fiscal year (0y) and next (+1y) — which
+// is exactly the "(Est. $5.54B)" an earnings feed prints beside a raised guide.
+export interface ForwardEstimate { period: string; end_date: string | null; eps: number | null; revenue: number | null; }
+const _ft = new Map<string, { at: number; data: ForwardEstimate[] }>();
+export async function yahooForwardEstimates(ticker: string): Promise<ForwardEstimate[]> {
+  const t = String(ticker || '').toUpperCase();
+  if (!t) return [];
+  const hit = _ft.get(t);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.data;
+  let out: ForwardEstimate[] = [];
+  try {
+    const c = await yahooCrumb();
+    if (c) {
+      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=earningsTrend&crumb=${encodeURIComponent(c.crumb)}`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': BROWSER_UA, 'Cookie': c.cookie },
+        cache: 'no-store', signal: AbortSignal.timeout(9000),
+      });
+      if (res.ok) {
+        const j: any = await res.json();
+        const trend: any[] = j?.quoteSummary?.result?.[0]?.earningsTrend?.trend || [];
+        out = trend
+          .filter((x) => ['0q', '+1q', '0y', '+1y'].includes(String(x?.period)))
+          .map((x) => ({
+            period: String(x.period),
+            end_date: x?.endDate ?? null,
+            eps: typeof x?.earningsEstimate?.avg?.raw === 'number' ? x.earningsEstimate.avg.raw : null,
+            revenue: typeof x?.revenueEstimate?.avg?.raw === 'number' ? x.revenueEstimate.avg.raw : null,
+          }));
+      } else if (res.status === 401) { _crumb = null; }
+    }
+  } catch { out = []; }
+  if (_ft.size > 2000) { const oldest = Array.from(_ft.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 400); for (const [k] of oldest) _ft.delete(k); }
+  _ft.set(t, { at: out.length ? Date.now() : Date.now() - 6 * 3600_000 + 60_000, data: out });
+  return out;
+}
+
 /** Small concurrency-limited map — keeps us polite to both Yahoo and SEC. */
 export async function pooled<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
