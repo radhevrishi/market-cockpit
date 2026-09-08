@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-08T09:54:21Z",
+  "lastSync": "2026-09-08T12:31:52Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9838,
+      "size": 10252,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10948,
+      "size": 10524,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 5434,
+      "size": 4131,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 6242,
+      "size": 6241,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 15892,
+      "size": 17200,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -70,12 +70,12 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2358,
+      "size": 2357,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
       "name": "turnarounds.csv",
-      "size": 19269,
+      "size": 19271,
       "displayName": "Turnarounds"
     },
     {
@@ -90,12 +90,12 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65693,
+      "size": 65694,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 11639,
+      "size": 11656,
       "displayName": "Weekly Volume Pockets"
     }
   ]
