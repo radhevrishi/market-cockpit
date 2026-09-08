@@ -107,17 +107,56 @@ const isBadEpsLabel = (s: string) =>
   || (/\bbasic\b/i.test(s) && !/basic\s*(?:and|&|\/|,)\s*diluted/i.test(s));
 
 const REVENUE = /^(?:total\s+)?(?:net\s+)?(?:operating\s+)?(?:revenues?|sales|net\s+sales)(?:\s*,?\s*net)?(?:\s*\(.*\))?$/i;
-const OP_INCOME = /^(?:total\s+)?(?:(?:operating\s+(?:income|profit|earnings|loss)(?:\s*\(loss\)|\s*\/\s*\(loss\)|\s*\(income\))?)|(?:(?:income|earnings|profit|loss)\s*(?:\(loss\)|\/\s*\(loss\)|\(income\))?\s+from\s+operations)|(?:operating\s+\(loss\)\s*(?:income|profit|earnings))|(?:earnings\s+before\s+interest\s+and\s+taxes(?:\s*\(ebit\))?)|(?:ebit))$/i;
+// "Consolidated operating profit" is the same line as "Operating profit", and
+// leaving the qualifier out of the shape cost Lockheed Martin its margin
+// entirely: its release states "Consolidated operating profit | $2,479 | $748"
+// in the very first table, that row was rejected for the leading word, and a
+// SEGMENT table five tables later then matched — its Space division's $741 of
+// six-month profit is within a per cent of the $748 consolidated year-ago
+// figure — and published a segment number as the company's operating income.
+const OP_INCOME = /^(?:total\s+)?(?:consolidated\s+)?(?:(?:operating\s+(?:income|profit|earnings|loss)(?:\s*\(loss\)|\s*\/\s*\(loss\)|\s*\(income\))?)|(?:(?:income|earnings|profit|loss)\s*(?:\(loss\)|\/\s*\(loss\)|\(income\))?\s+from\s+operations)|(?:operating\s+\(loss\)\s*(?:income|profit|earnings))|(?:earnings\s+before\s+interest\s+and\s+taxes(?:\s*\(ebit\))?)|(?:ebit))$/i;
 const NET_INCOME = /^(?:total\s+)?net\s+(?:income|earnings|loss|profit)(?:\s*\(loss\)|\s*\/\s*\(loss\)|\s*\(income\))?(?:\s+attributable\s+to\s+.{2,80})?$/i;
 // Direct one-row EPS: "Diluted earnings per share", "Net income (loss) per
 // share, diluted", "Net loss per share attributable to X — basic and diluted",
 // optionally prefixed "GAAP".
 const EPS_DIRECT = /^(?:gaap\s+)?(?:(?:diluted\s+)?(?:net\s+)?(?:income|earnings|loss|profit)?\s*(?:\(loss\)|\(income\))?\s*per\s+(?:common\s+|ordinary\s+|class\s+[a-z]\s+(?:and\s+class\s+[a-z]\s+)?common\s+|diluted\s+)?shares?(?:\s+attributable\s+to\s+.{2,120})?\s*[-–—,:]?\s*(?:basic\s*(?:and|&|\/)\s*diluted|diluted)?|diluted\s+(?:net\s+)?(?:income|earnings|loss)?\s*(?:\(loss\))?\s*per\s+(?:common\s+|ordinary\s+)?shares?(?:\s+attributable\s+to\s+.{2,120})?|diluted\s+eps)(?:\s*\(.*\))?$/i;
 const EPS_HEADER = /per\s+(?:common\s+|ordinary\s+|diluted\s+|basic\s+and\s+diluted\s+)?shares?|earnings\s+per\s+share|eps\b/i;
+/**
+ * The second guard on a DIRECT EPS row: the label must literally name a
+ * per-share figure, so that a shape `EPS_DIRECT` matched loosely can still be
+ * thrown out.
+ *
+ * It used to be `/per\s+share|eps/`, which requires "per" and "share" to be
+ * ADJACENT — and most of the market does not write it that way. Citi Trends'
+ * August-2026 release states its EPS on two separate tables as "Diluted net
+ * income (loss) per common share"; `EPS_DIRECT` matched it both times and this
+ * guard then discarded it, so the PRELIM card printed "EPS not tagged" for a
+ * company whose release states the figure twice. Every qualifier `EPS_DIRECT`
+ * itself allows between "per" and "share" — common, ordinary, diluted, basic,
+ * "Class A common" — is therefore allowed here too, and nothing else is.
+ */
+const EPS_PER_SHARE = /per\s+(?:(?:common|ordinary|diluted|basic|and|class\s+[a-z])\s+){0,4}shares?\b|earnings\s+per\s+share|\beps\b/i;
 /** Under a "…per share:" header, the diluted figure sits on a row called
  *  "Diluted", or (Genesco) "Net earnings (loss)" beneath a "Diluted … per
  *  share:" header. */
 const EPS_SUBROW = /^(?:diluted|(?:total\s+)?net\s+(?:income|earnings|loss|profit)(?:\s*\(loss\)|\s*\(income\))?)(?:\s*\(.*\))?$/i;
+
+/**
+ * A GUIDANCE ROW WEARS THE SAME CLOTHES AS A RESULTS ROW — a label on the left
+ * and numbers on the right — and the label alone does not give it away.
+ * Abercrombie's August-2026 release carries, in its outlook table, the row
+ * "Net income per diluted share (2)(3)(5) | In The Range of $2.90 to $3.20".
+ * Its $2.90 is within a cent of A&F's year-ago $2.91, so the range validated
+ * as a [prior, current] pair and would have put $3.20 on the card against a
+ * reported $4.17.
+ *
+ * The tell is not in the label, it is in the NUMERIC ZONE: an income statement
+ * puts nothing there but figures, currency symbols and punctuation, so prose
+ * beside the numbers means the row is an outlook, a share-count note ("Around
+ * 44 million") or a footnote — never a reported figure. Checked on the numeric
+ * zone only, so a label that happens to mention a forecast is unaffected.
+ */
+const OUTLOOK_ZONE = /\b(?:range|approximately|around|about|expects?|expected|anticipate\w*|outlook|guidance|forecast|projected?|estimated?)\b|\bto\s*\$/i;
 
 // ─── numeric tokens ─────────────────────────────────────────────────────────
 function tokens(rest: string): number[] {
@@ -150,9 +189,33 @@ function matchRow(toks: number[], yearAgo: number, isEps: boolean, preferScale: 
   const scales = isEps ? [1] : (preferScale ? [preferScale, ...SCALES.filter((s) => s !== preferScale)] : SCALES);
   for (const sc of scales) {
     const close = (v: number) => isEps ? Math.abs(v - yearAgo) <= 0.011 : relClose(v * sc, yearAgo);
-    // Standard layout: [current, prior, …]
+    // Standard layout: [current, prior, …]. The current figure is the column
+    // the matched prior-year one is PAIRED with, which is not always the first.
+    //
+    // A US comparative table is built out of current/prior PAIRS, so a prior
+    // column always sits at an odd offset from its own current column.
+    // Fastenal's release leads with the six-month pair and puts the quarter
+    // pair after it — "$0.63 | 0.55 | 14.8% | $0.33 | 0.29 | 15.9%" — so its
+    // year-ago quarter matches at index 3 and the answer is index 2, $0.33.
+    // Taking the first column regardless published Fastenal's June quarter at
+    // $0.63 of EPS, which is its half-year figure. A prior column at an EVEN
+    // index is not a pair at all but a time series — Weyerhaeuser prints
+    // "Q3 | prior quarter | year-ago quarter", matching at index 2 — and there
+    // the first column is still the one being reported.
+    // The pairing only holds where the leading two columns ARE a pair. A
+    // GAAP-to-non-GAAP reconciliation table looks identical positionally and
+    // is not: Microsoft's June-2026 release carries "Net Income | $35,766 |
+    // $(480) | $35,286 | $27,233 | …", where column 1 is the adjustment and
+    // column 2 the non-GAAP result, so reading the year-ago $27,233 as the
+    // fourth column's partner would put $35,286 — Microsoft's non-GAAP net
+    // income — on a GAAP row. An adjustment column is small and points the
+    // other way; a period column is neither.
+    const paired = head.length >= 2 && (head[0] >= 0) === (head[1] >= 0)
+      && Math.abs(head[1]) >= Math.abs(head[0]) * 0.25;
     for (let k = 1; k < head.length; k++) {
-      if (close(head[k])) return { cur: head[0] * sc, prev: head[k] * sc, scale: sc, label, tableIdx };
+      if (!close(head[k])) continue;
+      const curIdx = (paired && k % 2 === 1) ? k - 1 : 0;
+      return { cur: head[curIdx] * sc, prev: head[k] * sc, scale: sc, label, tableIdx };
     }
     // Prior-first layout: [prior, current]
     if (close(head[0]) && head.length >= 2) return { cur: head[1] * sc, prev: head[0] * sc, scale: sc, label, tableIdx };
@@ -247,6 +310,7 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef): Re
       for (const r of tables[ti].rows) {
         const lbl = cleanLabel(r.label);
         if (!lbl || !REVENUE.test(lbl) || EXCLUDE.test(lbl.replace(/^(total\s+)?(net\s+)?(revenues?|sales)/i, ''))) continue;
+        if (OUTLOOK_ZONE.test(r.rest)) continue;
         const h = matchRow(tokens(r.rest), yearAgo.revenue, false, null, lbl, ti);
         if (!h) continue;
         if (!(h.cur > 0) || h.cur < yearAgo.revenue * 0.2 || h.cur > yearAgo.revenue * 5) continue;
@@ -269,6 +333,7 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef): Re
       const toks = tokens(r.rest);
       if (!lbl) continue;
       if (!toks.length) { lastHeader = lbl; continue; }        // a section header row
+      if (OUTLOOK_ZONE.test(r.rest)) continue;                 // an outlook, not a result
 
       if (yearAgo.operating_income != null && OP_INCOME.test(lbl) && !EXCLUDE.test(lbl.replace(/operating|income|loss|profit|earnings|from operations|\(loss\)/gi, ''))) {
         const h = matchRow(toks, yearAgo.operating_income, false, preferScale, lbl, ti);
@@ -279,7 +344,7 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef): Re
         if (h && (revCur == null || Math.abs(h.cur) < revCur * 3) && better(h, found.net_income)) found.net_income = h;
       }
       if (yearAgo.eps != null) {
-        const direct = EPS_DIRECT.test(lbl) && !isBadEpsLabel(lbl) && /per\s+share|eps/i.test(lbl);
+        const direct = EPS_DIRECT.test(lbl) && !isBadEpsLabel(lbl) && EPS_PER_SHARE.test(lbl);
         const sub = EPS_SUBROW.test(lbl) && EPS_HEADER.test(lastHeader)
           && !/weighted|shares\s+outstanding|share\s+count/i.test(lastHeader)
           && !isBadEpsLabel(lastHeader) && !isBadEpsLabel(lbl)

@@ -229,6 +229,22 @@ const OPEX_OTHER_SLOTS: string[][] = [
   ['ResearchAndDevelopmentExpense'],
   ['OtherCostAndExpenseOperating'],
 ];
+/**
+ * Depreciation and amortisation shown as its OWN line below gross profit —
+ * Burlington's and Gold.com's is, and leaving it out is exactly why their
+ * derived operating income overshot. It is NOT part of the slots above,
+ * because the same elements are what a filer whose depreciation sits inside
+ * cost of sales uses for its cash-flow add-back, and there is nothing in
+ * companyfacts that tells the two apart. It is therefore a separate rung,
+ * offered only to a filer whose statement proves an operating expense is
+ * missing without it — see `deriveOperatingIncome`.
+ */
+const OPEX_DNA_SLOT = [
+  'DepreciationNonproduction',
+  'DepreciationDepletionAndAmortization',
+  'DepreciationAndAmortization',
+  'DepreciationAmortizationAndAccretionNet',
+];
 /** Non-operating items, used ONLY to bound how far a derived operating income
  *  may sit ABOVE the filer's pre-tax line. `NonoperatingIncomeExpense` is the
  *  roll-up of the rest; the interest elements are alternative spellings of one
@@ -241,6 +257,16 @@ const NONOPERATING_EXPENSE_TAGS = [
 const NONOPERATING_INCOME_TAGS = [
   'InvestmentIncomeInterest', 'InterestAndOtherIncome', 'OtherNonoperatingIncomeExpense',
   'OtherNonoperatingIncome', 'InvestmentIncomeNonoperating', 'IncomeLossFromEquityMethodInvestments',
+];
+/** Interest presented as ONE net line, negative for a net charge. Burlington
+ *  tags its interest expense as `InterestExpenseNonoperating` in some quarters
+ *  and only as this element in others (its July-2024 quarter has −16,582 here
+ *  and nothing in the gross element), so a bound built from the gross tags
+ *  alone silently drops the whole charge for those quarters. Read with its
+ *  sign, never through `Math.abs`: for the filer running net interest INCOME
+ *  this element widens nothing. */
+const NONOPERATING_NET_INTEREST_TAGS = [
+  'InterestIncomeExpenseNonoperatingNet',
 ];
 /** A lender's fee and commission income. Net interest income is only half of
  *  a thrift's or a bank's top line — Provident Financial's June quarter is
@@ -665,6 +691,62 @@ const BASIC_SHARE_TAGS = ['WeightedAverageNumberOfSharesOutstandingBasic', 'Weig
  * absolute error is 3 cents, against 6 for de-cumulating the diluted line and
  * 28 for borrowing the previous quarter's count.
  */
+/**
+ * THE FILER TAGGED ITS SHARE COUNTS IN THOUSANDS.
+ *
+ * `shares` is an absolute unit in XBRL, but an issuer whose income statement is
+ * printed "(in thousands, except per share data)" sometimes tags the weighted-
+ * average share row at the PRINTED scale. Nutanix does: its July-2026 diluted
+ * count is filed as 297,456 against ~297.5 MILLION shares. Nothing downstream
+ * notices while the filer's own EPS is on file — but Q4 is never tagged as a
+ * quarter (trap #2), so it is derived as net income ÷ shares, and Nutanix's
+ * July-2025 quarter came out at $129.74 of EPS against a filed $0.13. That
+ * figure is also the year-ago number the press-release reader validates a
+ * PRELIM card's EPS against, so the release EPS was refused and the card said
+ * "EPS not tagged" for a company that states it twice in its own exhibit.
+ *
+ * The filer's own arithmetic is the detector, so nothing is assumed: in every
+ * quarter where it tagged EPS, net income AND a share count, net income ÷
+ * shares ÷ EPS must be 1. Where it is a thousand instead, the counts for that
+ * stretch of the filing history are in thousands. A single quarter never
+ * decides it, and a ratio that is not a clean power of ten is left alone —
+ * that is a filer whose EPS numerator is something other than this net-income
+ * line (preferred dividends, a per-class numerator), not a scale error.
+ *
+ * The answer is a function of the quarter rather than one number for the
+ * filer, because the scale MOVES: Nutanix tagged real share counts through its
+ * FY2023 and thousands from FY2024 on, so a single verdict for the whole
+ * history would either leave the recent quarters wrong or corrupt the old
+ * ones. Only the observations within a year either side of the quarter being
+ * corrected are consulted, and they must agree unanimously — across the
+ * changeover they do not, and that quarter is then left exactly as filed.
+ */
+const SHARE_COUNT_SCALES = [1e3, 1e6];
+function shareCountScale(
+  qShares: Record<string, number>,
+  qEps: Record<string, number>,
+  qNet: Record<string, number>,
+): (end: string) => number {
+  const obs: Array<{ end: string; ratio: number }> = [];
+  for (const e of Object.keys(qShares)) {
+    const sh = qShares[e];
+    const ni = atMap(qNet, e);
+    const eps = atMap(qEps, e);
+    // EPS is filed rounded to the cent; a small one cannot pin a ratio at all.
+    if (!(sh > 0) || ni == null || eps == null || Math.abs(eps) < 0.05) continue;
+    obs.push({ end: e, ratio: Math.abs(ni / sh / eps) });
+  }
+  if (obs.length < 2) return () => 1;
+  return (end: string): number => {
+    const near = obs.filter((o) => Math.abs(dnum(o.end) - dnum(end)) <= 400 * dayMs);
+    if (near.length < 2) return 1;
+    for (const k of SHARE_COUNT_SCALES) {
+      if (near.every((o) => o.ratio >= k * 0.85 && o.ratio <= k * 1.18)) return k;
+    }
+    return 1;
+  };
+}
+
 function dilutedByQuarter(
   ser: (c: string) => DurFact[],
   concept: string,
@@ -972,17 +1054,43 @@ export type OperatingIncomeBasis = 'reported' | 'derived' | 'pretax';
  * else. A two-sided test would have thrown REX away, which is the defect this
  * whole ladder exists to fix.
  *
- * Burlington fails by $127m against $20m of tagged interest, and Chevron by
- * $13.6bn against nothing; both are refused. Gold.com fails by $9.4m, which is
- * to the dollar the depreciation and amortisation it shows as its own line
- * between SG&A and interest — a good demonstration that the test catches the
- * thing it is for. (Subtracting a tagged `DepreciationDepletionAndAmortization`
- * would have rescued Gold.com and Burlington and broken every filer whose
- * depreciation sits inside cost of sales, where the only D&A on file is the
- * cash-flow add-back. There is no way to tell those apart in companyfacts, so
- * the margin is left blank instead.) Realty Income, W. P. Carey, GE and Exxon
- * never reach the test — they tag no gross profit and no cost of revenue, so
- * there is nothing to derive from, and their margin is simply blank.
+ * Chevron fails by $13.6bn against nothing tagged and is refused outright.
+ *
+ * WHY THERE IS A SECOND RUNG. Burlington and Gold.com fail rung 1 for one
+ * specific, common and identifiable reason: depreciation and amortisation is
+ * its own line on the face of the statement, below gross profit, and is
+ * therefore missing from the subtraction. Burlington's July-2026 quarter
+ * derives to $364.6m against a $242.1m pre-tax line — a $122.5m overshoot
+ * against $114.0m of tagged D&A — and its margin has been blank ever since the
+ * pre-tax fallback was removed, on both the current quarter and the year-ago
+ * one, which is what "OPM — no prior margin" on the card was.
+ *
+ * Subtracting D&A UNCONDITIONALLY is what must not happen: for the filer whose
+ * depreciation sits inside cost of sales, the only D&A on file is the
+ * cash-flow add-back, and subtracting it double-counts. That error pushes the
+ * answer DOWN, where the one-sided bound is blind to it. So rung 2 is reached
+ * ONLY when rung 1 is PROVED wrong by the filer's own pre-tax line — a filer
+ * whose D&A is already inside cost of sales has no reason to fail rung 1, and
+ * is never offered rung 2 at all. The rung that is used must then satisfy the
+ * same bound itself.
+ *
+ * RECONCILIATION IS PER QUARTER, NOT ALL-OR-NOTHING. It used to be that one
+ * unreconciled quarter anywhere in the three-year window discarded the filer
+ * entirely, and that is too brittle to survive a real filing history:
+ * Burlington's May-2026 quarter carries ~$16m of debt-amendment cost that it
+ * tags under no standard element at all, so that ONE quarter cannot reconcile
+ * however the operating expenses are assembled. A quarter that does not
+ * reconcile now publishes nothing and the rest are unaffected — but the rung
+ * as a whole is still refused unless it reconciles in at least two quarters
+ * and in at least three quarters out of every four it could check, so a
+ * derivation that is systematically wrong (Chevron) can never be rescued by a
+ * lucky quarter.
+ *
+ * Realty Income, W. P. Carey, Deere, GE and Exxon never reach the test — they
+ * tag no gross profit and no cost of revenue, so there is nothing to derive
+ * from, and their margin is simply blank. That is the right answer for them:
+ * none of the five strikes an operating subtotal on the face of its own
+ * consolidated statement either.
  */
 function deriveOperatingIncome(
   ser: (c: string) => DurFact[],
@@ -1005,22 +1113,44 @@ function deriveOperatingIncome(
     if (sum != null) opexQ[e] = sum;
   }
 
-  const derived: Record<string, number> = {};
-  for (const e of Object.keys(opexQ)) derived[e] = gpQ[e] - opexQ[e];
-  if (!Object.keys(derived).length) return {};
+  const rung1: Record<string, number> = {};
+  for (const e of Object.keys(opexQ)) rung1[e] = gpQ[e] - opexQ[e];
+  if (!Object.keys(rung1).length) return {};
+
+  // Rung 2: the same, less a depreciation-and-amortisation line the filer shows
+  // for itself. Built here, but only ever consulted when rung 1 fails — see
+  // the header note.
+  const dna = firstPopulated(ser, OPEX_DNA_SLOT);
+  const rung2: Record<string, number> = {};
+  if (dna) for (const e of Object.keys(rung1)) {
+    const d = atMap(dna.q, e);
+    if (d != null) rung2[e] = rung1[e] - Math.abs(d);
+  }
 
   // ── the one-sided check against the filer's own pre-tax line ──
-  const pretax = firstPopulated(ser, PRETAX_INCOME_TAGS);
-  if (!pretax) return {};                           // nothing to check it against
+  // Both spellings of the pre-tax line are merged rather than the first
+  // populated one taken: Dillard's tags the "…ExtraordinaryItems…" element up
+  // to its November-2025 quarter and the "…MinorityInterest…" one after it, so
+  // a ladder that stops at the first hit leaves every CURRENT quarter with no
+  // reconciliation target at all — and an unchecked quarter is exactly the one
+  // that must not be published on the strength of quarters three years old.
+  const pretaxQ: Record<string, number> = {};
+  for (const c of PRETAX_INCOME_TAGS) {
+    const q = quarterize(ser(c), false);
+    for (const e of Object.keys(q)) if (pretaxQ[e] === undefined) pretaxQ[e] = q[e];
+  }
+  if (!Object.keys(pretaxQ).length) return {};      // nothing to check it against
   const nonOpNetQ = quarterize(ser(NONOPERATING_NET_TAG), false);
   const nonOpExpQ = NONOPERATING_EXPENSE_TAGS.map((c) => quarterize(ser(c), false));
   const nonOpIncQ = NONOPERATING_INCOME_TAGS.map((c) => quarterize(ser(c), false));
+  const nonOpNetIntQ = NONOPERATING_NET_INTEREST_TAGS.map((c) => quarterize(ser(c), false));
   const cutoffMs = Date.now() - RECENT_MS;
-  let checked = 0;
-  for (const e of Object.keys(derived).sort()) {
-    if (dnum(e) < cutoffMs) continue;
-    const px = atMap(pretax.q, e);
-    if (px == null) continue;
+  /** true / false when the quarter can be checked at all, null when it cannot.
+   *  `twoSided` pins the candidate from BELOW as well — see the rung-2 note. */
+  const reconciles = (e: string, cand: number, twoSided: boolean): boolean | null => {
+    if (dnum(e) < cutoffMs) return null;
+    const px = atMap(pretaxQ, e);
+    if (px == null) return null;
     // Operating income sits above the pre-tax line by exactly (charges below
     // it − income below it). `NonoperatingIncomeExpense` is the roll-up of
     // both; failing that, the interest elements are alternative spellings of
@@ -1031,19 +1161,60 @@ function deriveOperatingIncome(
     if (net != null) { if (net < 0) charge = -net; else income = net; }
     else {
       for (const m of nonOpExpQ) { const v = atMap(m, e); if (v != null) charge = Math.max(charge, Math.abs(v)); }
+      for (const m of nonOpNetIntQ) { const v = atMap(m, e); if (v == null) continue; if (v < 0) charge = Math.max(charge, -v); }
       for (const m of nonOpIncQ) { const v = atMap(m, e); if (v != null) income += v; }
     }
-    const tol = Math.max(Math.abs(derived[e]) * 0.02, Math.abs(px) * 0.02, 1);
+    const tol = Math.max(Math.abs(cand) * 0.02, Math.abs(px) * 0.02, 1);
     // Clamped at zero: where the filer's tagged non-operating items net to
     // INCOME rather than a charge, operating income has no licence to exceed
     // the pre-tax line at all. It is a one-sided bound either way — a charge
     // the filer never tagged quarterly (REX's is annual-only) leaves the bound
     // at zero and the derivation, which sits BELOW the pre-tax line, unharmed.
-    const allowed = Math.max(0, charge - income) + tol;
-    if (derived[e] - px > allowed) return {};   // one failure kills it
-    checked++;
+    const gap = cand - px;
+    if (gap > Math.max(0, charge - income) + tol) return false;
+    // The lower bound, for rung 2 only. Subtracting a D&A line that is in fact
+    // already inside cost of sales pushes the answer DOWN, exactly where the
+    // one-sided rule is blind, so a rung that subtracts one must land ON the
+    // pre-tax line once the filer's own tagged non-operating items are put
+    // back, not merely below it. Emerson is what this catches: its June-2026
+    // quarter derives to $1,312m at rung 1 against a $916m pre-tax line, and
+    // subtracting its $377m of cash-flow D&A gives $935m — inside the upper
+    // bound, but $45m short of the $980m the pre-tax line plus $85m of net
+    // interest less $21m of other income implies, because most of that $377m
+    // is the depreciation already sitting in its cost of sales. Refused, and
+    // Emerson's margin stays blank, which is right: it strikes no operating
+    // subtotal of its own either.
+    //
+    // The lower bound carries a half-a-per-cent-of-revenue floor on top of the
+    // ordinary tolerance, because the derivation is struck on the revenue
+    // series `chooseRevenue` picked and a filer that shows a small separate
+    // "other revenue" line strikes its own operating income on a slightly
+    // wider one — Burlington's is $4.5m a quarter, which is a fifth of a per
+    // cent of its revenue and around twice the 2% band. A depreciation line
+    // attributed to the wrong side of gross profit is worth whole per cent of
+    // revenue (Emerson's is 0.9%), so the floor separates the two rather than
+    // blurring them.
+    if (!twoSided) return true;
+    const floor = Math.max(tol, Math.abs(atMap(qRev, e) ?? 0) * 0.005);
+    return (px + charge - income) - cand <= floor;
+  };
+
+  const rungs: Array<{ q: Record<string, number>; twoSided: boolean }> = [{ q: rung1, twoSided: false }];
+  if (Object.keys(rung2).length) rungs.push({ q: rung2, twoSided: true });
+  for (const { q: cand, twoSided } of rungs) {
+    const out: Record<string, number> = {};
+    let pass = 0, fail = 0;
+    for (const e of Object.keys(cand).sort()) {
+      const ok = reconciles(e, cand[e], twoSided);
+      // A quarter older than the check window, or one the filer tagged no
+      // pre-tax line for, is carried on the same basis the checkable quarters
+      // established. A quarter that fails is simply not published.
+      if (ok === null) { out[e] = cand[e]; continue; }
+      if (ok) { out[e] = cand[e]; pass++; } else fail++;
+    }
+    if (pass >= 2 && pass > fail) return out;
   }
-  return checked >= 2 ? derived : {};
+  return {};
 }
 
 /**
@@ -1203,10 +1374,20 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     tags.eps = c;
     qs.eps = c ? quarterize(ser(c), false, false) : {};
   }
+  // Share counts, and the scale correction for a filer that tagged them in
+  // thousands — see `shareCountScale`. It is applied to the quarterly map AND
+  // to the annual count `annualShares` reads below, because both feed the same
+  // division.
+  let shareScaleAt: (end: string) => number = () => 1;
   {
     const c = pickConcept(facts, 'diluted_shares');
     tags.diluted_shares = c;
     qs.diluted_shares = c ? dilutedByQuarter(ser, c, qs.net_income || {}) : {};
+    shareScaleAt = shareCountScale(qs.diluted_shares, qs.eps || {}, qs.net_income || {});
+    for (const e of Object.keys(qs.diluted_shares)) {
+      const k = shareScaleAt(e);
+      if (k !== 1) qs.diluted_shares[e] *= k;
+    }
   }
   {
     // The profit proxy the revenue chooser sanity-tests against. `pickConcept`
@@ -1315,7 +1496,7 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     const shC = tags.diluted_shares ? ser(tags.diluted_shares) : [];
     const fyRows = shC.filter((r) => r.days >= 330 && r.days <= 380
       && dnum(r.end) >= dnum(end) - 4 * dayMs && dnum(r.start) <= dnum(end) + 4 * dayMs);
-    if (fyRows.length) return fyRows[0].val;
+    if (fyRows.length) return fyRows[0].val * shareScaleAt(end);
     // No annual share count tagged: FY net income ÷ FY EPS is the count the
     // filing itself implies.
     const niC = tags.net_income ? ser(tags.net_income) : [];
@@ -2462,11 +2643,19 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     chartOk,
   }).tier;
 
+  const TIER_ORDER: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
+  const worseOf = (a: EarningsTier, b: EarningsTier) =>
+    TIER_ORDER.indexOf(a) >= TIER_ORDER.indexOf(b) ? a : b;
+
+  // What the FUNDAMENTALS alone said, before the tape got a vote. Kept so the
+  // floor below can tell a bad quarter from a good quarter the market disliked.
+  const tierOnFundamentals = tier;
   {
     const mr = marketReactionDelta(tier, p?.d1_pct, p?.gap_pct);
     tier = mr.tier;
     for (const c of mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
+  const reactionDemoted = TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(tierOnFundamentals);
 
   // ═══════════════════════════════════════════════════════════════════════
   // HARD QUALITY CAPS — the caveats have to cost something.
@@ -2485,9 +2674,13 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // filing itself establishes.
   const criticals = caveat_tags.filter((t) =>
     t === 'low quality' || t === 'ocf divergence' || t === 'optical eps' || t.startsWith('gaap ')).length;
-  const capTier = (max: EarningsTier, why: string) => {
-    const order: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
-    if (order.indexOf(tier) < order.indexOf(max)) {
+  // Caps raised by the FILING (cash, trend, quality flags) are remembered
+  // separately from the cap raised by the TAPE, because the floor below has to
+  // know which of the two is holding a row down.
+  let filingCap: EarningsTier = 'BLOCKBUSTER';
+  const capTier = (max: EarningsTier, why: string, fromFiling = true) => {
+    if (fromFiling) filingCap = worseOf(filingCap, max);
+    if (TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(max)) {
       tier = max;
       if (!caveat_tags.includes(why)) caveat_tags.push(why);
     }
@@ -2506,7 +2699,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
 
   // 2. "Market confirming" has to mean the market confirmed it. A print the
   //    tape rejected on the day cannot be the top tier by definition.
-  if (p?.d1_pct != null && p.d1_pct <= -5) capTier('STRONG', 'market rejected the print');
+  if (p?.d1_pct != null && p.d1_pct <= -5) capTier('STRONG', 'market rejected the print', false);
 
   // 3. A stage-4 downtrend is not a setup, whatever the quarter looked like.
   if (stage === 4) capTier('MIXED', 'stage 4 downtrend');
@@ -2514,6 +2707,33 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // 4. Two or more critical quality flags at once — a one-off-driven EPS AND
   //    cash that does not back it, say — is not one caveat, it is a pattern.
   if (criticals >= 2) capTier('STRONG', 'multiple quality flags');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE TAPE IS NOT THE FUNDAMENTALS — a floor under the price reaction.
+  //
+  // Keysight grew revenue 37%, beat by 24% on EPS, and fell 11.6% on the day.
+  // The reaction demotion and the reaction caveat's score penalty compounded
+  // and the card read MIXED — the same grade as a company whose margins are
+  // collapsing. That is the wrong reading of a sell-off: a clean print the
+  // market did not pay for is precisely the setup that gets paid later
+  // (post-earnings drift is built on exactly this population), and the PEAD
+  // score below already measures it.
+  //
+  // So the tape may cost a row the TOP tier — "market confirming" has to mean
+  // the market confirmed it — but on its own it can never push a row below
+  // STRONG. Anything the FILING establishes still can, without limit: if the
+  // cash flow, the trend or two quality flags say MIXED, MIXED it is, and the
+  // floor never lifts a row above what those allow. This only undoes a
+  // demotion the price alone caused.
+  if (reactionDemoted) {
+    const floor = worseOf(worseOf(tierOnFundamentals, filingCap), 'STRONG');
+    if (TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(floor)) {
+      tier = floor;
+      if (!caveat_tags.includes('sold off — fundamentals intact')) {
+        caveat_tags.push('sold off — fundamentals intact');
+      }
+    }
+  }
 
   // US thin-float gate — dollar volume, not ₹Cr. Missing ADDV is NOT punished.
   const addv = p?.addv_musd ?? null;

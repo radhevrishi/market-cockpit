@@ -163,6 +163,33 @@ export async function cikTickerMap(): Promise<Map<number, string>> {
   return out;
 }
 
+/**
+ * The listing venue for each of `tickers`, as SEC states it ("NYSE", "Nasdaq",
+ * "NYSE American", "Cboe"), or null for a ticker the file does not carry.
+ *
+ * This is the ONE authority on where a US name trades that this app has, and it
+ * is free: `company_tickers_exchange.json` is already fetched and cached daily
+ * by `listings()`. The TradingView export needs it because an exchange prefix
+ * cannot be inferred from a symbol — see lib/us-tradingview.ts for what a
+ * wrong prefix does (TradingView drops the row silently).
+ *
+ * The `.` / `-` class-share separator is tried both ways, because callers hold
+ * tickers from two vocabularies: SEC writes BRK-B, TradingView writes BRK.B.
+ */
+export async function exchangeForTickers(tickers: string[]): Promise<Record<string, string | null>> {
+  const L = await listings();
+  const out: Record<string, string | null> = {};
+  for (const raw of tickers) {
+    const t = String(raw || '').toUpperCase().trim();
+    if (!t) continue;
+    const hit = L.byTicker.get(t)
+      ?? L.byTicker.get(t.replace(/\./g, '-'))
+      ?? L.byTicker.get(t.replace(/-/g, '.'));
+    out[t] = hit?.exchange ?? null;
+  }
+  return out;
+}
+
 export async function tickerToCik(ticker: string): Promise<number | null> {
   const L = await listings();
   const t = ticker.toUpperCase().replace(/\./g, '-');

@@ -43,7 +43,7 @@ import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
-  quarterSeries, balanceContext, assignSetupScores, rule40From, roceFrom,
+  quarterSeries, balanceContext, assignSetupScores, rule40From, roceFrom, splitFactorSince,
   US_TIER_ORDER, type UsGradedRow, type EarningsTier,
 } from '@/lib/us-earnings-core';
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
@@ -277,13 +277,31 @@ function actualForGuide(
  * then refused rather than rescaled — a guide restated by us is no longer the
  * company's guide.
  */
+/**
+ * FISCAL-YEAR LABELS ARE NOT WRITTEN THE SAME TWICE. The same year appears as
+ * "FY27", "FY2027", "fiscal 2027", "fiscal year 2027" and "FY '27" across two
+ * consecutive releases from one filer, so requiring the two strings to match
+ * exactly was silently disabling the split guard — CrowdStrike's card kept
+ * saying it "lowered the FY27 adj. EPS guide by 74.5%" about a 4-for-1 split.
+ * Reduce every spelling to the last two digits of the year and compare that.
+ */
+function fyKey(s: string | null | undefined): string {
+  const m = String(s || '').toUpperCase().match(/(?:FY|FISCAL(?:\s+YEAR)?)?\s*'?\s*(\d{4}|\d{2})\b/);
+  if (!m) return '';
+  return 'FY' + (m[1].length === 4 ? m[1].slice(2) : m[1]);
+}
+
 function perShareSplitFactor(current: GuidanceFigure[], prior: GuideVsActual[]): number | null {
   const mid = (lo: number | null | undefined, hi: number | null | undefined) =>
     lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi ?? null);
   for (const c of current) {
     if (c.unit !== 'usd_share') continue;
-    const p = prior.find((x) => x.unit === 'usd_share' && x.metric === c.metric && x.basis === c.basis
-      && (x.guided_for_label || '').toUpperCase() === (c.period_label || '').toUpperCase());
+    const same = prior.filter((x) => x.unit === 'usd_share' && x.metric === c.metric && x.basis === c.basis);
+    // Prefer the entry whose fiscal year matches; where neither side spells a
+    // year out, one unambiguous candidate for the metric is enough.
+    const ck = fyKey(c.period_label);
+    const p = same.find((x) => ck !== '' && fyKey(x.guided_for_label) === ck)
+      ?? (same.length === 1 ? same[0] : undefined);
     if (!p) continue;
     const nm = mid(c.low, c.high), pm = mid(p.guide_low, p.guide_high);
     if (nm == null || pm == null || !(nm > 0) || !(pm > 0)) continue;
@@ -296,6 +314,34 @@ function perShareSplitFactor(current: GuidanceFigure[], prior: GuideVsActual[]):
     }
   }
   return null;
+}
+
+/**
+ * THE SPLIT GUARD, WITH THE FILER'S OWN RECORD AS THE FIRST WITNESS.
+ *
+ * Inferring a split from two guidance ranges is a last resort: it only works
+ * when both releases guided the same per-share metric for the same period and
+ * both were parsed. The filer states the split itself, in XBRL — the
+ * conversion-ratio element, and every share count it re-presented afterwards —
+ * and `splitFactorSince` reads it. So ask EDGAR first, and only fall back to
+ * the ratio between two guides when EDGAR is silent (a filer that tags neither
+ * signal, or a split announced but not yet restated).
+ *
+ * Either way the consequence is the same and deliberate: per-share comparisons
+ * drawn from the pre-split release are REFUSED, never rescaled. A guide we
+ * restated is no longer the company's guide.
+ */
+function splitSincePriorRelease(
+  facts: any,
+  priorFilingDate: string | null | undefined,
+  current: GuidanceFigure[],
+  prior: GuideVsActual[],
+): number | null {
+  if (priorFilingDate) {
+    const k = splitFactorSince(facts, String(priorFilingDate));
+    if (k != null && Number.isFinite(k) && Math.abs(k - 1) > 0.01) return k;
+  }
+  return perShareSplitFactor(current, prior);
 }
 
 /**
@@ -322,6 +368,16 @@ interface TileRef {
   verdict: 'above' | 'below' | 'in-line' | null;
   actual: number | null;
 }
+/**
+ * Signed, never sized. Every guided metric this is used for — revenue, EPS,
+ * EBITDA, margin, free cash flow — is one where HIGHER IS BETTER whatever the
+ * sign, so the comparison is a position on the number line and nothing here
+ * takes an absolute value except the point-guide tolerance, which is a width.
+ * Titan Machinery's −$1.75 to −$1.25 adjusted-EPS range is the case that makes
+ * the distinction visible: a −$1.40 actual lands inside it and is IN-LINE, a
+ * −$1.10 actual is above it (a smaller loss, so a beat), and a magnitude
+ * comparison would have inverted both.
+ */
 function tileVerdict(low: number | null, high: number | null, actual: number | null): TileRef['verdict'] {
   if (actual == null || low == null && high == null) return null;
   const lo = Math.min(low ?? high!, high ?? low!);
@@ -423,6 +479,7 @@ const round6 = (v: number | null | undefined): number | null =>
 function guideChange(
   current: GuidanceFigure[],
   priorYear: GuideVsActual[],
+  knownSplit?: number | null,
 ): Array<{
   metric: string; basis: string | null; period_label: string | null;
   prev_low: number | null; prev_high: number | null;
@@ -433,12 +490,15 @@ function guideChange(
   const out: ReturnType<typeof guideChange> = [];
   const mid = (lo: number | null, hi: number | null) =>
     lo != null && hi != null ? (lo + hi) / 2 : lo ?? hi ?? null;
-  const split = perShareSplitFactor(current, priorYear);
+  // The caller has already asked EDGAR whether the shares split; only fall back
+  // to inferring it from the two ranges when it has not.
+  const split = (knownSplit != null && Math.abs(knownSplit - 1) > 0.01)
+    ? knownSplit : perShareSplitFactor(current, priorYear);
   for (const c of current) {
     if (c.period !== 'year') continue;                 // only the FY guide is comparable across releases
     if (split && c.unit === 'usd_share') continue;     // two share counts, not a revision — see above
     const p = priorYear.find((x) => x.metric === c.metric && x.basis === c.basis
-      && (x.guided_for_label || '').toUpperCase() === (c.period_label || '').toUpperCase());
+      && fyKey(x.guided_for_label) === fyKey(c.period_label));
     if (!p) continue;
     const nm = mid(c.low, c.high), pm = mid(p.guide_low, p.guide_high);
     if (nm == null || pm == null) continue;
@@ -848,7 +908,7 @@ export async function GET(req: Request) {
           // `series` carries gross profit in $M; the guidance side is in dollars.
           gross_profit: gpNow != null ? gpNow * 1e6 : null,
         };
-        const splitK = perShareSplitFactor(g.figures || [], pg.for_year);
+        const splitK = splitSincePriorRelease(p.facts, pg.prior_filing_date, g.figures || [], pg.for_year);
         (row as any).vs_guide = {
           prior_filing_date: pg.prior_filing_date,
           prior_filing_url: pg.prior_filing_url,
@@ -860,7 +920,7 @@ export async function GET(req: Request) {
           (row as any).vs_guide.for_quarter,
           { est: streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end), actual: p.fundamentals.revenue },
         );
-        const chg = guideChange(g.figures || [], pg.for_year);
+        const chg = guideChange(g.figures || [], pg.for_year, splitK);
         if (chg.length) (row as any).guide_change = chg;
         // A guidance LABEL is read from prose ("we now expect…"); a guidance
         // CHANGE is arithmetic on two stated ranges. When they disagree, the
@@ -1111,7 +1171,7 @@ export async function GET(req: Request) {
             });
             if (pg && (pg.for_quarter.length || pg.for_year.length)) {
               const extra = { adj_eps: adjNowP, fcf: null, gross_profit: null };
-              const splitK = perShareSplitFactor(gPre?.figures || [], pg.for_year);
+              const splitK = splitSincePriorRelease(facts0, pg.prior_filing_date, gPre?.figures || [], pg.for_year);
               (row as any).vs_guide = {
                 prior_filing_date: pg.prior_filing_date,
                 prior_filing_url: pg.prior_filing_url,
@@ -1124,7 +1184,7 @@ export async function GET(req: Request) {
                 { est: streetRevenueFor(await yahooForwardEstimates(f.ticker!).catch(() => []), qEnd),
                   actual: pr?.revenue ?? null },
               );
-              const chg = guideChange(gPre?.figures || [], pg.for_year);
+              const chg = guideChange(gPre?.figures || [], pg.for_year, splitK);
               if (chg.length) (row as any).guide_change = chg;
             }
           } catch { /* a missing prior release is not an error */ }

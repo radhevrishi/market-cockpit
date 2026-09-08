@@ -137,13 +137,17 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
   };
   const pats: Array<[RegExp, (m: RegExpExecArray) => { q: 1 | 2 | 3 | 4 | null; fy: number | null }]> = [
     // "second quarter of fiscal year 2027", "fourth quarter and full year fiscal 2026"
-    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+quarter\b[^.]{0,60}?\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b/i,
+    // "FY 2026" is the same token as "fiscal 2026" and is how a filer writes it
+    // when the year leads: Toll Brothers' headline is "Reports FY 2026 Third
+    // Quarter Results", which no pattern here used to match at all, so the
+    // scan fell through to a comparative sentence deeper in the release.
+    [/\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+quarter\b[^.]{0,60}?\b(?:fiscal(?:\s+year)?|FY)\s*'?(\d{4}|\d{2})\b/i,
       (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
     // "Third Fiscal Quarter of 2026" (FuelCell's phrasing)
     [/\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+fiscal[\s\-]+quarter\s+(?:of\s+)?'?(\d{4}|\d{2})\b/i,
       (m) => ({ q: ORD[m[1].toLowerCase()], fy: yr(m[2]) })],
-    // "fiscal 2027 second quarter"
-    [/\bfiscal(?:\s+year)?\s*'?(\d{4}|\d{2})\b[^.]{0,40}?\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+quarter\b/i,
+    // "fiscal 2027 second quarter", "FY 2026 Third Quarter"
+    [/\b(?:fiscal(?:\s+year)?|FY)\s*'?(\d{4}|\d{2})\b[^.]{0,40}?\b(first|second|third|fourth|1st|2nd|3rd|4th)[\s\-]+quarter\b/i,
       (m) => ({ q: ORD[m[2].toLowerCase()], fy: yr(m[1]) })],
     // "Q2 FY27", "Q2 FY2027", "Q2 fiscal 2027"
     [/\bQ([1-4])\s*(?:FY|fiscal(?:\s+year)?)\s*'?(\d{4}|\d{2})\b/i,
@@ -158,6 +162,25 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
   // "first quarter of fiscal 2027" in the outlook, and matching by pattern
   // order picked the outlook. So: take the EARLIEST match in the document,
   // searching the headline region first.
+  //
+  // THE HEADLINE OWNS THE QUARTER; THE BODY MAY ONLY SUPPLY ITS YEAR.
+  //
+  // The scans below reach up to 6,000 characters into the release to find a
+  // year, and everything that deep is a comparative, a footnote or a forward
+  // reference. Dick's says "Reports Second Quarter Results" at the top and, four
+  // thousand characters down, "Foot Locker will not be included in quarterly
+  // comparable sales until the fourth quarter of fiscal 2026" — a sentence that
+  // is about neither the quarter reported nor the year of it, and which relabelled
+  // the card Q4. A quarter ordinal that disagrees with the one in the headline is
+  // therefore never the reported quarter, whatever year sits beside it.
+  //
+  // Only the HEADLINE may veto, not the first ordinal anywhere in the release:
+  // plenty of filers name no quarter up top at all ("H&R Block Reports Fiscal
+  // 2026 Results"; VF's release opens with a 53-week-calendar footnote), and the
+  // first ordinal in their body text is as arbitrary as the deep matches this
+  // rule exists to reject. When the headline is silent the rule stands down.
+  const flat = text.replace(/\s+/g, ' ');
+  const headQ = quarterOrdinalFromText(flat.slice(0, 400));
   const scan = (window: string): { q: 1 | 2 | 3 | 4 | null; fy: number | null } => {
     let best: { q: 1 | 2 | 3 | 4 | null; fy: number | null; at: number } | null = null;
     for (const [re, take] of pats) {
@@ -167,16 +190,65 @@ export function fiscalLabelFromText(text: string): { q: 1 | 2 | 3 | 4 | null; fy
       while ((m = g.exec(window)) && guard++ < 20) {
         const got = take(m);
         if (!got.q || !got.fy) continue;
+        if (headQ != null && got.q !== headQ) continue;   // see the headline note above
         // Never take a phrase that is plainly about the period AHEAD.
         const ctx = window.slice(Math.max(0, m.index - 90), m.index + m[0].length + 40);
         if (/\b(guidance|outlook|expects?|expected|forecast|anticipat|for the (?:third|fourth|first|second) quarter of)\b/i.test(ctx)
           && !/\b(results?|reported?|reports|announce)/i.test(ctx)) continue;
+        // A YEAR THAT BELONGS TO THE OUTLOOK IS NOT THE YEAR BEING REPORTED.
+        //
+        // The sentence guard above is a blunt instrument on a headline that
+        // states BOTH periods, because one "Reports" anywhere in the 90
+        // characters around the match exempts the whole thing. Donaldson's Q4
+        // release — a July year-end, so its just-closed year and the year it is
+        // guiding differ — reads "Donaldson Reports Record Fourth Quarter and
+        // Full-Year 2026 Sales and Earnings · Fiscal 2027 Guidance Projects
+        // All-Time High Sales and EPS". The first pattern's 60-character bridge
+        // steps straight over "Full-Year 2026" and marries "Fourth Quarter" to
+        // "Fiscal 2027", and the card said Q4 FY27 for a quarter Donaldson
+        // itself calls Q4 FY26. Two positional rules fix that class:
+        const spanned = Array.from(m[0].matchAll(/(?<!\d)(?:'\d{2}|(?:19|20)\d{2})(?!\d)/g))
+          .map((y) => yr(y[0].replace(/^'/, '')))
+          .filter((n): n is number => n != null);
+        //  • A match that spans TWO DIFFERENT years has bridged two period
+        //    phrases and cannot say which one owns the quarter. Drop it and let
+        //    a tighter pattern — one that stops at the nearer year — speak.
+        if (new Set(spanned).size > 1) continue;
+        //  • A year immediately followed by "guidance"/"outlook" is the period
+        //    being GUIDED, however the rest of the headline reads. This is the
+        //    same trap without an intervening year: "Reports Fourth Quarter
+        //    Results; Provides Fiscal 2027 Guidance".
+        const after = window.slice(m.index + m[0].length, m.index + m[0].length + 24);
+        if (/^[\s\-–—·|,;]{0,4}(?:full[\s-]?year\s+)?(?:guidance|outlook|forecast|targets?)\b/i.test(after)) continue;
+        // A PERIOD-END DATE IS NOT A FISCAL YEAR.
+        //
+        // Titan Machinery's headline is "Announces Results for Fiscal Second
+        // Quarter Ended July 31, 2026". The last pattern — the one that accepts
+        // a bare year with no "fiscal" in front of it, for calendar-year
+        // filers — read the "2026" out of that date and labelled the quarter
+        // Q2 FY26. Titan's year ends in January, so the quarter that closed on
+        // 31 Jul 2026 is Q2 FY27, which is what its own body text and its XBRL
+        // both say. A written month-day-year at the END of the match is a date,
+        // never a fiscal-year name: drop it, and the fiscal year comes from a
+        // phrase that actually names one ("our fiscal 2027 second quarter") or
+        // from XBRL, which is dependable on the year.
+        if (/(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*'?\d{2,4}\s*$/i.test(m[0])) continue;
+        // NOR IS THE PERIOD IT IS BEING COMPARED AGAINST.
+        //
+        // The guard above sends the reader deeper into the release, and the
+        // next quarter phrase in the text is usually the YEAR-AGO one:
+        // AutoZone's release says "net sales of $4.8 billion for its third
+        // quarter (12 weeks) ended May 9, 2026, an increase of 8.4% from the
+        // third quarter of fiscal 2025" — and "fiscal 2025" is the comparative,
+        // not the quarter being reported. A phrase introduced by from / versus
+        // / compared to names a prior period by construction.
+        const before = window.slice(Math.max(0, m.index - 30), m.index);
+        if (/\b(?:from|versus|vs\.?|compared\s+(?:to|with)|against|over|than)\s+(?:the\s+)?$/i.test(before)) continue;
         if (!best || m.index < best.at) best = { ...got, at: m.index };
       }
     }
     return best ? { q: best.q, fy: best.fy } : { q: null, fy: null };
   };
-  const flat = text.replace(/\s+/g, ' ');
   const near = scan(flat.slice(0, 1500));
   if (near.q && near.fy) return near;
   const wide = scan(flat.slice(0, 6000));

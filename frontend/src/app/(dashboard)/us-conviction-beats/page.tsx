@@ -20,16 +20,22 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Award, RefreshCw, X, Undo2, ExternalLink, Star, ChevronDown, ChevronRight } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-react';
 import {
   getUsConvictionList, removeUsConviction, clearUsConviction, syncUsConviction,
   restoreUsConvictionBin, readUsConvictionBin,
-  usFilingAgeDays, computeUsNewWindow, usVerdict,
+  usFilingAgeDays, computeUsNewWindow, usVerdict, usRule40, usRoce,
   passesUsConvictionFilter, usPresetFilters, isUsPresetActive,
   US_FILTER_DEFAULT, US_PRESET,
   type UsConvictionEntry, type UsConvFilters,
 } from '@/lib/conviction-beats-us';
-import { fmtUsd, fmtPx, fmtPct } from '@/lib/us-earnings-core';
+import { fmtUsd, fmtPct } from '@/lib/us-earnings-core';
+// ONE card, shared with /us-earnings-opportunities. See the header of
+// src/components/us-earnings-card.tsx for why it is not two.
+import { UsEarningsCard, Chip } from '@/components/us-earnings-card';
+import { buildTvExport } from '@/lib/us-tradingview';
+import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -44,6 +50,13 @@ type SortKey = 'fresh' | 'score' | 'pead' | 'sales' | 'eps' | 'drift' | 'mcap' |
 
 function etToday(): string {
   return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** Identity for the open/closed state of one card. The BENCH KEY, not the
+ *  ticker: an archived quarter is stored under `TICKER@Q3-2026` and shares its
+ *  ticker with the live entry, so a ticker key opened and closed both. */
+function cardKey(e: UsConvictionEntry): string {
+  return e.bench_key || `${e.ticker}|${e.period_end || e.filing_date}`;
 }
 
 /** Drift state — the sell half of the PEAD workflow. A top-tier name fading
@@ -79,7 +92,11 @@ export default function UsConvictionBeatsPage() {
     try { return JSON.parse(localStorage.getItem(VIEW_KEY) || '{}').view || 'cards'; } catch { return 'cards'; }
   });
   const [showAdv, setShowAdv] = useState(false);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Which cards have their detail panel open, keyed by BENCH KEY rather than by
+  // ticker: an archived quarter lives under `TICKER@Q3-2026` and shares its
+  // ticker with the live entry, so keying by ticker opened both at once.
+  const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => { try { localStorage.setItem(FILTERS_KEY, JSON.stringify(filters)); } catch {} }, [filters]);
   useEffect(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ sort, dir: sortDir, view })); } catch {} }, [sort, sortDir, view]);
@@ -227,6 +244,26 @@ export default function UsConvictionBeatsPage() {
     drifting: entries.filter((e) => driftState(e) === 'DRIFTING').length,
   }), [entries]);
 
+  // ── expand / collapse ──────────────────────────────────────────────────
+  const toggleCard = useCallback((k: string) => {
+    setOpenCards((prev) => {
+      const n = new Set(prev);
+      if (n.has(k)) n.delete(k); else n.add(k);
+      return n;
+    });
+  }, []);
+  // Expand-all works on the rows that pass the filters — the same set the
+  // TradingView copy exports, so what you open is what you copy.
+  const visibleKeys = useMemo(() => filtered.map(cardKey), [filtered]);
+  const allOpen = visibleKeys.length > 0 && visibleKeys.every((k) => openCards.has(k));
+  const toggleAll = () => {
+    setOpenCards((prev) => {
+      const n = new Set(prev);
+      for (const k of visibleKeys) { if (allOpen) n.delete(k); else n.add(k); }
+      return n;
+    });
+  };
+
   const setSortKey = (k: SortKey) => {
     if (sort === k) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
     else { setSort(k); setSortDir(k === 'pe' || k === 'age' ? 'asc' : 'desc'); }
@@ -235,20 +272,73 @@ export default function UsConvictionBeatsPage() {
   const exportCsv = () => {
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const head = ['Ticker', 'Company', 'Tier', 'Verdict', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
-      'OPM %', 'OPM prev %', 'CFO/NI', 'PEAD', 'RS', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
+      'OPM %', 'OPM prev %', 'CFO/NI', 'Rule of 40', 'R40 basis', 'ROCE %', 'PEAD', 'RS', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
       'D1 %', 'Since %', 'Sector', 'Caveats', 'SEC'];
     const body = filtered.map((e) => [e.ticker, e.company, e.tier, usVerdict(e).verdictLabel, e.composite_score, e.quarter, e.filing_date,
       e.sales_yoy_pct?.toFixed(1), e.net_profit_yoy_pct?.toFixed(1), e.eps_yoy_pct?.toFixed(1),
-      e.opm_pct?.toFixed(2), e.opm_prev_pct?.toFixed(2), e.cfo_to_pat_ratio?.toFixed(2), e.pead_score, e.rs_rating, e.stage,
+      e.opm_pct?.toFixed(2), e.opm_prev_pct?.toFixed(2), e.cfo_to_pat_ratio?.toFixed(2),
+      usRule40(e)?.score, usRule40(e)?.basis, usRoce(e)?.pct,
+      e.pead_score, e.rs_rating, e.stage,
       e.pct_from_52w_high?.toFixed(1), e.addv_musd?.toFixed(1), e.market_cap_musd?.toFixed(0), e.price?.toFixed(2), e.pe,
       e.d1_pct?.toFixed(2), e.move_pct?.toFixed(2), e.sector, (e.caveat_tags || []).join(' | '), e.source_url].map(esc).join(','));
     download(`us-conviction-beats-${etToday()}.csv`, [head.map(esc).join(','), ...body].join('\n'));
   };
-  const exportTv = () => {
-    const groups = [['ELITE', filtered.filter((e) => e.is_elite)], ['BLOCKBUSTER', filtered.filter((e) => e.tier === 'BLOCKBUSTER' && !e.is_elite)], ['STRONG', filtered.filter((e) => e.tier === 'STRONG' && !e.is_elite)]] as const;
-    const text = groups.filter(([, l]) => l.length).map(([g, l]) => `###${g},${l.map((e) => e.ticker).join(',')}`).join(',');
-    download(`us-conviction-beats-${etToday()}-tradingview.txt`, text, 'text/plain');
-  };
+  /**
+   * COPY → TRADINGVIEW, grouped by tier.
+   *
+   *   ###ELITE,NASDAQ:NVDA,NASDAQ:AVGO,###BLOCKBUSTER,NYSE:KEYS,…
+   *
+   * Same semantics as the India tabs: descending quality order, and a name in a
+   * higher group is deduped out of every lower one. Only the rows that pass the
+   * filters currently applied are copied — the export is what is on screen.
+   *
+   * The exchange prefix is RESOLVED, never guessed: the venue comes from the
+   * bench row when the payload carried one, otherwise from SEC's
+   * `company_tickers_exchange.json` through /api/v1/us/exchange (cached in this
+   * browser for a week). A name whose venue genuinely cannot be established is
+   * still exported, as a bare ticker — a form TradingView accepts — rather than
+   * being dropped or given a guessed prefix that TradingView would silently
+   * discard. See lib/us-tradingview.ts.
+   */
+  const exportTv = useCallback(async (mode: 'copy' | 'download') => {
+    if (!filtered.length) { toast.error('Nothing passes the current filters'); return; }
+    const tickers = filtered.map((e) => e.ticker);
+    // Paint from whatever is already cached, then top up over the network. A
+    // failed fetch degrades to bare tickers, never to a wrong prefix.
+    let venues: Record<string, string | null> = knownExchanges(tickers);
+    try { venues = { ...venues, ...(await resolveExchanges(tickers)) }; } catch { /* cached half still exports */ }
+    const venueFor = (e: UsConvictionEntry): string | null =>
+      e.exchange ?? venues[e.ticker.toUpperCase().split('@')[0]] ?? null;
+    const rowsOf = (list: UsConvictionEntry[]) => list.map((e) => ({ ticker: e.ticker, exchange: venueFor(e) }));
+
+    const out = buildTvExport([
+      { label: 'ELITE', rows: rowsOf(filtered.filter((e) => e.is_elite)) },
+      { label: 'BLOCKBUSTER', rows: rowsOf(filtered.filter((e) => e.tier === 'BLOCKBUSTER')) },
+      { label: 'STRONG', rows: rowsOf(filtered.filter((e) => e.tier === 'STRONG')) },
+    ]);
+    if (!out.count) { toast.error('Nothing to copy'); return; }
+    const tail = out.unresolved.length
+      ? ` · ${out.unresolved.length} without a venue prefix (SEC lists no exchange for ${out.unresolved.slice(0, 3).join(', ')}${out.unresolved.length > 3 ? '…' : ''})`
+      : '';
+    const summary = out.groups.map((g) => `${g.label} ${g.count}`).join(' · ');
+
+    if (mode === 'download') {
+      download(`us-conviction-beats-${etToday()}-tradingview.txt`, out.text, 'text/plain');
+      toast.success(`${out.count} tickers · ${summary}${tail}`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(out.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+      toast.success(`Copied ${out.count} tickers in ${out.groups.length} section${out.groups.length === 1 ? '' : 's'} for TradingView · ${summary}${tail}`);
+    } catch {
+      // Clipboard permission denied (or an insecure origin). Fall back to the
+      // file so the export still reaches the user.
+      download(`us-conviction-beats-${etToday()}-tradingview.txt`, out.text, 'text/plain');
+      toast.error('Clipboard blocked — downloaded the list as a file instead');
+    }
+  }, [filtered]);
 
   return (
     <div style={{ padding: 20, maxWidth: 1500, margin: '0 auto' }}>
@@ -285,6 +375,14 @@ export default function UsConvictionBeatsPage() {
         </button>
         <button onClick={() => setFilters((p) => ({ ...p, elite: !p.elite }))} style={chip(filters.elite, '#F59E0B')}>⭐ ELITE ({countWith({ elite: true })})</button>
         <button onClick={() => setFilters((p) => ({ ...p, multibagger: !p.multibagger }))} style={chip(filters.multibagger, '#8B5CF6')}>💎 MULTIBAGGER ({countWith({ multibagger: true })})</button>
+        <button onClick={() => setFilters((p) => ({ ...p, rule40: !p.rule40 }))} style={chip(filters.rule40, '#10B981')}
+          title="Revenue growth % + free-cash-flow margin %, both trailing twelve months, at or above 40. A name whose filing does not support the arithmetic is cut, never assumed to pass.">
+          ⚡ RULE OF 40 ({countWith({ rule40: true })})
+        </button>
+        <button onClick={() => setFilters((p) => ({ ...p, roce20: !p.roce20 }))} style={chip(filters.roce20, '#10B981')}
+          title="Trailing-twelve-month operating income ÷ (total assets − current liabilities), at or above 20%. Not computed for a filer with no classified balance sheet — a bank's current liabilities are its deposits.">
+          🏭 ROCE ≥20% ({countWith({ roce20: true })})
+        </button>
         <button onClick={() => setShowAdv((v) => !v)} style={chip(showAdv)}>{showAdv ? '▴ Hide detail filters' : '▾ Detail filters'}</button>
       </div>
 
@@ -352,8 +450,20 @@ export default function UsConvictionBeatsPage() {
         ))}
         <span style={{ flex: 1 }} />
         <button onClick={() => setView((v) => (v === 'cards' ? 'table' : 'cards'))} style={chip(false)}>{view === 'cards' ? '▦ Table' : '▤ Cards'}</button>
+        {view === 'cards' && filtered.length > 0 && (
+          <button onClick={toggleAll} style={chip(allOpen)} aria-expanded={allOpen}
+            title="Open the full write-up — guidance, results, margins, balance sheet — on every card that passes the filters">
+            {allOpen ? '⊟ Collapse all' : `⊞ Expand all ${filtered.length}`}
+          </button>
+        )}
         <button onClick={exportCsv} style={chip(false)}>📊 CSV</button>
-        <button onClick={exportTv} style={chip(false)}>📈 TradingView</button>
+        <button onClick={() => exportTv('copy')} style={chip(copied, '#10B981')}
+          title="Copy the filtered bench for TradingView, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG with the real exchange prefix on every symbol">
+          <Copy className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />
+          {copied ? '✓ Copied' : 'Copy → TradingView'}
+        </button>
+        <button onClick={() => exportTv('download')} style={chip(false)}
+          title="The same grouped list as a .txt file">📈 .txt</button>
         <button onClick={() => { setFilters({ ...US_FILTER_DEFAULT, cap: 'all' }); try { localStorage.setItem(OPT_OUT_KEY, '1'); } catch {} }} style={chip(false)}>Clear filters</button>
       </div>
 
@@ -397,11 +507,14 @@ export default function UsConvictionBeatsPage() {
 
       {view === 'cards' ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 12 }}>
-          {filtered.map((e) => (
-            <BenchCard key={`${e.ticker}-${e.filing_date}`} e={e}
-              expanded={!!expanded[e.ticker]} onToggle={() => setExpanded((x) => ({ ...x, [e.ticker]: !x[e.ticker] }))}
-              onRemove={() => { removeUsConviction(e.ticker); reload(); }} />
-          ))}
+          {filtered.map((e) => {
+            const k = cardKey(e);
+            return (
+              <BenchCard key={k} e={e}
+                open={openCards.has(k)} onToggle={() => toggleCard(k)}
+                onRemove={() => { removeUsConviction(e.bench_key || e.ticker); reload(); }} />
+            );
+          })}
         </div>
       ) : (
         <BenchTable rows={filtered} sort={sort} dir={sortDir} onSort={setSortKey} onRemove={(t) => { removeUsConviction(t); reload(); }} />
@@ -449,170 +562,89 @@ function ChipRow<T extends number>({ label, value, opts, fmt, onSet, count }: {
   );
 }
 
-function MiniBar({ value, max = 100, color }: { value: number | null | undefined; max?: number; color: string }) {
-  const pct = value == null ? 0 : Math.max(0, Math.min(100, (value / max) * 100));
-  return (
-    <div style={{ height: 4, borderRadius: 2, backgroundColor: 'var(--mc-bg-4)', overflow: 'hidden' }}>
-      <div style={{ width: `${pct}%`, height: '100%', backgroundColor: color }} />
-    </div>
-  );
-}
-
-function Sparkline({ series, color }: { series: number[] | null | undefined; color: string }) {
-  if (!series || series.length < 5) return null;
-  const w = 120, h = 28;
-  const min = Math.min(...series), max = Math.max(...series);
-  const rng = max - min || 1;
-  const pts = series.map((v, i) => `${(i / (series.length - 1)) * w},${h - ((v - min) / rng) * h}`).join(' ');
-  return (
-    <svg width={w} height={h} style={{ display: 'block' }} aria-label="30-day close path">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5} />
-    </svg>
-  );
-}
-
-function BenchCard({ e, expanded, onToggle, onRemove }: { e: UsConvictionEntry; expanded: boolean; onToggle: () => void; onRemove: () => void }) {
+/**
+ * THE BENCH CARD.
+ *
+ * It IS the Opportunities card — same five metric tiles, same secondary tiles,
+ * same R40 / ROCE / SETUP chips, same expand panel with the guidance, the
+ * four-period results and margin tables, the balance-sheet context and the
+ * post-earnings setup scorecard. What the bench adds is the three things only
+ * it knows: its own verdict, how the name has drifted since the print, and the
+ * button that takes it off the bench. Those go in through the card's slots
+ * rather than into a second card of our own, which is how the two tabs used to
+ * end up showing the same company two different ways.
+ *
+ * The row handed to the card is the bench entry with three normalisations:
+ *   • `filing_url` — the bench stores the same link under `source_url`.
+ *   • `rule40` / `roce` — the stored figures, or the same computation over the
+ *     stored series for an entry benched before the payload carried them. Null
+ *     stays null: a name whose filing does not support either shows no chip.
+ *   • the two tag arrays, which the card reads `.length` off.
+ * Nothing else is touched, and nothing is invented.
+ */
+function BenchCard({ e, open, onToggle, onRemove }: {
+  e: UsConvictionEntry; open: boolean; onToggle: () => void; onRemove: () => void;
+}) {
   const v = usVerdict(e);
-  const tierColor = e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
   const age = usFilingAgeDays(e.filing_date);
-  const opmD = (e.opm_pct != null && e.opm_prev_pct != null) ? e.opm_pct - e.opm_prev_pct : null;
   const ds = driftState(e);
   const driftColor = ds === 'DRIFTING' ? '#EF4444' : ds === 'FADING' ? '#F59E0B' : ds === 'RUNNING' ? '#10B981' : 'var(--mc-text-3)';
-  const spark = e.close_30d ?? null;
-  const sparkColor = spark && spark.length > 1 && spark[spark.length - 1] >= spark[0] ? '#10B981' : '#EF4444';
+
+  const row = useMemo(() => ({
+    ...e,
+    filing_url: e.source_url ?? null,
+    rule40: usRule40(e),
+    roce: usRoce(e),
+    caveat_tags: Array.isArray(e.caveat_tags) ? e.caveat_tags : [],
+    methodology_tags: Array.isArray(e.methodology_tags) ? e.methodology_tags : [],
+  }), [e]);
+
   return (
-    <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)', padding: 12, borderTop: `3px solid ${tierColor}`, position: 'relative' }}>
-      <button onClick={onRemove} title="Remove from bench" style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--mc-text-4)' }}>
-        <X className="w-3 h-3" />
-      </button>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', paddingRight: 18 }}>
-        <span style={{ fontWeight: 800, fontSize: 15, color: 'var(--mc-text-0)' }}>{e.ticker}</span>
-        <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company}</span>
-      </div>
-      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', margin: '6px 0 9px' }}>
-        <Tag text={e.tier} color={tierColor} />
-        <Tag text={v.verdictLabel} color={VERDICT_COLOR[v.verdictLabel]} />
-        {ds && ds !== 'HOLDING' && <Tag text={`${ds === 'DRIFTING' ? '⚠ ' : ''}${ds} ${fmtPct(e.move_pct, 0)}`} color={driftColor} />}
-        {e.quarter && <Tag text={e.quarter} />}
-        {age != null && <Tag text={`·${age}d`} />}
-        <Tag text={fmtUsd(e.market_cap_musd)} />
-        {e.guidance && <Tag text={`📣 ${e.guidance.toLowerCase()}`} color={e.guidance === 'RAISED' ? '#10B981' : (e.guidance === 'LOWERED' || e.guidance === 'WITHDRAWN') ? '#EF4444' : e.guidance === 'MAINTAINED' ? '#FACC15' : undefined} />}
-        {e.eps_surprise_pct != null && <Tag text={benchSurprise(e)} color={e.eps_surprise_pct >= 5 ? '#10B981' : e.eps_surprise_pct <= -5 ? '#EF4444' : undefined} />}
-        {e.prelim && <Tag text="PRELIM" color="#8B5CF6" />}
-        {e.is_elite && <Tag text="⭐ ELITE" color="#F59E0B" />}
-        {e.multibagger_setup && <Tag text="💎" color="#8B5CF6" />}
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-        <MiniTile label="REV" value={fmtPct(e.sales_yoy_pct)} good={(e.sales_yoy_pct ?? 0) >= 20} sub={e.revenue_prev_musd != null && e.revenue_curr_musd != null ? `${fmtUsd(e.revenue_prev_musd)}→${fmtUsd(e.revenue_curr_musd)}` : undefined} />
-        <MiniTile label="EPS · GAAP" value={fmtPct(e.eps_yoy_pct)} good={(e.eps_yoy_pct ?? 0) >= 25} sub={e.eps_prev != null && e.eps_curr != null ? `$${e.eps_prev.toFixed(2)}→$${e.eps_curr.toFixed(2)}` : undefined} />
-        <MiniTile label="OPM Δ" value={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp` : '—'} good={(opmD ?? -1) >= 0} sub={e.opm_pct != null ? `${e.opm_pct.toFixed(1)}% now` : undefined} />
-        <MiniTile label="PEAD" value={String(e.pead_score ?? '—')} good={(e.pead_score ?? 0) >= 60} sub={`score ${e.composite_score}`} />
-      </div>
-      {e.eps_adj != null && (
-        <div style={{ marginTop: 7, fontSize: 10, color: 'var(--mc-text-3)' }}>
-          street basis: adj. EPS <b style={{ color: 'var(--mc-text-1)' }}>${Number(e.eps_adj).toFixed(2)}</b>
-          {e.eps_estimate != null && <> vs est ${Number(e.eps_estimate).toFixed(2)}</>}
-          {e.eps_surprise_pct != null && <> · <b style={{ color: e.eps_surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{benchSurpriseText(e)}</b></>}
-        </div>
-      )}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-        <div><div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>SCORE {e.composite_score}</div><MiniBar value={e.composite_score} color={tierColor} /></div>
-        <div><div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>PEAD {e.pead_score ?? '—'}</div><MiniBar value={e.pead_score} color="#EF4444" /></div>
-      </div>
-      {/* tradeability — the two numbers that decide whether a small cap is investable */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8, fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
-        <span>Stage <b style={{ color: e.stage === 4 ? '#EF4444' : e.stage === 2 ? '#10B981' : 'var(--mc-text-0)' }}>{e.stage ?? '—'}</b></span>
-        <span>RS <b style={{ color: 'var(--mc-text-0)' }}>{e.rs_rating ?? '—'}</b></span>
-        <span>52w <b style={{ color: (e.pct_from_52w_high ?? -100) >= -15 ? 'var(--mc-text-0)' : '#F59E0B' }}>{fmtPct(e.pct_from_52w_high, 0)}</b></span>
-        <span title="20-day median dollar volume">$Vol <b style={{ color: (e.addv_musd ?? 0) < 2 ? '#EF4444' : 'var(--mc-text-0)' }}>{e.addv_musd != null ? `$${e.addv_musd.toFixed(1)}M/d` : '—'}</b></span>
-        <span>CFO/NI <b style={{ color: 'var(--mc-text-0)' }}>{e.cfo_to_pat_ratio != null ? e.cfo_to_pat_ratio.toFixed(2) : (e.is_financial ? 'n/a' : '—')}</b></span>
-        <span>{fmtPx(e.price)}{e.pe ? ` · P/E ${e.pe}` : ''}</span>
-      </div>
-      {(e.caveat_tags?.length || 0) > 0 && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
-          {e.caveat_tags!.map((t) => <Tag key={t} text={t} color="#EF4444" />)}
-        </div>
-      )}
-      <button onClick={onToggle} style={{ marginTop: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)', padding: 0, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {expanded ? 'Less' : 'More'}
-      </button>
-      {expanded && (
-        <div style={{ marginTop: 8, fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', lineHeight: 1.55 }}>
-          {e.narrative && <div style={{ marginBottom: 6 }}>{e.narrative}</div>}
-          {Array.isArray(e.guidance_snippets) && e.guidance_snippets.length > 0 && (
-            <div style={{ marginBottom: 6 }}>
-              <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-text-4)', marginBottom: 3 }}>📣 GUIDANCE · press release</div>
-              {e.guidance_snippets.map((q, i) => <div key={i} style={{ borderLeft: '2px solid var(--mc-bg-4)', paddingLeft: 7, marginBottom: 3 }}>“{q}”</div>)}
-            </div>
+    <UsEarningsCard
+      r={row as any}
+      open={open}
+      onToggle={onToggle}
+      panelId={`us-cb-panel-${String(e.bench_key || e.ticker).replace(/[^A-Za-z0-9_-]/g, '-')}`}
+      topRight={
+        <button onClick={onRemove} title="Remove from bench"
+          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--mc-text-4)', padding: 2, lineHeight: 0 }}>
+          <X className="w-3 h-3" />
+        </button>
+      }
+      extraChips={
+        <>
+          <Chip text={e.tier} color={e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981'} />
+          {/* The bench's own earnings-quality verdict, with the reasons behind
+              it on the tooltip — the card is a scanning surface and a second
+              line of prose under every one of them is what made the old bench
+              card twice as tall as it needed to be. */}
+          <span title={v.reasons.length ? v.reasons.join(' · ') : undefined}>
+            <Chip text={v.verdictLabel} color={VERDICT_COLOR[v.verdictLabel]} />
+          </span>
+          {ds && ds !== 'HOLDING' && (
+            <Chip text={`${ds === 'DRIFTING' ? '⚠ ' : ''}${ds} ${fmtPct(e.move_pct, 0)}`} color={driftColor} />
           )}
-          {v.reasons.length > 0 && <div style={{ color: 'var(--mc-text-3)', marginBottom: 6 }}>{v.reasons.join(' · ')}</div>}
-          {(e.quarters_revenue || e.quarters_eps || e.quarters_opm) && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 6 }}>
-              <Trend label="Revenue $M" s={e.quarters_revenue} fmt={(x) => x >= 1000 ? `${(x / 1000).toFixed(1)}B` : `${x.toFixed(0)}`} />
-              <Trend label="EPS $" s={e.quarters_eps} fmt={(x) => x.toFixed(2)} />
-              <Trend label="OPM %" s={e.quarters_opm} fmt={(x) => x.toFixed(1)} />
-            </div>
+          {age != null && <Chip text={`·${age}d`} />}
+          {/* Tradeability. Two numbers, because a small cap that cannot be
+              bought in size is not an opportunity however good the print was:
+              under $2M traded a day a position of any size moves the price. */}
+          {e.addv_musd != null && (
+            <span title="20-day median dollar volume">
+              <Chip text={`$Vol $${e.addv_musd.toFixed(1)}M/d`} color={e.addv_musd < 2 ? '#EF4444' : undefined} />
+            </span>
           )}
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span>Gap {fmtPct(e.gap_pct, 1)} · D1 <b style={{ color: (e.d1_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(e.d1_pct, 1)}</b> · Since print <b style={{ color: driftColor }}>{fmtPct(e.move_pct, 1)}</b></span>
-            {spark && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Sparkline series={spark} color={sparkColor} /><span style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>30d</span></span>}
-          </div>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 10, marginTop: 8, alignItems: 'center' }}>
-        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{e.form || ''} filed {e.filing_date}{e.sector ? ` · ${e.sector}` : ''}</span>
-        {e.source_url && (
-          <a href={e.source_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            SEC <ExternalLink className="w-3 h-3" />
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Trend({ label, s, fmt }: { label: string; s: number[] | null | undefined; fmt: (x: number) => string }) {
-  if (!s || s.length < 2) return null;
-  const up = s[s.length - 1] >= s[0];
-  return (
-    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '5px 7px' }}>
-      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>{label} · last {s.length}Q</div>
-      <div style={{ fontSize: 11, color: up ? '#10B981' : '#EF4444', fontWeight: 700 }}>{s.map(fmt).join(' → ')}</div>
-    </div>
-  );
-}
-
-function Tag({ text, color }: { text: string; color?: string }) {
-  const c = color || 'var(--mc-text-3)';
-  return (
-    <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999, border: `1px solid ${color ? c : 'var(--mc-bg-4)'}`, color: c, backgroundColor: color ? `color-mix(in srgb, ${c} 10%, transparent)` : 'transparent', whiteSpace: 'nowrap' }}>{text}</span>
-  );
-}
-
-/** Same rule as the opportunities page: a percentage surprise off a near-zero
- *  estimate is arithmetic noise — state it in cents instead. */
-function benchSurpriseText(e: any): string {
-  const est = e.eps_estimate as number | null;
-  const act = (e.eps_adj ?? e.eps_curr) as number | null;
-  if (est != null && act != null && Math.abs(est) < 0.1) {
-    const d = act - est;
-    return `${d >= 0 ? 'beat by' : 'missed by'} $${Math.abs(d).toFixed(2)}`;
-  }
-  const p = e.eps_surprise_pct as number | null;
-  return p == null ? '' : `${p >= 0 ? '+' : ''}${p.toFixed(0)}%`;
-}
-function benchSurprise(e: any): string {
-  const t = benchSurpriseText(e);
-  return /%$/.test(t) ? `vs est ${t}` : t;
-}
-
-function MiniTile({ label, value, good, sub }: { label: string; value: string; good: boolean; sub?: string }) {
-  return (
-    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 8px', minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 800, color: good ? 'var(--mc-bullish)' : 'var(--mc-text-0)' }}>{value}</div>
-      {sub && <div style={{ fontSize: 9, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
-    </div>
+          {e.pct_from_52w_high != null && (
+            <span title="Distance from the 52-week high">
+              <Chip text={`52w ${fmtPct(e.pct_from_52w_high, 0)}`} color={e.pct_from_52w_high >= -15 ? undefined : '#F59E0B'} />
+            </span>
+          )}
+        </>
+      }
+      /* NO subFooter. The collapsed card ENDS AT THE NARRATIVE — everything
+         else (the filing links, the filed date, the full guidance, the results
+         and margin tables, the balance sheet) is in the expand panel, which is
+         the same panel the Opportunities tab shows. */
+    />
   );
 }
 
@@ -633,6 +665,8 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
           <tr>
             <H label="Ticker" left /><H label="Company" left /><H label="Tier" left /><H label="Verdict" left />
             <H label="Rev YoY" k="sales" /><H label="EPS YoY" k="eps" /><th style={th('OPM Δ')}>OPM Δ</th><th style={th('CFO/NI')}>CFO/NI</th>
+            <th style={th('R40')} title="Revenue growth % + FCF margin %, trailing twelve months. Blank where the filing does not support it.">R40</th>
+            <th style={th('ROCE')} title="TTM operating income ÷ (total assets − current liabilities). Blank for a filer with no classified balance sheet.">ROCE</th>
             <H label="PEAD" k="pead" /><H label="Score" k="score" /><th style={th('RS')}>RS</th><th style={th('Stg')}>Stg</th>
             <H label="$Vol/d" k="addv" /><H label="Mkt cap" k="mcap" /><H label="P/E" k="pe" /><th style={th('D1')}>D1</th>
             <H label="Since" k="drift" /><H label="Filed" k="fresh" left /><th style={th('')} />
@@ -644,6 +678,8 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             const opmD = (e.opm_pct != null && e.opm_prev_pct != null) ? e.opm_pct - e.opm_prev_pct : null;
             const tierColor = e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
             const ds = driftState(e);
+            const r40 = usRule40(e);
+            const roce = usRoce(e);
             return (
               <tr key={`${e.ticker}-${e.filing_date}`} style={{ borderBottom: '1px solid var(--mc-bg-3)' }}>
                 <td style={{ ...td, textAlign: 'left', fontWeight: 800, color: 'var(--mc-text-0)' }}>
@@ -656,6 +692,17 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                 <td style={td}>{fmtPct(e.eps_yoy_pct)}</td>
                 <td style={td}>{opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp` : '—'}</td>
                 <td style={td}>{e.cfo_to_pat_ratio != null ? e.cfo_to_pat_ratio.toFixed(2) : (e.is_financial ? 'n/a' : '—')}</td>
+                {/* A blank cell is the honest rendering of "the filing does not
+                    support this figure"; a zero or a dash would both read as a
+                    measurement that was actually taken. */}
+                <td style={{ ...td, color: r40 == null ? undefined : r40.passes ? '#10B981' : undefined, fontWeight: r40?.passes ? 800 : undefined }}
+                  title={r40 == null ? undefined : `${r40.growth_pct}% growth + ${r40.fcf_margin_pct}% FCF margin, ${r40.basis === 'ttm' ? 'trailing twelve months' : 'this quarter only'}`}>
+                  {r40?.score ?? ''}{r40 && r40.basis === 'quarter' ? '·q' : ''}
+                </td>
+                <td style={{ ...td, color: roce == null ? undefined : roce.pct != null && roce.pct >= 20 ? '#10B981' : undefined }}
+                  title={roce == null ? undefined : `TTM EBIT $${roce.ebit_ttm_musd}M ÷ capital employed $${roce.capital_employed_musd}M`}>
+                  {roce?.pct != null ? `${roce.pct.toFixed(0)}%` : ''}
+                </td>
                 <td style={td}>{e.pead_score ?? '—'}</td>
                 <td style={{ ...td, fontWeight: 800, color: 'var(--mc-text-0)' }}>{e.composite_score}</td>
                 <td style={td}>{e.rs_rating ?? '—'}</td>

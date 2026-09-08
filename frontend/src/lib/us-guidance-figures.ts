@@ -1039,7 +1039,20 @@ export function fmtGuideRange(g: { low: number | null; high: number | null; unit
       : `$${Math.round(a).toLocaleString()}`;
     return v < 0 ? `-${body}` : body;
   };
-  return g.low === g.high ? one(g.low) : `${one(g.low)}–${one(g.high)}`;
+  if (g.low === g.high) return one(g.low);
+  // AN EN-DASH CANNOT SEPARATE TWO SIGNED NUMBERS.
+  //
+  // Titan Machinery guided to an adjusted LOSS of $1.75 to $1.25 a share and
+  // the card printed "-$1.75–-$1.25", where the dash between the two ends is
+  // indistinguishable from the minus signs on either side of it. The same is
+  // true of a percentage range, whose ends always carry a sign: "+10%–+12%".
+  // Whenever either end renders with a leading sign, the two are joined with
+  // the word instead — "-$1.75 to -$1.25", "+10% to +12%" — which is how the
+  // filers themselves write a negative range and reads correctly wherever the
+  // range straddles zero as well.
+  const lo = one(g.low), hi = one(g.high);
+  const signed = /^[-+−]/.test(lo) || /^[-+−]/.test(hi);
+  return signed ? `${lo} to ${hi}` : `${lo}–${hi}`;
 }
 
 export const GUIDE_METRIC_LABEL: Record<GuideMetric, string> = {
