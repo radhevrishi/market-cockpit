@@ -18,6 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getCachedDay, putCachedDay, clearDayCache, scrubLegacyDayCaches } from '@/lib/us-day-cache';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
 import { syncUsConviction } from '@/lib/conviction-beats-us';
@@ -225,7 +226,9 @@ export default function UsEarningsOpportunitiesPage() {
     });
   }, []);
 
-  useEffect(() => { scrubOldCaches(); evictOldestDays(); }, []);
+  // The day cache lives in IndexedDB now (see src/lib/us-day-cache.ts for why).
+  // This drops the localStorage generations it replaces, once.
+  useEffect(() => { scrubOldCaches(); scrubLegacyDayCaches(); }, []);
   useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
   useEffect(() => { try { debouncedSetItem(LS_DAYS, String(days)); } catch {} }, [days]);
 
@@ -245,7 +248,7 @@ export default function UsEarningsOpportunitiesPage() {
       queryKey: ['graded-us-day', d, forceKey],
       queryFn: async (): Promise<DayPayload> => {
         if (forceKey === 0) {
-          const cached = readCache(d, d >= today);
+          const cached = await getCachedDay(d, d >= today);
           if (cached) return cached as unknown as DayPayload;
         }
         const ctrl = new AbortController();
@@ -257,7 +260,7 @@ export default function UsEarningsOpportunitiesPage() {
           );
           if (!res.ok) throw new Error(`Grading failed for ${d} (HTTP ${res.status})`);
           const payload = await res.json();
-          if (cacheable(payload)) cacheDay(d, payload);
+          void putCachedDay(d, payload);
           return payload;
         } finally { clearTimeout(timer); }
       },
@@ -285,7 +288,10 @@ export default function UsEarningsOpportunitiesPage() {
   const isLoading = loadedCount === 0 && dayQueries.some((q: any) => q.isFetching);
   const isFetching = dayQueries.some((q: any) => q.isFetching);
   const error = loadedCount === 0 ? ((dayQueries.find((q: any) => q.isError) as any)?.error ?? null) : null;
-  const refetch = () => setForceKey((k) => k + 1);
+  // THE ONLY THING THAT SHOULD EVER RE-SWEEP A WHOLE WINDOW. Ordinary visits
+  // read every completed session out of the cache; this button is the user
+  // saying "throw it away and rebuild", so it empties the store first.
+  const refetch = () => { void clearDayCache(); setForceKey((k) => k + 1); };
 
   // Push BLOCKBUSTER / STRONG (and demotions) onto the US bench.
   //
@@ -611,7 +617,7 @@ export default function UsEarningsOpportunitiesPage() {
         )}
         <button onClick={exportCsv} style={btn()}>📊 CSV</button>
         <button onClick={exportTradingView} style={btn()}>📈 TradingView</button>
-        <button onClick={() => { setForceKey((k) => k + 1); setTimeout(() => refetch(), 0); }}
+        <button onClick={() => { void clearDayCache(); setForceKey((k) => k + 1); }}
           disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <RefreshCw className="w-3 h-3" style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
           {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Force re-scan'}

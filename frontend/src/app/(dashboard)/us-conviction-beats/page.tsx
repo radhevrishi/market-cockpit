@@ -510,8 +510,27 @@ export default function UsConvictionBeatsPage() {
         <div style={panel()}>
           <div style={{ fontWeight: 700, color: 'var(--mc-text-0)', marginBottom: 6 }}>The bench is empty</div>
           <div style={{ color: 'var(--mc-text-2)', fontSize: 'var(--mc-text-sm)' }}>
-            It fills itself from graded US results. Hit <b>Rebuild + re-price</b> above, or open{' '}
-            <a href="/us-earnings-opportunities" style={{ color: 'var(--mc-cyan)' }}>US Earnings Opportunities</a> — every graded window syncs here automatically.
+            It fills itself from graded US results, or you can rebuild it now.
+          </div>
+          {/* THE ACTION THE EMPTY STATE DESCRIBES HAS TO BE IN THE EMPTY STATE.
+              This used to say "hit Rebuild + re-price above" — and above is a
+              status strip that, on a bench with nothing in it, is a row of
+              zeroes the eye skips, with the button last in a wrapping flex row.
+              Right after "Clear all" the auto-sweep also greys that button out,
+              so the one instruction on screen pointed at a control that was
+              both hard to find and disabled. */}
+          <button onClick={() => sweep(30, true)} disabled={sweeping}
+            style={{
+              marginTop: 12, padding: '9px 16px', borderRadius: 'var(--mc-radius)',
+              border: '1px solid var(--mc-cyan)', background: 'var(--mc-cyan)',
+              color: '#04121A', fontWeight: 800, fontSize: 'var(--mc-text-sm)',
+              cursor: sweeping ? 'default' : 'pointer', opacity: sweeping ? 0.6 : 1,
+            }}>
+            <RefreshCw className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 6, animation: sweeping ? 'spin 1s linear infinite' : undefined }} />
+            {sweeping ? 'Rebuilding…' : 'Rebuild the bench (30 sessions)'}
+          </button>
+          <div style={{ marginTop: 10, color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
+            Or open <a href="/us-earnings-opportunities" style={{ color: 'var(--mc-cyan)' }}>US Earnings Opportunities</a> — every graded window syncs here automatically.
           </div>
         </div>
       )}
