@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-10T08:35:25Z",
+  "lastSync": "2026-09-10T09:54:51Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10522,
+      "size": 10521,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,17 +30,17 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 7084,
+      "size": 7083,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 6005,
+      "size": 5184,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4048,
+      "size": 3647,
       "displayName": "Lowequitycapital"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19279,
+      "size": 19278,
       "displayName": "Turnarounds"
     },
     {
