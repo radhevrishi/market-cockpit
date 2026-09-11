@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-09-11T09:53:17Z",
+  "lastSync": "2026-09-11T12:31:06Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 10322,
+      "size": 10325,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 9877,
+      "size": 9878,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10521,
+      "size": 10520,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,27 +25,27 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 4532,
+      "size": 4050,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 6195,
+      "size": 6236,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 4899,
+      "size": 5173,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4082,
+      "size": 3648,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 12298,
+      "size": 12244,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 4486,
+      "size": 4487,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19277,
+      "size": 19276,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 25737,
+      "size": 25734,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63519,
+      "size": 63518,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65696,
+      "size": 65695,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 9351,
+      "size": 9292,
       "displayName": "Weekly Volume Pockets"
     }
   ]
