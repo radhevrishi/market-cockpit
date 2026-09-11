@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-11T08:29:54Z",
+  "lastSync": "2026-09-11T09:53:17Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9454,
+      "size": 9877,
       "displayName": "CAPEX"
     },
     {
@@ -40,12 +40,12 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 3647,
+      "size": 4082,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 11893,
+      "size": 12298,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19275,
+      "size": 19277,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 25747,
+      "size": 25737,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63518,
+      "size": 63519,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65695,
+      "size": 65696,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 8945,
+      "size": 9351,
       "displayName": "Weekly Volume Pockets"
     }
   ]
