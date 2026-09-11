@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-11T12:31:06Z",
+  "lastSync": "2026-09-11T15:23:06Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10520,
+      "size": 10113,
       "displayName": "Debt Reduction"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65695,
+      "size": 65693,
       "displayName": "Working watchlist"
     },
     {
