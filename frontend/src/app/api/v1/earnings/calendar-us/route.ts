@@ -47,6 +47,13 @@ interface DayEntry {
   reported_elsewhere?: number;
   expected: ExpectedReporter[];  // SCHEDULED reporters (Nasdaq) — the whole list for future dates,
                                  // the not-yet-filed remainder for today, empty for the past
+  /** PROJECTED reporters — see `projectedFor`. Nasdaq lists only dates a
+   *  company has CONFIRMED, so a filer that reports on the same week every
+   *  year but has not announced yet is missing from the schedule entirely
+   *  (FedEx, Carnival and Jefferies were all absent from a three-week window
+   *  that a commercial calendar filled). These come from the filer's OWN 8-K a
+   *  year earlier and are labelled as projections, never as scheduled. */
+  projected?: Array<{ ticker: string; company: string; last_year_date: string }>;
   eightK: number;
   periodic: number;
 }
@@ -141,6 +148,27 @@ export async function GET(req: Request) {
       }
     }
 
+    // ── PROJECTED DATES ──────────────────────────────────────────────────
+    //
+    // Nasdaq's calendar is a CONFIRMED-dates calendar: a company appears once
+    // it has announced. Most large filers announce two to four weeks ahead, so
+    // a three-week forward window is mostly empty on the Nasdaq feed while a
+    // commercial calendar shows it full — not because they know something, but
+    // because they project from history.
+    //
+    // So do we, from the only history that cannot be wrong about a filer: its
+    // own 8-K a year earlier. For each future session we read EDGAR's earnings
+    // index for the same session one year back (364 days keeps the weekday) and
+    // carry those filers forward, unless they are already confirmed or have
+    // already filed somewhere in this window. Every one is labelled with the
+    // date it is projected FROM, and the UI never calls it scheduled.
+    const futureDates = workDates.filter((d) => d > today);
+    const lastYear = await pooled(futureDates, 4, async (d) => {
+      const y = new Date(Date.parse(d + 'T00:00:00Z') - 364 * dayMs).toISOString().slice(0, 10);
+      try { return { d, y, list: await earningsFilersOn(y) }; }
+      catch { return { d, y, list: [] as EdgarFiling[] }; }
+    });
+
     const byDate = new Map<string, DayEntry>();
     for (const d of dates) {
       byDate.set(d, { date: d, weekend: isWeekend(d), future: d > today, count: 0, tickers: [], entries: [], expected: [], eightK: 0, periodic: 0, reported_elsewhere: 0 });
@@ -165,12 +193,39 @@ export async function GET(req: Request) {
       // private issuer. Mark it rather than leaving a silent gap.
       if (s.d < today) entry.reported_elsewhere = entry.expected.length;
     }
+    // Projections last, so they can be measured against everything already
+    // known: a company that has filed in this window, or that Nasdaq has
+    // confirmed on ANY day of it, is not projected anywhere.
+    {
+      const known = new Set<string>();
+      byDate.forEach((e) => {
+        for (const x of e.entries) known.add(x.ticker);
+        for (const x of e.expected) known.add(x.ticker);
+      });
+      const placed = new Set<string>();
+      for (const ly of lastYear) {
+        if (!ly) continue;
+        const entry = byDate.get(ly.d);
+        if (!entry) continue;
+        const out: NonNullable<DayEntry['projected']> = [];
+        for (const f of ly.list) {
+          // An 8-K carries the announcement; a 10-Q-only filer a year ago says
+          // nothing about when it will announce this year.
+          if (f.form !== '8-K' || !f.ticker) continue;
+          if (known.has(f.ticker) || placed.has(f.ticker)) continue;
+          placed.add(f.ticker);
+          out.push({ ticker: f.ticker, company: f.company, last_year_date: ly.y });
+        }
+        entry.projected = out.sort((a, b) => a.ticker.localeCompare(b.ticker));
+      }
+    }
+
     byDate.forEach((entry) => {
       entry.entries.sort((a, b) => (a.form === '8-K' ? 0 : 1) - (b.form === '8-K' ? 0 : 1) || a.ticker.localeCompare(b.ticker));
       entry.tickers = entry.entries.map((e) => e.ticker);
       entry.eightK = entry.entries.filter((e) => e.form === '8-K').length;
       entry.periodic = entry.entries.length - entry.eightK;
-      entry.count = entry.entries.length + entry.expected.length;
+      entry.count = entry.entries.length + entry.expected.length + (entry.projected?.length ?? 0);
       total += entry.count;
     });
 

@@ -63,6 +63,7 @@ interface Expected {
 interface CalendarDay {
   date: string; weekend: boolean; future?: boolean; count: number;
   tickers: string[]; entries?: CalendarTicker[]; expected?: Expected[]; eightK: number; periodic: number;
+  projected?: Array<{ ticker: string; company: string; last_year_date: string }>;
   reported_elsewhere?: number;
 }
 interface CalendarPayload {
@@ -996,6 +997,8 @@ export default function UsEarningsOpportunitiesPage() {
                 const expected: Expected[] = d.expected || [];
                 const shown = calSearch ? entries.filter((e) => e.ticker.includes(calSearch)) : entries;
                 const shownExp = calSearch ? expected.filter((e) => e.ticker.includes(calSearch)) : expected;
+                const projected = d.projected || [];
+                const shownProj = calSearch ? projected.filter((e) => e.ticker.includes(calSearch)) : projected;
                 const open = !!openDays[d.date] || !!calSearch || calDays === 1;
                 const LIMIT = 30;
                 const visible = open ? shown : shown.slice(0, LIMIT);
@@ -1026,7 +1029,13 @@ export default function UsEarningsOpportunitiesPage() {
                           🗓 {shownExp.length} {isFuture ? 'scheduled' : (isToday ? 'still to report' : 'reported without an 8-K')}
                         </span>
                       )}
-                      {!shown.length && !shownExp.length && (
+                      {shownProj.length > 0 && (
+                        <span title="Not yet announced. Projected from each company's own 8-K a year earlier — a date it may still move."
+                          style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)' }}>
+                          ~{shownProj.length} projected
+                        </span>
+                      )}
+                      {!shown.length && !shownExp.length && !shownProj.length && (
                         <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-4)' }}>
                           {d.weekend ? 'weekend' : isFuture ? 'nothing scheduled yet' : 'no filings'}
                         </span>
@@ -1090,6 +1099,32 @@ export default function UsEarningsOpportunitiesPage() {
                         {hiddenExp > 0 && (
                           <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: true }))} style={{ ...btn(), fontSize: 11, padding: '3px 8px' }}>
                             +{hiddenExp} more ▾
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {/* PROJECTED — a different shape from scheduled, on purpose.
+                        Nasdaq lists a company once it has confirmed; these have
+                        not confirmed, and the only thing behind them is that
+                        this filer announced on this session last year. Shown
+                        faintly, prefixed "~", with the source date in the
+                        tooltip, so a projection is never read as a date the
+                        company has given. */}
+                    {shownProj.length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                        {(open ? shownProj : shownProj.slice(0, LIMIT)).map((e) => (
+                          <span key={e.ticker} title={`${e.company} — not yet announced. Projected from its own earnings 8-K on ${e.last_year_date}.`}
+                            style={{
+                              fontSize: 11, fontWeight: 600, padding: '3px 7px', borderRadius: 5,
+                              border: '1px dotted var(--mc-bg-4)', color: 'var(--mc-text-4)',
+                              backgroundColor: 'transparent',
+                            }}>
+                            ~{e.ticker}
+                          </span>
+                        ))}
+                        {!open && shownProj.length > LIMIT && (
+                          <button onClick={() => setOpenDays((o) => ({ ...o, [d.date]: true }))} style={{ ...btn(), fontSize: 11, padding: '3px 8px' }}>
+                            +{shownProj.length - LIMIT} more ▾
                           </button>
                         )}
                       </div>
