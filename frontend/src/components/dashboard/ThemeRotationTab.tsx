@@ -20,11 +20,19 @@ interface ThemeRow {
   characterChange?: 'bullish' | 'bearish' | null;
   conviction?: number; rotationVelocity?: number; rotation?: string; action?: string | null;
   verdict?: string; verdictColor?: string; verdictNote?: string;
+  // what changed (derived from the weekly RRG trail, no stored history)
+  quadrant1w?: string | null; quadrant4w?: string | null;
+  quadrantMove?: QuadMove | null; quadrantMove4w?: QuadMove | null;
+  rsDelta1w?: number | null; momDelta1w?: number | null;
+  fallingLeader?: boolean;
   ok?: boolean;
 }
+interface QuadMove { from: string; to: string; dir: 'upgrade' | 'downgrade' }
 interface Payload {
   region: Region; benchmark: { symbol: string; name: string; price: number; changePercent: number };
+  benchmarkRet?: Ret | null;
   themes: ThemeRow[]; rotatingIn: string[]; rotatingOut: string[]; topBuy: string[]; topAvoid: string[];
+  movedUp?: string[]; movedDown?: string[];
   asOf: string; source?: string; error?: string;
 }
 
@@ -175,10 +183,38 @@ export default function ThemeRotationTab() {
       for (const s of sts) picks.push({ symbol: s.symbol, grade: s.grade, gr: gradeRank(s.grade), themeName: th.name, themeEmoji: th.emoji, verdict: th.verdict, verdictColor: th.verdictColor });
     }
     picks.sort((a, b) => a.gr - b.gr || ((a.verdict === 'BUY' ? 0 : 1) - (b.verdict === 'BUY' ? 0 : 1)) || a.symbol.localeCompare(b.symbol));
-    const top = picks.slice(0, 25);
+    // ── CONCENTRATION CAP — MAX 3 NAMES PER THEME ─────────────────────────
+    //
+    // Ranking 25 names purely by grade is not a portfolio. If your best-graded
+    // names happen to cluster in one theme, the "best 25" came out as eleven
+    // semiconductor stocks and a tail — one book with one bet in it, and the
+    // whole point of a ROTATION-driven list is that it spreads across the
+    // themes currently working. Worse, that concentration is invisible: every
+    // row looks individually justified.
+    //
+    // So the list is built in passes. Pass one takes each theme's single best
+    // name, pass two the second-best, pass three the third — then stops. Order
+    // within a pass is still strictly by Fundo grade, so quality still decides
+    // who gets in; the cap only decides how many from one theme can. The result
+    // is the best names available under a constraint a human would have applied
+    // anyway, and the theme spread is stated above the table so it is checkable.
+    const PER_THEME_CAP = 3;
+    const byTheme = new Map<string, typeof picks>();
+    for (const p of picks) {
+      if (!byTheme.has(p.themeName)) byTheme.set(p.themeName, []);
+      byTheme.get(p.themeName)!.push(p);
+    }
+    const top: typeof picks = [];
+    for (let pass = 0; pass < PER_THEME_CAP && top.length < 25; pass++) {
+      const round = [...byTheme.values()].map((arr) => arr[pass]).filter(Boolean);
+      round.sort((a, b) => a.gr - b.gr || ((a.verdict === 'BUY' ? 0 : 1) - (b.verdict === 'BUY' ? 0 : 1)) || a.symbol.localeCompare(b.symbol));
+      for (const p of round) { if (top.length >= 25) break; top.push(p); }
+    }
     const graded = top.filter((p) => p.gr < 99).length;
     const wt = top.length ? +(100 / top.length).toFixed(1) : 0;
-    return { top, graded, wt };
+    const themeSpread = new Set(top.map((p) => p.themeName)).size;
+    const excluded = Math.max(0, picks.length - top.length);
+    return { top, graded, wt, themeSpread, excluded, cap: PER_THEME_CAP };
   }, [userBook, byId]);
 
   const regime = useMemo(() => {
@@ -269,8 +305,95 @@ export default function ThemeRotationTab() {
             </div>
           )}
 
-          {/* CLEAR rotation board — 2×2 quadrants you read at a glance */}
-          <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expandedIds={expandedIds} />
+          {/* ═══ WHAT CHANGED THIS WEEK — the only genuinely new information ═══
+              A board that shows where every theme SITS is a snapshot; a rotation
+              tracker has to show where they MOVED. "Leading" reads identically
+              whether a theme has led for a year or crossed the line on Friday,
+              and those two mean opposite things for sizing. Derived from the
+              weekly RRG trail, so it needs no stored history and survives a
+              cache wipe. This is the first thing worth reading on the page. */}
+          {(() => {
+            const ups = themes.filter((t) => t.quadrantMove?.dir === 'upgrade');
+            const downs = themes.filter((t) => t.quadrantMove?.dir === 'downgrade');
+            const line = (t: ThemeRow) => (
+              <button key={t.id} onClick={() => toggleExpand(t.id)}
+                title={`${t.name}: ${t.quadrant1w} → ${t.quadrant} · RS-momentum ${(t.momDelta1w ?? 0) > 0 ? '+' : ''}${(t.momDelta1w ?? 0).toFixed(1)} this week · click for stocks`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', textAlign: 'left',
+                  fontSize: 11.5, fontWeight: 700, color: TXT, borderRadius: 7, padding: '4px 9px',
+                  background: t.quadrantMove!.dir === 'upgrade' ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
+                  border: `1px solid ${t.quadrantMove!.dir === 'upgrade' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+                }}>
+                <span>{t.emoji} {t.name}</span>
+                <span style={{ color: DIM, fontWeight: 600, fontSize: 10 }}>
+                  {t.quadrant1w} <span style={{ color: t.quadrantMove!.dir === 'upgrade' ? '#22C55E' : '#EF4444' }}>→</span> {t.quadrant}
+                </span>
+              </button>
+            );
+            return (
+              <div style={{ background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: '11px 13px', marginBottom: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>🔀 What changed this week</div>
+                <div style={{ fontSize: 10.5, color: DIM, marginBottom: ups.length || downs.length ? 9 : 0, lineHeight: 1.5 }}>
+                  Themes that crossed a quadrant line since last Friday — where the rotation actually moved, as opposed to where it already was. A theme that has just turned is a different trade from one that turned six months ago.
+                </div>
+                {!ups.length && !downs.length ? (
+                  <div style={{ fontSize: 11.5, color: MUT, marginTop: 8 }}>No theme changed quadrant this week — the rotation is stable. Nothing new to act on; the board below still holds.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {ups.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 9.5, fontWeight: 900, letterSpacing: 0.5, color: '#22C55E', marginBottom: 5 }}>▲ STRENGTHENED — {ups.length}</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{ups.map(line)}</div>
+                      </div>
+                    )}
+                    {downs.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 9.5, fontWeight: 900, letterSpacing: 0.5, color: '#F87171', marginBottom: 5 }}>▼ DETERIORATED — {downs.length}</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{downs.map(line)}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ═══ RELATIVE STRENGTH IS NOT A RISING PRICE ═══
+              Every RS number on this page is measured against the benchmark, so
+              a theme can sit in Leading while its own price falls — it is simply
+              falling less. That is a defensive rotation, not a buy, and reading
+              the board without the distinction is the easiest way to buy a
+              downtrend. Named here once, and badged per row below. */}
+          {(() => {
+            const falling = themes.filter((t) => t.fallingLeader && (t.verdict === 'BUY' || t.verdict === 'EARLY BUY' || t.quadrant === 'Leading'));
+            const b3 = payload.benchmarkRet?.m3;
+            if (!falling.length && b3 == null) return null;
+            return (
+              <div style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '9px 13px', marginBottom: 14, fontSize: 11.5, color: MUT, lineHeight: 1.55 }}>
+                <b style={{ color: '#F59E0B' }}>⚖️ Relative vs absolute.</b>{' '}
+                {b3 != null && <>The benchmark ({payload.benchmark.name}) is <b style={{ color: b3 >= 0 ? '#22C55E' : '#F87171' }}>{fmtPct(b3)}</b> over 3 months — every RS number below is measured against that. </>}
+                {falling.length > 0 && (
+                  <>
+                    <b style={{ color: TXT }}>{falling.length} theme{falling.length > 1 ? 's are' : ' is'} leading on relative strength while its own price is still down over 3 months</b>
+                    {' '}({falling.slice(0, 4).map((t) => t.name).join(', ')}{falling.length > 4 ? `, +${falling.length - 4}` : ''}) — outperforming a falling market is defence, not a buy signal. Marked <span style={{ color: '#F59E0B', fontWeight: 800 }}>↓abs</span> in the table.
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* CLEAR rotation board — the RRG map beside the 2×2 you read at a glance */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 380px) 1fr', gap: 12, alignItems: 'start', marginBottom: 14 }} className="mc-rrg-split">
+            <div style={{ background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: '10px 11px' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 900, color: TXT, marginBottom: 1 }}>🎯 Rotation map</div>
+              <div style={{ fontSize: 9.5, color: DIM, marginBottom: 6, lineHeight: 1.45 }}>
+                Each theme plotted on relative strength (→) against its own momentum (↑), with an eight-week tail: the tail shows the path it took to get there, which is the part a list of quadrant labels cannot show. Themes travel clockwise. Hover a dot to name it; click to open its stocks.
+              </div>
+              <RRG themes={themes} hover={hover} setHover={setHover} onPick={(id) => toggleExpand(id)} />
+            </div>
+            <QuadrantBoard themes={themes} onPick={(id) => toggleExpand(id)} expandedIds={expandedIds} />
+          </div>
+          <style>{`@media (max-width: 860px){ .mc-rrg-split{ grid-template-columns: 1fr !important; } }`}</style>
 
           {/* YOUR BOOK — every stock on your lists, mapped to a theme. Sits BELOW the
               rotation board (below Leading/Improving/Lagging) per the user's ask.
@@ -359,8 +482,13 @@ export default function ThemeRotationTab() {
                             <div style={{ fontWeight: 800, color: TXT }}>{t.emoji} {t.name}
                               {t.action === 'ADD' && <span title="Rotating into strength — add" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#22C55E', background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.4)', borderRadius: 4, padding: '1px 5px' }}>➕ ADD</span>}
                               {t.action === 'TRIM' && <span title="Rolling over — trim" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#EF4444', background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 4, padding: '1px 5px' }}>✂️ TRIM</span>}
+                              {/* Outperforming a falling market is defence, not a buy. The
+                                  RS columns cannot show this — they are relative by
+                                  construction — so it is said in words on the row itself. */}
+                              {t.fallingLeader && <span title="Leading on relative strength, but its own price is still down over 3 months — it is falling less than the market, not rising" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#F59E0B', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>↓abs</span>}
+                              {t.quadrantMove && <span title={`Crossed ${t.quadrantMove.from} → ${t.quadrantMove.to} this week`} style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: t.quadrantMove.dir === 'upgrade' ? '#22C55E' : '#EF4444', background: t.quadrantMove.dir === 'upgrade' ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)', border: `1px solid ${t.quadrantMove.dir === 'upgrade' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`, borderRadius: 4, padding: '1px 5px' }}>{t.quadrantMove.dir === 'upgrade' ? '▲' : '▼'} NEW</span>}
                             </div>
-                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}</div>
+                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.quadrantMove ? <span style={{ color: MUT }}> (was {t.quadrantMove.from})</span> : t.quadrant4w && t.quadrant4w !== t.quadrant ? <span style={{ color: MUT }}> (was {t.quadrant4w} a month ago)</span> : ''}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}</div>
                           </div>
                         </div>
                       </td>
@@ -370,8 +498,15 @@ export default function ThemeRotationTab() {
                       {(['w1', 'm1', 'm3', 'ytd', 'y1'] as const).map((k) => (
                         <td key={k} style={{ padding: '7px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: TXT, background: pctColor(t.ret?.[k]), borderRadius: 4 }}>{fmtPct(t.ret?.[k])}</td>
                       ))}
-                      <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: MUT }}>
+                      <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: MUT }}
+                        title={t.momDelta1w != null ? `RS-momentum ${t.momDelta1w > 0 ? '+' : ''}${t.momDelta1w.toFixed(1)} over the past week — the rate of change, not the level` : undefined}>
                         {t.rsRatio?.toFixed(0)}<span style={{ color: (t.rsMomentum || 100) >= 100 ? '#22C55E' : '#EF4444', marginLeft: 4 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
+                        {/* The level says where it is; the weekly delta says whether it is
+                            still getting there. A Leading theme with a negative delta is
+                            already on its way out and the level alone will not show it. */}
+                        {t.momDelta1w != null && Math.abs(t.momDelta1w) >= 0.2 && (
+                          <div style={{ fontSize: 8.5, color: t.momDelta1w > 0 ? '#22C55E' : '#EF4444' }}>{t.momDelta1w > 0 ? '+' : ''}{t.momDelta1w.toFixed(1)}/wk</div>
+                        )}
                       </td>
                       <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>
                         {typeof t.conviction === 'number'
@@ -483,9 +618,9 @@ export default function ThemeRotationTab() {
           <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 12, padding: 15 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 3 }}>
               <div style={{ fontSize: 14, fontWeight: 900, color: TXT }}>🧪 Dummy Portfolio — Best {dummyPortfolio.top.length} <span style={{ color: DIM, fontWeight: 700 }}>({region === 'us' ? '🇺🇸 USA' : '🇮🇳 India'})</span></div>
-              {dummyPortfolio.top.length > 0 && <div style={{ fontSize: 10.5, color: DIM }}><b style={{ color: MUT }}>{dummyPortfolio.graded}</b> graded · equal-weight <b style={{ color: MUT }}>{dummyPortfolio.wt}%</b> each</div>}
+              {dummyPortfolio.top.length > 0 && <div style={{ fontSize: 10.5, color: DIM }}><b style={{ color: MUT }}>{dummyPortfolio.graded}</b> graded · across <b style={{ color: MUT }}>{dummyPortfolio.themeSpread}</b> themes · equal-weight <b style={{ color: MUT }}>{dummyPortfolio.wt}%</b> each</div>}
             </div>
-            <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>Your Multibagger / Technicals names that sit in a theme the engine rates <b style={{ color: '#22C55E' }}>BUY</b> or <b style={{ color: '#22C55E' }}>EARLY BUY</b> right now — <b style={{ color: MUT }}>nothing from Weakening or Lagging</b>. Ranked by your Fundo grade (A+ first). A simple starter book, not advice.</div>
+            <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>Your Multibagger / Technicals names that sit in a theme the engine rates <b style={{ color: '#22C55E' }}>BUY</b> or <b style={{ color: '#22C55E' }}>EARLY BUY</b> right now — <b style={{ color: MUT }}>nothing from Weakening or Lagging</b>. Ranked by your Fundo grade (A+ first), <b style={{ color: MUT }}>capped at {dummyPortfolio.cap} names per theme</b> so the book spreads across the rotation instead of stacking into whichever theme your best grades happen to sit in{dummyPortfolio.excluded ? <> — {dummyPortfolio.excluded} eligible name{dummyPortfolio.excluded > 1 ? 's' : ''} left out by that cap</> : null}. A simple starter book, not advice.</div>
             {dummyPortfolio.top.length === 0 ? (
               <div style={{ fontSize: 11.5, color: DIM, padding: '10px 0' }}>No names from your lists currently sit in a BUY / EARLY-BUY theme. When a theme you own rotates into a buy call, its best-graded names appear here.</div>
             ) : (
@@ -545,8 +680,8 @@ function QuadrantBoard({ themes, onPick, expandedIds }: { themes: ThemeRow[]; on
     { q: 'Weakening', label: 'WEAKENING', action: 'rolling over — trim', color: '#F97316', tint: 'rgba(249,115,22,0.07)', emoji: '🟠', items: bucket('Weakening').sort((a, b) => (a.rsMomentum || 0) - (b.rsMomentum || 0)) },
   ];
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Rotation board — where every theme sits right now. <b style={{ color: '#22C55E' }}>Top-right = buy</b>, moving clockwise to <b style={{ color: '#EF4444' }}>bottom-left = avoid</b>. Click any theme to see its stocks.</div>
+    <div>
+      <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Rotation board — where every theme sits right now. <b style={{ color: '#22C55E' }}>Top-right = buy</b>, moving clockwise to <b style={{ color: '#EF4444' }}>bottom-left = avoid</b>. A <span style={{ color: '#FBBF24', fontWeight: 800 }}>◆</span> marks a theme that crossed into this quadrant <b style={{ color: MUT }}>this week</b> — newly arrived, not long-settled. Click any theme to see its stocks.</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         {boxes.map((b) => (
           <div key={b.q} style={{ background: b.tint, border: `1px solid ${b.color}55`, borderRadius: 10, padding: '10px 11px', minHeight: 92 }}>
@@ -558,6 +693,7 @@ function QuadrantBoard({ themes, onPick, expandedIds }: { themes: ThemeRow[]; on
               {b.items.length ? b.items.map((t) => (
                 <button key={t.id} onClick={() => onPick(t.id)} title={`${t.name} — RS ${t.rsRatio?.toFixed(0)} · click for stocks`}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', color: expandedIds.has(t.id) ? '#fff' : TXT, background: expandedIds.has(t.id) ? b.color : `${b.color}18`, border: `1px solid ${b.color}${expandedIds.has(t.id) ? '' : '44'}`, borderRadius: 20, padding: '3px 9px' }}>
+                  {t.quadrantMove && <span title={`Crossed ${t.quadrant1w} → ${t.quadrant} this week`} style={{ color: '#FBBF24', fontSize: 9 }}>◆</span>}
                   {t.emoji} {t.name}
                   <span style={{ color: (t.rsMomentum || 100) >= 100 ? (expandedIds.has(t.id) ? '#fff' : '#22C55E') : (expandedIds.has(t.id) ? '#fff' : '#EF4444'), fontWeight: 900 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
                 </button>
@@ -570,9 +706,24 @@ function QuadrantBoard({ themes, onPick, expandedIds }: { themes: ThemeRow[]; on
   );
 }
 
-// ── RRG scatter (kept for reference; the quadrant board above is the primary view) ─
-function RRG({ themes, hover, setHover }: { themes: ThemeRow[]; hover: string | null; setHover: (s: string | null) => void }) {
-  const W = 360, H = 300, pad = 26;
+// ═══ RRG SCATTER — the one view that shows PATH rather than position ═══════
+//
+// This component existed for months and was never rendered: the quadrant board
+// replaced it because a wall of 49 unlabelled dots is unreadable. But the board
+// throws away the single most useful thing the engine computes — the eight-week
+// TAIL. A dot sitting in Leading tells you nothing about whether it arrived
+// last week from Improving (a young trend worth adding to) or is drifting out
+// towards Weakening (a trade to trim). The tail shows that at a glance, and no
+// table column can.
+//
+// So the scatter comes back, fixed rather than restored: the tail fades from
+// old to recent so direction of travel is visible without an animation, the
+// current point is a filled dot with a ring on whatever is hovered or already
+// expanded, and labels are drawn only for the themes worth naming — the ones
+// that MOVED quadrant this week, plus whatever the pointer is on — so the chart
+// stays legible at 49 themes instead of turning into a smear of text.
+function RRG({ themes, hover, setHover, onPick }: { themes: ThemeRow[]; hover: string | null; setHover: (s: string | null) => void; onPick?: (id: string) => void }) {
+  const W = 360, H = 320, pad = 30;
   const pts = themes.filter((t) => t.rsRatio != null && t.rsMomentum != null);
   const xs = pts.map((t) => t.rsRatio as number), ys = pts.map((t) => t.rsMomentum as number);
   const span = (arr: number[]) => { const mn = Math.min(100, ...arr), mx = Math.max(100, ...arr); const pad2 = Math.max(1.5, (mx - mn) * 0.15); return [mn - pad2, mx + pad2] as const; };
@@ -594,16 +745,52 @@ function RRG({ themes, hover, setHover }: { themes: ThemeRow[]; hover: string | 
       <text x={pad} y={pad + 10} fill="#3B82F6" fontSize="9" fontWeight="700">IMPROVING</text>
       <text x={pad} y={H - pad - 4} fill="#EF4444" fontSize="9" fontWeight="700">LAGGING</text>
       <text x={W - pad} y={H - pad - 4} fill="#F97316" fontSize="9" textAnchor="end" fontWeight="700">WEAKENING</text>
+      <text x={W / 2} y={H - 6} fill="#5B6B85" fontSize="8" textAnchor="middle">relative strength vs benchmark →</text>
+      <text x={9} y={H / 2} fill="#5B6B85" fontSize="8" textAnchor="middle" transform={`rotate(-90 9 ${H / 2})`}>momentum →</text>
+      {/* Tails first, so every dot sits above every line. Drawn as fading
+          segments rather than one polyline: opacity rising towards the present
+          is what makes the direction of travel readable without animation. */}
+      {pts.map((t) => {
+        const tr = t.trail || [];
+        if (tr.length < 2) return null;
+        const c = QC[t.quadrant || 'Lagging'];
+        const on = hover === t.id;
+        return (
+          <g key={`tr:${t.id}`} pointerEvents="none">
+            {tr.slice(1).map((p, i) => {
+              const a = tr[i], b = p;
+              const frac = (i + 1) / (tr.length - 1);          // 0 = oldest, 1 = now
+              return (
+                <line key={i} x1={sx(a.x)} y1={sy(a.y)} x2={sx(b.x)} y2={sy(b.y)}
+                  stroke={c} strokeWidth={on ? 0.6 + frac * 1.8 : 0.3 + frac * 0.9}
+                  opacity={on ? 0.35 + frac * 0.55 : (t.quadrantMove ? 0.16 : 0.09) + frac * 0.22}
+                  strokeLinecap="round" />
+              );
+            })}
+          </g>
+        );
+      })}
       {pts.map((t) => {
         const x = sx(t.rsRatio as number), y = sy(t.rsMomentum as number);
         const c = QC[t.quadrant || 'Lagging'];
         const on = hover === t.id;
-        const trail = (t.trail || []).map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ');
+        // Only what is worth naming gets a label: the pointer's target, and the
+        // themes that crossed a quadrant line this week. At 49 themes, labelling
+        // everything is the same as labelling nothing.
+        const label = on || (!!t.quadrantMove && !hover);
         return (
-          <g key={t.id} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)} style={{ cursor: 'pointer' }}>
-            {t.trail && t.trail.length > 1 && <polyline points={trail} fill="none" stroke={c} strokeWidth={on ? 1.6 : 0.8} opacity={on ? 0.8 : 0.35} />}
-            <circle cx={x} cy={y} r={on ? 6 : 4} fill={c} stroke="#0B111C" strokeWidth="1" />
-            {(on || pts.length <= 22) && <text x={x + 7} y={y + 3} fill={on ? '#fff' : '#B7C4D6'} fontSize={on ? 10 : 8.5} fontWeight={on ? 800 : 600}>{t.emoji}{on ? ` ${t.name}` : ''}</text>}
+          <g key={t.id} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}
+            onClick={() => onPick?.(t.id)} style={{ cursor: 'pointer' }}>
+            <circle cx={x} cy={y} r={10} fill="transparent" />
+            {t.quadrantMove && <circle cx={x} cy={y} r={on ? 8.5 : 7} fill="none" stroke="#FBBF24" strokeWidth="1.2" opacity={0.9} />}
+            <circle cx={x} cy={y} r={on ? 6 : t.quadrantMove ? 4.5 : 3.6} fill={c} stroke="#0B111C" strokeWidth="1" />
+            {label && (
+              <text x={x + (x > W * 0.66 ? -8 : 8)} y={y + 3} textAnchor={x > W * 0.66 ? 'end' : 'start'}
+                fill={on ? '#fff' : '#C8D4E4'} fontSize={on ? 10 : 8.5} fontWeight={on ? 800 : 700}
+                stroke="#0B111C" strokeWidth={on ? 2.6 : 2} paintOrder="stroke" strokeLinejoin="round">
+                {t.emoji} {t.name}
+              </text>
+            )}
           </g>
         );
       })}

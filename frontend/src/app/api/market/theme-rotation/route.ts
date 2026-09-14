@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v9:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v10:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -58,6 +58,29 @@ function getQuadrant(rsRatio: number, rsMomentum: number): string {
   if (rsRatio >= 100 && rsMomentum < 100) return 'Weakening';
   if (rsRatio < 100 && rsMomentum < 100) return 'Lagging';
   return 'Improving';
+}
+
+// ═══ WHAT CHANGED — the half of a rotation tracker that was missing ═══════
+//
+// The board has always shown where every theme SITS. Rotation is where a theme
+// is MOVING, and a snapshot cannot say that: "Leading" reads identically
+// whether a theme has led for a year or crossed into it on Friday. The two
+// mean opposite things for position sizing.
+//
+// No stored history is needed for this. The weekly RRG trail already carries
+// the last eight (RS-Ratio, RS-Momentum) pairs, so the quadrant a week ago and
+// a month ago can simply be re-derived from it. That makes the feature exact,
+// free, and immune to a cache wipe or a redeploy losing its memory.
+//
+// Direction is judged on STRENGTH, not on the RRG's clockwise cycle: a reader
+// wants to know whether a theme got better or worse, and Leading > Improving >
+// Weakening > Lagging is the order they mean by that.
+const QUAD_STRENGTH: Record<string, number> = { Leading: 3, Improving: 2, Weakening: 1, Lagging: 0 };
+function quadrantMoveBetween(from: string | null, to: string):
+  { from: string; to: string; dir: 'upgrade' | 'downgrade' } | null {
+  if (!from || from === to) return null;
+  const a = QUAD_STRENGTH[from] ?? 0, b = QUAD_STRENGTH[to] ?? 0;
+  return { from, to, dir: b > a ? 'upgrade' : 'downgrade' };
 }
 
 // JdK RS-Ratio / RS-Momentum from two aligned weekly close series. Returns the
@@ -304,11 +327,31 @@ async function build(region: ThemeRegion) {
     // INTO strength — reclaimed 50-DMA + momentum crossed up) = ADD; a bearish one
     // (rolling over + lost the 50-DMA) = TRIM.
     const action = characterChange === 'bullish' ? 'ADD' : characterChange === 'bearish' ? 'TRIM' : null;
+
+    // ── WHAT CHANGED: the quadrant a week and a month ago, re-derived from the
+    //    trail rather than stored. trail[last] is this week.
+    const backAt = (n: number) => (trail.length > n ? trail[trail.length - 1 - n] : null);
+    const p1 = backAt(1), p4 = backAt(4);
+    const quadrant1w = p1 ? getQuadrant(p1.x, p1.y) : null;
+    const quadrant4w = p4 ? getQuadrant(p4.x, p4.y) : null;
+    const quadrantMove = quadrantMoveBetween(quadrant1w, quadrant);
+    const quadrantMove4w = quadrantMoveBetween(quadrant4w, quadrant);
+    const rsDelta1w = p1 ? +(rsRatio - p1.x).toFixed(2) : null;
+    const momDelta1w = p1 ? +(rsMomentum - p1.y).toFixed(2) : null;
+    // ── RELATIVE STRENGTH IS NOT A RISING PRICE. Every number above this line
+    //    is measured AGAINST the benchmark, so a theme can sit in Leading while
+    //    its own price falls — it is merely falling less than the market. That
+    //    is a defensive rotation, not a buy, and reading the board without this
+    //    distinction is the single easiest way to buy a downtrend. Flagged
+    //    explicitly rather than left for the reader to infer from the columns.
+    const fallingLeader = (quadrant === 'Leading' || quadrant === 'Improving') && (ret.m3 ?? 0) <= 0;
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
       proxy: t.proxy || null, members, sourceKind,
       price: +price.toFixed(2), dayChangePct: +dayChg.toFixed(2),
       ret, rsRatio, rsMomentum, quadrant, trail,
+      quadrant1w, quadrant4w, quadrantMove, quadrantMove4w, rsDelta1w, momDelta1w,
+      fallingLeader,
       aboveSMA50, breadthAbove50,
       characterChange,
       conviction, rotationVelocity: +velPerWk.toFixed(2), rotation, action,
@@ -332,10 +375,25 @@ async function build(region: ThemeRegion) {
   const topAvoid = okRows.filter((r: any) => r.verdict === 'AVOID')
     .sort((a: any, b: any) => (a.rsRatio + a.rsMomentum) - (b.rsRatio + b.rsMomentum)).slice(0, 5).map((r: any) => r.id);
 
+  // THE BENCHMARK'S OWN TREND, stated. Every RS number on this page is measured
+  // against it, so without it "Leading, +2% over 3M" is unreadable: is that a
+  // strong theme in a flat market, or a weak one in a market up 9%? One line of
+  // arithmetic that changes how the whole board is read.
+  const benchmarkRet = benchData ? returns(benchData.ts, benchData.closes) : null;
+
+  // WHAT CHANGED THIS WEEK — the themes that actually crossed a quadrant line
+  // since last Friday, which is the only genuinely new information on the page.
+  const movedUp = okRows.filter((r: any) => r.quadrantMove?.dir === 'upgrade')
+    .sort((a: any, b: any) => (b.momDelta1w ?? 0) - (a.momDelta1w ?? 0)).map((r: any) => r.id);
+  const movedDown = okRows.filter((r: any) => r.quadrantMove?.dir === 'downgrade')
+    .sort((a: any, b: any) => (a.momDelta1w ?? 0) - (b.momDelta1w ?? 0)).map((r: any) => r.id);
+
   return {
     region,
     benchmark: { symbol: bench.symbol, name: bench.name, price: benchData?.price || 0, changePercent: benchData?.dayChg || 0 },
+    benchmarkRet,
     themes: rows,
+    movedUp, movedDown,
     rotatingIn, rotatingOut, topBuy, topAvoid,
     asOf: new Date().toISOString(),
     source: 'Yahoo Finance · JdK RS-Ratio/Momentum',
