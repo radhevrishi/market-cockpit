@@ -3648,8 +3648,13 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     .sort((a, b) => b.amount_usd - a.amount_usd)[0] || null;
   const strippedAlready = (input.adj_eps != null && f.eps != null && input.adj_eps < f.eps - 0.02);
   const perShareAlready = (oneOffTot != null && Math.abs(oneOffTot) >= 0.02);
+  // BOTH SIDES IN ABSOLUTE DOLLARS. `f.net_income` is raw XBRL — it is only
+  // divided down to millions at the row's edge — so dividing the item by a
+  // million here compared $150 against $151,000,000 and the ratio came out
+  // zero. The one place this rule can go wrong is its units, so they are
+  // stated: amount_usd and net_income are both dollars.
   const absShare = (absOff && !strippedAlready && !perShareAlready && niC != null && niC > 0)
-    ? (absOff.amount_usd / 1e6) / niC : null;
+    ? absOff.amount_usd / niC : null;
   if (absOff && absShare != null && absShare >= 0.15) {
     caveat_tags.push(
       `one-off ≈$${(absOff.amount_usd / 1e6).toFixed(0)}m in the quarter — ${Math.round(absShare * 100)}% of net income, per-share effect not stated (${absOff.label})`);

@@ -19,6 +19,7 @@ import { submissions, tickerToCik } from '../src/lib/us-edgar';
 import { releaseDocument } from '../src/lib/us-guidance';
 import { adjustedEpsFromReleaseHtml } from '../src/lib/us-pr-adjusted';
 import { oneOffsFromReleaseHtml, epsExOneOffs, absoluteOneOffsFromReleaseHtml } from '../src/lib/us-one-offs';
+import { gradeUsRow } from '../src/lib/us-earnings-core';
 
 interface Case {
   ticker: string;
@@ -84,8 +85,49 @@ const CASES: Case[] = [
 const near = (a: number | null, b: number | null, tol = 0.02) =>
   (a == null && b == null) || (a != null && b != null && Math.abs(a - b) <= tol);
 
+// ── UNIT CHECK: the grading rules, run on numbers rather than on EDGAR ─────
+//
+// `fundamentals.net_income` is RAW XBRL — absolute dollars — and only becomes
+// millions at the row's edge. A rule that compared a $150m one-off against it
+// in the wrong unit produced a ratio of zero and silently did nothing: the
+// extraction was right, the filing was right, and the caveat never appeared.
+// A units mistake cannot be caught by any test that reads a filing, so it is
+// caught here.
+function unitChecks(): number {
+  let bad = 0;
+  const grade = (over: any) => gradeUsRow({
+    ticker: 'TEST', company: 'Test', filing_date: '2026-08-26', filing_url: '', form: '8-K',
+    fundamentals: {
+      revenue: 3_515_000_000, revenue_prev: 3_600_000_000,
+      net_income: 151_000_000, net_income_prev: 153_000_000, eps: 1.28, eps_prev: 1.35,
+    },
+    adj_eps: 1.28, adj_eps_prev: 0.56,
+    ...over,
+  } as any) as any;
+  const withItem = grade({
+    abs_one_offs: [{ label: 'tariff refunds', amount_usd: 150e6, kind: 'benefit', quote: 'q' }],
+  });
+  const tagged = (withItem?.caveat_tags || []).some((t: string) => t.startsWith('one-off ≈$'));
+  console.log(`${tagged ? 'PASS' : 'FAIL'}  UNITS a $150m item on $151m of net income is caught`);
+  if (!tagged) bad++;
+  const without = grade({ abs_one_offs: [] });
+  const clean = !(without?.caveat_tags || []).some((t: string) => t.startsWith('one-off ≈$'));
+  console.log(`${clean ? 'PASS' : 'FAIL'}  UNITS the same quarter with no item is not tagged`);
+  if (!clean) bad++;
+  // An item the company already stripped out of its adjusted figure is not
+  // charged to the headline a second time.
+  const stripped = grade({
+    adj_eps: 0.90,
+    abs_one_offs: [{ label: 'tariff refunds', amount_usd: 150e6, kind: 'benefit', quote: 'q' }],
+  });
+  const notDouble = !(stripped?.caveat_tags || []).some((t: string) => t.startsWith('one-off ≈$'));
+  console.log(`${notDouble ? 'PASS' : 'FAIL'}  UNITS an item already excluded from adjusted EPS is not charged twice`);
+  if (!notDouble) bad++;
+  return bad;
+}
+
 (async () => {
-  let failed = 0;
+  let failed = unitChecks();
   for (const c of CASES) {
     let adj: number | null = null;
     let core: number | null = null;
@@ -120,6 +162,7 @@ const near = (a: number | null, b: number | null, tol = 0.02) =>
       `${err ? '  ERR ' + err : ''}`);
     if (!ok) console.log(`      ↳ guards: ${c.why}`);
   }
-  console.log(`\n${CASES.length - failed}/${CASES.length} passed`);
+  const total = CASES.length + 3;
+  console.log(`\n${total - failed}/${total} passed`);
   process.exit(failed ? 1 : 0);
 })();
