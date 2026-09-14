@@ -253,6 +253,20 @@ export async function exchangeForTickersRefined(tickers: string[]): Promise<Reco
   return base;
 }
 
+/** Diagnostic: what each SEC source says about a ticker's venue. */
+export async function venueDebug(tickers: string[]): Promise<Record<string, any>> {
+  const L = await listings();
+  const out: Record<string, any> = {};
+  for (const raw of tickers) {
+    const t = String(raw || '').toUpperCase().trim();
+    const hit = L.byTicker.get(t);
+    let subsEx: string[] | null = null;
+    try { if (hit?.cik) subsEx = (await submissions(hit.cik))?.exchanges ?? null; } catch { subsEx = null; }
+    out[t] = { cik: hit?.cik ?? null, ticker_file: hit?.exchange ?? null, submissions_exchanges: subsEx };
+  }
+  return out;
+}
+
 export async function tickerToCik(ticker: string): Promise<number | null> {
   const L = await listings();
   const t = ticker.toUpperCase().replace(/\./g, '-');

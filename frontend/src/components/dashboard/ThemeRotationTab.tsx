@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { getUsConvictionList, hydrateUsConviction } from '@/lib/conviction-beats-us';
 import { classifyTheme } from '@/lib/theme-classify';
+import { buildTvExport } from '@/lib/us-tradingview';
 
 type Region = 'us' | 'india';
 interface Ret { w1: number; m1: number; m3: number; m6: number; ytd: number; y1: number }
@@ -115,6 +116,7 @@ export default function ThemeRotationTab() {
   const collapseAll = useCallback(() => setExpandedIds(new Set()), []);
   const byId = useMemo(() => { const m = new Map<string, ThemeRow>(); themes.forEach((t) => m.set(t.id, t)); return m; }, [themes]);
 
+
   // zzz484 — read the user's OWN lists (Multibagger fundamental pool + India/USA
   // Technicals + Conviction bench) so drill-down stocks that are on the user's
   // lists get a ★ and their fundo score. Client-side because these live in the
@@ -123,7 +125,9 @@ export default function ThemeRotationTab() {
     const norm = (s: any) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/, '').replace(/^(NSE|BSE):/, '').trim();
     const fundo = new Map<string, { score?: number; grade?: string }>();
     const tech = new Set<string>();
-    const bench = new Map<string, string>();
+    // Tier AND score, because the bench is the only quality signal available
+    // when no Multibagger grade has been uploaded for this region.
+    const bench = new Map<string, { tier?: string; score?: number }>();
     const readJSON = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
     const frows = readJSON(region === 'us' ? 'mb_usa_scored_v2' : 'mb_excel_scored_v2');
     if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (s) fundo.set(s, { score: r?.score, grade: r?.grade }); }
@@ -141,11 +145,12 @@ export default function ThemeRotationTab() {
     try {
       if (region === 'us') {
         for (const e of getUsConvictionList()) {
-          const s = norm(e.ticker); if (s) bench.set(s, (e as any).tier);
+          const s = norm(e.ticker);
+          if (s) bench.set(s, { tier: (e as any).tier, score: (e as any).composite_score });
         }
       } else {
         const cb = readConvictionBeats() as Record<string, any>;
-        for (const k in cb) { const s = norm(k); if (s) bench.set(s, cb[k]?.tier); }
+        for (const k in cb) { const s = norm(k); if (s) bench.set(s, { tier: cb[k]?.tier, score: cb[k]?.composite_score ?? cb[k]?.score }); }
       }
     } catch { /* none */ }
     return { fundo, tech, bench, norm };
@@ -162,7 +167,7 @@ export default function ThemeRotationTab() {
     const readJSON = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
     // Named, so `map.get(s) || { symbol: s }` narrows to one type rather than a
     // union TypeScript then refuses to read fields off.
-    type BookEntry = { symbol: string; sector?: string; industry?: string; score?: number; grade?: string; inTech?: boolean; inFundo?: boolean; inBench?: boolean };
+    type BookEntry = { symbol: string; sector?: string; industry?: string; score?: number; grade?: string; inTech?: boolean; inFundo?: boolean; inBench?: boolean; benchTier?: string; benchScore?: number };
     const map = new Map<string, BookEntry>();
     const entryFor = (sym: string): BookEntry => map.get(sym) || { symbol: sym };
     const trows = readJSON(region === 'us' ? 'mb_tech_rows_usa_v1' : 'mb_tech_rows_ind_v1');
@@ -181,6 +186,7 @@ export default function ThemeRotationTab() {
           const s = norm(b.ticker); if (!s || EXCLUDE.has(s)) continue;
           const e = entryFor(s);
           e.sector = e.sector || (b as any).sector; e.inBench = true;
+          e.benchTier = (b as any).tier; e.benchScore = (b as any).composite_score;
           map.set(s, e);
         }
       } else {
@@ -189,6 +195,7 @@ export default function ThemeRotationTab() {
           const s = norm(k); if (!s || EXCLUDE.has(s)) continue;
           const e = entryFor(s);
           e.sector = e.sector || cb[k]?.sector || cb[k]?.industry; e.inBench = true;
+          e.benchTier = cb[k]?.tier; e.benchScore = cb[k]?.composite_score ?? cb[k]?.score;
           map.set(s, e);
         }
       }
@@ -236,11 +243,31 @@ export default function ThemeRotationTab() {
       return (base[m[1]] ?? 90) + mod;
     };
     const BUYABLE = new Set(['BUY', 'EARLY BUY']);
-    const picks: { symbol: string; grade?: string; gr: number; themeName: string; themeEmoji: string; verdict: string; verdictColor?: string }[] = [];
+    const picks: { symbol: string; grade?: string; gr: number; tier?: string; escore?: number; themeName: string; themeEmoji: string; verdict: string; verdictColor?: string }[] = [];
     for (const [tid, sts] of userBook.groups.entries()) {
       const th = byId.get(tid);
       if (!th || !th.verdict || !BUYABLE.has(th.verdict)) continue;
-      for (const s of sts) picks.push({ symbol: s.symbol, grade: s.grade, gr: gradeRank(s.grade), themeName: th.name, themeEmoji: th.emoji, verdict: th.verdict, verdictColor: th.verdictColor });
+      for (const s of sts) picks.push({
+        symbol: s.symbol, grade: s.grade,
+        // ── A RANK THAT DEGRADES TO SOMETHING, NOT TO NOTHING  (zzz618) ──
+        //
+        // Ranking was purely by Fundo grade, so with no Multibagger upload
+        // every name tied at 99 and the tiebreak — the ticker string — became
+        // the ranking. The "best 20" came out alphabetical: ADEA, ADUS, AGM,
+        // AMZN. That is worse than useless; it looks ranked.
+        //
+        // The conviction bench already holds a quality signal for exactly
+        // these names: the tier the engine gave their last filing, and its
+        // composite score. So an ungraded name falls back to that rather than
+        // to the alphabet — BLOCKBUSTER ahead of STRONG, and the engine score
+        // separating names inside a tier.
+        gr: gradeRank(s.grade) < 99
+          ? gradeRank(s.grade)
+          : (s.benchTier === 'BLOCKBUSTER' ? 30 : s.benchTier === 'STRONG' ? 40 : 99)
+            - Math.min(9, Math.round((s.benchScore ?? 0) / 11)),
+        tier: s.benchTier, escore: s.benchScore,
+        themeName: th.name, themeEmoji: th.emoji, verdict: th.verdict, verdictColor: th.verdictColor,
+      });
     }
     picks.sort((a, b) => a.gr - b.gr || ((a.verdict === 'BUY' ? 0 : 1) - (b.verdict === 'BUY' ? 0 : 1)) || a.symbol.localeCompare(b.symbol));
     // ── CONCENTRATION CAP — MAX 3 NAMES PER THEME ─────────────────────────
@@ -270,12 +297,70 @@ export default function ThemeRotationTab() {
       round.sort((a, b) => a.gr - b.gr || ((a.verdict === 'BUY' ? 0 : 1) - (b.verdict === 'BUY' ? 0 : 1)) || a.symbol.localeCompare(b.symbol));
       for (const p of round) { if (top.length >= 25) break; top.push(p); }
     }
-    const graded = top.filter((p) => p.gr < 99).length;
+    const graded = top.filter((p) => p.grade).length;
     const wt = top.length ? +(100 / top.length).toFixed(1) : 0;
     const themeSpread = new Set(top.map((p) => p.themeName)).size;
+    const rankedBy = top.some((p) => p.grade) ? 'your Fundo grade' : 'the tier the engine gave each name on its last filing';
     const excluded = Math.max(0, picks.length - top.length);
-    return { top, graded, wt, themeSpread, excluded, cap: PER_THEME_CAP };
+    return { top, graded, wt, themeSpread, excluded, cap: PER_THEME_CAP, rankedBy };
   }, [userBook, byId]);
+
+  // ═══ COPY THE BOOK TO TRADINGVIEW, GROUPED BY THE ROTATION CALL  (zzz618)
+  //
+  // The whole point of this page is the call it puts on each name, and until
+  // now that call could only be read here. Exported grouped — ###BUY,
+  // ###EARLY BUY, ###TRIM, ###AVOID — the rotation travels with the watchlist,
+  // so the same judgement is in front of you on the chart where you act on it.
+  //
+  // Venues: the US list resolves each ticker against SEC's own listing data
+  // (the same endpoint the Conviction Beats export uses, including its NYSE
+  // American correction). India needs no lookup — a numeric code is a BSE
+  // scrip and everything else is NSE, which is the rule the India tabs
+  // already use.
+  const [tvBusy, setTvBusy] = useState(false);
+  const [tvDone, setTvDone] = useState(false);
+  const copyToTradingView = useCallback(async () => {
+    setTvBusy(true);
+    try {
+      const buckets: Record<string, string[]> = { BUY: [], 'EARLY BUY': [], HOLD: [], WATCH: [], TRIM: [], AVOID: [] };
+      for (const [tid, sts] of userBook.groups.entries()) {
+        const th = byId.get(tid);
+        const v = th?.verdict || '';
+        if (!buckets[v]) continue;
+        for (const st of sts as any[]) buckets[v].push(String(st.symbol).toUpperCase());
+      }
+      let venues: Record<string, string | null> = {};
+      if (region === 'us') {
+        const all = Object.values(buckets).flat();
+        if (all.length) {
+          try {
+            const res = await fetch(`/api/v1/us/exchange?tickers=${encodeURIComponent(all.slice(0, 600).join(','))}`, { cache: 'no-store' });
+            venues = (await res.json())?.map || {};
+          } catch { /* a bare ticker still imports */ }
+        }
+      }
+      const rowsOf = (list: string[]) => list.map((t) => ({
+        ticker: t,
+        exchange: region === 'us' ? (venues[t] ?? null) : (/^\d+$/.test(t) ? 'BSE' : 'NSE'),
+      }));
+      const out = buildTvExport(
+        (['BUY', 'EARLY BUY', 'HOLD', 'WATCH', 'TRIM', 'AVOID'] as const)
+          .filter((k) => buckets[k].length)
+          .map((k) => ({ label: `${region === 'us' ? 'US' : 'IN'} ${k}`, rows: rowsOf(buckets[k]) })),
+      );
+      if (!out.count) return;
+      try {
+        await navigator.clipboard.writeText(out.text);
+        setTvDone(true); setTimeout(() => setTvDone(false), 2500);
+      } catch {
+        const blob = new Blob([out.text], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `theme-rotation-${region}-tradingview.txt`;
+        a.click(); URL.revokeObjectURL(a.href);
+      }
+    } finally { setTvBusy(false); }
+  }, [region, userBook, byId]);
 
   const regime = useMemo(() => {
     if (!payload || !themes.length) return null;
@@ -321,6 +406,11 @@ export default function ThemeRotationTab() {
               <button key={r} onClick={() => setRegion(r)} style={{ padding: '7px 16px', border: 'none', cursor: 'pointer', background: region === r ? '#1E40AF' : 'transparent', color: region === r ? '#fff' : MUT, fontSize: 13, fontWeight: 800 }}>{r === 'us' ? '🇺🇸 USA' : '🇮🇳 India'}</button>
             ))}
           </div>
+          <button onClick={copyToTradingView} disabled={tvBusy || !userBook.total}
+            title="Copy your book to TradingView, grouped by the rotation call — ###BUY, ###EARLY BUY, ###TRIM, ###AVOID — so the judgement travels with the watchlist."
+            style={{ fontSize: 11, fontWeight: 800, padding: '6px 11px', borderRadius: 7, cursor: tvBusy ? 'wait' : 'pointer', border: `1px solid ${tvDone ? '#10B981' : 'rgba(96,165,250,0.45)'}`, background: 'transparent', color: tvDone ? '#10B981' : '#60A5FA' }}>
+            {tvBusy ? '⏳' : tvDone ? '✓ Copied' : '📋 Copy → TradingView'}
+          </button>
           <button onClick={() => load(region, true)} disabled={loading} title="Recompute from live prices (bypasses the 30-min cache)" style={{ fontSize: 11, fontWeight: 800, padding: '6px 11px', borderRadius: 7, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(34,197,94,0.4)', background: 'transparent', color: '#22C55E' }}>{loading ? '⏳' : '↻ Refresh'}</button>
         </div>
       </div>
@@ -510,9 +600,27 @@ export default function ThemeRotationTab() {
                           cost a character of width on each of 236 chips. The
                           grade is what actually varies, so it is what shows. */}
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {sts.map((s) => (
-                          <span key={s.symbol} title={`${s.symbol}${s.sector ? ` · ${s.sector}` : ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>{s.symbol}{s.grade ? <span style={{ color: DIM, fontWeight: 600 }}> {s.grade}</span> : null}</span>
-                        ))}
+                        {sts.map((s) => {
+                          // ── COLOUR SAYS WHERE THE NAME CAME FROM  (zzz618) ──
+                          //
+                          // Every chip looked the same, so a name the grading
+                          // engine put on the bench off an actual filing was
+                          // indistinguishable from one typed into a spreadsheet.
+                          // Those are different kinds of evidence and the book is
+                          // now mostly the former, so the distinction has to be
+                          // visible without hovering: red for a BLOCKBUSTER
+                          // print, green for STRONG, amber for your own upload.
+                          const t = String(s.benchTier || '').toUpperCase();
+                          const col = t === 'BLOCKBUSTER' ? '#F87171' : t === 'STRONG' ? '#34D399' : '#F59E0B';
+                          const bgc = t === 'BLOCKBUSTER' ? 'rgba(248,113,113,0.14)' : t === 'STRONG' ? 'rgba(52,211,153,0.13)' : 'rgba(245,158,11,0.12)';
+                          return (
+                            <span key={s.symbol}
+                              title={`${s.symbol}${s.sector ? ` · ${s.sector}` : ''}${s.grade ? ` · Fundo ${s.grade}` : ''}${t ? ` · graded ${t} on its last filing${s.benchScore != null ? ` (engine ${s.benchScore})` : ''}` : ' · from your own list'}`}
+                              style={{ fontSize: 10.5, fontWeight: 700, color: col, background: bgc, borderRadius: 4, padding: '1px 5px', lineHeight: 1.5, border: t ? `1px solid ${col}44` : '1px solid transparent' }}>
+                              {s.symbol}{s.grade ? <span style={{ color: DIM, fontWeight: 600 }}> {s.grade}</span> : null}
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -641,8 +749,9 @@ export default function ThemeRotationTab() {
                                   const nsym = userLists.norm(s.sym);
                                   const f = userLists.fundo.get(nsym);
                                   const inTech = userLists.tech.has(nsym);
-                                  const tier = userLists.bench.get(nsym);
-                                  const inList = !!f || inTech || !!tier;
+                                  const benchHit = userLists.bench.get(nsym);
+                                  const tier = benchHit?.tier;
+                                  const inList = !!f || inTech || !!benchHit;
                                   const fundoScore = f?.score;
                                   const ft = (typeof s.techno === 'number' && typeof fundoScore === 'number') ? Math.round((s.techno + fundoScore) / 2) : null;
                                   const scoreCol = (v: number) => v >= 70 ? '#22C55E' : v >= 50 ? '#EAB308' : '#EF4444';
@@ -830,7 +939,9 @@ export default function ThemeRotationTab() {
                         <tr key={p.symbol} style={{ borderTop: `1px solid ${BORD}` }}>
                           <td style={{ padding: '6px 8px', color: DIM, fontWeight: 700 }}>{i + 1}</td>
                           <td style={{ padding: '6px 8px', color: '#F59E0B', fontWeight: 800 }}>★ {p.symbol}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: gcol }}>{p.grade || '·'}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: p.grade ? gcol : (p.tier === 'BLOCKBUSTER' ? '#F87171' : p.tier === 'STRONG' ? '#34D399' : DIM), fontSize: p.grade ? undefined : 9.5 }}
+                            title={p.grade ? `Fundo grade ${p.grade}` : p.tier ? `No Fundo grade — graded ${p.tier} on its last filing${p.escore != null ? ` (engine ${p.escore})` : ''}` : undefined}>
+                            {p.grade || (p.tier === 'BLOCKBUSTER' ? '🔥 BB' : p.tier === 'STRONG' ? '✅ STR' : '·')}</td>
                           <td style={{ padding: '6px 8px', color: MUT, whiteSpace: 'nowrap' }}>{p.themeEmoji} {p.themeName}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'center' }}><span style={{ fontSize: 9, fontWeight: 900, color: p.verdictColor, background: `${p.verdictColor}1a`, border: `1px solid ${p.verdictColor}55`, borderRadius: 5, padding: '2px 6px', whiteSpace: 'nowrap' }}>{p.verdict}</span></td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', color: MUT, fontWeight: 700 }}>{dummyPortfolio.wt}%</td>

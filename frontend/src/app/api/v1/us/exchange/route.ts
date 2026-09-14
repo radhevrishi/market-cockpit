@@ -20,7 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { exchangeForTickersRefined } from '@/lib/us-edgar';
+import { exchangeForTickersRefined, venueDebug } from '@/lib/us-edgar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,6 +36,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ map: {}, notes: ['no tickers requested'] });
   }
   const wanted = Array.from(new Set(raw.map((t) => t.toUpperCase()))).slice(0, MAX_TICKERS);
+  // `?debug=1` shows BOTH sources — the ticker file's coarse venue and the
+  // filer's own stated exchanges — so a venue that exports wrong can be
+  // diagnosed from the outside instead of guessed at.
+  if (url.searchParams.get('debug') === '1') {
+    const { default: dbg } = { default: await venueDebug(wanted) } as any;
+    return NextResponse.json({ debug: dbg });
+  }
   try {
     const map = await exchangeForTickersRefined(wanted);
     const known = Object.values(map).filter(Boolean).length;
