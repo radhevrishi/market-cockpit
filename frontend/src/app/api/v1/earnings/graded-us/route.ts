@@ -57,7 +57,20 @@ import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-p
 import { quadrantScore } from '@/lib/earnings-grade-shared';
 
 export const runtime = 'nodejs';
-export const maxDuration = 300;
+// A HEAVY SESSION NEEDS LONGER THAN FIVE MINUTES, AND THIS IS NOT SERVERLESS.
+//
+// Mid-August sessions — 10-Q season at its peak, three hundred filers in one
+// day — run past 300 seconds and were killed mid-flight: the request died, the
+// payload was never written to the cache, and the day failed again on every
+// retry for ever. 2026-08-14 was measured at exactly 300s then "remote end
+// closed connection", which is this limit and nothing else.
+//
+// Railway runs a long-lived Node process, so this ceiling is self-imposed
+// rather than a platform cap. The public edge still cuts a browser request at
+// its own timeout, but the prewarm job reaches this route over loopback, which
+// the edge never sees — so raising it is what lets the heaviest days complete
+// once, in the background, and be served from Redis in a second thereafter.
+export const maxDuration = 900;
 export const dynamic = 'force-dynamic';
 
 /** Hard cap on companyfacts fetches per request (peak season can exceed 400 filers/day). */

@@ -47,7 +47,12 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const DEADLINE_MS = 250_000;      // stop starting new sessions after ~4m10s
+// The job's own budget. It is deliberately shorter than the graded route's
+// ceiling: this endpoint is called from GitHub Actions over the public edge,
+// which cuts long requests, so the job must return in time to report. A
+// session it cannot finish inside the budget is STARTED and not awaited — see
+// the fire-and-forget below.
+const DEADLINE_MS = 230_000;
 const MAX_SESSIONS = 60;
 
 /** The engine's own trading-day calendar, so this warms exactly the sessions
@@ -79,8 +84,30 @@ export async function GET(req: NextRequest) {
   const failed: Array<{ date: string; why: string }> = [];
   let skippedForTime = 0;
 
+  // THE DAY THE BUDGET CANNOT COVER IS STILL STARTED.
+  //
+  // A heavy session takes longer than this job may run, so waiting for it is
+  // impossible — but the work does not have to be wasted. Once the budget is
+  // spent, the next cold session is kicked off over loopback and NOT awaited:
+  // the server keeps grading it after this response returns, and writes it to
+  // Redis when it finishes. Each run therefore leaves one more heavy day
+  // permanently warm, and the window converges instead of stalling on the
+  // first day that is too big to finish in five minutes.
+  let launched: string | null = null;
   for (const d of days) {
-    if (Date.now() - t0 > DEADLINE_MS) { skippedForTime++; continue; }
+    if (Date.now() - t0 > DEADLINE_MS) {
+      if (!launched && d < today) {
+        try {
+          const already = await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${d}|1`).catch(() => null);
+          if (!already?.by_tier) {
+            launched = d;
+            void railwaySelfFetch(`${origin}/api/v1/earnings/graded-us?date=${d}&days=1`,
+              { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } }).catch(() => {});
+          }
+        } catch { /* nothing to launch */ }
+      }
+      skippedForTime++; continue;
+    }
     // TODAY IS NEVER WARMED. It is still filling up, and a half-day written to
     // a thirty-day cache is worse than no cache at all.
     if (d >= today) { continue; }
@@ -114,9 +141,10 @@ export async function GET(req: NextRequest) {
     failed: failed.length,
     left_for_next_run: skippedForTime,
     elapsed_s: Math.round((Date.now() - t0) / 1000),
+    left_running_in_background: launched,
     detail: { warmed, failed, skipped_for_time: skippedForTime },
     note: skippedForTime
-      ? 'Deadline reached — run again to continue; sessions already warmed are skipped for free.'
+      ? `Deadline reached${launched ? ` — ${launched} left grading in the background and will be cached when it finishes` : ''}. Run again to continue; sessions already warmed are skipped for free.`
       : 'Window fully warm for this engine version.',
   });
 }
