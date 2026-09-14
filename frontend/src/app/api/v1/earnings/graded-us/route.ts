@@ -1394,7 +1394,9 @@ export async function GET(req: Request) {
         // core figure where a one-off sits inside it, against the estimate the
         // basis guard cleared. Otherwise GAAP, with no estimate at all.
         if (adjNow != null) {
-          push('Adj. EPS', adjForBeat ?? adjNow, 'usd_share', adjPrev, estForSurprise);
+          // Both ends on the SAME basis. The core figure measured against the
+          // headline prior year is a growth rate on two different books.
+          push('Adj. EPS', adjForBeat ?? adjNow, 'usd_share', adjPrevForGrowth, estForSurprise);
         } else {
           push('EPS', row.eps_curr, 'usd_share', row.eps_prev, null);
         }

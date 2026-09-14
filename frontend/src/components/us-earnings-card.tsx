@@ -559,15 +559,26 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   // line swung out of a loss still has a growth number, and so the two are
   // never confused.
   if (hasAdjEps) {
+    // THE TILE SHOWS THE PAIR THE GROWTH RATE WAS STRUCK FROM.
+    //
+    // Where the release states a one-off inside its adjusted figure, the grade
+    // measures the core number against the company's own comparable prior year
+    // (Burlington: $1.72 → $2.37, +38%). The tile was still printing the
+    // headline $2.96 beside that +38%, so the two numbers on one tile did not
+    // produce the percentage between them. The headline stays visible on the
+    // STREET BASIS line, where the one-off is named.
+    const coreCur = num((r as any).eps_adj_ex_oneoff);
+    const tileCur = coreCur ?? adjEpsCur;
     tiles.push(
-      <Tile key="epsadj" label="EPS · ADJ." {...swingTile(r.eps_adj_yoy_pct ?? null, r.eps_adj_swing ?? null,
-        adjEpsCur != null ? `$${adjEpsCur.toFixed(2)}` : '—')}
+      <Tile key="epsadj" label={coreCur != null ? 'EPS · ADJ. CORE' : 'EPS · ADJ.'}
+        {...swingTile(r.eps_adj_yoy_pct ?? null, r.eps_adj_swing ?? null,
+        tileCur != null ? `$${tileCur.toFixed(2)}` : '—')}
         // The same suppression as the STREET BASIS line below the tiles: when
         // `eps_basis_note` is set the estimate is on a different basis from
         // this actual, and printing it under the actual is the comparison the
         // engine just refused to make.
-        sub={adjEpsPrev != null && adjEpsCur != null
-          ? `$${adjEpsPrev.toFixed(2)} → $${adjEpsCur.toFixed(2)}`
+        sub={adjEpsPrev != null && tileCur != null
+          ? `$${adjEpsPrev.toFixed(2)} → $${tileCur.toFixed(2)}${coreCur != null ? ' core' : ''}`
           : (r as any).eps_basis_note
           ? 'no comparable street estimate'
           : epsEst != null && adjEpsCur != null
@@ -1064,28 +1075,29 @@ function SignalRow({ signals }: { signals: any[] | null | undefined }) {
   const list = Array.isArray(signals) ? signals.filter(Boolean) : [];
   if (!list.length) return null;
   const DOT: Record<string, string> = { green: '#10B981', amber: '#FACC15', red: '#EF4444' };
-  const fmtVal = (v: number, unit: string) => unit === 'usd_share' ? `$${v.toFixed(2)}` : fmtUsd(v * 1e6);
+  // VALUES ARE IN $M, and fmtUsdCell takes $M. Multiplying by 1e6 first — which
+  // this did — printed Nvidia's quarter as "$96221.00T".
+  const fmtVal = (v: number, unit: string) => unit === 'usd_share' ? `$${v.toFixed(2)}` : fmtUsdCell(v);
+  const anyEst = list.some((x) => x.basis === 'est' && x.est != null);
   return (
     <div style={{
-      marginTop: 8, padding: '7px 10px', borderRadius: 6,
+      marginTop: 8, padding: '6px 10px', borderRadius: 6,
       backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
-      display: 'flex', flexDirection: 'column', gap: 3,
-    }}>
+      display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11,
+      color: 'var(--mc-text-2)',
+    }}
+      title="Revenue, EPS, operating income and net income for the quarter. A light beside a line compares it with the street where a consensus for this exact period exists (revenue and EPS only — no free source publishes an operating-income or net-income consensus); otherwise it reads the year-on-year change.">
       {list.map((x) => (
-        <div key={x.label} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11, color: 'var(--mc-text-2)' }}>
+        <span key={x.label} style={{ display: 'inline-flex', gap: 5, alignItems: 'baseline', whiteSpace: 'nowrap' }}>
           <span style={{
-            width: 7, height: 7, borderRadius: 999, flex: '0 0 auto',
+            width: 6, height: 6, borderRadius: 999, alignSelf: 'center',
             backgroundColor: x.light ? DOT[x.light] : 'var(--mc-text-4)',
           }} />
-          <span style={{ minWidth: 86, color: 'var(--mc-text-3)' }}>{x.label}</span>
+          <span style={{ color: 'var(--mc-text-3)' }}>{x.label}</span>
           <b style={{ color: 'var(--mc-text-0)' }}>{fmtVal(x.value, x.unit)}</b>
-          {x.basis === 'est' && x.est != null && (
-            <span>vs est <b>{fmtVal(x.est, x.unit)}</b>
-              {x.surprise_pct != null && (
-                <b style={{ color: x.surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
-                  {' '}{x.surprise_pct >= 0 ? '+' : ''}{x.surprise_pct.toFixed(1)}%
-                </b>
-              )}
+          {x.basis === 'est' && x.est != null && x.surprise_pct != null && (
+            <span style={{ color: x.surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+              vs est {fmtVal(x.est, x.unit)} {x.surprise_pct >= 0 ? '+' : ''}{x.surprise_pct.toFixed(1)}%
             </span>
           )}
           {x.yoy_pct != null && (
@@ -1093,11 +1105,14 @@ function SignalRow({ signals }: { signals: any[] | null | undefined }) {
               {x.yoy_pct >= 0 ? '+' : ''}{x.yoy_pct.toFixed(0)}% YoY
             </span>
           )}
-          {x.basis !== 'est' && (
-            <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>· no street estimate published for this line — light reads YoY</span>
-          )}
-        </div>
+        </span>
       ))}
+      {/* ONE footnote for the row, not one per line. Four repetitions of the
+          same sentence was most of what the block contained. */}
+      <span style={{ color: 'var(--mc-text-4)', fontSize: 9.5 }}>
+        {anyEst ? 'lights: vs street where a consensus exists for this period, else YoY'
+          : 'lights read YoY — no street consensus is published for these lines'}
+      </span>
     </div>
   );
 }
