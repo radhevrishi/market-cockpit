@@ -37,7 +37,26 @@
 import { kvGet, kvSet } from './kv';
 import { yahooForwardEstimates, pooled } from './us-prices';
 
-const KEY_V = 'us-est:v1';
+// ── ONE KEY PER TICKER, NOT ONE PER PERIOD ────────────────────────────────
+//
+// The first version stored a key per (ticker, period end) and, on a miss,
+// walked forty neighbouring dates looking for one — forty-one sequential
+// round-trips to Frankfurt for every filer graded, almost all of them misses,
+// because coverage starts empty and fills only as the calendar sweeps.
+//
+// The cost was not the money, though it was plain enough in the console: 1.4
+// MILLION reads in three hours against ~10,000 writes, at a hit rate of almost
+// exactly zero. The cost was the WALL CLOCK. Twenty-five milliseconds per
+// round-trip, forty-one of them, serially, per filer, is a second of doing
+// nothing per company — a minute on a sixty-filer session and five minutes on
+// the heaviest August days, on top of every SEC request those days already
+// need. That is what was killing those sessions at 300 seconds, and no
+// increase to any timeout could have fixed it.
+//
+// A ticker's snapshots now live in ONE small document keyed by period end, so
+// a lookup is a single GET and the tolerance search happens in memory, where
+// it costs nothing at all.
+const KEY_V = 'us-est:v2';
 /** A filed quarter is graded within days; six months is generous headroom. */
 const TTL_S = 180 * 24 * 3600;
 /** 52/53-week calendars move a period end by up to a week either way, and the
@@ -54,7 +73,12 @@ export interface EstimateSnapshot {
   captured_at: string;       // ISO date the consensus was read
 }
 
-const key = (ticker: string, periodEnd: string) => `${KEY_V}:${ticker.toUpperCase()}:${periodEnd}`;
+/** One document per ticker: { [period_end]: EstimateSnapshot }. */
+type SnapshotIndex = Record<string, EstimateSnapshot>;
+const key = (ticker: string) => `${KEY_V}:${ticker.toUpperCase()}`;
+/** A name reports four times a year, so a dozen entries is three years of
+ *  history in a few hundred bytes. Oldest periods fall off the end. */
+const MAX_PERIODS = 12;
 
 function daysApart(a: string, b: string): number {
   const x = Date.parse(a + 'T00:00:00Z');
@@ -79,21 +103,30 @@ export async function snapshotEstimates(tickers: string[]): Promise<number> {
   await pooled(uniq, 6, async (t) => {
     try {
       const fwd = await yahooForwardEstimates(t);
+      // ONE read and ONE write per ticker, whatever the vendor returns.
+      const idx: SnapshotIndex = (await kvGet<SnapshotIndex>(key(t)).catch(() => null)) || {};
+      let changed = false;
       for (const f of fwd) {
         // Only the two QUARTERLY entries: a fiscal-year estimate is not a
         // quarter's consensus and must never be stored as one.
         if (f.period !== '0q' && f.period !== '+1q') continue;
         if (!f.end_date || !/^\d{4}-\d{2}-\d{2}$/.test(f.end_date)) continue;
         if (f.eps == null && f.revenue == null) continue;
-        const snap: EstimateSnapshot = {
+        idx[f.end_date] = {
           ticker: t,
           period_end: f.end_date,
           eps: f.eps,
           revenue: f.revenue,
           captured_at: new Date().toISOString().slice(0, 10),
         };
-        await kvSet(key(t, f.end_date), snap, TTL_S);
+        changed = true;
         written++;
+      }
+      if (changed) {
+        const ends = Object.keys(idx).sort().slice(-MAX_PERIODS);
+        const trimmed: SnapshotIndex = {};
+        for (const e of ends) trimmed[e] = idx[e];
+        await kvSet(key(t), trimmed, TTL_S);
       }
     } catch { /* no snapshot for this name this time */ }
   });
@@ -110,24 +143,20 @@ export async function readEstimateSnapshot(
 ): Promise<EstimateSnapshot | null> {
   if (!ticker || !periodEnd || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) return null;
   const t = ticker.toUpperCase();
-  // The exact period end first — the common case, and free.
-  try {
-    const hit = await kvGet<EstimateSnapshot>(key(t, periodEnd));
-    if (hit && hit.period_end) return hit;
-  } catch { /* fall through */ }
-  // Then the neighbouring week, for a 52/53-week calendar whose period end the
-  // vendor rounded to a month end. Bounded, and never beyond a fifth of a
-  // quarter, so a match is always the same period rather than an adjacent one.
-  const base = Date.parse(periodEnd + 'T00:00:00Z');
-  if (!Number.isFinite(base)) return null;
-  for (let d = 1; d <= MATCH_DAYS; d++) {
-    for (const sign of [-1, 1]) {
-      const iso = new Date(base + sign * d * 86_400_000).toISOString().slice(0, 10);
-      try {
-        const hit = await kvGet<EstimateSnapshot>(key(t, iso));
-        if (hit && hit.period_end && daysApart(hit.period_end, periodEnd) <= MATCH_DAYS) return hit;
-      } catch { /* keep looking */ }
-    }
+  // ONE round-trip. Everything below happens in memory.
+  let idx: SnapshotIndex | null = null;
+  try { idx = await kvGet<SnapshotIndex>(key(t)); } catch { return null; }
+  if (!idx) return null;
+  const exact = idx[periodEnd];
+  if (exact && exact.period_end) return exact;
+  // The 52/53-week tolerance, searched over what we already hold: the nearest
+  // stored period within the window wins, and nothing outside it can match.
+  let best: EstimateSnapshot | null = null;
+  let bestD = Infinity;
+  for (const [end, snap] of Object.entries(idx)) {
+    if (!snap || !snap.period_end) continue;
+    const d = daysApart(end, periodEnd);
+    if (d <= MATCH_DAYS && d < bestD) { best = snap; bestD = d; }
   }
-  return null;
+  return best;
 }
