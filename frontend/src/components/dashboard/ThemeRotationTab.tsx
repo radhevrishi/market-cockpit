@@ -774,26 +774,52 @@ function RRG({ themes, hover, setHover, onPick }: { themes: ThemeRow[]; hover: s
         const x = sx(t.rsRatio as number), y = sy(t.rsMomentum as number);
         const c = QC[t.quadrant || 'Lagging'];
         const on = hover === t.id;
-        // Only what is worth naming gets a label: the pointer's target, and the
-        // themes that crossed a quadrant line this week. At 49 themes, labelling
-        // everything is the same as labelling nothing.
-        const label = on || (!!t.quadrantMove && !hover);
         return (
           <g key={t.id} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}
             onClick={() => onPick?.(t.id)} style={{ cursor: 'pointer' }}>
             <circle cx={x} cy={y} r={10} fill="transparent" />
             {t.quadrantMove && <circle cx={x} cy={y} r={on ? 8.5 : 7} fill="none" stroke="#FBBF24" strokeWidth="1.2" opacity={0.9} />}
             <circle cx={x} cy={y} r={on ? 6 : t.quadrantMove ? 4.5 : 3.6} fill={c} stroke="#0B111C" strokeWidth="1" />
-            {label && (
-              <text x={x + (x > W * 0.66 ? -8 : 8)} y={y + 3} textAnchor={x > W * 0.66 ? 'end' : 'start'}
-                fill={on ? '#fff' : '#C8D4E4'} fontSize={on ? 10 : 8.5} fontWeight={on ? 800 : 700}
-                stroke="#0B111C" strokeWidth={on ? 2.6 : 2} paintOrder="stroke" strokeLinejoin="round">
-                {t.emoji} {t.name}
-              </text>
-            )}
           </g>
         );
       })}
+      {/* ── LABELS LAST, AND DE-COLLIDED ────────────────────────────────────
+          Only what is worth naming gets a label: the pointer's target, and the
+          themes that crossed a quadrant line this week. At 49 themes, labelling
+          everything is the same as labelling nothing.
+
+          Those movers are exactly the points that CLUSTER, though — a theme
+          changes quadrant by sitting near the 100/100 lines, so all of them
+          crowd the centre and their labels landed on top of each other,
+          unreadable. So each label is nudged down until it clears the one
+          before it and joined to its dot by a hairline, which keeps every name
+          legible without moving the data. */}
+      {(() => {
+        const labelled = pts.filter((t) => (hover ? hover === t.id : !!t.quadrantMove));
+        const placed: number[] = [];
+        return labelled
+          .map((t) => ({ t, x: sx(t.rsRatio as number), y: sy(t.rsMomentum as number) }))
+          .sort((a, b) => a.y - b.y)
+          .map(({ t, x, y }) => {
+            let ly = y + 3;
+            while (placed.some((p) => Math.abs(p - ly) < 11)) ly += 11;
+            ly = Math.max(pad + 8, Math.min(H - pad - 2, ly));
+            placed.push(ly);
+            const on = hover === t.id;
+            const right = x > W * 0.6;
+            const lx = x + (right ? -9 : 9);
+            return (
+              <g key={`lb:${t.id}`} pointerEvents="none">
+                {Math.abs(ly - (y + 3)) > 3 && <line x1={x} y1={y} x2={lx} y2={ly - 3} stroke="#5B6B85" strokeWidth="0.6" opacity={0.7} />}
+                <text x={lx} y={ly} textAnchor={right ? 'end' : 'start'}
+                  fill={on ? '#fff' : '#C8D4E4'} fontSize={on ? 10 : 8.5} fontWeight={on ? 800 : 700}
+                  stroke="#0B111C" strokeWidth={on ? 2.8 : 2.2} paintOrder="stroke" strokeLinejoin="round">
+                  {t.emoji} {t.name}
+                </text>
+              </g>
+            );
+          });
+      })()}
     </svg>
   );
 }
