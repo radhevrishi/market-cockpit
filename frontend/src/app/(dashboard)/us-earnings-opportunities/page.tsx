@@ -17,7 +17,7 @@
 // XBRL, rather than pretending they don't exist.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCachedDay, putCachedDay, clearDayCache, scrubLegacyDayCaches } from '@/lib/us-day-cache';
 import Link from 'next/link';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -250,6 +250,10 @@ export default function UsEarningsOpportunitiesPage() {
   const qc = useQueryClient();
   const [readyUpto, setReadyUpto] = useState(DAY_CONCURRENCY);
   useEffect(() => { setReadyUpto(DAY_CONCURRENCY); }, [date, days, forceKey]);
+  // How many times each session has been fetched in this sweep, so a retry can
+  // be given a longer clock than the attempt that timed out.
+  const attemptsRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => { attemptsRef.current = new Map(); }, [date, days, forceKey]);
 
   const dayQueries = useQueries({
     queries: sessions.map((d, i) => ({
@@ -280,8 +284,18 @@ export default function UsEarningsOpportunitiesPage() {
           })();
           return cached as unknown as DayPayload;
         }
+        // A SECOND ATTEMPT DESERVES A LONGER CLOCK.
+        //
+        // Seventeen sessions out of thirty came back "EDGAR or the price source
+        // timed out" in one sweep, and they are not broken days: they are heavy
+        // days that ran past the client's four-minute limit while the server
+        // was still working. The next attempt lands far more often because the
+        // server's caches for those filers are now warm — but only if it is
+        // given more time than the attempt that just timed out.
+        const attempt = (attemptsRef.current.get(d) || 0) + 1;
+        attemptsRef.current.set(d, attempt);
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 240_000);
+        const timer = setTimeout(() => ctrl.abort(), attempt === 1 ? 240_000 : 480_000);
         try {
           const res = await fetch(
             `/api/v1/earnings/graded-us?date=${d}&days=1${forceKey > 0 ? '&force=1' : ''}`,
@@ -299,7 +313,10 @@ export default function UsEarningsOpportunitiesPage() {
       enabled: i < readyUpto,
       staleTime: d >= today ? 3 * 60_000 : 24 * 3600_000,
       refetchOnWindowFocus: false,
-      retry: 1,
+      // Two retries, spaced out: the first is immediate-ish for a transient
+      // failure, the second waits long enough for a busy SEC window to clear.
+      retry: 2,
+      retryDelay: (n: number) => (n === 0 ? 4_000 : 20_000),
     })),
   });
   const settledCount = dayQueries.filter((q: any) => q.isSuccess || q.isError).length;
@@ -346,6 +363,31 @@ export default function UsEarningsOpportunitiesPage() {
   // that errored keeps the 40 that loaded on screen and in the store; bumping
   // `forceKey` would give every day a new key and a `force=1` sweep.
   const retryFailed = () => { dayQueries.forEach((q: any) => { if (q.isError) void q.refetch(); }); };
+  // ── THE FAILED SESSIONS RETRY THEMSELVES, ONCE, WITHOUT BEING ASKED ──────
+  //
+  // A sweep that ends "17 of 30 sessions could not be scanned" with a link to
+  // press is a sweep that did not finish, and the names on those seventeen days
+  // are simply missing from the tiers until somebody notices the sentence. The
+  // retry is the same work the button does, started automatically once the
+  // whole window has settled — and ONE TIME per sweep, serially rather than all
+  // at once, because the failures are timeouts and firing them together
+  // recreates exactly the contention that caused them. If this pass fails too,
+  // the message and the button stay, and nothing loops.
+  const autoRetriedRef = useRef(false);
+  useEffect(() => { autoRetriedRef.current = false; }, [date, days, forceKey]);
+  useEffect(() => {
+    if (autoRetriedRef.current) return;
+    if (!sessions.length || settledCount < sessions.length) return;
+    const failed = dayQueries.filter((q: any) => q.isError);
+    if (!failed.length) return;
+    autoRetriedRef.current = true;
+    void (async () => {
+      for (const q of failed) {
+        try { await (q as any).refetch(); } catch { /* the message stays */ }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settledCount, sessions.length]);
 
   // Push BLOCKBUSTER / STRONG (and demotions) onto the US bench.
   //

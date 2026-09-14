@@ -2092,7 +2092,19 @@ export function MiniTable({ head, rows }: { head: Array<{ label: string; sub?: s
  */
 export function streetBullet(r: UsRowX): React.ReactNode | null {
   const est = num(r.eps_estimate);
-  const act = num(r.eps_adj);
+  // THE FIGURE THE GRADE WAS STRUCK ON, NOT THE HEADLINE BESIDE IT.
+  //
+  // This read `eps_adj` — the company's headline adjusted EPS — while the
+  // percentage beside it came from the engine, which measures the surprise on
+  // the CORE figure once a quantified one-off is removed. The two disagree by
+  // the size of the one-off, and the sentence said so out loud: Advance Auto's
+  // card read "Beat the $0.80 street EPS estimate by $0.23 (10%)" while its own
+  // chip read "EPS miss 10%" — the $0.23 struck from the $1.03 headline, the
+  // 10% struck from the $0.72 core, and the verdict taken from the wrong one.
+  // A sentence whose two numbers cannot both be true is worse than no sentence.
+  const core = num((r as any).eps_adj_ex_oneoff);
+  const headline = num(r.eps_adj);
+  const act = core ?? headline;
   const pct = num(r.eps_surprise_pct);
   if (est == null || (act == null && pct == null)) return null;
   // TWO BOOKS, NO SUBTRACTION. This bullet computes `act - est` itself rather
@@ -2149,7 +2161,17 @@ export function streetBullet(r: UsRowX): React.ReactNode | null {
       {verdict === 'in-line' ? ' with' : ''} the {money(est)} street EPS estimate
       <span style={{ color: 'var(--mc-text-4)' }}> ({basis} basis)</span>
       {verdict === 'in-line' ? '.' : <> by <b style={{ color: 'var(--mc-text-0)' }}>{tail}</b>.</>}
-      {act != null && <span style={{ color: 'var(--mc-text-4)' }}> Reported {money(act)}.</span>}
+      {act != null && (
+        <span style={{ color: 'var(--mc-text-4)' }}>
+          {' '}Reported {money(act)}
+          {/* When the grade was struck on the core figure, the headline is
+              still stated — it is the number the wires printed — but as the
+              second fact in the sentence, never as the one being compared. */}
+          {core != null && headline != null && Math.abs(core - headline) > 0.005
+            ? <> on the core basis; the company headlined {money(headline)}.</>
+            : '.'}
+        </span>
+      )}
     </Bul>
   );
 }

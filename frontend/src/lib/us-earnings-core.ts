@@ -1755,6 +1755,29 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     return { ...base, blocked: false, verified: false };
   };
 
+  /**
+   * A per-share comparison across a share count that MULTIPLIED is not a
+   * comparison at all — and this is not the split case above, which the filer's
+   * own record establishes and the machinery rescales. It is real issuance.
+   *
+   * Inno Holdings reported a loss of $144.00 per share a year ago and $0.70
+   * this quarter on a share count 215 TIMES larger, and the card read "loss
+   * narrowed". Nothing was narrowed: the denominator moved by two orders of
+   * magnitude. Both share counts are filed figures and the ratio between them
+   * is arithmetic on the filing, so nothing is inferred — but past a threshold
+   * no reader can hold the two per-share numbers in the same sentence, and the
+   * honest output is no growth rate. Three times is far beyond any ordinary
+   * buyback, secondary or option pool, and well below the 215× that made this
+   * visible.
+   */
+  const shareCountBreak = (end: string | null, ref: string | null): boolean => {
+    if (!end || !ref || end === ref) return false;
+    const a = at('diluted_shares', end), b = at('diluted_shares', ref);
+    if (a == null || b == null || !(a > 0) || !(b > 0)) return false;
+    const ratio = a > b ? a / b : b / a;
+    return ratio >= 3;
+  };
+
   const epsAtRaw = (end: string | null): { v: number | null; derived: boolean; refused?: boolean } => {
     if (!end) return { v: null, derived: false };
     const direct = at('eps', end);
@@ -1765,6 +1788,21 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     // the card can say why — "not tagged" and "the denominator is not
     // believable" are different sentences and the reader needs the second one.
     if (built.v != null && !countCredible(end)) return { v: null, derived: false, refused: true };
+    // A PROFIT PER SHARE ON A LOSS-MAKING QUARTER IS NOT THAT QUARTER'S EPS.
+    //
+    // 374Water reported a net loss of $2.70m and the card carried EPS of
+    // +$0.15 — a tagged figure, but for something else: a continuing-operations
+    // line, a segment, or a period the tag's context does not match. Whatever
+    // it is, a per-share figure whose sign contradicts the quarter's own net
+    // income cannot be the earnings per share of that quarter, and no reader
+    // can be expected to notice. Both numbers come from the same filing, so
+    // this compares the filer with itself and infers nothing. A near-zero net
+    // income is exempt: rounding can legitimately flip a sign there.
+    const ni = at('net_income', end);
+    if (built.v != null && ni != null && Math.abs(ni) > 250_000
+        && Math.abs(built.v) > 0.005 && (ni > 0) !== (built.v > 0)) {
+      return { v: null, derived: false, refused: true };
+    }
     return built;
   };
   const epsAt = (end: string | null): { v: number | null; derived: boolean } => epsAtRaw(end);
@@ -1772,6 +1810,8 @@ function buildGrid(facts: any, asOfPeriodEnd?: string | null): UsQuarterGrid | n
     if (!end) return { v: null, blocked: false };
     const p = yoyPartner(Object.keys(qs.eps || {}), end) || yoyPartner(ends, end);
     if (!p) return { v: null, blocked: false };
+    // Issuance on this scale is not a comparison — see `shareCountBreak`.
+    if (shareCountBreak(p, end)) return { v: null, blocked: true };
     const r = epsOnBasis(p, end);
     return { v: r.v, blocked: r.blocked };
   };

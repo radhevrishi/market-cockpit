@@ -33,7 +33,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v2';
+const PROMPT_VERSION = 'us-ai-summary-v3';
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // The release in full wherever it fits. A long retail release puts its income
 // statement and its reconciliation tables well past 60k characters, and a model
@@ -110,6 +110,56 @@ function supported(fig: string, release: Set<string>): boolean {
   for (const r of release) {
     if (r.length >= d.length && r.startsWith(d)) return true;   // 523 ⊂ 5232
     if (d.length > r.length && d.startsWith(r) && d.length - r.length <= 2) return true;
+  }
+  return false;
+}
+
+// ── THE PERCENTAGES, CHECKED THE SAME WAY ──────────────────────────────────
+//
+// The guard above reads dollar figures only, and a summary is mostly
+// percentages: "up 27% year-over-year", "gross margin of 75.0%", "expanding
+// 2.6 percentage points". A wrong percentage is as actionable as a wrong
+// dollar and was going out unchecked.
+//
+// A percentage cannot use the digit-prefix rule, because rounding UP breaks it
+// — a release printing 105.9% and a summary writing 106% share no prefix. So a
+// percentage is supported when some number the release prints ROUNDS to it at
+// the precision the summary wrote it: 105.9 → "106" ✓, and a figure the
+// release never printed matches nothing. Exact, and it cannot be satisfied by
+// accident the way a tolerance band could.
+
+/** Every percentage the model wrote, as {value, decimals}. */
+function pctTokens(text: string): Array<{ v: number; dp: number }> {
+  const out: Array<{ v: number; dp: number }> = [];
+  const re = /(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent\b|percentage points?\b)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const raw = m[1].replace(/,/g, '');
+    const v = Number(raw);
+    if (!Number.isFinite(v)) continue;
+    out.push({ v, dp: (raw.split('.')[1] || '').length });
+  }
+  return out;
+}
+
+/** Every number the release prints, as a value. */
+function valuesIn(text: string): number[] {
+  const out: number[] = [];
+  for (const m of text.match(/\d[\d,]*(?:\.\d+)?/g) || []) {
+    const v = Number(m.replace(/,/g, ''));
+    if (Number.isFinite(v)) out.push(v);
+  }
+  return out;
+}
+
+function supportedPct(p: { v: number; dp: number }, values: number[]): boolean {
+  // A whole-number percentage under 10 is too coarse to be evidence either
+  // way — "up 5%" will always find a 5 somewhere — and refusing those would
+  // cost more good lines than it catches bad ones.
+  if (p.dp === 0 && p.v < 10) return true;
+  const f = Math.pow(10, p.dp);
+  for (const r of values) {
+    if (Math.round(r * f) / f === p.v) return true;
   }
   return false;
 }
@@ -196,13 +246,15 @@ export async function GET(req: NextRequest) {
   // The line carrying the unsupported figure is removed and the rest stands;
   // only when the summary loses its substance is the whole thing refused.
   const inRelease = numeralsIn(text);
+  const releaseValues = valuesIn(text);
   const lines = summary.split('\n');
   const dropped: string[] = [];
   const kept = lines.filter((ln) => {
     const bad = moneyTokens(ln).filter((f) => !supported(f, inRelease));
-    if (!bad.length) return true;
-    dropped.push(bad[0]);
-    return false;
+    if (bad.length) { dropped.push(`$${bad[0]}`); return false; }
+    const badPct = pctTokens(ln).filter((p) => !supportedPct(p, releaseValues));
+    if (badPct.length) { dropped.push(`${badPct[0].v}%`); return false; }
+    return true;
   });
   const bulletCount = (arr: string[]) => arr.filter((l) => /^\s*[*\-•]/.test(l)).length;
   if (dropped.length) {
@@ -212,7 +264,7 @@ export async function GET(req: NextRequest) {
     if (!after || (before && after < before * 0.67)) {
       return NextResponse.json({
         ok: false,
-        error: `The summary cited figures that do not appear in the release (${dropped.slice(0, 3).map((b) => `$${b}`).join(', ')}), so it was discarded rather than shown.`,
+        error: `The summary cited figures that do not appear in the release (${dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown.`,
       });
     }
     summary = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
