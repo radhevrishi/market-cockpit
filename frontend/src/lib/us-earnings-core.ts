@@ -3687,10 +3687,12 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   //     A company that just grew 30% and guides the next quarter to ~0 is
   //     telling you the quarter was the peak, in its own numbers.
   // Both are FILING caps: they come from management's own outlook, not the tape.
+  let guideCapped = false;
   {
     const vsStreet = input.guide_next_vs_street_pct ?? null;
     const implied = input.guide_next_implied_growth_pct ?? null;
     if (vsStreet != null && vsStreet <= -3) {
+      guideCapped = true;
       capTier(vsStreet <= -10 ? 'MIXED' : 'STRONG',
         `next-quarter guide ${Math.abs(Math.round(vsStreet))}% below street`);
     }
@@ -3698,6 +3700,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     // was taken out above cannot make the deceleration look worse than it is.
     const reportedGrowth = epsY;
     if (implied != null && implied < 5 && reportedGrowth != null && reportedGrowth >= 25) {
+      guideCapped = true;
       capTier(implied < 0 ? 'MIXED' : 'STRONG',
         `guide implies ${implied < 0 ? 'a decline' : 'growth stops'} next quarter`);
     }
@@ -3709,6 +3712,15 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     const beatGone = (beatPct != null ? beatPct < 3 : beatAbs != null ? beatAbs < 0.03 : false);
     if (beatGone) capTier('MIXED', 'beat only with the one-off');
     else if (oneOffShare >= 0.2) capTier('STRONG', 'headline eps leans on a one-off');
+    // BOTH ENDS OF THE QUARTER QUALIFIED AT ONCE.
+    //
+    // A headline that leans on a one-off says the quarter was better than the
+    // business; a guide below the street or implying the growth stops says the
+    // next one will be worse. Each alone is a ceiling at STRONG — the quarter
+    // was still good. Together they are not one caveat twice: the number that
+    // impressed is partly non-recurring AND management's own outlook does not
+    // carry it forward, which is precisely the print the tape marks down.
+    if (guideCapped && oneOffShare >= 0.2) capTier('MIXED', 'one-off headline and a guide that does not carry it forward');
   }
 
   // ═══════════════════════════════════════════════════════════════════════
