@@ -107,8 +107,21 @@ export async function GET(req: NextRequest) {
           const already = await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${d}|1`).catch(() => null);
           if (!already?.by_tier) {
             launched.push(d);
-            void railwaySelfFetch(`${origin}/api/v1/earnings/graded-us?date=${d}&days=1`,
-              { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } }).catch(() => {});
+            // LOOPBACK DIRECTLY, NOT VIA THE FALLBACK.
+            //
+            // `railwaySelfFetch` only drops to 127.0.0.1 when the public fetch
+            // THROWS. A request that runs past the edge's own timeout does not
+            // throw — it returns a 502 — so the background grade was still
+            // edge-bound and still died at ~300s, which is why the seven
+            // heaviest August sessions never cached however many times the job
+            // ran. The edge is exactly what must be bypassed here: nobody is
+            // waiting on this response, and the route's own ceiling is 900s.
+            const port = process.env.PORT;
+            const bgUrl = port
+              ? `http://127.0.0.1:${port}/api/v1/earnings/graded-us?date=${d}&days=1`
+              : `${origin}/api/v1/earnings/graded-us?date=${d}&days=1`;
+            void fetch(bgUrl, { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } })
+              .catch(() => {});
           }
         } catch { /* nothing to launch */ }
       }
