@@ -208,6 +208,40 @@ function bgPump(origin: string) {
   }
 }
 
+// ═══ THE SHARED-CACHE READ GATE  (zzz604) ══════════════════════════════════
+//
+// A warm session is between 30 KB and 1.2 MB of gzipped JSON, and the page asks
+// for thirty of them the moment it opens. Fired at Redis all at once they do
+// not arrive thirty times faster — they contend for one REST connection, and
+// the ones at the back simply time out. Each timeout was then read as "not
+// cached", so the server re-graded a day it already had: ten minutes of EDGAR
+// to rediscover an answer sitting in Redis.
+//
+// Six at a time removes the contention entirely. An uncontended read is a few
+// hundred milliseconds, so thirty of them clear in about two seconds — far
+// inside any client's patience, and every one of them SUCCEEDS. A hard ceiling
+// on each read keeps a genuinely stuck connection from holding the gate: it
+// fails fast, the caller is told the read failed rather than that the session
+// is missing, and it asks again a moment later when the queue has drained.
+const KV_READ_MAX = 6;
+const KV_READ_TIMEOUT_MS = 12_000;
+let _kvReads = 0;
+const _kvWaiters: Array<() => void> = [];
+async function sharedRead(key: string): Promise<any> {
+  if (_kvReads >= KV_READ_MAX) await new Promise<void>((res) => _kvWaiters.push(res));
+  _kvReads++;
+  try {
+    return await Promise.race([
+      kvGet<any>(key),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('kv read timeout')), KV_READ_TIMEOUT_MS)),
+    ]);
+  } finally {
+    _kvReads--;
+    const next = _kvWaiters.shift();
+    if (next) next();
+  }
+}
+
 /** Queue a cold session. Returns its 1-based place in line, or 0 if it was
  *  already known (queued, running, or being graded by a live request). */
 function bgEnqueue(key: string, origin: string): number {
@@ -796,6 +830,7 @@ export async function GET(req: Request) {
   // written as soon as the work finishes — including when the client that
   // asked for it has already walked away. The retry then costs one read.
   const kvKey = `us-graded:${US_ENGINE_VERSION}:${cacheKey}`;
+  const cacheOnlyParam = searchParams.get('cache_only') === '1';
   if (!force) {
     const hit = _cache.get(cacheKey);
     if (hit && Date.now() - hit.at < hit.ttl) {
@@ -805,14 +840,38 @@ export async function GET(req: Request) {
     }
     if (!explicit && date < today) {
       try {
-        const shared = unzipPayload(await kvGet<any>(kvKey));
+        const shared = unzipPayload(await sharedRead(kvKey));
         if (shared?.by_tier) {
           _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: shared });
           return NextResponse.json(shared, {
             headers: { 'x-mc-cache': 'shared', 'Cache-Control': 'private, max-age=60' },
           });
         }
-      } catch { /* Redis absent or unreachable — the sweep just runs */ }
+      } catch {
+        // ── A FAILED READ IS NOT AN ABSENT SESSION  (zzz604) ────────────────
+        //
+        // This catch used to fall straight through to "grade it", and that is
+        // the bug behind "fast to sixteen, then very slow". After a restart the
+        // page asks for thirty sessions at once; the first several Redis reads
+        // land and paint, and the rest — each pulling a hundred kilobytes or
+        // more through the same REST connection — time out. Every one of those
+        // timeouts was read as "this session isn't cached", so the server threw
+        // away thirty perfectly good cached days and started re-grading them
+        // from EDGAR: ten minutes of work to rediscover an answer it already
+        // had, while the reader watched the counter stop at sixteen.
+        //
+        // A read that FAILS and a key that is ABSENT are different facts and
+        // must lead to different actions. Absent → grade it. Failed → say so
+        // and let the caller ask again in a moment; by then the reads ahead of
+        // it have finished and the answer is in memory. Nothing is recomputed.
+        if (cacheOnlyParam) {
+          return NextResponse.json(
+            { pending: true, filing_date: date, window_days: days, engine_version: US_ENGINE_VERSION,
+              cache_read_failed: true, queue_place: 0, queue_length: _bgQueue.length + _bgRunning },
+            { headers: { 'x-mc-cache': 'read-failed', 'Cache-Control': 'no-store' } },
+          );
+        }
+      }
     }
   }
 
@@ -831,7 +890,7 @@ export async function GET(req: Request) {
   // session at once and lets the heavy ones arrive when they are ready, which
   // is the difference between "10 of 30 after several minutes" and a window
   // that is on screen instantly with a few days still filling in.
-  const cacheOnly = searchParams.get('cache_only') === '1';
+  const cacheOnly = cacheOnlyParam;
   if (cacheOnly && !explicit) {
     const place = bgEnqueue(cacheKey, new URL(req.url).origin);
     return NextResponse.json(

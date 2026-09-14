@@ -324,6 +324,11 @@ export default function UsEarningsOpportunitiesPage() {
           // this day stands instead of implying fourteen are in progress.
           _queue_place: typeof j?.queue_place === 'number' ? j.queue_place : null,
           _queue_length: typeof j?.queue_length === 'number' ? j.queue_length : null,
+          // The server could not READ its cache for this day — which is not the
+          // same as the day not being cached. It is warm, the read simply lost a
+          // race with twenty-nine others; asking again in a moment costs one
+          // read instead of a ten-minute regrade.
+          _readFailed: !!j?.cache_read_failed,
         } as unknown as DayPayload;
       },
       // Stagger: only the first few days start immediately; the rest queue up as
@@ -339,6 +344,8 @@ export default function UsEarningsOpportunitiesPage() {
       refetchInterval: (q: any) => {
         const p = (q?.state?.data as any);
         if (!p?._grading) return false;
+        // A lost cache read is warm data one retry away — come straight back.
+        if (p._readFailed) return 2_500;
         const place = typeof p._queue_place === 'number' ? p._queue_place : 1;
         return Math.min(150_000, 20_000 * Math.max(1, place));
       },
@@ -378,7 +385,11 @@ export default function UsEarningsOpportunitiesPage() {
   // not waiting on this browser and it is not holding anything up. Counting
   // it as "not loaded" is what produced "10 of 30" on a window that had in
   // fact already reached every session.
-  const gradingDays = sessions.filter((_, i) => ((dayQueries[i] as any)?.data as any)?._grading);
+  // A day whose cache READ lost a race is not being graded — it is warm and one
+  // retry away. Counting it as "grading" would report a ten-minute wait for
+  // something that lands in two seconds, so the two are kept apart.
+  const gradingDays = sessions.filter((_, i) => { const p = (dayQueries[i] as any)?.data as any; return p?._grading && !p?._readFailed; });
+  const rereadDays = sessions.filter((_, i) => { const p = (dayQueries[i] as any)?.data as any; return p?._grading && p?._readFailed; });
   const failedDays = sessions.filter((_, i) => (dayQueries[i] as any)?.isError);
   // The session the server is actually working on right now — queue place 1.
   // Everything else with a placeholder is waiting its turn, not in progress.
@@ -906,7 +917,7 @@ export default function UsEarningsOpportunitiesPage() {
           </div>
         </div>
       )}
-      {viewMode === 'GRADED' && loadedCount > 0 && (loadedCount < sessions.length || gradingDays.length > 0) && (
+      {viewMode === 'GRADED' && loadedCount > 0 && (loadedCount < sessions.length || gradingDays.length > 0 || rereadDays.length > 0) && (
         <div style={{
           marginBottom: 12, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
           backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)',
@@ -914,8 +925,9 @@ export default function UsEarningsOpportunitiesPage() {
         }}>
           <RefreshCw className="w-3 h-3" style={{ color: 'var(--mc-cyan)', animation: 'spin 1s linear infinite' }} />
           <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
-            <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount - gradingDays.length} of {sessions.length} sessions</b> on screen
+            <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount - gradingDays.length - rereadDays.length} of {sessions.length} sessions</b> on screen
             with <b style={{ color: 'var(--mc-text-0)' }}>{allRows.length}</b> companies graded.
+            {rereadDays.length > 0 && <> {rereadDays.length} more {rereadDays.length > 1 ? 'are' : 'is'} already computed and being re-read from cache — a couple of seconds, not a re-scan.</>}
             {gradingDays.length > 0 && (
               // ONE session is graded at a time, and saying so is the whole
               // point. Every cold day queues behind the same 8-requests-a-second
