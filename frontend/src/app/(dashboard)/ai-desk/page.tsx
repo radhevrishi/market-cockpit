@@ -112,6 +112,7 @@ export default function AiDeskPage() {
 
   const rows: Row[] = useMemo(() => (data?.rows || []) as Row[], [data]);
   const interpreted = rows.filter((r) => r.ai);
+  const pending = rows.filter((r) => !r.ai);
   const top = interpreted.slice(0, 5);
 
   const panel = (): React.CSSProperties => ({
@@ -152,15 +153,31 @@ export default function AiDeskPage() {
             {[6, 12, 20].map((l) => (
               <button key={l} onClick={() => setLimit(l)} style={chip(limit === l, '#60A5FA')}>top {l}</button>
             ))}
-            <button onClick={() => load(true)} disabled={loading} style={{ ...chip(false, '#22C55E'), cursor: loading ? 'wait' : 'pointer' }}>
+            {/* The button says WHAT IT WILL DO and roughly how long. A run that
+                takes a minute with a bare spinner reads as a hang; one that
+                said "9 names, about a minute" reads as work. */}
+            <button onClick={() => load(true)} disabled={loading}
+              title={pending.length ? `${pending.length} of these have never been interpreted. Each costs one model call; a filed quarter is then cached for a year, so this is paid once per company per quarter.` : 'Everything in this deck is already interpreted — this re-reads the cache.'}
+              style={{ ...chip(false, '#22C55E'), cursor: loading ? 'wait' : 'pointer' }}>
               <RefreshCw className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 5, animation: loading ? 'spin 1s linear infinite' : undefined }} />
-              {loading ? 'Interpreting…' : 'Run the analyst'}
+              {loading
+                ? `Interpreting${pending.length ? ` ${pending.length} name${pending.length > 1 ? 's' : ''}` : ''}…`
+                : pending.length
+                ? `Run the analyst on ${pending.length}`
+                : 'Run the analyst'}
             </button>
           </>
         )}
       </div>
 
       {err && <div style={{ ...panel(), borderColor: 'rgba(239,68,68,0.4)', color: '#F87171', fontSize: 12 }}>{err}</div>}
+      {loading && tab === 'DESK' && (
+        <div style={{ ...panel(), borderLeft: '3px solid #22C55E', fontSize: 12, color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
+          Reading each company&rsquo;s filing figures and its own press release, then answering the four questions. Roughly
+          {' '}<b style={{ color: 'var(--mc-text-0)' }}>{Math.max(1, Math.ceil((pending.length || rows.length || 1) * 12 / 3 / 60))} minute(s)</b> for this deck, three at a time.
+          The whole deck is returned at once when it finishes — and every answer is then cached against its SEC accession number, so you pay for a quarter once.
+        </div>
+      )}
 
       {tab === 'DESK' && (
         <>
@@ -196,7 +213,12 @@ export default function AiDeskPage() {
             </div>
           )}
 
-          {rows.map((r) => {
+          {interpreted.length > 0 && (
+            <div style={{ fontSize: 10.5, fontWeight: 900, letterSpacing: 0.5, color: 'var(--mc-text-3)', margin: '4px 0 8px' }}>
+              INTERPRETED — {interpreted.length}, ranked by the composite (engine grade blended with structural and why-now, less the bear drag)
+            </div>
+          )}
+          {interpreted.map((r) => {
             const a = r.ai;
             const isOpen = open.has(r.ticker);
             return (
@@ -283,6 +305,54 @@ export default function AiDeskPage() {
               </div>
             );
           })}
+
+          {/* ── THE QUEUE, AS A LIST AND NOT AS CARDS ──────────────────────
+              These carry the engine's grade and nothing else. Shown compactly
+              and below the line, because a full card for a name the analyst has
+              not read yet takes the space of one it has, and its score is not
+              comparable with the ones above. */}
+          {pending.length > 0 && (
+            <div style={panel()}>
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 3 }}>
+                Awaiting interpretation — {pending.length}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 9, lineHeight: 1.55 }}>
+                The engine has graded these; the analyst has not read them yet. Their score is the <b>engine grade alone</b> and is
+                not comparable with the composites above, which have already had a bear case taken off them — so they are listed
+                here rather than ranked among them. Press <b style={{ color: '#22C55E' }}>Run the analyst</b> to read them.
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--mc-text-3)', textAlign: 'right' }}>
+                      <th style={{ textAlign: 'left', padding: '4px 6px' }}>Ticker</th>
+                      <th style={{ textAlign: 'left', padding: '4px 6px' }}>Company</th>
+                      <th style={{ textAlign: 'left', padding: '4px 6px' }}>Filed</th>
+                      <th style={{ padding: '4px 6px' }}>Engine</th>
+                      <th style={{ padding: '4px 6px' }}>PEAD</th>
+                      <th style={{ padding: '4px 6px' }}>Rev</th>
+                      <th style={{ padding: '4px 6px' }}>EPS</th>
+                      <th style={{ textAlign: 'left', padding: '4px 6px' }}>Engine caveats</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pending.map((r) => (
+                      <tr key={r.ticker} style={{ borderTop: '1px solid var(--mc-bg-4)' }}>
+                        <td style={{ padding: '5px 6px', color: 'var(--mc-text-0)', fontWeight: 800 }}>{r.ticker}</td>
+                        <td style={{ padding: '5px 6px', color: 'var(--mc-text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }}>{r.company}</td>
+                        <td style={{ padding: '5px 6px', color: 'var(--mc-text-4)' }}>{r.filing_date}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', fontWeight: 800 }}>{r.engine_score ?? '·'}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{r.pead ?? '·'}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: (r.sales_yoy_pct ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(r.sales_yoy_pct)}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: (r.eps_yoy_pct ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(r.eps_yoy_pct)}</td>
+                        <td style={{ padding: '5px 6px', color: 'var(--mc-caution,#F59E0B)', fontSize: 10.5 }}>{(r.caveat_tags || []).join(' · ') || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
 

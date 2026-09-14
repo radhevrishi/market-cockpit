@@ -34,7 +34,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const ASSESS_CONCURRENCY = 2;
+// Three, not two. Each assessment is one bounded API call with no shared rate
+// limit behind it (unlike the SEC sweep), so three keeps a twelve-name deck
+// inside a minute while staying well short of anything that could pile up.
+const ASSESS_CONCURRENCY = 3;
 
 function etToday(): string {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
@@ -244,8 +247,24 @@ export async function GET(req: NextRequest) {
     while (next < candidates.length) await work(candidates[next++]);
   }));
 
-  // Ranked by the composite, which already contains the bear drag.
-  out.sort((a, b) => (b.composite ?? 0) - (a.composite ?? 0));
+  // ── INTERPRETED ROWS RANK FIRST  (zzz617) ────────────────────────────────
+  //
+  // Sorting purely by composite put the UNINTERPRETED names at the top, because
+  // a row with no assessment scores its raw engine grade while an interpreted
+  // one has already had the bear-case drag taken off it. So a deck where the AI
+  // had done real work opened with nine rows reading "Not interpreted yet" above
+  // the three it had actually analysed — the page looked like the analyst had
+  // never run, and the composite column was comparing two different things as
+  // though they were one.
+  //
+  // Interpreted and un-interpreted are therefore different populations, ranked
+  // separately and labelled separately. A number that has been through the bear
+  // case is never sorted against one that has not.
+  out.sort((a, b) => {
+    const ai = a.ai ? 1 : 0, bi = b.ai ? 1 : 0;
+    if (ai !== bi) return bi - ai;
+    return (b.composite ?? 0) - (a.composite ?? 0);
+  });
 
   return NextResponse.json({
     ok: true,
