@@ -187,13 +187,21 @@ export default function UsConvictionBeatsPage() {
       // up as it goes. Three sessions in flight, like the other tab.
       const days = windowSessions(today, sessions);
       let done = 0; let failed = 0;
+      // The retry pass is a DIFFERENT pass, and saying "12/42" while it runs
+      // made a successful recovery look like the sweep had restarted. `total`
+      // is whatever the current pass is working through, and `phase` names it.
+      let total = days.length;
+      let phase: 'sweep' | 'retry' = 'sweep';
       const failedDays: string[] = [];
       const one = async (d: string) => {
         try {
           let p: any = await getCachedDay(d, d >= today);
           if (!p) {
             const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 240_000);
+            // A retry is the slow lane: it runs one session at a time against a
+            // server whose caches are now warm, so it can afford to wait longer
+            // than the parallel pass that just timed out.
+            const timer = setTimeout(() => ctrl.abort(), phase === 'retry' ? 420_000 : 240_000);
             try {
               const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1`, { cache: 'no-store', signal: ctrl.signal });
               if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -209,9 +217,12 @@ export default function UsConvictionBeatsPage() {
           else if (batch.length) changes += syncUsConviction(batch);
         } catch { failed++; failedDays.push(d); }
         done++;
+        const head = phase === 'retry'
+          ? `Retrying ${done}/${total} session${total === 1 ? '' : 's'} that timed out`
+          : `${wipe ? 'Rebuilding' : 'Sweeping'} ${done}/${total} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''}`;
         setSweepMsg(wipe
-          ? `Rebuilding ${done}/${days.length} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''} — ${collected.length} names collected, the bench below is untouched until this finishes`
-          : `Sweeping ${done}/${days.length} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''} — ${getUsConvictionList().length} on the bench`);
+          ? `${head} — ${collected.length} names collected, the bench below is untouched until this finishes`
+          : `${head} — ${getUsConvictionList().length} on the bench`);
         if (!wipe) reload();
       };
       let next = 0;
@@ -223,13 +234,20 @@ export default function UsConvictionBeatsPage() {
       // because the server has warmed its caches for those filers. Six failures
       // silently dropped meant six sessions of results simply missing from the
       // bench with nothing saying so.
+      //
+      // ONE AT A TIME, not two. The failures are timeouts, and a timeout on a
+      // heavy session is contention: three sweeps sharing one SEC politeness
+      // gate. Retrying two-up recreates the condition that caused them, which
+      // is why "6 failed" kept surviving the retry. Serial, with a longer
+      // clock, is the pass that actually lands.
       if (failedDays.length) {
         const retry = failedDays.slice();
         failedDays.length = 0;
         failed = 0;
         done = 0;
-        let r = 0;
-        await Promise.all([0, 1].map(async () => { while (r < retry.length) await one(retry[r++]); }));
+        phase = 'retry';
+        total = retry.length;
+        for (const d of retry) await one(d);
       }
       // THE SWAP. Everything graded, nothing lost: the old bench goes and the
       // rebuilt one lands in the same tick. Only now, and only if the rebuild

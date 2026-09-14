@@ -33,15 +33,20 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v1';
+const PROMPT_VERSION = 'us-ai-summary-v2';
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
-const MAX_CHARS = 60_000;               // ~15k tokens of release text
+// The release in full wherever it fits. A long retail release puts its income
+// statement and its reconciliation tables well past 60k characters, and a model
+// that never saw the tables can only summarise the narrative — which is how a
+// summary ends up with figures the verifier cannot find. Cached per accession,
+// so the extra input is paid once per company per quarter.
+const MAX_CHARS = 140_000;
 
 const SYSTEM = `You summarise a single quarterly earnings press release for a professional investor who has already seen the headline numbers.
 
 ABSOLUTE RULES
 - Use ONLY the release text provided. You have no other knowledge of this company. Never add context, history, competitor comparison, valuation or market reaction.
-- Every number you write must appear verbatim in the release text. Do not compute, derive, annualise, convert or round any figure. If a figure is not in the text, write the point without a figure.
+- Every number you write must appear in the release text. Copy it as the release prints it, with the same unit — if a table is headed "in thousands" and shows 5,232, write $5.2 million or 5,232 thousand, never a figure of your own construction. Do not compute, derive, annualise or infer any number. If a figure is not in the text, write the point without a figure.
 - Never describe anything as a beat or a miss unless the release itself says so: you have not been given consensus estimates.
 - Guidance is what management SAYS WILL happen. Never present it as achieved.
 - If the release genuinely contains no negatives, say so in one line rather than inventing one.
@@ -56,19 +61,57 @@ Negatives:
 
 Overall Assessment: <one paragraph, 3-6 sentences: what the quarter establishes, what it leaves open, and what will decide the next few quarters according to the release itself. No recommendation, no price view.>`;
 
-/** Every dollar figure the model wrote, so an invented one can be caught. */
-function moneyTokens(text: string): string[] {
-  return (text.match(/\$\s?\d[\d,]*(?:\.\d+)?\s*(?:million|billion|thousand|bn|mm)?/gi) || [])
-    .map((t) => t.replace(/\s+/g, ' ').trim().toLowerCase());
+// ── THE NUMBERS CHECK ──────────────────────────────────────────────────────
+//
+// Every figure in the summary must be one the release contains. The first
+// version of this compared the digits literally and threw away good summaries
+// for a reason that was not fabrication at all: a release states "5,232" in a
+// table headed "in thousands", and a summary that says "$5.23 million" is
+// RIGHT — it is the same number, correctly converted. Comparing "5.23" against
+// "5232" found no match and discarded the lot.
+//
+// So the comparison is on SIGNIFICANT DIGITS, ignoring the decimal point,
+// thousands separators and trailing zeros: 5.23 → "523", which is the leading
+// run of 5,232 → "5232". That accepts every honest restatement of a printed
+// figure (thousands to millions, $1.5 billion as $1.50B) and still rejects a
+// number the release never printed, which is the only thing this guard is for.
+
+/** Significant digits of a number, with separators, the decimal point and
+ *  trailing zeros removed. "881.40" → "8814"; "1,500" → "15". */
+function sigDigits(n: string): string {
+  const d = n.replace(/[^\d]/g, '').replace(/^0+/, '');
+  return d.replace(/0+$/, '') || (d ? '0' : '');
 }
 
-/** Loose containment: the release writes "$1.5 billion" and the model may too,
- *  but it may also write "$1.5B". Compare on the numeral, which is the part
- *  that can be wrong. */
+/** Every dollar figure the model wrote, so an invented one can be caught. */
+function moneyTokens(text: string): string[] {
+  return (text.match(/\$\s?\d[\d,]*(?:\.\d+)?/g) || [])
+    .map((t) => t.replace(/[^\d.,]/g, ''));
+}
+
+/** The significant digits of every number the release prints. */
 function numeralsIn(text: string): Set<string> {
   const out = new Set<string>();
-  for (const m of text.match(/\d[\d,]*(?:\.\d+)?/g) || []) out.add(m.replace(/,/g, ''));
+  for (const m of text.match(/\d[\d,]*(?:\.\d+)?/g) || []) {
+    const d = sigDigits(m);
+    if (d) out.add(d);
+  }
   return out;
+}
+
+/** Is this figure supported by something the release printed? True when its
+ *  significant digits match, or begin, the digits of a printed number — which
+ *  is what a unit conversion or a rounding to two decimals looks like. */
+function supported(fig: string, release: Set<string>): boolean {
+  const d = sigDigits(fig);
+  if (!d) return true;                       // nothing numeric to check
+  if (d.length <= 1) return true;            // "$5" — too coarse to be evidence either way
+  if (release.has(d)) return true;
+  for (const r of release) {
+    if (r.length >= d.length && r.startsWith(d)) return true;   // 523 ⊂ 5232
+    if (d.length > r.length && d.startsWith(r) && d.length - r.length <= 2) return true;
+  }
+  return false;
 }
 
 export async function GET(req: NextRequest) {
@@ -145,15 +188,34 @@ export async function GET(req: NextRequest) {
   // single invented figure discards the whole answer: a summary that is right
   // about three things and wrong about a fourth is not a partial success, it is
   // a number the owner might act on.
+  // AN UNSUPPORTED FIGURE COSTS ITS OWN LINE, NOT THE WHOLE SUMMARY.
+  //
+  // Discarding everything was right when the alternative was showing a number
+  // the release never printed — but it also threw away four correct bullets for
+  // one doubtful one, which is how "AI Summary" came to show nothing at all.
+  // The line carrying the unsupported figure is removed and the rest stands;
+  // only when the summary loses its substance is the whole thing refused.
   const inRelease = numeralsIn(text);
-  const bad = moneyTokens(summary)
-    .map((t) => (t.match(/\d[\d,]*(?:\.\d+)?/) || [''])[0].replace(/,/g, ''))
-    .filter((n) => n && !inRelease.has(n));
-  if (bad.length) {
-    return NextResponse.json({
-      ok: false,
-      error: `The summary cited ${bad.length === 1 ? 'a figure' : 'figures'} that ${bad.length === 1 ? 'does' : 'do'} not appear in the release (${bad.slice(0, 3).map((b) => `$${b}`).join(', ')}), so it was discarded rather than shown.`,
-    });
+  const lines = summary.split('\n');
+  const dropped: string[] = [];
+  const kept = lines.filter((ln) => {
+    const bad = moneyTokens(ln).filter((f) => !supported(f, inRelease));
+    if (!bad.length) return true;
+    dropped.push(bad[0]);
+    return false;
+  });
+  const bulletCount = (arr: string[]) => arr.filter((l) => /^\s*[*\-•]/.test(l)).length;
+  if (dropped.length) {
+    const before = bulletCount(lines), after = bulletCount(kept);
+    // More than a third of the substance gone means the summary as a whole is
+    // not trustworthy, not that one line slipped.
+    if (!after || (before && after < before * 0.67)) {
+      return NextResponse.json({
+        ok: false,
+        error: `The summary cited figures that do not appear in the release (${dropped.slice(0, 3).map((b) => `$${b}`).join(', ')}), so it was discarded rather than shown.`,
+      });
+    }
+    summary = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let documents: any[] = [];
@@ -161,6 +223,7 @@ export async function GET(req: NextRequest) {
 
   const payload = {
     summary, source_url: sourceUrl, model: MODEL, documents,
+    dropped_lines: dropped.length || undefined,
     generated_at: new Date().toISOString(),
   };
   await kvSet(key, payload, TTL_S);

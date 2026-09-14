@@ -293,10 +293,19 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         <Chip text={r.quarter} />
         {r.sector && <Chip text={r.sector} />}
         {r.market_cap_musd != null && <Chip text={fmtUsd(r.market_cap_musd)} />}
-        {(r as any).eps_surprise_pct != null && (
-          <Chip text={`EPS beat ${surpriseChip(r).replace(/^vs est\s*/, '')}`}
-            color={(r as any).eps_surprise_pct >= 5 ? '#10B981' : (r as any).eps_surprise_pct <= -5 ? '#EF4444' : undefined} />
-        )}
+        {/* "EPS beat −10%" IS NOT A SENTENCE. The word was fixed while the
+            number was signed, so a miss came out labelled a beat and the reader
+            had to notice the minus to know which it was. The noun now follows
+            the sign, and the sign is no longer printed twice. */}
+        {(r as any).eps_surprise_pct != null && (() => {
+          const p = (r as any).eps_surprise_pct as number;
+          const noun = Math.abs(p) < 0.5 ? 'EPS in line' : p > 0 ? 'EPS beat' : 'EPS miss';
+          const mag = surpriseChip(r).replace(/^vs est\s*/, '').replace(/^[+−-]/, '');
+          return (
+            <Chip text={Math.abs(p) < 0.5 ? noun : `${noun} ${mag}`}
+              color={p >= 5 ? '#10B981' : p <= -5 ? '#EF4444' : undefined} />
+          );
+        })()}
         {/* TWO CHIPS, BECAUSE THERE ARE TWO QUESTIONS.
             "Guidance raised" compares the new outlook to the company's OWN
             previous one; whether the outlook clears CONSENSUS is a separate
