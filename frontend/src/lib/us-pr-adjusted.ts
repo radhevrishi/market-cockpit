@@ -366,9 +366,29 @@ const ANY_NUMBER_RE = /^\(?[-‐-―]?[\d,]+(?:\.\d+)?\)?%?$/;
 
 type Duration = 'quarter' | 'longer' | 'unknown';
 
+/**
+ * A FISCAL YEAR NAMED WITH NO QUARTER ANYWHERE NEAR IT.
+ *
+ * Estée Lauder's Q4 release puts its full-year commentary in a paragraph that
+ * never says "full year" or "year ended" — it says "increased to net earnings
+ * of $.50 IN FISCAL 2026" and, in the next sentence, "Adjusted diluted net
+ * earnings per common share increased to $2.51, compared with $1.51". Nothing
+ * in that paragraph matches the longer-period vocabulary, so the $2.51 — the
+ * YEAR's adjusted EPS — was read as the quarter's and measured against a
+ * quarterly consensus of $0.32: a +686% "beat" on a quarter that earned about
+ * thirty cents.
+ *
+ * "In fiscal 2026" is a full-year marker. It is only safe to treat it as one
+ * when no quarter is named in the same text, which is why this is tested AFTER
+ * the quarter vocabulary: "the fiscal 2026 fourth quarter" stays a quarter, and
+ * a paragraph that speaks only of the year does not.
+ */
+const FY_ALONE_RE = /\b(?:in|for|during|of|throughout|versus|vs\.?)\s+(?:the\s+)?fiscal\s+(?:year\s+)?(?:\d{4}|'?\d{2})\b|\bfor\s+the\s+(?:twelve|12)\s+months\b|\bfor\s+the\s+year\b/i;
+
 function durationOf(text: string): Duration {
   if (LONGER_RE.test(text)) return 'longer';         // both present ⇒ cannot tell ⇒ not the quarter
   if (QUARTER_RE.test(text)) return 'quarter';
+  if (FY_ALONE_RE.test(text)) return 'longer';
   return 'unknown';
 }
 

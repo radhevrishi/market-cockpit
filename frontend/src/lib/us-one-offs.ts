@@ -123,9 +123,16 @@ function labelFrom(sentence: string, amtIdx: number): string {
   // the next clause boundary. Fall back to the discrete word itself.
   const tail = sentence.slice(amtIdx);
   const m = tail.match(/\b(?:related to|relating to|associated with|attributable to|due to|from|of|for)\s+(?:the\s+|an?\s+)?(?:net\s+)?(?:impact\s+of\s+(?:the\s+)?)?([a-z][a-z0-9 &'\-\/]{2,60}?)(?=[,.;:()]|\s+(?:and|which|that|in|on|during|compared|versus|vs)\b|$)/i);
-  if (m) return m[1].trim().replace(/\s*\d+$/, '').toLowerCase();   // "tariff refunds 1" — a footnote mark
-  const d = sentence.match(DISCRETE);
-  return d ? d[1].toLowerCase() : 'discrete item';
+  if (m) {
+    const lab = m[1].trim().replace(/\s*\d+$/, '').toLowerCase();   // "tariff refunds 1" — a footnote mark
+    // "…benefits of $1.65 FOR Q2 2026" names a period, not the item. Fall
+    // through to the item vocabulary rather than labelling a refund "q2".
+    if (lab && !/^(?:q[1-4]|fy|the\s+(?:quarter|year)|quarter|year|fiscal)\b/i.test(lab) && lab.length > 2) return lab;
+  }
+  // The item vocabulary, with the word in front of it when it qualifies the
+  // item ("tariff refunds", "IEEPA recovery") rather than the bare noun.
+  const d = sentence.match(new RegExp(`([A-Za-z]+\\s+)?${DISCRETE.source.replace(/^\\b|\\b$/g, '')}`, 'i'));
+  return d ? d[0].trim().toLowerCase() : 'discrete item';
 }
 
 const FORWARD = /\b(guidance|expects?|expected|anticipates?|forecasts?|estimated?|projected|remainder of|to a range of|outlook (?:to|of|for|range))\b|^\s*(?:fiscal\s+\d{4}\s+)?outlook\b/i;
@@ -193,8 +200,19 @@ export function oneOffsFromReleaseText(text: string): OneOff[] {
     //    "Adjusted EPS of $2.96 includes an approximate $0.60 benefit related
     //     to tariff refunds" / "$1.75 per diluted share impact" (Abercrombie)
     // The comparison tail ("compared with $390 million, or $1.37 per share")
-    // is the prior year; the item is never in it.
-    const body = s.split(/\b(?:compared (?:with|to)|vs\.?|versus)\b/i)[0];
+    // is the prior year, and its figures must not be mistaken for the item —
+    // UNLESS the tail is where the item is disclosed. Target writes the whole
+    // thing as one sentence: "Second quarter GAAP and Adjusted EPS was $4.11,
+    // compared with prior-year … of $2.05, an increase of 100 percent, which
+    // included tariff refund benefits of $1.65 for Q2 2026." Trimming at
+    // "compared with" threw away the $1.65 and left a 76% "beat" against an
+    // adjusted consensus. So the tail is kept whenever it carries both a
+    // discrete item and a sign word; otherwise it is dropped as before.
+    const parts = s.split(/\b(?:compared (?:with|to)|vs\.?|versus)\b/i);
+    const tail = parts.slice(1).join(' ');
+    const tailCarriesItem = !!tail && DISCRETE.test(tail)
+      && (new RegExp(BENEFIT.source, 'i').test(tail) || new RegExp(CHARGE.source, 'i').test(tail));
+    const body = tailCarriesItem ? s : parts[0];
     let amts = perShareAmounts(body);
     // The headline figure is the one that "includes" the item — an amount
     // immediately followed by the includes-verb is the total, never the item.

@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getCachedDay, putCachedDay, clearDayCache, scrubLegacyDayCaches } from '@/lib/us-day-cache';
 import Link from 'next/link';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
 import { syncUsConviction } from '@/lib/conviction-beats-us';
 import {
@@ -247,6 +247,7 @@ export default function UsEarningsOpportunitiesPage() {
   // How many of those days are allowed to be in flight. Starts at the
   // concurrency limit and walks forward as days settle (a state value, so the
   // gate cannot depend on the query results it controls).
+  const qc = useQueryClient();
   const [readyUpto, setReadyUpto] = useState(DAY_CONCURRENCY);
   useEffect(() => { setReadyUpto(DAY_CONCURRENCY); }, [date, days, forceKey]);
 
@@ -261,7 +262,24 @@ export default function UsEarningsOpportunitiesPage() {
         // again. This used to be `if (forceKey === 0)`, which is why any retry
         // started the whole window over from 0.
         const cached = await getCachedDay(d, d >= today);
-        if (cached) return cached as unknown as DayPayload;
+        // FRESH CACHE: paint it, done.
+        if (cached && !cached._stale_engine) return cached as unknown as DayPayload;
+        // STALE CACHE (graded by an older engine): paint it NOW and correct it
+        // in the background. The alternative — refusing it — is what made a
+        // deployed fix look like an empty page and a twenty-minute wait.
+        if (cached) {
+          void (async () => {
+            try {
+              const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1`, { cache: 'no-store' });
+              if (!res.ok) return;
+              const fresh = await res.json();
+              if (!fresh?.by_tier) return;
+              void putCachedDay(d, fresh);
+              qc.setQueryData(['graded-us-day', d, forceKey], fresh);
+            } catch { /* the stale day stays on screen; nothing is lost */ }
+          })();
+          return cached as unknown as DayPayload;
+        }
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 240_000);
         try {
