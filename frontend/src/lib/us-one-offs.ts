@@ -127,7 +127,13 @@ function labelFrom(sentence: string, amtIdx: number): string {
     const lab = m[1].trim().replace(/\s*\d+$/, '').toLowerCase();   // "tariff refunds 1" — a footnote mark
     // "…benefits of $1.65 FOR Q2 2026" names a period, not the item. Fall
     // through to the item vocabulary rather than labelling a refund "q2".
-    if (lab && !/^(?:q[1-4]|fy|the\s+(?:quarter|year)|quarter|year|fiscal)\b/i.test(lab) && lab.length > 2) return lab;
+    // "…of $150 million OF WHICH approximately $100 million…" — the words after
+    // the preposition are a relative clause, not the item. A label that starts
+    // on a connective or a hedge is not naming anything, and "which
+    // approximately" on a Kohl's card was how that showed.
+    const JUNK_HEAD = /^(?:which|that|whom|approximately|about|roughly|it|this|these|those|such|them|these\s)/i;
+    if (lab && !JUNK_HEAD.test(lab)
+        && !/^(?:q[1-4]|fy|the\s+(?:quarter|year)|quarter|year|fiscal)\b/i.test(lab) && lab.length > 2) return lab;
   }
   // The item vocabulary, with the word in front of it when it qualifies the
   // item ("tariff refunds", "IEEPA recovery") rather than the bare noun.
@@ -278,6 +284,119 @@ export function oneOffsFromReleaseText(text: string): OneOff[] {
 export function oneOffsFromReleaseHtml(html: string): OneOff[] {
   if (!html || typeof html !== 'string') return [];
   try { return oneOffsFromReleaseText(htmlToText(html)); } catch { return []; }
+}
+
+// ── THE ITEM QUANTIFIED IN DOLLARS AND NEVER PER SHARE ─────────────────────
+//
+// Kohl's Q2 FY26: GAAP diluted EPS $1.28, adjusted diluted EPS $1.28 — the two
+// are the same figure because the company adjusted for nothing — against a
+// $0.57 street number, which the card read as a 124% beat. Buried a paragraph
+// below: "Tariff refunds of approximately $150 million were received in the
+// quarter of which approximately $100 million flowed through gross margin."
+//
+// Everything above this line needs a PER-SHARE amount, and this release never
+// prints one, so the whole Burlington machinery found nothing and the beat was
+// reported clean. It was not clean: on $151 million of net income, a $150
+// million refund is essentially the entire quarter's profit.
+//
+// The honest thing to do with an item like this is NOT to turn it into an EPS
+// figure. Dividing by share count and assuming a tax rate manufactures a
+// number the filing does not contain, which is the one thing this engine never
+// does. What it can do is state the size of the item against a figure from the
+// same filing — net income — and refuse to call the beat clean. So this
+// returns the item, its dollar amount and its sentence, and the caller decides
+// what a benefit worth most of the quarter's profit does to the grade.
+export interface AbsoluteOneOff {
+  label: string;
+  /** Absolute dollars, signed: + is a benefit to earnings. */
+  amount_usd: number;
+  kind: 'benefit' | 'charge';
+  quote: string;
+}
+
+/** "$150 million", "$1.2 billion", "$17.4 thousand" → absolute dollars. */
+function absAmounts(s: string): Array<{ value: number; index: number }> {
+  const out: Array<{ value: number; index: number }> = [];
+  const re = /\$\s?(\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    const n = Number(m[1].replace(/,/g, ''));
+    if (!Number.isFinite(n)) continue;
+    const mult = /thousand/i.test(m[2]) ? 1e3 : /million/i.test(m[2]) ? 1e6 : 1e9;
+    out.push({ value: n * mult, index: m.index });
+  }
+  return out;
+}
+
+/**
+ * Discrete items the release quantifies in DOLLARS, tied to the reported
+ * quarter, with no per-share figure anywhere in the sentence. Per-share
+ * disclosures are handled above and are deliberately excluded here so the same
+ * item is never counted twice.
+ */
+export function absoluteOneOffsFromReleaseText(text: string, periodEndISO?: string | null): AbsoluteOneOff[] {
+  if (!text || text.length < 200) return [];
+  const out: AbsoluteOneOff[] = [];
+  const seen = new Set<string>();
+  // A RELEASE TALKS ABOUT OLD QUARTERS TOO. Dollar Tree's Q2 FY26 release
+  // explains a gain "in the fourth quarter of fiscal 2024" — a real one-off,
+  // in a quarter reported two years ago, and "fourth quarter" satisfied the
+  // period anchor below. A fiscal label two years or more behind the period
+  // being reported is never this quarter; one year behind can be, because a
+  // retailer's fiscal 2025 ends in January 2026.
+  const periodYear = periodEndISO && /^\d{4}/.test(periodEndISO) ? Number(periodEndISO.slice(0, 4)) : null;
+  for (const s of splitSentences(text)) {
+    if (!DISCRETE.test(s)) continue;
+    if (FORWARD.test(s)) continue;                 // guidance, not this print
+    if (NOT_THE_QUARTER.test(s)) continue;         // the half-year column
+    if (PER_SHARE_SUBJECT.test(s)) continue;       // handled per-share, above
+    // It has to be THIS quarter. "received in the quarter", "during the second
+    // quarter", "in the quarter ended". Without a period anchor the sentence
+    // could be describing any period the release mentions.
+    if (!/\b(?:in|during|within|for)\s+the\s+(?:current\s+|second\s+|third\s+|fourth\s+|first\s+)?quarter\b|\bin\s+the\s+quarter\b|\bquarter\s+ended\b/i.test(s)) continue;
+    if (periodYear != null) {
+      const yr = s.match(/\b(?:fiscal|FY)\s*(\d{4})\b/i) || s.match(/\bquarter\s+of\s+(\d{4})\b/i);
+      if (yr && Number(yr[1]) <= periodYear - 2) continue;
+    }
+    const amts = absAmounts(s);
+    if (!amts.length) continue;
+    // The largest amount in the sentence is the item; a smaller one beside it
+    // is usually the portion that landed in one line ("of which ~$100 million
+    // flowed through gross margin"), and the item is the whole.
+    const a = amts.reduce((x, y) => (Math.abs(y.value) > Math.abs(x.value) ? y : x));
+    // THE ITEM'S OWN WORD DECIDES THE SIGN, NOT THE NEAREST ADJECTIVE.
+    //
+    // Williams-Sonoma: "a REDUCTION of COST of goods sold of $167.8 million
+    // related to refunds received for tariffs". The nearest sign word to the
+    // amount is "cost", so a proximity test called a $168 million benefit a
+    // charge. A refund received is money coming back whatever noun it lands
+    // in, and a reduction of a cost is a benefit by construction — both are
+    // stated outright in the sentence, so neither needs to be guessed.
+    let kind: 'benefit' | 'charge' | null = null;
+    if (/\breduction (?:of|in) (?:cost|costs|expenses?|cost of (?:goods|sales|revenue))/i.test(s)) kind = 'benefit';
+    else if (/\bincrease (?:of|in) (?:cost|costs|expenses?)/i.test(s)) kind = 'charge';
+    if (kind == null) {
+      if (/\b(refunds?|recover(?:y|ies|ed)|drawbacks?|reversals?|releases? of|windfall|tax benefits?)\b/i.test(s)) kind = 'benefit';
+      else if (/\b(impairments?|restructuring|severance|write[- ]?(?:offs?|downs?)|litigation)\b/i.test(s)) kind = 'charge';
+    }
+    if (kind == null) {
+      // Only now, and only when the two are not equally far away.
+      const benefitD = nearestDistance(s, BENEFIT, a.index);
+      const chargeD = nearestDistance(s, CHARGE, a.index);
+      kind = benefitD < chargeD ? 'benefit' : chargeD < benefitD ? 'charge' : null;
+    }
+    if (!kind) continue;                            // an unsigned amount says nothing
+    const label = labelFrom(s, a.index);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push({ label, amount_usd: kind === 'benefit' ? a.value : -a.value, kind, quote: s });
+  }
+  return out;
+}
+
+export function absoluteOneOffsFromReleaseHtml(html: string, periodEndISO?: string | null): AbsoluteOneOff[] {
+  if (!html || typeof html !== 'string') return [];
+  try { return absoluteOneOffsFromReleaseText(htmlToText(html), periodEndISO); } catch { return []; }
 }
 
 /**

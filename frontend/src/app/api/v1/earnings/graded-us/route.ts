@@ -40,7 +40,7 @@ import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
 import { readEstimateSnapshot } from '@/lib/us-estimate-snapshot';
-import { oneOffsFromReleaseHtml, epsExOneOffs, type OneOff } from '@/lib/us-one-offs';
+import { oneOffsFromReleaseHtml, absoluteOneOffsFromReleaseHtml, epsExOneOffs, type OneOff, type AbsoluteOneOff } from '@/lib/us-one-offs';
 import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { ownGuideVerdict } from '@/lib/us-guide-verdict';
@@ -700,14 +700,24 @@ export async function GET(req: Request) {
         // reaction window is real, not today's date.
         let filed = date;
         const last202 = x.s?.recent.find((f) => f.form === '8-K' && f.items.includes('2.02'));
-        if (last202?.filingDate) filed = last202.filingDate;
+        // NOT EVERY FILER ANNOUNCES ON AN 8-K. Taylor Devices reports by
+        // filing its 10-K and nothing else: no Item 2.02 exists, and this
+        // used to stamp the row with TODAY'S date — a company that reported in
+        // August appeared on the bench as having reported this morning, with a
+        // reaction window measured from a day on which nothing happened. The
+        // periodic filing IS the announcement for such a filer, so its date is
+        // the event date and its index page is the document.
+        const lastPeriodic = x.s?.recent.find((f) => f.form === '10-Q' || f.form === '10-K');
+        const src = last202 || lastPeriodic || null;
+        if (src?.filingDate) filed = src.filingDate;
         filings.push({
           cik: String(x.r.cik).padStart(10, '0'), cikNum: x.r.cik!,
-          ticker: x.r.t, company: x.s?.name || x.r.t, form: last202 ? '8-K' : '10-Q',
-          items: last202?.items || [], accession: last202?.accession || '',
+          ticker: x.r.t, company: x.s?.name || x.r.t,
+          form: last202 ? '8-K' : (lastPeriodic?.form || '10-Q'),
+          items: last202?.items || [], accession: src?.accession || '',
           filed, period: null, sic: x.s?.sic || null,
-          filing_url: last202
-            ? `https://www.sec.gov/Archives/edgar/data/${x.r.cik}/${last202.accession.replace(/-/g, '')}/${last202.accession}-index.htm`
+          filing_url: src
+            ? `https://www.sec.gov/Archives/edgar/data/${x.r.cik}/${src.accession.replace(/-/g, '')}/${src.accession}-index.htm`
             : `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${x.r.t}&type=8-K`,
         });
       }
@@ -857,11 +867,11 @@ export async function GET(req: Request) {
       // and for six filers it returned a modelled number that appears nowhere
       // in any filing at all. A number narrated as "the company's adjusted EPS"
       // has to come from the company.
-      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[] }> => {
-        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null, oneOffs: [] };
+      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[]; absOneOffs: AbsoluteOneOff[] }> => {
+        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null, oneOffs: [], absOneOffs: [] };
         try {
           const doc = await releaseDocument(p.f.cikNum, p.f.accession, p.f.filing_url);
-          if (!doc.html) return { read: false, adj: null, oneOffs: [] };
+          if (!doc.html) return { read: false, adj: null, oneOffs: [], absOneOffs: [] };
           return {
             read: true,
             adj: adjustedEpsFromReleaseHtml(doc.html, {
@@ -871,8 +881,12 @@ export async function GET(req: Request) {
             // The one-offs the release itself quantifies INSIDE its adjusted
             // figure (Burlington's "$0.60 benefit related to tariff refunds").
             oneOffs: oneOffsFromReleaseHtml(doc.html),
+            // And the ones it quantifies only in dollars (Kohl's "$150 million
+            // of tariff refunds received in the quarter"), which carry no
+            // per-share figure and so can never be subtracted — only weighed.
+            absOneOffs: absoluteOneOffsFromReleaseHtml(doc.html, p.fundamentals.q_end ?? null),
           };
-        } catch { return { read: false, adj: null, oneOffs: [] }; }
+        } catch { return { read: false, adj: null, oneOffs: [], absOneOffs: [] }; }
       }),
     ]);
 
@@ -917,9 +931,10 @@ export async function GET(req: Request) {
       // labelled fallback, and never a vendor number that simply repeats the
       // GAAP figure — that is the feed carrying GAAP under an adjusted name,
       // and pairing it with an adjusted estimate invents a beat.
-      const prRead = prAdj[pi] || { read: false, adj: null, oneOffs: [] };
+      const prRead = prAdj[pi] || { read: false, adj: null, oneOffs: [], absOneOffs: [] };
       const pa = prRead.adj;
       const oneOffs: OneOff[] = prRead.oneOffs || [];
+      const absOneOffs: AbsoluteOneOff[] = (prRead as any).absOneOffs || [];
       const vendorAdj = sLatest?.eps_actual ?? null;
       const gaapNow = p.fundamentals.eps ?? null;
       const vendorLooksGaap = vendorAdj != null && gaapNow != null && Math.abs(vendorAdj - gaapNow) <= 0.011;
@@ -1077,6 +1092,7 @@ export async function GET(req: Request) {
         guide_next_vs_street_pct: guideVsStreet,
         guide_next_implied_growth_pct: guideImpliedGrowth,
         one_offs: oneOffs,
+        abs_one_offs: absOneOffs,
         adj_eps_ex_oneoff: exOne ? exOne.eps : null,
         one_off_total_per_share: exOne ? exOne.total : null,
         close_30d: p.t.close_30d,

@@ -379,6 +379,22 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
               → core <b>${Number((r as any).eps_adj_ex_oneoff).toFixed(2)}</b> ex {Number((r as any).one_off_total_per_share) > 0 ? '+' : '−'}${Math.abs(Number((r as any).one_off_total_per_share)).toFixed(2)} {((r as any).one_offs || []).find((o: any) => o.included)?.label ?? 'one-off'}
             </span>
           )}
+          {/* THE ONE-OFF THE RELEASE PRICED ONLY IN DOLLARS.
+              Kohl's stated $150m of tariff refunds received in the quarter and
+              never put a per-share figure on it, so there is no core EPS to
+              show — only the item, its size and the sentence it came from. No
+              cents figure is derived from it here or anywhere else. */}
+          {(r as any).eps_adj_ex_oneoff == null
+            && Array.isArray((r as any).abs_one_offs)
+            && (r as any).abs_one_offs.some((o: any) => o.amount_usd > 0) && (() => {
+              const o = (r as any).abs_one_offs.filter((x: any) => x.amount_usd > 0)
+                .sort((a: any, b: any) => b.amount_usd - a.amount_usd)[0];
+              return (
+                <span style={{ color: 'var(--mc-caution, #F59E0B)' }} title={o.quote}>
+                  → includes ≈${(o.amount_usd / 1e6).toFixed(0)}m of {o.label} · per-share effect not stated
+                </span>
+              );
+            })()}
           {/* A REFUSED ESTIMATE IS NOT PRINTED AT ALL — not even without a
               surprise beside it.
               The engine already declines to compute a surprise when the

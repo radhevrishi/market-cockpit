@@ -3139,6 +3139,9 @@ export interface UsGradedRow {
   eps_adj_ex_oneoff: number | null;
   one_off_total_per_share: number | null;
   one_offs: import('./us-one-offs').OneOff[];
+  /** Discrete items the release quantified only in dollars — no per-share
+   *  figure exists for them, so they are shown and weighed, never subtracted. */
+  abs_one_offs?: import('./us-one-offs').AbsoluteOneOff[];
   eps_adj_yoy_pct: number | null;
   eps_adj_swing: SwingKind;
   /** Which basis the grade's growth axis actually used. */
@@ -3241,6 +3244,11 @@ export interface UsGradeInput {
   one_offs?: import('./us-one-offs').OneOff[] | null;
   adj_eps_ex_oneoff?: number | null;
   one_off_total_per_share?: number | null;
+  /** One-offs the release quantifies ONLY in dollars, never per share
+   *  (Kohl's "$150 million of tariff refunds received in the quarter"). They
+   *  can never be subtracted from an EPS figure without inventing a share
+   *  count and a tax rate, so they are weighed against net income instead. */
+  abs_one_offs?: import('./us-one-offs').AbsoluteOneOff[] | null;
 }
 
 /**
@@ -3621,8 +3629,34 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     const label = (input.one_offs || []).find((o) => o.included)?.label ?? 'discrete item';
     caveat_tags.push(`one-off ${oneOffTot > 0 ? '+' : '−'}$${Math.abs(oneOffTot).toFixed(2)}/sh in adjusted eps (${label})`);
   }
+  // ── THE ONE-OFF THE RELEASE PRICED IN DOLLARS AND NEVER IN CENTS ────────
+  //
+  // Kohl's Q2 FY26: adjusted EPS $1.28 — the same figure as GAAP, because the
+  // company adjusted for nothing — against a $0.57 street number, which reads
+  // as a 124% beat. Elsewhere in the same release: "Tariff refunds of
+  // approximately $150 million were received in the quarter", on $151 million
+  // of net income. Every rule above needs a per-share amount to work with and
+  // this release never prints one, so the beat was graded clean.
+  //
+  // No EPS figure is manufactured here. The item's size is stated against net
+  // income — both numbers from the same filing — and that ratio is what the
+  // grade reads. Two guards keep it from double-counting: an item the company
+  // already quantified per share is handled above, and a company whose
+  // adjusted EPS sits BELOW its GAAP EPS has stripped its benefits out
+  // already, so what remains inside the headline is not this.
+  const absOff = (input.abs_one_offs || []).filter((o) => o.amount_usd > 0)
+    .sort((a, b) => b.amount_usd - a.amount_usd)[0] || null;
+  const strippedAlready = (input.adj_eps != null && f.eps != null && input.adj_eps < f.eps - 0.02);
+  const perShareAlready = (oneOffTot != null && Math.abs(oneOffTot) >= 0.02);
+  const absShare = (absOff && !strippedAlready && !perShareAlready && niC != null && niC > 0)
+    ? (absOff.amount_usd / 1e6) / niC : null;
+  if (absOff && absShare != null && absShare >= 0.15) {
+    caveat_tags.push(
+      `one-off ≈$${(absOff.amount_usd / 1e6).toFixed(0)}m in the quarter — ${Math.round(absShare * 100)}% of net income, per-share effect not stated (${absOff.label})`);
+  }
   const criticals = caveat_tags.filter((t) =>
     t === 'low quality' || t === 'ocf divergence' || t === 'optical eps' || t.startsWith('gaap ')
+    || t.startsWith('one-off ≈$')
     || (t.startsWith('one-off +') && oneOffShare != null && oneOffShare >= 0.2)).length;
   // Caps raised by the FILING (cash, trend, quality flags) are remembered
   // separately from the cap raised by the TAPE, because the floor below has to
@@ -3765,6 +3799,14 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     // impressed is partly non-recurring AND management's own outlook does not
     // carry it forward, which is precisely the print the tape marks down.
     if (guideCapped && oneOffShare >= 0.2) capTier('MIXED', 'one-off headline and a guide that does not carry it forward');
+  }
+
+  // The dollar-only item, weighed the same way. A benefit worth half the
+  // quarter's profit means the headline is not the business; a smaller one
+  // means the quarter was good but not as good as the number.
+  if (absShare != null && absShare >= 0.15) {
+    capTier(absShare >= 0.5 ? 'MIXED' : 'STRONG',
+      'headline leans on a one-off the release priced only in dollars');
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -3965,6 +4007,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     eps_adj_ex_oneoff: input.adj_eps_ex_oneoff ?? null,
     one_off_total_per_share: input.one_off_total_per_share ?? null,
     one_offs: input.one_offs ?? [],
+    abs_one_offs: input.abs_one_offs ?? [],
     eps_adj_yoy_pct: epsYAdj,
     eps_adj_swing: swingKind(input.adj_eps ?? null, input.adj_eps_prev ?? null),
     eps_basis_used: epsYGaap != null ? 'gaap' : epsYAdj != null ? 'adjusted' : null,

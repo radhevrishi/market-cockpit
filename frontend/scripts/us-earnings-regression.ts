@@ -18,7 +18,7 @@
 import { submissions, tickerToCik } from '../src/lib/us-edgar';
 import { releaseDocument } from '../src/lib/us-guidance';
 import { adjustedEpsFromReleaseHtml } from '../src/lib/us-pr-adjusted';
-import { oneOffsFromReleaseHtml, epsExOneOffs } from '../src/lib/us-one-offs';
+import { oneOffsFromReleaseHtml, epsExOneOffs, absoluteOneOffsFromReleaseHtml } from '../src/lib/us-one-offs';
 
 interface Case {
   ticker: string;
@@ -32,6 +32,10 @@ interface Case {
   /** Expected core EPS after removing the one-offs the release quantifies —
    *  null means no applicable one-off. */
   core: number | null;
+  /** The largest BENEFIT the release quantifies in dollars and never per share,
+   *  in $m, or null when there is none. `undefined` means the case does not
+   *  check it. */
+  absBenefitMusd?: number | null;
   why: string;
 }
 
@@ -69,7 +73,12 @@ const CASES: Case[] = [
   { ticker: 'OKTA', gaap: 0.65, qEnd: '2026-07-31', adj: 1.05, core: null, why: 'clean quarter, control case' },
   { ticker: 'BOX', gaap: 0.09, qEnd: '2026-07-31', adj: 0.40, core: null, why: 'clean quarter, control case' },
   { ticker: 'ZM', gaap: 5.15, qEnd: '2026-07-31', adj: 1.55, core: null, why: 'huge GAAP/adjusted gap from a tax item already excluded' },
-  { ticker: 'WSM', gaap: 2.84, qEnd: '2026-08-03', adj: 2.10, core: null, why: 'clean retail quarter, control case' },
+  { ticker: 'WSM', gaap: 2.84, qEnd: '2026-08-03', adj: 2.10, core: null, absBenefitMusd: 167.8,
+    why: 'a $167.8m benefit written as "a reduction of cost of goods sold" — the nearest sign word to the amount is "cost", which read a benefit as a charge' },
+  { ticker: 'KSS', gaap: 1.28, qEnd: '2026-08-01', adj: 1.28, core: null, absBenefitMusd: 150,
+    why: 'adjusted EPS equals GAAP and the $150m of tariff refunds is quantified only in dollars — a 124% "beat" that was mostly the refund' },
+  { ticker: 'DLTR', gaap: 2.70, qEnd: '2026-08-01', adj: 2.70, core: 1.39, absBenefitMusd: null,
+    why: 'the dollar-only scan must not pick up "in the fourth quarter of fiscal 2024" — a real item, in a quarter reported two years ago' },
 ];
 
 const near = (a: number | null, b: number | null, tol = 0.02) =>
@@ -80,6 +89,7 @@ const near = (a: number | null, b: number | null, tol = 0.02) =>
   for (const c of CASES) {
     let adj: number | null = null;
     let core: number | null = null;
+    let absB: number | null = null;
     let err = '';
     try {
       const cik = await tickerToCik(c.ticker);
@@ -94,15 +104,20 @@ const near = (a: number | null, b: number | null, tol = 0.02) =>
       adj = a ? a.value : null;
       const ex = epsExOneOffs(adj, oneOffsFromReleaseHtml(doc.html || ''), c.gaap);
       core = ex ? ex.eps : null;
+      const abs = absoluteOneOffsFromReleaseHtml(doc.html || '', c.qEnd).filter((o) => o.amount_usd > 0);
+      absB = abs.length ? Math.max(...abs.map((o) => o.amount_usd)) / 1e6 : null;
     } catch (e: any) { err = String(e?.message || e); }
 
     const okAdj = near(adj, c.adj);
     const okCore = near(core, c.core);
-    const ok = okAdj && okCore && !err;
+    const okAbs = c.absBenefitMusd === undefined || near(absB, c.absBenefitMusd, 0.2);
+    const ok = okAdj && okCore && okAbs && !err;
     if (!ok) failed++;
     console.log(
       `${ok ? 'PASS' : 'FAIL'}  ${c.ticker.padEnd(5)} adj ${String(adj).padEnd(6)}(exp ${String(c.adj).padEnd(6)})` +
-      ` core ${String(core).padEnd(6)}(exp ${String(c.core).padEnd(6)})${err ? '  ERR ' + err : ''}`);
+      ` core ${String(core).padEnd(6)}(exp ${String(c.core).padEnd(6)})` +
+      (c.absBenefitMusd === undefined ? '' : ` $one-off ${String(absB).padEnd(6)}(exp ${String(c.absBenefitMusd).padEnd(6)})`) +
+      `${err ? '  ERR ' + err : ''}`);
     if (!ok) console.log(`      ↳ guards: ${c.why}`);
   }
   console.log(`\n${CASES.length - failed}/${CASES.length} passed`);
