@@ -63,6 +63,9 @@ const NAV_GROUPS: NavGroup[] = [
       // US market engine — same grading, fed by SEC EDGAR instead of NSE/Screener.
       { href: '/us-earnings-opportunities', label: 'US Earnings Opportunities', icon: <Globe className="w-4 h-4" /> },
       { href: '/us-conviction-beats',       label: 'US Conviction Beats',       icon: <Globe className="w-4 h-4" /> },
+      // The interpretation layer that sits ON TOP of the graded engine: it
+      // never screens, it only reads what the filings already qualified.
+      { href: '/ai-desk',                   label: 'AI Research Desk',          icon: <Microscope className="w-4 h-4" /> },
       { href: '/earnings',               label: 'Earnings Scan',          icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/earnings-analysis',      label: 'Earnings Analysis (AI)', icon: <Microscope className="w-4 h-4" /> },
       { href: '/earnings-guidance',      label: 'Earnings Guidance',      icon: <LineChart className="w-4 h-4" /> },

@@ -1,627 +1,397 @@
 'use client';
+// ═══════════════════════════════════════════════════════════════════════════
+// AI RESEARCH DESK  (zzz611)
+//
+// The deck this page shows is the answer to one question the screener could
+// never answer: of the names the filings already qualified, which ones had
+// something actually CHANGE, why would the market care now, and what is the
+// best argument that each is wrong.
+//
+// THREE RULES THE LAYOUT ENFORCES
+//
+//  1. THE MACHINE'S NUMBER AND THE AI'S OPINION ARE NEVER MIXED. Every figure
+//     in grey type came from SEC XBRL and is reproducible. Everything in the
+//     interpretation block is a model's judgement and is labelled as one. A
+//     reader must always be able to tell which is which at a glance, because
+//     they carry completely different warranties.
+//
+//  2. THE BEAR CASE IS NOT COLLAPSED. It sits on the card, in full, at the
+//     same weight as the thesis. A research tool that makes the argument
+//     against easier to skip than the argument for is a marketing tool.
+//
+//  3. NOTHING CLAIMS TO BE PROVEN. The ledger tab shows sample sizes on every
+//     row and says plainly when it is too young to mean anything.
+// ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useRef, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, RefreshCw, Copy, Bot, User, AlertCircle, Sparkles, Key, Sun, Moon } from 'lucide-react';
-import { format } from 'date-fns';
-import api from '@/lib/api';
-import { Skeleton } from '@/components/ui/Skeleton';
-// PATCH 0282 — Shared freshness chip.
-import { PanelFreshness } from '@/components/PanelFreshness';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+type Tab = 'DESK' | 'LEDGER';
 
-interface ApiBrief {
-  type: string;
-  content: string | string[];
-  generated_at?: string;
-  model_version?: string | null;
-  api_key_missing?: boolean;
-  error?: boolean;
-  error_message?: string;
-  error_type?: string;
+interface Ai {
+  change_level: number; change_type: 'NOISE' | 'CYCLICAL' | 'STRUCTURAL';
+  structural_score: number; structural_drivers: string[]; temporary_factors: string[];
+  why_now_score: number; why_now: string[];
+  bear_case: string; bear_severity: number; key_risks: string[];
+  invalidation: string[]; thesis: string; confidence: number; not_established: string[];
+}
+interface Row {
+  ticker: string; company: string; sector?: string | null; quarter?: string | null;
+  filing_date: string; tier: string; price: number | null;
+  engine_score: number | null; pead: number | null; rs: number | null;
+  sales_yoy_pct: number | null; eps_yoy_pct: number | null; opm_pct: number | null;
+  cfo_to_pat_ratio: number | null; d1_pct: number | null; market_cap_musd: number | null;
+  filing_url: string | null; caveat_tags: string[];
+  ai: Ai | null; ai_error?: string; composite: number;
+  composite_parts?: Array<{ label: string; value: number; weight: number }>;
 }
 
-interface AiStatus {
-  ai_available: boolean;
-  anthropic_key_configured: boolean;
-  message: string;
-}
+const CHANGE_COLOR: Record<string, string> = {
+  STRUCTURAL: 'var(--mc-bullish, #22C55E)',
+  CYCLICAL: '#EAB308',
+  NOISE: 'var(--mc-bearish, #EF4444)',
+};
+const CHANGE_WORD: Record<string, string> = {
+  STRUCTURAL: 'Structural — the earning power looks different',
+  CYCLICAL: 'Cyclical — the industry turned, not the company',
+  NOISE: 'Noise — the headline overstates what changed',
+};
 
-// ─── Hooks ────────────────────────────────────────────────────────────────────
+const fmtPct = (v?: number | null) => (v == null ? '·' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`);
+const fmtCap = (v?: number | null) => (v == null ? '·' : Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(1)}B` : `$${v.toFixed(0)}M`);
 
-function useAiStatus() {
-  return useQuery<AiStatus>({
-    queryKey: ['ai', 'status'],
-    queryFn: async () => { const { data } = await api.get('/ai/status'); return data; },
-    staleTime: 5 * 60_000,
-    retry: 1,
-  });
-}
-
-function useMorningBrief() {
-  return useQuery<ApiBrief>({
-    queryKey: ['ai', 'brief', 'morning'],
-    queryFn: async () => { const { data } = await api.get('/ai/brief/morning'); return data; },
-    staleTime: 30 * 60_000,
-    retry: 1,
-  });
-}
-
-function useEveningBrief() {
-  return useQuery<ApiBrief>({
-    queryKey: ['ai', 'brief', 'evening'],
-    queryFn: async () => { const { data } = await api.get('/ai/brief/evening'); return data; },
-    staleTime: 30 * 60_000,
-    retry: 1,
-  });
-}
-
-function useSavedBriefs() {
-  return useQuery<ApiBrief[]>({
-    queryKey: ['ai', 'briefs'],
-    queryFn: async () => {
-      const { data } = await api.get('/ai/briefs');
-      return Array.isArray(data) ? data : (data?.briefs ?? []);
-    },
-    retry: 1,
-    staleTime: 15 * 60_000,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
-}
-
-// ─── API Key Banner ───────────────────────────────────────────────────────────
-
-function ApiKeyBanner() {
+function Meter({ label, value, hint, invert }: { label: string; value: number; hint?: string; invert?: boolean }) {
+  // Higher is better for every score except bear severity, where higher is
+  // worse — so the colour rule is inverted rather than the number, which keeps
+  // the printed figure the same one the model actually produced.
+  const good = invert ? value < 40 : value >= 70;
+  const mid = invert ? value < 65 : value >= 45;
+  const col = good ? '#22C55E' : mid ? '#EAB308' : '#EF4444';
   return (
-    <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-5">
-      <Key className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-      <div>
-        <p className="text-amber-300 text-sm font-semibold mb-1">Anthropic API key not configured</p>
-        <p className="text-amber-200/70 text-xs leading-relaxed">
-          AI features need an API key to work. Get your free key at{' '}
-          <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="underline text-amber-300 hover:text-amber-200">
-            console.anthropic.com
-          </a>
-          , then add it to your <code className="bg-amber-500/20 px-1 rounded">.env</code> file as{' '}
-          <code className="bg-amber-500/20 px-1 rounded">ANTHROPIC_API_KEY=sk-ant-...</code> and restart.
-        </p>
+    <div title={hint} style={{ minWidth: 92 }}>
+      <div style={{ fontSize: 9.5, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 17, fontWeight: 900, color: col, fontFamily: 'ui-monospace,monospace' }}>{value}</span>
+        <span style={{ flex: 1, height: 5, background: 'var(--mc-bg-3)', borderRadius: 3, overflow: 'hidden', minWidth: 30 }}>
+          <span style={{ display: 'block', width: `${Math.max(2, value)}%`, height: '100%', background: col }} />
+        </span>
       </div>
     </div>
   );
 }
 
-// ─── Generate CTA Banner ──────────────────────────────────────────────────────
+export default function AiDeskPage() {
+  const [tab, setTab] = useState<Tab>('DESK');
+  const [days, setDays] = useState(10);
+  const [limit, setLimit] = useState(12);
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [ledger, setLedger] = useState<any>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
 
-function GenerateCTA({
-  type,
-  label,
-  Icon,
-  accentClass,
-  onGenerate,
-  isGenerating,
-  hasContent,
-}: {
-  type: 'morning' | 'evening';
-  label: string;
-  Icon: React.ElementType;
-  accentClass: string;
-  onGenerate: () => void;
-  isGenerating: boolean;
-  hasContent: boolean;
-}) {
-  return (
-    <div className={`flex items-center justify-between gap-4 rounded-xl px-5 py-3.5 border mb-5 ${accentClass}`}>
-      <div className="flex items-center gap-2.5">
-        <Icon className="w-4 h-4 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold">{label}</p>
-          <p className="text-xs opacity-70">
-            {hasContent ? 'Brief ready · Click to regenerate with latest data' : 'No brief yet · Generate now'}
-          </p>
-        </div>
-      </div>
-      <button
-        onClick={onGenerate}
-        disabled={isGenerating}
-        className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25 disabled:opacity-50 transition-colors whitespace-nowrap"
-      >
-        {isGenerating
-          ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Generating…</>
-          : <><Sparkles className="w-3.5 h-3.5" /> {hasContent ? 'Regenerate' : 'Generate Brief'}</>
-        }
-      </button>
-    </div>
-  );
-}
-
-// ─── Content Sanitizer ────────────────────────────────────────────────────
-
-function sanitizeContent(content: unknown): string[] {
-  if (!content) return [];
-
-  // If it's already an array, return as is
-  if (Array.isArray(content)) {
-    return content.map(item => String(item)).filter(Boolean);
-  }
-
-  const str = String(content);
-
-  // Check if content looks like a Python dict
-  if (str.trim().startsWith('{') && str.includes("'")) {
+  const load = useCallback(async (interpret: boolean) => {
+    setLoading(true); setErr(null);
     try {
-      // Try to parse as Python dict by replacing single quotes with double quotes
-      const jsonStr = str.replace(/'/g, '"');
-      const parsed = JSON.parse(jsonStr);
+      // The first visit reads only what is already interpreted, so opening the
+      // tab is instant and costs nothing. Interpreting is an explicit act.
+      const r = await fetch(`/api/v1/ai/desk?days=${days}&limit=${limit}${interpret ? '' : '&cache_only=1'}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (!j?.ok) throw new Error(j?.error || 'The desk did not answer.');
+      setData(j);
+    } catch (e: any) { setErr(String(e?.message || e)); }
+    finally { setLoading(false); }
+  }, [days, limit]);
 
-      // Extract text values from the dict
-      if (typeof parsed === 'object' && parsed !== null) {
-        const lines: string[] = [];
-        for (const [key, value] of Object.entries(parsed)) {
-          if (typeof value === 'string' && value.trim()) {
-            lines.push(value);
-          }
-        }
-        return lines.length > 0 ? lines : [str];
-      }
-    } catch {
-      // If parsing fails, return as is but with notice
-      return [str];
-    }
-  }
+  const loadLedger = useCallback(async () => {
+    try { const r = await fetch('/api/v1/ai/ledger', { cache: 'no-store' }); setLedger(await r.json()); } catch { /* shown as empty */ }
+  }, []);
 
-  // Split by newlines if regular text
-  return str.split('\n').filter(Boolean);
+  useEffect(() => { void load(false); }, [load]);
+  useEffect(() => { if (tab === 'LEDGER' && !ledger) void loadLedger(); }, [tab, ledger, loadLedger]);
+
+  const rows: Row[] = useMemo(() => (data?.rows || []) as Row[], [data]);
+  const interpreted = rows.filter((r) => r.ai);
+  const top = interpreted.slice(0, 5);
+
+  const panel = (): React.CSSProperties => ({
+    backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
+    borderRadius: 'var(--mc-radius)', padding: 14, marginBottom: 12,
+  });
+  const chip = (on: boolean, col = 'var(--mc-cyan)'): React.CSSProperties => ({
+    fontSize: 11, fontWeight: 800, padding: '6px 12px', borderRadius: 7, cursor: 'pointer',
+    border: `1px solid ${on ? col : 'var(--mc-bg-4)'}`, background: on ? `${col}22` : 'transparent',
+    color: on ? col : 'var(--mc-text-2)',
+  });
+
+  return (
+    <div style={{ padding: '18px 20px 60px', maxWidth: 1400 }}>
+      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <h1 style={{ fontSize: 19, fontWeight: 900, color: 'var(--mc-text-0)' }}>🧠 AI Research Desk</h1>
+        <span style={{ fontSize: 11, color: 'var(--mc-text-3)', border: '1px solid var(--mc-bg-4)', borderRadius: 20, padding: '2px 10px' }}>
+          Machines calculate · AI interprets · You decide
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--mc-text-2)', lineHeight: 1.6, marginBottom: 14, maxWidth: 940 }}>
+        Every figure on this page was computed by the engine from SEC XBRL filings and is reproducible. The interpretation blocks
+        are a model reading those same figures and the company&rsquo;s own release, and answering the four things arithmetic cannot:
+        is the change <b>structural</b>, why would the market re-rate it <b>now</b>, what is the strongest case <b>against</b>, and
+        what would prove the read wrong. The model is forbidden to compute anything or to use knowledge of the company from
+        outside the filing. Every assessment is written to a prediction ledger and marked against the market later.
+      </p>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button onClick={() => setTab('DESK')} style={chip(tab === 'DESK')}>Today&rsquo;s deck</button>
+        <button onClick={() => setTab('LEDGER')} style={chip(tab === 'LEDGER', '#A78BFA')}>Prediction ledger</button>
+        <span style={{ flex: 1 }} />
+        {tab === 'DESK' && (
+          <>
+            {[5, 10, 20, 30].map((d) => (
+              <button key={d} onClick={() => setDays(d)} style={chip(days === d)}>{d}d</button>
+            ))}
+            {[6, 12, 20].map((l) => (
+              <button key={l} onClick={() => setLimit(l)} style={chip(limit === l, '#60A5FA')}>top {l}</button>
+            ))}
+            <button onClick={() => load(true)} disabled={loading} style={{ ...chip(false, '#22C55E'), cursor: loading ? 'wait' : 'pointer' }}>
+              <RefreshCw className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 5, animation: loading ? 'spin 1s linear infinite' : undefined }} />
+              {loading ? 'Interpreting…' : 'Run the analyst'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {err && <div style={{ ...panel(), borderColor: 'rgba(239,68,68,0.4)', color: '#F87171', fontSize: 12 }}>{err}</div>}
+
+      {tab === 'DESK' && (
+        <>
+          <div style={{ ...panel(), display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 11.5, color: 'var(--mc-text-2)' }}>
+            <span><b style={{ color: 'var(--mc-text-0)' }}>{rows.length}</b> candidates from the engine</span>
+            <span><b style={{ color: 'var(--mc-text-0)' }}>{interpreted.length}</b> interpreted</span>
+            {data?.cached ? <span><b style={{ color: 'var(--mc-text-0)' }}>{data.cached}</b> from cache (a filed quarter never changes)</span> : null}
+            {data?.failed ? <span style={{ color: 'var(--mc-caution,#F59E0B)' }}>{data.failed} could not be assessed</span> : null}
+            {data?.sessions_pending?.length ? (
+              <span style={{ color: 'var(--mc-text-3)' }}>
+                {data.sessions_pending.length} session{data.sessions_pending.length > 1 ? 's' : ''} not graded yet — those names are not in this deck.
+              </span>
+            ) : null}
+            {!interpreted.length && !loading && (
+              <span style={{ color: 'var(--mc-text-3)' }}>Nothing interpreted yet — press <b>Run the analyst</b>.</span>
+            )}
+          </div>
+          {(data?.notes || []).map((n: string, i: number) => (
+            <div key={i} style={{ ...panel(), borderColor: 'rgba(245,158,11,0.35)', color: 'var(--mc-caution,#F59E0B)', fontSize: 11.5 }}>{n}</div>
+          ))}
+
+          {top.length > 0 && (
+            <div style={{ ...panel(), borderLeft: '3px solid var(--mc-cyan)' }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 6 }}>The five to look at first</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {top.map((r, i) => (
+                  <span key={r.ticker} style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-text-0)', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 20, padding: '4px 11px' }}>
+                    <span style={{ color: 'var(--mc-text-4)' }}>{i + 1}.</span> {r.ticker}
+                    <span style={{ color: CHANGE_COLOR[r.ai!.change_type], marginLeft: 6 }}>{r.composite}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {rows.map((r) => {
+            const a = r.ai;
+            const isOpen = open.has(r.ticker);
+            return (
+              <div key={r.ticker} style={{ ...panel(), padding: 0, overflow: 'hidden' }}>
+                {/* ── the machine's half ── */}
+                <div style={{ padding: '12px 14px', borderBottom: a ? '1px solid var(--mc-bg-4)' : undefined }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 17, fontWeight: 900, color: 'var(--mc-text-0)' }}>{r.ticker}</span>
+                    <span style={{ fontSize: 12.5, color: 'var(--mc-text-2)' }}>{r.company}</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: r.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981', border: '1px solid currentColor', borderRadius: 5, padding: '1px 6px' }}>{r.tier}</span>
+                    {r.quarter && <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>{r.quarter} · filed {r.filing_date}</span>}
+                    <span style={{ flex: 1 }} />
+                    <span title="Engine grade blended with the AI's structural and why-now scores, minus a drag for the severity of the bear case."
+                      style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-text-0)', fontFamily: 'ui-monospace,monospace' }}>{r.composite}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8, fontSize: 11, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace,monospace' }}>
+                    <span>Engine <b style={{ color: 'var(--mc-text-1)' }}>{r.engine_score ?? '·'}</b></span>
+                    <span>PEAD <b style={{ color: 'var(--mc-text-1)' }}>{r.pead ?? '·'}</b></span>
+                    <span>RS <b style={{ color: 'var(--mc-text-1)' }}>{r.rs ?? '·'}</b></span>
+                    <span>Rev <b style={{ color: (r.sales_yoy_pct ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(r.sales_yoy_pct)}</b></span>
+                    <span>EPS <b style={{ color: (r.eps_yoy_pct ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(r.eps_yoy_pct)}</b></span>
+                    <span>OPM <b style={{ color: 'var(--mc-text-1)' }}>{r.opm_pct == null ? '·' : `${r.opm_pct.toFixed(1)}%`}</b></span>
+                    <span>CFO/NI <b style={{ color: (r.cfo_to_pat_ratio ?? 1) >= 0.8 ? 'var(--mc-text-1)' : '#EF4444' }}>{r.cfo_to_pat_ratio?.toFixed(2) ?? '·'}</b></span>
+                    <span>Reaction <b style={{ color: (r.d1_pct ?? 0) >= 0 ? '#22C55E' : '#EF4444' }}>{fmtPct(r.d1_pct)}</b></span>
+                    <span>Cap <b style={{ color: 'var(--mc-text-1)' }}>{fmtCap(r.market_cap_musd)}</b></span>
+                    {r.filing_url && <a href={r.filing_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)' }}>filing ↗</a>}
+                  </div>
+                  {r.caveat_tags?.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--mc-caution,#F59E0B)' }}>
+                      Engine caveats: {r.caveat_tags.join(' · ')}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── the AI's half, unmistakably separate ── */}
+                {!a ? (
+                  <div style={{ padding: '10px 14px', fontSize: 11.5, color: 'var(--mc-text-3)' }}>
+                    {r.ai_error || 'Not interpreted yet.'}
+                  </div>
+                ) : (
+                  <div style={{ padding: '12px 14px', background: 'var(--mc-bg-2)' }}>
+                    <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 10 }}>
+                      <div style={{ minWidth: 210 }}>
+                        <div style={{ fontSize: 9.5, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3 }}>CLASSIFICATION</div>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: CHANGE_COLOR[a.change_type] }}>{a.change_type}</div>
+                        <div style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>{CHANGE_WORD[a.change_type]} · level {a.change_level}/5</div>
+                      </div>
+                      <Meter label="STRUCTURAL" value={a.structural_score} hint="How much of this quarter's improvement should persist." />
+                      <Meter label="WHY NOW" value={a.why_now_score} hint="How likely expectations are to move in the near term." />
+                      <Meter label="BEAR SEVERITY" value={a.bear_severity} invert hint="How much damage the bear case does if it is right." />
+                      <Meter label="CONFIDENCE" value={a.confidence} hint="The model's own confidence given how thin the material was." />
+                    </div>
+
+                    <div style={{ fontSize: 12.5, color: 'var(--mc-text-1)', lineHeight: 1.6, marginBottom: 10 }}>{a.thesis}</div>
+
+                    {/* The bear case is given the same weight as the thesis, on
+                        purpose. It is the half a reader is most tempted to skip. */}
+                    <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '9px 11px', marginBottom: 10 }}>
+                      <div style={{ fontSize: 9.5, fontWeight: 900, color: '#F87171', letterSpacing: 0.4, marginBottom: 4 }}>THE CASE AGAINST</div>
+                      <div style={{ fontSize: 12, color: 'var(--mc-text-1)', lineHeight: 1.6 }}>{a.bear_case}</div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: 12 }}>
+                      {a.why_now.length > 0 && (
+                        <Block title="WHY NOW" color="#22C55E" items={a.why_now} />
+                      )}
+                      {a.structural_drivers.length > 0 && (
+                        <Block title="WHAT ACTUALLY CHANGED" color="#60A5FA" items={a.structural_drivers} />
+                      )}
+                      {a.temporary_factors.length > 0 && (
+                        <Block title="WHAT MAY NOT REPEAT" color="#EAB308" items={a.temporary_factors} />
+                      )}
+                      {isOpen && a.key_risks.length > 0 && <Block title="RISKS" color="#F87171" items={a.key_risks} />}
+                      {isOpen && a.invalidation.length > 0 && <Block title="WHAT WOULD PROVE THIS WRONG" color="#A78BFA" items={a.invalidation} />}
+                      {isOpen && a.not_established.length > 0 && <Block title="COULD NOT BE ESTABLISHED FROM THE FILING" color="#94A3B8" items={a.not_established} />}
+                    </div>
+
+                    <button onClick={() => setOpen((s) => { const n = new Set(s); n.has(r.ticker) ? n.delete(r.ticker) : n.add(r.ticker); return n; })}
+                      style={{ marginTop: 9, ...chip(false) }}>
+                      {isOpen ? '▴ less' : '▾ risks, invalidation, gaps'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {tab === 'LEDGER' && (
+        <>
+          <div style={panel()}>
+            <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 4 }}>Prediction ledger</div>
+            <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
+              Every assessment is recorded the moment it is made, with the engine&rsquo;s inputs and the model&rsquo;s scores frozen beside it,
+              and marked later against what the stock actually did at 7 / 30 / 90 / 180 days — <b>relative to the S&amp;P 500</b>, because a
+              rising tide is not a signal. Entries are written once and never rewritten, so this measures foresight rather than hindsight.
+              {ledger?.note && <><br /><span style={{ color: 'var(--mc-caution,#F59E0B)' }}>{ledger.note}</span></>}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--mc-text-3)' }}>
+              <b style={{ color: 'var(--mc-text-1)' }}>{ledger?.total ?? 0}</b> predictions recorded ·{' '}
+              <b style={{ color: 'var(--mc-text-1)' }}>{ledger?.scored ?? 0}</b> marked so far
+            </div>
+          </div>
+
+          {(ledger?.learned || []).map((L: any) => (
+            <div key={L.horizon} style={panel()}>
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 8 }}>
+                Which inputs carried information — {L.horizon.replace('d', '')} days
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ color: 'var(--mc-text-3)', textAlign: 'right' }}>
+                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>Condition</th>
+                    <th style={{ padding: '4px 6px' }}>n</th>
+                    <th style={{ padding: '4px 6px' }}>hit rate</th>
+                    <th style={{ padding: '4px 6px' }}>avg excess</th>
+                    <th style={{ padding: '4px 6px' }}>vs. without</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {L.reads.map((rd: any, i: number) => {
+                    const edge = +(rd.yes.avg_excess - rd.no.avg_excess).toFixed(1);
+                    const thin = rd.yes.n < 20;
+                    return (
+                      <tr key={i} style={{ borderTop: '1px solid var(--mc-bg-4)' }}>
+                        <td style={{ padding: '5px 6px', color: 'var(--mc-text-1)' }}>{rd.yes.label.replace(' — yes', '')}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', color: thin ? 'var(--mc-caution,#F59E0B)' : 'var(--mc-text-2)', fontFamily: 'ui-monospace,monospace' }}>{rd.yes.n}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: 'var(--mc-text-2)' }}>{rd.yes.hit_rate}%</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: rd.yes.avg_excess >= 0 ? '#22C55E' : '#EF4444' }}>{rd.yes.avg_excess > 0 ? '+' : ''}{rd.yes.avg_excess}pp</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: edge >= 0 ? '#22C55E' : '#EF4444' }}>{edge > 0 ? '+' : ''}{edge}pp</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6 }}>
+                Sample size is shown on every row and amber below 20. An edge over a handful of observations is not an edge.
+              </div>
+            </div>
+          ))}
+
+          {(ledger?.entries || []).length > 0 && (
+            <div style={panel()}>
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 8 }}>Recorded predictions</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--mc-text-3)', textAlign: 'right' }}>
+                      <th style={{ textAlign: 'left', padding: '4px 6px' }}>Ticker</th>
+                      <th style={{ textAlign: 'left', padding: '4px 6px' }}>Filed</th>
+                      <th style={{ padding: '4px 6px' }}>Engine</th>
+                      <th style={{ padding: '4px 6px' }}>Struct</th>
+                      <th style={{ padding: '4px 6px' }}>Why now</th>
+                      <th style={{ padding: '4px 6px' }}>Bear</th>
+                      <th style={{ padding: '4px 6px' }}>Comp</th>
+                      <th style={{ padding: '4px 6px' }}>+30d excess</th>
+                      <th style={{ padding: '4px 6px' }}>+90d excess</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledger.entries.map((e: any) => (
+                      <tr key={e.id} style={{ borderTop: '1px solid var(--mc-bg-4)' }}>
+                        <td style={{ padding: '4px 6px', color: 'var(--mc-text-0)', fontWeight: 800 }}>{e.ticker}</td>
+                        <td style={{ padding: '4px 6px', color: 'var(--mc-text-3)' }}>{e.filing_date}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{e.engine_score ?? '·'}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{e.structural_score ?? '·'}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{e.why_now_score ?? '·'}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{e.bear_severity ?? '·'}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', fontWeight: 800 }}>{e.composite ?? '·'}</td>
+                        {(['d30', 'd90'] as const).map((h) => (
+                          <td key={h} style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: e.out?.[h] ? (e.out[h].excess_pct >= 0 ? '#22C55E' : '#EF4444') : 'var(--mc-text-4)' }}>
+                            {e.out?.[h] ? `${e.out[h].excess_pct > 0 ? '+' : ''}${e.out[h].excess_pct}%` : 'pending'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
-// ─── Brief Card ───────────────────────────────────────────────────────────────
-
-function BriefCard({ brief, isLoading, error, onRefresh }: {
-  brief: ApiBrief | undefined;
-  isLoading: boolean;
-  error: unknown;
-  onRefresh: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const copyText = () => {
-    if (!brief?.content) return;
-    const text = Array.isArray(brief.content) ? brief.content.join('\n') : String(brief.content);
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  // Check if the brief data itself contains an error flag
-  if (brief && brief.error) {
-    // Use error_message if provided by backend, otherwise fallback
-    const errorMsg = brief.error_message
-      ? brief.error_message
-      : brief.api_key_missing
-      ? 'API key is not configured'
-      : 'Failed to generate brief';
-
-    return (
-      <div className="flex flex-col items-center justify-center py-16 gap-3">
-        <AlertCircle className="w-8 h-8 text-red-400" />
-        <p className="text-[#8899AA] text-sm text-center">{errorMsg}</p>
-        <button onClick={onRefresh} className="flex items-center gap-1.5 text-[#0F7ABF] text-sm hover:text-[#38A9E8]">
-          <RefreshCw className="w-4 h-4" /> Try again
-        </button>
-      </div>
-    );
-  }
-
-  if (error) return (
-    <div className="flex flex-col items-center justify-center py-16 gap-3">
-      <AlertCircle className="w-8 h-8 text-red-400" />
-      <p className="text-[#8899AA] text-sm">Could not load brief — please try again</p>
-      <button onClick={onRefresh} className="flex items-center gap-1.5 text-[#0F7ABF] text-sm hover:text-[#38A9E8]">
-        <RefreshCw className="w-4 h-4" /> Try again
-      </button>
-    </div>
-  );
-
-  if (isLoading) return (
-    <div className="space-y-3 py-4">
-      <Skeleton className="h-4 w-1/2" />
-      {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
-    </div>
-  );
-
-  if (!brief) return (
-    <div className="flex flex-col items-center justify-center py-16 gap-3">
-      <Sparkles className="w-8 h-8 text-[#0F7ABF]" />
-      <p className="text-[#8899AA] text-sm">Brief not generated yet</p>
-      <p className="text-[#4A5B6C] text-xs text-center max-w-xs">Use the Generate button above to create your personalised market brief</p>
-    </div>
-  );
-
-  const bullets: string[] = sanitizeContent(brief.content);
-
+function Block({ title, color, items }: { title: string; color: string; items: string[] }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-[#4A5B6C] text-xs">
-          {/* AUDIT_100 #21 — guard format() against invalid generated_at. */}
-          {(() => {
-            if (!brief.generated_at) return 'Just generated';
-            try {
-              const d = new Date(brief.generated_at);
-              return Number.isFinite(d.getTime())
-                ? `Generated ${format(d, 'MMM d, HH:mm')}`
-                : 'Just generated';
-            } catch { return 'Just generated'; }
-          })()}
-          {brief.model_version ? ` · ${brief.model_version}` : ''}
-        </p>
-        <div className="flex gap-2">
-          <button onClick={copyText} className="flex items-center gap-1 text-[#4A5B6C] hover:text-[#8899AA] text-xs transition-colors">
-            <Copy className="w-3.5 h-3.5" /> {copied ? 'Copied!' : 'Copy'}
-          </button>
-          <button onClick={onRefresh} className="flex items-center gap-1 text-[#4A5B6C] hover:text-[#8899AA] text-xs transition-colors">
-            <RefreshCw className="w-3.5 h-3.5" /> Regenerate
-          </button>
-        </div>
-      </div>
-      <div className="space-y-2">
-        {bullets.map((line, i) => {
-          if (!line.trim()) return null;
-          const emoji = line.match(/^[\p{Emoji}]/u)?.[0];
-          const rest = emoji ? line.slice(emoji.length).trim() : line;
-          const parts = rest.split(/\s*(?:—|–|:)\s*/);
-          const label = parts.length > 1 ? parts[0] : null;
-          const body  = parts.length > 1 ? parts.slice(1).join(' — ') : rest;
-          return (
-            <div key={i} className="bg-[#0D1B2E]/60 border border-[#2A3B4C] rounded-xl px-4 py-3.5 hover:border-[#0F7ABF]/30 transition-colors">
-              <div className="flex gap-3">
-                {emoji && <span className="text-lg shrink-0 mt-0.5">{emoji}</span>}
-                <div>
-                  {label && <p className="text-[#0F7ABF] text-xs font-semibold uppercase tracking-wide mb-0.5">{label}</p>}
-                  <p className="text-[#C8D8E8] text-sm leading-relaxed">{body}</p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {!brief.api_key_missing && (
-        <p className="text-[#2A3B4C] text-[10px] mt-4 text-center">
-          AI summary for informational use only · Not investment advice
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ─── Chat ─────────────────────────────────────────────────────────────────────
-
-interface ChatMsg { role: 'user' | 'assistant'; content: string; ts: Date }
-
-interface ChatResponse {
-  message: string;
-  response: string;
-  generated_at?: string;
-  error?: boolean;
-  error_type?: string;
-  error_message?: string;
-  api_key_missing?: boolean;
-}
-
-function ChatTab({ aiAvailable, apiHasError }: { aiAvailable: boolean; apiHasError: boolean }) {
-  // Determine initial greeting based on API status
-  const initialGreeting = aiAvailable && !apiHasError
-    ? "Hello! I'm your Market Desk AI. Ask me about your portfolio, a specific stock, upcoming earnings, or sector trends."
-    : apiHasError
-    ? "⚠️ AI service is currently unavailable. Please check your API configuration and credits."
-    : "⚠️ Anthropic API key is not configured. Add it to .env and restart to enable.";
-
-  const [messages, setMessages] = useState<ChatMsg[]>([{
-    role: 'assistant',
-    content: initialGreeting,
-    ts: new Date(),
-  }]);
-  const [input, setInput] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  const chatMutation = useMutation({
-    mutationFn: (message: string) => api.post('/ai/chat', { message }),
-    onSuccess: (res) => {
-      const data: ChatResponse = res.data;
-
-      // Check if the response contains an error flag
-      if (data?.error) {
-        // Use error_message from backend if available
-        const errorMsg = data.error_message
-          ? `⚠️ ${data.error_message}`
-          : data.api_key_missing
-          ? '⚠️ API key not configured — add ANTHROPIC_API_KEY to .env and restart'
-          : '⚠️ Failed to generate response. Please try again.';
-
-        setMessages(prev => [...prev, { role: 'assistant', content: errorMsg, ts: new Date() }]);
-      } else {
-        const reply = data?.response ?? String(data);
-        setMessages(prev => [...prev, { role: 'assistant', content: reply, ts: new Date() }]);
-      }
-    },
-    onError: () => {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: '⚠️ AI service is temporarily unavailable. Please try again later.',
-        ts: new Date(),
-      }]);
-    },
-  });
-
-  const send = () => {
-    const msg = input.trim();
-    if (!msg || chatMutation.isPending) return;
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: msg, ts: new Date() }]);
-    chatMutation.mutate(msg);
-  };
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-  const SUGGESTIONS = [
-    'Summarize my portfolio performance this week',
-    'Which of my holdings reports earnings next?',
-    'What sectors are moving today?',
-    'Explain the AI infra theme basket',
-  ];
-
-  return (
-    <div className="flex flex-col h-[calc(100vh-280px)] min-h-[400px]">
-      <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'assistant' ? 'bg-[#0F7ABF]/20 text-[#0F7ABF]' : 'bg-[#2A3B4C] text-[#8899AA]'}`}>
-              {msg.role === 'assistant' ? <Bot className="w-4 h-4" /> : <User className="w-4 h-4" />}
-            </div>
-            <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'assistant' ? 'bg-[#1A2B3C] border border-[#2A3B4C] text-[#C8D8E8]' : 'bg-[#0F7ABF] text-white'}`}>
-              {msg.content}
-              <p className={`text-[10px] mt-1 ${msg.role === 'assistant' ? 'text-[#4A5B6C]' : 'text-blue-200'}`}>{format(msg.ts, 'HH:mm')}</p>
-            </div>
-          </div>
-        ))}
-        {chatMutation.isPending && (
-          <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-full bg-[#0F7ABF]/20 text-[#0F7ABF] flex items-center justify-center shrink-0">
-              <Bot className="w-4 h-4" />
-            </div>
-            <div className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-2xl px-4 py-3">
-              <div className="flex gap-1 items-center h-5">
-                {[0,1,2].map(i => <span key={i} className="w-2 h-2 rounded-full bg-[#0F7ABF] animate-bounce" style={{ animationDelay: `${i*150}ms` }} />)}
-              </div>
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-      {messages.length <= 1 && aiAvailable && (
-        <div className="flex flex-wrap gap-2 py-3">
-          {SUGGESTIONS.map(s => (
-            <button key={s} onClick={() => setInput(s)}
-              className="text-xs px-3 py-1.5 rounded-lg bg-[#1A2B3C] border border-[#2A3B4C] text-[#8899AA] hover:border-[#0F7ABF] hover:text-white transition-colors">
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="flex gap-2 pt-3 border-t border-[#2A3B4C]">
-        <input
-          type="text" value={input} onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-          placeholder={aiAvailable ? 'Ask about a ticker, your portfolio, earnings…' : 'Configure API key to enable chat…'}
-          disabled={!aiAvailable}
-          className="flex-1 bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl px-4 py-3 text-white text-sm placeholder-[#4A5B6C] focus:outline-none focus:border-[#0F7ABF] transition-colors disabled:opacity-50"
-        />
-        <button onClick={send} disabled={!input.trim() || chatMutation.isPending || !aiAvailable}
-          className="bg-[#0F7ABF] hover:bg-[#0E6DAD] disabled:opacity-40 text-white p-3 rounded-xl transition-colors">
-          <Send className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Saved Briefs ─────────────────────────────────────────────────────────────
-
-function SavedBriefsTab() {
-  const { data, isLoading } = useSavedBriefs();
-  return (
-    <div className="space-y-3">
-      {isLoading
-        ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)
-        : !data?.length
-        ? (
-          <div className="text-center py-16">
-            <p className="text-4xl mb-3">📚</p>
-            <p className="text-white font-semibold mb-1">No saved briefs yet</p>
-            <p className="text-[#4A5B6C] text-sm">Generated briefs will appear here once the history feature is enabled</p>
-          </div>
-        )
-        : data.map((brief, idx) => (
-          <div key={idx} className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl px-5 py-4 hover:border-[#0F7ABF]/40 transition-colors">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-white text-sm font-medium capitalize">{brief.type?.replace('_', ' ') ?? 'Brief'}</span>
-              <span className="text-[#4A5B6C] text-xs">
-                {/* AUDIT_100 #21 — guard format() against invalid generated_at
-                    so the renderer doesn't throw on a partial /ai/briefs payload. */}
-                {(() => {
-                  if (!brief.generated_at) return '';
-                  try {
-                    const d = new Date(brief.generated_at);
-                    return Number.isFinite(d.getTime()) ? format(d, 'MMM d, HH:mm') : '';
-                  } catch { return ''; }
-                })()}
-              </span>
-            </div>
-            <p className="text-[#8899AA] text-xs line-clamp-2">
-              {Array.isArray(brief.content) ? brief.content[0] : String(brief.content).slice(0, 200)}
-            </p>
-          </div>
-        ))
-      }
-    </div>
-  );
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-type TabId = 'morning' | 'evening' | 'chat' | 'saved';
-const TABS: { id: TabId; label: string; emoji: string }[] = [
-  { id: 'morning', label: 'Morning Brief', emoji: '☀️' },
-  { id: 'evening', label: 'Evening Brief', emoji: '🌙' },
-  { id: 'chat',    label: 'AI Chat',       emoji: '💬' },
-  { id: 'saved',   label: 'Saved',         emoji: '📚' },
-];
-
-export default function AIDeskPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('morning');
-  const qc = useQueryClient();
-  const morning = useMorningBrief();
-  const evening = useEveningBrief();
-  const { data: aiStatus, error: aiStatusError } = useAiStatus();
-  // PATCH 1058 — Degraded mode when /ai/status 404s (backend not provisioned).
-  const aiDeskDegraded = !!aiStatusError;
-
-  // Determine AI availability and error status
-  const briefHasError = !!(morning.data?.error || evening.data?.error);
-  const briefErrorType = morning.data?.error_type || evening.data?.error_type;
-  const briefCreditExhausted = briefErrorType === 'insufficient_credits' ||
-    !!(morning.data?.error_message?.includes('credit') || evening.data?.error_message?.includes('credit'));
-
-  // AI is truly available if: key is configured AND no runtime errors have occurred
-  const aiAvailable = (aiStatus?.ai_available ?? true) && !briefHasError;
-  const apiHasError: boolean = briefHasError && !briefCreditExhausted;
-
-  const [generatingMorning, setGeneratingMorning] = useState(false);
-  const [generatingEvening, setGeneratingEvening] = useState(false);
-
-  const generateBrief = async (type: 'morning' | 'evening') => {
-    const setter = type === 'morning' ? setGeneratingMorning : setGeneratingEvening;
-    setter(true);
-    try {
-      await api.get(`/ai/brief/${type}`);
-      await qc.invalidateQueries({ queryKey: ['ai', 'brief', type] });
-    } catch {
-      /* errors handled by BriefCard */
-    } finally {
-      setter(false);
-    }
-  };
-
-  return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center gap-2 mb-5 flex-wrap">
-        <Bot className="w-5 h-5 text-[#0F7ABF]" />
-        <h1 className="text-lg font-bold text-white">AI Desk</h1>
-        {/* PATCH 0282 — Freshness chip from whichever brief was loaded most
-            recently (morning or evening). Helps users see how fresh the AI
-            output they're reading actually is. */}
-        <PanelFreshness
-          dataUpdatedAt={Math.max(morning.dataUpdatedAt || 0, evening.dataUpdatedAt || 0)}
-          isFetching={morning.isFetching || evening.isFetching}
-          staleAfterMs={6 * 60 * 60_000}
-        />
-        {aiStatus ? (
-          <span className={`ml-2 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-            aiAvailable && !briefHasError
-              ? 'bg-green-500/20 border-green-500/30 text-green-400'
-              : briefCreditExhausted
-              ? 'bg-red-500/20 border-red-500/30 text-red-400'
-              : 'bg-amber-500/20 border-amber-500/30 text-amber-400'
-          }`}>
-            {aiAvailable && !briefHasError ? '● Active' : aiStatus.anthropic_key_configured ? (briefCreditExhausted ? '○ No Credits' : '○ Error') : '○ Offline'}
-          </span>
-        ) : null}
-      </div>
-
-      {/* PATCH 1058 — Degraded banner when /ai/status endpoint isn't deployed. */}
-      {aiDeskDegraded && (
-        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-5">
-          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-          <p className="text-amber-300 text-sm font-semibold">🟡 AI Desk backend not yet provisioned on this deployment — degraded mode</p>
-        </div>
-      )}
-
-      {aiStatus && (!aiStatus.ai_available || briefCreditExhausted) && (
-        briefCreditExhausted ? (
-          <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-5">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-red-300 text-sm font-semibold mb-1">Anthropic API credits exhausted</p>
-              <p className="text-red-200/70 text-xs leading-relaxed">
-                Your API credit balance is too low. Add credits at{' '}
-                <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="underline text-red-300 hover:text-red-200">
-                  console.anthropic.com/settings/billing
-                </a>
-                {' '}to re-enable AI features.
-              </p>
-            </div>
-          </div>
-        ) : !aiStatus.anthropic_key_configured ? (
-          <ApiKeyBanner />
-        ) : (
-          <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-5">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-red-300 text-sm font-semibold mb-1">AI service temporarily unavailable</p>
-              <p className="text-red-200/70 text-xs leading-relaxed">
-                The backend AI service is offline. Please check that the API server is running and try again in a moment.
-              </p>
-            </div>
-          </div>
-        )
-      )}
-
-      {/* Prominent generate CTAs — shown for morning and evening tabs */}
-      {activeTab === 'morning' && (
-        <GenerateCTA
-          type="morning"
-          label="Morning Market Brief"
-          Icon={Sun}
-          accentClass="bg-amber-500/10 border-amber-500/30 text-amber-300"
-          onGenerate={() => generateBrief('morning')}
-          isGenerating={generatingMorning || morning.isLoading}
-          hasContent={!!morning.data}
-        />
-      )}
-      {activeTab === 'evening' && (
-        <GenerateCTA
-          type="evening"
-          label="Evening Market Wrap"
-          Icon={Moon}
-          accentClass="bg-indigo-500/10 border-indigo-500/30 text-indigo-300"
-          onGenerate={() => generateBrief('evening')}
-          isGenerating={generatingEvening || evening.isLoading}
-          hasContent={!!evening.data}
-        />
-      )}
-
-      <div className="flex gap-1 bg-[#0D1B2E] rounded-xl p-1 border border-[#2A3B4C] mb-6">
-        {TABS.map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === tab.id ? 'bg-[#1A2B3C] text-white shadow' : 'text-[#4A5B6C] hover:text-[#8899AA]'
-            }`}>
-            <span>{tab.emoji}</span>
-            <span className="hidden sm:inline">{tab.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'morning' && (
-        <BriefCard brief={morning.data} isLoading={morning.isLoading} error={morning.error} onRefresh={() => morning.refetch()} />
-      )}
-      {activeTab === 'evening' && (
-        <BriefCard brief={evening.data} isLoading={evening.isLoading} error={evening.error} onRefresh={() => evening.refetch()} />
-      )}
-      {activeTab === 'chat' && <ChatTab aiAvailable={aiAvailable} apiHasError={apiHasError} />}
-      {activeTab === 'saved' && <SavedBriefsTab />}
+      <div style={{ fontSize: 9.5, fontWeight: 900, color, letterSpacing: 0.4, marginBottom: 5 }}>{title}</div>
+      <ul style={{ margin: 0, paddingLeft: 15, fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
+        {items.map((s, i) => <li key={i}>{s}</li>)}
+      </ul>
     </div>
   );
 }
