@@ -1269,10 +1269,27 @@ export function streetChip(figs: GuideFig[] | null | undefined): { text: string;
     Array.from(new Set(scored.filter((x) => x.vs!.stance === s).map((x) => name(x.f)))).slice(0, 2).join(', ');
   const below = pick('below'), above = pick('above'), inline = pick('in-line');
   const covered = Array.from(new Set(scored.map((x) => name(x.f)))).join(', ');
-  const title = `Compared against the street for ${covered} only. Every other guided figure on this card has no consensus to meet — see the outlook block.`;
-  if (below) return { text: `🎯 Guide below street: ${below}`, color: 'var(--mc-bearish)', title };
-  if (above) return { text: `🎯 Guide above street: ${above}`, color: 'var(--mc-bullish)', title };
-  return { text: `🎯 Guide in line w/ street: ${inline}`, color: IN_LINE_COLOR, title };
+  // ── THE CHIP MUST NAME THE PERIOD, NOT ONLY THE METRIC ──────────────────
+  //
+  // Braze's chip read "Guide in line w/ street: revenue, adj. eps" — true, and
+  // true only of the FULL YEAR. The estimate feed carries no next-quarter
+  // number for this filer, so the quarter was never compared at all, and the
+  // quarter was the whole story: guided adjusted EPS $0.13–0.14 against $0.16,
+  // and the stock fell 25.8%. A green chip that silently covers the year while
+  // the near quarter is unexamined is the most misleading thing on the card.
+  const periods = Array.from(new Set(scored.map((x) => (x.f.period === 'year' ? 'FY' : 'the quarter'))));
+  const scope = periods.length === 1 ? periods[0] : 'FY and the quarter';
+  const yearOnly = periods.length === 1 && periods[0] === 'FY';
+  const title = `Compared against the street for ${covered} (${scope}) only. Every other guided figure on this card has no consensus to meet — see the outlook block.`;
+  if (below) return { text: `🎯 Guide below street: ${below} (${scope})`, color: 'var(--mc-bearish)', title };
+  if (above) return { text: `🎯 Guide above street: ${above} (${scope})`, color: 'var(--mc-bullish)', title };
+  // An "in line" that covers only the full year is stated in neutral grey with
+  // the scope attached, never as a green all-clear.
+  return {
+    text: `🎯 Guide in line w/ street: ${inline}${yearOnly ? ' (FY only — no consensus for the quarter)' : ` (${scope})`}`,
+    color: yearOnly ? 'var(--mc-text-3)' : IN_LINE_COLOR,
+    title,
+  };
 }
 
 export function GuideBlock({ figs, label, showSource, changes }: {

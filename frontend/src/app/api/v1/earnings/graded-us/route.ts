@@ -1090,6 +1090,45 @@ export async function GET(req: Request) {
         if (base == null || base <= 0) return null;
         return (guideMid / base - 1) * 100;
       })();
+      // ── THE GUIDE MEASURED AGAINST THE QUARTER THAT WAS JUST REPORTED ────
+      //
+      // Braze beat on revenue, beat on adjusted EPS, raised the full year — and
+      // fell 25.8% on the day, because it guided the NEXT quarter's adjusted
+      // operating income to $16.0–17.0m against the $22.0m it had just
+      // delivered, on higher revenue. The card read STRONG with a green "guide
+      // in line with street" chip, because the estimate feed carries no Q3
+      // number for this filer at all (its quarterly entries jump from the
+      // reported quarter straight to Q4), so every street test was skipped and
+      // the FY lines — which WERE in line — were the only thing the chip saw.
+      //
+      // No consensus is needed to see what happened. Management published the
+      // next quarter's revenue and its next quarter's adjusted operating
+      // income, and the margin those two imply is 7.2% against the 9.7% just
+      // reported. That is two of management's own numbers divided by each
+      // other, the same arithmetic as the IMPLIED band, and it is available on
+      // every filer that guides both lines — for ever, with no vendor.
+      //
+      // A margin is used rather than the income level because a level is
+      // seasonal and a margin is far less so: a retailer guiding Q4 above Q3
+      // and a software filer guiding Q3 below Q2 are both judged on the same
+      // question — is the business management describes next quarter more or
+      // less profitable than the one it just delivered.
+      const guideNextMarginDelta = (() => {
+        const q = (metric: string) => guideFigs.find((f: any) =>
+          f.metric === metric && f.period === 'quarter' && f.unit !== 'pct'
+          && (metric === 'revenue' || f.basis === 'adjusted'));
+        const rev = q('revenue'), oi = q('operating_income');
+        const revMid = rev ? figMidOf(rev) : null;
+        const oiMid = oi ? figMidOf(oi) : null;
+        if (revMid == null || oiMid == null || !(revMid > 0)) return null;
+        const guided = (oiMid / revMid) * 100;
+        // The reported adjusted operating margin, as the release states it.
+        const km: any[] = ((g as any)?.metrics || []) as any[];
+        const rep = km.find((k) => k?.id === 'operating_margin_adj' && k?.value != null);
+        const reported = rep ? Number(rep.value) : null;
+        if (reported == null || !Number.isFinite(reported)) return null;
+        return Math.round((guided - reported) * 10) / 10;   // percentage points
+      })();
       const row = gradeUsRow({
         ticker: p.f.ticker!,
         company: p.f.company,
@@ -1127,6 +1166,7 @@ export async function GET(req: Request) {
         positive_guidance: g.label === 'RAISED' && !(guideVsStreet != null && guideVsStreet <= -3),
         guide_next_vs_street_pct: guideVsStreet,
         guide_next_implied_growth_pct: guideImpliedGrowth,
+        guide_next_margin_delta_pp: guideNextMarginDelta,
         one_offs: oneOffs,
         abs_one_offs: absOneOffs,
         adj_eps_ex_oneoff: exOne ? exOne.eps : null,

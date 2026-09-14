@@ -3281,6 +3281,11 @@ export interface UsGradeInput {
    *  numbers — neither is a forecast of ours. */
   guide_next_vs_street_pct?: number | null;
   guide_next_implied_growth_pct?: number | null;
+  /** The adjusted operating margin management's OWN next-quarter guide implies,
+   *  less the adjusted operating margin it just reported, in percentage points.
+   *  Negative means the company is telling you next quarter is less profitable
+   *  than the one it just delivered — and it needs no consensus to see. */
+  guide_next_margin_delta_pp?: number | null;
   one_offs?: import('./us-one-offs').OneOff[] | null;
   adj_eps_ex_oneoff?: number | null;
   one_off_total_per_share?: number | null;
@@ -3815,6 +3820,30 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     if (guideFailures >= 2) capTier('MIXED', 'guide below street AND implying the growth stops');
   }
 
+  // ── MANAGEMENT'S OWN NEXT QUARTER, LESS PROFITABLE THAN THIS ONE ────────
+  //
+  // Braze: adjusted EPS beat, revenue beat, full year raised — and the next
+  // quarter guided to a 7.2% adjusted operating margin against the 9.7% just
+  // reported. The tape took 25.8% out of the stock on the day and the card
+  // said STRONG, because the estimate feed carries no next-quarter number for
+  // this filer and every street test was therefore skipped.
+  //
+  // This rule needs no feed. It is the guided revenue and the guided adjusted
+  // operating income — both printed in the release — divided by each other and
+  // set against the margin the company just delivered. A quarter that beat and
+  // a guide that takes the margin down is not a STRONG print: it is a good
+  // quarter management has already told you will not repeat. Half a point is
+  // noise; a full point is a statement.
+  const gmDelta = input.guide_next_margin_delta_pp ?? null;
+  if (gmDelta != null && gmDelta <= -1) {
+    const tag = `guides next quarter's margin ${Math.abs(gmDelta).toFixed(1)}pp below the quarter just reported`;
+    if (!caveat_tags.includes(tag)) caveat_tags.push(tag);
+    // Deep compression, or compression the market has already punished, is a
+    // MIXED print. A smaller step down costs the top tier only.
+    const punished = p?.d1_pct != null && p.d1_pct <= -10;
+    capTier(gmDelta <= -2 || punished ? 'MIXED' : 'STRONG', 'the guide takes the margin down');
+  }
+
   // EARNINGS THAT OUTRUN BOTH THE REVENUE AND THE CASH.
   //
   // Electromed: EPS +56% on revenue +12% — four times the top line — with cash
@@ -3880,7 +3909,17 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     const floor = worseOf(worseOf(tierOnFundamentals, filingCap), priceFloor);
     if (TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(floor)) {
       tier = floor;
-      const why = stage === 4 && !reactionDemoted
+      // "FUNDAMENTALS INTACT" IS A CLAIM, AND THE RELEASE CAN CONTRADICT IT.
+      // It is the right reading of Keysight — a clean print the market did not
+      // pay for. It is the wrong reading of Braze, where the thing the market
+      // sold was in the release: a guide that takes the margin down. Where the
+      // filing's own forward numbers are worse than the quarter just reported,
+      // the sell-off is not a mystery and the card must not call it one.
+      const forwardWorse = (gmDelta != null && gmDelta <= -1)
+        || (input.guide_next_vs_street_pct != null && input.guide_next_vs_street_pct <= -3);
+      const why = forwardWorse
+        ? (stage === 4 ? 'downtrend — and the guide is the reason' : 'sold off — on its own guide')
+        : stage === 4 && !reactionDemoted
         ? 'downtrend — fundamentals intact' : 'sold off — fundamentals intact';
       if (!caveat_tags.includes(why)) caveat_tags.push(why);
     }
