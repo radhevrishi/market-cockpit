@@ -226,6 +226,61 @@ export async function exchangeForTickers(tickers: string[]): Promise<Record<stri
 const COARSE_VENUES = new Set(['nyse']);
 const REFINE_CONCURRENCY = 4;
 
+// ═══ WHY THE SUBMISSIONS CROSS-CHECK WAS NOT ENOUGH  (zzz624) ══════════════
+//
+// The theory above was that the filer's own cover page would say "NYSEAmerican"
+// where the ticker file said "NYSE". Probing the live endpoint proved it false
+// for exactly the names that were failing:
+//
+//   BHB  cik 743367   ticker_file NYSE   submissions ["NYSE"]
+//   IMO  cik 49938    ticker_file NYSE   submissions ["NYSE"]
+//   NHC  cik 1047335  ticker_file NYSE   submissions ["NYSE"]
+//
+// All three are NYSE American. SEC simply does not distinguish them in either
+// file, so no amount of cross-checking SEC against SEC can ever recover the
+// venue — which is why the previous fix deployed cleanly and changed nothing.
+//
+// The distinction does exist in market data. Yahoo's chart metadata carries
+// `fullExchangeName`, and for BHB it reads "NYSE American" exactly. Yahoo is
+// already a dependency of this app and is reachable from the server, so the
+// coarse NYSE bucket is now settled there: SEC decides WHETHER a ticker is a
+// real US filer, Yahoo decides WHICH NYSE venue it trades on. Each source is
+// used for the thing it actually knows.
+//
+// A listing venue effectively never changes, so the answer is cached for
+// thirty days per ticker and an export costs nothing after the first time.
+// Every failure path leaves the SEC venue standing — this can improve an
+// export, never break one.
+const VENUE_CACHE_TTL = 30 * 24 * 60 * 60;
+
+async function yahooVenue(ticker: string): Promise<string | null> {
+  const key = `venue:yahoo:v1:${ticker}`;
+  try {
+    const { kvGet, kvSet, isRedisAvailable } = await import('./kv');
+    if (isRedisAvailable()) {
+      const hit = await kvGet<string>(key);
+      if (hit) return hit === '-' ? null : hit;
+    }
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    let full: string | null = null;
+    try {
+      const r = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5d&interval=1d`,
+        { signal: ctl.signal, headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' },
+      );
+      if (r.ok) {
+        const j: any = await r.json();
+        const m = j?.chart?.result?.[0]?.meta;
+        const v = m?.fullExchangeName ?? m?.exchangeName;
+        if (typeof v === 'string' && v.trim()) full = v.trim();
+      }
+    } finally { clearTimeout(timer); }
+    if (isRedisAvailable()) { try { await kvSet(key, full || '-', VENUE_CACHE_TTL); } catch { /* best effort */ } }
+    return full;
+  } catch { return null; }
+}
+
 export async function exchangeForTickersRefined(tickers: string[]): Promise<Record<string, string | null>> {
   const base = await exchangeForTickers(tickers);
   const L = await listings();
@@ -236,17 +291,29 @@ export async function exchangeForTickersRefined(tickers: string[]): Promise<Reco
   await Promise.all(Array.from({ length: Math.min(REFINE_CONCURRENCY, needs.length) }, async () => {
     while (next < needs.length) {
       const t = needs[next++];
+      // 1. SEC's own cover page, when it happens to be more specific. Free
+      //    (submissions are cached six hours) and authoritative when present.
       try {
         const cik = L.byTicker.get(t)?.cik;
-        if (!cik) continue;
-        const s = await submissions(cik);
-        const ex = (s?.exchanges || []).map((x) => String(x || '').trim()).filter(Boolean);
-        if (!ex.length) continue;
-        // Prefer a venue the ticker file could not express. Everything else is
-        // left exactly as the ticker file had it: a filer that really is on the
-        // big board says so in both places and must not be rewritten.
-        const specific = ex.find((x) => /american|arca|mkt/i.test(x));
-        if (specific) base[t] = specific;
+        if (cik) {
+          const s = await submissions(cik);
+          const ex = (s?.exchanges || []).map((x) => String(x || '').trim()).filter(Boolean);
+          const specific = ex.find((x) => /american|arca|mkt/i.test(x));
+          if (specific) { base[t] = specific; continue; }
+        }
+      } catch { /* fall through to the market-data check */ }
+      // 2. Yahoo, which is the only source that actually separates the NYSE
+      //    family. Anything it does not recognise leaves the SEC venue alone.
+      try {
+        const y = await yahooVenue(t);
+        // Yahoo writes the venue two ways: `fullExchangeName` ("NYSE American",
+        // "NYSE Arca") and the short code in `exchangeName` ("ASE", "PCX").
+        // Both are normalised to the long form here so the one TradingView
+        // prefix map in lib/us-tradingview.ts keeps a single vocabulary.
+        const norm = String(y || '').trim();
+        if (/^(ASE|AMEX)$/i.test(norm)) base[t] = 'NYSE American';
+        else if (/^PCX$/i.test(norm)) base[t] = 'NYSE Arca';
+        else if (/american|arca|amex/i.test(norm)) base[t] = norm;
       } catch { /* the coarse venue stands — never worse than before */ }
     }
   }));
@@ -262,7 +329,9 @@ export async function venueDebug(tickers: string[]): Promise<Record<string, any>
     const hit = L.byTicker.get(t);
     let subsEx: string[] | null = null;
     try { if (hit?.cik) subsEx = (await submissions(hit.cik))?.exchanges ?? null; } catch { subsEx = null; }
-    out[t] = { cik: hit?.cik ?? null, ticker_file: hit?.exchange ?? null, submissions_exchanges: subsEx };
+    let yv: string | null = null;
+    try { yv = await yahooVenue(t); } catch { yv = null; }
+    out[t] = { cik: hit?.cik ?? null, ticker_file: hit?.exchange ?? null, submissions_exchanges: subsEx, yahoo: yv };
   }
   return out;
 }
