@@ -10,6 +10,7 @@ import { readConvictionBeats } from '@/lib/conviction-beats';
 import { getUsConvictionList, hydrateUsConviction } from '@/lib/conviction-beats-us';
 import { classifyTheme } from '@/lib/theme-classify';
 import { buildTvExport } from '@/lib/us-tradingview';
+import { SUB_THEMES } from '@/lib/theme-universe';
 
 type Region = 'us' | 'india';
 interface Ret { w1: number; m1: number; m3: number; m6: number; ytd: number; y1: number }
@@ -50,6 +51,60 @@ interface Payload {
     regime: 'risk-on' | 'risk-off' | 'mixed'; regimeScore: number; note: string;
   } | null;
   asOf: string; source?: string; error?: string;
+}
+
+// ═══ SUB-THEMES, EVERYWHERE — NOT JUST IN THE DRILL-DOWN  (zzz629) ════════
+//
+// A theme is rarely one trade, and the board kept saying so in only one place.
+// "Photonics AVOID" over a list of seven of your names hides that the
+// transceiver half and the laser half are different positions; "Semiconductors
+// AVOID" over forty-two names is not an instruction, it is a shrug.
+//
+// The sub-theme map already exists and is already the authority the drill-down
+// uses. Inverting it once gives a symbol → sub-theme lookup that costs nothing
+// and lets every surface — Your Book, the call strip — group by the same
+// vocabulary. A name the map does not place stays visible under "Other", never
+// dropped: a grouping that silently loses names is worse than no grouping.
+const SUB_OF: Map<string, Map<string, string>> = (() => {
+  const out = new Map<string, Map<string, string>>();
+  const norm = (x: string) => String(x || '').toUpperCase().replace(/\.(NS|BO)$/, '').replace(/^(NSE|BSE):/, '').trim();
+  for (const [themeId, subs] of Object.entries(SUB_THEMES || {})) {
+    const m = new Map<string, string>();
+    for (const sub of subs) for (const sym of sub.members) if (!m.has(norm(sym))) m.set(norm(sym), sub.name);
+    out.set(themeId, m);
+  }
+  return out;
+})();
+
+/** Partition a theme's names into its declared sub-themes, largest first, with
+ *  everything unplaced kept under "Other". Returns null when the theme has no
+ *  declared split or when the split would put every name in one bucket — a
+ *  heading that groups nothing is noise. */
+function subGroupsFor(themeId: string, syms: Array<{ symbol: string }>):
+  Array<{ name: string; items: Array<{ symbol: string }> }> | null {
+  const map = SUB_OF.get(themeId);
+  if (!map || syms.length < 3) return null;
+  const buckets = new Map<string, Array<{ symbol: string }>>();
+  for (const s of syms) {
+    const key = map.get(String(s.symbol).toUpperCase()) || 'Other';
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(s);
+  }
+  const named = [...buckets.keys()].filter((k) => k !== 'Other');
+  if (!named.length) return null;                       // nothing was placed
+  // A SPLIT THAT PLACES ALMOST NOTHING IS NOISE. The sub-theme maps are
+  // curated around each theme's leaders, so a book full of micro-caps inside
+  // that theme can land almost entirely in "Other" — and a heading over one
+  // placed name and forty unplaced ones is worse than no heading. Show the
+  // split only when it actually organises the group.
+  const placed = named.reduce((a, k) => a + (buckets.get(k)?.length || 0), 0);
+  if (placed < 3 && placed / syms.length < 0.25) return null;
+  const rows = [...buckets.entries()]
+    .map(([name, items]) => ({ name, items }))
+    .sort((a, b) => (a.name === 'Other' ? 1 : b.name === 'Other' ? -1 : b.items.length - a.items.length));
+  // If one bucket holds everything, the split adds a heading and no information.
+  if (rows.length < 2) return null;
+  return rows;
 }
 
 const QC: Record<string, string> = { Leading: '#16A34A', Improving: '#3B82F6', Weakening: '#F97316', Lagging: '#EF4444' };
@@ -118,6 +173,41 @@ export default function ThemeRotationTab() {
 
   useEffect(() => { if (!data[region]) load(region); }, [region, data, load]);
   useEffect(() => { setExpandedIds(new Set()); }, [region]);
+
+  // ═══ SUB-THEME DETAIL ON THE CALL STRIP ITSELF  (zzz629) ══════════════════
+  //
+  // "Buy Photonics" is not an instruction when the transceiver half is working
+  // and the laser half is not. The sub-theme split already exists in the
+  // drill-down, but it only appeared once a row was opened — so the first
+  // screen, the one actually read, never showed it.
+  //
+  // The drill payload is cached server-side for six hours, so fetching it for
+  // the ACTIONABLE buckets (the ones a reader might trade off) is one Redis
+  // read each after the first pass. Only those buckets: computing sub-themes
+  // for nineteen AVOID themes would be work spent on themes nobody is going to
+  // buy. Staggered, fire-and-forget, and the strip renders the moment each
+  // arrives — nothing on the page ever waits for this.
+  const ACTIONABLE = useMemo(() => ['BUY', 'EARLY BUY', 'HOLD', 'TRIM'], []);
+  useEffect(() => {
+    const p = data[region];
+    if (!p?.byVerdict) return;
+    const ids: string[] = [];
+    for (const v of ACTIONABLE) for (const id of (p.byVerdict[v] || [])) ids.push(id);
+    const want = ids.filter((id) => SUB_OF.has(id) && !drill[`${region}:${id}`]).slice(0, 18);
+    if (!want.length) return;
+    let cancelled = false;
+    (async () => {
+      for (const id of want) {
+        if (cancelled) return;
+        await loadDrill(region, id);
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    })();
+    return () => { cancelled = true; };
+    // `drill` is deliberately out of the dependency list: it changes on every
+    // arrival, and including it would restart the walk on each one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [region, data, loadDrill, ACTIONABLE]);
 
   const payload = data[region];
   const themes = payload?.themes?.filter((t) => t.ok) || [];
@@ -575,6 +665,44 @@ export default function ThemeRotationTab() {
                       <div key={k} style={{ background: bg, border: `1px solid ${col}4d`, borderRadius: 10, padding: '11px 13px' }}>
                         <div style={{ fontSize: 11, fontWeight: 900, color: col, letterSpacing: 0.5, marginBottom: 7 }}>{label} <span style={{ color: DIM, fontWeight: 700 }}>({ids.length})</span></div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{ids.length ? ids.map((id) => chip(id, col)) : <span style={{ color: DIM, fontSize: 11.5 }}>none right now</span>}</div>
+                        {/* ── WHICH HALF OF THE THEME  (zzz629) ─────────────
+                            A verdict on a theme is only half an instruction:
+                            "buy Photonics" is wrong when the transceivers are
+                            working and the lasers are not. Each theme that
+                            declares a split shows its sub-themes ranked by
+                            relative strength, strongest first, right here on
+                            the first screen — so the reader sees WHICH PART to
+                            act on without opening anything. */}
+                        {ACTIONABLE.includes(k) && ids.map((id) => {
+                          const dd = drill[`${region}:${id}`];
+                          const subs: any[] = (dd?.subs || []).filter((x: any) => !x.residual);
+                          if (subs.length < 2) return null;
+                          const th = byId.get(id);
+                          const mx = Math.max(1, ...subs.map((x: any) => Math.abs(x.rs3m ?? 0)));
+                          return (
+                            <div key={`sub-${id}`} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${col}33` }}>
+                              <div style={{ fontSize: 9.5, fontWeight: 800, color: MUT, marginBottom: 3 }}>{th?.emoji} {th?.name} — by sub-theme</div>
+                              {subs.map((sub: any) => {
+                                const v = sub.rs3m ?? 0;
+                                const w = Math.min(50, (Math.abs(v) / mx) * 50);
+                                const c = v >= 0 ? '#16A34A' : '#EF4444';
+                                return (
+                                  <div key={sub.name} title={`${sub.count} names · 3M ${fmtPct(sub.m3)} · ${sub.breadth}% above their 50-DMA · ${sub.buyReady} buy-ready · ${sub.symbols.join(', ')}`}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
+                                    <span style={{ fontSize: 9.5, color: TXT, width: 132, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub.name}</span>
+                                    <div style={{ flex: 1, position: 'relative', height: 8, minWidth: 40 }}>
+                                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
+                                      <div style={{ position: 'absolute', top: 1, bottom: 1, borderRadius: 2, background: c, opacity: 0.85, ...(v >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` }) }} />
+                                    </div>
+                                    <span style={{ fontSize: 9, fontFamily: 'ui-monospace,monospace', width: 38, textAlign: 'right', color: v >= 0 ? '#22C55E' : '#F87171' }}>{v > 0 ? '+' : ''}{v.toFixed(0)}</span>
+                                    <span style={{ fontSize: 8.5, color: sub.buyReady ? '#22C55E' : DIM, width: 26, textAlign: 'right' }} title={`${sub.buyReady} of ${sub.count} above their 50-DMA and outperforming`}>{sub.buyReady}/{sub.count}</span>
+                                  </div>
+                                );
+                              })}
+                              <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>Strongest: <b style={{ color: '#22C55E' }}>{subs[0]?.name}</b>{subs.length > 1 ? <> · weakest <b style={{ color: '#F87171' }}>{subs[subs.length - 1]?.name}</b></> : null}. Bar = relative strength vs the benchmark over 3M; <b>n/m</b> = buy-ready of members.</div>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
@@ -718,13 +846,20 @@ export default function ThemeRotationTab() {
                   coloured by where the name came from and what its last filing
                   graded; that is only useful if the key is on the page. */}
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 9, fontSize: 10, color: DIM }}>
-                <span style={{ fontWeight: 800, color: MUT }}>Colour key:</span>
-                <span style={{ color: '#F87171', background: 'rgba(248,113,113,0.14)', border: '1px solid #F8717144', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER</span>
-                <span>graded <b style={{ color: '#F87171' }}>BLOCKBUSTER</b> on its last filing (from Conviction Beats)</span>
-                <span style={{ color: '#34D399', background: 'rgba(52,211,153,0.13)', border: '1px solid #34D39944', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER</span>
-                <span>graded <b style={{ color: '#34D399' }}>STRONG</b></span>
+                {/* THE TAG, NOT THE COLOUR, CARRIES THE MEANING  (zzz629).
+                    The tier was encoded in colour alone, so a reader had to
+                    hold three shades in their head and check them against a
+                    key above a mosaic of 400 chips — and reasonably gave up
+                    and asked what the colours meant. Each benched name now
+                    states its grade on the chip itself; the colour is only a
+                    second, faster channel for the same fact. */}
+                <span style={{ fontWeight: 800, color: MUT }}>Where each name came from:</span>
+                <span style={{ color: '#F87171', background: 'rgba(248,113,113,0.14)', border: '1px solid #F8717144', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER<span style={{ fontSize: 8, marginLeft: 3, opacity: 0.95 }}>BB</span></span>
+                <span>graded <b style={{ color: '#F87171' }}>BLOCKBUSTER</b> on its last filing — from {region === 'us' ? 'US' : 'India'} Conviction Beats</span>
+                <span style={{ color: '#34D399', background: 'rgba(52,211,153,0.13)', border: '1px solid #34D39944', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER<span style={{ fontSize: 8, marginLeft: 3, opacity: 0.95 }}>STR</span></span>
+                <span>graded <b style={{ color: '#34D399' }}>STRONG</b> — also from the bench</span>
                 <span style={{ color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER</span>
-                <span>from your own Technicals / Multibagger list only</span>
+                <span>no tag — from your own Technicals / Multibagger upload, not from a graded filing</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gridAutoFlow: 'dense', gap: 9, alignItems: 'start' }}>
                 {[...userBook.groups.entries()]
@@ -749,29 +884,56 @@ export default function ThemeRotationTab() {
                           Book" every name is yours, so it said nothing and
                           cost a character of width on each of 236 chips. The
                           grade is what actually varies, so it is what shows. */}
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {sts.map((s) => {
-                          // ── COLOUR SAYS WHERE THE NAME CAME FROM  (zzz618) ──
-                          //
-                          // Every chip looked the same, so a name the grading
-                          // engine put on the bench off an actual filing was
-                          // indistinguishable from one typed into a spreadsheet.
-                          // Those are different kinds of evidence and the book is
-                          // now mostly the former, so the distinction has to be
-                          // visible without hovering: red for a BLOCKBUSTER
-                          // print, green for STRONG, amber for your own upload.
+                      {(() => {
+                        // ── COLOUR SAYS WHERE THE NAME CAME FROM  (zzz618) ──
+                        // ── AND SO, NOW, DOES A TAG  (zzz629) ───────────────
+                        //
+                        // A name the grading engine put on the bench off an
+                        // actual filing is different evidence from one typed
+                        // into a spreadsheet. That was encoded in colour alone,
+                        // which is unreadable at this density — so the grade is
+                        // now written on the chip and the colour merely echoes
+                        // it.
+                        const chip = (s: { symbol: string; sector?: string; grade?: string; benchTier?: string; benchScore?: number }) => {
                           const t = String(s.benchTier || '').toUpperCase();
                           const col = t === 'BLOCKBUSTER' ? '#F87171' : t === 'STRONG' ? '#34D399' : '#F59E0B';
                           const bgc = t === 'BLOCKBUSTER' ? 'rgba(248,113,113,0.14)' : t === 'STRONG' ? 'rgba(52,211,153,0.13)' : 'rgba(245,158,11,0.12)';
+                          const tag = t === 'BLOCKBUSTER' ? 'BB' : t === 'STRONG' ? 'STR' : null;
                           return (
                             <span key={s.symbol}
-                              title={`${s.symbol}${s.sector ? ` · ${s.sector}` : ''}${s.grade ? ` · Fundo ${s.grade}` : ''}${t ? ` · graded ${t} on its last filing${s.benchScore != null ? ` (engine ${s.benchScore})` : ''}` : ' · from your own list'}`}
+                              title={`${s.symbol}${s.sector ? ` · ${s.sector}` : ''}${s.grade ? ` · Fundo ${s.grade}` : ''}${t ? ` · graded ${t} on its last filing${s.benchScore != null ? ` (engine ${s.benchScore})` : ''} — from Conviction Beats` : ' · from your own Technicals / Multibagger list, not from a graded filing'}`}
                               style={{ fontSize: 10.5, fontWeight: 700, color: col, background: bgc, borderRadius: 4, padding: '1px 5px', lineHeight: 1.5, border: t ? `1px solid ${col}44` : '1px solid transparent' }}>
-                              {s.symbol}{s.grade ? <span style={{ color: DIM, fontWeight: 600 }}> {s.grade}</span> : null}
+                              {s.symbol}
+                              {tag ? <span style={{ fontSize: 8, marginLeft: 3, opacity: 0.95, fontWeight: 900 }}>{tag}</span> : null}
+                              {s.grade ? <span style={{ color: DIM, fontWeight: 600 }}> {s.grade}</span> : null}
                             </span>
                           );
-                        })}
-                      </div>
+                        };
+                        // ── AND THE NAMES ARE GROUPED BY SUB-THEME ──────────
+                        // "Semiconductors AVOID" over forty-two names is a
+                        // shrug, not an instruction. Split into Fabless /
+                        // Foundry / Equipment / Test it becomes four readable
+                        // positions, and the same vocabulary the drill-down
+                        // already uses.
+                        const groups = subGroupsFor(tid, sts as any);
+                        if (!groups) {
+                          return <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{sts.map(chip)}</div>;
+                        }
+                        return (
+                          <div>
+                            {groups.map((g) => (
+                              <div key={g.name} style={{ marginBottom: 5 }}>
+                                <div style={{ fontSize: 9, fontWeight: 800, color: g.name === 'Other' ? DIM : MUT, letterSpacing: 0.2, marginBottom: 2 }}>
+                                  {g.name} <span style={{ color: DIM, fontWeight: 600 }}>· {g.items.length}</span>
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 6, borderLeft: `2px solid ${(th?.verdictColor || '#64748B')}33` }}>
+                                  {g.items.map(chip as any)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 {/* sector-fallback groups — visible even without a rotation theme */}
