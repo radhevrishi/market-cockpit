@@ -203,6 +203,56 @@ export async function exchangeForTickers(tickers: string[]): Promise<Record<stri
   return out;
 }
 
+// ═══ THE VENUE SEC'S TICKER FILE DOES NOT TELL YOU  (zzz615) ═══════════════
+//
+// `company_tickers_exchange.json` labels NYSE American and NYSE Arca listings
+// simply "NYSE". TradingView does not: it carries them under `AMEX`, so an
+// export that faithfully wrote `NYSE:BHB` produced a symbol TradingView has
+// never heard of — and TradingView drops an unknown symbol SILENTLY, so the
+// watchlist came up short with nothing saying which names were missing. Bar
+// Harbor Bankshares, Imperial Oil and National HealthCare all vanished exactly
+// this way; all three are `AMEX:` on TradingView.
+//
+// The filer's own submissions file is more precise: `exchanges` there comes
+// from the cover page and says "NYSEAmerican" where the ticker file says
+// "NYSE". So a ticker that lands in the coarse NYSE bucket is checked against
+// it, and only against it — Nasdaq names are already unambiguous and are never
+// re-fetched. Submissions are cached for six hours, and an export is something
+// a person presses, so the extra reads are rare and bounded.
+//
+// This is a general rule about two SEC files disagreeing, not a list of
+// tickers: any NYSE American name the bench picks up in future is corrected by
+// the same code without anyone touching it.
+const COARSE_VENUES = new Set(['nyse']);
+const REFINE_CONCURRENCY = 4;
+
+export async function exchangeForTickersRefined(tickers: string[]): Promise<Record<string, string | null>> {
+  const base = await exchangeForTickers(tickers);
+  const L = await listings();
+  const needs = Object.entries(base)
+    .filter(([, v]) => v && COARSE_VENUES.has(String(v).toLowerCase().trim()))
+    .map(([t]) => t);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(REFINE_CONCURRENCY, needs.length) }, async () => {
+    while (next < needs.length) {
+      const t = needs[next++];
+      try {
+        const cik = L.byTicker.get(t)?.cik;
+        if (!cik) continue;
+        const s = await submissions(cik);
+        const ex = (s?.exchanges || []).map((x) => String(x || '').trim()).filter(Boolean);
+        if (!ex.length) continue;
+        // Prefer a venue the ticker file could not express. Everything else is
+        // left exactly as the ticker file had it: a filer that really is on the
+        // big board says so in both places and must not be rewritten.
+        const specific = ex.find((x) => /american|arca|mkt/i.test(x));
+        if (specific) base[t] = specific;
+      } catch { /* the coarse venue stands — never worse than before */ }
+    }
+  }));
+  return base;
+}
+
 export async function tickerToCik(ticker: string): Promise<number | null> {
   const L = await listings();
   const t = ticker.toUpperCase().replace(/\./g, '-');

@@ -20,7 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { exchangeForTickers } from '@/lib/us-edgar';
+import { exchangeForTickersRefined } from '@/lib/us-edgar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
   }
   const wanted = Array.from(new Set(raw.map((t) => t.toUpperCase()))).slice(0, MAX_TICKERS);
   try {
-    const map = await exchangeForTickers(wanted);
+    const map = await exchangeForTickersRefined(wanted);
     const known = Object.values(map).filter(Boolean).length;
     return NextResponse.json({
       map,

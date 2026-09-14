@@ -51,12 +51,22 @@ const TV_PREFIX: Record<string, string> = {
   'iex': 'IEX',
 };
 
+/** The same map keyed by letters-and-digits only, so "NYSE American",
+ *  "NYSEAmerican" and "nyse-american" all resolve to the one prefix. */
+const TV_PREFIX_NORM: Record<string, string> = Object.fromEntries(
+  Object.entries(TV_PREFIX).map(([k, v]) => [k.replace(/[^a-z0-9]/g, ''), v]),
+);
+
 /** The TradingView prefix for a SEC venue name, or null when we hold no venue
  *  or hold one TradingView has no equivalent for (OTC tiers, mostly). */
 export function tvExchangePrefix(exchange: string | null | undefined): string | null {
-  const k = String(exchange ?? '').trim().toLowerCase();
+  // SEC writes the same venue three ways across its own files — "NYSE
+  // American", "NYSEAmerican", "NYSE MKT" — so the key is normalised to
+  // letters and digits before lookup rather than matched literally. A
+  // punctuation change at SEC must never quietly start dropping prefixes.
+  const k = String(exchange ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!k) return null;
-  return TV_PREFIX[k] ?? null;
+  return TV_PREFIX_NORM[k] ?? null;
 }
 
 /**
