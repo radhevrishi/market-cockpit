@@ -163,6 +163,22 @@ export default function UsConvictionBeatsPage() {
     ));
   }, []);
 
+  // ── THE NEW DEFAULT HAS TO REACH AN EXISTING READER  (zzz612) ──────────
+  //
+  // The effect above only fires on a bench with no saved filters at all, so
+  // anyone already using the Quality Preset would keep seeing "All caps" and
+  // the change would look like it had not shipped. This runs once, and only
+  // for the exact state that predates the change — preset on, cap untouched.
+  // A flag records that it ran, so a reader who deliberately goes back to
+  // "All" is never quietly narrowed again on their next visit.
+  useEffect(() => {
+    const K = 'mc:us-cb:smid-default:v1';
+    try { if (localStorage.getItem(K) === '1') return; } catch { return; }
+    try { localStorage.setItem(K, '1'); } catch { /* the migration simply repeats */ }
+    setFilters((prev) => (isUsPresetActive(prev) && (!prev.cap || prev.cap === 'all')
+      ? { ...prev, cap: 'smid' } : prev));
+  }, []);
+
   // ── WHICH SESSIONS THIS BENCH IS ACTUALLY BUILT FROM ────────────────────
   //
   // The bench held ten names while the Opportunities tab, over a shorter
