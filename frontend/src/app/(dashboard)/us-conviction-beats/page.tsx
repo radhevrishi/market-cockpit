@@ -151,7 +151,15 @@ export default function UsConvictionBeatsPage() {
     setFilters((prev) => (
       prev.sales == null && prev.eps == null && prev.pead == null
         && prev.opmDelta == null && prev.cfoPatMin == null && prev.mktCapMin == null && prev.verdicts == null
-        ? usPresetFilters() : prev
+        // ── THE PRESET CARRIES ITS OWN CAP  (zzz612) ──────────────────
+        //
+        // The Quality Preset exists to surface names worth owning, and the
+        // owner's universe is small and mid caps — a preset that leaves the
+        // cap filter on "All" opens on a list led by Caterpillar, Nucor and
+        // Arista, which is the opposite of what turning it on was for. So
+        // the preset now selects Small+Mid with it, exactly as if it were
+        // one more of the preset's conditions.
+        ? { ...usPresetFilters(), cap: 'smid' } : prev
     ));
   }, []);
 
@@ -564,7 +572,10 @@ export default function UsConvictionBeatsPage() {
         return { ...US_FILTER_DEFAULT, cap: prev.cap, q: prev.q };
       }
       try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-      return { ...usPresetFilters(), cap: prev.cap, q: prev.q };
+      // Turning the preset ON narrows to small+mid with it; turning it off
+      // leaves the cap where the reader put it, so an explicit choice is
+      // never overwritten in the direction that hides names.
+      return { ...usPresetFilters(), cap: 'smid', q: prev.q };
     });
   };
 
@@ -655,17 +666,30 @@ export default function UsConvictionBeatsPage() {
       ? ` · ${out.unresolved.length} without a venue prefix (SEC lists no exchange for ${out.unresolved.slice(0, 3).join(', ')}${out.unresolved.length > 3 ? '…' : ''})`
       : '';
     const summary = out.groups.map((g) => `${g.label} ${g.count}`).join(' · ');
+    // ── SAY WHAT WAS LEFT OUT  (zzz612) ───────────────────────────────────
+    //
+    // The export is always the FILTERED set — what is on screen, nothing more.
+    // That is the right behaviour and it was silent about it, so a list copied
+    // with the Quality Preset on looks identical to one copied with filters
+    // off, and a name that is on the bench but filtered out appears to have
+    // vanished (or, if TradingView still holds an older paste, to have
+    // appeared from nowhere). Stating the count against the whole bench makes
+    // the two impossible to confuse.
+    const held = entries.length - filtered.length;
+    const scope = held > 0
+      ? ` · ${filtered.length} of ${entries.length} on the bench — ${held} excluded by the current filters`
+      : ` · the whole bench (${entries.length})`;
 
     if (mode === 'download') {
       download(`us-conviction-beats-${etToday()}-tradingview.txt`, out.text, 'text/plain');
-      toast.success(`${out.count} tickers · ${summary}${tail}`);
+      toast.success(`${out.count} tickers · ${summary}${scope}${tail}`);
       return;
     }
     try {
       await navigator.clipboard.writeText(out.text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-      toast.success(`Copied ${out.count} tickers in ${out.groups.length} section${out.groups.length === 1 ? '' : 's'} for TradingView · ${summary}${tail}`);
+      toast.success(`Copied ${out.count} tickers in ${out.groups.length} section${out.groups.length === 1 ? '' : 's'} for TradingView · ${summary}${scope}${tail}`);
     } catch {
       // Clipboard permission denied (or an insecure origin). Fall back to the
       // file so the export still reaches the user.

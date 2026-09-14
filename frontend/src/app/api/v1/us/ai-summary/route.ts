@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { releaseDocument, filingExhibits, htmlToText } from '@/lib/us-guidance';
+import { submissions, tickerToCik } from '@/lib/us-edgar';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -171,11 +172,63 @@ export async function GET(req: NextRequest) {
   const filingUrl = String(u.searchParams.get('filing_url') || '');
   const ticker = String(u.searchParams.get('ticker') || '').toUpperCase();
   const force = u.searchParams.get('force') === '1';
-  if (!cik || !accession || !filingUrl) {
+  // The filing the row was GRADED from, used to find the matching earnings
+  // release when that filing is a 10-Q. Optional: a row that carries a proper
+  // 8-K never needs it.
+  const filingDate = String(u.searchParams.get('filing_date') || '').slice(0, 10);
+  if (!ticker && (!cik || !accession || !filingUrl)) {
     return NextResponse.json({ ok: false, error: 'cik, accession and filing_url are required' }, { status: 400 });
   }
 
-  const key = `us-ai-summary:${PROMPT_VERSION}:${accession}`;
+  // ── FINDING THE RELEASE WHEN THE ROW IS A 10-Q  (zzz612) ─────────────────
+  //
+  // A quarter is graded from whichever filing carried the numbers, and for
+  // many companies that is the 10-Q. A 10-Q has no press-release exhibit, so
+  // the card said "this row has no 8-K filing behind it to read" — which was
+  // true of the FILING and false of the COMPANY: Matador files its earnings
+  // release as an 8-K Item 2.02 the same week. Refusing to look for it threw
+  // away a summary that was one lookup away.
+  //
+  // So when the row's own filing carries no release, the company's recent
+  // submissions are searched for the 8-K announcing THIS quarter's results —
+  // Item 2.02, nearest the row's filing date, within a month either side so a
+  // neighbouring quarter's release can never be substituted for this one.
+  let cikN = cik;
+  let acc = accession;
+  let idxUrl = filingUrl;
+  let usedFallback = false;
+  const findEarnings8K = async (): Promise<boolean> => {
+    try {
+      if (!cikN && ticker) cikN = (await tickerToCik(ticker)) || 0;
+      if (!cikN) return false;
+      const subs = await submissions(cikN);
+      if (!subs?.recent?.length) return false;
+      const anchor = filingDate ? Date.parse(`${filingDate}T00:00:00Z`) : NaN;
+      const cands = subs.recent
+        .filter((f) => f.form.startsWith('8-K') && f.items.includes('2.02') && f.accession)
+        .map((f) => ({ f, d: Number.isFinite(anchor) ? Math.abs(Date.parse(`${f.filingDate}T00:00:00Z`) - anchor) : 0 }))
+        .filter((c) => !Number.isFinite(anchor) || c.d <= 31 * 86_400_000)
+        .sort((a, b) => a.d - b.d);
+      const pick = cands[0]?.f;
+      if (!pick) return false;
+      const bare = pick.accession.replace(/-/g, '');
+      acc = pick.accession;
+      idxUrl = `https://www.sec.gov/Archives/edgar/data/${cikN}/${bare}/${pick.accession}-index.htm`;
+      usedFallback = true;
+      return true;
+    } catch { return false; }
+  };
+  if (!cikN || !acc || !idxUrl) {
+    const found = await findEarnings8K();
+    if (!found) {
+      return NextResponse.json({
+        ok: false, available: false,
+        error: 'This quarter was graded from a 10-Q and no earnings press release (8-K Item 2.02) was filed near it, so there is nothing to read.',
+      });
+    }
+  }
+
+  const key = `us-ai-summary:${PROMPT_VERSION}:${acc}`;
   if (!force) {
     const hit = await kvGet<any>(key);
     if (hit?.summary) return NextResponse.json({ ok: true, cached: true, ...hit });
@@ -193,9 +246,17 @@ export async function GET(req: NextRequest) {
   let text = '';
   let sourceUrl: string | null = null;
   try {
-    const doc = await releaseDocument(cik, accession, filingUrl);
+    const doc = await releaseDocument(cikN, acc, idxUrl);
     if (doc.html) { text = htmlToText(doc.html); sourceUrl = doc.url; }
   } catch { /* handled below */ }
+  // The row's own filing had no readable release — try the company's earnings
+  // 8-K for the same quarter before giving up.
+  if (text.length < 800 && !usedFallback && await findEarnings8K()) {
+    try {
+      const doc = await releaseDocument(cikN, acc, idxUrl);
+      if (doc.html) { text = htmlToText(doc.html); sourceUrl = doc.url; }
+    } catch { /* fall through to the honest refusal below */ }
+  }
   if (text.length < 800) {
     return NextResponse.json({
       ok: false, available: false,
@@ -271,7 +332,7 @@ export async function GET(req: NextRequest) {
   }
 
   let documents: any[] = [];
-  try { documents = (await filingExhibits(filingUrl)).slice(0, 12); } catch { documents = []; }
+  try { documents = (await filingExhibits(idxUrl)).slice(0, 12); } catch { documents = []; }
 
   const payload = {
     summary, source_url: sourceUrl, model: MODEL, documents,

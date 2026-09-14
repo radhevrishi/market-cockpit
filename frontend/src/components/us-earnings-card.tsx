@@ -507,7 +507,7 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
 
       <SignalRow signals={(r as any).signals} />
 
-      <AiSummary docs={(r as any).filing_docs} ticker={r.ticker} releaseUrl={(r as any).release_url ?? null} />
+      <AiSummary docs={(r as any).filing_docs} ticker={r.ticker} releaseUrl={(r as any).release_url ?? null} filingDate={r.filing_date} />
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
@@ -1066,8 +1066,8 @@ export function setAllAiSummaries(open: boolean) {
   window.dispatchEvent(new CustomEvent(AI_ALL_EVENT, { detail: { open } }));
 }
 
-function AiSummary({ docs, ticker, releaseUrl }: {
-  docs: FilingDocs | null | undefined; ticker: string; releaseUrl: string | null;
+function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
+  docs: FilingDocs | null | undefined; ticker: string; releaseUrl: string | null; filingDate?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -1078,15 +1078,25 @@ function AiSummary({ docs, ticker, releaseUrl }: {
   const [files, setFiles] = useState<Array<{ name: string; url: string; type: string; description: string }>>([]);
 
   const load = useCallback(async () => {
-    if (!docs?.cik || !docs.accession || !docs.index_url) {
-      setState('error'); setErr('This row has no 8-K filing behind it to read.'); return;
+    // ── ASK BEFORE REFUSING  (zzz612) ─────────────────────────────────────
+    //
+    // This used to give up here whenever the row had no filing index — and a
+    // row graded from a 10-Q has none, because a 10-Q carries no press-release
+    // exhibit. The card therefore said the company had no filing to read when
+    // what it meant was that THIS filing had none; Matador files its earnings
+    // release as an 8-K Item 2.02 in the same week, and nobody had looked.
+    // The server can find it from the ticker and the filing date, so the
+    // client's job is to ask, not to decide.
+    if (!ticker && !docs?.accession) {
+      setState('error'); setErr('This row carries neither a ticker nor a filing, so there is nothing to look up.'); return;
     }
     setState('loading');
     try {
-      const q = new URLSearchParams({
-        cik: String(docs.cik), accession: docs.accession,
-        filing_url: docs.index_url, ticker,
-      });
+      const q = new URLSearchParams({ ticker });
+      if (docs?.cik) q.set('cik', String(docs.cik));
+      if (docs?.accession) q.set('accession', docs.accession);
+      if (docs?.index_url) q.set('filing_url', docs.index_url);
+      if (filingDate) q.set('filing_date', String(filingDate).slice(0, 10));
       const res = await fetch(`/api/v1/us/ai-summary?${q}`, { cache: 'no-store' });
       const j = await res.json();
       if (j?.ok && j.summary) {
@@ -1097,7 +1107,7 @@ function AiSummary({ docs, ticker, releaseUrl }: {
     } catch (e: any) {
       setErr(`The summary could not be fetched (${String(e?.message || e)}).`); setState('error');
     }
-  }, [docs, ticker]);
+  }, [docs, ticker, filingDate]);
 
   const toggle = () => {
     const next = !open;

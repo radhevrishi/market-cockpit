@@ -5846,6 +5846,10 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   // in FavouritesGrid), so these land last until dragged into place.
   { href: '/us-earnings-opportunities', label: '🇺🇸 US Earnings Ops', color: '#F59E0B' },
   { href: '/us-conviction-beats', label: '🇺🇸 US Conviction Beats', color: '#F59E0B' },
+  // zzz612 — the interpretation layer that reads what the graded engine
+  // already qualified: structural / why-now / bear case, with every call
+  // written to a prediction ledger. Sits beside the two engines it reads.
+  { href: '/ai-desk', label: '🧠 AI Research Desk', color: '#A78BFA' },
   // zzz559 — Risk Desk, Position Sizing, Thesis Tracker, Coffee Can, PEAD
   // Tracker, Monte Carlo, Tax Planner and Valuation Bands moved OUT of
   // Favourites and back into the A–Z strip below. A saved drag order that
