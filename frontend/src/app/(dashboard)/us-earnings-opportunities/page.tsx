@@ -317,6 +317,13 @@ export default function UsEarningsOpportunitiesPage() {
           pending: [], scheduled: [], generated_at: new Date().toISOString(),
           sources_polled: 0, truncated: false, notes: [],
           _grading: true,
+          // The server grades cold sessions ONE at a time — they all queue
+          // behind the same SEC rate limit, so running fourteen at once only
+          // exhausted the container's memory and killed all fourteen. These
+          // two numbers are the server's own queue, so the page can say where
+          // this day stands instead of implying fourteen are in progress.
+          _queue_place: typeof j?.queue_place === 'number' ? j.queue_place : null,
+          _queue_length: typeof j?.queue_length === 'number' ? j.queue_length : null,
         } as unknown as DayPayload;
       },
       // Stagger: only the first few days start immediately; the rest queue up as
@@ -325,7 +332,16 @@ export default function UsEarningsOpportunitiesPage() {
       enabled: i < readyUpto,
       // A placeholder comes back every half-minute until the server has
       // finished grading that session; a real payload never re-fetches.
-      refetchInterval: (q: any) => ((q?.state?.data as any)?._grading ? 30_000 : false),
+      // A placeholder re-checks until the server has finished that session; a
+      // real payload never re-fetches. The day at the front of the server's
+      // queue is checked often; a day eleventh in line is not — polling it
+      // every half-minute is a request that cannot possibly have news.
+      refetchInterval: (q: any) => {
+        const p = (q?.state?.data as any);
+        if (!p?._grading) return false;
+        const place = typeof p._queue_place === 'number' ? p._queue_place : 1;
+        return Math.min(150_000, 20_000 * Math.max(1, place));
+      },
       staleTime: d >= today ? 3 * 60_000 : 24 * 3600_000,
       refetchOnWindowFocus: false,
       // Two retries, spaced out: the first is immediate-ish for a transient
@@ -364,6 +380,19 @@ export default function UsEarningsOpportunitiesPage() {
   // fact already reached every session.
   const gradingDays = sessions.filter((_, i) => ((dayQueries[i] as any)?.data as any)?._grading);
   const failedDays = sessions.filter((_, i) => (dayQueries[i] as any)?.isError);
+  // The session the server is actually working on right now — queue place 1.
+  // Everything else with a placeholder is waiting its turn, not in progress.
+  const gradingNow = useMemo(() => {
+    let best: { d: string; place: number } | null = null;
+    sessions.forEach((d, i) => {
+      const p = ((dayQueries[i] as any)?.data as any);
+      if (!p?._grading) return;
+      const place = typeof p._queue_place === 'number' ? p._queue_place : 99;
+      if (!best || place < best.place) best = { d, place };
+    });
+    return best as { d: string; place: number } | null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, dayQueries.map((q: any) => (q?.data as any)?._queue_place ?? '').join(',')]);
   useEffect(() => { setReadyUpto((v) => Math.max(v, settledCount + DAY_CONCURRENCY)); }, [settledCount]);
 
   const data: UsPayload | undefined = useMemo(() => {
@@ -888,9 +917,17 @@ export default function UsEarningsOpportunitiesPage() {
             <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount - gradingDays.length} of {sessions.length} sessions</b> on screen
             with <b style={{ color: 'var(--mc-text-0)' }}>{allRows.length}</b> companies graded.
             {gradingDays.length > 0 && (
-              <> {gradingDays.length} heavy session{gradingDays.length > 1 ? 's are' : ' is'} being graded on the
-                server ({gradingDays.slice(0, 4).join(', ')}{gradingDays.length > 4 ? ' …' : ''}) and will appear here
-                as {gradingDays.length > 1 ? 'they land' : 'it lands'} — nothing is waiting on this page.</>
+              // ONE session is graded at a time, and saying so is the whole
+              // point. Every cold day queues behind the same 8-requests-a-second
+              // SEC gate, so grading them in parallel finishes no sooner and
+              // used to exhaust the server's memory — which killed all of them
+              // and left the window stuck. Naming the day in progress and the
+              // number behind it is both truthful and reassuring; listing
+              // fourteen "in progress" was neither.
+              <> The server is grading <b style={{ color: 'var(--mc-text-0)' }}>{gradingNow?.d ?? gradingDays[0]}</b>
+                {gradingDays.length > 1 && <> with {gradingDays.length - 1} more session{gradingDays.length > 2 ? 's' : ''} behind it</>},
+                one at a time — running them together buys nothing against SEC's rate limit. Each lands here on its own;
+                nothing is waiting on this page, and you can leave and come back.</>
             )}
             {etaText && loadedCount < sessions.length && <b style={{ color: 'var(--mc-cyan)' }}> {etaText}.</b>} Days already scanned are read from cache and never re-fetched.
           </span>

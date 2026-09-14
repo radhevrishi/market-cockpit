@@ -144,10 +144,82 @@ interface UsGradedPayload {
 // today keep moving as prices tick and late 10-Qs land → 15 minutes, matching
 // the India route.
 const _cache = new Map<string, { at: number; ttl: number; data: UsGradedPayload }>();
-/** Sessions currently being graded in the background, so a page sweeping the
- *  same window twice cannot start the same expensive day twice over. */
-const _bgInFlight = new Set<string>();
 const CACHE_MAX = 60;
+
+// ═══ THE BACKGROUND GRADING QUEUE  (zzz601) ════════════════════════════════
+//
+// WHY A QUEUE AND NOT A SET OF IN-FLIGHT REQUESTS
+//
+// The page probes all thirty sessions at once. The warm ones answer in
+// milliseconds — that is the "16 of 30 appeared instantly" part — and every
+// COLD one used to fire its own background grade on the spot. Fourteen cold
+// days therefore started fourteen full EDGAR sweeps inside one Node process,
+// simultaneously.
+//
+// That buys nothing and costs everything. All fourteen queue behind the same
+// process-wide 8-requests-a-second gate, so they finish no sooner than if they
+// ran one after another — but each one holds several multi-megabyte
+// companyfacts documents in memory while it waits its turn, so the container's
+// memory ceiling is reached, Railway restarts the process, and every one of
+// the fourteen dies at once having written nothing. The next poll finds them
+// all still cold and starts fourteen more. Nothing ever lands. That is the
+// stall: not slowness, a crash loop of my own making.
+//
+// So background work is serialised. One session is graded at a time, the rest
+// wait in a FIFO, and a day already queued is never queued twice. Total time
+// is unchanged — the rate limit already decided that — but every session that
+// starts now FINISHES, is written to Redis, and never has to be graded again.
+// The queue's position is reported back so the page can say something true
+// about what is happening instead of listing fourteen days as "in progress".
+const BG_MAX = 1;
+const _bgQueue: string[] = [];             // cacheKeys waiting their turn
+const _bgKnown = new Set<string>();        // queued OR running OR grading in the foreground
+let _bgRunning = 0;
+
+/** Marks a key as being computed right now, whoever asked for it. A cache_only
+ *  probe must not launch a second copy of a grade that is already under way on
+ *  a real request's clock. */
+function bgClaim(key: string): boolean {
+  if (_bgKnown.has(key)) return false;
+  _bgKnown.add(key);
+  return true;
+}
+function bgRelease(key: string) { _bgKnown.delete(key); }
+
+function bgPump(origin: string) {
+  while (_bgRunning < BG_MAX && _bgQueue.length > 0) {
+    const key = _bgQueue.shift()!;
+    const [d, n] = key.split('|');
+    _bgRunning++;
+    // LOOPBACK, NEVER THE PUBLIC EDGE. The edge cuts long requests with a 502,
+    // which does not throw, so an edge-bound background grade dies silently at
+    // ~300s — exactly the heavy days that most need grading. Nobody is waiting
+    // on this response and the route's own ceiling is 900s.
+    const port = process.env.PORT;
+    const self = port ? `http://127.0.0.1:${port}` : origin;
+    void fetch(`${self}/api/v1/earnings/graded-us?date=${d}&days=${n}`,
+      { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } })
+      .catch(() => {})
+      .finally(() => {
+        _bgRunning--;
+        bgRelease(key);
+        setTimeout(() => bgPump(origin), 500);
+      });
+  }
+}
+
+/** Queue a cold session. Returns its 1-based place in line, or 0 if it was
+ *  already known (queued, running, or being graded by a live request). */
+function bgEnqueue(key: string, origin: string): number {
+  if (!bgClaim(key)) {
+    const i = _bgQueue.indexOf(key);
+    return i >= 0 ? i + 1 + _bgRunning : 0;
+  }
+  _bgQueue.push(key);
+  const place = _bgQueue.length + _bgRunning;
+  bgPump(origin);
+  return place;
+}
 
 function etToday(): string {
   return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
@@ -761,20 +833,28 @@ export async function GET(req: Request) {
   // that is on screen instantly with a few days still filling in.
   const cacheOnly = searchParams.get('cache_only') === '1';
   if (cacheOnly && !explicit) {
-    if (!_bgInFlight.has(cacheKey)) {
-      _bgInFlight.add(cacheKey);
-      const port = process.env.PORT;
-      const self = port ? `http://127.0.0.1:${port}` : new URL(req.url).origin;
-      void fetch(`${self}/api/v1/earnings/graded-us?date=${date}&days=${days}`,
-        { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } })
-        .catch(() => {})
-        .finally(() => { setTimeout(() => _bgInFlight.delete(cacheKey), 5_000); });
-    }
+    const place = bgEnqueue(cacheKey, new URL(req.url).origin);
     return NextResponse.json(
-      { pending: true, filing_date: date, window_days: days, engine_version: US_ENGINE_VERSION },
+      {
+        pending: true,
+        filing_date: date,
+        window_days: days,
+        engine_version: US_ENGINE_VERSION,
+        // Honest arithmetic for the progress line: how many sessions are ahead
+        // of this one, and how many the server is working through in total.
+        // One at a time, because the SEC gate means concurrency buys nothing
+        // and memory pressure costs everything.
+        queue_place: place || 1,
+        queue_length: _bgQueue.length + _bgRunning,
+      },
       { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } },
     );
   }
+
+  // A live (non-cache_only) grade of a cold day claims the same slot, so a
+  // probe arriving mid-computation reports "pending" without starting a
+  // duplicate sweep of the very same two hundred filers.
+  const claimedHere = !explicit && bgClaim(cacheKey);
 
   const notes: string[] = [];
   let truncated = false;
@@ -2158,5 +2238,10 @@ export async function GET(req: Request) {
       notes: [`error: ${String(err?.message || err)}`],
       error: String(err?.message || err),
     }, { status: 502 });
+  } finally {
+    // Whatever happened — success, error, or a thrown timeout — this key is no
+    // longer being computed. Leaving it claimed would make the page report a
+    // session as "grading" for ever and stop anything from ever retrying it.
+    if (claimedHere) bgRelease(cacheKey);
   }
 }

@@ -93,12 +93,16 @@ export async function GET(req: NextRequest) {
   // Redis when it finishes. Each run therefore leaves one more heavy day
   // permanently warm, and the window converges instead of stalling on the
   // first day that is too big to finish in five minutes.
-  // Three at a time, not one. They all queue behind the same process-wide 8
-  // requests-a-second gate, so three in flight consume no more of SEC's budget
-  // than one — they simply interleave, and the window closes in two or three
-  // runs instead of seven. More than three risks holding several large
-  // companyfacts payloads in memory at once for no throughput gain.
-  const BACKGROUND_MAX = 3;
+  // ONE at a time. The earlier version launched three, reasoning that they
+  // share the SEC gate anyway so they merely interleave. The throughput half
+  // of that was right and the memory half was wrong: each concurrent grade
+  // holds several multi-megabyte companyfacts documents while it waits its
+  // turn at the gate, and three heavy August sessions together were enough to
+  // hit the container's ceiling — Railway restarts the process and all three
+  // die having written nothing, which is exactly why those sessions stayed
+  // cold however often the job ran. Serialised, each one finishes and is
+  // cached for good; the window converges over a few runs instead of never.
+  const BACKGROUND_MAX = 1;
   const launched: string[] = [];
   for (const d of days) {
     if (Date.now() - t0 > DEADLINE_MS) {
