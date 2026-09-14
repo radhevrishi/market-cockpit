@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
       if (launched.length < BACKGROUND_MAX && d < today) {
         try {
           const already = await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${d}|1`).catch(() => null);
-          if (!already?.by_tier) {
+          if (!already?.by_tier && !already?.z) {
             launched.push(d);
             // LOOPBACK DIRECTLY, NOT VIA THE FALLBACK.
             //
@@ -135,7 +135,7 @@ export async function GET(req: NextRequest) {
     // graded route writes.
     try {
       const hit = await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${d}|1`);
-      if (hit?.by_tier) { cached.push(d); continue; }
+      if (hit?.by_tier || hit?.z) { cached.push(d); continue; }
     } catch { /* no Redis — fall through and grade it */ }
     try {
       const res = await railwaySelfFetch(

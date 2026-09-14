@@ -29,6 +29,31 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { gzipSync, gunzipSync } from 'zlib';
+
+// ── THE SESSION IS STORED COMPRESSED ──────────────────────────────────────
+//
+// Every session that cached was 270–330 KB. The one that never cached, however
+// many times it was graded, was 2026-08-14 at 1.16 MB — 149 companies out of
+// 224 filers, the biggest day of the quarter. The write was silently refused
+// at the store's record limit and the `catch` swallowed it, so the day was
+// recomputed from EDGAR on every single request, for ever. That is the whole
+// reason the oldest August sessions could never be warmed.
+//
+// A graded session is JSON, which gzips by roughly ten to one, so the biggest
+// day in the quarter becomes a little over a hundred kilobytes — comfortably
+// inside any limit, and cheaper to move as well. Reading tolerates both shapes
+// so anything already stored uncompressed keeps working until it expires.
+const zipPayload = (p: UsGradedPayload): { z: string } =>
+  ({ z: gzipSync(Buffer.from(JSON.stringify(p), 'utf8')).toString('base64') });
+function unzipPayload(raw: any): UsGradedPayload | null {
+  if (!raw) return null;
+  if (typeof raw?.z === 'string') {
+    try { return JSON.parse(gunzipSync(Buffer.from(raw.z, 'base64')).toString('utf8')); }
+    catch { return null; }
+  }
+  return raw?.by_tier ? (raw as UsGradedPayload) : null;
+}
 import {
   earningsFilersOn, companyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
@@ -708,7 +733,7 @@ export async function GET(req: Request) {
     }
     if (!explicit && date < today) {
       try {
-        const shared = await kvGet<UsGradedPayload>(kvKey);
+        const shared = unzipPayload(await kvGet<any>(kvKey));
         if (shared?.by_tier) {
           _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: shared });
           return NextResponse.json(shared, {
@@ -2104,7 +2129,7 @@ export async function GET(req: Request) {
     // wait on Redis, and a client that has already timed out is exactly who
     // this write is for. Today's date is excluded — it is still filling up.
     if (!explicit && !includesToday) {
-      void kvSet(kvKey, payload, 30 * 24 * 3600).catch(() => {});
+      void kvSet(kvKey, zipPayload(payload), 30 * 24 * 3600).catch(() => {});
     }
 
     return NextResponse.json(payload, {
