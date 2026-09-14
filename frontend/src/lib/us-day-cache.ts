@@ -192,6 +192,10 @@ export async function putCachedDay(day: string, payload: any): Promise<void> {
   // Never store a payload we would refuse to read back.
   if (payload.engine_version !== US_ENGINE_VERSION) return;
   if (payload._stale_engine) return;                     // never re-store a stale read
+  // Nor a placeholder for a session the server is still grading: it holds no
+  // rows, and storing it would make an empty day look like a scanned one for
+  // the next thirty days.
+  if ((payload as any)._grading) return;
   if ((payload.raw_items_total ?? 0) > 0 && (payload.candidates_total ?? 0) === 0) return;
   const rec: DayRecord = { day, payload, cachedAt: Date.now(), bytes: sizeOf(payload) };
   const db = await openDb();

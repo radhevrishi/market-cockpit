@@ -284,65 +284,48 @@ export default function UsEarningsOpportunitiesPage() {
           })();
           return cached as unknown as DayPayload;
         }
-        // ── ASK, DO NOT WAIT ────────────────────────────────────────────
+        // ── A PENDING SESSION SETTLES IMMEDIATELY ───────────────────────
         //
-        // The sweep runs four sessions at a time, and a heavy session used to
-        // hold its slot for the full four-minute client timeout — so a handful
-        // of big days throttled the entire window and the counter crawled.
+        // `cache_only=1` answers in about a second, always: the session if it
+        // is cached, otherwise `pending` while the server grades it in the
+        // background over loopback, where no timeout can kill it.
         //
-        // `cache_only=1` answers instantly, always: the session's data if it is
-        // cached, otherwise `pending` while the server grades it in the
-        // background (over loopback, where nothing can time it out). The slot
-        // is then freed between probes rather than held open on one connection,
-        // so every warm day in the window paints immediately and the few heavy
-        // ones arrive as they finish.
-        const probe = async (): Promise<any | null> => {
-          const r = await fetch(
-            `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1${forceKey > 0 ? '&force=1' : ''}`,
-            { cache: 'no-store' },
-          );
-          if (!r.ok) throw new Error(`Grading failed for ${d} (HTTP ${r.status})`);
-          const j = await r.json();
-          return j?.pending ? null : j;
-        };
-        const first = await probe();
-        if (first) { void putCachedDay(d, first); return first; }
-        // Pending: come back for it. Twenty-second beats for about eight
-        // minutes, which covers the heaviest session EDGAR has produced.
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 20_000));
-          const again = await probe().catch(() => null);
-          if (again) { void putCachedDay(d, again); return again; }
-        }
-        throw new Error(`${d} is still being graded — it will be there on the next visit`);
-        // eslint-disable-next-line no-unreachable
-        // A SECOND ATTEMPT DESERVES A LONGER CLOCK.
+        // The first version of this then POLLED inside the query for up to
+        // eight minutes — which freed the connection but still held the
+        // sweep slot, so four heavy days clogged the same gate as before and
+        // the counter still crawled at "10 of 30". A query that has not
+        // settled blocks the stagger behind it, however little work it is
+        // doing.
         //
-        // Seventeen sessions out of thirty came back "EDGAR or the price source
-        // timed out" in one sweep, and they are not broken days: they are heavy
-        // days that ran past the client's four-minute limit while the server
-        // was still working. The next attempt lands far more often because the
-        // server's caches for those filers are now warm — but only if it is
-        // given more time than the attempt that just timed out.
-        const attempt = (attemptsRef.current.get(d) || 0) + 1;
-        attemptsRef.current.set(d, attempt);
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), attempt === 1 ? 240_000 : 480_000);
-        try {
-          const res = await fetch(
-            `/api/v1/earnings/graded-us?date=${d}&days=1${forceKey > 0 ? '&force=1' : ''}`,
-            { cache: 'no-store', signal: ctrl.signal },
-          );
-          if (!res.ok) throw new Error(`Grading failed for ${d} (HTTP ${res.status})`);
-          const payload = await res.json();
-          void putCachedDay(d, payload);
-          return payload;
-        } finally { clearTimeout(timer); }
+        // So a pending session RESOLVES — with an empty placeholder that
+        // contributes nothing to the merge and is never written to the day
+        // cache. The slot is released at once, every warm session in the
+        // window paints within seconds, and the placeholder re-fetches itself
+        // on a timer until the real payload is ready. Nothing is lost and
+        // nothing waits on anything else.
+        const r = await fetch(
+          `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1${forceKey > 0 ? '&force=1' : ''}`,
+          { cache: 'no-store' },
+        );
+        if (!r.ok) throw new Error(`Grading failed for ${d} (HTTP ${r.status})`);
+        const j = await r.json();
+        if (!j?.pending) { void putCachedDay(d, j); return j; }
+        return {
+          filing_date: d, window_days: 1, window_start: d,
+          candidates_total: 0, raw_items_total: 0, pending_xbrl_total: 0, no_price_total: 0,
+          by_tier: { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] },
+          pending: [], scheduled: [], generated_at: new Date().toISOString(),
+          sources_polled: 0, truncated: false, notes: [],
+          _grading: true,
+        } as unknown as DayPayload;
       },
       // Stagger: only the first few days start immediately; the rest queue up as
       // earlier ones settle, so the server is never asked to sweep the whole
       // window at once.
       enabled: i < readyUpto,
+      // A placeholder comes back every half-minute until the server has
+      // finished grading that session; a real payload never re-fetches.
+      refetchInterval: (q: any) => ((q?.state?.data as any)?._grading ? 30_000 : false),
       staleTime: d >= today ? 3 * 60_000 : 24 * 3600_000,
       refetchOnWindowFocus: false,
       // Two retries, spaced out: the first is immediate-ish for a transient
@@ -374,6 +357,12 @@ export default function UsEarningsOpportunitiesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settledCount, sessions.length, sweepStart]);
   const loadedCount = dayQueries.filter((q: any) => q.isSuccess).length;
+  // SCANNED IS NOT THE SAME AS GRADED. A session that settled with a
+  // placeholder has been ASKED for and is being graded on the server; it is
+  // not waiting on this browser and it is not holding anything up. Counting
+  // it as "not loaded" is what produced "10 of 30" on a window that had in
+  // fact already reached every session.
+  const gradingDays = sessions.filter((_, i) => ((dayQueries[i] as any)?.data as any)?._grading);
   const failedDays = sessions.filter((_, i) => (dayQueries[i] as any)?.isError);
   useEffect(() => { setReadyUpto((v) => Math.max(v, settledCount + DAY_CONCURRENCY)); }, [settledCount]);
 
@@ -888,7 +877,7 @@ export default function UsEarningsOpportunitiesPage() {
           </div>
         </div>
       )}
-      {viewMode === 'GRADED' && loadedCount > 0 && loadedCount < sessions.length && (
+      {viewMode === 'GRADED' && loadedCount > 0 && (loadedCount < sessions.length || gradingDays.length > 0) && (
         <div style={{
           marginBottom: 12, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
           backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)',
@@ -896,10 +885,14 @@ export default function UsEarningsOpportunitiesPage() {
         }}>
           <RefreshCw className="w-3 h-3" style={{ color: 'var(--mc-cyan)', animation: 'spin 1s linear infinite' }} />
           <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
-            <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount} of {sessions.length} sessions</b> loaded —
-            showing {allRows.length} graded so far; the remaining {sessions.filter((d) => !dayQueries[sessions.indexOf(d)]?.isSuccess).slice(0, 4).join(', ')}
-            {sessions.length - loadedCount > 4 ? ' …' : ''} are still coming in.
-            {etaText && <b style={{ color: 'var(--mc-cyan)' }}> {etaText}.</b>} Days already scanned are read from cache and never re-fetched.
+            <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount - gradingDays.length} of {sessions.length} sessions</b> on screen
+            with <b style={{ color: 'var(--mc-text-0)' }}>{allRows.length}</b> companies graded.
+            {gradingDays.length > 0 && (
+              <> {gradingDays.length} heavy session{gradingDays.length > 1 ? 's are' : ' is'} being graded on the
+                server ({gradingDays.slice(0, 4).join(', ')}{gradingDays.length > 4 ? ' …' : ''}) and will appear here
+                as {gradingDays.length > 1 ? 'they land' : 'it lands'} — nothing is waiting on this page.</>
+            )}
+            {etaText && loadedCount < sessions.length && <b style={{ color: 'var(--mc-cyan)' }}> {etaText}.</b>} Days already scanned are read from cache and never re-fetched.
           </span>
           {days >= LONG_WINDOW_DAYS && (
             // A long window is worth waiting for, but only if the wait is
