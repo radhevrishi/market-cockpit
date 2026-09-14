@@ -1150,6 +1150,14 @@ export async function GET(req: Request) {
       // quarter selection, so it is reused rather than rebuilt.
       const ser = gaapSeries;
       if (ser) (row as any).series = ser;
+      // THE FILING'S OWN DOCUMENT TABLE — the press release, the slide deck,
+      // the shareholder letter, and a transcript where the filer attached one.
+      // Published so the card can hand the reader the primary sources rather
+      // than describing them: everything this grade was read from, one click
+      // away, with EDGAR's own description of each file.
+      (row as any).filing_docs = {
+        cik: p.f.cikNum, accession: p.f.accession, index_url: p.f.filing_url,
+      };
       const ctx = balanceContext(p.facts, p.fundamentals.q_end);
       if (ctx) (row as any).context = ctx;
       // The owner's Rule of 40 (revenue growth % + FCF margin %) and ROCE, both

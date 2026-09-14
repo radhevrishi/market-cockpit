@@ -23,7 +23,8 @@
 
 'use client';
 
-import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText } from 'lucide-react';
 import {
   fmtUsd, fmtPx, fmtPct, SWING_LABEL, SWING_GOOD,
   type UsGradedRow, type EarningsTier, type SwingKind,
@@ -406,6 +407,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
       )}
 
       <SignalRow signals={(r as any).signals} />
+
+      <AiSummary docs={(r as any).filing_docs} ticker={r.ticker} releaseUrl={(r as any).release_url ?? null} />
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
@@ -843,6 +846,203 @@ export const EST_ABSENT_NOTE: Record<string, string> = {
   'ambiguous-feed': 'The estimate feed carries two materially different numbers for this period, so neither can be used.',
   'implausible': 'The only candidate estimate is not the same quantity as this guide — a different basis or a different scale — so it is refused rather than shown.',
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI SUMMARY, TRANSCRIPT AND REPORTS
+//
+// The summary is written from the company's own press release and nothing
+// else, on demand and cached with the filing, so it costs one call per quarter
+// however many times the card is opened. It is fetched only when the reader
+// asks: a page of sixty cards must never fire sixty model calls.
+//
+// The documents beside it are the filing's OWN table from EDGAR — the release,
+// the slide deck, the shareholder letter, and a transcript where the filer
+// attached one. Most US issuers do not file transcripts with the SEC, and when
+// none is there this says so rather than linking somewhere it is not.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface FilingDocs { cik: number; accession: string; index_url: string }
+
+function AiSummary({ docs, ticker, releaseUrl }: {
+  docs: FilingDocs | null | undefined; ticker: string; releaseUrl: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [text, setText] = useState<string>('');
+  const [err, setErr] = useState<string>('');
+  const [files, setFiles] = useState<Array<{ name: string; url: string; type: string; description: string }>>([]);
+
+  const load = useCallback(async () => {
+    if (!docs?.cik || !docs.accession || !docs.index_url) {
+      setState('error'); setErr('This row has no 8-K filing behind it to read.'); return;
+    }
+    setState('loading');
+    try {
+      const q = new URLSearchParams({
+        cik: String(docs.cik), accession: docs.accession,
+        filing_url: docs.index_url, ticker,
+      });
+      const res = await fetch(`/api/v1/us/ai-summary?${q}`, { cache: 'no-store' });
+      const j = await res.json();
+      if (j?.ok && j.summary) {
+        setText(j.summary); setFiles(j.documents || []); setState('done');
+      } else {
+        setErr(j?.error || 'No summary is available for this filing.'); setState('error');
+      }
+    } catch (e: any) {
+      setErr(`The summary could not be fetched (${String(e?.message || e)}).`); setState('error');
+    }
+  }, [docs, ticker]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && state === 'idle') void load();
+  };
+
+  const idxUrl = docs?.index_url || null;
+  const transcript = files.find((f) => /transcript|prepared remarks/i.test(`${f.description} ${f.name}`));
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button onClick={toggle} aria-expanded={open}
+          title="A summary of this quarter written from the company's own press release — positives, negatives and what it leaves open. Nothing outside the release is used."
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+            fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
+            border: '1px solid color-mix(in srgb, var(--mc-cyan) 45%, transparent)',
+            backgroundColor: open ? 'color-mix(in srgb, var(--mc-cyan) 16%, transparent)' : 'var(--mc-bg-1)',
+            color: 'var(--mc-cyan)',
+          }}>
+          <Sparkles className="w-3 h-3" />
+          {state === 'loading' ? 'Reading the release…' : 'AI Summary'}
+        </button>
+        {releaseUrl && (
+          <a href={releaseUrl} target="_blank" rel="noreferrer" style={docChip()}>
+            <FileText className="w-3 h-3" /> Press release
+          </a>
+        )}
+        {idxUrl && (
+          <a href={idxUrl} target="_blank" rel="noreferrer" style={docChip()}>
+            <FileText className="w-3 h-3" /> All reports
+          </a>
+        )}
+        {transcript && (
+          <a href={transcript.url} target="_blank" rel="noreferrer" style={docChip()}>
+            <FileText className="w-3 h-3" /> Transcript
+          </a>
+        )}
+      </div>
+
+      {open && (
+        <div style={{
+          marginTop: 7, padding: '10px 12px', borderRadius: 8,
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
+          borderLeft: '3px solid var(--mc-cyan)',
+        }}>
+          {state === 'loading' && (
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
+              Reading {ticker}&rsquo;s press release…
+            </div>
+          )}
+          {state === 'error' && (
+            <div style={{ fontSize: 11, color: 'var(--mc-caution, #F59E0B)' }}>{err}</div>
+          )}
+          {state === 'done' && <SummaryText text={text} />}
+          {state === 'done' && files.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--mc-bg-4)' }}>
+              <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', marginBottom: 5 }}>
+                FILED WITH THIS RESULT
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {files.map((f) => (
+                  <a key={f.url} href={f.url} target="_blank" rel="noreferrer" style={docChip()}
+                    title={`${f.type} · ${f.name}`}>
+                    <FileText className="w-3 h-3" />
+                    {f.description && f.description.length > 2 ? f.description : f.type}
+                  </a>
+                ))}
+              </div>
+              {!files.some((f) => /transcript|prepared remarks/i.test(`${f.description} ${f.name}`)) && (
+                <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-4)' }}>
+                  No call transcript was filed with the SEC for this quarter — most US issuers never file one, and
+                  nothing here links to a transcript it cannot show you.
+                </div>
+              )}
+            </div>
+          )}
+          {state === 'done' && (
+            <div style={{ marginTop: 8, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+              Written from the company&rsquo;s own press release only — no news, no estimates, no market reaction. Every
+              dollar figure is checked against the release before the summary is shown; one that is not in the text
+              discards the whole summary. Educational, not investment advice.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function docChip(): React.CSSProperties {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 4, textDecoration: 'none',
+    fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999,
+    border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)',
+    color: 'var(--mc-text-2)',
+  };
+}
+
+/** The model answers in the fixed Positives / Negatives / Overall shape; this
+ *  renders that shape and nothing else, so a malformed answer degrades to plain
+ *  lines rather than to broken markup. */
+function SummaryText({ text }: { text: string }) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  for (const l of lines) {
+    const head = /^(Positives|Negatives)\s*:?$/i.exec(l);
+    if (head) {
+      out.push(
+        <div key={`h${i++}`} style={{
+          fontSize: 9, fontWeight: 800, letterSpacing: 0.3, marginTop: out.length ? 9 : 0, marginBottom: 4,
+          color: /^p/i.test(head[1]) ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
+        }}>{head[1].toUpperCase()}</div>,
+      );
+      continue;
+    }
+    if (/^\*\s+/.test(l) || /^[-•]\s+/.test(l)) {
+      const body = l.replace(/^[*\-•]\s+/, '');
+      out.push(
+        <div key={`b${i++}`} style={{ display: 'flex', gap: 6, fontSize: 11.5, lineHeight: 1.55, color: 'var(--mc-text-2)', marginBottom: 3 }}>
+          <span style={{ color: 'var(--mc-text-4)' }}>•</span><span>{boldLead(body)}</span>
+        </div>,
+      );
+      continue;
+    }
+    const overall = /^Overall Assessment\s*:\s*/i.exec(l);
+    out.push(
+      <div key={`p${i++}`} style={{ fontSize: 11.5, lineHeight: 1.6, color: 'var(--mc-text-2)', marginTop: overall ? 9 : 4 }}>
+        {overall && (
+          <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', display: 'block', marginBottom: 4 }}>
+            OVERALL ASSESSMENT
+          </span>
+        )}
+        {overall ? l.slice(overall[0].length) : l}
+      </div>,
+    );
+  }
+  return <>{out}</>;
+}
+
+/** "Q1 financials: Reported revenue of…" — the model leads each bullet with a
+ *  short label, and the label is what the eye scans. */
+function boldLead(body: string): React.ReactNode {
+  const m = /^([A-Z][^:]{2,48}):\s+/.exec(body);
+  if (!m) return body;
+  return <><b style={{ color: 'var(--mc-text-0)' }}>{m[1]}</b>{body.slice(m[0].length - 1)}</>;
+}
 
 /**
  * THE FOUR LINES A PRINT IS READ BY — revenue, EPS, operating income, net

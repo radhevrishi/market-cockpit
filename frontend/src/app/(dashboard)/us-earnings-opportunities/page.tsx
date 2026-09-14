@@ -294,9 +294,13 @@ export default function UsEarningsOpportunitiesPage() {
   const etaText = useMemo(() => {
     const left = sessions.length - settledCount;
     if (left <= 0 || settledCount < 2) return null;
+    // Wall-clock per settled day. This ALREADY contains the parallelism —
+    // four days in flight is why a day settles every ~20s rather than every
+    // ~80s — so dividing by the concurrency again (which this did) halved every
+    // estimate and printed "under a minute left" with eighteen days to go.
     const perDay = (Date.now() - sweepStart) / settledCount;
     if (!Number.isFinite(perDay) || perDay <= 0) return null;
-    const secs = Math.round((left * perDay) / Math.max(1, DAY_CONCURRENCY / 2) / 1000);
+    const secs = Math.round((left * perDay) / 1000);
     if (secs < 45) return 'under a minute left';
     return `about ${Math.max(1, Math.round(secs / 60))} min left`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -650,10 +654,24 @@ export default function UsEarningsOpportunitiesPage() {
         )}
         <button onClick={exportCsv} style={btn()}>📊 CSV</button>
         <button onClick={exportTradingView} style={btn()}>📈 TradingView</button>
-        <button onClick={() => { void refetch(); }}
+        {/* TWO DIFFERENT THINGS, TWO BUTTONS.
+            "Refresh" re-runs only what is missing or failed and keeps every
+            session already scanned — the everyday action. "Hard re-scan"
+            throws the store away and starts at 0 of N, which is what to press
+            when a cached session is suspected of being wrong. Before these were
+            one button, every refresh restarted the whole window. */}
+        <button onClick={retryFailed}
           disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <RefreshCw className="w-3 h-3" style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
-          {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Force re-scan'}
+          {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Refresh'}
+        </button>
+        <button onClick={() => {
+          if (confirm(`Throw away every cached session and re-scan all ${sessions.length} from SEC EDGAR?\n\nThe ${loadedCount} already loaded will be discarded and the sweep restarts at 0. Use Refresh instead if you only want the days that have not landed yet.`)) {
+            void refetch();
+          }
+        }} disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1 }}
+          title="Clear the local cache and re-read every session from EDGAR, starting from zero">
+          ⟳ Hard re-scan
         </button>
       </div>
 

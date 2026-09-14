@@ -490,7 +490,7 @@ export interface FilingExhibit {
 const _exh = new Map<string, { at: number; data: FilingExhibit[] }>();
 /** The filing's document table, from its …-index.htm. Cached with the filing
  *  (immutable). One request, and only ever made when guidance came up empty. */
-async function filingExhibits(filingIndexUrl: string): Promise<FilingExhibit[]> {
+export async function filingExhibits(filingIndexUrl: string): Promise<FilingExhibit[]> {
   const hit = _exh.get(filingIndexUrl);
   if (hit && Date.now() - hit.at < 7 * 24 * 3600_000) return hit.data;
   const out: FilingExhibit[] = [];

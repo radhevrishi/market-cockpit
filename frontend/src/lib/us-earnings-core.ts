@@ -3641,6 +3641,23 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   //    footnote on a "clean quality" print.
   if (f.cfo != null && f.cfo < 0 && niC != null && niC > 0) {
     capTier('MIXED', 'profit without operating cash');
+  } else if (cfoPat != null && cfoPat < 0.5 && fcfC != null && fcfC < 0 && niC != null && niC > 0) {
+    // CASH THAT BACKS LESS THAN HALF THE PROFIT, AND NONE LEFT AFTER CAPEX.
+    //
+    // Fabrinet's Q4 FY26: revenue +45%, adjusted EPS +55%, a guide above the
+    // street — and $55m of operating cash against $139m of reported net income
+    // (0.39×) with free cash flow at −$37m. The tape took it down 15%. The old
+    // pair of rules only caught operating cash that had gone NEGATIVE, so a
+    // quarter that collected 39 cents of every reported dollar and spent more
+    // than it collected was capped at STRONG by the free-cash-flow rule alone.
+    //
+    // Two cash facts failing together is not one caveat twice: conversion below
+    // a half says the earnings are sitting in working capital, and negative
+    // free cash flow says nothing was left over regardless. A quarter whose
+    // cash contradicts its profit on both counts is MIXED, whatever the growth
+    // rate above it — and a company genuinely building inventory into demand
+    // reverses it in a quarter or two, which the next grade will show.
+    capTier('MIXED', 'earnings not backed by cash — conversion under half, free cash flow negative');
   } else if (fcfC != null && fcfC < 0 && niC != null && niC > 0) {
     // Free cash flow can be negative for a genuinely investing business, so
     // this is one step, not two.
