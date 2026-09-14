@@ -835,7 +835,18 @@ function blocks(html: string): string[] {
     .replace(/<(?:p|div|li|tr|h[1-6])\b[^>]*>/gi, BLOCK_SENTINEL);
   const out: string[] = [];
   for (const raw of decodeEntities(marked.replace(/<[^>]*>/g, ' ')).split(BLOCK_SENTINEL)) {
-    const t = raw.replace(INVISIBLE_RE, ' ').replace(/\s+/g, ' ').trim();
+    const t = raw.replace(INVISIBLE_RE, ' ')
+      // FOOTNOTE MARKERS BREAK THE SENTENCE SHAPES.
+      //
+      // Agilent writes "non-GAAP EPS (3) of $1.62"; the "(3)" is a reference to
+      // a footnote and sits exactly where the shapes expect "of"/"was" to
+      // follow the measure, so the release's own adjusted EPS was never found
+      // at all — the card showed none. A one- or two-digit number in brackets
+      // with no dollar sign and no decimal point is a marker, never a figure:
+      // "$(3.15)" and "(1,286)" both keep their parentheses because they carry
+      // a currency symbol, a decimal or a thousands separator.
+      .replace(/(?<![\d$.,])\(\s?\d{1,2}\s?\)(?![\d.,])/g, ' ')
+      .replace(/\s+/g, ' ').trim();
     if (t) out.push(t);
   }
   return out;

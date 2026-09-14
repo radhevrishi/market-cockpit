@@ -602,7 +602,14 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
     tiles.push(
       <Tile key="cfo" label="CFO/NI" value={r.cfo_to_pat_ratio != null ? r.cfo_to_pat_ratio.toFixed(2) : '—'}
         color={r.cfo_to_pat_ratio == null ? undefined : r.cfo_to_pat_ratio >= 1 ? 'var(--mc-bullish)' : r.cfo_to_pat_ratio >= 0.5 ? undefined : 'var(--mc-bearish)'}
-        sub={r.cfo_curr_musd != null ? `CFO ${fmtUsdLevel(r.cfo_curr_musd)}` : 'net income not comparable'} />,
+        sub={r.cfo_curr_musd != null
+          ? `CFO ${fmtUsdLevel(r.cfo_curr_musd)}${(() => {
+              const m = /\bQ([1-4])\b/.exec(String((r as any).fiscal_label || ''));
+              // The filing states cash flow from the year's start, so every
+              // quarter but the first is a subtraction this engine performed.
+              return m && m[1] !== '1' ? ' · derived' : '';
+            })()}`
+          : 'net income not comparable'} />,
     );
   }
 
@@ -2645,6 +2652,17 @@ export function DetailPanel({ r }: { r: UsRowX }) {
     .filter((m) => m && Number.isFinite(m.value));
   const snippets: string[] = Array.isArray(r.guidance_snippets) ? r.guidance_snippets : [];
   const tags = (r.tags_used || null) as Record<string, string | null> | null;
+  // Which quarter of the fiscal year this is decides whether the cash figures
+  // were stated or subtracted — the filing's cash-flow statement is cumulative
+  // from the year's start, so only Q1 is itself.
+  const fqNum = (() => {
+    const m = /\bQ([1-4])\b/.exec(String((r as any).fiscal_label || ''));
+    return m ? Number(m[1]) : null;
+  })();
+  const cashIsDerived = fqNum != null && fqNum !== 1;
+  const cashDerivedHow = fqNum === 4
+    ? 'the full year less its first three quarters'
+    : 'year-to-date less the prior quarter';
 
   // ── the display columns. A period we could not match by date is not shown at
   // all, rather than shown as a column of dashes.
@@ -3105,6 +3123,18 @@ export function DetailPanel({ r }: { r: UsRowX }) {
             {Object.entries(tags).filter(([, v]) => !!v).map(([k, v]) => (
               <span key={k} style={{ whiteSpace: 'nowrap' }}>
                 {k.replace(/_/g, ' ')} ← <code style={{ color: 'var(--mc-text-3)' }}>{v}</code>
+                {/* DERIVED IS NOT REPORTED, AND THE CARD MUST SAY WHICH.
+                    A 10-Q's cash-flow statement is YEAR-TO-DATE: only a first
+                    quarter is stated as itself, and every other quarter's
+                    operating cash and capex are this engine's subtraction —
+                    correct arithmetic (Burlington's six-month −$197.8m
+                    reconciles exactly), but not a number the filer printed.
+                    Calling it "reported" is the same duration error the engine
+                    refuses everywhere else. Q4 comes from a 10-K as the year
+                    less its three quarters, which is derived twice over. */}
+                {(k === 'cfo' || k === 'capex') && cashIsDerived && (
+                  <span style={{ color: 'var(--mc-caution, #F59E0B)' }}> · derived: {cashDerivedHow}</span>
+                )}
               </span>
             ))}
           </div>

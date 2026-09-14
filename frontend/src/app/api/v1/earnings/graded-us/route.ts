@@ -995,8 +995,26 @@ export async function GET(req: Request) {
       const nextQEps = guideFigs.find((f: any) => f && f.metric === 'eps' && f.period === 'quarter'
         && f.unit === 'usd_share' && figMidOf(f) != null);
       const guideMid = nextQEps ? figMidOf(nextQEps) : null;
-      const guideVsStreet = (guideMid != null && (nextQEps as any).est != null && (nextQEps as any).est !== 0)
-        ? ((guideMid - (nextQEps as any).est) / Math.abs((nextQEps as any).est)) * 100 : null;
+      // EVERY GUIDED LINE THE STREET HAS A NUMBER FOR, NOT JUST NEXT QUARTER'S
+      // EPS. A filer can guide next quarter in line and the full year below, or
+      // hold EPS and cut revenue; reading one line meant the card showed
+      // "Guide below street: revenue" while the grade saw nothing at all. The
+      // WORST line is the one that counts — a guide is only as good as the
+      // number in it that disappointed.
+      const guideVsStreet = (() => {
+        const gaps = guideFigs
+          .map((f: any) => {
+            const mid = figMidOf(f);
+            const est = f?.est;
+            if (mid == null || est == null || est === 0) return null;
+            // Percentage guides ("+9% to +11%") are not comparable to a dollar
+            // consensus; the estimate attached to them is a level.
+            if (f.unit === 'pct') return null;
+            return ((mid - est) / Math.abs(est)) * 100;
+          })
+          .filter((x): x is number => x != null && Number.isFinite(x));
+        return gaps.length ? Math.min(...gaps) : null;
+      })();
       // The year-ago base for the quarter being guided: one year before the
       // quarter AFTER the one just reported, matched on the filer's own period
       // ends so a 52/53-week calendar cannot shift it onto the wrong quarter.

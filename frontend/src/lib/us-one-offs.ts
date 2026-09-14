@@ -53,7 +53,7 @@ export interface OneOff {
 
 /** Vocabulary that marks an item as discrete rather than operating. This is a
  *  CLASS list — nothing in it names a company or a quarter. */
-const DISCRETE = /\b(one[- ]time|non[- ]?recurring|discrete|unusual|refunds?|recover(?:y|ies|ed)|drawbacks?|settlements?|gain on (?:the )?sale|insurance|reversals?|releases? of|true[- ]ups?|catch[- ]up|out[- ]of[- ]period|prior[- ]period|retroactive|cumulative|tax benefits?|valuation allowance|litigation|legal|impairments?|restructuring|severance|write[- ]?(?:offs?|downs?)|credits?|windfall)\b/i;
+const DISCRETE = /\b(one[- ]time|non[- ]?recurring|discrete|unusual|refunds?|recover(?:y|ies|ed)|drawbacks?|settlements?|gains?\s+(?:and\s+losses\s+)?on\s+[a-z ]{0,20}(?:sale|investments?|securities|disposal|divestiture)|strategic investments?|mark[- ]to[- ]market|fair[- ]value (?:gains?|losses?|remeasurement|adjustments?)|insurance|reversals?|releases? of|true[- ]ups?|catch[- ]up|out[- ]of[- ]period|prior[- ]period|retroactive|cumulative|tax benefits?|valuation allowance|litigation|legal|impairments?|restructuring|severance|write[- ]?(?:offs?|downs?)|credits?|windfall)\b/i;
 
 const EARNINGS_WORD = /\b(EPS|earnings per share|net income|net earnings|diluted earnings|adjusted earnings|income per share|earnings)\b/i;
 // The verbs that tie an item TO a reported figure. "Contributed" belongs here
@@ -222,13 +222,33 @@ export function oneOffsFromReleaseText(text: string): OneOff[] {
     const explicit = amts.filter((a) => /^\s*(?:per\s|\/\s?(?:diluted\s+)?share)/i.test(s.slice(a.index + a.length, a.index + a.length + 12)));
     if (explicit.length) amts = explicit;
     if (!amts.length) continue;
+    // A SENTENCE THAT NAMES BOTH BASES GIVES TWO AMOUNTS, AND ONLY ONE OF THEM
+    // BELONGS TO THE FIGURE BEING ADJUSTED. Salesforce's footnote reads "gains
+    // on strategic investments impacted GAAP diluted net income per share by
+    // $2.43 … and non-GAAP diluted net income per share by $X": the first
+    // amount is the GAAP effect, and subtracting it from the non-GAAP figure
+    // would be the wrong arithmetic on the right idea. When the sentence names
+    // the non-GAAP figure, only amounts AFTER that mention are candidates.
+    const ngIdx = body.search(/\bnon[\s‐-]?gaap\b/i);
+    if (ngIdx >= 0) {
+      const after = amts.filter((a) => a.index > ngIdx);
+      if (after.length) amts = after;
+    }
     let best: { a: Amt; kind: OneOff['kind']; d: number } | null = null;
     for (const a of amts) {
       const at = a.index + a.length / 2;
       const db = nearestDistance(s, BENEFIT, at);
       const dc = nearestDistance(s, CHARGE, at);
       const d = Math.min(db, dc);
-      if (d > 90) continue;                                // no sign word near it
+      // How far a sign word may sit from the amount. A footnote names the item
+      // once and its per-share effects later — Salesforce's "gains on strategic
+      // investments impacted GAAP … by $2.43 … and non-GAAP … by $2.53" puts
+      // 170 characters between "gains" and the number that matters, and a
+      // 90-character window silently dropped a $2.53 item out of a $5.90
+      // figure. The other guards (per-share, tied by an includes/impact verb,
+      // on the adjusted basis, smaller than the figure itself) do the real
+      // work; this one only has to keep an unrelated amount from being picked.
+      if (d > 220) continue;
       const kind: OneOff['kind'] = db < dc ? 'benefit' : dc < db ? 'charge' : 'unknown';
       if (!best || d < best.d) best = { a, kind, d };
     }
@@ -245,7 +265,7 @@ export function oneOffsFromReleaseText(text: string): OneOff[] {
       label,
       per_share: kind === 'benefit' ? perShare : kind === 'charge' ? -perShare : null,
       kind,
-      included: INCLUDES.test(s) || /\bimpact\b/i.test(s),
+      included: INCLUDES.test(s) || /\bimpact(?:ed|s|ing)?\b/i.test(s),
       adjusted_basis: adjustedBasis,
       ex_eps_stated: null,
       ex_eps_prev_stated: null,
@@ -274,16 +294,43 @@ export function oneOffsFromReleaseHtml(html: string): OneOff[] {
  */
 export function epsExOneOffs(adjEps: number | null, items: OneOff[], gaapEps?: number | null): { eps: number; total: number; prev?: number | null } | null {
   if (adjEps == null || !Number.isFinite(adjEps) || !items.length) return null;
-  const stated = items.find((o) => o.ex_eps_stated != null);
+  // THE ITEM MUST BELONG TO THE FIGURE BEING ADJUSTED.
+  //
+  // Workday's release says "Included within DILUTED NET INCOME PER SHARE for the
+  // current quarter is a tax benefit of $1.52 per share related to an
+  // intra-entity transfer of intellectual property" — a statement about its
+  // GAAP line. Subtracting it from the $2.75 non-GAAP figure turned a +5% beat
+  // into a −53% miss. A sentence that does not speak of the adjusted figure
+  // says nothing about the adjusted figure, whatever the two happen to be.
+  // A statement about the GAAP figure IS a statement about the adjusted figure
+  // when the two are the same number — Abercrombie and Target both headline
+  // "GAAP and Adjusted EPS" at one value, and their refund disclosures never
+  // use the word "adjusted" at all.
+  const sameFigure = gaapEps != null && Number.isFinite(gaapEps) && Math.abs(gaapEps - adjEps) <= 0.011;
+  const mine = items.filter((o) => o.adjusted_basis || sameFigure);
+  const stated = mine.find((o) => o.ex_eps_stated != null);
   if (stated) {
     const total = Math.round((adjEps - stated.ex_eps_stated!) * 100) / 100;
+    // THE EX-ITEM FIGURE MUST MOVE IN THE DIRECTION THE SENTENCE DESCRIBES.
+    //
+    // Build-A-Bear: "Excluding the $7 million impact from the tariff refund …
+    // adjusted EPS totaled $1.73" — against a quarter that reported $0.70,
+    // because the $1.73 is the twenty-six-week column. Removing a BENEFIT
+    // cannot raise the figure; when it does, the two numbers are not the same
+    // period and nothing is computed from them.
+    // AN ITEM CANNOT BE LARGER THAN THE FIGURE IT SITS INSIDE. Build-A-Bear's
+    // $1.73 "excluding the tariff refund" is the twenty-six-week number against
+    // a quarter that reported $0.70: the implied item ($1.03) exceeds the whole
+    // quarter, which no disclosed item inside it can. Two periods, not one.
+    if (Math.abs(total) > Math.abs(adjEps)) return null;
+    // And removing a BENEFIT cannot raise the figure.
+    const removingBenefit = /\bexclud\w*\s+(?:the\s+)?(?:\$?[\d.,]+\s*(?:million|billion)?\s*)?(?:net\s+)?[a-z ]{0,24}(refund|recover|gain|benefit|credit|windfall|reversal)/i.test(stated.quote);
+    if (removingBenefit && total < 0) return null;
     return Math.abs(total) >= 0.01
       ? { eps: stated.ex_eps_stated!, total, prev: stated.ex_eps_prev_stated }
       : null;
   }
-  const gap = (gaapEps != null && Number.isFinite(gaapEps)) ? Math.abs(gaapEps - adjEps) : null;
-  const signed = items.filter((o) => o.included && o.per_share != null && (o.per_share as number) > 0
-    && (o.adjusted_basis || gap == null || gap < Math.abs(o.per_share as number) * 0.5));
+  const signed = mine.filter((o) => o.included && o.per_share != null && (o.per_share as number) > 0);
   if (!signed.length) return null;
   const total = signed.reduce((n, o) => n + (o.per_share as number), 0);
   if (Math.abs(total) < 0.01) return null;
