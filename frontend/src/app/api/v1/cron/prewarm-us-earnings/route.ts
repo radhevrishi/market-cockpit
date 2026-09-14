@@ -53,7 +53,14 @@ export const maxDuration = 300;
 // session it cannot finish inside the budget is STARTED and not awaited — see
 // the fire-and-forget below.
 const DEADLINE_MS = 230_000;
-const MAX_SESSIONS = 60;
+// The pages offer a THREE-MONTH bench window — about 63 trading sessions — and
+// warming only thirty of them meant the older half of that window was always
+// cold. Every cold session is graded one at a time, so a three-month sweep
+// arrived as "13 could not be scanned" and a bench of ten names. Warming the
+// whole range a session at a time costs nothing extra: a session already cached
+// for the current engine version is skipped without touching EDGAR, so a run
+// over 90 sessions on a warm window is 90 Redis reads and nothing else.
+const MAX_SESSIONS = 95;
 
 /** The engine's own trading-day calendar, so this warms exactly the sessions
  *  the page will ask for — never a Saturday the page never requests. */

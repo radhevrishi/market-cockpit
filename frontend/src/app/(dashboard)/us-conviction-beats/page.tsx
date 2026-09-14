@@ -153,7 +153,7 @@ export default function UsConvictionBeatsPage() {
   // the next visit without being asked. A book that is quietly incomplete is
   // worse than one that says so.
   const COVERAGE_KEY = 'mc-us-cb-coverage-v1';
-  type Coverage = { failed: string[]; swept: number; total: number; at: string };
+  type Coverage = { failed: string[]; grading?: string[]; swept: number; total: number; at: string };
   const readCoverage = (): Coverage | null => {
     try { return JSON.parse(localStorage.getItem(COVERAGE_KEY) || 'null'); } catch { return null; }
   };
@@ -162,6 +162,63 @@ export default function UsConvictionBeatsPage() {
   };
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   useEffect(() => { setCoverage(readCoverage()); }, []);
+
+  // ═══ THE BACKGROUND FILLER  (zzz607) ═════════════════════════════════════
+  //
+  // A cold session is graded on the server one at a time — that serialisation
+  // is not a limitation to route around, it is the only reason heavy days
+  // survive at all; three at once exhausted the container's memory and killed
+  // all three. What it does mean is that a long window whose older half has
+  // never been graded cannot possibly finish while the user watches a button.
+  //
+  // So the sweep stops waiting and this takes over. It keeps asking for the
+  // sessions still in the server's queue, folds each one into the bench the
+  // moment it lands, and says how many are left. The user gets their page back
+  // immediately, the bench fills itself, and — crucially — a session that is
+  // merely SLOW is never again recorded as a session that FAILED.
+  const backfillRef = useRef(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+  const startBackfill = useCallback((daysToFill: string[]) => {
+    if (backfillRef.current || !daysToFill.length) return;
+    backfillRef.current = true;
+    const left = daysToFill.slice();
+    const deadline = Date.now() + 90 * 60_000;      // give up after an hour and a half
+    void (async () => {
+      try {
+        while (left.length && Date.now() < deadline) {
+          setBackfillMsg(`${left.length} session${left.length > 1 ? 's' : ''} still being graded on the server (one at a time, so each one finishes) — the bench fills in here as they land. Nothing is waiting on you.`);
+          const d = left[0];
+          let got: any = null;
+          try {
+            const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1`, { cache: 'no-store' });
+            if (res.ok) { const j = await res.json(); if (j?.by_tier) got = j; }
+          } catch { /* transient — ask again on the next lap */ }
+          if (got) {
+            void putCachedDay(d, got);
+            const batch: any[] = [];
+            for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
+              for (const c of (got?.by_tier?.[t] || [])) batch.push({ ...c, source_url: c.filing_url });
+            }
+            if (batch.length) syncUsConviction(batch);
+            left.shift();
+            reload();
+            // The ledger follows reality: this session is no longer missing.
+            const cur = readCoverage();
+            if (cur) {
+              const cov: Coverage = { ...cur, grading: left.slice(), swept: Math.min(cur.total, cur.swept + 1), at: new Date().toISOString() };
+              writeCoverage(cov); setCoverage(cov);
+            }
+            continue;                                // try the next one straight away
+          }
+          await new Promise((r) => setTimeout(r, 20_000));
+        }
+        setBackfillMsg(left.length
+          ? `${left.length} session${left.length > 1 ? 's are' : ' is'} still queued on the server after an hour and a half — press Reload bench when you next open this page and they will be picked up.`
+          : null);
+      } finally { backfillRef.current = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Walk recent sessions of graded-us, then re-price bench names older than
    *  the swept window via explicit-ticker mode (batches of 25). */
@@ -220,6 +277,10 @@ export default function UsConvictionBeatsPage() {
       let total = days.length;
       let phase: 'sweep' | 'retry' = 'sweep';
       const failedDays: string[] = [];
+      // Sessions the server has accepted but not finished grading. Different
+      // from a failure in every way that matters: nothing went wrong, and they
+      // arrive on their own if we keep asking.
+      const queued: string[] = [];
       // ── ASK, DON'T COMPUTE  (zzz606) ──────────────────────────────────────
       //
       // This sweep used to request the full grading endpoint — no `cache_only`
@@ -270,7 +331,25 @@ export default function UsConvictionBeatsPage() {
             // The retry is the slow lane: one session at a time against a
             // server whose queue has drained, so it can afford a longer clock.
             p = await askDay(d, phase === 'retry' ? 420_000 : 150_000);
-            if (!p) throw new Error('still grading on the server');
+            // ── QUEUED IS NOT FAILED  (zzz607) ────────────────────────────
+            //
+            // A session the server has not graded yet is not an error and
+            // reporting it as "could not be scanned" is both alarming and
+            // false — it WILL land, the server is simply working through the
+            // cold days one at a time behind SEC's rate limit, which is the
+            // only way they survive at all.
+            //
+            // The old code threw here, so the day went into the failed list,
+            // was retried once, failed again for the same unavoidable reason,
+            // and was then written into the coverage ledger as permanently
+            // missing. On a three-month window — which reaches back past
+            // anything the pre-warm has touched — that is most of the window,
+            // and it is why the bench came back with ten names on it.
+            //
+            // So a queued day is remembered separately and filled in by a
+            // background pass that keeps asking after the sweep has finished.
+            // The bench grows by itself and nothing is lost.
+            if (!p) { queued.push(d); tick(d); return; }
             void putCachedDay(d, p);
           }
           const batch: any[] = [];
@@ -280,10 +359,13 @@ export default function UsConvictionBeatsPage() {
           if (wipe) collected.push(...batch);
           else if (batch.length) changes += syncUsConviction(batch);
         } catch { failed++; failedDays.push(d); }
+        tick(d);
+      };
+      const tick = (_d: string) => {
         done++;
         const head = phase === 'retry'
           ? `Retrying ${done}/${total} session${total === 1 ? '' : 's'} that timed out`
-          : `${wipe ? 'Rebuilding' : 'Sweeping'} ${done}/${total} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''}`;
+          : `${wipe ? 'Rebuilding' : 'Sweeping'} ${done}/${total} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''}${queued.length ? ` · ${queued.length} queued on the server` : ''}`;
         setSweepMsg(wipe
           ? `${head} — ${collected.length} names collected, the bench below is untouched until this finishes`
           : `${head} — ${getUsConvictionList().length} on the bench`);
@@ -340,19 +422,22 @@ export default function UsConvictionBeatsPage() {
       try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
       // The ledger, written whether the sweep was clean or not.
       const prev = readCoverage();
+      const missing = failedDays.length + queued.length;
       const cov: Coverage = opts.onlyDays?.length && prev
         // A gap-filling pass only changes the gaps: the sessions it recovered
         // leave the failed list, and the window total is the one already on
         // record — this pass never swept the whole window.
         ? {
             failed: failedDays.slice(),
-            swept: Math.min(prev.total, prev.swept + (days.length - failedDays.length)),
+            grading: queued.slice(),
+            swept: Math.min(prev.total, prev.swept + (days.length - missing)),
             total: prev.total,
             at: new Date().toISOString(),
           }
         : {
             failed: failedDays.slice(),
-            swept: days.length - failedDays.length,
+            grading: queued.slice(),
+            swept: days.length - missing,
             total: days.length,
             at: new Date().toISOString(),
           };
@@ -360,6 +445,9 @@ export default function UsConvictionBeatsPage() {
       setSweepMsg((changes > 0
         ? `Bench updated — ${changes} change${changes > 1 ? 's' : ''} (last ${sessions} sessions swept${stale.length ? `, ${Math.min(stale.length, 150)} older names re-priced` : ''}).`
         : 'Bench already up to date.') + (failed ? ` ${failed} session${failed > 1 ? 's' : ''} still could not be scanned after a retry — press Reload bench to try them again.` : ''));
+      // Hand the queued sessions to the background filler and let go of the
+      // button: the sweep is over, the bench keeps growing.
+      if (queued.length) startBackfill(queued.slice());
     } catch (e: any) {
       setSweepMsg(`Sweep failed: ${String(e?.message || e)}`);
     } finally {
@@ -372,7 +460,11 @@ export default function UsConvictionBeatsPage() {
   /** Sweep ONLY the sessions the ledger says were never scanned. */
   const fillGaps = useCallback(() => {
     const c = readCoverage();
-    if (c?.failed?.length) void sweep(benchWindow, true, { onlyDays: c.failed.slice() });
+    // Both kinds of gap: the ones that errored and the ones the server had not
+    // reached yet. Leaving the queued ones out means the button says it filled
+    // the gaps and the bench is still short.
+    const gaps = [...(c?.failed || []), ...(c?.grading || [])];
+    if (gaps.length) void sweep(benchWindow, true, { onlyDays: gaps });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sweep, benchWindow]);
   // The gaps close themselves on the next visit — once per load, and only when
@@ -381,6 +473,10 @@ export default function UsConvictionBeatsPage() {
   useEffect(() => {
     if (gapRunRef.current) return;
     const c = readCoverage();
+    // A session left QUEUED when the page was last closed does not need another
+    // sweep — the server has it and it is warm by now. Asking the background
+    // filler for it costs one read; re-sweeping costs a full pass.
+    if (c?.grading?.length) { gapRunRef.current = true; startBackfill(c.grading.slice()); return; }
     if (!c?.failed?.length) return;
     gapRunRef.current = true;
     const t = setTimeout(() => { if (!sweeping) void sweep(benchWindow, false, { onlyDays: c.failed.slice() }); }, 2500);
@@ -787,23 +883,37 @@ export default function UsConvictionBeatsPage() {
           Without this line the only visible fact is a small number of names,
           which reads as "nothing qualified" — and the two days missing from
           the run that prompted this carried a dozen names that did. */}
-      {coverage && (
-        <div style={{ fontSize: 'var(--mc-text-xs)', marginBottom: 12, color: coverage.failed.length ? 'var(--mc-caution, #F59E0B)' : 'var(--mc-text-3)' }}>
-          {coverage.failed.length ? (
-            <>
-              Built from <b>{coverage.swept} of {coverage.total}</b> sessions — {coverage.failed.length} could not be
-              scanned ({coverage.failed.slice(0, 6).join(', ')}{coverage.failed.length > 6 ? ` +${coverage.failed.length - 6}` : ''}),
-              so names that reported on {coverage.failed.length > 1 ? 'those days' : 'that day'} are missing from the bench.
-              {sweeping ? ' Filling the gaps now…' : (
-                <button onClick={fillGaps} style={{ ...chip(false), marginLeft: 8 }}>scan the missing sessions</button>
-              )}
-            </>
-          ) : (
-            <>Built from all <b>{coverage.total}</b> sessions in the window — nothing was skipped.</>
-          )}
-        </div>
-      )}
+      {/* A SESSION STILL BEING GRADED AND A SESSION THAT FAILED ARE DIFFERENT
+          FACTS, and lumping them together is what made a working sweep read as
+          a broken one: "13 could not be scanned" on thirteen days that were
+          simply still in the server's queue, and which arrived a few minutes
+          later. Amber and a button belong to the first kind only. */}
+      {coverage && (() => {
+        const grading = coverage.grading || [];
+        const dead = coverage.failed || [];
+        if (!dead.length && !grading.length) {
+          return <div style={{ fontSize: 'var(--mc-text-xs)', marginBottom: 12, color: 'var(--mc-text-3)' }}>Built from all <b>{coverage.total}</b> sessions in the window — nothing was skipped.</div>;
+        }
+        return (
+          <div style={{ fontSize: 'var(--mc-text-xs)', marginBottom: 12, color: dead.length ? 'var(--mc-caution, #F59E0B)' : 'var(--mc-text-3)' }}>
+            Built from <b>{coverage.swept} of {coverage.total}</b> sessions.
+            {grading.length > 0 && (
+              <> <b style={{ color: 'var(--mc-text-1)' }}>{grading.length}</b> {grading.length > 1 ? 'are' : 'is'} still being graded
+                on the server ({grading.slice(0, 5).join(', ')}{grading.length > 5 ? ` +${grading.length - 5}` : ''}) — the server takes
+                cold sessions one at a time, which is the only way the heavy ones finish at all. They fold into the bench by themselves.</>
+            )}
+            {dead.length > 0 && (
+              <> <b>{dead.length}</b> could not be scanned ({dead.slice(0, 5).join(', ')}{dead.length > 5 ? ` +${dead.length - 5}` : ''}),
+                so names that reported on {dead.length > 1 ? 'those days' : 'that day'} are missing.
+                {sweeping ? ' Filling the gaps now…' : (
+                  <button onClick={fillGaps} style={{ ...chip(false), marginLeft: 8 }}>scan the missing sessions</button>
+                )}</>
+            )}
+          </div>
+        );
+      })()}
       {sweepMsg && <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 12 }}>{sweepMsg}</div>}
+      {backfillMsg && <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 12 }}>⏳ {backfillMsg}</div>}
 
       {entries.length === 0 && (
         <div style={panel()}>
