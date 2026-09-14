@@ -284,6 +284,38 @@ export default function UsEarningsOpportunitiesPage() {
           })();
           return cached as unknown as DayPayload;
         }
+        // ── ASK, DO NOT WAIT ────────────────────────────────────────────
+        //
+        // The sweep runs four sessions at a time, and a heavy session used to
+        // hold its slot for the full four-minute client timeout — so a handful
+        // of big days throttled the entire window and the counter crawled.
+        //
+        // `cache_only=1` answers instantly, always: the session's data if it is
+        // cached, otherwise `pending` while the server grades it in the
+        // background (over loopback, where nothing can time it out). The slot
+        // is then freed between probes rather than held open on one connection,
+        // so every warm day in the window paints immediately and the few heavy
+        // ones arrive as they finish.
+        const probe = async (): Promise<any | null> => {
+          const r = await fetch(
+            `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1${forceKey > 0 ? '&force=1' : ''}`,
+            { cache: 'no-store' },
+          );
+          if (!r.ok) throw new Error(`Grading failed for ${d} (HTTP ${r.status})`);
+          const j = await r.json();
+          return j?.pending ? null : j;
+        };
+        const first = await probe();
+        if (first) { void putCachedDay(d, first); return first; }
+        // Pending: come back for it. Twenty-second beats for about eight
+        // minutes, which covers the heaviest session EDGAR has produced.
+        for (let i = 0; i < 24; i++) {
+          await new Promise((r) => setTimeout(r, 20_000));
+          const again = await probe().catch(() => null);
+          if (again) { void putCachedDay(d, again); return again; }
+        }
+        throw new Error(`${d} is still being graded — it will be there on the next visit`);
+        // eslint-disable-next-line no-unreachable
         // A SECOND ATTEMPT DESERVES A LONGER CLOCK.
         //
         // Seventeen sessions out of thirty came back "EDGAR or the price source

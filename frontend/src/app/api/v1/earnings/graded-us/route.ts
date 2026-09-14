@@ -119,6 +119,9 @@ interface UsGradedPayload {
 // today keep moving as prices tick and late 10-Qs land → 15 minutes, matching
 // the India route.
 const _cache = new Map<string, { at: number; ttl: number; data: UsGradedPayload }>();
+/** Sessions currently being graded in the background, so a page sweeping the
+ *  same window twice cannot start the same expensive day twice over. */
+const _bgInFlight = new Set<string>();
 const CACHE_MAX = 60;
 
 function etToday(): string {
@@ -714,6 +717,38 @@ export async function GET(req: Request) {
         }
       } catch { /* Redis absent or unreachable — the sweep just runs */ }
     }
+  }
+
+  // ── "IS IT READY?" — A QUESTION THAT MUST ALWAYS ANSWER AT ONCE ─────────
+  //
+  // The page sweeps a window four sessions at a time. A session already in
+  // Redis answers in a second; a heavy one takes minutes, and while it does it
+  // holds one of those four slots, so the whole window crawls behind the few
+  // slowest days. Raising the server's own ceiling made that WORSE from the
+  // reader's side: the browser now waits longer before giving up.
+  //
+  // With `cache_only=1` the route never computes on the caller's clock. Either
+  // the session is cached and is returned, or the grading is started in the
+  // background — over loopback, where no edge timeout can kill it — and the
+  // caller is told `pending` immediately. The sweep therefore paints every warm
+  // session at once and lets the heavy ones arrive when they are ready, which
+  // is the difference between "10 of 30 after several minutes" and a window
+  // that is on screen instantly with a few days still filling in.
+  const cacheOnly = searchParams.get('cache_only') === '1';
+  if (cacheOnly && !explicit) {
+    if (!_bgInFlight.has(cacheKey)) {
+      _bgInFlight.add(cacheKey);
+      const port = process.env.PORT;
+      const self = port ? `http://127.0.0.1:${port}` : new URL(req.url).origin;
+      void fetch(`${self}/api/v1/earnings/graded-us?date=${date}&days=${days}`,
+        { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } })
+        .catch(() => {})
+        .finally(() => { setTimeout(() => _bgInFlight.delete(cacheKey), 5_000); });
+    }
+    return NextResponse.json(
+      { pending: true, filing_date: date, window_days: days, engine_version: US_ENGINE_VERSION },
+      { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } },
+    );
   }
 
   const notes: string[] = [];
