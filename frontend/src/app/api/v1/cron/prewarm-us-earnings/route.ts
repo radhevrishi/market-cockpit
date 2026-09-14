@@ -93,14 +93,20 @@ export async function GET(req: NextRequest) {
   // Redis when it finishes. Each run therefore leaves one more heavy day
   // permanently warm, and the window converges instead of stalling on the
   // first day that is too big to finish in five minutes.
-  let launched: string | null = null;
+  // Three at a time, not one. They all queue behind the same process-wide 8
+  // requests-a-second gate, so three in flight consume no more of SEC's budget
+  // than one — they simply interleave, and the window closes in two or three
+  // runs instead of seven. More than three risks holding several large
+  // companyfacts payloads in memory at once for no throughput gain.
+  const BACKGROUND_MAX = 3;
+  const launched: string[] = [];
   for (const d of days) {
     if (Date.now() - t0 > DEADLINE_MS) {
-      if (!launched && d < today) {
+      if (launched.length < BACKGROUND_MAX && d < today) {
         try {
           const already = await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${d}|1`).catch(() => null);
           if (!already?.by_tier) {
-            launched = d;
+            launched.push(d);
             void railwaySelfFetch(`${origin}/api/v1/earnings/graded-us?date=${d}&days=1`,
               { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } }).catch(() => {});
           }
@@ -144,7 +150,7 @@ export async function GET(req: NextRequest) {
     left_running_in_background: launched,
     detail: { warmed, failed, skipped_for_time: skippedForTime },
     note: skippedForTime
-      ? `Deadline reached${launched ? ` — ${launched} left grading in the background and will be cached when it finishes` : ''}. Run again to continue; sessions already warmed are skipped for free.`
+      ? `Deadline reached${launched.length ? ` — ${launched.join(', ')} left grading in the background and will be cached when they finish` : ''}. Run again to continue; sessions already warmed are skipped for free.`
       : 'Window fully warm for this engine version.',
   });
 }
