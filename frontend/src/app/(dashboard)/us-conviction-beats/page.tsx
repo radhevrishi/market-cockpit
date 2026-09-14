@@ -38,6 +38,7 @@ import { fmtUsd, fmtPct } from '@/lib/us-earnings-core';
 // src/components/us-earnings-card.tsx for why it is not two.
 import {
   UsEarningsCard, Chip, QuarterBasisBadge, rule40Title, QUADRANT_META, quadrantTitle,
+  setAllAiSummaries, useAiSummaryQueue,
   type Rule40Like,
 } from '@/components/us-earnings-card';
 import { buildTvExport } from '@/lib/us-tradingview';
@@ -370,6 +371,8 @@ export default function UsConvictionBeatsPage() {
   // TradingView copy exports, so what you open is what you copy.
   const visibleKeys = useMemo(() => filtered.map(cardKey), [filtered]);
   const allOpen = visibleKeys.length > 0 && visibleKeys.every((k) => openCards.has(k));
+  const [allAiOpen, setAllAiOpen] = useState(false);
+  const aiLeft = useAiSummaryQueue();
   const toggleAll = () => {
     setOpenCards((prev) => {
       const n = new Set(prev);
@@ -642,6 +645,19 @@ export default function UsConvictionBeatsPage() {
           <button onClick={toggleAll} style={chip(allOpen)} aria-expanded={allOpen}
             title="Open the full write-up — guidance, results, margins, balance sheet — on every card that passes the filters">
             {allOpen ? '⊟ Collapse all' : `⊞ Expand all ${filtered.length}`}
+          </button>
+        )}
+        {/* The same control the Opportunities tab has: every summary on the
+            bench at once, written from each company's own press release and
+            cached with the filing, worked through a few at a time. */}
+        {view === 'cards' && filtered.length > 0 && (
+          <button
+            onClick={() => { const next = !allAiOpen; setAllAiOpen(next); setAllAiSummaries(next); }}
+            style={chip(allAiOpen)} aria-expanded={allAiOpen}
+            title="Open the AI summary on every bench card — each written from that company's own press release, nothing else">
+            {aiLeft > 0
+              ? `✨ Reading releases… ${aiLeft} left`
+              : allAiOpen ? '✨ Hide AI summaries' : `✨ AI summary all ${filtered.length}`}
           </button>
         )}
         <button onClick={exportCsv} style={chip(false)}>📊 CSV</button>

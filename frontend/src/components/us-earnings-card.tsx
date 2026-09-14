@@ -23,7 +23,7 @@
 
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText } from 'lucide-react';
 import {
   fmtUsd, fmtPx, fmtPct, SWING_LABEL, SWING_GOOD,
@@ -915,11 +915,66 @@ export const EST_ABSENT_NOTE: Record<string, string> = {
 
 interface FilingDocs { cik: number; accession: string; index_url: string }
 
+// ── "OPEN EVERY SUMMARY", WITHOUT FIRING SEVENTY MODEL CALLS AT ONCE ───────
+//
+// One card at a time is the right default — a page of sixty cards must never
+// fire sixty calls because it rendered. But reading a whole window means
+// clicking sixty buttons, so the page gets one control that opens them all.
+//
+// It cannot simply let every card fetch: seventy simultaneous requests would
+// hit the model API's rate limit and most of them would come back as errors
+// that look like broken summaries. So the cards share ONE queue with a small
+// concurrency, and the button reports what is left. A filed quarter's summary
+// is cached for a year, so the second pass over the same window is free and
+// nearly instant — the queue only ever pays for the quarters never read.
+const AI_ALL_EVENT = 'mc:us-ai-summary-all';
+const AI_CONCURRENCY = 3;
+const aiQueue: Array<() => Promise<void>> = [];
+let aiRunning = 0;
+let aiPendingCount = 0;
+const aiProgress = new Set<(left: number) => void>();
+function aiEmitProgress() { aiProgress.forEach((f) => f(aiPendingCount)); }
+function aiPump() {
+  while (aiRunning < AI_CONCURRENCY && aiQueue.length) {
+    const job = aiQueue.shift()!;
+    aiRunning++;
+    void job().catch(() => {}).finally(() => {
+      aiRunning--; aiPendingCount = Math.max(0, aiPendingCount - 1);
+      aiEmitProgress(); aiPump();
+    });
+  }
+  if (!aiQueue.length && !aiRunning && aiPendingCount !== 0) { aiPendingCount = 0; aiEmitProgress(); }
+}
+function aiEnqueue(job: () => Promise<void>) {
+  aiQueue.push(job); aiPendingCount++; aiEmitProgress(); aiPump();
+}
+/** How many summaries are still queued or in flight. The page's button reads
+ *  this so "Summarise all" can say how far along it is. */
+export function useAiSummaryQueue(): number {
+  const [left, setLeft] = useState(aiPendingCount);
+  useEffect(() => {
+    const f = (n: number) => setLeft(n);
+    aiProgress.add(f);
+    return () => { aiProgress.delete(f); };
+  }, []);
+  return left;
+}
+/** Open (or close) every AI summary on the page. Opening queues the ones that
+ *  have not been read yet; closing cancels nothing already in flight — the
+ *  answer is kept, so re-opening is instant. */
+export function setAllAiSummaries(open: boolean) {
+  if (typeof window === 'undefined') return;
+  if (!open) { aiQueue.length = 0; aiPendingCount = aiRunning; aiEmitProgress(); }
+  window.dispatchEvent(new CustomEvent(AI_ALL_EVENT, { detail: { open } }));
+}
+
 function AiSummary({ docs, ticker, releaseUrl }: {
   docs: FilingDocs | null | undefined; ticker: string; releaseUrl: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const stateRef = useRef<'idle' | 'loading' | 'done' | 'error'>('idle');
+  useEffect(() => { stateRef.current = state; }, [state]);
   const [text, setText] = useState<string>('');
   const [err, setErr] = useState<string>('');
   const [files, setFiles] = useState<Array<{ name: string; url: string; type: string; description: string }>>([]);
@@ -951,6 +1006,26 @@ function AiSummary({ docs, ticker, releaseUrl }: {
     setOpen(next);
     if (next && state === 'idle') void load();
   };
+
+  // The page's "Summarise all" control. A card that has already been read just
+  // opens; one that has not joins the shared queue, so the window fills in a
+  // few at a time instead of all at once.
+  useEffect(() => {
+    const onAll = (ev: Event) => {
+      const want = !!(ev as CustomEvent).detail?.open;
+      setOpen(want);
+      // Only a card that has never been read joins the queue. Enqueuing from a
+      // ref rather than from inside a state updater keeps the side effect out
+      // of render, where React may run it twice.
+      if (want && stateRef.current === 'idle') {
+        stateRef.current = 'loading';
+        setState('loading');
+        aiEnqueue(load);
+      }
+    };
+    window.addEventListener(AI_ALL_EVENT, onAll as EventListener);
+    return () => window.removeEventListener(AI_ALL_EVENT, onAll as EventListener);
+  }, [load]);
 
   const idxUrl = docs?.index_url || null;
   const transcript = files.find((f) => /transcript|prepared remarks/i.test(`${f.description} ${f.name}`));

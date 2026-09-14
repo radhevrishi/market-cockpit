@@ -31,7 +31,7 @@ import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
 // The card itself — shared with /us-conviction-beats so the two tabs can never
 // drift apart again. See src/components/us-earnings-card.tsx.
-import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num } from '@/components/us-earnings-card';
+import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllAiSummaries, useAiSummaryQueue } from '@/components/us-earnings-card';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
@@ -544,6 +544,10 @@ export default function UsEarningsOpportunitiesPage() {
       return n;
     });
   };
+  // The AI summaries are a separate switch from the write-up panels: a reader
+  // scanning a window usually wants one or the other, not both at once.
+  const [allAiOpen, setAllAiOpen] = useState(false);
+  const aiLeft = useAiSummaryQueue();
 
   const counts = useMemo(() => {
     const c = {
@@ -669,6 +673,22 @@ export default function UsEarningsOpportunitiesPage() {
           <button onClick={toggleAllCards} style={btn(allCardsOpen)} aria-expanded={allCardsOpen}
             title="Open the full write-up on every card that passes the filters">
             {allCardsOpen ? '⊟ Collapse all' : `⊞ Expand all ${shownTotal}`}
+          </button>
+        )}
+        {/* READ THE WHOLE WINDOW, NOT ONE CARD AT A TIME.
+            Each summary is written from that company's own press release and
+            cached with the filing for a year, so a window already read opens
+            instantly and costs nothing; a window never read is worked through
+            a few at a time (the button counts down) rather than firing one
+            request per card at once, which the model API would refuse. */}
+        {viewMode === 'GRADED' && shownTotal > 0 && (
+          <button
+            onClick={() => { const next = !allAiOpen; setAllAiOpen(next); setAllAiSummaries(next); }}
+            style={btn(allAiOpen)} aria-expanded={allAiOpen}
+            title="Open the AI summary on every card that passes the filters — each one written from that company's own press release, nothing else">
+            {aiLeft > 0
+              ? `✨ Reading releases… ${aiLeft} left`
+              : allAiOpen ? '✨ Hide AI summaries' : `✨ AI summary all ${shownTotal}`}
           </button>
         )}
         <button onClick={exportCsv} style={btn()}>📊 CSV</button>
