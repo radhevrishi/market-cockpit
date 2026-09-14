@@ -40,6 +40,13 @@ export interface OneOff {
   adjusted_basis: boolean;
   /** Ex-item EPS the company itself stated, when it did ("excluding …, EPS was $2.37"). */
   ex_eps_stated: number | null;
+  /** The PRIOR-YEAR figure on the same ex-item basis, when the same sentence
+   *  gives it ("…, or $2.37 per share, vs. $110 million, or $1.72 per share for
+   *  the second quarter of Fiscal 2025"). Without it the growth rate mixes two
+   *  bases: $2.37 against the headline prior $1.59 is +49%, and against the
+   *  company's own comparable $1.72 it is +38% — the number the company and
+   *  every feed printed. */
+  ex_eps_prev_stated: number | null;
   /** The sentence, trimmed, so the card can quote the company rather than us. */
   quote: string;
 }
@@ -49,7 +56,13 @@ export interface OneOff {
 const DISCRETE = /\b(one[- ]time|non[- ]?recurring|discrete|unusual|refunds?|recover(?:y|ies|ed)|drawbacks?|settlements?|gain on (?:the )?sale|insurance|reversals?|releases? of|true[- ]ups?|catch[- ]up|out[- ]of[- ]period|prior[- ]period|retroactive|cumulative|tax benefits?|valuation allowance|litigation|legal|impairments?|restructuring|severance|write[- ]?(?:offs?|downs?)|credits?|windfall)\b/i;
 
 const EARNINGS_WORD = /\b(EPS|earnings per share|net income|net earnings|diluted earnings|adjusted earnings|income per share|earnings)\b/i;
-const INCLUDES = /\b(includ(?:es|ed|ing)|inclusive of|reflect(?:s|ed|ing)|benefit(?:ed|ted|s)? from|driven by|boosted by|helped by|aided by)\b/i;
+// The verbs that tie an item TO a reported figure. "Contributed" belongs here
+// as much as "includes": Advance Auto Parts wrote "Tariff refunds contributed
+// approximately $0.31 to second quarter 2026 adjusted diluted earnings per
+// share" — the same disclosure Burlington made with "including", and without
+// this verb the $0.31 was read out of the release and then discarded as not
+// attached to anything, leaving a $0.23 "beat" that was entirely the refund.
+const INCLUDES = /\b(includ(?:es|ed|ing)|inclusive of|reflect(?:s|ed|ing)|benefit(?:ed|ted|s)? from|driven by|boosted by|helped by|aided by|contribut(?:ed|es|ing|ion)|added|accounted for|represent(?:ed|s)|attributable to)\b/i;
 const BENEFIT = /\b(benefits?|gains?|tailwinds?|favou?rable|positive|credits?|contribut(?:ed|ion))\b/gi;
 const CHARGE = /\b(charges?|expenses?|costs?|headwinds?|unfavou?rable|negative|losses?|impairments?)\b/gi;
 const PER_SHARE_SUBJECT = /\b(EPS|per (?:diluted |basic )?share|earnings per share|income per share)\b/i;
@@ -128,6 +141,18 @@ function perShareAfter(s: string, from: number): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** The per-share figure in the COMPARISON tail of the same sentence — the
+ *  prior year on the same ex-item basis. Refused when it equals the current
+ *  figure (a sentence that repeats one number is not giving two). */
+function priorPerShareAfter(s: string, current: number): number | null {
+  const parts = s.split(/\b(?:vs\.?|versus|compared (?:with|to))\b/i);
+  if (parts.length < 2) return null;
+  const m = parts[1].match(/\$\s?(\d+\.\d{2})\s*(?:per\s+(?:diluted\s+)?(?:common\s+)?share|\/\s?share)/i);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return (Number.isFinite(v) && Math.abs(v - current) > 0.005) ? v : null;
+}
+
 /**
  * Extract every quantified one-off the release states around an earnings
  * figure of the reported quarter. Deduplicated by label; the first (usually
@@ -158,7 +183,8 @@ export function oneOffsFromReleaseText(text: string): OneOff[] {
       const ex = perShareAfter(s, (exm.index ?? 0) + exm[0].length) ?? perShareAfter(s, 0);
       if (ex != null && !seen.has(label)) {
         seen.add(label);
-        out.push({ label, per_share: null, kind: 'unknown', included: true, adjusted_basis: true, ex_eps_stated: ex, quote: s });
+        out.push({ label, per_share: null, kind: 'unknown', included: true, adjusted_basis: true,
+          ex_eps_stated: ex, ex_eps_prev_stated: priorPerShareAfter(s, ex), quote: s });
       }
       continue;
     }
@@ -204,6 +230,7 @@ export function oneOffsFromReleaseText(text: string): OneOff[] {
       included: INCLUDES.test(s) || /\bimpact\b/i.test(s),
       adjusted_basis: adjustedBasis,
       ex_eps_stated: null,
+      ex_eps_prev_stated: null,
       quote: s,
     });
   }
@@ -227,12 +254,14 @@ export function oneOffsFromReleaseHtml(html: string): OneOff[] {
  * applies — an unsigned "impact" is surfaced as a caveat but never
  * arithmetically applied.
  */
-export function epsExOneOffs(adjEps: number | null, items: OneOff[], gaapEps?: number | null): { eps: number; total: number } | null {
+export function epsExOneOffs(adjEps: number | null, items: OneOff[], gaapEps?: number | null): { eps: number; total: number; prev?: number | null } | null {
   if (adjEps == null || !Number.isFinite(adjEps) || !items.length) return null;
   const stated = items.find((o) => o.ex_eps_stated != null);
   if (stated) {
     const total = Math.round((adjEps - stated.ex_eps_stated!) * 100) / 100;
-    return Math.abs(total) >= 0.01 ? { eps: stated.ex_eps_stated!, total } : null;
+    return Math.abs(total) >= 0.01
+      ? { eps: stated.ex_eps_stated!, total, prev: stated.ex_eps_prev_stated }
+      : null;
   }
   const gap = (gaapEps != null && Number.isFinite(gaapEps)) ? Math.abs(gaapEps - adjEps) : null;
   const signed = items.filter((o) => o.included && o.per_share != null && (o.per_share as number) > 0

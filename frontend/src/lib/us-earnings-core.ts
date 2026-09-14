@@ -3088,6 +3088,11 @@ export interface UsGradedRow {
   revenue_prev_musd: number | null;
   net_income_curr_musd: number | null;
   net_income_prev_musd: number | null;
+  /** Operating income in $M, both years. The OPM tile carries the margin; the
+   *  signal row carries the dollars, because "Oper income $134M vs $137M" is
+   *  how the print is read on the tape. */
+  operating_income_curr_musd: number | null;
+  operating_income_prev_musd: number | null;
   eps_curr: number | null;
   eps_prev: number | null;
   eps_derived?: boolean;
@@ -3226,6 +3231,13 @@ export interface UsGradeInput {
   /** One-offs the release itself quantifies INSIDE its adjusted figure
    *  (see `us-one-offs.ts`). `adj_eps_ex_oneoff` is the company's adjusted EPS
    *  with those taken back out; `one_off_total_per_share` is what came out. */
+  /** The company's own NEXT-QUARTER EPS guide, measured two ways. Negative
+   *  `guide_next_vs_street_pct` is a guide below consensus; low
+   *  `guide_next_implied_growth_pct` is the growth the guide itself implies
+   *  against the quarter it will be compared to. Both are management's own
+   *  numbers — neither is a forecast of ours. */
+  guide_next_vs_street_pct?: number | null;
+  guide_next_implied_growth_pct?: number | null;
   one_offs?: import('./us-one-offs').OneOff[] | null;
   adj_eps_ex_oneoff?: number | null;
   one_off_total_per_share?: number | null;
@@ -3659,6 +3671,38 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   //    when the tape is also against the print. A charge (negative total)
   //    works the other way — core earnings were better than shown — and only
   //    earns the caveat.
+  // 5a. THE GUIDE IS THE PART OF THE FILING THAT IS ABOUT THE FUTURE.
+  //
+  // A quarter that beat and a next quarter guided below what the street is
+  // carrying are two facts, and the second is the one the tape trades:
+  // Burlington beat, raised the full year by passing the beat through, guided
+  // Q3 adjusted EPS to $1.60–$1.70 against $1.80 a year earlier — and fell 13%.
+  // The grade used to see only the beat and the FY raise.
+  //
+  // Two separate tests, because they fail independently:
+  //   • below the street  — a consensus for that exact period exists and the
+  //     guide midpoint sits under it. A ceiling, sized by how far under.
+  //   • growth stops      — no consensus needed: the guide midpoint against
+  //     what this filer reported in the quarter the guide will be compared to.
+  //     A company that just grew 30% and guides the next quarter to ~0 is
+  //     telling you the quarter was the peak, in its own numbers.
+  // Both are FILING caps: they come from management's own outlook, not the tape.
+  {
+    const vsStreet = input.guide_next_vs_street_pct ?? null;
+    const implied = input.guide_next_implied_growth_pct ?? null;
+    if (vsStreet != null && vsStreet <= -3) {
+      capTier(vsStreet <= -10 ? 'MIXED' : 'STRONG',
+        `next-quarter guide ${Math.abs(Math.round(vsStreet))}% below street`);
+    }
+    // Reported growth on the basis the grade actually used, so a one-off that
+    // was taken out above cannot make the deceleration look worse than it is.
+    const reportedGrowth = epsY;
+    if (implied != null && implied < 5 && reportedGrowth != null && reportedGrowth >= 25) {
+      capTier(implied < 0 ? 'MIXED' : 'STRONG',
+        `guide implies ${implied < 0 ? 'a decline' : 'growth stops'} next quarter`);
+    }
+  }
+
   if (oneOffTot != null && oneOffTot > 0 && input.adj_eps_ex_oneoff != null && oneOffShare != null) {
     const beatAbs = input.consensus_beat_abs ?? null;   // already ex one-off (route)
     const beatPct = input.consensus_beat_pct ?? null;
@@ -3840,6 +3884,8 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     revenue_prev_musd: revP != null ? Math.round(revP / 1e4) / 100 : null,
     net_income_curr_musd: niC != null ? Math.round(niC / 1e4) / 100 : null,
     net_income_prev_musd: niP != null ? Math.round(niP / 1e4) / 100 : null,
+    operating_income_curr_musd: f.operating_income != null ? Math.round(f.operating_income / 1e4) / 100 : null,
+    operating_income_prev_musd: f.operating_income_prev != null ? Math.round(f.operating_income_prev / 1e4) / 100 : null,
     eps_curr: f.eps, eps_prev: f.eps_prev, eps_derived: !!f.eps_derived,
     eps_compare_blocked: perShareBlocked || undefined,
     cfo_curr_musd: f.cfo != null ? Math.round(f.cfo / 1e4) / 100 : null,

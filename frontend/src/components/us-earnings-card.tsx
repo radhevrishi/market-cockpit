@@ -405,6 +405,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         </div>
       )}
 
+      <SignalRow signals={(r as any).signals} />
+
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
         <span>Since <b style={{ color: r.move_pct == null ? 'var(--mc-text-3)' : r.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.move_pct, 1)}</b></span>
@@ -841,6 +843,64 @@ export const EST_ABSENT_NOTE: Record<string, string> = {
   'ambiguous-feed': 'The estimate feed carries two materially different numbers for this period, so neither can be used.',
   'implausible': 'The only candidate estimate is not the same quantity as this guide — a different basis or a different scale — so it is refused rather than shown.',
 };
+
+/**
+ * THE FOUR LINES A PRINT IS READ BY — revenue, EPS, operating income, net
+ * income — each with a light, in the order an earnings feed puts them.
+ *
+ * The light's MEANING is printed on the line, because the two available
+ * meanings are not interchangeable and conflating them is how a card comes to
+ * imply a consensus that does not exist:
+ *
+ *   "vs est"  a real consensus for this exact period — revenue matched to the
+ *             period end, EPS cleared by the basis guard. Nothing else has one.
+ *   "YoY"     no consensus exists for this line. No free source publishes an
+ *             operating-income or net-income consensus, so those lines carry
+ *             the year-on-year change and say so. A green "(Est. $137M)" beside
+ *             an operating income would be a number we made up, and this engine
+ *             does not print numbers it cannot source.
+ */
+function SignalRow({ signals }: { signals: any[] | null | undefined }) {
+  const list = Array.isArray(signals) ? signals.filter(Boolean) : [];
+  if (!list.length) return null;
+  const DOT: Record<string, string> = { green: '#10B981', amber: '#FACC15', red: '#EF4444' };
+  const fmtVal = (v: number, unit: string) => unit === 'usd_share' ? `$${v.toFixed(2)}` : fmtUsd(v * 1e6);
+  return (
+    <div style={{
+      marginTop: 8, padding: '7px 10px', borderRadius: 6,
+      backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
+      display: 'flex', flexDirection: 'column', gap: 3,
+    }}>
+      {list.map((x) => (
+        <div key={x.label} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11, color: 'var(--mc-text-2)' }}>
+          <span style={{
+            width: 7, height: 7, borderRadius: 999, flex: '0 0 auto',
+            backgroundColor: x.light ? DOT[x.light] : 'var(--mc-text-4)',
+          }} />
+          <span style={{ minWidth: 86, color: 'var(--mc-text-3)' }}>{x.label}</span>
+          <b style={{ color: 'var(--mc-text-0)' }}>{fmtVal(x.value, x.unit)}</b>
+          {x.basis === 'est' && x.est != null && (
+            <span>vs est <b>{fmtVal(x.est, x.unit)}</b>
+              {x.surprise_pct != null && (
+                <b style={{ color: x.surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
+                  {' '}{x.surprise_pct >= 0 ? '+' : ''}{x.surprise_pct.toFixed(1)}%
+                </b>
+              )}
+            </span>
+          )}
+          {x.yoy_pct != null && (
+            <span style={{ color: 'var(--mc-text-3)' }}>
+              {x.yoy_pct >= 0 ? '+' : ''}{x.yoy_pct.toFixed(0)}% YoY
+            </span>
+          )}
+          {x.basis !== 'est' && (
+            <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>· no street estimate published for this line — light reads YoY</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** Re-exported so callers of this module keep their import. The definition now
  *  lives beside the own-guide verdict it exists to serve — see

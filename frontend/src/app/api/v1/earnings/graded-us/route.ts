@@ -534,6 +534,14 @@ function tileRefs(
  * quarter's revenue. So it is used only when its end date really is this
  * quarter's, and is simply absent for every filer whose feed has moved on.
  */
+/** The midpoint of a guided range — the number management put its name to. */
+function figMidOf(f: { low?: number | null; high?: number | null }): number | null {
+  const lo = typeof f.low === 'number' ? f.low : null;
+  const hi = typeof f.high === 'number' ? f.high : null;
+  if (lo != null && hi != null) return (lo + hi) / 2;
+  return lo ?? hi;
+}
+
 function streetRevenueFor(fwd: ForwardEstimate[], periodEnd: string | null): number | null {
   if (!periodEnd || !fwd.length) return null;
   const hits = fwd.filter((f) => f.end_date && f.revenue != null
@@ -950,8 +958,57 @@ export async function GET(req: Request) {
       // reads. Nothing here is computed when the release quantifies nothing.
       const exOne = epsExOneOffs(adjNow, oneOffs, gaapNow);
       const adjForBeat = exOne ? exOne.eps : adjNow;
+      // The prior year on the SAME ex-item basis, when the company stated it in
+      // the same sentence. Burlington: "$2.37 per share, vs. … $1.72 per share
+      // for the second quarter of Fiscal 2025" — +38%, which is the growth rate
+      // the company and every feed printed. Against the headline prior ($1.59)
+      // the same $2.37 reads +49%, a rate nobody published, because it measures
+      // an ex-refund quarter against a with-everything base.
+      const adjPrevForGrowth = (exOne && exOne.prev != null) ? exOne.prev : adjPrev;
       const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
       const fyEnding = fiscalYearEndingAt(p.facts, p.fundamentals.q_end);
+      // ── THE FORWARD GUIDE IS PART OF THE GRADE, NOT A CHIP BESIDE IT ─────
+      //
+      // Burlington raised its full-year outlook — by passing through the beat
+      // it had just reported — and guided the NEXT quarter's adjusted EPS to
+      // $1.60–$1.70 against $1.80 in the year-ago quarter and a street number
+      // above the range. The card carried both facts and graded only the first,
+      // so a print whose own guidance says the growth stops read STRONG with a
+      // green "outlook raised" chip. The quarter is the past; the guide is the
+      // part of the filing that is about the future, and it is management's own
+      // number, not a forecast of ours.
+      //
+      // Two measurements, both from figures already on the card:
+      //   • vs the street — only where a consensus for that exact period exists
+      //   • implied growth — the guide midpoint against what this same filer
+      //     reported in the quarter the guide will be compared to
+      const guideFigs = withEstimates(g.figures || [], forwards[pi] || [], {
+        period_end: p.fundamentals.q_end,
+        fiscal_q: g.fiscal_q ?? fq.q ?? null,
+        fiscal_fy: g.fiscal_fy ?? fq.fy ?? null,
+      });
+      const nextQEps = guideFigs.find((f: any) => f && f.metric === 'eps' && f.period === 'quarter'
+        && f.unit === 'usd_share' && figMidOf(f) != null);
+      const guideMid = nextQEps ? figMidOf(nextQEps) : null;
+      const guideVsStreet = (guideMid != null && (nextQEps as any).est != null && (nextQEps as any).est !== 0)
+        ? ((guideMid - (nextQEps as any).est) / Math.abs((nextQEps as any).est)) * 100 : null;
+      // The year-ago base for the quarter being guided: one year before the
+      // quarter AFTER the one just reported, matched on the filer's own period
+      // ends so a 52/53-week calendar cannot shift it onto the wrong quarter.
+      const guideImpliedGrowth = (() => {
+        if (guideMid == null || !gaapSeries || !p.fundamentals.q_end) return null;
+        const target = new Date(Date.parse(p.fundamentals.q_end + 'T00:00:00Z') - 274 * 86400000)
+          .toISOString().slice(0, 10);
+        let best = -1, bestD = 1e9;
+        for (let k = 0; k < gaapSeries.ends.length; k++) {
+          const d = Math.abs(daysBetween(gaapSeries.ends[k], target));
+          if (d < bestD) { bestD = d; best = k; }
+        }
+        if (best < 0 || bestD > 25) return null;
+        const base = gaapSeries.eps[best];
+        if (base == null || base <= 0) return null;
+        return (guideMid / base - 1) * 100;
+      })();
       const row = gradeUsRow({
         ticker: p.f.ticker!,
         company: p.f.company,
@@ -969,8 +1026,7 @@ export async function GET(req: Request) {
         },
         shares_outstanding: p.shares,
         adj_eps: adjNow,
-        adj_eps_prev: adjPrev,
-        positive_guidance: g.label === 'RAISED',
+        adj_eps_prev: adjPrevForGrowth,
         // The beat has to reach the GRADE, not just the chip beside it. It used
         // to be computed after gradeUsRow returned, which is why BJ's Wholesale
         // — a 17% beat with a raised guide — was graded as though neither had
@@ -985,6 +1041,11 @@ export async function GET(req: Request) {
         // the grade through the cents door.
         consensus_beat_abs: (adjForBeat != null && estForSurprise != null)
           ? adjForBeat - estForSurprise : null,
+        // A full-year raise that passes a beat through, alongside a next-quarter
+        // guide below the street, is not a raise for grading purposes.
+        positive_guidance: g.label === 'RAISED' && !(guideVsStreet != null && guideVsStreet <= -3),
+        guide_next_vs_street_pct: guideVsStreet,
+        guide_next_implied_growth_pct: guideImpliedGrowth,
         one_offs: oneOffs,
         adj_eps_ex_oneoff: exOne ? exOne.eps : null,
         one_off_total_per_share: exOne ? exOne.total : null,
@@ -1059,7 +1120,24 @@ export async function GET(req: Request) {
         // non-GAAP construction, not this quarter's free cash flow, and putting
         // it under a "FREE CASH FLOW" tile makes the company look cash-positive
         // when it was not.
-        return !(m.value > cfo + Math.abs(cfo) * 0.05);
+        if (m.value > cfo + Math.abs(cfo) * 0.05) return false;
+        // A RELEASE FIGURE THAT DISAGREES WITH OUR OWN IS MEASURING SOMETHING
+        // ELSE. Advance Auto Parts states "Free cash flow $120" in its release
+        // — for the TWENTY-EIGHT WEEKS ended 18 July 2026, reconciled in the
+        // release from $252m of operating cash less $132m of capex. This
+        // quarter's free cash flow, from the same filing's XBRL, is $195m. The
+        // tile carried the $120m under a quarterly heading and labelled it "as
+        // reported", which is how a year-to-date number ends up being read as
+        // three months. Neither figure is wrong; they are different periods,
+        // and only one of them belongs on a card about this quarter. Where the
+        // two disagree by more than a rounding margin, the release figure is
+        // not this quarter's and is dropped — our own CFO − capex, both read
+        // from the filing for this period, stands.
+        const ourFcf = p.fundamentals.cfo != null && p.fundamentals.capex != null
+          ? p.fundamentals.cfo - p.fundamentals.capex : null;
+        if (ourFcf != null && Math.abs(ourFcf) > 1e6
+            && Math.abs(m.value - ourFcf) > Math.abs(ourFcf) * 0.15) return false;
+        return true;
       });
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
@@ -1089,6 +1167,18 @@ export async function GET(req: Request) {
           fcf_margin_pct: (row.fcf_curr_musd != null && row.revenue_curr_musd)
             ? (row.fcf_curr_musd / row.revenue_curr_musd) * 100 : null,
           cfo_to_ni: row.cfo_to_pat_ratio ?? null,
+          // The trailing YEAR of free cash flow, from the filer's own quarterly
+          // series. Burlington converted 1.48× in Q2 and is free-cash-flow
+          // negative across the half on $875M of planned store capex; scoring
+          // the quarter 20/20 for cash quality read one period and ignored the
+          // other. Null (and so no cap) unless four quarters are on file.
+          fcf_ttm_musd: (() => {
+            const f = ser?.fcf;
+            if (!f || f.length < 4) return null;
+            const last4 = f.slice(-4);
+            if (last4.some((x) => x == null)) return null;
+            return (last4 as number[]).reduce((n, x) => n + x, 0) / 1e6;
+          })(),
           opm_pct: row.opm_pct ?? null,
           profitable: row.net_income_curr_musd != null ? row.net_income_curr_musd > 0 : null,
           sales_yoy_pct: row.sales_yoy_pct,
@@ -1244,6 +1334,63 @@ export async function GET(req: Request) {
         (row as any).eps_estimate = sLatest.eps_estimate;
         (row as any).eps_basis_note = 'no adjusted EPS in the release; the consensus estimate is on an adjusted basis, so no surprise is shown';
       }
+      // ── THE SIGNAL ROW — revenue, EPS, operating income, net income ──────
+      //
+      // The four lines every earnings feed leads with, in one block, each with
+      // a light. What a light MEANS is stated on the line itself, because the
+      // two possible meanings are not interchangeable:
+      //
+      //   • vs est — a real consensus figure exists for THIS period, bound to
+      //     it by date (revenue) or by the basis guard (EPS). Only revenue and
+      //     EPS ever have one: no free source publishes an operating-income or
+      //     net-income consensus, so a "(Est. $137M)" on those lines would be a
+      //     number we invented. We do not print one.
+      //   • YoY — no consensus; the light reads the year-on-year change, and
+      //     the line says so.
+      //
+      // Thresholds differ for the same reason. A 2% miss against the street is
+      // a red print; 2% growth against last year is not a green one.
+      {
+        const sig: any[] = [];
+        const light = (surprisePct: number | null, yoy: number | null): 'green' | 'amber' | 'red' | null => {
+          if (surprisePct != null) return surprisePct >= 2 ? 'green' : surprisePct <= -2 ? 'red' : 'amber';
+          if (yoy != null) return yoy >= 10 ? 'green' : yoy <= -5 ? 'red' : 'amber';
+          return null;
+        };
+        const pctOf = (a: number | null, b: number | null): number | null =>
+          (a != null && b != null && b !== 0) ? ((a - b) / Math.abs(b)) * 100 : null;
+        const push = (label: string, value: number | null, unit: 'musd' | 'usd_share',
+                      prev: number | null, est: number | null) => {
+          if (value == null) return;
+          const yoy = pctOf(value, prev);
+          const surprise = (est != null && est !== 0) ? ((value - est) / Math.abs(est)) * 100 : null;
+          sig.push({
+            label, value, unit, prev, yoy_pct: yoy,
+            est, surprise_pct: surprise,
+            basis: est != null ? 'est' : 'yoy',
+            light: light(surprise, yoy),
+          });
+        };
+        // Revenue: the street figure only when Yahoo's trend still carries an
+        // entry whose period END is this quarter (±20 days) — the same binding
+        // the guidance tiles use, and it refuses an ambiguous match outright.
+        const revEst = streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end);
+        push('Revenue', row.revenue_curr_musd, 'musd', row.revenue_prev_musd,
+          revEst != null ? revEst / 1e6 : null);
+        // EPS: the adjusted basis when the release states one, measured on the
+        // core figure where a one-off sits inside it, against the estimate the
+        // basis guard cleared. Otherwise GAAP, with no estimate at all.
+        if (adjNow != null) {
+          push('Adj. EPS', adjForBeat ?? adjNow, 'usd_share', adjPrev, estForSurprise);
+        } else {
+          push('EPS', row.eps_curr, 'usd_share', row.eps_prev, null);
+        }
+        push('Oper income', (row as any).operating_income_curr_musd, 'musd',
+          (row as any).operating_income_prev_musd, null);
+        push('Net income', row.net_income_curr_musd, 'musd', row.net_income_prev_musd, null);
+        if (sig.length) (row as any).signals = sig;
+      }
+
       // THE NARRATIVE IS REBUILT FROM THE FINAL CAVEAT LIST.
       //
       // `gradeUsRow` composed the sentence before this loop attached the tags

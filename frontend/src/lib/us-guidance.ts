@@ -146,6 +146,19 @@ function classify(sentences: string[]): { label: GuidanceLabel | null; score: nu
   if (withdrawn && !raised) { label = 'WITHDRAWN'; score = -0.8; }
   else if (raised && lowered) { label = raised >= lowered ? 'RAISED' : 'LOWERED'; score = raised >= lowered ? 0.5 : -0.5; }
   else if (raised) { label = 'RAISED'; score = 1; }
+  // A REAFFIRMATION IS A STATEMENT, NOT AN ABSENCE.
+  //
+  // Advance Auto Parts reaffirmed its full-year sales, margin, capex and free
+  // cash flow guidance in its headline AND in the body, and cut its planned
+  // store openings in a sentence further down. One lowering sentence outranked
+  // two reaffirmations, and the card said "Own outlook cut" about a release
+  // whose own headline is "Reaffirms Full Year 2026 … Guidance". When a filer
+  // says both, the count decides, and a tie goes to the explicit reaffirmation
+  // — the lowering sentence is the narrower statement of the two.
+  else if (lowered && maintained) {
+    label = maintained >= lowered ? 'MAINTAINED' : 'LOWERED';
+    score = maintained >= lowered ? 0.1 : -0.7;
+  }
   else if (lowered) { label = 'LOWERED'; score = -1; }
   else if (maintained) { label = 'MAINTAINED'; score = 0.15; }
   else if (provided) { label = 'PROVIDED'; score = 0.25; }

@@ -344,6 +344,14 @@ export interface QuadrantInputs {
   roce_pct?: number | null;          // return on capital employed, %
   fcf_margin_pct?: number | null;    // free cash flow ÷ revenue, %
   cfo_to_ni?: number | null;         // operating cash ÷ net income
+  /** Free cash flow over the trailing four quarters, $M. ONE quarter's cash
+   *  conversion is not a quality: a retailer that collects in Q2 and spends the
+   *  year's store capex in Q1 converts beautifully for one quarter and burns
+   *  cash over the year. Where this is negative the cash-conversion component
+   *  is capped at half, because the annual answer contradicts the quarterly
+   *  one — and full marks for cash quality on a business with negative
+   *  trailing free cash flow is the score reading the wrong period. */
+  fcf_ttm_musd?: number | null;
   opm_pct?: number | null;           // operating margin LEVEL, %
   profitable?: boolean | null;       // net income > 0 this quarter
   // — inflection side —
@@ -395,7 +403,11 @@ export function quadrantScore(i: QuadrantInputs): QuadrantResult {
   // ── QUALITY: returns, cash, margin level, profitability ──
   push(qParts, 'ROCE', band(i.roce_pct, 0, 20, 30), 30);
   push(qParts, 'FCF margin', band(i.fcf_margin_pct, -5, 15, 25), 25);
-  push(qParts, 'cash conversion', band(i.cfo_to_ni, 0.3, 1.2, 20), 20);
+  const convRaw = band(i.cfo_to_ni, 0.3, 1.2, 20);
+  const convCapped = (convRaw != null && i.fcf_ttm_musd != null && i.fcf_ttm_musd < 0)
+    ? Math.min(convRaw, 10) : convRaw;
+  push(qParts, i.fcf_ttm_musd != null && i.fcf_ttm_musd < 0 && convCapped !== convRaw
+    ? 'cash conversion (capped — negative trailing FCF)' : 'cash conversion', convCapped, 20);
   push(qParts, 'operating margin', band(i.opm_pct, 0, 20, 15), 15);
   if (i.profitable != null) qParts.push({ label: 'profitable', points: i.profitable ? 10 : 0, of: 10 });
 
