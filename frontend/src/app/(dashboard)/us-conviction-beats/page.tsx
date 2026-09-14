@@ -27,7 +27,7 @@ import toast from 'react-hot-toast';
 import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-react';
 import {
   getUsConvictionList, removeUsConviction, clearUsConviction, syncUsConviction,
-  restoreUsConvictionBin, readUsConvictionBin,
+  restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError,
   usFilingAgeDays, computeUsNewWindow, usVerdict, usRule40, usRoce,
   passesUsConvictionFilter, usPresetFilters, isUsPresetActive,
   US_FILTER_DEFAULT, US_PRESET,
@@ -118,10 +118,25 @@ export default function UsConvictionBeatsPage() {
   useEffect(() => { try { localStorage.setItem(FILTERS_KEY, JSON.stringify(filters)); } catch {} }, [filters]);
   useEffect(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ sort, dir: sortDir, view })); } catch {} }, [sort, sortDir, view]);
 
+  const [persistError, setPersistError] = useState<string | null>(null);
   const reload = useCallback(() => {
     setEntries(getUsConvictionList());
     setBinCount(readUsConvictionBin().length);
+    setPersistError(usBenchPersistError);
   }, []);
+
+  // The bench lives in IndexedDB (localStorage cannot hold three hundred
+  // graded records — see the note in conviction-beats-us.ts). Hydration is one
+  // async read; until it lands the page shows whatever the localStorage mirror
+  // still holds, so it is never blank, only briefly short. Everything that
+  // writes to the bench waits for this, so a sweep can never start from an
+  // empty map and "rebuild" a book that was merely not loaded yet.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    void hydrateUsConviction().finally(() => { hydratedRef.current = true; if (alive) reload(); });
+    return () => { alive = false; };
+  }, [reload]);
 
   useEffect(() => {
     reload();
@@ -224,6 +239,10 @@ export default function UsConvictionBeatsPage() {
    *  the swept window via explicit-ticker mode (batches of 25). */
   const sweep = useCallback(async (sessions = 30, manual = false, opts: { hard?: boolean; wipe?: boolean; onlyDays?: string[] } = {}) => {
     if (sweeping) return;
+    // NEVER SWEEP BEFORE THE BENCH HAS LOADED. A sweep that starts against an
+    // empty map would add every graded name as new and, on a wipe rebuild,
+    // replace a full book with whatever one pass happened to collect.
+    if (!hydratedRef.current) { try { await hydrateUsConviction(); } catch { /* memory-only */ } hydratedRef.current = true; }
     setSweeping(true);
     setSweepMsg(null);
     // Stamped at the START: a sweep that fails half-way used to leave the stamp
@@ -914,6 +933,14 @@ export default function UsConvictionBeatsPage() {
       })()}
       {sweepMsg && <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 12 }}>{sweepMsg}</div>}
       {backfillMsg && <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 12 }}>⏳ {backfillMsg}</div>}
+      {/* A BENCH THAT CANNOT BE SAVED MUST SAY SO. The whole reason names went
+          missing for a day was a storage failure that was caught and thrown
+          away, so the page looked healthy while losing most of the book. */}
+      {persistError && (
+        <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-caution, #F59E0B)', marginBottom: 12, padding: '8px 12px', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 'var(--mc-radius)' }}>
+          ⚠ {persistError}
+        </div>
+      )}
 
       {entries.length === 0 && (
         <div style={panel()}>

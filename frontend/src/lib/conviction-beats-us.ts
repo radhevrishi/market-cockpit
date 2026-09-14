@@ -648,20 +648,104 @@ function migrateEntry(raw: any): UsConvictionEntry {
   return merged as UsConvictionEntry;
 }
 
+// ═══ WHERE THE BENCH ACTUALLY LIVES  (zzz608) ══════════════════════════════
+//
+// THE BUG THIS FIXES, precisely.
+//
+// A graded bench record is about 13 KB — guidance figures, the guide
+// comparison, the setup factor list, sixteen quarters of series, thirty daily
+// closes. Three hundred names is therefore ~3.8 MB, and localStorage caps the
+// WHOLE ORIGIN at about 5 MB — an origin that also holds the Multibagger
+// uploads, the technicals rows, the India bench and the day caches.
+//
+// So the write threw QuotaExceededError, the escalation ladder below threw at
+// every rung, and the last rung gave up SILENTLY. The sweep had graded all 63
+// sessions correctly and collected 305 names; the disk kept eleven. Pressing
+// "Reload bench" or "Clear + reload" did the same work and hit the same wall,
+// which is exactly what "still missing many companies" looks like from the
+// outside: no error, no warning, just a short bench.
+//
+// A cap you keep hitting is not a tuning problem. IndexedDB has hundreds of
+// megabytes, so the bench lives there now, with an in-memory map as the
+// synchronous surface every caller already expects and localStorage kept only
+// as a best-effort mirror so the first paint after a cold start is not blank.
+// If the mirror does not fit, nothing is lost any more — and the failure is
+// recorded instead of swallowed.
+const IDB_NAME = 'mc-us-bench';
+const IDB_STORE = 'bench';
+const IDB_DOC = 'map';
+
+let _mem: Record<string, UsConvictionEntry> | null = null;
+let _idbBroken = false;
+/** True when the bench could not be persisted anywhere. Surfaced in the UI —
+ *  silent data loss is the one outcome this module must never produce. */
+export let usBenchPersistError: string | null = null;
+
+function idbOpen(): Promise<IDBDatabase | null> {
+  return new Promise((res) => {
+    try {
+      if (typeof indexedDB === 'undefined') return res(null);
+      const rq = indexedDB.open(IDB_NAME, 1);
+      rq.onupgradeneeded = () => { try { rq.result.createObjectStore(IDB_STORE); } catch { /* exists */ } };
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+    } catch { res(null); }
+  });
+}
+
+function migrateMap(o: any): Record<string, UsConvictionEntry> {
+  const out: Record<string, UsConvictionEntry> = {};
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return out;
+  for (const k of Object.keys(o)) {
+    const e = migrateEntry(o[k]);
+    if (e && typeof e === 'object' && typeof e.ticker === 'string') out[k] = e;
+  }
+  return out;
+}
+
+function readLocalBench(): Record<string, UsConvictionEntry> {
+  try {
+    const rawText = localStorage.getItem(LS_KEY);
+    return migrateMap(rawText ? JSON.parse(rawText) : {});
+  } catch { return {}; }
+}
+
+/**
+ * Load the bench from IndexedDB into memory. Call once, early, before a sweep.
+ * Until it resolves, reads fall back to whatever localStorage still holds, so
+ * the page is never blank — it is simply short until the real store arrives.
+ * Whichever side has MORE names wins: that makes the one-way migration off
+ * localStorage automatic and makes it impossible for an empty or truncated
+ * store to overwrite a good one.
+ */
+export async function hydrateUsConviction(): Promise<number> {
+  if (typeof window === 'undefined') return 0;
+  const local = readLocalBench();
+  const db = await idbOpen();
+  if (!db) { _idbBroken = true; _mem = local; return Object.keys(local).length; }
+  const stored: any = await new Promise((res) => {
+    try {
+      const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(IDB_DOC);
+      rq.onsuccess = () => res(rq.result ?? null);
+      rq.onerror = () => res(null);
+    } catch { res(null); }
+  });
+  const fromIdb = migrateMap(stored);
+  _mem = Object.keys(fromIdb).length >= Object.keys(local).length ? fromIdb : local;
+  // First run after the upgrade: the bench is still only in localStorage.
+  if (Object.keys(fromIdb).length < Object.keys(local).length) writeUsConviction(local);
+  emit();
+  return Object.keys(_mem).length;
+}
+
 /** Read the raw map, migrating each record forward in memory. */
 export function readUsConviction(): Record<string, UsConvictionEntry> {
   if (typeof window === 'undefined') return {};
-  try {
-    const rawText = localStorage.getItem(LS_KEY);
-    const o = rawText ? JSON.parse(rawText) : {};
-    if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
-    const out: Record<string, UsConvictionEntry> = {};
-    for (const k of Object.keys(o)) {
-      const e = migrateEntry(o[k]);
-      if (e && typeof e === 'object' && typeof e.ticker === 'string') out[k] = e;
-    }
-    return out;
-  } catch { return {}; }
+  // A shallow copy: callers mutate the map they are handed (delete a demoted
+  // ticker, patch a record) and then write it back, and the in-memory store
+  // must not change under them before that write lands.
+  if (!_mem) _mem = readLocalBench();
+  return { ..._mem };
 }
 
 /**
@@ -696,13 +780,51 @@ function writeUsConviction(map: Record<string, UsConvictionEntry>) {
     const { bench_key, ...rest } = map[k] as any;
     clean[k] = rest;
   }
+  // MEMORY IS THE SOURCE OF TRUTH, and it is updated first and unconditionally
+  // — no storage limit can take names off the bench in front of the user.
+  _mem = clean;
+
+  // IndexedDB is the real store. Hundreds of megabytes, so the whole bench
+  // fits with room to spare.
+  if (!_idbBroken) {
+    void (async () => {
+      const db = await idbOpen();
+      if (!db) { _idbBroken = true; return; }
+      try {
+        await new Promise<void>((res, rej) => {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put(clean, IDB_DOC);
+          tx.oncomplete = () => res();
+          tx.onerror = () => rej(tx.error);
+          tx.onabort = () => rej(tx.error);
+        });
+        usBenchPersistError = null;
+      } catch (e: any) {
+        usBenchPersistError = `The bench could not be saved to this browser's database (${String(e?.name || e)}). It is correct on screen but may be short after a reload.`;
+      }
+    })();
+  }
+
+  // localStorage is now only a MIRROR, so the first paint after a cold start
+  // is not blank while IndexedDB opens. It is allowed to be incomplete: the
+  // freshest MAX_BENCH names are the ones worth having early, and hydrate
+  // replaces them with the full set a moment later. What must never happen
+  // again is a failure here costing the user names — it cannot, because the
+  // real copy is already in memory and on its way to IndexedDB.
   try { localStorage.setItem(LS_KEY, JSON.stringify(clean)); return; } catch { /* full */ }
   try { evictStaleGradedCaches(30); localStorage.setItem(LS_KEY, JSON.stringify(clean)); return; } catch { /* still full */ }
   try { localStorage.setItem(LS_KEY, JSON.stringify(pruneBench(clean, MAX_BENCH))); return; } catch { /* still full */ }
   try {
     evictStaleGradedCaches(0);
     localStorage.setItem(LS_KEY, JSON.stringify(pruneBench(clean, Math.floor(MAX_BENCH * 0.75))));
-  } catch { /* give up: the caller's data is unchanged on disk, never corrupted */ }
+  } catch {
+    // The mirror does not fit. Harmless now — but if IndexedDB is ALSO gone
+    // (private window, blocked site data) the bench really is memory-only and
+    // the user has to be told rather than left to discover it after a reload.
+    if (_idbBroken) {
+      usBenchPersistError = 'This browser is out of storage for the bench and its database is unavailable, so the bench is held in memory only and will be short after a reload.';
+    }
+  }
 }
 
 export function readUsConvictionBin(): UsConvictionEntry[] {
@@ -954,7 +1076,18 @@ export function removeUsConviction(key: string) {
 export function clearUsConviction() {
   if (typeof window === 'undefined') return;
   try { binPush(Object.values(readUsConviction())); } catch {}
+  // Clear every copy, or a "Clear + reload" would be silently undone by
+  // hydrate handing back the old IndexedDB map on the next visit.
+  _mem = {};
   try { localStorage.removeItem(LS_KEY); } catch {}
+  void (async () => {
+    const db = await idbOpen();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(IDB_DOC);
+    } catch { /* nothing stored */ }
+  })();
   emit();
 }
 
