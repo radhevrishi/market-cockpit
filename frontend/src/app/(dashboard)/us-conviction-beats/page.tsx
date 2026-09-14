@@ -220,21 +220,58 @@ export default function UsConvictionBeatsPage() {
       let total = days.length;
       let phase: 'sweep' | 'retry' = 'sweep';
       const failedDays: string[] = [];
+      // ── ASK, DON'T COMPUTE  (zzz606) ──────────────────────────────────────
+      //
+      // This sweep used to request the full grading endpoint — no `cache_only`
+      // — with a four-minute browser timeout, three sessions at a time. Every
+      // part of that was wrong for a heavy session:
+      //
+      //   · three simultaneous full grades in one Node process is the memory
+      //     pressure that was killing the server, so all three died and the
+      //     sweep reported "3 failed" on exactly the days that carry the most
+      //     bench-eligible names;
+      //   · a session that needs five minutes behind SEC's gate cannot finish
+      //     inside a four-minute timeout, so the heaviest days could not be
+      //     swept at all, however many times the button was pressed — which is
+      //     precisely "it takes only a few even when there are lots of
+      //     companies";
+      //   · and the abandoned request left the server grading anyway, so the
+      //     retry pass started the same work over from nothing.
+      //
+      // `cache_only=1` answers in about a second, always: the session if it is
+      // cached, otherwise a note that the server has queued it. Cached days —
+      // which, now that the window stays warm, is nearly all of them — land
+      // instantly; a cold one is polled while the server grades it ONE at a
+      // time, and the counter keeps moving the whole while.
+      const askDay = async (d: string, budgetMs: number): Promise<any | null> => {
+        const started = Date.now();
+        for (;;) {
+          const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1`, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const j = await res.json();
+          // `by_tier` is the only honest test for a graded session: this
+          // payload's `pending` field is `true` while grading and an ARRAY of
+          // filers-without-XBRL when finished, so a truthiness check throws
+          // away every busy day. That bug cost a day on the other page.
+          if (j?.by_tier) return j;
+          if (Date.now() - started > budgetMs) return null;   // still grading — the retry pass picks it up
+          await new Promise((r) => setTimeout(r, 6_000));
+        }
+      };
       const one = async (d: string) => {
         try {
           let p: any = await getCachedDay(d, d >= today);
+          // A day graded by an OLDER engine is not good enough for the bench:
+          // the tier it carries is the verdict of rules that have since been
+          // fixed. The opportunities page already refuses these; this one was
+          // quietly seeding the bench from them.
+          if (p?._stale_engine) p = null;
           if (!p) {
-            const ctrl = new AbortController();
-            // A retry is the slow lane: it runs one session at a time against a
-            // server whose caches are now warm, so it can afford to wait longer
-            // than the parallel pass that just timed out.
-            const timer = setTimeout(() => ctrl.abort(), phase === 'retry' ? 420_000 : 240_000);
-            try {
-              const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1`, { cache: 'no-store', signal: ctrl.signal });
-              if (!res.ok) throw new Error(`HTTP ${res.status}`);
-              p = await res.json();
-              void putCachedDay(d, p);
-            } finally { clearTimeout(timer); }
+            // The retry is the slow lane: one session at a time against a
+            // server whose queue has drained, so it can afford a longer clock.
+            p = await askDay(d, phase === 'retry' ? 420_000 : 150_000);
+            if (!p) throw new Error('still grading on the server');
+            void putCachedDay(d, p);
           }
           const batch: any[] = [];
           for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
