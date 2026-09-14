@@ -148,17 +148,82 @@ export function QuadrantBadge({ r }: { r: UsGradedRow }) {
   );
 }
 
-function Tile({ label, value, sub, color }: { label: string; value: string; sub?: React.ReactNode; color?: string }) {
+// ═══ TILE SIZE FOLLOWS SIGNIFICANCE  (zzz609) ══════════════════════════════
+//
+// Every tile used to be drawn at exactly the same size, which means the card
+// asserts that a +48% revenue line and a 55.6% adjusted gross margin deserve
+// the same share of your attention. They do not, and the cost is real: eight
+// identical boxes have to be READ, one at a time, before the quarter can be
+// judged. A card that is scanned in half a second instead of five is a
+// different instrument.
+//
+// So a tile is drawn at one of three weights, and which one it gets is decided
+// per card by how much the figure actually moved — not by a fixed ranking.
+// The ORDER never changes (revenue, EPS, adjusted EPS, margin, cash), so the
+// eye still knows where to look when comparing one card with the next; only
+// the emphasis moves. Big type is earned by magnitude, and — just as
+// important — a figure that is quietly WRONG earns it too: a cash-conversion
+// ratio under 0.5 or free cash flow that has turned negative is exactly the
+// number that must not be buried in ten-point grey.
+type TileSize = 'lead' | 'normal' | 'compact';
+const TILE_SCALE: Record<TileSize, { pad: string; val: number; lab: number; sub: number }> = {
+  lead:    { pad: '11px 13px', val: 25, lab: 10.5, sub: 10.5 },
+  normal:  { pad: '7px 9px',   val: 15, lab: 10,   sub: 10 },
+  compact: { pad: '5px 8px',   val: 12.5, lab: 8.5, sub: 8.5 },
+};
+/** Relative column width, so a lead tile is physically wider as well as louder. */
+const TILE_FR: Record<TileSize, number> = { lead: 1.55, normal: 1, compact: 0.78 };
+
+function Tile({ label, value, sub, color, size = 'normal' }: {
+  label: string; value: string; sub?: React.ReactNode; color?: string; size?: TileSize;
+}) {
+  const s = TILE_SCALE[size];
+  const lead = size === 'lead';
   return (
     <div style={{
-      backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
-      padding: '7px 9px', minWidth: 0,
+      backgroundColor: lead ? 'var(--mc-bg-2)' : 'var(--mc-bg-1)',
+      border: '1px solid var(--mc-bg-4)',
+      // The accent bar is the cheapest possible "start here": it costs no
+      // vertical space and it is the colour the figure is already carrying.
+      borderLeft: lead ? `3px solid ${color || 'var(--mc-text-1)'}` : '1px solid var(--mc-bg-4)',
+      borderRadius: 6, padding: s.pad, minWidth: 0,
     }}>
-      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 800, color: color || 'var(--mc-text-0)', lineHeight: 1.25 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
+      <div style={{ fontSize: s.lab, color: lead ? 'var(--mc-text-2)' : 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: s.val, fontWeight: lead ? 900 : 800, color: color || 'var(--mc-text-0)', lineHeight: 1.2, letterSpacing: lead ? -0.5 : 0 }}>{value}</div>
+      {sub && <div style={{ fontSize: s.sub, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
     </div>
   );
+}
+
+/**
+ * Turn a list of per-tile importance weights into sizes.
+ *
+ * At most two tiles lead — three "most important" things is none. A lead slot
+ * must be EARNED (`LEAD_FLOOR`): on a quarter where nothing moved much, no
+ * tile is blown up to shout "+1%", and the row simply reads evenly, which is
+ * itself the honest signal. Anything genuinely dull is shrunk so the eye skips
+ * it without having to stop.
+ */
+const LEAD_FLOOR = 28;
+const COMPACT_CEIL = 12;
+function sizesFor(weights: number[], maxLead = 2): TileSize[] {
+  const idx = weights.map((w, i) => [w, i] as const).sort((a, b) => b[0] - a[0]);
+  const out: TileSize[] = weights.map((w) => (w <= COMPACT_CEIL ? 'compact' : 'normal'));
+  let led = 0;
+  for (const [w, i] of idx) {
+    if (led >= maxLead || w < LEAD_FLOOR) break;
+    out[i] = 'lead'; led++;
+  }
+  return out;
+}
+/** Magnitude of a percentage move, damped so a low-base 4,000% does not
+ *  permanently own the card: past 100% the extra is worth progressively less. */
+function moveWeight(pct: number | null | undefined, swing?: SwingKind): number {
+  if (swing) return 55;                       // loss → profit is always a headline
+  const p = num(pct);
+  if (p == null) return 0;
+  const a = Math.abs(p);
+  return a <= 100 ? a : 100 + Math.min(20, (a - 100) / 25);
 }
 
 /** A percentage surprise off a near-zero estimate is noise dressed as signal —
@@ -535,7 +600,10 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   adjEpsCur: number | null; adjEpsPrev: number | null; epsEst: number | null;
   surp: number | null; hasAdjEps: boolean;
 }) {
-  const tiles: React.ReactNode[] = [];
+  // Each tile is pushed with an importance weight; `sizesFor` turns the set
+  // into sizes once every tile is known, so emphasis is decided by the whole
+  // quarter rather than by each figure in isolation.
+  const parts: Array<{ node: (size: TileSize) => React.ReactNode; w: number }> = [];
 
   // ── REVENUE ────────────────────────────────────────────────────────────
   const revNow = num(r.revenue_curr_musd);
@@ -559,7 +627,12 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
       ({ value, color } = swingTile(null, null));
       sub = `${fmtUsdLevel(revPrev)} → ${fmtUsdLevel(revNow)}`;
     }
-    tiles.push(<Tile key="rev" label="REVENUE" value={value} color={color} sub={sub} />);
+    parts.push({
+      node: (size) => <Tile key="rev" label="REVENUE" value={value} color={color} sub={sub} size={size} />,
+      // Revenue carries a floor: it is the line every other figure is a
+      // consequence of, so it is never the tile the eye is taught to skip.
+      w: Math.max(14, moveWeight(r.sales_yoy_pct)),
+    });
   }
 
   // ── EPS · GAAP ─────────────────────────────────────────────────────────
@@ -575,8 +648,8 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   // tiles beside this one are unaffected, which is why they still show.
   const psBlocked = !!(r as any).eps_compare_blocked;
   if (r.eps_curr != null || r.eps_prev != null) {
-    tiles.push(
-      <Tile key="eps" label="EPS · GAAP" {...swingTile(gaapEpsY, r.eps_swing)}
+    parts.push({ w: Math.max(14, moveWeight(gaapEpsY, r.eps_swing)), node: (size) => (
+      <Tile key="eps" label="EPS · GAAP" size={size} {...swingTile(gaapEpsY, r.eps_swing)}
         sub={psBlocked
           ? (r.eps_curr != null
               ? `${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)} · share count changed, no comparable prior`
@@ -584,8 +657,8 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
           : r.eps_prev != null && r.eps_curr != null
           ? `$${r.eps_prev.toFixed(2)} → ${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)}`
           : r.eps_curr != null ? `${r.eps_derived ? '≈' : ''}$${r.eps_curr.toFixed(2)} · no prior base`
-          : `prior $${r.eps_prev!.toFixed(2)} · not tagged this quarter`} />,
-    );
+          : `prior $${r.eps_prev!.toFixed(2)} · not tagged this quarter`} />
+    ) });
   }
 
   // ── EPS · ADJ. ─────────────────────────────────────────────────────────
@@ -603,8 +676,8 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
     // STREET BASIS line, where the one-off is named.
     const coreCur = num((r as any).eps_adj_ex_oneoff);
     const tileCur = coreCur ?? adjEpsCur;
-    tiles.push(
-      <Tile key="epsadj" label={coreCur != null ? 'EPS · ADJ. CORE' : 'EPS · ADJ.'}
+    parts.push({ w: Math.max(14, moveWeight(r.eps_adj_yoy_pct ?? null, r.eps_adj_swing ?? null)), node: (size) => (
+      <Tile key="epsadj" size={size} label={coreCur != null ? 'EPS · ADJ. CORE' : 'EPS · ADJ.'}
         {...swingTile(r.eps_adj_yoy_pct ?? null, r.eps_adj_swing ?? null,
         tileCur != null ? `$${tileCur.toFixed(2)}` : '—')}
         // The same suppression as the STREET BASIS line below the tiles: when
@@ -617,24 +690,33 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
           ? 'no comparable street estimate'
           : epsEst != null && adjEpsCur != null
           ? `vs est $${epsEst.toFixed(2)}${surp != null ? ` · ${surp >= 0 ? '+' : ''}${surp.toFixed(0)}%` : ''}`
-          : 'no prior base'} />,
-    );
+          : 'no prior base'} />
+    ) });
   }
 
   // ── OPM ────────────────────────────────────────────────────────────────
   if (r.opm_pct != null || r.opm_prev_pct != null) {
-    tiles.push(
-      <Tile key="opm" label="OPM" value={r.opm_pct != null ? `${r.opm_pct.toFixed(1)}%` : 'Not tagged'}
+    // A margin moves in percentage POINTS, and a point is a much bigger event
+    // than a point of growth — six points of operating margin is the whole
+    // story of a quarter. Scaled accordingly rather than compared raw.
+    parts.push({ w: opmD == null ? 6 : Math.min(70, Math.abs(opmD) * 7), node: (size) => (
+      <Tile key="opm" label="OPM" size={size} value={r.opm_pct != null ? `${r.opm_pct.toFixed(1)}%` : 'Not tagged'}
         color={r.opm_pct == null ? 'var(--mc-text-3)' : opmD == null ? undefined : opmD >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
         sub={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp YoY`
-          : r.opm_prev_pct != null ? `prior ${r.opm_prev_pct.toFixed(1)}%` : 'no prior margin'} />,
-    );
+          : r.opm_prev_pct != null ? `prior ${r.opm_prev_pct.toFixed(1)}%` : 'no prior margin'} />
+    ) });
   }
 
   // ── CFO / NI ───────────────────────────────────────────────────────────
   if (r.cfo_to_pat_ratio != null || r.cfo_curr_musd != null) {
-    tiles.push(
-      <Tile key="cfo" label="CFO/NI" value={r.cfo_to_pat_ratio != null ? r.cfo_to_pat_ratio.toFixed(2) : '—'}
+    // CASH CONVERSION IS ONLY INTERESTING WHEN IT IS WRONG. A ratio near 1 is
+    // what a healthy business does and deserves no emphasis; one below 0.5 says
+    // the profit did not arrive as cash, and that is the single figure most
+    // worth catching before anything else on the card is believed.
+    const cr = r.cfo_to_pat_ratio;
+    const cfoW = cr == null ? 5 : cr < 0.5 ? 60 : cr < 0.8 ? 26 : cr >= 2.5 ? 22 : 7;
+    parts.push({ w: cfoW, node: (size) => (
+      <Tile key="cfo" label="CFO/NI" size={size} value={r.cfo_to_pat_ratio != null ? r.cfo_to_pat_ratio.toFixed(2) : '—'}
         color={r.cfo_to_pat_ratio == null ? undefined : r.cfo_to_pat_ratio >= 1 ? 'var(--mc-bullish)' : r.cfo_to_pat_ratio >= 0.5 ? undefined : 'var(--mc-bearish)'}
         sub={r.cfo_curr_musd != null
           ? `CFO ${fmtUsdLevel(r.cfo_curr_musd)}${(() => {
@@ -643,16 +725,19 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
               // quarter but the first is a subtraction this engine performed.
               return m && m[1] !== '1' ? ' · derived' : '';
             })()}`
-          : 'net income not comparable'} />,
-    );
+          : 'net income not comparable'} />
+    ) });
   }
 
-  if (!tiles.length) return null;
+  if (!parts.length) return null;
   // The column count follows what actually rendered, so a card with three
-  // tiles shows three full-width tiles rather than three tiles and two holes.
+  // tiles shows three full-width tiles rather than three tiles and two holes;
+  // the WIDTHS follow the same weights as the type sizes, so the tile that
+  // matters is both louder and larger.
+  const sizes = sizesFor(parts.map((p) => p.w));
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tiles.length}, minmax(0, 1fr))`, gap: 6 }}>
-      {tiles}
+    <div style={{ display: 'grid', gridTemplateColumns: sizes.map((z) => `minmax(0, ${TILE_FR[z]}fr)`).join(' '), gap: 6, alignItems: 'stretch' }}>
+      {parts.map((p, i) => p.node(sizes[i]))}
     </div>
   );
 }
@@ -741,7 +826,11 @@ export function SecondaryTiles({ r }: { r: UsGradedRow }) {
   // reads as a figure rather than as the absence of one.
   for (const m of metrics) if (m && Number.isFinite(m.value) && !by.has(m.id)) by.set(m.id, m);
 
-  const tiles: React.ReactNode[] = [];
+  // The second row is SUPPORTING evidence and is drawn quietly by default —
+  // an adjusted gross margin of 55.6% is context, not news. A figure earns
+  // normal weight only when it is decisive: free cash flow that has gone
+  // negative or swung sign, or a supporting metric that moved hard.
+  const parts: Array<{ node: (size: TileSize) => React.ReactNode; w: number }> = [];
   const fcf = (r as any).fcf_curr_musd as number | null | undefined;
   const fcfPrev = (r as any).fcf_prev_musd as number | null | undefined;
   const fcfY = (r as any).fcf_yoy_pct as number | null | undefined;
@@ -751,15 +840,17 @@ export function SecondaryTiles({ r }: { r: UsGradedRow }) {
   // saw. Ours is the fallback, and it says which one is on screen.
   const relFcf = by.get('free_cash_flow');
   if (relFcf) {
-    tiles.push(
-      <Tile key="fcf" label="FREE CASH FLOW" value={fmtKeyMetric(relFcf)}
+    // Cash that is not there is the most important thing on this row.
+    parts.push({ w: relFcf.value < 0 ? 58 : Math.min(45, moveWeight(relFcf.yoy_pct) * 0.5), node: (size) => (
+      <Tile key="fcf" label="FREE CASH FLOW" size={size} value={fmtKeyMetric(relFcf)}
         color={relFcf.value >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
         sub={<>{relFcf.yoy_pct != null ? `${fmtPct(relFcf.yoy_pct)} YoY · as reported` : 'as reported'}
-          <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />,
-    );
+          <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />
+    ) });
   } else if (fcf != null) {
-    tiles.push(
-      <Tile key="fcf" label="FREE CASH FLOW" value={fmtUsd(fcf)}
+    const flipped = fcfPrev != null && (fcfPrev >= 0) !== (fcf >= 0);
+    parts.push({ w: fcf < 0 ? 58 : flipped ? 50 : Math.min(45, moveWeight(fcfY) * 0.5), node: (size) => (
+      <Tile key="fcf" label="FREE CASH FLOW" size={size} value={fmtUsd(fcf)}
         color={fcf >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
         sub={<>{fcfY != null
             // A four-figure percentage says only that last year's base was
@@ -769,8 +860,8 @@ export function SecondaryTiles({ r }: { r: UsGradedRow }) {
                 ? `${fmtUsd(fcfPrev)} → ${fmtUsd(fcf as number)} · low base`
                 : `${fmtPct(fcfY)} YoY · CFO − capex`)
             : fcfPrev != null ? `was ${fmtUsd(fcfPrev)}` : 'CFO − capex'}
-          <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />,
-    );
+          <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />
+    ) });
   }
 
   const order: Array<[KeyMetricId, string]> = [
@@ -792,23 +883,30 @@ export function SecondaryTiles({ r }: { r: UsGradedRow }) {
     subscription_revenue: ['subscription_revenue'],
   };
   for (const [id, label] of order) {
-    if (tiles.length >= 4) break;
+    if (parts.length >= 4) break;
     const m = by.get(id);
     if (!m) continue;
     const rf = refFor(r, ...(REF_KEYS[id] || []));
-    tiles.push(
-      <Tile key={id} label={label} value={fmtKeyMetric(m)}
+    // A level with no year-ago comparison ("reported") is reference material:
+    // it cannot have moved, so it never competes for attention.
+    parts.push({ w: m.yoy_pct == null ? 3 : Math.min(45, moveWeight(m.yoy_pct) * 0.5), node: (size) => (
+      <Tile key={id} label={label} size={size} value={fmtKeyMetric(m)}
         color={m.yoy_pct == null ? undefined : m.yoy_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
-        sub={<>{m.yoy_pct != null ? `${fmtPct(m.yoy_pct)} YoY` : 'reported'}<RefSub ref={rf} /></>} />,
-    );
+        sub={<>{m.yoy_pct != null ? `${fmtPct(m.yoy_pct)} YoY` : 'reported'}<RefSub ref={rf} /></>} />
+    ) });
   }
-  if (!tiles.length) return null;
+  if (!parts.length) return null;
+  // One lead at most on this row, and only for something decisive — the
+  // headline belongs to the row above.
+  const sizes = sizesFor(parts.map((p) => p.w), 1);
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, tiles.length)}, 1fr)`, gap: 6, marginTop: 6 }}>
-      {tiles}
+    <div style={{ display: 'grid', gridTemplateColumns: sizes.map((z) => `minmax(0, ${TILE_FR[z]}fr)`).join(' '), gap: 6, marginTop: 6 }}>
+      {parts.map((p, i) => p.node(sizes[i]))}
     </div>
   );
 }
+
+
 
 // ── guide vs. the street: a bracketing range is NOT a miss ─────────────────
 /** The neutral third state. Same yellow the MIXED tier and the setup bar use. */
