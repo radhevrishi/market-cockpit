@@ -277,8 +277,17 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         >
           {meta.icon} {meta.label}
         </span>
+        {/* THE NAME, AND THE NAME THE READER KNOWS IT BY.
+            Ticker P is "Everpure, Inc." — Pure Storage since January 2026 —
+            and a card headed with a name nobody recognises beside a ticker
+            everybody does reads as a ticker/company mismatch. SEC publishes
+            the former name for two years after a rename; it is shown here for
+            exactly as long as SEC carries it, and never invented. */}
         <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {r.company}
+          {(r as any).former_name && (
+            <span style={{ color: 'var(--mc-text-4)' }}> · formerly {(r as any).former_name}</span>
+          )}
         </span>
         <span style={{ fontWeight: 800, fontSize: 13, color: meta.color }}>{r.composite_score}</span>
       </div>

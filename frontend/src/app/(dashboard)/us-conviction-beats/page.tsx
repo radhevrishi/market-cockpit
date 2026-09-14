@@ -813,6 +813,16 @@ function BenchCard({ e, open, onToggle, onRemove }: {
       }
       extraChips={
         <>
+          {/* AN EARLIER QUARTER IS NOT A DUPLICATE CARD.
+              When a benched name reports again, the outgoing quarter is kept
+              under `TICKER@Q2-2026` so its beat history survives — and it then
+              renders as a second, identical-looking card for the same ticker.
+              Nothing on it said which quarter it was, so the bench read as
+              though it had listed the same company twice. It is history, and
+              it now says so before anything else on the card. */}
+          {typeof e.bench_key === 'string' && e.bench_key.includes('@') && (
+            <Chip text={`ARCHIVED · ${e.quarter || 'earlier quarter'}`} color="#8B5CF6" />
+          )}
           <Chip text={e.tier} color={e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981'} />
           {/* The bench's own earnings-quality verdict, with the reasons behind
               it on the tooltip — the card is a scanning surface and a second

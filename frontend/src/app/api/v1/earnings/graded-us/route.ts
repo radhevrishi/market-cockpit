@@ -867,13 +867,22 @@ export async function GET(req: Request) {
       // and for six filers it returned a modelled number that appears nowhere
       // in any filing at all. A number narrated as "the company's adjusted EPS"
       // has to come from the company.
-      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[]; absOneOffs: AbsoluteOneOff[] }> => {
-        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null, oneOffs: [], absOneOffs: [] };
+      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[]; absOneOffs: AbsoluteOneOff[]; formerName: string | null }> => {
+        // A NAME NOBODY RECOGNISES IS READ AS A BUG.
+        //
+        // Ticker P is Everpure, Inc. on NYSE — which is Pure Storage, renamed
+        // in January 2026 and still filing under the `pstg` XBRL prefix. The
+        // card was right and looked wrong. SEC publishes the former name, so
+        // the card can say it. Cached with the filer's submissions, which this
+        // route already reads for other filers.
+        const formerName = await submissions(p.f.cikNum).then((s) => s?.formerName ?? null).catch(() => null);
+        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null, oneOffs: [], absOneOffs: [], formerName };
         try {
           const doc = await releaseDocument(p.f.cikNum, p.f.accession, p.f.filing_url);
-          if (!doc.html) return { read: false, adj: null, oneOffs: [], absOneOffs: [] };
+          if (!doc.html) return { read: false, adj: null, oneOffs: [], absOneOffs: [], formerName };
           return {
             read: true,
+            formerName,
             adj: adjustedEpsFromReleaseHtml(doc.html, {
               gaapEps: p.fundamentals.eps ?? null,
               periodEndISO: p.fundamentals.q_end ?? null,
@@ -886,7 +895,7 @@ export async function GET(req: Request) {
             // per-share figure and so can never be subtracted — only weighed.
             absOneOffs: absoluteOneOffsFromReleaseHtml(doc.html, p.fundamentals.q_end ?? null),
           };
-        } catch { return { read: false, adj: null, oneOffs: [], absOneOffs: [] }; }
+        } catch { return { read: false, adj: null, oneOffs: [], absOneOffs: [], formerName }; }
       }),
     ]);
 
@@ -931,7 +940,7 @@ export async function GET(req: Request) {
       // labelled fallback, and never a vendor number that simply repeats the
       // GAAP figure — that is the feed carrying GAAP under an adjusted name,
       // and pairing it with an adjusted estimate invents a beat.
-      const prRead = prAdj[pi] || { read: false, adj: null, oneOffs: [], absOneOffs: [] };
+      const prRead = prAdj[pi] || { read: false, adj: null, oneOffs: [], absOneOffs: [], formerName: null };
       const pa = prRead.adj;
       const oneOffs: OneOff[] = prRead.oneOffs || [];
       const absOneOffs: AbsoluteOneOff[] = (prRead as any).absOneOffs || [];
@@ -1204,6 +1213,11 @@ export async function GET(req: Request) {
       (row as any).filing_docs = {
         cik: p.f.cikNum, accession: p.f.accession, index_url: p.f.filing_url,
       };
+      // The former name, when SEC records a rename in the last two years.
+      const fname = (prRead as any).formerName as string | null;
+      if (fname && fname.toLowerCase() !== String(row.company || '').toLowerCase()) {
+        (row as any).former_name = fname;
+      }
       const ctx = balanceContext(p.facts, p.fundamentals.q_end);
       if (ctx) (row as any).context = ctx;
       // The owner's Rule of 40 (revenue growth % + FCF margin %) and ROCE, both

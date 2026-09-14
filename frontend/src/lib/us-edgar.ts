@@ -216,6 +216,13 @@ export interface SubmissionsLite {
   exchanges: string[];
   tickers: string[];
   name: string | null;
+  /** The name this filer traded under before a RECENT rename, when SEC's
+   *  `formerNames` carries one within the last two years. Pure Storage became
+   *  Everpure, Inc. in January 2026 and kept the ticker P; a card headed
+   *  "Everpure, Inc. · P" is correct and unrecognisable, which reads as a
+   *  ticker/company mismatch. Older names are not carried — a company renamed
+   *  a decade ago is simply its current name. */
+  formerName: string | null;
   recent: Array<{ form: string; filingDate: string; reportDate: string | null; items: string[]; accession: string }>;
 }
 const _subs = new Map<number, { at: number; data: SubmissionsLite | null }>();
@@ -247,6 +254,18 @@ export async function submissions(cikNum: number): Promise<SubmissionsLite | nul
         exchanges: Array.isArray(j.exchanges) ? j.exchanges.filter(Boolean).map(String) : [],
         tickers: Array.isArray(j.tickers) ? j.tickers.filter(Boolean).map(String) : [],
         name: j.name ? normalizeCompanyName(String(j.name)) : null,
+        formerName: (() => {
+          const list = Array.isArray(j.formerNames) ? j.formerNames : [];
+          const cutoff = Date.now() - 2 * 365 * 86_400_000;
+          let best: { name: string; to: number } | null = null;
+          for (const f of list) {
+            const to = Date.parse(String(f?.to || ''));
+            if (!Number.isFinite(to) || to < cutoff) continue;
+            if (!f?.name) continue;
+            if (!best || to > best.to) best = { name: normalizeCompanyName(String(f.name)), to };
+          }
+          return best ? best.name : null;
+        })(),
         recent,
       };
     }
