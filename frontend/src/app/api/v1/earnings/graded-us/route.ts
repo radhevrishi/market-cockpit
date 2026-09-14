@@ -38,6 +38,7 @@ import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
+import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
 import { oneOffsFromReleaseHtml, epsExOneOffs, type OneOff } from '@/lib/us-one-offs';
 import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
@@ -89,6 +90,10 @@ interface UsGradedPayload {
    *  the India "scheduled today · results pending" list. Empties as 8-Ks land. */
   scheduled: ExpectedReporter[];
   generated_at: string;
+  /** Which build of the grading engine produced this payload. The browser's
+   *  day cache refuses a day graded by an older engine, so a deployed fix
+   *  reaches every cached window without anyone pressing anything. */
+  engine_version?: string;
   sources_polled: number;
   truncated: boolean;
   notes: string[];
@@ -1898,6 +1903,7 @@ export async function GET(req: Request) {
         .sort((a, b) => b.filed.localeCompare(a.filed) || a.ticker.localeCompare(b.ticker)),
       scheduled: scheduled.sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0)),
       generated_at: new Date().toISOString(),
+      engine_version: US_ENGINE_VERSION,
       sources_polled: 3,
       truncated,
       notes,
@@ -1931,6 +1937,7 @@ export async function GET(req: Request) {
       pending: [],
       scheduled: [],
       generated_at: new Date().toISOString(),
+      engine_version: US_ENGINE_VERSION,
       sources_polled: 0,
       truncated: false,
       notes: [`error: ${String(err?.message || err)}`],

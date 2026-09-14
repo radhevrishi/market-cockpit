@@ -660,8 +660,13 @@ export default function UsEarningsOpportunitiesPage() {
             throws the store away and starts at 0 of N, which is what to press
             when a cached session is suspected of being wrong. Before these were
             one button, every refresh restarted the whole window. */}
+        {/* NEITHER BUTTON IS DISABLED WHILE SCANNING. A 30-session window is
+            in flight for minutes, and disabling the controls for that whole
+            time means the one moment you want them — "this is showing me an
+            old grade, start again" — is the one moment they cannot be pressed.
+            The owner clicked Hard re-scan mid-sweep and nothing happened. */}
         <button onClick={retryFailed}
-          disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          style={{ ...btn(), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <RefreshCw className="w-3 h-3" style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
           {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Refresh'}
         </button>
@@ -669,8 +674,8 @@ export default function UsEarningsOpportunitiesPage() {
           if (confirm(`Throw away every cached session and re-scan all ${sessions.length} from SEC EDGAR?\n\nThe ${loadedCount} already loaded will be discarded and the sweep restarts at 0. Use Refresh instead if you only want the days that have not landed yet.`)) {
             void refetch();
           }
-        }} disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1 }}
-          title="Clear the local cache and re-read every session from EDGAR, starting from zero">
+        }} style={btn()}
+          title="Clear the local cache and re-read every session from EDGAR, starting from zero. Works while a scan is running — that is usually when you want it.">
           ⟳ Hard re-scan
         </button>
       </div>

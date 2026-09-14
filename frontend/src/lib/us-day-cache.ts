@@ -42,6 +42,8 @@
 //      feature still works where IndexedDB does not, not to be fast.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { US_ENGINE_VERSION } from './us-engine-version';
+
 const DB_NAME = 'mc-us-days';
 const DB_VERSION = 1;
 const STORE = 'days';
@@ -165,6 +167,15 @@ export async function getCachedDay(day: string, isToday: boolean): Promise<any |
   if (!Number.isFinite(age) || age > maxAge) return null;
   const p: any = rec.payload;
   if (!p?.by_tier) return null;
+  // A DAY GRADED BY AN OLDER ENGINE IS NOT THIS ENGINE'S ANSWER.
+  //
+  // The filings behind a completed session never change, which is why a day is
+  // held for 30 days — but the GRADE changes every time a rule is fixed. Served
+  // from cache, a month-old day shows a month-old verdict, and a deployed fix
+  // looks like it did nothing. Refusing the day costs one re-scan of that
+  // session and is the only way a correction reaches a browser that is not
+  // asked to clear anything.
+  if (p.engine_version !== US_ENGINE_VERSION) return null;
   // A scan that found filers but graded NONE of them is a failed scan, not a
   // result. Never serve it from cache — refetch.
   if ((p.raw_items_total ?? 0) > 0 && (p.candidates_total ?? 0) === 0) return null;
@@ -174,6 +185,8 @@ export async function getCachedDay(day: string, isToday: boolean): Promise<any |
 /** Cache one session. Never throws; a failure simply means no cache. */
 export async function putCachedDay(day: string, payload: any): Promise<void> {
   if (!payload?.by_tier) return;
+  // Never store a payload we would refuse to read back.
+  if (payload.engine_version !== US_ENGINE_VERSION) return;
   if ((payload.raw_items_total ?? 0) > 0 && (payload.candidates_total ?? 0) === 0) return;
   const rec: DayRecord = { day, payload, cachedAt: Date.now(), bytes: sizeOf(payload) };
   const db = await openDb();
