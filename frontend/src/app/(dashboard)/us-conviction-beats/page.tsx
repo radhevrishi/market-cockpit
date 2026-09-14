@@ -149,7 +149,7 @@ export default function UsConvictionBeatsPage() {
     // unset, so the 6-hour auto-sweep fired again on every visit — "it's
     // sweeping all the time".
     try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
-    // "Clear + reload" NO LONGER EMPTIES THE BENCH FIRST.
+    // "Clear + reload" NEVER EMPTIES THE BENCH UNTIL THE REBUILD IS COMPLETE.
     //
     // It did, and the result was a bench of 315 names replaced by a bench of
     // eleven for as long as the rebuild took — which, on a cold day cache, is
@@ -158,11 +158,18 @@ export default function UsConvictionBeatsPage() {
     // this) leaves the bench permanently short, and the only way back is the
     // recycle bin.
     //
-    // So the clear happens AFTER the first session comes back successfully,
-    // below: by then the rebuild is known to work, and the gap between empty
-    // and refilled is one session rather than the whole window. A sweep that
-    // never gets a single session leaves the existing bench untouched.
-    let wipePending = !!opts.wipe;
+    // Clearing after the FIRST successful session was the first attempt and it
+    // is still wrong: a 42-session rebuild then shows a two-name bench for as
+    // long as the sweep runs, which looks exactly like the data loss it was
+    // meant to avoid.
+    //
+    // So a wipe-rebuild collects every row it grades WITHOUT touching the
+    // bench, and swaps at the end: clear, then write the whole collected set in
+    // one go. The old bench is on screen and intact for the entire rebuild, the
+    // change is atomic, and a sweep that is abandoned half way changes nothing
+    // at all.
+    const wipe = !!opts.wipe;
+    const collected: any[] = [];
     // A HARD reload re-reads every session from EDGAR instead of the day cache.
     // The ordinary reload is the one to use: a completed session cannot change,
     // so the cache is the same data without the wait.
@@ -198,13 +205,14 @@ export default function UsConvictionBeatsPage() {
           for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
             for (const c of (p?.by_tier?.[t] || [])) batch.push({ ...c, source_url: c.filing_url });
           }
-          // The rebuild has proved it works — now the old bench can go.
-          if (wipePending) { wipePending = false; clearUsConviction(); }
-          if (batch.length) changes += syncUsConviction(batch);
+          if (wipe) collected.push(...batch);
+          else if (batch.length) changes += syncUsConviction(batch);
         } catch { failed++; failedDays.push(d); }
         done++;
-        setSweepMsg(`Sweeping ${done}/${days.length} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''} — ${getUsConvictionList().length} on the bench`);
-        reload();
+        setSweepMsg(wipe
+          ? `Rebuilding ${done}/${days.length} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''} — ${collected.length} names collected, the bench below is untouched until this finishes`
+          : `Sweeping ${done}/${days.length} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''} — ${getUsConvictionList().length} on the bench`);
+        if (!wipe) reload();
       };
       let next = 0;
       await Promise.all([0, 1, 2].map(async () => { while (next < days.length) await one(days[next++]); }));
@@ -222,6 +230,14 @@ export default function UsConvictionBeatsPage() {
         done = 0;
         let r = 0;
         await Promise.all([0, 1].map(async () => { while (r < retry.length) await one(retry[r++]); }));
+      }
+      // THE SWAP. Everything graded, nothing lost: the old bench goes and the
+      // rebuilt one lands in the same tick. Only now, and only if the rebuild
+      // actually produced something — an empty result means EDGAR gave us
+      // nothing, and replacing a book with nothing is never the right answer.
+      if (wipe) {
+        if (collected.length) { clearUsConviction(); changes += syncUsConviction(collected); reload(); }
+        else setSweepMsg('Rebuild produced no graded rows — the bench was left exactly as it was.');
       }
       // Re-price the older part of the bench. Explicit mode grades each name
       // off its latest 8-K, so price / move / P/E / market cap refresh even for

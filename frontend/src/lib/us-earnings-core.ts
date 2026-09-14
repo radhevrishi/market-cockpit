@@ -3705,11 +3705,12 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   //     telling you the quarter was the peak, in its own numbers.
   // Both are FILING caps: they come from management's own outlook, not the tape.
   let guideCapped = false;
+  let guideFailures = 0;
   {
     const vsStreet = input.guide_next_vs_street_pct ?? null;
     const implied = input.guide_next_implied_growth_pct ?? null;
     if (vsStreet != null && vsStreet <= -3) {
-      guideCapped = true;
+      guideCapped = true; guideFailures++;
       capTier(vsStreet <= -10 ? 'MIXED' : 'STRONG',
         `next-quarter guide ${Math.abs(Math.round(vsStreet))}% below street`);
     }
@@ -3717,10 +3718,36 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     // was taken out above cannot make the deceleration look worse than it is.
     const reportedGrowth = epsY;
     if (implied != null && implied < 5 && reportedGrowth != null && reportedGrowth >= 25) {
-      guideCapped = true;
+      guideCapped = true; guideFailures++;
       capTier(implied < 0 ? 'MIXED' : 'STRONG',
         `guide implies ${implied < 0 ? 'a decline' : 'growth stops'} next quarter`);
     }
+    // TWO FORWARD FAILURES ARE NOT ONE FAILURE TWICE.
+    //
+    // Burlington: the next quarter is guided BELOW the street AND, on the
+    // company's own arithmetic, to roughly no growth after a quarter that grew
+    // 96%. Each alone is a ceiling at STRONG — the quarter itself was good.
+    // Both together say the quarter was the peak and management has said so in
+    // its own numbers, which is a MIXED print whatever the beat was. This is
+    // deliberately independent of the one-off rules below: Burlington's refund
+    // was 19.9% of the headline and the one-off cap missed it by a tenth of a
+    // percentage point, which is exactly the kind of threshold accident a
+    // second, unrelated line of evidence should not be hostage to.
+    if (guideFailures >= 2) capTier('MIXED', 'guide below street AND implying the growth stops');
+  }
+
+  // EARNINGS THAT OUTRUN BOTH THE REVENUE AND THE CASH.
+  //
+  // Electromed: EPS +56% on revenue +12% — four times the top line — with cash
+  // conversion at 0.88 and free cash flow down 25%. The `optical eps` caveat
+  // says the first half of that and the tier ignored the second. Growth that
+  // appears in neither the revenue line nor the bank account is not a STRONG
+  // quarter; it is a quarter to look at twice, which is what MIXED means.
+  // Either fact alone is survivable — a genuine operating-leverage quarter
+  // converts cash, and a working-capital quarter still grows its revenue.
+  if (cfoPat != null && cfoPat < 1
+      && caveat_tags.some((t) => t === 'optical eps' || t.startsWith('gaap '))) {
+    capTier('MIXED', 'earnings outrun both revenue and cash');
   }
 
   if (oneOffTot != null && oneOffTot > 0 && input.adj_eps_ex_oneoff != null && oneOffShare != null) {
