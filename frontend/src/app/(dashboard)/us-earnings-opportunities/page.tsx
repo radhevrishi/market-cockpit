@@ -309,7 +309,28 @@ export default function UsEarningsOpportunitiesPage() {
         );
         if (!r.ok) throw new Error(`Grading failed for ${d} (HTTP ${r.status})`);
         const j = await r.json();
-        if (!j?.pending) { void putCachedDay(d, j); return j; }
+        // ── WHAT COUNTS AS A GRADED SESSION  (zzz605) ─────────────────────
+        //
+        // This test used to be `if (!j.pending)`, and it was wrong in the worst
+        // possible way — silently, and only on the days that matter.
+        //
+        // `pending` means two different things in this payload. The server's
+        // "still grading" reply sets `pending: true`; a FINISHED session sets
+        // `pending: [...]` — the list of filers in the window whose XBRL was
+        // not posted yet. A quiet day finishes with `pending: []`, which is
+        // falsy, so it passed. A BUSY day finishes with fifty-odd un-graded
+        // micro-caps in that array, which is truthy — so the finished payload,
+        // all hundred and fifty graded companies of it, was thrown away and
+        // replaced with an empty "still grading" placeholder. Every time.
+        //
+        // That is the whole of "fast to sixteen, then nothing": the only
+        // sessions that ever landed were the ones with nothing much in them,
+        // and the page then re-fetched the busy days for ever, discarding a
+        // correct answer on each pass.
+        //
+        // So the test is now the thing that actually distinguishes them: a
+        // graded session has `by_tier`. A placeholder never does.
+        if (j?.by_tier) { void putCachedDay(d, j); return j; }
         return {
           filing_date: d, window_days: 1, window_start: d,
           candidates_total: 0, raw_items_total: 0, pending_xbrl_total: 0, no_price_total: 0,
