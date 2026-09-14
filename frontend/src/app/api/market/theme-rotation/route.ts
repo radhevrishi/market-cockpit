@@ -27,7 +27,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v10:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v11:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -315,11 +315,43 @@ function verdictFor(quadrant: string, aboveSMA50: boolean, m1?: number, m3?: num
     return { verdict: 'WATCH', color: '#EAB308', note: 'Turning on momentum but price/trend not confirmed — watch for the 50-DMA reclaim' };
   }
 
-  // WEAKENING — was strong, now rolling over → TRIM (don't add, tighten stops).
-  if (quadrant === 'Weakening') return { verdict: 'TRIM', color: '#F97316', note: 'Still strong but momentum rolling over — trim / tighten stops, do not add' };
+  // ── WEAKENING — AND THE ASYMMETRY THAT MADE THIS WRONG  (zzz620) ───────
+  //
+  // Leading and Improving above both demand PRICE CONFIRMATION before they say
+  // anything bullish. Weakening and Lagging demanded nothing at all: the
+  // quadrant label alone produced TRIM or AVOID. That is not caution, it is an
+  // inconsistency, and it produced a flatly wrong call.
+  //
+  // Cybersecurity sat at RS 108, +6.0% on the week, +17.5% over three months,
+  // above its 50-DMA — and the board said TRIM, because RS-momentum (a
+  // doubly-smoothed measure of relative strength against its OWN trailing
+  // average) had dipped under 100. A theme can cool relative to its own recent
+  // outperformance while still beating the market and still rising. Telling
+  // someone to sell that is the single most expensive kind of error this page
+  // can make, and it was being made on the strength of a lagging indicator
+  // with no price check.
+  //
+  // So the bearish half now carries the same burden of proof as the bullish
+  // half: a call to reduce must be confirmed by PRICE, not by a smoothed
+  // relative measure alone.
+  if (quadrant === 'Weakening') {
+    // Price has actually rolled over — the RS signal and the tape agree.
+    if (!aboveSMA50 || (typeof m3 === 'number' && m3 <= 0)) {
+      return { verdict: 'TRIM', color: '#F97316', note: 'Relative momentum rolling over AND price below its 50-DMA or negative over 3M — the tape confirms it. Trim, tighten stops, do not add.' };
+    }
+    // Still above the 50-DMA and still rising: cooling, not breaking.
+    return { verdict: 'HOLD', color: '#F59E0B', note: 'Relative momentum is cooling off its own highs, but price is above the 50-DMA and still rising over 3M — hold what you own, stop adding. Not a sell: the tape has not confirmed a roll-over.' };
+  }
 
-  // LAGGING — weak & falling → AVOID.
-  return { verdict: 'AVOID', color: '#EF4444', note: 'Lagging — weak RS and falling momentum, avoid until it turns' };
+  // ── LAGGING — the same test, in reverse ───────────────────────────────
+  // Weak relative strength and falling momentum is the avoid case, but a theme
+  // that has reclaimed its 50-DMA and is rising is a theme in the process of
+  // turning, whatever its trailing relative numbers still say. Calling that
+  // AVOID is how a reader is kept out of every early recovery.
+  if (aboveSMA50 && (up1 || pos3)) {
+    return { verdict: 'WATCH', color: '#EAB308', note: 'Relative strength is still weak, but price has reclaimed its 50-DMA and is rising — a turn may be starting. Watch for relative strength to follow; do not buy on price alone.' };
+  }
+  return { verdict: 'AVOID', color: '#EF4444', note: 'Lagging — weak RS, falling momentum, and price below its 50-DMA. Avoid until it turns.' };
 }
 
 async function build(region: ThemeRegion) {

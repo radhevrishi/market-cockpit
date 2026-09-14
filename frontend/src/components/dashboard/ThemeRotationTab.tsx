@@ -576,6 +576,18 @@ export default function ThemeRotationTab() {
                   Each card now claims columns in proportion to how many of
                   your names it holds, and `dense` packing backfills the gaps
                   the wide cards leave, so the panel fills itself. */}
+              {/* A COLOUR NOBODY EXPLAINED IS JUST DECORATION. The chips are
+                  coloured by where the name came from and what its last filing
+                  graded; that is only useful if the key is on the page. */}
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 9, fontSize: 10, color: DIM }}>
+                <span style={{ fontWeight: 800, color: MUT }}>Colour key:</span>
+                <span style={{ color: '#F87171', background: 'rgba(248,113,113,0.14)', border: '1px solid #F8717144', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER</span>
+                <span>graded <b style={{ color: '#F87171' }}>BLOCKBUSTER</b> on its last filing (from Conviction Beats)</span>
+                <span style={{ color: '#34D399', background: 'rgba(52,211,153,0.13)', border: '1px solid #34D39944', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER</span>
+                <span>graded <b style={{ color: '#34D399' }}>STRONG</b></span>
+                <span style={{ color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>TICKER</span>
+                <span>from your own Technicals / Multibagger list only</span>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gridAutoFlow: 'dense', gap: 9, alignItems: 'start' }}>
                 {[...userBook.groups.entries()]
                   .map(([tid, sts]) => ({ tid, sts, th: byId.get(tid) }))
