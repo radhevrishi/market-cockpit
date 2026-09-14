@@ -313,6 +313,67 @@ export async function GET(request: Request) {
   const rawMode = (searchParams.get('mode') || 'broad').toLowerCase();
   const mode = (rawMode === 'broad' || rawMode === 'auto' || rawMode === 'basket') ? rawMode : 'broad';   // PATCH 0807 — default to broad
 
+  // ═══ THE US TAB WAS READING INDIA'S BREADTH  (zzz626) ═════════════════════
+  //
+  // Everything below this line is NSE: the broad path walks the BHAVCOPY
+  // universe blobs, the basket fallback is an Indian basket. There was no
+  // region parameter, and BOTH the USA Technicals tab and the India Technicals
+  // tab called this one endpoint — so US breakout setups were being framed
+  // "Risk-Off" or "Healthy Bull" on the participation of the Indian market.
+  // Two tabs showing the same regime number for two different markets was the
+  // visible symptom; the number being simply wrong for one of them was the bug.
+  //
+  // The US read is built from the theme-rotation engine, which already scores
+  // the entire US theme universe on live prices every six hours and is one
+  // Redis read away. That has a second benefit worth as much as the fix: the
+  // Technicals tab and the Theme Rotation tab can no longer disagree about what
+  // the US tape is doing, because there is now one measurement behind both.
+  if ((searchParams.get('region') || '').toLowerCase() === 'us') {
+    try {
+      const port = process.env.PORT;
+      const self = port ? `http://127.0.0.1:${port}` : new URL(request.url).origin;
+      const res = await fetch(`${self}/api/market/theme-rotation?region=us`, { cache: 'no-store' });
+      const j: any = await res.json();
+      const b = j?.breadth;
+      if (!b) throw new Error('theme-rotation returned no breadth block');
+      // regimeScore runs roughly −2.3 … +2.3; mapped onto the same 0-100
+      // composite the India path produces so the banner component, the colour
+      // thresholds and the cash suggestion all stay exactly as they are.
+      const compositeR = Math.max(0, Math.min(100, Math.round(50 + (b.regimeScore ?? 0) * 21.7)));
+      const regime =
+        compositeR >= 80 ? { label: 'Expansion',    color: '#10B981', desc: 'Broad participation, aggressive risk-on', cash: 0 } :
+        compositeR >= 60 ? { label: 'Healthy Bull', color: '#22D3EE', desc: 'Bullish but selective; reward leadership', cash: 10 } :
+        compositeR >= 40 ? { label: 'Transitional', color: '#F59E0B', desc: 'Mixed signals; penalize weak balance sheets', cash: 25 } :
+                           { label: 'Risk-Off',     color: '#EF4444', desc: 'Narrow tape; only quality and FCF survives', cash: 45 };
+      return NextResponse.json({
+        composite: compositeR,
+        regime: regime.label,
+        regime_color: regime.color,
+        regime_desc: b.note || regime.desc,
+        suggested_cash_pct: regime.cash,
+        pillars: {
+          trend: { score: b.pctAbove50 ?? null, weight: 60, above50: b.above50, total: b.themes },
+          extremes: { newHigh: b.newHigh, newLow: b.newLow, weight: 25 },
+          benchmark: { above50: b.benchAbove50, rangePos: b.benchRangePos, weight: 15 },
+        },
+        universe_size: b.themes,
+        scope: 'us-themes',
+        scope_label: `US theme universe (${b.themes} themes, live prices)`,
+        source: 'theme-rotation engine · Yahoo Finance',
+        region: 'us',
+        ms: Date.now() - t0,
+        generated_at: new Date().toISOString(),
+      }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });
+    } catch (e: any) {
+      // NEVER fall through to the India path for a US request — a wrong number
+      // is worse than no number, which is the whole lesson of this bug.
+      return NextResponse.json(
+        { error: `US breadth unavailable: ${String(e?.message || e)}`, region: 'us' },
+        { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
+
   // ─── BROAD MODE — read from KV blobs, full NSE universe ──────────────
   if (mode === 'broad' || mode === 'auto') {
     const broad = await computeBroadBreadth();

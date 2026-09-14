@@ -7592,7 +7592,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // every fetch is in a try/catch, tolerates failure, and hides silently.
   const [benchMap, setBenchMap] = React.useState<Record<string, { tier?: string; conviction_score?: number }>>({});
   const [radarMap, setRadarMap] = React.useState<Map<string, { symbol: string; transformation_score?: number }>>(new Map());
-  const [techRegime, setTechRegime] = React.useState<{ composite: number; regime: string; regime_color?: string; regime_desc?: string; suggested_cash_pct?: number } | null>(null);
+  const [techRegime, setTechRegime] = React.useState<{ composite: number; regime: string; regime_color?: string; regime_desc?: string; suggested_cash_pct?: number; scope_label?: string; universe_size?: number } | null>(null);
   const [confluenceOnly, setConfluenceOnly] = React.useState<boolean>(false);
   // ADDITIVE (audit R3) — Buyable-only toggle + sector/group table filter.
   const [buyableOnly, setBuyableOnly] = React.useState<boolean>(false);
@@ -7700,19 +7700,26 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     })();
     return () => { alive = false; };
   }, []);
-  // Market-breadth regime strip.
+  // ── Market-breadth regime strip  (zzz626) ────────────────────────────
+  // THE REGION IS PASSED. This component renders for both markets, and it used
+  // to call /api/v1/breadth with no region at all — an endpoint that is NSE
+  // from top to bottom. So the USA Technicals tab was framing US breakout
+  // setups with INDIAN market participation, and both tabs showed the same
+  // regime number for two different markets, which is how it was noticed.
+  // `market` has been on this component all along; it simply was not used here.
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        const res = await fetch(`/api/v1/breadth${market === 'USA' ? '?region=us' : ''}`, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         if (alive && data && typeof data.composite === 'number') setTechRegime(data);
+        else if (alive) setTechRegime(null);   // a wrong regime is worse than none
       } catch {}
     })();
     return () => { alive = false; };
-  }, []);
+  }, [market]);
   // Per-row cross-link helpers + inline badge renderer, reused across every table.
   const normSym = React.useCallback((s: any) => String(s || '').toUpperCase().replace(/\.NS$|\.BO$/i, '').trim(), []);
   const onBench = React.useCallback((s: any) => !!benchMap[normSym(s)], [benchMap, normSym]);
@@ -9448,7 +9455,10 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           background: `color-mix(in srgb, ${techRegime.regime_color || '#22D3EE'} 12%, transparent)`,
           border: `1px solid color-mix(in srgb, ${techRegime.regime_color || '#22D3EE'} 45%, transparent)` }}>
           <span style={{ fontSize: 11, fontWeight: 800, color: MUTED, letterSpacing: 0.6, textTransform: 'uppercase' }}>Market Regime</span>
-          <span style={{ fontSize: 15, fontWeight: 900, color: techRegime.regime_color || TXT }}>{techRegime.regime}</span>
+          <span style={{ fontSize: 15, fontWeight: 900, color: techRegime.regime_color || TXT }}>{market === 'USA' ? '🇺🇸' : '🇮🇳'} {techRegime.regime}</span>
+          {/* WHAT WAS MEASURED, NAMED. Two tabs quoting one unlabelled number
+              is how a US tab reading Indian breadth went unnoticed. */}
+          {techRegime.scope_label && <span style={{ fontSize: 11, color: MUTED }} title="The universe this regime was measured over">{techRegime.scope_label}</span>}
           <span style={{ fontSize: 12.5, color: TXT }}>Breadth composite <b style={{ color: techRegime.regime_color || TXT }}>{Math.round(techRegime.composite)}</b>/100</span>
           {typeof techRegime.suggested_cash_pct === 'number' && (
             <span style={{ fontSize: 12.5, color: MUTED }}>· suggested cash <b style={{ color: TXT }}>{Math.round(techRegime.suggested_cash_pct)}%</b></span>
@@ -10728,14 +10738,18 @@ function MultibaggerAnalytics({
     let alive = true;
     (async () => {
       try {
-        const res = await fetch('/api/v1/breadth', { cache: 'no-store' });
+        // Same fix as the Technicals tab: this panel renders for whichever
+        // market `scope` is on, and an NSE regime over a USA leaderboard is
+        // simply the wrong number.
+        const res = await fetch(`/api/v1/breadth${scope === 'USA' ? '?region=us' : ''}`, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         if (alive && data && typeof data.composite === 'number') setRegime(data);
+        else if (alive) setRegime(null);
       } catch {}
     })();
     return () => { alive = false; };
-  }, []);
+  }, [scope]);
 
   // PATCH 0874 — USA rows + prev-score baselines now live in state with
   // a tick-bumping listener pair (storage + mb-upload:updated), so this
