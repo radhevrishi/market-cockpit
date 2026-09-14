@@ -225,6 +225,11 @@ export default function UsEarningsOpportunitiesPage() {
   // is the only identity that survives all three; filing_date stands in for the
   // handful of rows whose period end is not tagged yet.
   const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
+  const [find, setFind] = useState('');
+  const [findLoading, setFindLoading] = useState(false);
+  const [findAdhoc, setFindAdhoc] = useState<any | null>(null);
+  const [findErr, setFindErr] = useState<string | null>(null);
+
   const toggleCard = useCallback((k: string) => {
     setOpenCards((s) => {
       const n = new Set(s);
@@ -605,6 +610,19 @@ export default function UsEarningsOpportunitiesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calQueries.map((q: any) => (q.data ? (q.data as any).generated_at + ':' + (q.data as any).from : '')).join('|'), calFrom, calTo]);
 
+  // ═══ FIND A COMPANY  (zzz619) ═══════════════════════════════════════════
+  //
+  // "NTSK reported and I cannot find it" was not a missing company — NTSK was
+  // graded MIXED on 2 September and sitting in the window the whole time. It
+  // was unfindable, which for the reader is the same thing as absent, and
+  // worse, because it quietly undermines trust in everything else on the page.
+  //
+  // So this searches the WHOLE loaded window and deliberately IGNORES the
+  // active filters: the most useful answer to "where is NTSK" is often "in
+  // MIXED, which your current filters hide", and a search that obeys the
+  // filters can never give it. A name outside the window is graded on demand
+  // from its own latest filing rather than reported as unknown.
+
   const allRows = useMemo(() => {
     if (!data?.by_tier) return [] as UsGradedRow[];
     return US_TIER_ORDER.flatMap((t) => data.by_tier[t] || []);
@@ -672,6 +690,39 @@ export default function UsEarningsOpportunitiesPage() {
   // scanning a window usually wants one or the other, not both at once.
   const [allAiOpen, setAllAiOpen] = useState(false);
   const aiLeft = useAiSummaryQueue();
+
+  // Matches across the whole window, filters or no filters.
+  const findHits = useMemo(() => {
+    const q = find.trim().toUpperCase();
+    if (q.length < 1) return [];
+    return allRows
+      .filter((r: any) => String(r.ticker || '').toUpperCase().includes(q)
+        || String(r.company || '').toUpperCase().includes(q))
+      .sort((a: any, b: any) => String(b.filing_date).localeCompare(String(a.filing_date)))
+      .slice(0, 12);
+  }, [find, allRows]);
+
+  /** Grade one ticker off its own latest filing, for a name the window misses. */
+  const gradeOnDemand = useCallback(async (tkr: string) => {
+    const t = tkr.trim().toUpperCase();
+    if (!t) return;
+    setFindLoading(true); setFindErr(null); setFindAdhoc(null);
+    try {
+      const res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(t)}`, { cache: 'no-store' });
+      const j = await res.json();
+      const rows: any[] = [];
+      for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) rows.push(...(j?.by_tier?.[tier] || []));
+      if (!rows.length) {
+        const pend = (j?.pending || []).find((p: any) => String(p.ticker).toUpperCase() === t);
+        setFindErr(pend
+          ? `${t} filed on ${pend.filed} but could not be graded — ${pend.reason === 'xbrl-not-posted' ? 'its XBRL is not posted on EDGAR yet' : pend.reason}.`
+          : `No recent earnings filing was found on EDGAR for ${t}.`);
+      } else setFindAdhoc(rows[0]);
+    } catch (e: any) {
+      setFindErr(`Could not grade ${t} (${String(e?.message || e)}).`);
+    } finally { setFindLoading(false); }
+  }, []);
+
 
   const counts = useMemo(() => {
     const c = {
@@ -938,6 +989,96 @@ export default function UsEarningsOpportunitiesPage() {
           </div>
         </div>
       )}
+      {/* ── FIND A COMPANY ─────────────────────────────────────────────── */}
+      {viewMode === 'GRADED' && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              value={find} onChange={(e) => { setFind(e.target.value); setFindAdhoc(null); setFindErr(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !findHits.length && find.trim()) void gradeOnDemand(find); }}
+              placeholder="Find a company — ticker or name (searches the whole window, ignoring filters)"
+              style={{
+                flex: '1 1 340px', minWidth: 240, padding: '8px 11px', borderRadius: 'var(--mc-radius)',
+                border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)',
+                color: 'var(--mc-text-0)', fontSize: 'var(--mc-text-sm)',
+              }} />
+            {find && (
+              <button onClick={() => { setFind(''); setFindAdhoc(null); setFindErr(null); }}
+                style={{ fontSize: 11, fontWeight: 800, padding: '7px 12px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-2)' }}>clear</button>
+            )}
+          </div>
+
+          {find.trim().length > 0 && (
+            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 'var(--mc-radius)', border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)' }}>
+              {findHits.length > 0 ? (
+                <>
+                  <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 7 }}>
+                    {findHits.length} match{findHits.length > 1 ? 'es' : ''} in this window. The tier is where the name actually sits —
+                    if your filters exclude that tier, the card is on the page but hidden by them.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {findHits.map((r: any) => {
+                      const meta = (TIER_META as any)[r.tier] || {};
+                      return (
+                        <button key={`${r.ticker}:${r.filing_date}`}
+                          onClick={() => {
+                            // Open the tier section the match lives in before
+                            // scrolling: taking the reader to a card inside a
+                            // collapsed section is a broken promise.
+                            setExpanded((e) => ({ ...e, [r.tier]: true }));
+                            const k = rowKey(r);
+                            setOpenCards((o: Set<string>) => new Set(o).add(k));
+                            setTimeout(() => {
+                              document.getElementById(`find-${r.ticker}-${r.filing_date}`)
+                                ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 120);
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', textAlign: 'left',
+                            padding: '6px 9px', borderRadius: 7, cursor: 'pointer',
+                            border: '1px solid var(--mc-bg-4)', background: 'var(--mc-bg-2)', color: 'var(--mc-text-1)',
+                            fontSize: 'var(--mc-text-xs)',
+                          }}>
+                          <b style={{ color: 'var(--mc-text-0)', fontSize: 13 }}>{r.ticker}</b>
+                          <span style={{ color: 'var(--mc-text-2)' }}>{r.company}</span>
+                          <span style={{ fontSize: 9.5, fontWeight: 900, color: meta.color || 'var(--mc-text-2)', border: `1px solid ${meta.color || 'var(--mc-bg-4)'}`, borderRadius: 5, padding: '1px 6px' }}>{r.tier}</span>
+                          <span style={{ color: 'var(--mc-text-4)' }}>{r.quarter} · filed {r.filing_date}</span>
+                          <span style={{ marginLeft: 'auto', fontFamily: 'ui-monospace,monospace', color: 'var(--mc-text-2)' }}>
+                            score {r.composite_score ?? '·'} · PEAD {r.pead_score ?? '·'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
+                  <b style={{ color: 'var(--mc-text-0)' }}>{find.trim().toUpperCase()}</b> did not report inside this {days}-session window.
+                  It may have reported earlier, or its XBRL may not be posted yet.{' '}
+                  <button onClick={() => void gradeOnDemand(find)} disabled={findLoading}
+                    style={{ fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 7, marginLeft: 4, cursor: findLoading ? 'wait' : 'pointer', border: '1px solid var(--mc-cyan)', background: 'transparent', color: 'var(--mc-cyan)' }}>
+                    {findLoading ? 'grading…' : `grade ${find.trim().toUpperCase()} from its latest filing`}
+                  </button>
+                  {findErr && <div style={{ marginTop: 7, color: 'var(--mc-caution,#F59E0B)' }}>{findErr}</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* A name graded on demand is shown as a full card, right here. */}
+          {findAdhoc && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 6 }}>
+                Graded on demand from {findAdhoc.ticker}&rsquo;s latest filing ({findAdhoc.quarter} · filed {findAdhoc.filing_date}) — it is outside the window above, so it is not part of the tiers or counts.
+              </div>
+              <div style={{ maxWidth: 460 }}>
+                <UsEarningsCard r={findAdhoc} open onToggle={() => setFindAdhoc(null)} panelId={panelId(rowKey(findAdhoc))} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {viewMode === 'GRADED' && loadedCount > 0 && (loadedCount < sessions.length || gradingDays.length > 0 || rereadDays.length > 0) && (
         <div style={{
           marginBottom: 12, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
@@ -1362,8 +1503,10 @@ export default function UsEarningsOpportunitiesPage() {
                 {rows.map((r) => {
                   const k = rowKey(r);
                   return (
-                    <UsEarningsCard key={`${r.ticker}:${r.filing_date}`} r={r}
-                      open={openCards.has(k)} onToggle={() => toggleCard(k)} panelId={panelId(k)} />
+                    <div key={`${r.ticker}:${r.filing_date}`} id={`find-${r.ticker}-${r.filing_date}`}>
+                      <UsEarningsCard r={r}
+                        open={openCards.has(k)} onToggle={() => toggleCard(k)} panelId={panelId(k)} />
+                    </div>
                   );
                 })}
               </div>

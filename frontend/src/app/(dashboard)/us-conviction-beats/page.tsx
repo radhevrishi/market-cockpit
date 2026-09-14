@@ -119,6 +119,36 @@ export default function UsConvictionBeatsPage() {
   useEffect(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ sort, dir: sortDir, view })); } catch {} }, [sort, sortDir, view]);
 
   const [persistError, setPersistError] = useState<string | null>(null);
+  // ── WHY A NAME IS NOT ON THE BENCH  (zzz619) ───────────────────────────
+  //
+  // The search box could only find what was already here. Type a ticker that
+  // is not on the bench and the page went blank with no explanation — and the
+  // explanation is usually the most useful thing on the screen: NTSK is not
+  // here because it graded MIXED, and this bench only holds BLOCKBUSTER and
+  // STRONG. "Not found" and "found, and here is why it did not qualify" are
+  // completely different answers.
+  const [lookup, setLookup] = useState<{ state: 'idle' | 'busy' | 'done' | 'error'; row?: any; msg?: string }>({ state: 'idle' });
+  const lookupTicker = useCallback(async (t: string) => {
+    const tk = t.trim().toUpperCase();
+    if (!tk) return;
+    setLookup({ state: 'busy' });
+    try {
+      const res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(tk)}`, { cache: 'no-store' });
+      const j = await res.json();
+      const rows: any[] = [];
+      for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) rows.push(...(j?.by_tier?.[tier] || []));
+      if (rows.length) { setLookup({ state: 'done', row: rows[0] }); return; }
+      const pend = (j?.pending || []).find((p: any) => String(p.ticker).toUpperCase() === tk);
+      setLookup({
+        state: 'error',
+        msg: pend
+          ? `${tk} filed on ${pend.filed} but could not be graded — ${pend.reason === 'xbrl-not-posted' ? 'its XBRL is not posted on EDGAR yet' : pend.reason}.`
+          : `No recent earnings filing was found on EDGAR for ${tk}.`,
+      });
+    } catch (e: any) {
+      setLookup({ state: 'error', msg: `Could not grade ${tk} (${String(e?.message || e)}).` });
+    }
+  }, []);
   const reload = useCallback(() => {
     setEntries(getUsConvictionList());
     setBinCount(readUsConvictionBin().length);
@@ -994,7 +1024,10 @@ export default function UsConvictionBeatsPage() {
 
       {/* ── filters row ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: 12, borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', marginBottom: 14 }}>
-        <input value={filters.q} onChange={(e) => setFilters((p) => ({ ...p, q: e.target.value }))} placeholder="Search ticker or company…"
+        <input value={filters.q}
+          onChange={(e) => { setFilters((p) => ({ ...p, q: e.target.value })); setLookup({ state: 'idle' }); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && filters.q.trim()) void lookupTicker(filters.q); }}
+          placeholder="Search ticker or company… (Enter to grade one that isn't here)"
           style={{ fontSize: 'var(--mc-text-xs)', padding: '6px 10px', borderRadius: 999, minWidth: 200, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-2)', color: 'var(--mc-text-0)' }} />
         <span style={rowLabel}>Cap</span>
         {[['all', 'All'], ['smid', 'Small+Mid'], ['small', 'Small'], ['mid', 'Mid'], ['large', 'Large'], ['mega', 'Mega']].map(([v, l]) => (
@@ -1058,6 +1091,43 @@ export default function UsConvictionBeatsPage() {
           {sweeping ? 'reloading…' : `window ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? `${benchWindow} sessions`}`}
         </span>
       </div>
+      {/* ── THE ANSWER WHEN A SEARCH FINDS NOTHING ───────────────────── */}
+      {filters.q.trim() && filtered.length === 0 && lookup.state === 'idle' && (
+        <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 12, padding: '9px 12px', borderRadius: 'var(--mc-radius)', border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)', lineHeight: 1.6 }}>
+          <b style={{ color: 'var(--mc-text-0)' }}>{filters.q.trim().toUpperCase()}</b> is not on this bench. That may be because it graded
+          MIXED or AVOID — the bench only keeps BLOCKBUSTER and STRONG — or because it reported outside the window above.{' '}
+          <button onClick={() => void lookupTicker(filters.q)}
+            style={{ fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 7, marginLeft: 2, cursor: 'pointer', border: '1px solid var(--mc-cyan)', background: 'transparent', color: 'var(--mc-cyan)' }}>
+            grade it from its latest filing
+          </button>
+        </div>
+      )}
+      {lookup.state === 'busy' && (
+        <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 12 }}>Reading its latest filing from EDGAR…</div>
+      )}
+      {lookup.state === 'error' && (
+        <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-caution,#F59E0B)', marginBottom: 12, padding: '9px 12px', borderRadius: 'var(--mc-radius)', border: '1px solid rgba(245,158,11,0.35)' }}>
+          {lookup.msg}
+        </div>
+      )}
+      {lookup.state === 'done' && lookup.row && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 7, lineHeight: 1.6 }}>
+            <b style={{ color: 'var(--mc-text-0)' }}>{lookup.row.ticker}</b> graded{' '}
+            <b style={{ color: lookup.row.tier === 'BLOCKBUSTER' ? '#F59E0B' : lookup.row.tier === 'STRONG' ? '#10B981' : 'var(--mc-text-2)' }}>{lookup.row.tier}</b>{' '}
+            on its {lookup.row.quarter} filing of {lookup.row.filing_date}.
+            {(lookup.row.tier === 'MIXED' || lookup.row.tier === 'AVOID')
+              ? ' That is why it is not on the bench — only BLOCKBUSTER and STRONG are kept. The full card is below so you can see the numbers behind that call.'
+              : ' It qualifies; if it is not on the bench above, the session it filed in is outside your current window — widen the window or press Reload bench.'}
+            <button onClick={() => setLookup({ state: 'idle' })}
+              style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 7, marginLeft: 8, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-2)' }}>dismiss</button>
+          </div>
+          <div style={{ maxWidth: 460 }}>
+            <UsEarningsCard r={lookup.row} open onToggle={() => setLookup({ state: 'idle' })} panelId="cb-lookup-card" />
+          </div>
+        </div>
+      )}
+
       {/* ── WHAT THIS BENCH IS BUILT FROM ──────────────────────────────
           A book that is short because two sessions never scanned must say so.
           Without this line the only visible fact is a small number of names,
