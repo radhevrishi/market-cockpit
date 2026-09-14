@@ -137,6 +137,16 @@ const ADJ_RE = /\b(?:adjusted|non[\s‐-―-]?gaap)\b/i;
 /** A per-share measure: "EPS", or "per <up to 3 words> share". */
 const PER_SHARE_RE = /\bEPS\b|\bper\s+(?:[A-Za-z()-]+\s+){0,3}?shares?\b/i;
 
+// A DELTA IS NOT A LEVEL.
+//
+// Marzetti's reconciliation table carries a row literally labelled "Diluted EPS
+// Change ($)" whose value is 0.12 — the twelve-cent MOVE between this quarter
+// and last. Read as the quarter's adjusted EPS, it produced "adj. EPS $0.12 vs
+// est $1.40 · −91%" and a "missed consensus" caveat on a quarter whose EPS was
+// $1.77 and rising. The label says what the number is; every filer that shows a
+// change column labels it, and none of them label a level this way.
+const DELTA_LABEL_RE = /\b(chang|increase|decrease|variance|delta|growth|impact|differen|bps|basis points|%\s*chang)/i;
+
 /** Measures that are NOT per-share earnings even when the words look close. */
 const NOT_EPS_RE = new RegExp(
   [
@@ -726,6 +736,9 @@ function collectTableCandidates(t: ParsedTable, tableIdx: number, headlineQuarte
       // the most recent-looking column in the whole release.
       if (GUIDANCE_RE.test(`${rowLabel} ${colLabel} ${section} ${m.caption} ${m.preText.slice(-240)}`)) continue;
       if (!ADJ_RE.test(rowLabel) && !hasGaapSiblingColumn(m, r, cell.col, colLabel)) continue;
+      // The row (or the column heading it sits under) describes a MOVEMENT
+      // rather than a figure. Nothing in this engine may read a delta as a level.
+      if (DELTA_LABEL_RE.test(rowLabel) || DELTA_LABEL_RE.test(colLabel)) continue;
 
       // ── bind the value to a period, most specific evidence first ─────────
       let bound = colLabel;

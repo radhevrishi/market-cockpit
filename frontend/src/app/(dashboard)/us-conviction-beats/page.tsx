@@ -149,11 +149,20 @@ export default function UsConvictionBeatsPage() {
     // unset, so the 6-hour auto-sweep fired again on every visit — "it's
     // sweeping all the time".
     try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
-    // "Clear + reload": the bench is emptied first (entries go to the recycle
-    // bin, so nothing is lost), then rebuilt from the window below. Without
-    // this the two are separate clicks and the auto-sweep can refill between
-    // them, which is why "clear all" looked like it did nothing.
-    if (opts.wipe) { clearUsConviction(); reload(); }
+    // "Clear + reload" NO LONGER EMPTIES THE BENCH FIRST.
+    //
+    // It did, and the result was a bench of 315 names replaced by a bench of
+    // eleven for as long as the rebuild took — which, on a cold day cache, is
+    // several minutes of watching your own book disappear. Worse, a rebuild
+    // that fails half way (six sessions timed out on the run that prompted
+    // this) leaves the bench permanently short, and the only way back is the
+    // recycle bin.
+    //
+    // So the clear happens AFTER the first session comes back successfully,
+    // below: by then the rebuild is known to work, and the gap between empty
+    // and refilled is one session rather than the whole window. A sweep that
+    // never gets a single session leaves the existing bench untouched.
+    let wipePending = !!opts.wipe;
     // A HARD reload re-reads every session from EDGAR instead of the day cache.
     // The ordinary reload is the one to use: a completed session cannot change,
     // so the cache is the same data without the wait.
@@ -171,6 +180,7 @@ export default function UsConvictionBeatsPage() {
       // up as it goes. Three sessions in flight, like the other tab.
       const days = windowSessions(today, sessions);
       let done = 0; let failed = 0;
+      const failedDays: string[] = [];
       const one = async (d: string) => {
         try {
           let p: any = await getCachedDay(d, d >= today);
@@ -188,13 +198,31 @@ export default function UsConvictionBeatsPage() {
           for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
             for (const c of (p?.by_tier?.[t] || [])) batch.push({ ...c, source_url: c.filing_url });
           }
+          // The rebuild has proved it works — now the old bench can go.
+          if (wipePending) { wipePending = false; clearUsConviction(); }
           if (batch.length) changes += syncUsConviction(batch);
-        } catch { failed++; }
+        } catch { failed++; failedDays.push(d); }
         done++;
-        setSweepMsg(`Sweeping ${done}/${days.length} sessions${failed ? ` (${failed} failed)` : ''}…`);
+        setSweepMsg(`Sweeping ${done}/${days.length} sessions${failed ? ` · ${failed} failed, retrying at the end` : ''} — ${getUsConvictionList().length} on the bench`);
+        reload();
       };
       let next = 0;
       await Promise.all([0, 1, 2].map(async () => { while (next < days.length) await one(days[next++]); }));
+      // ONE RETRY FOR THE SESSIONS THAT TIMED OUT.
+      //
+      // A heavy session behind SEC's rate limit can exceed the client timeout
+      // while the server is still working; the next attempt usually lands
+      // because the server has warmed its caches for those filers. Six failures
+      // silently dropped meant six sessions of results simply missing from the
+      // bench with nothing saying so.
+      if (failedDays.length) {
+        const retry = failedDays.slice();
+        failedDays.length = 0;
+        failed = 0;
+        done = 0;
+        let r = 0;
+        await Promise.all([0, 1].map(async () => { while (r < retry.length) await one(retry[r++]); }));
+      }
       // Re-price the older part of the bench. Explicit mode grades each name
       // off its latest 8-K, so price / move / P/E / market cap refresh even for
       // names whose filing date fell outside the sessions above.
@@ -214,7 +242,7 @@ export default function UsConvictionBeatsPage() {
       try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
       setSweepMsg((changes > 0
         ? `Bench updated — ${changes} change${changes > 1 ? 's' : ''} (last ${sessions} sessions swept${stale.length ? `, ${Math.min(stale.length, 150)} older names re-priced` : ''}).`
-        : 'Bench already up to date.') + (failed ? ` ${failed} session${failed > 1 ? 's' : ''} could not be scanned — press Rebuild again to retry just those.` : ''));
+        : 'Bench already up to date.') + (failed ? ` ${failed} session${failed > 1 ? 's' : ''} still could not be scanned after a retry — press Reload bench to try them again.` : ''));
     } catch (e: any) {
       setSweepMsg(`Sweep failed: ${String(e?.message || e)}`);
     } finally {
