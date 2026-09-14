@@ -672,7 +672,22 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v14:${date}`;  // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
+  const cacheKey = `graded:v14:${date}`;  // zzz622 — CACHE-ONLY READ. Callers that are assembling a multi-day
+  // window (the AI Research Desk) must never be able to trigger a full
+  // enrichment sweep on a reader's clock: thirty sessions × one sweep is a
+  // ten-minute page load and a rate-limit apology. cache_only answers from
+  // what is already built, and says plainly when a session is not built yet,
+  // so the caller can show the gap instead of hanging on it. Inserted before
+  // any of the auto-heal machinery below so it cannot start work either.
+  if ((searchParams.get('cache_only') === '1') && !force && !refreshMissing) {
+    if (!isRedisAvailable()) return NextResponse.json({ pending: true, reason: 'no cache backend' }, { status: 200 });
+    try {
+      const cached = await kvGet<any>(cacheKey);
+      if (cached?.by_tier) return NextResponse.json(cached, { status: 200 });
+    } catch { /* fall through to pending */ }
+    return NextResponse.json({ pending: true, date }, { status: 200 });
+  }
+// zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────

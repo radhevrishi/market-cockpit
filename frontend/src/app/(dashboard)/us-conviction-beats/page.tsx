@@ -602,6 +602,28 @@ export default function UsConvictionBeatsPage() {
     });
   }, [entries, filters, sort, sortDir, newWindow]);
 
+  // ═══ NAMES THE SIZE FILTER IS HIDING  (zzz623) ══════════════════════════
+  //
+  // The Quality Preset defaults to Small+Mid, which is the right default: the
+  // bench on "All" opens on Caterpillar and Nucor, and the reader is here for
+  // the names nobody has written up yet. But a default that silently removes
+  // a BLOCKBUSTER is a default that looks like a BUG — nVent (NVT) graded 89,
+  // BLOCKBUSTER, and simply was not on the page, because it is a $23B company
+  // and the cap chip said Small+Mid. Nothing on the screen said so.
+  //
+  // So the page now says so, in one line, with the fix one click away. The
+  // filter is unchanged; only its silence is.
+  const hiddenBySize = useMemo(() => {
+    if (!filters.cap || filters.cap === 'all') return [] as UsConvictionEntry[];
+    const anyCap = { ...filters, cap: 'all' };
+    const shown = new Set(filtered.map((e) => `${e.ticker}|${e.filing_date}`));
+    return entries
+      .filter((e) => (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG')
+        && passesUsConvictionFilter(e, anyCap as UsConvFilters, newWindow)
+        && !shown.has(`${e.ticker}|${e.filing_date}`))
+      .sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0));
+  }, [entries, filters, filtered, newWindow]);
+
   /** How many names a single filter change would leave — the "(N)" on chips. */
   const countWith = useCallback((patch: Partial<UsConvFilters>) => {
     const f = { ...filters, ...patch };
@@ -1019,6 +1041,21 @@ export default function UsConvictionBeatsPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Top-tier names the size filter is holding back, named rather than
+          silently dropped — and one click from being shown. */}
+      {hiddenBySize.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '9px 12px', marginBottom: 10, borderRadius: 'var(--mc-radius)', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.35)' }}>
+          <span style={{ fontSize: 11.5, color: 'var(--mc-text-1)' }}>
+            <b style={{ color: '#F59E0B' }}>{hiddenBySize.length} BLOCKBUSTER / STRONG name{hiddenBySize.length > 1 ? 's are' : ' is'} hidden by the size filter</b> — they pass every other gate you have set and are only out because the cap chip is on <b>{String(filters.cap).toUpperCase()}</b>:{' '}
+            <span style={{ fontFamily: 'ui-monospace,monospace', color: 'var(--mc-text-0)' }}>{hiddenBySize.slice(0, 14).map((e) => e.ticker).join(' · ')}{hiddenBySize.length > 14 ? ` · +${hiddenBySize.length - 14} more` : ''}</span>
+          </span>
+          <button onClick={() => setFilters((p) => ({ ...p, cap: 'all' }))}
+            style={{ fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 7, cursor: 'pointer', border: '1px solid rgba(245,158,11,0.6)', background: 'transparent', color: '#F59E0B', whiteSpace: 'nowrap' }}>
+            Show all sizes
+          </button>
         </div>
       )}
 

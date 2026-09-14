@@ -82,6 +82,12 @@ function Meter({ label, value, hint, invert }: { label: string; value: number; h
 
 export default function AiDeskPage() {
   const [tab, setTab] = useState<Tab>('DESK');
+  // zzz622 — INDIA. The interpretation layer never cared which market it was
+  // reading: it is handed a fact sheet and asked four questions. Only the fact
+  // sheet is market-specific (crore and a Screener/NSE grade rather than
+  // millions and an XBRL one), so the desk serves both from one page, and a
+  // deck is cached per region.
+  const [region, setRegion] = useState<'us' | 'india'>('us');
   const [days, setDays] = useState(10);
   const [limit, setLimit] = useState(12);
   const [data, setData] = useState<any>(null);
@@ -95,13 +101,13 @@ export default function AiDeskPage() {
     try {
       // The first visit reads only what is already interpreted, so opening the
       // tab is instant and costs nothing. Interpreting is an explicit act.
-      const r = await fetch(`/api/v1/ai/desk?days=${days}&limit=${limit}${interpret ? '' : '&cache_only=1'}`, { cache: 'no-store' });
+      const r = await fetch(`/api/v1/ai/desk?region=${region}&days=${days}&limit=${limit}${interpret ? '&refresh=1' : '&cache_only=1'}`, { cache: 'no-store' });
       const j = await r.json();
       if (!j?.ok) throw new Error(j?.error || 'The desk did not answer.');
       setData(j);
     } catch (e: any) { setErr(String(e?.message || e)); }
     finally { setLoading(false); }
-  }, [days, limit]);
+  }, [days, limit, region]);
 
   const loadLedger = useCallback(async () => {
     try { const r = await fetch('/api/v1/ai/ledger', { cache: 'no-store' }); setLedger(await r.json()); } catch { /* shown as empty */ }
@@ -134,8 +140,8 @@ export default function AiDeskPage() {
         </span>
       </div>
       <p style={{ fontSize: 12, color: 'var(--mc-text-2)', lineHeight: 1.6, marginBottom: 14, maxWidth: 940 }}>
-        Every figure on this page was computed by the engine from SEC XBRL filings and is reproducible. The interpretation blocks
-        are a model reading those same figures and the company&rsquo;s own release, and answering the four things arithmetic cannot:
+        Every figure on this page was computed by the engine — {region === 'us' ? 'from SEC XBRL filings' : 'from the filed Indian quarterly results the engine grades'} — and is reproducible. The interpretation blocks
+        are a model reading those same figures and {region === 'us' ? ' the company\u2019s own release' : ' the engine\u2019s own read of the print'}, and answering the four things arithmetic cannot:
         is the change <b>structural</b>, why would the market re-rate it <b>now</b>, what is the strongest case <b>against</b>, and
         what would prove the read wrong. The model is forbidden to compute anything or to use knowledge of the company from
         outside the filing. Every assessment is written to a prediction ledger and marked against the market later.
@@ -147,6 +153,11 @@ export default function AiDeskPage() {
         <span style={{ flex: 1 }} />
         {tab === 'DESK' && (
           <>
+            <div style={{ display: 'flex', gap: 4, marginRight: 4 }}>
+              {(['us', 'india'] as const).map((rg) => (
+                <button key={rg} onClick={() => { setRegion(rg); setData(null); }} style={chip(region === rg, rg === 'us' ? '#60A5FA' : '#F59E0B')}>{rg === 'us' ? '🇺🇸 USA' : '🇮🇳 India'}</button>
+              ))}
+            </div>
             {[5, 10, 20, 30].map((d) => (
               <button key={d} onClick={() => setDays(d)} style={chip(days === d)}>{d}d</button>
             ))}

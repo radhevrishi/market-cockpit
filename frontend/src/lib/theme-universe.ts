@@ -250,3 +250,223 @@ export function leadersFor(t: ThemeDef): string[] {
   if (t.basket && t.basket.length) return t.basket;
   return THEME_LEADERS[t.id] || [];
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUB-THEMES (zzz621) — the layer between "Photonics is working" and "buy COHR".
+//
+// A theme is rarely one trade. "Photonics +14%" can be transceivers ripping
+// while optical switching goes nowhere; "Battery" can be energy-storage doing
+// all the work while lithium materials still bleed. Ranking a theme's members
+// as one flat list hides that, and the flat list is what a reader was left to
+// untangle by eye.
+//
+// So each theme that HAS a real internal split declares it here, and the
+// drill-down scores each sub-theme as its own equal-weight mini-basket
+// (return, relative strength, breadth). The engine is general: any theme
+// without an entry simply renders the flat leader list exactly as before, and
+// adding a sub-theme later is one line of data, no code.
+//
+// Names that appear in a sub-theme but not in THEME_LEADERS/basket are fetched
+// too — the sub-theme map is allowed to WIDEN a theme's coverage, which is the
+// whole point (a theme's top-6 leaders cannot represent four sub-industries).
+export interface SubTheme { name: string; members: string[] }
+
+export const SUB_THEMES: Record<string, SubTheme[]> = {
+  // ── US ──────────────────────────────────────────────────────────────────
+  'us-photonics': [
+    { name: 'Optical Transceivers', members: ['COHR', 'LITE', 'AAOI', 'FN'] },
+    { name: 'Optical Networking & Switching', members: ['CIEN', 'INFN'] },
+    { name: 'Silicon Photonics & Packaging', members: ['POET', 'MRVL'] },
+    { name: 'Lasers & Optical Sensing', members: ['LASR', 'OUST', 'LPTH'] },
+  ],
+  'us-memory': [
+    { name: 'DRAM / HBM', members: ['MU'] },
+    { name: 'NAND & Flash', members: ['SNDK', 'WDC'] },
+    { name: 'HDD & Storage Systems', members: ['STX', 'NTAP', 'QMCO'] },
+  ],
+  'us-semis': [
+    { name: 'Fabless Designers', members: ['NVDA', 'AVGO', 'AMD', 'QCOM'] },
+    { name: 'Foundry & IDM', members: ['TSM', 'INTC', 'GFS'] },
+    { name: 'Wafer-Fab Equipment', members: ['AMAT', 'LRCX', 'KLAC', 'ASML'] },
+    { name: 'Test, Assembly & Materials', members: ['TER', 'ONTO', 'ACMR', 'COHU', 'KLIC'] },
+  ],
+  'us-ai-hardware': [
+    { name: 'Accelerators', members: ['NVDA', 'AMD'] },
+    { name: 'Custom Silicon & Networking', members: ['AVGO', 'MRVL'] },
+    { name: 'Foundry', members: ['TSM'] },
+  ],
+  'us-datacenter': [
+    { name: 'Power & Cooling Equipment', members: ['VRT', 'ETN', 'POWL'] },
+    { name: 'Generation', members: ['GEV', 'VST', 'CEG'] },
+    { name: 'Build & Engineering', members: ['PWR', 'EME'] },
+  ],
+  'us-cyber': [
+    { name: 'Platform Security', members: ['PANW', 'CRWD', 'FTNT'] },
+    { name: 'Cloud & Network Security', members: ['ZS', 'NET', 'S'] },
+    { name: 'Identity & Data Security', members: ['CYBR', 'OKTA', 'VRNS'] },
+    { name: 'Vulnerability & Security Ops', members: ['QLYS', 'TENB', 'RPD'] },
+  ],
+  'us-software': [
+    { name: 'Application Software', members: ['CRM', 'NOW', 'ADBE', 'WDAY'] },
+    { name: 'Data & Infrastructure', members: ['ORCL', 'SNOW', 'MDB', 'DDOG'] },
+    { name: 'Vertical & Growth SaaS', members: ['TTD', 'HUBS', 'TEAM'] },
+  ],
+  'us-nuclear': [
+    { name: 'Uranium Miners', members: ['CCJ', 'UEC', 'UUUU', 'DNN'] },
+    { name: 'Fuel & Enrichment', members: ['LEU'] },
+    { name: 'SMR Developers', members: ['OKLO', 'SMR', 'NNE'] },
+    { name: 'Nuclear Services', members: ['BWXT'] },
+  ],
+  'us-battery': [
+    { name: 'Battery Materials', members: ['ALB', 'SQM', 'PLL'] },
+    { name: 'Cells & Battery Systems', members: ['ENVX', 'QS'] },
+    { name: 'Grid Energy Storage', members: ['FLNC', 'STEM'] },
+    { name: 'EV Demand', members: ['TSLA'] },
+  ],
+  'us-space': [
+    { name: 'Launch', members: ['RKLB', 'LUNR'] },
+    { name: 'Satellites & Earth Imaging', members: ['PL', 'BKSY', 'ASTS'] },
+    { name: 'Space Infrastructure', members: ['RDW', 'MDA'] },
+  ],
+  'us-quantum': [
+    { name: 'Pure-play Quantum', members: ['IONQ', 'RGTI', 'QBTS', 'QUBT'] },
+    { name: 'Enterprise Quantum', members: ['IBM', 'HON'] },
+  ],
+  'us-defense': [
+    { name: 'Primes', members: ['RTX', 'LMT', 'GD', 'NOC'] },
+    { name: 'Components & Aerostructures', members: ['HWM', 'LOAR', 'AIR', 'TDG'] },
+    { name: 'Defense Tech & Autonomy', members: ['LHX', 'AVAV', 'KTOS', 'PLTR'] },
+  ],
+  'us-crypto': [
+    { name: 'Exchanges & Brokers', members: ['COIN', 'HOOD'] },
+    { name: 'Miners & Compute', members: ['MARA', 'RIOT', 'CLSK', 'IREN', 'WULF', 'CIFR'] },
+    { name: 'Balance-sheet Proxies', members: ['MSTR'] },
+  ],
+  'us-solar': [
+    { name: 'Panels & Modules', members: ['FSLR', 'CSIQ'] },
+    { name: 'Inverters', members: ['ENPH', 'SEDG'] },
+    { name: 'Trackers & Balance-of-System', members: ['NXT', 'ARRY', 'SHLS'] },
+    { name: 'Residential & Installers', members: ['RUN'] },
+  ],
+  'us-drones': [
+    { name: 'Defense Drones', members: ['AVAV', 'KTOS'] },
+    { name: 'Commercial & Counter-UAS', members: ['RCAT', 'ONDS', 'UMAC'] },
+  ],
+  'us-gold': [
+    { name: 'Senior Miners', members: ['NEM', 'GOLD', 'AEM'] },
+    { name: 'Royalty & Streaming', members: ['FNV', 'WPM', 'RGLD'] },
+    { name: 'Mid-tier Producers', members: ['KGC', 'AU', 'HMY'] },
+  ],
+  'us-fintech': [
+    { name: 'Card Networks', members: ['V', 'MA'] },
+    { name: 'Payments & Acquiring', members: ['PYPL', 'TOST', 'GPN', 'FLYW'] },
+    { name: 'Neobrokers & Crypto-fin', members: ['HOOD', 'COIN', 'SOFI'] },
+    { name: 'Cross-border Payments', members: ['DLO', 'GLBE', 'RELY'] },
+  ],
+  'us-robotics': [
+    { name: 'Surgical Robotics', members: ['ISRG'] },
+    { name: 'Industrial Automation', members: ['ABB', 'ROK'] },
+    { name: 'Machine Vision & Test', members: ['CGNX', 'TER'] },
+  ],
+  'us-critminerals': [
+    { name: 'Rare Earths', members: ['MP'] },
+    { name: 'Lithium', members: ['ALB', 'LAC', 'SQM'] },
+    { name: 'Copper & Diversified', members: ['FCX', 'TECK'] },
+  ],
+  'us-energy': [
+    { name: 'Integrated Majors', members: ['XOM', 'CVX', 'COP'] },
+    { name: 'Oilfield Services', members: ['SLB', 'HAL', 'BKR'] },
+    { name: 'E&P', members: ['EOG', 'FANG', 'DVN'] },
+    { name: 'Midstream & LNG', members: ['LNG', 'WMB', 'KMI'] },
+  ],
+  'us-biotech': [
+    { name: 'Large-cap Biotech', members: ['VRTX', 'REGN', 'GILD', 'AMGN'] },
+    { name: 'Gene & Cell Therapy', members: ['CRSP', 'NTLA', 'BEAM'] },
+    { name: 'Platforms & Tools', members: ['TWST', 'MRNA'] },
+  ],
+  'us-regbanks': [
+    { name: 'Super-regionals', members: ['USB', 'PNC', 'TFC'] },
+    { name: 'Mid-cap Regionals', members: ['KEY', 'RF', 'CFG'] },
+  ],
+  // ── INDIA ───────────────────────────────────────────────────────────────
+  'in-defence': [
+    { name: 'Platforms & Shipbuilding', members: ['MAZDOCK.NS', 'COCHINSHIP.NS', 'GRSE.NS'] },
+    { name: 'Electronics & Missiles', members: ['BEL.NS', 'BDL.NS'] },
+    { name: 'Aerospace', members: ['HAL.NS'] },
+    { name: 'Explosives & Propellants', members: ['SOLARINDS.NS'] },
+  ],
+  'in-railways': [
+    { name: 'Rolling Stock', members: ['TITAGARH.NS', 'JWL.NS', 'BEML.NS'] },
+    { name: 'Rail Infra & EPC', members: ['RVNL.NS', 'IRCON.NS'] },
+    { name: 'Rail Financing', members: ['IRFC.NS'] },
+    { name: 'Signalling & Telecom', members: ['RAILTEL.NS'] },
+  ],
+  'in-power': [
+    { name: 'Transmission', members: ['POWERGRID.NS'] },
+    { name: 'T&D Equipment', members: ['CGPOWER.NS', 'SIEMENS.NS', 'ABB.NS', 'TRANSFORMER.NS'] },
+    { name: 'Generation', members: ['NTPC.NS', 'TATAPOWER.NS', 'JSWENERGY.NS'] },
+  ],
+  'in-ems': [
+    { name: 'Box-build & Consumer EMS', members: ['DIXON.NS', 'AMBER.NS'] },
+    { name: 'Industrial & Auto EMS', members: ['KAYNES.NS', 'SYRMA.NS', 'CYIENTDLM.NS'] },
+  ],
+  'in-renewables': [
+    { name: 'Wind', members: ['SUZLON.NS', 'INOXWIND.NS'] },
+    { name: 'Solar Manufacturing', members: ['WAAREEENER.NS', 'PREMIERENE.NS'] },
+    { name: 'Green IPPs', members: ['JSWENERGY.NS', 'TATAPOWER.NS', 'NTPCGREEN.NS'] },
+  ],
+  'in-capgoods': [
+    { name: 'EPC & Engineering', members: ['LT.NS', 'KEC.NS', 'KALPATPOWR.NS'] },
+    { name: 'Process & Power Equipment', members: ['THERMAX.NS', 'BHEL.NS'] },
+  ],
+  'in-it': [
+    { name: 'Large-cap IT', members: ['TCS.NS', 'INFY.NS', 'HCLTECH.NS', 'WIPRO.NS'] },
+    { name: 'Mid-cap / Digital', members: ['LTIM.NS', 'PERSISTENT.NS', 'COFORGE.NS', 'MPHASIS.NS'] },
+  ],
+  'in-chemicals': [
+    { name: 'Fluorochemicals', members: ['NAVINFLUOR.NS', 'SRF.NS'] },
+    { name: 'Agrochemicals', members: ['PIIND.NS', 'UPL.NS'] },
+    { name: 'Diversified Specialty', members: ['DEEPAKNTR.NS', 'AARTIIND.NS'] },
+  ],
+  'in-pharma': [
+    { name: 'Large-cap Formulations', members: ['SUNPHARMA.NS', 'CIPLA.NS', 'DRREDDY.NS', 'LUPIN.NS'] },
+    { name: 'CDMO & API', members: ['DIVISLAB.NS', 'LAURUSLABS.NS'] },
+  ],
+  'in-bank': [
+    { name: 'Private Banks', members: ['HDFCBANK.NS', 'ICICIBANK.NS', 'AXISBANK.NS', 'KOTAKBANK.NS'] },
+    { name: 'PSU Banks', members: ['SBIN.NS', 'BANKBARODA.NS', 'PNB.NS'] },
+  ],
+  'in-datacenter': [
+    { name: 'Servers & Hardware', members: ['NETWEB.NS'] },
+    { name: 'DC Real Estate', members: ['ANANTRAJ.NS'] },
+    { name: 'Connectivity & Fibre', members: ['TATACOMM.NS', 'STLTECH.NS'] },
+  ],
+  'in-auto': [
+    { name: 'Passenger & CV OEMs', members: ['MARUTI.NS', 'M&M.NS', 'TATAMOTORS.NS'] },
+    { name: 'Two-wheelers', members: ['BAJAJ-AUTO.NS', 'EICHERMOT.NS', 'TVSMOTOR.NS', 'HEROMOTOCO.NS'] },
+    { name: 'Auto Ancillaries', members: ['BHARATFORG.NS', 'MOTHERSON.NS', 'BOSCHLTD.NS'] },
+  ],
+  'in-metal': [
+    { name: 'Steel', members: ['TATASTEEL.NS', 'JSWSTEEL.NS', 'JINDALSTEL.NS', 'SAIL.NS'] },
+    { name: 'Non-ferrous', members: ['HINDALCO.NS', 'VEDL.NS', 'NATIONALUM.NS'] },
+  ],
+  'in-ports': [
+    { name: 'Ports', members: ['ADANIPORTS.NS'] },
+    { name: 'Shipping', members: ['GESHIP.NS', 'SCI.NS'] },
+    { name: 'Shipbuilding', members: ['MAZDOCK.NS', 'COCHINSHIP.NS'] },
+  ],
+};
+
+/** Sub-theme split for a theme, or null when it has none (→ flat leader list). */
+export function subThemesFor(themeId: string): SubTheme[] | null {
+  const s = SUB_THEMES[themeId];
+  return s && s.length ? s : null;
+}
+
+/** Every symbol the drill-down should fetch for a theme: its leaders UNION every
+ *  sub-theme member, so the sub-theme map can widen coverage beyond the top-6. */
+export function drillSymbolsFor(t: ThemeDef): string[] {
+  const out = new Set<string>(leadersFor(t));
+  for (const s of SUB_THEMES[t.id] || []) s.members.forEach((m) => out.add(m));
+  return [...out];
+}

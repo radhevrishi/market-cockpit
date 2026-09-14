@@ -19,6 +19,7 @@ interface ThemeRow {
   price?: number; dayChangePct?: number;
   ret?: Ret; rsRatio?: number; rsMomentum?: number; quadrant?: string; trail?: { x: number; y: number }[];
   aboveSMA50?: boolean; breadthAbove50?: number | null;
+  trendState?: string; trendColor?: string; trendNote?: string;
   characterChange?: 'bullish' | 'bearish' | null;
   conviction?: number; rotationVelocity?: number; rotation?: string; action?: string | null;
   verdict?: string; verdictColor?: string; verdictNote?: string;
@@ -38,8 +39,16 @@ interface Payload {
   region: Region; benchmark: { symbol: string; name: string; price: number; changePercent: number };
   benchmarkRet?: Ret | null;
   themes: ThemeRow[]; rotatingIn: string[]; rotatingOut: string[]; topBuy: string[]; topAvoid: string[];
+  byVerdict?: Record<string, string[]>;
   movedUp?: string[]; movedDown?: string[];
   clusters?: Array<{ id: number; label: string; members: string[] }>;
+  breadth?: {
+    themes: number; above50: number; pctAbove50: number;
+    newHigh: number; newLow: number;
+    quadrantCounts?: Record<string, number>;
+    benchAbove50?: boolean | null; benchRangePos?: number | null;
+    regime: 'risk-on' | 'risk-off' | 'mixed'; regimeScore: number; note: string;
+  } | null;
   asOf: string; source?: string; error?: string;
 }
 
@@ -64,6 +73,13 @@ export default function ThemeRotationTab() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());   // zzz486 — multi-expand
   const [drill, setDrill] = useState<Record<string, any>>({});
   const [drillLoading, setDrillLoading] = useState<string | null>(null);
+  // zzz621 — THEME TRACK: the same board read as a ranked bar chart on one
+  // chosen timeframe. The table shows every window at once, which is right for
+  // study and wrong for the two-second question "what is working TODAY" — a
+  // ranked bar answers that without the eye having to compare five columns.
+  const [trackTf, setTrackTf] = useState<'day' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1'>('m1');
+  const [trackOpen, setTrackOpen] = useState(true);
+  const [trackN, setTrackN] = useState(14);
 
   const load = useCallback(async (r: Region, force = false) => {
     setLoading(true);
@@ -370,8 +386,16 @@ export default function ThemeRotationTab() {
     const lead = themes.filter((t) => t.quadrant === 'Leading').length;
     const lag = themes.filter((t) => t.quadrant === 'Lagging').length;
     const benchUp = (payload.benchmark?.changePercent ?? 0) >= 0;
-    const risk = lead >= lag * 1.3 ? 'risk-on' : lag >= lead * 1.3 ? 'risk-off' : 'mixed';
-    return { buys, avoids, lead, lag, benchUp, risk };
+    // THE REGIME NOW COMES FROM THE TAPE, NOT FROM THE QUADRANTS. Counting
+    // Leading against Lagging was circular — both are measured AGAINST the
+    // benchmark, so in a market falling as a whole the count can still read
+    // risk-on while every theme on the board is losing money. The server's
+    // breadth read (themes holding their 50-day line, themes at one-year highs
+    // versus lows, and whether the benchmark holds its own) measures the
+    // absolute tape instead. The old count is kept only as a fallback.
+    const risk = payload.breadth?.regime
+      || (lead >= lag * 1.3 ? 'risk-on' : lag >= lead * 1.3 ? 'risk-off' : 'mixed');
+    return { buys, avoids, lead, lag, benchUp, risk, b: payload.breadth || null };
   }, [payload, themes, byId]);
 
   const sorted = useMemo(() => {
@@ -432,21 +456,135 @@ export default function ThemeRotationTab() {
             </div>
           )}
 
-          {/* BUY / AVOID / ROTATION call strip */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: 10, marginBottom: 14 }}>
-            <div style={{ background: 'rgba(22,163,74,0.07)', border: '1px solid rgba(22,163,74,0.3)', borderRadius: 10, padding: '11px 13px' }}>
-              <div style={{ fontSize: 11, fontWeight: 900, color: '#22C55E', letterSpacing: 0.5, marginBottom: 7 }}>🟢 BUY — strongest themes</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{payload.topBuy.length ? payload.topBuy.map((id) => chip(id, '#16A34A')) : <span style={{ color: DIM, fontSize: 12 }}>none leading right now</span>}</div>
+          {/* ═══ MARKET CONDITION — the line that sizes every call below ═══
+              A theme call is only half an instruction. "BUY Cybersecurity"
+              means one thing when four fifths of the board holds its 50-day
+              line and something else entirely when the whole tape is rolling
+              over — the second is where correct leadership still loses money.
+              Market → theme → stock, in that order: only trade where all three
+              agree, and size down when the first one does not. */}
+          {payload.breadth && (() => {
+            const b = payload.breadth;
+            const tot = Math.max(1, b.newHigh + b.newLow);
+            const hiPct = Math.round((b.newHigh / tot) * 100);
+            const col = b.regime === 'risk-on' ? '#22C55E' : b.regime === 'risk-off' ? '#F87171' : '#CBD5E1';
+            return (
+              <div style={{ background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: '11px 13px', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.5, color: MUT }}>🌡️ MARKET CONDITION — market → theme → stock</span>
+                  <span style={{ fontSize: 10.5, color: DIM, fontFamily: 'ui-monospace,monospace' }}>
+                    {b.above50}/{b.themes} themes &gt;50-DMA ({b.pctAbove50}%) · {payload.benchmark.name} {b.benchAbove50 === true ? <b style={{ color: '#22C55E' }}>above its 50-DMA</b> : b.benchAbove50 === false ? <b style={{ color: '#F87171' }}>below its 50-DMA</b> : '·'}{b.benchRangePos != null ? ` · 52w ${b.benchRangePos}%` : ''}
+                  </span>
+                </div>
+                {/* new-highs vs new-lows, at the theme level (labelled as such) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: '#22C55E', width: 74, textAlign: 'right' }} title="Themes in the top decile of their own one-year range">{b.newHigh} at highs</span>
+                  <div style={{ flex: 1, height: 12, borderRadius: 6, overflow: 'hidden', display: 'flex', background: 'rgba(148,163,184,0.15)' }}>
+                    <div style={{ width: `${hiPct}%`, background: 'linear-gradient(90deg,#16A34A,#22C55E)' }} />
+                    <div style={{ width: `${100 - hiPct}%`, background: 'linear-gradient(90deg,#EF4444,#B91C1C)' }} />
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: '#F87171', width: 74 }} title="Themes in the bottom decile of their own one-year range">{b.newLow} at lows</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 900, color: col, border: `1px solid ${col}55`, background: `${col}18`, borderRadius: 5, padding: '2px 7px', whiteSpace: 'nowrap' }}>{b.regime === 'risk-on' ? 'RISK-ON' : b.regime === 'risk-off' ? 'RISK-OFF' : 'MIXED'}</span>
+                  <span style={{ fontSize: 11, color: MUT, flex: 1, minWidth: 240 }}>{b.note}</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ═══ THEME TRACK — the board as one ranked bar, on one timeframe ═══
+              The table below shows every window at once, which is right for
+              study and wrong for the question a reader actually opens with:
+              what is working RIGHT NOW. A ranked bar answers that at a glance,
+              and switching the timeframe turns the same board into the answer
+              for today, the week, the quarter or the year. Colour is the
+              rotation VERDICT, not the return, so a big green bar that the
+              engine still says TRIM cannot be mistaken for a buy. */}
+          <div style={{ background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: '11px 13px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <span onClick={() => setTrackOpen((v) => !v)} style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.5, color: MUT, cursor: 'pointer' }}>{trackOpen ? '▾' : '▸'} 📊 THEME TRACK — ranked by move</span>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {([['day', 'Today'], ['w1', '1W'], ['m1', '1M'], ['m3', '3M'], ['ytd', 'YTD'], ['y1', '1Y']] as const).map(([k, lbl]) => (
+                  <button key={k} onClick={() => setTrackTf(k as any)} style={{ fontSize: 10.5, fontWeight: 800, padding: '3px 9px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${trackTf === k ? 'rgba(96,165,250,0.6)' : BORD}`, background: trackTf === k ? 'rgba(59,130,246,0.18)' : 'transparent', color: trackTf === k ? '#93C5FD' : DIM }}>{lbl}</button>
+                ))}
+              </div>
             </div>
-            <div style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 10, padding: '11px 13px' }}>
-              <div style={{ fontSize: 11, fontWeight: 900, color: '#60A5FA', letterSpacing: 0.5, marginBottom: 7 }}>🔵 ROTATING IN — early</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{payload.rotatingIn.length ? payload.rotatingIn.map((id) => chip(id, '#3B82F6')) : <span style={{ color: DIM, fontSize: 11 }}>none confirmed yet — no weak theme has reclaimed its 50-DMA</span>}</div>
-            </div>
-            <div style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: '11px 13px' }}>
-              <div style={{ fontSize: 11, fontWeight: 900, color: '#F87171', letterSpacing: 0.5, marginBottom: 7 }}>🔴 AVOID / ROTATING OUT</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{(payload.topAvoid.length ? payload.topAvoid : payload.rotatingOut).length ? (payload.topAvoid.length ? payload.topAvoid : payload.rotatingOut).map((id) => chip(id, '#EF4444')) : <span style={{ color: DIM, fontSize: 12 }}>—</span>}</div>
-            </div>
+            {trackOpen && (() => {
+              const valOf = (t: ThemeRow) => trackTf === 'day' ? (t.dayChangePct ?? 0) : (t.ret?.[trackTf as 'w1'] ?? 0);
+              const ranked = [...themes].sort((a, b) => valOf(b) - valOf(a));
+              const show = trackN >= ranked.length ? ranked : [...ranked.slice(0, Math.ceil(trackN / 2)), ...ranked.slice(ranked.length - Math.floor(trackN / 2))];
+              const mag = Math.max(1, ...ranked.map((t) => Math.abs(valOf(t))));
+              const gap = trackN < ranked.length ? Math.ceil(trackN / 2) : -1;
+              return (
+                <div style={{ marginTop: 9 }}>
+                  {show.map((t, i) => {
+                    const v = valOf(t);
+                    const w = Math.min(50, (Math.abs(v) / mag) * 50);
+                    const c = t.verdictColor || (v >= 0 ? '#16A34A' : '#EF4444');
+                    return (
+                      <React.Fragment key={t.id}>
+                        {i === gap && <div style={{ fontSize: 9, color: DIM, textAlign: 'center', padding: '4px 0', letterSpacing: 1 }}>· · · {ranked.length - trackN} more · · ·</div>}
+                        <div onClick={() => toggleExpand(t.id)} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0', cursor: 'pointer', background: hover === t.id ? 'rgba(255,255,255,0.03)' : 'transparent', borderRadius: 4 }}>
+                          <span style={{ fontSize: 10.5, color: TXT, width: 172, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 700 }}>{t.emoji} {t.name}</span>
+                          <div style={{ flex: 1, position: 'relative', height: 13 }}>
+                            <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
+                            <div style={{ position: 'absolute', top: 2, bottom: 2, borderRadius: 3, background: c, opacity: 0.85, ...(v >= 0 ? { left: '50%', width: `${w}%` } : { right: `${50}%`, width: `${w}%` }) }} />
+                          </div>
+                          <span style={{ fontSize: 10, fontFamily: 'ui-monospace,monospace', width: 54, textAlign: 'right', color: v >= 0 ? '#22C55E' : '#F87171' }}>{fmtPct(v)}</span>
+                          <span title={t.verdictNote} style={{ fontSize: 8.5, fontWeight: 900, width: 66, textAlign: 'center', color: t.verdictColor, background: `${t.verdictColor}1a`, border: `1px solid ${t.verdictColor}44`, borderRadius: 4, padding: '1px 3px', whiteSpace: 'nowrap' }}>{t.verdict}</span>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }}>
+                    <span style={{ fontSize: 9.5, color: DIM }}>Bar length is the move over the chosen window; colour is the rotation call, so a long green bar the engine still rates TRIM cannot read as a buy. Click any row to open its constituents.</span>
+                    <button onClick={() => setTrackN((n) => (n >= themes.length ? 14 : themes.length))} style={{ fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${BORD}`, background: 'transparent', color: DIM, whiteSpace: 'nowrap' }}>{trackN >= themes.length ? 'show top & bottom' : `show all ${themes.length}`}</button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
+
+          {/* ═══ THE CALL STRIP — A COMPLETE PARTITION, NOT A TOP FIVE ═══
+              It used to show three buckets of five: BUY, ROTATING IN, AVOID.
+              Everything rated HOLD, WATCH or TRIM appeared nowhere, and
+              anything past the fifth name in a bucket was cut — so a reader
+              looking for Cybersecurity (rated HOLD, and one of the strongest
+              things on the board) could not find it and reasonably concluded
+              the theme was missing. Every theme now sits in exactly one bucket
+              and nothing is truncated: the counts add up to the whole board. */}
+          {(() => {
+            const bv = payload.byVerdict || {};
+            const CARDS: Array<[string, string, string, string]> = [
+              ['BUY', '🟢 BUY — strongest themes', '#22C55E', 'rgba(22,163,74,0.07)'],
+              ['EARLY BUY', '🔵 EARLY BUY — rotating in', '#60A5FA', 'rgba(59,130,246,0.06)'],
+              ['HOLD', '🟡 HOLD — own it, stop adding', '#F59E0B', 'rgba(245,158,11,0.06)'],
+              ['WATCH', '👁️ WATCH — not confirmed yet', '#EAB308', 'rgba(234,179,8,0.05)'],
+              ['TRIM', '🟠 TRIM — reduce', '#F97316', 'rgba(249,115,22,0.06)'],
+              ['AVOID', '🔴 AVOID', '#F87171', 'rgba(239,68,68,0.06)'],
+            ];
+            const placed = CARDS.reduce((a, [k]) => a + (bv[k]?.length || 0), 0);
+            return (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: 10, marginBottom: 6 }}>
+                  {CARDS.map(([k, label, col, bg]) => {
+                    const ids = bv[k] || (k === 'BUY' ? payload.topBuy : k === 'EARLY BUY' ? payload.rotatingIn : k === 'AVOID' ? payload.topAvoid : []);
+                    return (
+                      <div key={k} style={{ background: bg, border: `1px solid ${col}4d`, borderRadius: 10, padding: '11px 13px' }}>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: col, letterSpacing: 0.5, marginBottom: 7 }}>{label} <span style={{ color: DIM, fontWeight: 700 }}>({ids.length})</span></div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{ids.length ? ids.map((id) => chip(id, col)) : <span style={{ color: DIM, fontSize: 11.5 }}>none right now</span>}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 10, color: DIM, marginBottom: 14 }}>
+                  Every theme on the board sits in exactly one bucket above — {placed} of {themes.length} placed. Nothing is truncated, so a theme you cannot find here is one the engine could not price, not one it left out. Click any chip to open it.
+                </div>
+              </>
+            );
+          })()}
 
           {/* character-change alerts (the "suddenly buyable / just rolled over" moments) */}
           {themes.some((t) => t.characterChange) && (
@@ -691,7 +829,7 @@ export default function ThemeRotationTab() {
                       <td style={{ padding: '7px 8px', textAlign: 'left' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                           <span style={{ color: DIM, fontSize: 9, width: 8, flexShrink: 0 }}>{isOpen ? '▾' : '▸'}</span>
-                          <span style={{ width: 8, height: 8, borderRadius: 8, background: QC[t.quadrant || 'Lagging'], flexShrink: 0 }} />
+                          <span title={t.trendNote} style={{ width: 8, height: 8, borderRadius: 8, background: t.trendColor || QC[t.quadrant || 'Lagging'], flexShrink: 0 }} />
                           <div>
                             <div style={{ fontWeight: 800, color: TXT }}>{t.emoji} {t.name}
                               {t.action === 'ADD' && <span title="Rotating into strength — add" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#22C55E', background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.4)', borderRadius: 4, padding: '1px 5px' }}>➕ ADD</span>}
@@ -702,7 +840,18 @@ export default function ThemeRotationTab() {
                               {t.fallingLeader && <span title="Leading on relative strength, but its own price is still down over 3 months — it is falling less than the market, not rising" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#F59E0B', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>↓abs</span>}
                               {t.quadrantMove && <span title={`Crossed ${t.quadrantMove.from} → ${t.quadrantMove.to} this week`} style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: t.quadrantMove.dir === 'upgrade' ? '#22C55E' : '#EF4444', background: t.quadrantMove.dir === 'upgrade' ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)', border: `1px solid ${t.quadrantMove.dir === 'upgrade' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`, borderRadius: 4, padding: '1px 5px' }}>{t.quadrantMove.dir === 'upgrade' ? '▲' : '▼'} NEW</span>}
                             </div>
-                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.quadrantMove ? <span style={{ color: MUT }}> (was {t.quadrantMove.from})</span> : t.quadrant4w && t.quadrant4w !== t.quadrant ? <span style={{ color: MUT }}> (was {t.quadrant4w} a month ago)</span> : ''}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}
+                            <div style={{ fontSize: 9.5, color: DIM }}>
+                              {/* THE HEADLINE LABEL IS JUDGED ON PRICE TOO.
+                                  The RRG quadrant is purely relative, so a
+                                  leader that merely stops accelerating prints
+                                  "Weakening" while it is up 17% and above its
+                                  50-day line. That word, in the first place a
+                                  reader looks, is the most expensive thing this
+                                  page can get wrong. The quadrant is still
+                                  shown — as the RRG detail it is. */}
+                              <b style={{ color: t.trendColor || MUT }} title={t.trendNote}>{t.trendState || t.quadrant}</b>
+                              <span title={`RRG quadrant (relative strength only): ${t.quadrant}`} style={{ color: DIM }}> · RRG {t.quadrant}</span>
+                              {t.quadrantMove ? <span style={{ color: MUT }}> (was {t.quadrantMove.from})</span> : t.quadrant4w && t.quadrant4w !== t.quadrant ? <span style={{ color: MUT }}> (was {t.quadrant4w} a month ago)</span> : ''}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}
                               {/* WHERE IN THE MOVE YOU ARE. "Above the 50-DMA"
                                   is a yes/no; 22% above it is a different entry
                                   from 1% above, and a theme can lead on relative
@@ -753,11 +902,20 @@ export default function ThemeRotationTab() {
                         <td colSpan={11} style={{ padding: '2px 8px 12px 24px', background: 'rgba(59,130,246,0.04)' }}>
                           {dLoading && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>Loading {t.name} leaders…</div>}
                           {!dLoading && dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>{dd.note}</div>}
-                          {!dLoading && dd?.stocks && dd.stocks.length > 0 && (
-                            <div>
-                              <div style={{ fontSize: 10, color: DIM, margin: '4px 0 6px' }}>Buyable leaders in {t.emoji} {t.name} — sorted by relative strength (3M). <b style={{ color: '#22C55E' }}>✓</b> = above 50-DMA and outperforming. <b style={{ color: '#F59E0B' }}>★</b> = on your Multibagger / Technicals list (shows your <b>Fundo</b> grade; <b>FT</b> = combined Fundo-Techno).</div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-                                {dd.stocks.map((s: any) => {
+                          {!dLoading && dd?.stocks && dd.stocks.length > 0 && (() => {
+                            // ═══ SUB-THEMES — because a theme is rarely one trade ═══
+                            // "Photonics +14%" can be transceivers ripping while optical
+                            // switching goes nowhere, and a flat list of eleven names
+                            // leaves the reader to untangle that by eye. Each declared
+                            // sub-theme is scored as its own equal-weight mini-basket
+                            // from the same per-stock numbers, ranked by relative
+                            // strength, with the members underneath it — so "buy
+                            // Photonics" resolves to "buy the transceiver half".
+                            const maxAbs = Math.max(1, ...dd.stocks.map((x: any) => Math.abs(x.rs3m ?? 0)));
+                            const subs: any[] | null = dd.subs && dd.subs.length ? dd.subs : null;
+                            const spread = subs?.[0]?._spread ?? null;
+                            const bySym = new Map<string, any>(dd.stocks.map((x: any) => [x.sym, x]));
+                            const card = (s: any) => {
                                   const nsym = userLists.norm(s.sym);
                                   const f = userLists.fundo.get(nsym);
                                   const inTech = userLists.tech.has(nsym);
@@ -768,13 +926,21 @@ export default function ThemeRotationTab() {
                                   const ft = (typeof s.techno === 'number' && typeof fundoScore === 'number') ? Math.round((s.techno + fundoScore) / 2) : null;
                                   const scoreCol = (v: number) => v >= 70 ? '#22C55E' : v >= 50 ? '#EAB308' : '#EF4444';
                                   const bord = s.buyReady ? 'rgba(34,197,94,0.5)' : inList ? 'rgba(245,158,11,0.5)' : BORD;
+                                  const bw = Math.min(50, (Math.abs(s.rs3m ?? 0) / maxAbs) * 50);
+                                  const bc = (s.rs3m ?? 0) >= 0 ? '#16A34A' : '#EF4444';
                                   return (
                                   <div key={s.sym} style={{ minWidth: 156, flex: '0 0 auto', background: CARD, border: `1px solid ${bord}`, borderRadius: 8, padding: '7px 9px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
                                       <span style={{ fontWeight: 900, color: TXT, fontSize: 12 }}>{inList && <span style={{ color: '#F59E0B' }} title="on your list">★ </span>}{s.sym}</span>
                                       <span style={{ fontSize: 9, fontWeight: 800, color: s.buyReady ? '#22C55E' : s.aboveSMA50 ? '#EAB308' : '#EF4444' }}>{s.buyReady ? '✓ buy-ready' : s.aboveSMA50 ? '~ watch' : '✕ weak'}</span>
                                     </div>
-                                    <div style={{ fontSize: 9.5, marginTop: 4, fontFamily: 'ui-monospace,monospace', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                    {/* the member's relative strength as a bar, so the
+                                        ranking inside a sub-theme is visible, not read */}
+                                    <div style={{ position: 'relative', height: 7, margin: '5px 0 3px' }}>
+                                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
+                                      <div style={{ position: 'absolute', top: 1, bottom: 1, borderRadius: 2, background: bc, opacity: 0.85, ...((s.rs3m ?? 0) >= 0 ? { left: '50%', width: `${bw}%` } : { right: '50%', width: `${bw}%` }) }} />
+                                    </div>
+                                    <div style={{ fontSize: 9.5, marginTop: 2, fontFamily: 'ui-monospace,monospace', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                       <span style={{ color: DIM }}>Techno <b style={{ color: scoreCol(s.techno ?? 0) }}>{s.techno ?? '·'}</b></span>
                                       {f ? <span style={{ color: DIM }}>Fundo <b style={{ color: f.grade ? (String(f.grade).startsWith('A') ? '#22C55E' : String(f.grade).startsWith('B') ? '#EAB308' : '#EF4444') : DIM }}>{f.grade || '·'}{typeof fundoScore === 'number' ? `(${fundoScore})` : ''}</b></span> : null}
                                       {ft != null ? <span style={{ color: DIM }}>FT <b style={{ color: scoreCol(ft) }}>{ft}</b></span> : null}
@@ -784,10 +950,45 @@ export default function ThemeRotationTab() {
                                     </div>
                                   </div>
                                   );
+                            };
+                            const legend = (
+                              <div style={{ fontSize: 10, color: DIM, margin: '4px 0 6px' }}>Buyable leaders in {t.emoji} {t.name} — sorted by relative strength (3M). <b style={{ color: '#22C55E' }}>✓</b> = above 50-DMA and outperforming. <b style={{ color: '#F59E0B' }}>★</b> = on your Multibagger / Technicals list (shows your <b>Fundo</b> grade; <b>FT</b> = combined Fundo-Techno).</div>
+                            );
+                            if (!subs) return <div>{legend}<div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>{dd.stocks.map(card)}</div></div>;
+                            const smax = Math.max(1, ...subs.map((x) => Math.abs(x.rs3m ?? 0)));
+                            return (
+                              <div>
+                                {legend}
+                                {spread != null && spread >= 12 && (
+                                  <div style={{ fontSize: 10.5, color: '#F59E0B', background: 'rgba(245,158,11,0.09)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 7, padding: '6px 9px', marginBottom: 8 }}>
+                                    ⚠️ <b>{spread.toFixed(0)} points of relative strength separate the best and worst sub-theme here.</b> “Buy {t.name}” is the wrong instruction — <b>{subs[0].name}</b> is doing the work{subs[subs.length - 1] ? <> and <b>{subs[subs.length - 1].name}</b> is not</> : null}.
+                                  </div>
+                                )}
+                                {subs.map((sub: any) => {
+                                  const v = sub.rs3m ?? 0;
+                                  const w = Math.min(50, (Math.abs(v) / smax) * 50);
+                                  const c = v >= 0 ? '#16A34A' : '#EF4444';
+                                  return (
+                                    <div key={sub.name} style={{ marginBottom: 10 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                                        <span style={{ fontSize: 11, fontWeight: 900, color: sub.residual ? DIM : TXT, width: 210, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub.name}<span style={{ color: DIM, fontWeight: 600 }}> ({sub.count})</span></span>
+                                        <div style={{ flex: 1, position: 'relative', height: 12, maxWidth: 320 }}>
+                                          <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
+                                          <div style={{ position: 'absolute', top: 2, bottom: 2, borderRadius: 3, background: c, opacity: 0.85, ...(v >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` }) }} />
+                                        </div>
+                                        <span style={{ fontSize: 10, fontFamily: 'ui-monospace,monospace', color: DIM, whiteSpace: 'nowrap' }}>
+                                          3M <b style={{ color: (sub.m3 ?? 0) >= 0 ? '#22C55E' : '#F87171' }}>{fmtPct(sub.m3)}</b> · RS <b style={{ color: v >= 0 ? '#22C55E' : '#F87171' }}>{v > 0 ? '+' : ''}{v.toFixed(1)}</b> · brdth <b style={{ color: sub.breadth >= 60 ? '#22C55E' : sub.breadth >= 35 ? '#EAB308' : '#F87171' }}>{sub.breadth}%</b> · <b style={{ color: sub.buyReady ? '#22C55E' : DIM }}>{sub.buyReady} buy-ready</b>
+                                        </span>
+                                      </div>
+                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, paddingLeft: 10, borderLeft: `2px solid ${c}44` }}>
+                                        {sub.symbols.map((sy: string) => bySym.get(sy)).filter(Boolean).map(card)}
+                                      </div>
+                                    </div>
+                                  );
                                 })}
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
                           {!dLoading && dd?.stocks && dd.stocks.length === 0 && !dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>No constituent data available.</div>}
                         </td>
                       </tr>

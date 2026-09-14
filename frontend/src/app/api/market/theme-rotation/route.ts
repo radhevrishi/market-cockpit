@@ -18,7 +18,8 @@ import { NextResponse } from 'next/server';
 import { fetchChart } from '@/lib/yahoo';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import {
-  themesForRegion, benchmarkForRegion, leadersFor, type ThemeRegion, type ThemeDef,
+  themesForRegion, benchmarkForRegion, leadersFor, subThemesFor, drillSymbolsFor,
+  type ThemeRegion, type ThemeDef,
 } from '@/lib/theme-universe';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v11:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v12:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -51,6 +52,49 @@ function resampleToWeekly(timestamps: number[], closes: number[]): number[] {
   }
   if (have) out.push(last);
   return out;
+}
+
+// ═══ THE LABEL A READER ACTUALLY SEES  (zzz623) ═══════════════════════════
+//
+// The RRG quadrant is a RELATIVE construct and nothing else. RS-Momentum here
+// is RS-Ratio measured against its OWN trailing mean, so it falls under 100 the
+// moment a theme stops outperforming the market by MORE than it recently was —
+// which happens to every sustained leader, repeatedly, while it is still
+// beating the market and still rising. The textbook then prints "Weakening".
+//
+// That word is the single most misleading thing this page can say. Cybersecurity
+// at RS 108, up 17% over three months and above its 50-day line is not weakening
+// by any meaning a reader attaches to the word; it is a leader that has stopped
+// accelerating. The verdict logic was already fixed to say HOLD rather than TRIM,
+// but the headline label still said Weakening, and the label is what gets read.
+//
+// So the quadrant stays exactly as it is — it is the correct name for a point on
+// the RRG chart, and the chart still uses it — and a SECOND label is computed
+// that judges the theme on BOTH halves: where it stands relative to the market,
+// AND what its own price is doing. That is the one shown on the row. Where the
+// two disagree, the disagreement itself is the information, and it is spelled
+// out rather than resolved silently in favour of the relative half.
+export type TrendState = 'Leading' | 'Cooling' | 'Rolling over' | 'Improving' | 'Lagging';
+const TREND_COLOR: Record<TrendState, string> = {
+  'Leading': '#16A34A', 'Cooling': '#84CC16', 'Rolling over': '#F97316',
+  'Improving': '#3B82F6', 'Lagging': '#EF4444',
+};
+function trendStateFor(rsRatio: number, rsMomentum: number, aboveSMA50: boolean, m1?: number, m3?: number):
+  { state: TrendState; color: string; note: string } {
+  const up1 = typeof m1 === 'number' ? m1 > 0 : false;
+  const pos3 = typeof m3 === 'number' ? m3 > 0 : false;
+  const strongRel = rsRatio >= 100;
+  const priceOk = aboveSMA50 && pos3;
+
+  if (strongRel && priceOk && rsMomentum >= 100)
+    return { state: 'Leading', color: TREND_COLOR['Leading'], note: 'Beating the market and its own price is rising — leadership with the tape behind it.' };
+  if (strongRel && priceOk)
+    return { state: 'Cooling', color: TREND_COLOR['Cooling'], note: 'Still beating the market and still rising, but no longer by a widening margin. This is a leader that has stopped accelerating — it is NOT weakening in price. Hold what you own; stop adding.' };
+  if (strongRel)
+    return { state: 'Rolling over', color: TREND_COLOR['Rolling over'], note: 'Ahead of the market on relative strength, but its own price has lost the 50-day line or gone negative over three months — it is falling less than the market, which is defence, not a buy.' };
+  if (aboveSMA50 && (up1 || pos3))
+    return { state: 'Improving', color: TREND_COLOR['Improving'], note: 'Relative strength is still below the market, but price has reclaimed the 50-day line and is rising — a turn may be starting.' };
+  return { state: 'Lagging', color: TREND_COLOR['Lagging'], note: 'Behind the market and below its own 50-day line. Nothing to do here yet.' };
 }
 
 function getQuadrant(rsRatio: number, rsMomentum: number): string {
@@ -429,6 +473,10 @@ async function build(region: ThemeRegion) {
     if (prevMomentum < 100 - DB && rsMomentum >= 100 + DB && aboveSMA50) characterChange = 'bullish';
     else if (prevMomentum >= 100 + DB && rsMomentum < 100 - DB && !aboveSMA50) characterChange = 'bearish';
     const v = verdictFor(quadrant, aboveSMA50, ret.m1, ret.m3);
+    // The label the row actually shows — judged on relative strength AND price,
+    // so a leader that has merely stopped accelerating is never called
+    // "Weakening" in the one place a reader looks first.
+    const tstate = trendStateFor(rsRatio, rsMomentum, aboveSMA50, ret.m1, ret.m3);
     // zzz497 — CONVICTION SCORE (0-100): rank themes by the STRENGTH of the signal,
     // not just the quadrant label. Blends relative strength vs the theme's own trend,
     // momentum, the 50-DMA trend confirmation, basket breadth, and the absolute 3M.
@@ -507,6 +555,7 @@ async function build(region: ThemeRegion) {
       _ts: ts, _closes: closes,          // stripped before the payload is sent
 
       aboveSMA50, breadthAbove50,
+      trendState: tstate.state, trendColor: tstate.color, trendNote: tstate.note,
       characterChange,
       conviction, rotationVelocity: +velPerWk.toFixed(2), rotation, action,
       verdict: v.verdict, verdictColor: v.color, verdictNote: v.note,
@@ -585,6 +634,29 @@ async function build(region: ThemeRegion) {
   const topAvoid = okRows.filter((r: any) => r.verdict === 'AVOID')
     .sort((a: any, b: any) => (a.rsRatio + a.rsMomentum) - (b.rsRatio + b.rsMomentum)).slice(0, 5).map((r: any) => r.id);
 
+  // ═══ EVERY THEME LANDS SOMEWHERE  (zzz623) ════════════════════════════════
+  //
+  // The call strip showed three buckets, five names each: BUY, ROTATING IN,
+  // AVOID. Everything the engine rated HOLD, WATCH or TRIM appeared in none of
+  // them, and anything past the fifth name in a bucket was cut. So a reader
+  // scanning the top of the page for Cybersecurity — rated HOLD, and one of the
+  // strongest things on the board — simply could not find it, and reasonably
+  // concluded the theme was missing rather than that the strip was partial.
+  //
+  // A board that hides its own verdicts is not a board. Every theme is now
+  // placed in exactly one bucket by its verdict, with nothing truncated, so the
+  // strip is a complete partition of the universe and the counts add up to the
+  // number of themes. Ordered by conviction inside each bucket, because the
+  // question inside a bucket is always "which of these first".
+  const VERDICTS = ['BUY', 'EARLY BUY', 'HOLD', 'WATCH', 'TRIM', 'AVOID'] as const;
+  const byVerdict: Record<string, string[]> = {};
+  for (const v of VERDICTS) {
+    byVerdict[v] = okRows
+      .filter((r: any) => r.verdict === v)
+      .sort((a: any, b: any) => (b.conviction ?? 0) - (a.conviction ?? 0))
+      .map((r: any) => r.id);
+  }
+
   // THE BENCHMARK'S OWN TREND, stated. Every RS number on this page is measured
   // against it, so without it "Leading, +2% over 3M" is unreadable: is that a
   // strong theme in a flat market, or a weak one in a market up 9%? One line of
@@ -596,14 +668,61 @@ async function build(region: ThemeRegion) {
   const movedDown = okRows.filter((r: any) => r.quadrantMove?.dir === 'downgrade')
     .sort((a: any, b: any) => (a.momDelta1w ?? 0) - (b.momDelta1w ?? 0)).map((r: any) => r.id);
 
+  // ═══ MARKET CONDITION — the line above every theme call  (zzz621) ═════════
+  //
+  // A theme call is only half an instruction. The same "BUY Cybersecurity"
+  // means one thing when four fifths of the board is above its 50-DMA and
+  // something quite different when the whole tape is rolling over — the second
+  // is when leadership gets you run over anyway. The classic desk version of
+  // this is a new-highs-versus-new-lows line, and the honest version of it we
+  // can compute from data already in hand is the same idea one level up: how
+  // many THEMES sit at the top of their own one-year range versus the bottom,
+  // how many hold their 50-day line, and whether the benchmark itself holds
+  // its own. Labelled as themes, not stocks, because that is what it measures.
+  //
+  // The regime it produces replaces a count of Leading-vs-Lagging quadrants,
+  // which was circular: quadrants are relative to the benchmark, so they can
+  // read risk-on in a market that is falling as a whole.
+  const bClose = benchData?.closes || [];
+  const bs50 = sma(bClose, 50);
+  const bLast = bClose.filter((x) => x != null && !isNaN(x)).pop() as number | undefined;
+  const benchAbove50 = (bs50 != null && bLast != null) ? bLast > bs50 : null;
+  const benchRangePos = rangePosition(bClose);
+  const nAbove = okRows.filter((r: any) => r.aboveSMA50).length;
+  const pctAbove50 = okRows.length ? Math.round((nAbove / okRows.length) * 100) : 0;
+  const newHigh = okRows.filter((r: any) => (r.rangePos ?? 0) >= 90).length;
+  const newLow  = okRows.filter((r: any) => (r.rangePos ?? 100) <= 10).length;
+  const qCount = { Leading: 0, Improving: 0, Weakening: 0, Lagging: 0 } as Record<string, number>;
+  okRows.forEach((r: any) => { qCount[r.quadrant] = (qCount[r.quadrant] || 0) + 1; });
+  let regimeScore = 0;
+  regimeScore += (pctAbove50 - 50) / 50;                              // −1 … +1
+  regimeScore += (newHigh - newLow) / Math.max(1, newHigh + newLow);  // −1 … +1
+  regimeScore += benchAbove50 === true ? 0.5 : benchAbove50 === false ? -0.5 : 0;
+  const regimeLabel = regimeScore >= 0.6 ? 'risk-on' : regimeScore <= -0.6 ? 'risk-off' : 'mixed';
+  const breadth = {
+    themes: okRows.length,
+    above50: nAbove, pctAbove50,
+    newHigh, newLow,
+    quadrantCounts: qCount,
+    benchAbove50, benchRangePos,
+    regime: regimeLabel,
+    regimeScore: +regimeScore.toFixed(2),
+    // Said in words, because the numbers above only matter through this:
+    note: regimeLabel === 'risk-on'
+      ? `${pctAbove50}% of themes hold their 50-day line and ${newHigh} sit at the top of their one-year range against ${newLow} at the bottom. Leadership is being rewarded — take the BUY calls at full size.`
+      : regimeLabel === 'risk-off'
+        ? `Only ${pctAbove50}% of themes hold their 50-day line and ${newLow} sit at the bottom of their one-year range against ${newHigh} at the top. The tape is against you — even a correct theme call gets punished here. Half size, or wait.`
+        : `${pctAbove50}% of themes hold their 50-day line; ${newHigh} at one-year highs against ${newLow} at lows. No broad trend — be selective, and only where the theme AND the stock both confirm.`,
+  };
+
   return {
     region,
     benchmark: { symbol: bench.symbol, name: bench.name, price: benchData?.price || 0, changePercent: benchData?.dayChg || 0 },
-    benchmarkRet,
+    benchmarkRet, breadth,
     themes: rows,
     movedUp, movedDown,
     clusters: clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),
-    rotatingIn, rotatingOut, topBuy, topAvoid,
+    rotatingIn, rotatingOut, topBuy, topAvoid, byVerdict,
     asOf: new Date().toISOString(),
     source: 'Yahoo Finance · JdK RS-Ratio/Momentum',
   };
@@ -616,7 +735,12 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
   const bench = benchmarkForRegion(region);
   const theme = themesForRegion(region).find((t) => t.id === themeId);
   if (!theme) return { themeId, stocks: [], error: 'unknown theme' };
-  const syms = leadersFor(theme);
+  // zzz621 — the drill now fetches the leader list UNION every sub-theme member,
+  // so the sub-theme split is allowed to widen a theme's coverage. A theme's
+  // top-six leaders cannot represent four sub-industries, and the whole reason
+  // for the split is that "Photonics" is really transceivers + switching +
+  // packaging + lasers, each of which can be doing something different.
+  const syms = drillSymbolsFor(theme);
   if (!syms.length) return { themeId, stocks: [], note: 'constituents not mapped for this theme yet' };
   const data = await fetchChunked([bench.symbol, ...syms], '1y', '1d');
   const bench3m = (() => { const d = data.get(bench.symbol); return d ? returns(d.ts, d.closes).m3 : 0; })();
@@ -640,13 +764,83 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
     if (r.m1 > 0) techno += 4;
     techno = Math.max(0, Math.min(100, Math.round(techno)));
     return {
-      sym: sym.replace(/\.NS$/, ''), price: +d.price.toFixed(2), dayChangePct: +d.dayChg.toFixed(2),
-      m1: r.m1, m3: r.m3, m6: r.m6, aboveSMA50, rs3m, techno,
+      sym: sym.replace(/\.NS$/, ''), raw: sym, price: +d.price.toFixed(2), dayChangePct: +d.dayChg.toFixed(2),
+      w1: r.w1, m1: r.m1, m3: r.m3, m6: r.m6, ytd: r.ytd, y1: r.y1, aboveSMA50, rs3m, techno,
       buyReady: aboveSMA50 && rs3m > 0,
     };
   }).filter(Boolean) as any[];
   stocks.sort((a, b) => b.rs3m - a.rs3m);                 // strongest leaders first
-  return { themeId, benchmark3m: bench3m, stocks };
+
+  // ═══ SUB-THEMES — the layer between "Photonics is working" and "buy COHR" ═══
+  //
+  // A theme is rarely one trade. Ranking its members as one flat list hides
+  // that optical transceivers can be ripping while optical switching goes
+  // nowhere, or that inside "Battery" the grid-storage names are doing all the
+  // work while lithium materials still bleed. Each declared sub-theme is scored
+  // as its own equal-weight mini-basket from the SAME per-stock numbers already
+  // computed above — no extra fetch, and every figure on the sub-theme row is
+  // the plain average of the rows beneath it, so a reader can check it by eye.
+  //
+  // Themes with no declared split return subs: null and render exactly as before.
+  const defs = subThemesFor(themeId);
+  let subs: any[] | null = null;
+  if (defs) {
+    const bySym = new Map<string, any>(stocks.map((s) => [s.raw, s]));
+    const claimed = new Set<string>();
+    subs = defs.map((d) => {
+      const mem = d.members.map((m) => bySym.get(m)).filter(Boolean) as any[];
+      mem.forEach((m) => claimed.add(m.raw));
+      if (!mem.length) return null;
+      const avg = (f: (x: any) => number | null | undefined) => {
+        const v = mem.map(f).filter((x) => typeof x === 'number' && !isNaN(x as number)) as number[];
+        return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(2) : null;
+      };
+      const above = mem.filter((m) => m.aboveSMA50).length;
+      mem.sort((a, b) => b.rs3m - a.rs3m);
+      return {
+        name: d.name,
+        count: mem.length,
+        symbols: mem.map((m) => m.sym),
+        w1: avg((m) => m.w1), m1: avg((m) => m.m1), m3: avg((m) => m.m3),
+        ytd: avg((m) => m.ytd), y1: avg((m) => m.y1), day: avg((m) => m.dayChangePct),
+        rs3m: avg((m) => m.rs3m),
+        techno: avg((m) => m.techno),
+        breadth: Math.round((above / mem.length) * 100),
+        buyReady: mem.filter((m) => m.buyReady).length,
+        leader: mem[0]?.sym || null,
+        laggard: mem[mem.length - 1]?.sym || null,
+      };
+    }).filter(Boolean) as any[];
+    // Anything the map didn't place still has to be visible — a sub-theme list
+    // that silently drops names is worse than no sub-themes at all.
+    const rest = stocks.filter((s) => !claimed.has(s.raw));
+    if (rest.length) {
+      const avg = (f: (x: any) => number | null | undefined) => {
+        const v = rest.map(f).filter((x) => typeof x === 'number' && !isNaN(x as number)) as number[];
+        return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(2) : null;
+      };
+      subs.push({
+        name: 'Other constituents', count: rest.length, symbols: rest.map((r) => r.sym),
+        w1: avg((m) => m.w1), m1: avg((m) => m.m1), m3: avg((m) => m.m3),
+        ytd: avg((m) => m.ytd), y1: avg((m) => m.y1), day: avg((m) => m.dayChangePct),
+        rs3m: avg((m) => m.rs3m), techno: avg((m) => m.techno),
+        breadth: Math.round((rest.filter((r) => r.aboveSMA50).length / rest.length) * 100),
+        buyReady: rest.filter((r) => r.buyReady).length,
+        leader: rest[0]?.sym || null, laggard: rest[rest.length - 1]?.sym || null,
+        residual: true,
+      });
+    }
+    subs.sort((a, b) => (b.rs3m ?? -999) - (a.rs3m ?? -999));
+    // THE SPREAD is the point of the split: if the best sub-theme is 25 points
+    // ahead of the worst, "buy the theme" is the wrong instruction and the tab
+    // should say which half to buy.
+    const rs = subs.map((s) => s.rs3m).filter((x) => typeof x === 'number') as number[];
+    if (rs.length >= 2) {
+      const spread = +(Math.max(...rs) - Math.min(...rs)).toFixed(1);
+      subs.forEach((s) => { s._spread = spread; });
+    }
+  }
+  return { themeId, benchmark3m: bench3m, stocks, subs };
 }
 
 export async function GET(request: Request) {
@@ -656,7 +850,7 @@ export async function GET(request: Request) {
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v9:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v12:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }
