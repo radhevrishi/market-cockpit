@@ -1105,6 +1105,12 @@ function SignalRow({ signals }: { signals: any[] | null | undefined }) {
           {x.basis === 'est' && x.est != null && x.surprise_pct != null && (
             <span style={{ color: x.surprise_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
               vs est {fmtVal(x.est, x.unit)} {x.surprise_pct >= 0 ? '+' : ''}{x.surprise_pct.toFixed(1)}%
+              {/* A revenue consensus stops existing when the quarter reports,
+                  so this one was written down beforehand. Saying WHEN is the
+                  difference between a remembered number and a claimed one. */}
+              {x.est_as_of && (
+                <span style={{ color: 'var(--mc-text-4)', fontWeight: 400 }}> (as at {x.est_as_of})</span>
+              )}
             </span>
           )}
           {x.yoy_pct != null && (

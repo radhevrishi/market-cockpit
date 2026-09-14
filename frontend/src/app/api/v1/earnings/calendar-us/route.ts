@@ -26,6 +26,7 @@ import { NextResponse } from 'next/server';
 import { earningsFilersOn, announcementDateFor, type EdgarFiling } from '@/lib/us-edgar';
 import { pooled } from '@/lib/us-prices';
 import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
+import { snapshotEstimates } from '@/lib/us-estimate-snapshot';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -56,6 +57,21 @@ interface DayEntry {
   projected?: Array<{ ticker: string; company: string; last_year_date: string }>;
   eightK: number;
   periodic: number;
+}
+
+/** Tickers scheduled to report on or after today — the ones whose consensus is
+ *  still in the vendor feed and worth writing down before it vanishes. Largest
+ *  first, so a capped run keeps the names anyone is likely to look at. */
+function lastYearScheduleTickers(
+  schedules: Array<{ d: string; list: ExpectedReporter[] } | undefined>, today: string,
+): string[] {
+  const rows: ExpectedReporter[] = [];
+  for (const s of schedules) {
+    if (!s || s.d < today) continue;
+    for (const r of s.list) if (r?.ticker) rows.push(r);
+  }
+  rows.sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0));
+  return rows.map((r) => r.ticker);
 }
 
 const _cache = new Map<string, { at: number; data: any }>();
@@ -168,6 +184,20 @@ export async function GET(req: Request) {
       try { return { d, y, list: await earningsFilersOn(y) }; }
       catch { return { d, y, list: [] as EdgarFiling[] }; }
     });
+
+    // ── CAPTURE THE CONSENSUS WHILE IT STILL EXISTS ─────────────────────
+    //
+    // The vendor's revenue estimate for a quarter disappears the moment that
+    // quarter is reported, which is why a graded card can only ever say "no
+    // street estimate published for this line". Every scheduled reporter in
+    // this window has one RIGHT NOW, so write it down. Fire-and-forget: the
+    // calendar's own answer never waits on it, and a vendor failure costs a
+    // snapshot rather than a response.
+    {
+      const soon = Array.from(new Set(
+        lastYearScheduleTickers(schedules, today).slice(0, 300)));
+      if (soon.length) void snapshotEstimates(soon).catch(() => {});
+    }
 
     const byDate = new Map<string, DayEntry>();
     for (const d of dates) {

@@ -39,6 +39,7 @@ import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-gui
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
+import { readEstimateSnapshot } from '@/lib/us-estimate-snapshot';
 import { oneOffsFromReleaseHtml, epsExOneOffs, type OneOff } from '@/lib/us-one-offs';
 import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
@@ -830,6 +831,12 @@ export async function GET(req: Request) {
     // Toro look like a 38% miss on a quarter it beat on the basis analysts
     // actually use. The GAAP figure stays in the YoY tile; the surprise chip
     // is street vs street.
+    // The consensus captured before each print, read alongside everything else
+    // so it costs no extra round trip. Absent for any quarter that reported
+    // before the capture existed — which reads as "no estimate", correctly.
+    const snapshots = await pooled(prepared, 8, (p) =>
+      readEstimateSnapshot(p.f.ticker || '', p.fundamentals.q_end).catch(() => null));
+
     const [surprises, guidances, forwards, prAdj] = await Promise.all([
       pooled(prepared, 6, (p) => yahooEarningsHistory(p.f.ticker!)),
       // Guidance lives in the 8-K's press-release exhibit; a 10-Q-only filer
@@ -1405,9 +1412,20 @@ export async function GET(req: Request) {
         // Revenue: the street figure only when Yahoo's trend still carries an
         // entry whose period END is this quarter (±20 days) — the same binding
         // the guidance tiles use, and it refuses an ambiguous match outright.
-        const revEst = streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end);
+        // The live feed first; then the consensus captured before the print,
+        // which is the only place a REPORTED quarter's revenue estimate still
+        // exists. Both are the vendor's own number for this exact period — the
+        // snapshot simply remembers it after the feed drops it.
+        const revEst = streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end)
+          ?? (snapshots[pi]?.revenue ?? null);
         push('Revenue', row.revenue_curr_musd, 'musd', row.revenue_prev_musd,
           revEst != null ? revEst / 1e6 : null);
+        // Where that estimate came from, so the card never implies a live
+        // consensus where it is showing one read weeks earlier.
+        if (revEst != null && sig.length) {
+          const live = streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end) != null;
+          sig[sig.length - 1].est_as_of = live ? null : (snapshots[pi]?.captured_at ?? null);
+        }
         // EPS: the adjusted basis when the release states one, measured on the
         // core figure where a one-off sits inside it, against the estimate the
         // basis guard cleared. Otherwise GAAP, with no estimate at all.
