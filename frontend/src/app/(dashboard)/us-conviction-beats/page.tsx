@@ -580,7 +580,51 @@ export default function UsConvictionBeatsPage() {
     return n;
   }, [entries, filters, newWindow]);
 
+  /**
+   * How many bench names pass ONE gate on its own.
+   *
+   * Not `countWith`, which layers a value on top of every filter already set —
+   * that answers "how many survive everything including this", and the reader
+   * opening this panel is asking the opposite question: which single gate is
+   * responsible for the bench being short. So this starts from the defaults
+   * and turns on nothing but the gate in question.
+   */
+  const countGateAlone = useCallback((key: string, v: number | null) => {
+    if (v == null) return entries.length;
+    const f: any = { ...US_FILTER_DEFAULT, cap: 'all', q: '' };
+    f[key] = v;
+    let n = 0;
+    for (const e of entries) if (passesUsConvictionFilter(e, f, newWindow)) n++;
+    return n;
+  }, [entries, newWindow]);
+
   const presetOn = isUsPresetActive(filters);
+  // ── THE PRESET, OPENED UP  (zzz614) ────────────────────────────────────
+  //
+  // The chip printed six thresholds and offered exactly one action: all of
+  // them, or none of them. But the thresholds are the whole argument — "PEAD
+  // ≥60" is a judgement, not a law — and a reader who wants EPS ≥15 instead of
+  // 25 had to abandon the preset and rebuild it by hand in the detail filters.
+  //
+  // So the numbers are editable in place. Hidden by default, because the chip
+  // is a one-click gate first and a control panel second, and shown only when
+  // asked for. `presetLive` is the test that matters once they can be edited:
+  // the preset is ON whenever its gates are set at all, CUSTOMISED when the
+  // values are no longer the defaults. Reading a changed threshold as "off"
+  // would have been the worst of both — the filter still cutting names while
+  // the chip claimed it was not.
+  const PRESET_KEYS = ['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin'] as const;
+  const presetLive = PRESET_KEYS.some((k) => (filters as any)[k] != null);
+  const presetCustom = presetLive && !presetOn;
+  const [showPreset, setShowPreset] = useState(false);
+  const PRESET_FIELDS: Array<{ k: typeof PRESET_KEYS[number]; label: string; unit: string; step: number; hint: string }> = [
+    { k: 'sales', label: 'Sales YoY', unit: '%', step: 5, hint: 'Minimum revenue growth against the year-ago quarter.' },
+    { k: 'eps', label: 'EPS YoY', unit: '%', step: 5, hint: 'Minimum earnings-per-share growth against the year-ago quarter.' },
+    { k: 'pead', label: 'PEAD', unit: '', step: 5, hint: 'Minimum post-earnings-drift score (0-100).' },
+    { k: 'opmDelta', label: 'OPM Δ', unit: 'pp', step: 1, hint: 'Minimum change in operating margin, in percentage points, against the year-ago quarter.' },
+    { k: 'cfoPatMin', label: 'CFO/NI', unit: '×', step: 0.1, hint: 'Minimum cash conversion. Skipped for banks, insurers and REITs, where the ratio does not mean the same thing.' },
+    { k: 'mktCapMin', label: 'Market cap', unit: '$M', step: 100, hint: 'Minimum market capitalisation in US$ millions.' },
+  ];
   const togglePreset = () => {
     setFilters((prev) => {
       if (isUsPresetActive(prev)) {
@@ -800,8 +844,85 @@ export default function UsConvictionBeatsPage() {
         <button onClick={togglePreset}
           title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · Verdict STRONG BUY / BUY / WATCH. No promoter-pledge gate — that concept does not exist in US markets.`}
           style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '7px 12px', borderRadius: 999, cursor: 'pointer', border: '1px solid #F59E0B', color: '#F59E0B', backgroundColor: presetOn ? 'color-mix(in srgb, #F59E0B 14%, transparent)' : 'var(--mc-bg-2)' }}>
-          ⚡ QUALITY PRESET · Sales≥{US_PRESET.sales} · EPS≥{US_PRESET.eps} · PEAD≥{US_PRESET.pead} · OPM Δ≥0 · CFO/NI≥{US_PRESET.cfoPatMin} · MktCap≥${US_PRESET.mktCapMinMusd}M {presetOn ? '✓ ON' : '· OFF — click to enable'}
+          ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M{' '}
+          {presetOn ? '✓ ON' : presetCustom ? '✓ ON · customised' : '· OFF — click to enable'}
         </button>
+        {/* Deliberately a SEPARATE control. Folding "show the numbers" into the
+            same click as "turn it on" means a reader cannot look without also
+            changing what they are looking at. */}
+        <button onClick={() => setShowPreset((v) => !v)}
+          title={showPreset ? 'Hide the preset thresholds' : 'Show and edit the preset thresholds'}
+          style={{ ...chip(showPreset, '#F59E0B'), borderRadius: 999 }}>
+          {showPreset ? '▾ hide thresholds' : '▸ show thresholds'}
+        </button>
+        {/* The thresholds, editable in place. Every change is live — the count
+            beside each field is how many names that gate alone would leave, so
+            the reader can see which number is doing the cutting BEFORE they
+            change it, rather than discovering it afterwards from an empty
+            list. Blank means the gate is off, which is a real and useful
+            state: the preset minus its cash-conversion test is a sensible
+            thing to want. */}
+        {showPreset && (
+          <div style={{
+            width: '100%', marginTop: 2, padding: '11px 13px', borderRadius: 'var(--mc-radius)',
+            border: '1px solid color-mix(in srgb, #F59E0B 35%, transparent)',
+            backgroundColor: 'color-mix(in srgb, #F59E0B 6%, transparent)',
+          }}>
+            <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 9, lineHeight: 1.55 }}>
+              These six gates are the preset. They are a judgement, not a law — change any of them and the bench re-filters at once.
+              Clear a box to switch that gate off entirely. The count beside each is how many of your <b style={{ color: 'var(--mc-text-1)' }}>{entries.length}</b> bench
+              names pass <i>that gate alone</i>, so you can see which one is doing the cutting.
+              {presetCustom && <> <b style={{ color: '#F59E0B' }}>Currently customised</b> — the chip stays on because the gates are still live.</>}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(168px,1fr))', gap: 9 }}>
+              {PRESET_FIELDS.map(({ k, label, unit, step, hint }) => {
+                const v = (filters as any)[k] as number | null;
+                const alone = countGateAlone(k, v);
+                return (
+                  <label key={k} title={hint} style={{ display: 'block', fontSize: 'var(--mc-text-xs)' }}>
+                    <div style={{ color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 3 }}>
+                      {label} ≥{unit === '$M' ? ' $' : ' '}<span style={{ color: 'var(--mc-text-1)' }}>{v ?? '—'}</span>{unit !== '$M' ? unit : 'M'}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="number" step={step} value={v ?? ''} placeholder="off"
+                        onChange={(ev) => {
+                          const raw = ev.target.value;
+                          const num = raw === '' ? null : Number(raw);
+                          setFilters((prev) => ({ ...prev, [k]: raw === '' ? null : (Number.isFinite(num as number) ? num : (prev as any)[k]) }));
+                          // Editing a threshold is a deliberate act: it must not
+                          // be undone by the auto-apply on the next visit.
+                          try { localStorage.removeItem(OPT_OUT_KEY); } catch { /* ignore */ }
+                        }}
+                        style={{
+                          width: '100%', padding: '5px 7px', borderRadius: 6, fontSize: 'var(--mc-text-xs)',
+                          border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)', color: 'var(--mc-text-0)',
+                        }} />
+                      <span title={`${alone} of ${entries.length} bench names pass this gate on its own`}
+                        style={{ fontSize: 10, color: alone === 0 ? 'var(--mc-bearish,#EF4444)' : 'var(--mc-text-4)', fontFamily: 'ui-monospace,monospace', whiteSpace: 'nowrap' }}>
+                        {alone}
+                      </span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button onClick={() => setFilters((prev) => ({ ...prev, ...usPresetFilters(), cap: prev.cap, q: prev.q }))}
+                style={chip(false, '#F59E0B')}>↺ Reset to preset defaults</button>
+              <button onClick={() => setFilters((prev) => {
+                const next: any = { ...prev };
+                for (const k of PRESET_KEYS) next[k] = null;
+                next.verdicts = null;
+                try { localStorage.setItem(OPT_OUT_KEY, '1'); } catch { /* ignore */ }
+                return next;
+              })} style={chip(false)}>Turn every gate off</button>
+              <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>
+                Verdict gate: STRONG BUY / BUY / WATCH{filters.verdicts ? '' : ' — currently off'}. No promoter-pledge gate — that concept does not exist in US markets.
+              </span>
+            </div>
+          </div>
+        )}
         <button onClick={() => setFilters((p) => ({ ...p, newOnly: !p.newOnly }))} style={chip(filters.newOnly, '#10B981')}>
           NEW · {newWindow.days}d{newWindow.widened ? ' (widened from 10d)' : ''} ({newWindow.count})
         </button>
