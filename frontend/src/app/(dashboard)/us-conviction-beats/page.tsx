@@ -19,9 +19,10 @@
 // two markets silently overwriting each other. See lib/conviction-beats-us.ts.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { windowSessions } from '@/lib/us-merge';
-import { getCachedDay, putCachedDay } from '@/lib/us-day-cache';
+import { getCachedDay, putCachedDay, clearDayCache } from '@/lib/us-day-cache';
 import toast from 'react-hot-toast';
 import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-react';
 import {
@@ -45,6 +46,12 @@ import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
 const FILTERS_KEY = 'mc:us-cb:filters:v1';
+const WINDOW_KEY = 'mc:us-cb:window:v1';
+/** How far back a rebuild reaches, in TRADING sessions. The bench is built from
+ *  8-K/10-Q filings, and a month of calendar time is about 21 sessions. */
+const WINDOWS: Array<[label: string, sessions: number]> = [
+  ['1 month', 21], ['2 months', 42], ['3 months', 63],
+];
 const VIEW_KEY = 'mc:us-cb:view:v1';
 const VERDICT_COLOR: Record<string, string> = {
   'STRONG BUY': '#10B981', BUY: '#34D399', WATCH: '#FACC15', AVOID: '#EF4444',
@@ -84,6 +91,10 @@ export default function UsConvictionBeatsPage() {
     } catch {}
     return US_FILTER_DEFAULT;
   });
+  const [benchWindow, setBenchWindow] = useState<number>(() => {
+    try { const n = Number(localStorage.getItem(WINDOW_KEY)); return WINDOWS.some(([, v]) => v === n) ? n : 42; } catch { return 42; }
+  });
+  useEffect(() => { try { localStorage.setItem(WINDOW_KEY, String(benchWindow)); } catch {} }, [benchWindow]);
   const [sweeping, setSweeping] = useState(false);
   const [sweepMsg, setSweepMsg] = useState<string | null>(null);
   const [binCount, setBinCount] = useState(0);
@@ -130,7 +141,7 @@ export default function UsConvictionBeatsPage() {
 
   /** Walk recent sessions of graded-us, then re-price bench names older than
    *  the swept window via explicit-ticker mode (batches of 25). */
-  const sweep = useCallback(async (sessions = 30, manual = false) => {
+  const sweep = useCallback(async (sessions = 30, manual = false, opts: { hard?: boolean; wipe?: boolean } = {}) => {
     if (sweeping) return;
     setSweeping(true);
     setSweepMsg(null);
@@ -138,6 +149,15 @@ export default function UsConvictionBeatsPage() {
     // unset, so the 6-hour auto-sweep fired again on every visit — "it's
     // sweeping all the time".
     try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
+    // "Clear + reload": the bench is emptied first (entries go to the recycle
+    // bin, so nothing is lost), then rebuilt from the window below. Without
+    // this the two are separate clicks and the auto-sweep can refill between
+    // them, which is why "clear all" looked like it did nothing.
+    if (opts.wipe) { clearUsConviction(); reload(); }
+    // A HARD reload re-reads every session from EDGAR instead of the day cache.
+    // The ordinary reload is the one to use: a completed session cannot change,
+    // so the cache is the same data without the wait.
+    if (opts.hard) await clearDayCache();
     let changes = 0;
     try {
       const today = etToday();
@@ -203,13 +223,14 @@ export default function UsConvictionBeatsPage() {
       if (!manual) setTimeout(() => setSweepMsg(null), 8000);
     }
   }, [sweeping, reload]);
+  const sweepWindow = useCallback((opts: { hard?: boolean; wipe?: boolean } = {}) => sweep(benchWindow, true, opts), [sweep, benchWindow]);
 
   // Sweep once every 6 hours on load, so an unattended bench keeps growing.
   useEffect(() => {
     let last = 0;
     try { last = Date.parse(localStorage.getItem(SWEEP_KEY) || '') || 0; } catch {}
     if (Date.now() - last > 6 * 3600_000) {
-      const t = setTimeout(() => sweep(20), 1200);
+      const t = setTimeout(() => sweep(benchWindow), 1200);
       return () => clearTimeout(t);
     }
     return undefined;
@@ -386,15 +407,73 @@ export default function UsConvictionBeatsPage() {
             ⚠ {tierCounts.drifting} drifting
           </span>
         )}
-        <a href="/us-earnings-opportunities" style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, border: '1px solid #F59E0B', color: '#F59E0B', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        {/* A ROUTE CHANGE, NOT A PAGE LOAD. `<a href>` tore the whole app down
+            and rebuilt it: the React Query cache went with it, the day cache had
+            to be re-read from IndexedDB, and this page then opened on an
+            auto-sweep — which is what "not smooth" meant. `Link` keeps the
+            client alive and prefetches the other tab on hover. */}
+        <Link href="/us-earnings-opportunities" prefetch style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, border: '1px solid #F59E0B', color: '#F59E0B', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <Star className="w-3 h-3" /> US Earnings Opportunities →
-        </a>
+        </Link>
       </div>
       <p style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-sm)', margin: '0 0 14px' }}>
         The bench of US names that graded BLOCKBUSTER or STRONG. It accumulates on its own from every graded window,
         demotes a name automatically when a later quarter drops out of the top tiers, and re-prices older entries on
         each sweep. Stored in this browser — nothing is sent anywhere. Educational, not investment advice.
       </p>
+
+      {/* ── BENCH CONTROLS ─────────────────────────────────────────────────
+          Its own bar, above the filters, because the two actions that rebuild
+          this page used to live at the tail of a wrapping status strip full of
+          zeroes — findable only if you already knew they were there. Reload,
+          how far back to reload, and clear are one row now. */}
+      <div style={{
+        display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12,
+        padding: '10px 12px', borderRadius: 'var(--mc-radius)',
+        backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)' }}>BENCH</span>
+        <button onClick={() => sweepWindow()} disabled={sweeping}
+          title="Re-grade every session in the window and re-price the older names. Sessions already scanned are read from the local cache, so this is fast after the first run."
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+            borderRadius: 999, border: '1px solid var(--mc-cyan)',
+            background: sweeping ? 'var(--mc-bg-3)' : 'var(--mc-cyan)',
+            color: sweeping ? 'var(--mc-text-2)' : '#04121A', fontWeight: 800,
+            fontSize: 'var(--mc-text-xs)', cursor: sweeping ? 'default' : 'pointer',
+          }}>
+          <RefreshCw className="w-3 h-3" style={{ animation: sweeping ? 'spin 1s linear infinite' : undefined }} />
+          {sweeping ? 'Reloading…' : 'Reload bench'}
+        </button>
+        <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)' }}>back</span>
+        {WINDOWS.map(([label, n]) => (
+          <button key={n} onClick={() => setBenchWindow(n)} disabled={sweeping}
+            title={`${n} trading sessions`}
+            style={chip(benchWindow === n)}>{label}</button>
+        ))}
+        <span style={{ flex: 1 }} />
+        <button onClick={() => {
+          if (confirm(`Clear the bench and rebuild it from the last ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? benchWindow + ' sessions'}?\n\nCleared entries move to the recycle bin and can be restored.`)) {
+            void sweepWindow({ wipe: true });
+          }
+        }} disabled={sweeping} style={chip(false, '#F59E0B')}
+          title="Empty the bench, then rebuild it from scratch over the window — the one button for 'start again'">
+          ♻ Clear + reload
+        </button>
+        <button onClick={() => {
+          if (confirm('Clear the entire US bench? Entries move to the recycle bin and can be restored.')) { clearUsConviction(); reload(); }
+        }} disabled={sweeping} style={chip(false, '#EF4444')}>Clear all</button>
+        {binCount > 0 && (
+          <button onClick={() => { restoreUsConvictionBin(); reload(); }} style={chip(false)}>
+            <Undo2 className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />Restore {binCount}
+          </button>
+        )}
+        <button onClick={() => { if (confirm('Re-download every session from SEC EDGAR, ignoring the local cache? This takes several minutes.')) void sweepWindow({ hard: true }); }}
+          disabled={sweeping} style={chip(false)}
+          title="Ignore the cached sessions and re-read them all from EDGAR. Only needed if you think a cached session is wrong.">
+          ⟳ Hard re-scan
+        </button>
+      </div>
 
       {/* ── quality preset + quick toggles ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
@@ -521,16 +600,9 @@ export default function UsConvictionBeatsPage() {
         <span><b style={{ color: '#10B981' }}>{tierCounts.STRONG}</b> strong</span>
         <span><b style={{ color: 'var(--mc-text-0)' }}>{filtered.length}</b> passing filters</span>
         <span style={{ flex: 1 }} />
-        {binCount > 0 && (
-          <button onClick={() => { restoreUsConvictionBin(); reload(); }} style={chip(false)}>
-            <Undo2 className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />Restore {binCount} removed
-          </button>
-        )}
-        <button onClick={() => sweep(30, true)} disabled={sweeping} style={{ ...chip(false), opacity: sweeping ? 0.5 : 1 }}>
-          <RefreshCw className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4, animation: sweeping ? 'spin 1s linear infinite' : undefined }} />
-          {sweeping ? 'Sweeping…' : 'Rebuild + re-price (30 sessions)'}
-        </button>
-        <button onClick={() => { if (confirm('Clear the entire US bench? Entries move to the recycle bin and can be restored.')) { clearUsConviction(); reload(); } }} style={chip(false, '#EF4444')}>Clear all</button>
+        <span style={{ color: 'var(--mc-text-3)' }}>
+          {sweeping ? 'reloading…' : `window ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? `${benchWindow} sessions`}`}
+        </span>
       </div>
       {sweepMsg && <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 12 }}>{sweepMsg}</div>}
 
@@ -547,7 +619,7 @@ export default function UsConvictionBeatsPage() {
               Right after "Clear all" the auto-sweep also greys that button out,
               so the one instruction on screen pointed at a control that was
               both hard to find and disabled. */}
-          <button onClick={() => sweep(30, true)} disabled={sweeping}
+          <button onClick={() => sweepWindow()} disabled={sweeping}
             style={{
               marginTop: 12, padding: '9px 16px', borderRadius: 'var(--mc-radius)',
               border: '1px solid var(--mc-cyan)', background: 'var(--mc-cyan)',
@@ -555,10 +627,10 @@ export default function UsConvictionBeatsPage() {
               cursor: sweeping ? 'default' : 'pointer', opacity: sweeping ? 0.6 : 1,
             }}>
             <RefreshCw className="w-3 h-3" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 6, animation: sweeping ? 'spin 1s linear infinite' : undefined }} />
-            {sweeping ? 'Rebuilding…' : 'Rebuild the bench (30 sessions)'}
+            {sweeping ? 'Rebuilding…' : `Rebuild the bench (last ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? `${benchWindow} sessions`})`}
           </button>
           <div style={{ marginTop: 10, color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>
-            Or open <a href="/us-earnings-opportunities" style={{ color: 'var(--mc-cyan)' }}>US Earnings Opportunities</a> — every graded window syncs here automatically.
+            Or open <Link href="/us-earnings-opportunities" prefetch style={{ color: 'var(--mc-cyan)' }}>US Earnings Opportunities</Link> — every graded window syncs here automatically.
           </div>
         </div>
       )}

@@ -34,10 +34,23 @@
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 const EFTS = 'https://efts.sec.gov/LATEST/search-index';
 
-// ─── politeness gate: ≤6 concurrent-ish requests/second to sec.gov ─────────
+// ─── politeness gate: requests per second to sec.gov ──────────────────────
+//
+// THIS GATE IS THE SPEED LIMIT OF THE WHOLE US ENGINE. It is process-wide, so
+// every day being scanned in parallel shares one queue: a 30-session sweep is
+// not bounded by how many days are in flight but by (total sec.gov requests) /
+// (requests per second). At 6/s a busy session's ~250 requests take ~40s, and
+// thirty of them take twenty minutes — which is what "9 of 30 after several
+// minutes" is.
+//
+// SEC's published fair-access threshold is 10 requests/second; exceeding it
+// earns a 10-minute IP block, which would be far worse than a slow sweep. 8/s
+// keeps a deliberate margin under that ceiling and takes about a fifth off the
+// wall-clock. Do not raise this above 8 without re-reading
+// https://www.sec.gov/os/webmaster-faq#developers.
 let _lastSlot = 0;
 async function secGate(): Promise<void> {
-  const MIN_GAP_MS = 165;                        // ≈6 req/s
+  const MIN_GAP_MS = 125;                        // 8 req/s (SEC's limit is 10)
   const now = Date.now();
   const slot = Math.max(now, _lastSlot + MIN_GAP_MS);
   _lastSlot = slot;

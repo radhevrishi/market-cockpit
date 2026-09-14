@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getCachedDay, putCachedDay, clearDayCache, scrubLegacyDayCaches } from '@/lib/us-day-cache';
+import Link from 'next/link';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
 import { syncUsConviction } from '@/lib/conviction-beats-us';
@@ -79,7 +80,12 @@ const LS_PREFIX = 'mc:graded-us:v3:';
 const LS_CAL_PREFIX = 'mc:cal-us:v1:';
 /** How many day-scans may be in flight at once. Three keeps the first rows on
  *  screen quickly without asking the server to sweep the whole window at once. */
-const DAY_CONCURRENCY = 3;
+// Days in flight at once. The real ceiling is the server's sec.gov gate (8
+// req/s, process-wide — see us-edgar.ts), so this number only has to be large
+// enough to keep that gate saturated while a day is busy with prices, which are
+// not gated. Four does; more just deepens the queue and slows the FIRST day,
+// which is the one the user is actually waiting to read.
+const DAY_CONCURRENCY = 4;
 /** Selectable windows, in TRADING SESSIONS (weekends are skipped), so 60d is
  *  roughly three calendar months. Every session is fetched and cached on its
  *  own, so widening the window only costs the days that are actually missing —
@@ -278,6 +284,23 @@ export default function UsEarningsOpportunitiesPage() {
     })),
   });
   const settledCount = dayQueries.filter((q: any) => q.isSuccess || q.isError).length;
+  // ── HOW LONG IS LEFT, measured rather than promised ──────────────────────
+  // "9 of 30 loaded" after several minutes reads as stuck when there is no
+  // second number beside it. The rate is the sweep's OWN observed rate (days
+  // settled ÷ elapsed), so it accounts for cache hits, a slow EDGAR evening and
+  // the size of the sessions in this particular window.
+  const [sweepStart, setSweepStart] = useState<number>(() => Date.now());
+  useEffect(() => { setSweepStart(Date.now()); }, [date, days, forceKey]);
+  const etaText = useMemo(() => {
+    const left = sessions.length - settledCount;
+    if (left <= 0 || settledCount < 2) return null;
+    const perDay = (Date.now() - sweepStart) / settledCount;
+    if (!Number.isFinite(perDay) || perDay <= 0) return null;
+    const secs = Math.round((left * perDay) / Math.max(1, DAY_CONCURRENCY / 2) / 1000);
+    if (secs < 45) return 'under a minute left';
+    return `about ${Math.max(1, Math.round(secs / 60))} min left`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settledCount, sessions.length, sweepStart]);
   const loadedCount = dayQueries.filter((q: any) => q.isSuccess).length;
   const failedDays = sessions.filter((_, i) => (dayQueries[i] as any)?.isError);
   useEffect(() => { setReadyUpto((v) => Math.max(v, settledCount + DAY_CONCURRENCY)); }, [settledCount]);
@@ -575,11 +598,13 @@ export default function UsEarningsOpportunitiesPage() {
           fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 8px', borderRadius: 999,
           border: '1px solid var(--mc-cyan)', color: 'var(--mc-cyan)',
         }}>NYSE · NASDAQ</span>
-        <a href="/us-conviction-beats" style={{
+        {/* A ROUTE CHANGE, NOT A PAGE LOAD — `<a href>` discarded every day
+            already loaded into React Query and remounted the whole app. */}
+        <Link href="/us-conviction-beats" prefetch style={{
           fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
           border: '1px solid var(--mc-warn)', color: 'var(--mc-warn)', textDecoration: 'none',
           display: 'inline-flex', alignItems: 'center', gap: 5,
-        }}><Award className="w-3 h-3" /> US Conviction Beats →</a>
+        }}><Award className="w-3 h-3" /> US Conviction Beats →</Link>
       </div>
       <p style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-sm)', margin: '0 0 16px' }}>
         Every US company that filed results in the window, graded on the same scale as the India engine.
@@ -737,17 +762,19 @@ export default function UsEarningsOpportunitiesPage() {
           <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
             <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount} of {sessions.length} sessions</b> loaded —
             showing {allRows.length} graded so far; the remaining {sessions.filter((d) => !dayQueries[sessions.indexOf(d)]?.isSuccess).slice(0, 4).join(', ')}
-            {sessions.length - loadedCount > 4 ? ' …' : ''} are still coming in. Days already scanned are read from cache and never re-fetched.
+            {sessions.length - loadedCount > 4 ? ' …' : ''} are still coming in.
+            {etaText && <b style={{ color: 'var(--mc-cyan)' }}> {etaText}.</b>} Days already scanned are read from cache and never re-fetched.
           </span>
           {days >= LONG_WINDOW_DAYS && (
             // A long window is worth waiting for, but only if the wait is
-            // stated. Each session is a separate EDGAR sweep behind a ~6 req/s
+            // stated. Each session is a separate EDGAR sweep behind an 8 req/s
             // gate, so 80 sessions is minutes, not seconds — and only ever
             // once, because every day is cached the moment it lands.
             <span style={{ fontSize: 10, color: 'var(--mc-text-4)', width: '100%', lineHeight: 1.5 }}>
               A {days}-session window is roughly {Math.round(days * 1.4)} calendar days and sweeps EDGAR once per
-              session, so the first pass takes several minutes. Results appear as each day lands, filters and sorting
-              work on what is already here, and nothing is scanned twice — reopening this window later is instant.
+              session behind SEC's fair-access rate limit, so the first pass takes several minutes and no amount of
+              parallelism can shorten it. Results appear as each day lands, filters and sorting work on what is already
+              here, and nothing is scanned twice — reopening this window later is instant.
             </span>
           )}
         </div>
