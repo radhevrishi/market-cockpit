@@ -20,7 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { windowSessions } from '@/lib/us-merge';
 import { getCachedDay, putCachedDay, clearDayCache } from '@/lib/us-day-cache';
 import toast from 'react-hot-toast';
@@ -140,9 +140,32 @@ export default function UsConvictionBeatsPage() {
     ));
   }, []);
 
+  // ── WHICH SESSIONS THIS BENCH IS ACTUALLY BUILT FROM ────────────────────
+  //
+  // The bench held ten names while the Opportunities tab, over a shorter
+  // window, graded seventeen — and the ten missing ones all filed on 26 and 27
+  // August, the two heaviest days of the wave. Those sessions timed out. The
+  // bench said nothing about it: it simply had fewer names, which reads as "the
+  // engine found nothing" rather than "two days were never scanned".
+  //
+  // So every sweep records which sessions landed and which did not, the bench
+  // states its own coverage in one line, and the missing ones are retried on
+  // the next visit without being asked. A book that is quietly incomplete is
+  // worse than one that says so.
+  const COVERAGE_KEY = 'mc-us-cb-coverage-v1';
+  type Coverage = { failed: string[]; swept: number; total: number; at: string };
+  const readCoverage = (): Coverage | null => {
+    try { return JSON.parse(localStorage.getItem(COVERAGE_KEY) || 'null'); } catch { return null; }
+  };
+  const writeCoverage = (c: Coverage) => {
+    try { localStorage.setItem(COVERAGE_KEY, JSON.stringify(c)); } catch {}
+  };
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
+  useEffect(() => { setCoverage(readCoverage()); }, []);
+
   /** Walk recent sessions of graded-us, then re-price bench names older than
    *  the swept window via explicit-ticker mode (batches of 25). */
-  const sweep = useCallback(async (sessions = 30, manual = false, opts: { hard?: boolean; wipe?: boolean } = {}) => {
+  const sweep = useCallback(async (sessions = 30, manual = false, opts: { hard?: boolean; wipe?: boolean; onlyDays?: string[] } = {}) => {
     if (sweeping) return;
     setSweeping(true);
     setSweepMsg(null);
@@ -186,7 +209,10 @@ export default function UsConvictionBeatsPage() {
       // EDGAR. Now each completed session is read from IndexedDB when it is
       // there, fetched once and stored when it is not, and the button counts
       // up as it goes. Three sessions in flight, like the other tab.
-      const days = windowSessions(today, sessions);
+      // A GAP-FILLING PASS SWEEPS ONLY THE SESSIONS THAT ARE MISSING.
+      // Re-walking forty-two days to recover two is why nobody pressed the
+      // button; two days take seconds.
+      const days = opts.onlyDays?.length ? opts.onlyDays.slice() : windowSessions(today, sessions);
       let done = 0; let failed = 0;
       // The retry pass is a DIFFERENT pass, and saying "12/42" while it runs
       // made a successful recovery look like the sweep had restarted. `total`
@@ -275,6 +301,25 @@ export default function UsConvictionBeatsPage() {
         if (batch.length) changes += syncUsConviction(batch);
       }
       try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
+      // The ledger, written whether the sweep was clean or not.
+      const prev = readCoverage();
+      const cov: Coverage = opts.onlyDays?.length && prev
+        // A gap-filling pass only changes the gaps: the sessions it recovered
+        // leave the failed list, and the window total is the one already on
+        // record — this pass never swept the whole window.
+        ? {
+            failed: failedDays.slice(),
+            swept: Math.min(prev.total, prev.swept + (days.length - failedDays.length)),
+            total: prev.total,
+            at: new Date().toISOString(),
+          }
+        : {
+            failed: failedDays.slice(),
+            swept: days.length - failedDays.length,
+            total: days.length,
+            at: new Date().toISOString(),
+          };
+      writeCoverage(cov); setCoverage(cov);
       setSweepMsg((changes > 0
         ? `Bench updated — ${changes} change${changes > 1 ? 's' : ''} (last ${sessions} sessions swept${stale.length ? `, ${Math.min(stale.length, 150)} older names re-priced` : ''}).`
         : 'Bench already up to date.') + (failed ? ` ${failed} session${failed > 1 ? 's' : ''} still could not be scanned after a retry — press Reload bench to try them again.` : ''));
@@ -287,6 +332,24 @@ export default function UsConvictionBeatsPage() {
     }
   }, [sweeping, reload]);
   const sweepWindow = useCallback((opts: { hard?: boolean; wipe?: boolean } = {}) => sweep(benchWindow, true, opts), [sweep, benchWindow]);
+  /** Sweep ONLY the sessions the ledger says were never scanned. */
+  const fillGaps = useCallback(() => {
+    const c = readCoverage();
+    if (c?.failed?.length) void sweep(benchWindow, true, { onlyDays: c.failed.slice() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sweep, benchWindow]);
+  // The gaps close themselves on the next visit — once per load, and only when
+  // the ledger actually records a gap, so an intact bench never sweeps.
+  const gapRunRef = useRef(false);
+  useEffect(() => {
+    if (gapRunRef.current) return;
+    const c = readCoverage();
+    if (!c?.failed?.length) return;
+    gapRunRef.current = true;
+    const t = setTimeout(() => { if (!sweeping) void sweep(benchWindow, false, { onlyDays: c.failed.slice() }); }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coverage]);
 
   // Sweep once every 6 hours on load, so an unattended bench keeps growing.
   useEffect(() => {
@@ -682,6 +745,27 @@ export default function UsConvictionBeatsPage() {
           {sweeping ? 'reloading…' : `window ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? `${benchWindow} sessions`}`}
         </span>
       </div>
+      {/* ── WHAT THIS BENCH IS BUILT FROM ──────────────────────────────
+          A book that is short because two sessions never scanned must say so.
+          Without this line the only visible fact is a small number of names,
+          which reads as "nothing qualified" — and the two days missing from
+          the run that prompted this carried a dozen names that did. */}
+      {coverage && (
+        <div style={{ fontSize: 'var(--mc-text-xs)', marginBottom: 12, color: coverage.failed.length ? 'var(--mc-caution, #F59E0B)' : 'var(--mc-text-3)' }}>
+          {coverage.failed.length ? (
+            <>
+              Built from <b>{coverage.swept} of {coverage.total}</b> sessions — {coverage.failed.length} could not be
+              scanned ({coverage.failed.slice(0, 6).join(', ')}{coverage.failed.length > 6 ? ` +${coverage.failed.length - 6}` : ''}),
+              so names that reported on {coverage.failed.length > 1 ? 'those days' : 'that day'} are missing from the bench.
+              {sweeping ? ' Filling the gaps now…' : (
+                <button onClick={fillGaps} style={{ ...chip(false), marginLeft: 8 }}>scan the missing sessions</button>
+              )}
+            </>
+          ) : (
+            <>Built from all <b>{coverage.total}</b> sessions in the window — nothing was skipped.</>
+          )}
+        </div>
+      )}
       {sweepMsg && <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 12 }}>{sweepMsg}</div>}
 
       {entries.length === 0 && (

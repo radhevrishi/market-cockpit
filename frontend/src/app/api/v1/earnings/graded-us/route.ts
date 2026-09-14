@@ -28,6 +28,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { kvGet, kvSet } from '@/lib/kv';
 import {
   earningsFilersOn, companyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
@@ -667,12 +668,38 @@ export async function GET(req: Request) {
   days = Math.min(days, 15);
 
   const cacheKey = explicit ? `T:${explicit}` : `${date}|${days}`;
+  // ── THE SHARED CACHE FOR A COMPLETED SESSION ───────────────────────────
+  //
+  // A completed session is immutable and expensive: the heaviest day of an
+  // earnings wave is two hundred filers behind SEC's politeness gate, and it
+  // is precisely those days that exceed the client's timeout — so the client
+  // gives up, retries, and the server starts the SAME two hundred filers from
+  // nothing. That is why the bench kept arriving with the big days missing:
+  // 26 and 27 August carried CRM, CRWD, OKTA, ANF, SJM, WSM, VEEV, A and a
+  // dozen more, and they were the two days that never landed.
+  //
+  // `_cache` above only helps while one server instance stays warm. This one
+  // is Redis: it survives a restart, it is shared by every instance, and it is
+  // written as soon as the work finishes — including when the client that
+  // asked for it has already walked away. The retry then costs one read.
+  const kvKey = `us-graded:${US_ENGINE_VERSION}:${cacheKey}`;
   if (!force) {
     const hit = _cache.get(cacheKey);
     if (hit && Date.now() - hit.at < hit.ttl) {
       return NextResponse.json(hit.data, {
         headers: { 'x-mc-cache': 'hit', 'Cache-Control': 'private, max-age=60' },
       });
+    }
+    if (!explicit && date < today) {
+      try {
+        const shared = await kvGet<UsGradedPayload>(kvKey);
+        if (shared?.by_tier) {
+          _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: shared });
+          return NextResponse.json(shared, {
+            headers: { 'x-mc-cache': 'shared', 'Cache-Control': 'private, max-age=60' },
+          });
+        }
+      } catch { /* Redis absent or unreachable — the sweep just runs */ }
     }
   }
 
@@ -1984,6 +2011,13 @@ export async function GET(req: Request) {
       for (const [k] of oldest) _cache.delete(k);
     }
     _cache.set(cacheKey, { at: Date.now(), ttl, data: payload });
+    // A COMPLETED SESSION IS WRITTEN WHERE EVERY INSTANCE CAN SEE IT, and the
+    // write is not awaited: a client still holding the connection should not
+    // wait on Redis, and a client that has already timed out is exactly who
+    // this write is for. Today's date is excluded — it is still filling up.
+    if (!explicit && !includesToday) {
+      void kvSet(kvKey, payload, 30 * 24 * 3600).catch(() => {});
+    }
 
     return NextResponse.json(payload, {
       headers: {
