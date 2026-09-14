@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { readConvictionBeats } from '@/lib/conviction-beats';
+import { getUsConvictionList, hydrateUsConviction } from '@/lib/conviction-beats-us';
 import { classifyTheme } from '@/lib/theme-classify';
 
 type Region = 'us' | 'india';
@@ -92,6 +93,12 @@ export default function ThemeRotationTab() {
     });
   }, [region, drill, loadDrill]);
 
+  // The US conviction bench lives in IndexedDB (localStorage cannot hold three
+  // hundred graded records). Without hydrating it here this page would see only
+  // whatever the localStorage mirror still held — a short, arbitrary subset.
+  const [benchReady, setBenchReady] = useState(false);
+  useEffect(() => { void hydrateUsConviction().finally(() => setBenchReady(true)); }, []);
+
   useEffect(() => { if (!data[region]) load(region); }, [region, data, load]);
   useEffect(() => { setExpandedIds(new Set()); }, [region]);
 
@@ -122,9 +129,27 @@ export default function ThemeRotationTab() {
     if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (s) fundo.set(s, { score: r?.score, grade: r?.grade }); }
     const trows = readJSON(region === 'us' ? 'mb_tech_rows_usa_v1' : 'mb_tech_rows_ind_v1');
     if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (s) tech.add(s); }
-    try { const cb = readConvictionBeats() as Record<string, any>; for (const k in cb) { const s = norm(k); if (s) bench.set(s, cb[k]?.tier); } } catch { /* none */ }
+    // ── THE CONVICTION BENCH IS PART OF YOUR BOOK  (zzz616) ───────────────
+    //
+    // It was read only to put a tier badge on a drill-down stock, and the
+    // bench was always the INDIA one whichever region was showing — so a US
+    // name that had graded BLOCKBUSTER never carried its tier, and no bench
+    // name reached "Your Book by Theme" at all unless it also happened to sit
+    // in a Multibagger or Technicals upload. The bench is the list of names the
+    // engine itself vouched for; leaving it out of the book was leaving out the
+    // best-evidenced part of it.
+    try {
+      if (region === 'us') {
+        for (const e of getUsConvictionList()) {
+          const s = norm(e.ticker); if (s) bench.set(s, (e as any).tier);
+        }
+      } else {
+        const cb = readConvictionBeats() as Record<string, any>;
+        for (const k in cb) { const s = norm(k); if (s) bench.set(s, cb[k]?.tier); }
+      }
+    } catch { /* none */ }
     return { fundo, tech, bench, norm };
-  }, [region, payload]);
+  }, [region, payload, benchReady]);
 
   // zzz485 — YOUR BOOK: take every stock across the user's Technicals + Multibagger
   // lists, classify each into a theme by its sector/industry (auto — works for
@@ -135,11 +160,39 @@ export default function ThemeRotationTab() {
     // zzz487 — index/benchmark ETFs are not holdings; keep them out of Your Book.
     const EXCLUDE = new Set(['SPY', 'QQQ', 'QQQM', 'IWM', 'DIA', 'VOO', 'VTI', 'VT', 'SPX', 'NDX', 'RUT', 'NIFTY', 'NIFTYBEES', 'BANKBEES', 'GOLDBEES']);
     const readJSON = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
-    const map = new Map<string, { symbol: string; sector?: string; industry?: string; score?: number; grade?: string; inTech?: boolean; inFundo?: boolean }>();
+    // Named, so `map.get(s) || { symbol: s }` narrows to one type rather than a
+    // union TypeScript then refuses to read fields off.
+    type BookEntry = { symbol: string; sector?: string; industry?: string; score?: number; grade?: string; inTech?: boolean; inFundo?: boolean; inBench?: boolean };
+    const map = new Map<string, BookEntry>();
+    const entryFor = (sym: string): BookEntry => map.get(sym) || { symbol: sym };
     const trows = readJSON(region === 'us' ? 'mb_tech_rows_usa_v1' : 'mb_tech_rows_ind_v1');
-    if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.inTech = true; map.set(s, e); }
+    if (Array.isArray(trows)) for (const r of trows) { const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue; const e = entryFor(s); e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.inTech = true; map.set(s, e); }
     const frows = readJSON(region === 'us' ? 'mb_usa_scored_v2' : 'mb_excel_scored_v2');
-    if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue; const e = map.get(s) || { symbol: s }; e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.score = r?.score; e.grade = r?.grade; e.inFundo = true; map.set(s, e); }
+    if (Array.isArray(frows)) for (const r of frows) { const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue; const e = entryFor(s); e.sector = r?.sector || e.sector; e.industry = r?.industry || e.industry; e.score = r?.score; e.grade = r?.grade; e.inFundo = true; map.set(s, e); }
+    // ── AND THE CONVICTION BENCH  (zzz616) ────────────────────────────────
+    //
+    // Names the grading engine itself put on the bench belong in the book as
+    // much as anything uploaded by hand — arguably more, since they are there
+    // on the evidence of a filing rather than a spreadsheet. They arrive with
+    // their own sector, so they classify into a theme exactly like the rest.
+    try {
+      if (region === 'us') {
+        for (const b of getUsConvictionList()) {
+          const s = norm(b.ticker); if (!s || EXCLUDE.has(s)) continue;
+          const e = entryFor(s);
+          e.sector = e.sector || (b as any).sector; e.inBench = true;
+          map.set(s, e);
+        }
+      } else {
+        const cb = readConvictionBeats() as Record<string, any>;
+        for (const k in cb) {
+          const s = norm(k); if (!s || EXCLUDE.has(s)) continue;
+          const e = entryFor(s);
+          e.sector = e.sector || cb[k]?.sector || cb[k]?.industry; e.inBench = true;
+          map.set(s, e);
+        }
+      }
+    } catch { /* the uploads alone still build a book */ }
     const all = [...map.values()];
     const groups = new Map<string, typeof all>();
     const other: typeof all = [];
@@ -163,8 +216,10 @@ export default function ThemeRotationTab() {
       gradeRank(a.grade) - gradeRank(b.grade) || a.symbol.localeCompare(b.symbol);
     for (const arr of groups.values()) arr.sort(byGrade);
     for (const arr of sectorGroups.values()) arr.sort(byGrade);
-    return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups };
-  }, [region, payload, userLists]);
+    const graded = all.filter((x) => x.grade).length;
+    const fromBench = all.filter((x) => x.inBench).length;
+    return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups, graded, fromBench };
+  }, [region, payload, userLists, benchReady]);
 
   // zzz495 — DUMMY PORTFOLIO. The best 25 of YOUR names, taken ONLY from themes the
   // engine currently rates BUY or EARLY BUY (Leading / genuine early-turn). Nothing
@@ -411,7 +466,17 @@ export default function ThemeRotationTab() {
           {userBook.total > 0 && (
             <div style={{ margin: '14px 0', background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
               <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>📋 Your Book by Theme</div>
-              <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10 }}>Every stock on your Technicals / Multibagger lists, auto-sorted into its theme by sector so you see the rotation call for each. <b style={{ color: MUT }}>{userBook.total}</b> names · <b style={{ color: MUT }}>{userBook.themed}</b> in a rotation theme{userBook.sectorGroups.size ? <> · <b style={{ color: MUT }}>{userBook.other.length}</b> grouped by sector below</> : null}. ★ = your name; grade = your Fundo.</div>
+              <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10, lineHeight: 1.55 }}>
+                Every stock on your Technicals / Multibagger lists <b style={{ color: MUT }}>and on the {region === 'us' ? 'US' : 'India'} Conviction Beats bench</b>, auto-sorted into its theme by sector so you see the rotation call for each.{' '}
+                <b style={{ color: MUT }}>{userBook.total}</b> names · <b style={{ color: MUT }}>{userBook.themed}</b> in a rotation theme{userBook.fromBench ? <> · <b style={{ color: MUT }}>{userBook.fromBench}</b> from the graded bench</> : null}{userBook.sectorGroups.size ? <> · <b style={{ color: MUT }}>{userBook.other.length}</b> grouped by sector below</> : null}.
+                {/* A GRADE COLUMN THAT IS EMPTY MUST SAY WHY. "0 graded" beside a
+                    full book reads as a broken page; it actually means the
+                    Multibagger upload for this region is missing, which is a
+                    thing the reader can fix in ten seconds if they are told. */}
+                {userBook.graded === 0
+                  ? <> <b style={{ color: '#F59E0B' }}>No Fundo grades are loaded for {region === 'us' ? 'USA' : 'India'}</b> — upload the {region === 'us' ? 'USA Multibagger' : 'India Multibagger'} sheet and every name here gains its grade, and the starter book below can rank by it.</>
+                  : <> Grade = your Fundo (<b style={{ color: MUT }}>{userBook.graded}</b> of {userBook.total} graded).</>}
+              </div>
               {/* ── A MOSAIC, NOT A UNIFORM GRID ─────────────────────────────
                   Forty-two Software names and one Gaming name were given
                   identical 250px boxes, so the big group wrapped into a tall
@@ -635,8 +700,28 @@ export default function ThemeRotationTab() {
                 <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>
                   Where your book actually sits against today's rotation. <b style={{ color: '#22C55E' }}>{nLead}</b> of your {nTot} themed names are in leading / early-buy themes; <b style={{ color: '#EF4444' }}>{nFade}</b> sit in fading themes (trim / avoid). {tiltGood ? 'Your tilt is with the rotation.' : 'You are heavy in themes rolling over — review the trim list.'}
                 </div>
+                {leading.length > 0 && (
+                  <div>
+                    {/* ── THE BUY SIDE, AT THE SAME WEIGHT  (zzz616) ─────────
+                        The trim side named every stock; this side named only
+                        the themes and a count. That asymmetry is not neutral —
+                        it makes what to SELL concrete and what to HOLD or ADD
+                        abstract, and a reader acts on whichever half they can
+                        actually read. Both halves now carry the names. */}
+                    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#22C55E', textTransform: 'uppercase', marginBottom: 6 }}>✓ Aligned — in leading / early-buy themes, hold or add</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {leading.map((r) => (
+                        <div key={r.theme.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11.5 }}>
+                          <span style={{ color: TXT, fontWeight: 700, minWidth: 150 }}>{r.theme.emoji} {r.theme.name}</span>
+                          <span style={{ fontSize: 9.5, fontWeight: 800, color: '#22C55E', background: 'color-mix(in srgb, #22C55E 12%, transparent)', border: '1px solid color-mix(in srgb, #22C55E 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
+                          <span style={{ color: MUT, fontFamily: 'ui-monospace, Menlo, monospace' }}>{r.names.join(', ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {fading.length > 0 && (
-                  <div style={{ marginBottom: leading.length ? 12 : 0 }}>
+                  <div style={{ marginTop: leading.length ? 14 : 0 }}>
                     <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#EF4444', textTransform: 'uppercase', marginBottom: 6 }}>✂️ Exposed to fading themes — trim candidates</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {fading.map((r) => (
@@ -645,16 +730,6 @@ export default function ThemeRotationTab() {
                           <span style={{ fontSize: 9.5, fontWeight: 800, color: '#EF4444', background: 'color-mix(in srgb, #EF4444 12%, transparent)', border: '1px solid color-mix(in srgb, #EF4444 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
                           <span style={{ color: MUT, fontFamily: 'ui-monospace, Menlo, monospace' }}>{r.names.join(', ')}</span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {leading.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#22C55E', textTransform: 'uppercase', marginBottom: 6 }}>✓ Aligned — in leading themes</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {leading.map((r) => (
-                        <span key={r.theme.id} style={{ fontSize: 10.5, color: MUT, background: BG, border: `1px solid ${BORD}`, padding: '2px 7px', borderRadius: 5 }}>{r.theme.emoji} {r.theme.name} <b style={{ color: TXT }}>·{r.names.length}</b></span>
                       ))}
                     </div>
                   </div>
