@@ -32,6 +32,13 @@ on:
     - cron: '0 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
     - cron: '0 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
     - cron: '0 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
+    # PATCH zzz593 - pre-warm the US graded sessions on Railway. Every US number
+    # comes from sec.gov behind an 8 req/s fair-access gate, so a cold 30-session
+    # window costs ~12 minutes of queue time. Warming it after the US close means
+    # the page reads Redis instead of EDGAR and opens instantly.
+    - cron: '20 1 * * 2-6'     # 01:20 UTC Tue-Sat -> prewarm-us-earnings (after the US close)
+    - cron: '40 1 * * 2-6'     # 01:40 UTC Tue-Sat -> prewarm-us-earnings (second pass)
+    - cron: '20 5 * * *'       # 05:20 UTC daily   -> prewarm-us-earnings (catch-up)
     # Phase 1 - durable Postgres archive: persist each day's KV snapshot into
     # raw_filings + earnings_events + calendar_snapshots (idempotent, never destructive).
     - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
@@ -52,6 +59,7 @@ on:
           - refresh-earnings-calendar
           - eo-blockbuster-alert
           - prewarm-earnings
+          - prewarm-us-earnings
           - archive-to-postgres
 
 concurrency:
@@ -102,6 +110,10 @@ jobs:
               echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"
               echo "label=prewarm-earnings" >> "$GITHUB_OUTPUT"
               ;;
+            "20 1 * * 2-6"|"40 1 * * 2-6"|"20 5 * * *")
+              echo "path=/api/v1/cron/prewarm-us-earnings?sessions=30" >> "$GITHUB_OUTPUT"
+              echo "label=prewarm-us-earnings" >> "$GITHUB_OUTPUT"
+              ;;
             "30 19 * * *")
               echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"
               echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
@@ -120,6 +132,7 @@ jobs:
                 refresh-earnings-calendar)   echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"; echo "label=cal-manual" >> "$GITHUB_OUTPUT" ;;
                 eo-blockbuster-alert)        echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-manual" >> "$GITHUB_OUTPUT" ;;
                 prewarm-earnings)            echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"; echo "label=prewarm-manual" >> "$GITHUB_OUTPUT" ;;
+                prewarm-us-earnings)         echo "path=/api/v1/cron/prewarm-us-earnings?sessions=30" >> "$GITHUB_OUTPUT"; echo "label=prewarm-us-manual" >> "$GITHUB_OUTPUT" ;;
                 archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"; echo "label=archive-manual" >> "$GITHUB_OUTPUT" ;;
                 *)
                   echo "::error title=No route::Unknown schedule and no manual input"
