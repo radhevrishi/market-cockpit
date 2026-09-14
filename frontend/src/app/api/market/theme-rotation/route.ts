@@ -140,6 +140,94 @@ function returns(ts: number[], closes: number[]): { w1: number; m1: number; m3: 
   return { w1: pct(back(5)), m1: pct(back(21)), m3: pct(back(63)), m6: pct(back(126)), ytd: pct(ytdBase), y1: pct(back(252)) };
 }
 
+// ═══ THE NUMBERS A DESK WOULD ASK FOR NEXT  (zzz610) ═══════════════════════
+//
+// The board answered "which themes are working". It could not answer the
+// questions that follow immediately from that, and which decide position size
+// rather than direction:
+//
+//   · How much risk am I taking to earn this? A theme up 18% with 45%
+//     volatility and one up 12% with 14% volatility are not the same trade,
+//     and ranking them by return alone silently prefers the wilder one.
+//   · How far into the move am I? "Above the 50-DMA" is a yes/no; 22% above it
+//     is a different entry from 1% above it.
+//   · How much has it already given back? A theme can lead on relative
+//     strength while sitting 30% below its own high.
+//   · And the one that matters most for a book: are my eight leading themes
+//     eight bets, or one bet wearing eight names?
+//
+// All of it comes from the daily closes already fetched for the RRG. No extra
+// requests, no new data source.
+
+/** Annualised volatility from daily closes (default ~3 months of trading). */
+function annVol(closes: number[], lookback = 63): number | null {
+  const c = closes.filter((x) => x != null && !isNaN(x));
+  if (c.length < 25) return null;
+  const s = c.slice(Math.max(0, c.length - lookback - 1));
+  const rets: number[] = [];
+  for (let i = 1; i < s.length; i++) if (s[i - 1] > 0) rets.push(s[i] / s[i - 1] - 1);
+  if (rets.length < 20) return null;
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const varr = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1);
+  return +(Math.sqrt(varr) * Math.sqrt(252) * 100).toFixed(1);
+}
+
+/** How far below the trailing-252-day high the theme now sits, in percent. */
+function drawdownFromHigh(closes: number[], lookback = 252): number | null {
+  const c = closes.filter((x) => x != null && !isNaN(x));
+  if (c.length < 30) return null;
+  const s = c.slice(Math.max(0, c.length - lookback));
+  const hi = Math.max(...s);
+  const last = s[s.length - 1];
+  if (!(hi > 0)) return null;
+  return +(((last - hi) / hi) * 100).toFixed(1);
+}
+
+/** Where the last close sits inside the trailing-252-day range, 0–100. */
+function rangePosition(closes: number[], lookback = 252): number | null {
+  const c = closes.filter((x) => x != null && !isNaN(x));
+  if (c.length < 30) return null;
+  const s = c.slice(Math.max(0, c.length - lookback));
+  const hi = Math.max(...s), lo = Math.min(...s), last = s[s.length - 1];
+  if (!(hi > lo)) return null;
+  return Math.round(((last - lo) / (hi - lo)) * 100);
+}
+
+/** Daily returns sampled on a shared timestamp grid, so two themes with
+ *  different histories can still be compared honestly. */
+function returnsOnGrid(ts: number[], closes: number[], grid: number[]): (number | null)[] {
+  const m = new Map<number, number>();
+  for (let i = 0; i < ts.length; i++) {
+    const c = closes[i];
+    if (c != null && !isNaN(c)) m.set(ts[i], c);
+  }
+  const out: (number | null)[] = [];
+  for (let i = 1; i < grid.length; i++) {
+    const a = m.get(grid[i - 1]), b = m.get(grid[i]);
+    out.push(a && b && a > 0 ? b / a - 1 : null);
+  }
+  return out;
+}
+
+/** Pearson correlation over the pairs where both series have a value. */
+function correlation(a: (number | null)[], b: (number | null)[]): number | null {
+  const xs: number[] = [], ys: number[] = [];
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const x = a[i], y = b[i];
+    if (x != null && y != null) { xs.push(x); ys.push(y); }
+  }
+  if (xs.length < 30) return null;
+  const mx = xs.reduce((p, c) => p + c, 0) / xs.length;
+  const my = ys.reduce((p, c) => p + c, 0) / ys.length;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < xs.length; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  if (sxx <= 0 || syy <= 0) return null;
+  return +(sxy / Math.sqrt(sxx * syy)).toFixed(3);
+}
+
 function sma(closes: number[], period: number): number | null {
   const c = closes.filter((x) => x != null && !isNaN(x));
   if (c.length < period) return null;
@@ -263,6 +351,10 @@ async function build(region: ThemeRegion) {
   const benchData = data.get(bench.symbol);
   const benchWk = benchData ? resampleToWeekly(benchData.ts, benchData.closes) : [];
 
+  // Computed before the rows so each theme can be measured in EXCESS of it.
+  const benchmarkRet = benchData ? returns(benchData.ts, benchData.closes) : null;
+  const benchmarkRet3m = benchmarkRet?.m3 ?? null;
+
   const rows = themes.map((t: ThemeDef) => {
     // Resolve the theme's price series: the proxy if it's healthy, else a
     // synthetic equal-weight basket (basket themes always; proxy themes only when
@@ -345,6 +437,33 @@ async function build(region: ThemeRegion) {
     //    distinction is the single easiest way to buy a downtrend. Flagged
     //    explicitly rather than left for the reader to infer from the columns.
     const fallingLeader = (quadrant === 'Leading' || quadrant === 'Improving') && (ret.m3 ?? 0) <= 0;
+
+    // ── RISK, EXTENSION AND DAMAGE ──────────────────────────────────────
+    const vol = annVol(closes);
+    const dd1y = drawdownFromHigh(closes);
+    const rangePos = rangePosition(closes);
+    // Percent above or below the 50-day line, which is the difference between
+    // "just reclaimed it" and "extended and due a pullback".
+    const dist50 = (s50 != null && s50 > 0) ? +(((cLast - s50) / s50) * 100).toFixed(1) : null;
+    // RETURN PER UNIT OF RISK, measured in excess of the benchmark. This is how
+    // a desk ranks a rotation: a theme that beat the market by 9 points with
+    // 14% volatility is a better USE OF CAPITAL than one that beat it by 15
+    // with 50% volatility, and the raw return columns say the opposite.
+    const excess3m = benchmarkRet3m != null && ret.m3 != null ? ret.m3 - benchmarkRet3m : null;
+    const riskAdj = (excess3m != null && vol != null && vol > 0)
+      ? +((excess3m * 4) / vol).toFixed(2)      // ×4 annualises the quarter
+      : null;
+    // Slope of relative strength across the eight-week tail: the direction the
+    // RS line itself is travelling, independent of where it currently sits.
+    let rsSlope: number | null = null;
+    if (trail.length >= 4) {
+      const n = trail.length;
+      const mx = (n - 1) / 2;
+      const my = trail.reduce((a, p) => a + p.x, 0) / n;
+      let num2 = 0, den = 0;
+      trail.forEach((p, i) => { num2 += (i - mx) * (p.x - my); den += (i - mx) ** 2; });
+      rsSlope = den ? +(num2 / den).toFixed(2) : null;
+    }
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
       proxy: t.proxy || null, members, sourceKind,
@@ -352,6 +471,9 @@ async function build(region: ThemeRegion) {
       ret, rsRatio, rsMomentum, quadrant, trail,
       quadrant1w, quadrant4w, quadrantMove, quadrantMove4w, rsDelta1w, momDelta1w,
       fallingLeader,
+      vol, dd1y, rangePos, dist50, excess3m, riskAdj, rsSlope,
+      _ts: ts, _closes: closes,          // stripped before the payload is sent
+
       aboveSMA50, breadthAbove50,
       characterChange,
       conviction, rotationVelocity: +velPerWk.toFixed(2), rotation, action,
@@ -361,6 +483,62 @@ async function build(region: ThemeRegion) {
   });
 
   const okRows = rows.filter((r: any) => r.ok);
+
+  // ═══ CROWDING: ARE THESE EIGHT BETS, OR ONE BET WEARING EIGHT NAMES? ═════
+  //
+  // The single most expensive mistake a thematic book makes is mistaking
+  // variety of LABEL for variety of RISK. Software, Internet, Fintech and
+  // Cloud can all read "Leading" while moving as one position — so a reader
+  // who spreads across four of them has concentrated, not diversified, and
+  // nothing on the board said so.
+  //
+  // Themes are therefore grouped by how they actually move: daily returns on a
+  // shared grid, pairwise correlation, and a greedy pass that seeds each
+  // cluster with the strongest unclaimed theme and absorbs everything moving
+  // with it above the threshold. Greedy and deterministic on purpose — a
+  // clustering the reader cannot predict is one they cannot trust.
+  const grid = (benchData?.ts || []).slice(-126);
+  const gridRets = new Map<string, (number | null)[]>();
+  for (const r of okRows as any[]) {
+    if (r._ts && r._closes) gridRets.set(r.id, returnsOnGrid(r._ts, r._closes, grid));
+  }
+  const CLUSTER_R = 0.8;
+  const clusterOf = new Map<string, number>();
+  const clusters: Array<{ id: number; members: string[]; label: string }> = [];
+  const seedOrder = [...okRows].sort((a: any, b: any) => (b.conviction ?? 0) - (a.conviction ?? 0));
+  for (const seed of seedOrder as any[]) {
+    if (clusterOf.has(seed.id)) continue;
+    const members = [seed.id];
+    clusterOf.set(seed.id, clusters.length);
+    const sr = gridRets.get(seed.id);
+    if (sr) {
+      for (const other of seedOrder as any[]) {
+        if (clusterOf.has(other.id)) continue;
+        const or = gridRets.get(other.id);
+        if (!or) continue;
+        const c = correlation(sr, or);
+        if (c != null && c >= CLUSTER_R) { clusterOf.set(other.id, clusters.length); members.push(other.id); }
+      }
+    }
+    // The cluster is NAMED after the theme that seeded it, because "the
+    // Genomics complex" is something a reader can hold in their head and
+    // "cluster 3" is not.
+    clusters.push({ id: clusters.length, members, label: seed.name });
+  }
+  for (const r of okRows as any[]) {
+    r.cluster = clusterOf.get(r.id) ?? null;
+    r.clusterLabel = r.cluster != null ? clusters[r.cluster].label : null;
+    r.clusterSize = r.cluster != null ? clusters[r.cluster].members.length : null;
+    // Correlation to the theme that seeded this cluster — how much of this
+    // theme's move is simply the cluster's move.
+    const seedId = r.cluster != null ? clusters[r.cluster].members[0] : null;
+    r.clusterCorr = (seedId && seedId !== r.id)
+      ? correlation(gridRets.get(seedId) || [], gridRets.get(r.id) || [])
+      : (seedId === r.id ? 1 : null);
+  }
+  // The raw series were carried on the row only so the clustering could run.
+  // They are megabytes and never reach the browser.
+  for (const r of rows as any[]) { delete r._ts; delete r._closes; }
   // rotation: momentum delta this bar (rsMomentum vs prev) proxies acceleration.
   const withDelta = okRows.map((r: any) => ({ id: r.id, name: r.name, emoji: r.emoji, quadrant: r.quadrant, momo: r.rsMomentum, rs: r.rsRatio }));
   // zzz494 — the 'rotating in — early' strip shows only themes whose verdict is a
@@ -379,8 +557,6 @@ async function build(region: ThemeRegion) {
   // against it, so without it "Leading, +2% over 3M" is unreadable: is that a
   // strong theme in a flat market, or a weak one in a market up 9%? One line of
   // arithmetic that changes how the whole board is read.
-  const benchmarkRet = benchData ? returns(benchData.ts, benchData.closes) : null;
-
   // WHAT CHANGED THIS WEEK — the themes that actually crossed a quadrant line
   // since last Friday, which is the only genuinely new information on the page.
   const movedUp = okRows.filter((r: any) => r.quadrantMove?.dir === 'upgrade')
@@ -394,6 +570,7 @@ async function build(region: ThemeRegion) {
     benchmarkRet,
     themes: rows,
     movedUp, movedDown,
+    clusters: clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),
     rotatingIn, rotatingOut, topBuy, topAvoid,
     asOf: new Date().toISOString(),
     source: 'Yahoo Finance · JdK RS-Ratio/Momentum',

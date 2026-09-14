@@ -25,6 +25,10 @@ interface ThemeRow {
   quadrantMove?: QuadMove | null; quadrantMove4w?: QuadMove | null;
   rsDelta1w?: number | null; momDelta1w?: number | null;
   fallingLeader?: boolean;
+  // risk / extension / damage, and how crowded this theme is with the others
+  vol?: number | null; dd1y?: number | null; rangePos?: number | null;
+  dist50?: number | null; excess3m?: number | null; riskAdj?: number | null; rsSlope?: number | null;
+  cluster?: number | null; clusterLabel?: string | null; clusterSize?: number | null; clusterCorr?: number | null;
   ok?: boolean;
 }
 interface QuadMove { from: string; to: string; dir: 'upgrade' | 'downgrade' }
@@ -33,6 +37,7 @@ interface Payload {
   benchmarkRet?: Ret | null;
   themes: ThemeRow[]; rotatingIn: string[]; rotatingOut: string[]; topBuy: string[]; topAvoid: string[];
   movedUp?: string[]; movedDown?: string[];
+  clusters?: Array<{ id: number; label: string; members: string[] }>;
   asOf: string; source?: string; error?: string;
 }
 
@@ -52,7 +57,7 @@ export default function ThemeRotationTab() {
   const [region, setRegion] = useState<Region>('us');
   const [data, setData] = useState<Record<Region, Payload | null>>({ us: null, india: null });
   const [loading, setLoading] = useState(false);
-  const [sortKey, setSortKey] = useState<'conv' | 'rs' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1'>('conv');
+  const [sortKey, setSortKey] = useState<'conv' | 'rs' | 'w1' | 'm1' | 'm3' | 'ytd' | 'y1' | 'risk' | 'vol'>('conv');
   const [hover, setHover] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());   // zzz486 — multi-expand
   const [drill, setDrill] = useState<Record<string, any>>({});
@@ -234,7 +239,11 @@ export default function ThemeRotationTab() {
     const val = (r: ThemeRow) =>
       key === 'conv' ? (r.conviction ?? -999)
       : key === 'rs' ? (r.rsRatio || 0) + (r.rsMomentum || 0) - 200
-      : (r.ret?.[key] ?? -999);
+      // Risk-adjusted sorts DESCEND by merit; volatility is a cost, so the
+      // least volatile ranks first and the sign is flipped to keep one rule.
+      : key === 'risk' ? (r.riskAdj ?? -999)
+      : key === 'vol' ? -(r.vol ?? 9999)
+      : (r.ret?.[key as 'w1'|'m1'|'m3'|'ytd'|'y1'] ?? -999);
     return [...themes].sort((a, b) => val(b) - val(a));
   }, [themes, sortKey]);
 
@@ -403,12 +412,26 @@ export default function ThemeRotationTab() {
             <div style={{ margin: '14px 0', background: CARD, border: `1px solid ${BORD}`, borderRadius: 10, padding: 13 }}>
               <div style={{ fontSize: 12.5, fontWeight: 900, color: TXT, marginBottom: 2 }}>📋 Your Book by Theme</div>
               <div style={{ fontSize: 10.5, color: DIM, marginBottom: 10 }}>Every stock on your Technicals / Multibagger lists, auto-sorted into its theme by sector so you see the rotation call for each. <b style={{ color: MUT }}>{userBook.total}</b> names · <b style={{ color: MUT }}>{userBook.themed}</b> in a rotation theme{userBook.sectorGroups.size ? <> · <b style={{ color: MUT }}>{userBook.other.length}</b> grouped by sector below</> : null}. ★ = your name; grade = your Fundo.</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(250px,1fr))', gap: 9 }}>
+              {/* ── A MOSAIC, NOT A UNIFORM GRID ─────────────────────────────
+                  Forty-two Software names and one Gaming name were given
+                  identical 250px boxes, so the big group wrapped into a tall
+                  column of chips while the small one left most of its box
+                  empty — half the panel was whitespace and the eye had to
+                  travel much further than the information warranted.
+                  Each card now claims columns in proportion to how many of
+                  your names it holds, and `dense` packing backfills the gaps
+                  the wide cards leave, so the panel fills itself. */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gridAutoFlow: 'dense', gap: 9, alignItems: 'start' }}>
                 {[...userBook.groups.entries()]
                   .map(([tid, sts]) => ({ tid, sts, th: byId.get(tid) }))
                   .sort((a, b) => { const rk = (v?: string) => v === 'BUY' ? 0 : v === 'EARLY BUY' ? 1 : v === 'HOLD' || v === 'WATCH' ? 2 : v === 'TRIM' ? 3 : v === 'AVOID' ? 4 : 5; return rk(a.th?.verdict) - rk(b.th?.verdict) || b.sts.length - a.sts.length; })
                   .map(({ tid, sts, th }) => (
-                    <div key={tid} style={{ border: `1px solid ${(th?.verdictColor || '#64748B')}44`, borderRadius: 8, padding: '8px 10px', background: BG }}>
+                    <div key={tid} style={{
+                      // Span follows population: a group holding a quarter of
+                      // your book should look like it does.
+                      gridColumn: `span ${sts.length >= 26 ? 3 : sts.length >= 10 ? 2 : 1}`,
+                      border: `1px solid ${(th?.verdictColor || '#64748B')}44`, borderRadius: 8, padding: '8px 10px', background: BG,
+                    }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
                         <button onClick={() => th && toggleExpand(tid)} style={{ background: 'transparent', border: 'none', color: TXT, fontWeight: 800, fontSize: 12, cursor: th ? 'pointer' : 'default', padding: 0, textAlign: 'left' }}>{th ? `${th.emoji} ${th.name}` : tid} <span style={{ color: DIM, fontWeight: 600 }}>· {sts.length}</span></button>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -417,23 +440,27 @@ export default function ThemeRotationTab() {
                           {th?.verdict ? <span style={{ fontSize: 9, fontWeight: 900, color: th.verdictColor, background: `${th.verdictColor}1a`, border: `1px solid ${th.verdictColor}55`, borderRadius: 5, padding: '2px 6px' }}>{th.verdict}</span> : null}
                         </div>
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {/* The star on every chip was decoration: inside "Your
+                          Book" every name is yours, so it said nothing and
+                          cost a character of width on each of 236 chips. The
+                          grade is what actually varies, so it is what shows. */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                         {sts.map((s) => (
-                          <span key={s.symbol} title={`${s.sector || ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 6px' }}>★ {s.symbol}{s.grade ? <span style={{ color: DIM }}> {s.grade}</span> : null}</span>
+                          <span key={s.symbol} title={`${s.symbol}${s.sector ? ` · ${s.sector}` : ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)', borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>{s.symbol}{s.grade ? <span style={{ color: DIM, fontWeight: 600 }}> {s.grade}</span> : null}</span>
                         ))}
                       </div>
                     </div>
                   ))}
                 {/* sector-fallback groups — visible even without a rotation theme */}
                 {[...userBook.sectorGroups.entries()].sort((a, b) => b[1].length - a[1].length).map(([sec, sts]) => (
-                  <div key={`sec:${sec}`} style={{ border: `1px dashed ${BORD}`, borderRadius: 8, padding: '8px 10px', background: BG }}>
+                  <div key={`sec:${sec}`} style={{ gridColumn: `span ${sts.length >= 26 ? 3 : sts.length >= 10 ? 2 : 1}`, border: `1px dashed ${BORD}`, borderRadius: 8, padding: '8px 10px', background: BG }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
                       <span style={{ color: MUT, fontWeight: 800, fontSize: 11.5 }}>{sec} <span style={{ color: DIM, fontWeight: 600 }}>· {sts.length}</span></span>
                       <span style={{ fontSize: 8.5, color: DIM }}>no theme call</span>
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       {sts.map((s) => (
-                        <span key={s.symbol} title={`${s.sector || ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: MUT, background: 'rgba(148,163,184,0.12)', borderRadius: 4, padding: '1px 6px' }}>★ {s.symbol}{s.grade ? <span style={{ color: DIM }}> {s.grade}</span> : null}</span>
+                        <span key={s.symbol} title={`${s.symbol}${s.sector ? ` · ${s.sector}` : ''}${s.grade ? ` · Grade ${s.grade}` : ''}`} style={{ fontSize: 10.5, fontWeight: 700, color: MUT, background: 'rgba(148,163,184,0.12)', borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>{s.symbol}{s.grade ? <span style={{ color: DIM, fontWeight: 600 }}> {s.grade}</span> : null}</span>
                       ))}
                     </div>
                   </div>
@@ -461,6 +488,8 @@ export default function ThemeRotationTab() {
                       <th key={k} onClick={() => setSortKey(k as any)} style={{ padding: '6px 6px', fontWeight: sortKey === k ? 900 : 700, color: sortKey === k ? TXT : DIM, cursor: 'pointer' }}>{lbl}{sortKey === k ? ' ▾' : ''}</th>
                     ))}
                     <th onClick={() => setSortKey('rs')} style={{ padding: '6px 8px', fontWeight: sortKey === 'rs' ? 900 : 700, color: sortKey === 'rs' ? TXT : DIM, cursor: 'pointer' }}>RS{sortKey === 'rs' ? ' ▾' : ''}</th>
+                    <th onClick={() => setSortKey('vol')} title="Annualised volatility of the theme over the last three months. A cost, not a virtue — sorting puts the calmest first." style={{ padding: '6px 6px', fontWeight: sortKey === 'vol' ? 900 : 700, color: sortKey === 'vol' ? TXT : DIM, cursor: 'pointer' }}>Vol{sortKey === 'vol' ? ' ▾' : ''}</th>
+                    <th onClick={() => setSortKey('risk')} title="Excess return over the benchmark per unit of risk (3M excess, annualised, ÷ annualised volatility). How a desk ranks a rotation: beating the market by 9 points with 14% vol is a better use of capital than beating it by 15 with 50%." style={{ padding: '6px 6px', fontWeight: sortKey === 'risk' ? 900 : 700, color: sortKey === 'risk' ? TXT : DIM, cursor: 'pointer' }}>R/Risk{sortKey === 'risk' ? ' ▾' : ''}</th>
                     <th onClick={() => setSortKey('conv')} title="Conviction score 0-100 — RS × momentum × 50-DMA trend × breadth" style={{ padding: '6px 8px', fontWeight: sortKey === 'conv' ? 900 : 700, color: sortKey === 'conv' ? TXT : DIM, cursor: 'pointer' }}>Conv{sortKey === 'conv' ? ' ▾' : ''}</th>
                   </tr>
                 </thead>
@@ -488,7 +517,17 @@ export default function ThemeRotationTab() {
                               {t.fallingLeader && <span title="Leading on relative strength, but its own price is still down over 3 months — it is falling less than the market, not rising" style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: '#F59E0B', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>↓abs</span>}
                               {t.quadrantMove && <span title={`Crossed ${t.quadrantMove.from} → ${t.quadrantMove.to} this week`} style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 900, color: t.quadrantMove.dir === 'upgrade' ? '#22C55E' : '#EF4444', background: t.quadrantMove.dir === 'upgrade' ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)', border: `1px solid ${t.quadrantMove.dir === 'upgrade' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`, borderRadius: 4, padding: '1px 5px' }}>{t.quadrantMove.dir === 'upgrade' ? '▲' : '▼'} NEW</span>}
                             </div>
-                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.quadrantMove ? <span style={{ color: MUT }}> (was {t.quadrantMove.from})</span> : t.quadrant4w && t.quadrant4w !== t.quadrant ? <span style={{ color: MUT }}> (was {t.quadrant4w} a month ago)</span> : ''}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}</div>
+                            <div style={{ fontSize: 9.5, color: DIM }}>{t.quadrant}{t.quadrantMove ? <span style={{ color: MUT }}> (was {t.quadrantMove.from})</span> : t.quadrant4w && t.quadrant4w !== t.quadrant ? <span style={{ color: MUT }}> (was {t.quadrant4w} a month ago)</span> : ''}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}
+                              {/* WHERE IN THE MOVE YOU ARE. "Above the 50-DMA"
+                                  is a yes/no; 22% above it is a different entry
+                                  from 1% above, and a theme can lead on relative
+                                  strength while sitting a third below its own high. */}
+                              {t.dist50 != null && <span title="Distance from the 50-day average"> · {t.dist50 > 0 ? '+' : ''}{t.dist50.toFixed(0)}% vs 50DMA</span>}
+                              {t.dd1y != null && t.dd1y <= -5 && <span title="Below its own 1-year high" style={{ color: t.dd1y <= -25 ? '#F87171' : undefined }}> · {t.dd1y.toFixed(0)}% from high</span>}
+                              {t.rangePos != null && <span title="Position in the 1-year range"> · 52w {t.rangePos}%</span>}
+                              {t.clusterSize != null && t.clusterSize > 1 && t.clusterLabel && t.clusterLabel !== t.name &&
+                                <span title={`Moves with ${t.clusterLabel} and ${t.clusterSize - 1} other theme(s) — correlation ${t.clusterCorr ?? '?'}. Owning both is closer to one position than two.`} style={{ color: '#C084FC' }}> · ⧉ moves with {t.clusterLabel}</span>}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -508,6 +547,16 @@ export default function ThemeRotationTab() {
                           <div style={{ fontSize: 8.5, color: t.momDelta1w > 0 ? '#22C55E' : '#EF4444' }}>{t.momDelta1w > 0 ? '+' : ''}{t.momDelta1w.toFixed(1)}/wk</div>
                         )}
                       </td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', fontSize: 11, color: t.vol == null ? DIM : t.vol >= 40 ? '#F87171' : t.vol >= 25 ? '#EAB308' : MUT }}
+                        title={t.vol != null ? `${t.vol}% annualised volatility` : undefined}>
+                        {t.vol != null ? `${t.vol.toFixed(0)}%` : '·'}
+                      </td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', fontSize: 11 }}
+                        title={t.excess3m != null ? `${t.excess3m > 0 ? '+' : ''}${t.excess3m.toFixed(1)}pp vs benchmark over 3M, per unit of risk` : undefined}>
+                        {t.riskAdj != null
+                          ? <b style={{ color: t.riskAdj >= 0.5 ? '#22C55E' : t.riskAdj >= 0 ? MUT : '#EF4444' }}>{t.riskAdj > 0 ? '+' : ''}{t.riskAdj.toFixed(2)}</b>
+                          : <span style={{ color: DIM }}>·</span>}
+                      </td>
                       <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>
                         {typeof t.conviction === 'number'
                           ? <span style={{ fontWeight: 800, color: t.conviction >= 66 ? '#22C55E' : t.conviction >= 45 ? '#EAB308' : '#EF4444' }}>{t.conviction}</span>
@@ -516,7 +565,7 @@ export default function ThemeRotationTab() {
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={9} style={{ padding: '2px 8px 12px 24px', background: 'rgba(59,130,246,0.04)' }}>
+                        <td colSpan={11} style={{ padding: '2px 8px 12px 24px', background: 'rgba(59,130,246,0.04)' }}>
                           {dLoading && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>Loading {t.name} leaders…</div>}
                           {!dLoading && dd?.note && <div style={{ color: DIM, fontSize: 11, padding: 8 }}>{dd.note}</div>}
                           {!dLoading && dd?.stocks && dd.stocks.length > 0 && (
@@ -610,6 +659,69 @@ export default function ThemeRotationTab() {
                     </div>
                   </div>
                 )}
+              </div>
+            );
+          })()}
+
+          {/* ═══ CROWDING — HOW MANY BETS IS YOUR BOOK ACTUALLY MAKING? ═══
+              "Your exposure vs the rotation call" answers whether you are on
+              the right side. This answers something the board could not:
+              whether the themes you are spread across are spread at all.
+              Software, Internet, Fintech and Cloud can all read BUY while
+              moving as one position — four labels, one bet — and a reader who
+              diversified across them has concentrated without knowing it.
+              Themes are grouped by measured correlation of daily returns, so
+              this is what your book DID, not what its labels say. */}
+          {(() => {
+            const groups = [...userBook.groups.entries()]
+              .map(([tid, sts]) => ({ th: byId.get(tid), n: (sts as any[]).length }))
+              .filter((g) => g.th) as Array<{ th: ThemeRow; n: number }>;
+            if (!groups.length) return null;
+            const byCluster = new Map<string, { label: string; names: number; themes: string[] }>();
+            let unclustered = 0;
+            for (const g of groups) {
+              const key = g.th.cluster != null ? String(g.th.cluster) : null;
+              if (key == null) { unclustered += g.n; continue; }
+              const cur = byCluster.get(key) || { label: g.th.clusterLabel || g.th.name, names: 0, themes: [] };
+              cur.names += g.n; cur.themes.push(g.th.name);
+              byCluster.set(key, cur);
+            }
+            const rows = [...byCluster.values()].sort((a, b) => b.names - a.names);
+            if (!rows.length) return null;
+            const total = rows.reduce((a, r) => a + r.names, 0) + unclustered;
+            const top = rows[0];
+            const topPct = total ? Math.round((top.names / total) * 100) : 0;
+            const heavy = topPct >= 35;
+            return (
+              <div style={{ marginTop: 18, background: CARD, border: `1px solid ${heavy ? 'rgba(245,158,11,0.4)' : BORD}`, borderRadius: 12, padding: 15 }}>
+                <div style={{ fontSize: 14, fontWeight: 900, color: TXT, marginBottom: 3 }}>⧉ Crowding — how many bets is your book really making?</div>
+                <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.55 }}>
+                  Themes grouped by how they actually MOVE (correlation of daily returns ≥ 0.8 over six months), not by what they are called.
+                  Your {total} themed names sit in <b style={{ color: MUT }}>{rows.length}</b> such group{rows.length > 1 ? 's' : ''}.
+                  {heavy
+                    ? <> <b style={{ color: '#F59E0B' }}>{topPct}% of them are in one</b> — the {top.label} complex. Spreading across its members is closer to one position than to several.</>
+                    : <> No single group holds more than {topPct}% of them, so the spread is real rather than nominal.</>}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {rows.slice(0, 7).map((r, i) => {
+                    const pct = total ? (r.names / total) * 100 : 0;
+                    const col = pct >= 35 ? '#F59E0B' : pct >= 20 ? '#60A5FA' : '#64748B';
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 11 }}>
+                        <span style={{ width: 118, flexShrink: 0, color: TXT, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.themes.join(', ')}>{r.label}</span>
+                        <span style={{ flex: 1, height: 9, background: BG, borderRadius: 5, overflow: 'hidden', minWidth: 60 }}>
+                          <span style={{ display: 'block', width: `${Math.max(2, pct)}%`, height: '100%', background: col }} />
+                        </span>
+                        <span style={{ width: 96, flexShrink: 0, textAlign: 'right', color: MUT, fontFamily: 'ui-monospace,monospace' }}>
+                          {r.names} names · {Math.round(pct)}%
+                        </span>
+                        <span style={{ width: 150, flexShrink: 0, color: DIM, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.themes.join(', ')}>
+                          {r.themes.length > 1 ? `${r.themes.length} themes: ${r.themes.join(', ')}` : r.themes[0]}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
           })()}
