@@ -20,6 +20,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { windowSessions } from '@/lib/us-merge';
+import { getCachedDay, putCachedDay } from '@/lib/us-day-cache';
 import toast from 'react-hot-toast';
 import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-react';
 import {
@@ -132,21 +134,47 @@ export default function UsConvictionBeatsPage() {
     if (sweeping) return;
     setSweeping(true);
     setSweepMsg(null);
+    // Stamped at the START: a sweep that fails half-way used to leave the stamp
+    // unset, so the 6-hour auto-sweep fired again on every visit — "it's
+    // sweeping all the time".
+    try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
     let changes = 0;
     try {
       const today = etToday();
-      const chunks = Math.ceil(sessions / 10);
-      for (let i = 0; i < chunks; i++) {
-        const end = new Date(Date.parse(today + 'T00:00:00Z') - i * 10 * 86400000).toISOString().slice(0, 10);
-        const res = await fetch(`/api/v1/earnings/graded-us?date=${end}&days=10`, { cache: 'no-store' });
-        if (!res.ok) continue;
-        const p = await res.json();
-        const batch: any[] = [];
-        for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
-          for (const c of (p?.by_tier?.[t] || [])) batch.push({ ...c, source_url: c.filing_url });
-        }
-        if (batch.length) changes += syncUsConviction(batch);
-      }
+      // ONE SESSION AT A TIME, THROUGH THE SAME DAY CACHE THE OPPORTUNITIES
+      // PAGE FILLS. The old loop asked the server for three 10-day sweeps with
+      // no timeout and no progress: a chunk that hung pinned "Sweeping…" for
+      // ever, a chunk that failed was skipped in silence, and every session the
+      // user had just watched load on the other tab was swept again from
+      // EDGAR. Now each completed session is read from IndexedDB when it is
+      // there, fetched once and stored when it is not, and the button counts
+      // up as it goes. Three sessions in flight, like the other tab.
+      const days = windowSessions(today, sessions);
+      let done = 0; let failed = 0;
+      const one = async (d: string) => {
+        try {
+          let p: any = await getCachedDay(d, d >= today);
+          if (!p) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 240_000);
+            try {
+              const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1`, { cache: 'no-store', signal: ctrl.signal });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              p = await res.json();
+              void putCachedDay(d, p);
+            } finally { clearTimeout(timer); }
+          }
+          const batch: any[] = [];
+          for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
+            for (const c of (p?.by_tier?.[t] || [])) batch.push({ ...c, source_url: c.filing_url });
+          }
+          if (batch.length) changes += syncUsConviction(batch);
+        } catch { failed++; }
+        done++;
+        setSweepMsg(`Sweeping ${done}/${days.length} sessions${failed ? ` (${failed} failed)` : ''}…`);
+      };
+      let next = 0;
+      await Promise.all([0, 1, 2].map(async () => { while (next < days.length) await one(days[next++]); }));
       // Re-price the older part of the bench. Explicit mode grades each name
       // off its latest 8-K, so price / move / P/E / market cap refresh even for
       // names whose filing date fell outside the sessions above.
@@ -164,9 +192,9 @@ export default function UsConvictionBeatsPage() {
         if (batch.length) changes += syncUsConviction(batch);
       }
       try { localStorage.setItem(SWEEP_KEY, new Date().toISOString()); } catch {}
-      setSweepMsg(changes > 0
+      setSweepMsg((changes > 0
         ? `Bench updated — ${changes} change${changes > 1 ? 's' : ''} (last ${sessions} sessions swept${stale.length ? `, ${Math.min(stale.length, 150)} older names re-priced` : ''}).`
-        : 'Bench already up to date.');
+        : 'Bench already up to date.') + (failed ? ` ${failed} session${failed > 1 ? 's' : ''} could not be scanned — press Rebuild again to retry just those.` : ''));
     } catch (e: any) {
       setSweepMsg(`Sweep failed: ${String(e?.message || e)}`);
     } finally {

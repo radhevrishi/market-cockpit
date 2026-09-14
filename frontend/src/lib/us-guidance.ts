@@ -93,7 +93,7 @@ async function secGet(url: string): Promise<string | null> {
   } catch { return null; }
 }
 
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')

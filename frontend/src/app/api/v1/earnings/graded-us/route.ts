@@ -38,6 +38,7 @@ import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
+import { oneOffsFromReleaseHtml, epsExOneOffs, type OneOff } from '@/lib/us-one-offs';
 import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
 import { type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { ownGuideVerdict } from '@/lib/us-guide-verdict';
@@ -836,19 +837,22 @@ export async function GET(req: Request) {
       // and for six filers it returned a modelled number that appears nowhere
       // in any filing at all. A number narrated as "the company's adjusted EPS"
       // has to come from the company.
-      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null }> => {
-        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null };
+      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[] }> => {
+        if (p.f.form !== '8-K' || !p.f.accession) return { read: false, adj: null, oneOffs: [] };
         try {
           const doc = await releaseDocument(p.f.cikNum, p.f.accession, p.f.filing_url);
-          if (!doc.html) return { read: false, adj: null };
+          if (!doc.html) return { read: false, adj: null, oneOffs: [] };
           return {
             read: true,
             adj: adjustedEpsFromReleaseHtml(doc.html, {
               gaapEps: p.fundamentals.eps ?? null,
               periodEndISO: p.fundamentals.q_end ?? null,
             }),
+            // The one-offs the release itself quantifies INSIDE its adjusted
+            // figure (Burlington's "$0.60 benefit related to tariff refunds").
+            oneOffs: oneOffsFromReleaseHtml(doc.html),
           };
-        } catch { return { read: false, adj: null }; }
+        } catch { return { read: false, adj: null, oneOffs: [] }; }
       }),
     ]);
 
@@ -893,8 +897,9 @@ export async function GET(req: Request) {
       // labelled fallback, and never a vendor number that simply repeats the
       // GAAP figure — that is the feed carrying GAAP under an adjusted name,
       // and pairing it with an adjusted estimate invents a beat.
-      const prRead = prAdj[pi] || { read: false, adj: null };
+      const prRead = prAdj[pi] || { read: false, adj: null, oneOffs: [] };
       const pa = prRead.adj;
+      const oneOffs: OneOff[] = prRead.oneOffs || [];
       const vendorAdj = sLatest?.eps_actual ?? null;
       const gaapNow = p.fundamentals.eps ?? null;
       const vendorLooksGaap = vendorAdj != null && gaapNow != null && Math.abs(vendorAdj - gaapNow) <= 0.011;
@@ -937,6 +942,14 @@ export async function GET(req: Request) {
       // it, here or anywhere downstream.
       const estUsable = !estBasis.conflict;
       const estForSurprise = estUsable ? (sLatest?.eps_estimate ?? null) : null;
+      // THE BEAT IS MEASURED ON THE CORE NUMBER. Where the release states that
+      // its adjusted EPS includes a quantified one-off, the street is compared
+      // with the figure ex that item: Burlington's $2.96 carries $0.60 of
+      // tariff refunds, and $2.36 against $2.19 is the beat the quarter earned.
+      // The headline figure is still shown; it is no longer what the grade
+      // reads. Nothing here is computed when the release quantifies nothing.
+      const exOne = epsExOneOffs(adjNow, oneOffs, gaapNow);
+      const adjForBeat = exOne ? exOne.eps : adjNow;
       const fq = fiscalPeriodFromFacts(p.facts, p.fundamentals.q_end);
       const fyEnding = fiscalYearEndingAt(p.facts, p.fundamentals.q_end);
       const row = gradeUsRow({
@@ -963,15 +976,18 @@ export async function GET(req: Request) {
         // — a 17% beat with a raised guide — was graded as though neither had
         // happened. Same arithmetic as the display path below, and it refuses a
         // percentage off a base under a dime for the same reason.
-        consensus_beat_pct: (adjNow != null && estForSurprise != null && estForSurprise >= 0.10)
-          ? ((adjNow - estForSurprise) / estForSurprise) * 100
+        consensus_beat_pct: (adjForBeat != null && estForSurprise != null && estForSurprise >= 0.10)
+          ? ((adjForBeat - estForSurprise) / estForSurprise) * 100
           : null,
         // The cents beat reads `estForSurprise`, NOT the raw vendor estimate —
         // an estimate refused for a basis conflict must be refused here too, or
         // the fabricated beat the guard just removed walks straight back into
         // the grade through the cents door.
-        consensus_beat_abs: (adjNow != null && estForSurprise != null)
-          ? adjNow - estForSurprise : null,
+        consensus_beat_abs: (adjForBeat != null && estForSurprise != null)
+          ? adjForBeat - estForSurprise : null,
+        one_offs: oneOffs,
+        adj_eps_ex_oneoff: exOne ? exOne.eps : null,
+        one_off_total_per_share: exOne ? exOne.total : null,
         close_30d: p.t.close_30d,
         // The filer's own words first (press-release headline), then SEC's
         // fy/fp — they disagree often enough to matter (NetApp's July quarter
@@ -1185,8 +1201,15 @@ export async function GET(req: Request) {
         // estimate is within a dime of zero, because a percentage off $0.00 is
         // arithmetic noise (Domo "+5,888%"). The cents delta is kept instead.
         if (est != null) {
-          const cents = adjNow - est;
+          // Surprise on the CORE figure (ex the one-offs the release itself
+          // quantifies), matching what the grade read above. The headline
+          // surprise is kept beside it so the card can show both.
+          const cents = (adjForBeat ?? adjNow) - est;
           (row as any).eps_surprise_abs = Math.round(cents * 1000) / 1000;
+          if (exOne) {
+            (row as any).eps_surprise_headline_abs = Math.round((adjNow - est) * 1000) / 1000;
+            (row as any).eps_surprise_headline_pct = est >= 0.10 ? Math.round(((adjNow - est) / est) * 1000) / 10 : null;
+          }
           // A surprise percentage needs a POSITIVE base. SentinelOne's
           // consensus was −$0.23 and its actual +$0.08 — a real and important
           // swing, but "+134%" off a negative estimate is not a number.

@@ -247,10 +247,14 @@ export default function UsEarningsOpportunitiesPage() {
     queries: sessions.map((d, i) => ({
       queryKey: ['graded-us-day', d, forceKey],
       queryFn: async (): Promise<DayPayload> => {
-        if (forceKey === 0) {
-          const cached = await getCachedDay(d, d >= today);
-          if (cached) return cached as unknown as DayPayload;
-        }
+        // THE CACHE IS CONSULTED ON EVERY RUN, hard refresh included. The hard
+        // refresh empties the store BEFORE it bumps `forceKey` (see `refetch`),
+        // so its misses are real; and a day that was swept at 40/60 before the
+        // user pressed "retry" is served from the store rather than swept
+        // again. This used to be `if (forceKey === 0)`, which is why any retry
+        // started the whole window over from 0.
+        const cached = await getCachedDay(d, d >= today);
+        if (cached) return cached as unknown as DayPayload;
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 240_000);
         try {
@@ -291,7 +295,11 @@ export default function UsEarningsOpportunitiesPage() {
   // THE ONLY THING THAT SHOULD EVER RE-SWEEP A WHOLE WINDOW. Ordinary visits
   // read every completed session out of the cache; this button is the user
   // saying "throw it away and rebuild", so it empties the store first.
-  const refetch = () => { void clearDayCache(); setForceKey((k) => k + 1); };
+  const refetch = async () => { await clearDayCache(); setForceKey((k) => k + 1); };
+  // RETRY MEANS THE FAILED DAYS, NOT THE WINDOW. Re-running only the queries
+  // that errored keeps the 40 that loaded on screen and in the store; bumping
+  // `forceKey` would give every day a new key and a `force=1` sweep.
+  const retryFailed = () => { dayQueries.forEach((q: any) => { if (q.isError) void q.refetch(); }); };
 
   // Push BLOCKBUSTER / STRONG (and demotions) onto the US bench.
   //
@@ -617,7 +625,7 @@ export default function UsEarningsOpportunitiesPage() {
         )}
         <button onClick={exportCsv} style={btn()}>📊 CSV</button>
         <button onClick={exportTradingView} style={btn()}>📈 TradingView</button>
-        <button onClick={() => { void clearDayCache(); setForceKey((k) => k + 1); }}
+        <button onClick={() => { void refetch(); }}
           disabled={isFetching} style={{ ...btn(), opacity: isFetching ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <RefreshCw className="w-3 h-3" style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
           {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Force re-scan'}
@@ -751,7 +759,7 @@ export default function UsEarningsOpportunitiesPage() {
           fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)',
         }}>
           ⚠ {failedDays.join(', ')} could not be scanned (EDGAR or the price source timed out). Everything else is shown.
-          <button onClick={() => setForceKey((k) => k + 1)} style={{ ...btn(), marginLeft: 8 }}>retry those days</button>
+          <button onClick={retryFailed} style={{ ...btn(), marginLeft: 8 }}>retry those days</button>
         </div>
       )}
       {!!error && (
@@ -912,7 +920,7 @@ export default function UsEarningsOpportunitiesPage() {
               ⚠ {calFailed.join(', ')} could not be swept — EDGAR timed out on{' '}
               {calFailed.length === 1 ? 'that range' : 'those ranges'}. Those days are simply not listed below;
               nothing was quietly shown as a quiet day. A narrower window (7d or 14d) almost always lands.
-              <button onClick={() => setForceKey((k) => k + 1)} style={{ ...btn(), marginLeft: 8 }}>retry</button>
+              <button onClick={() => calQueries.forEach((q: any) => { if (q.isError) void q.refetch(); })} style={{ ...btn(), marginLeft: 8 }}>retry</button>
             </div>
           )}
           {!cal && calFetching && <div style={panel()}><span style={{ color: 'var(--mc-text-2)' }}>Sweeping EDGAR for {calFrom} → {calTo} in {calChunks.length} chunks, {CAL_CONCURRENCY} at a time — each fills in as it lands, and each is cached afterwards. A chunk in peak earnings season can take a minute or two on a cold cache.</span></div>}

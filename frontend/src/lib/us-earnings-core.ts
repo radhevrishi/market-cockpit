@@ -3129,6 +3129,11 @@ export interface UsGradedRow {
    *  GAAP tile — they are two tiles, always labelled. */
   eps_adj_curr: number | null;
   eps_adj_prev: number | null;
+  /** Adjusted EPS ex the one-offs the release states it includes (null when
+   *  the release quantifies none). The grade's beat is measured on this. */
+  eps_adj_ex_oneoff: number | null;
+  one_off_total_per_share: number | null;
+  one_offs: import('./us-one-offs').OneOff[];
   eps_adj_yoy_pct: number | null;
   eps_adj_swing: SwingKind;
   /** Which basis the grade's growth axis actually used. */
@@ -3218,6 +3223,12 @@ export interface UsGradeInput {
   /** Daily closes behind the print, used to size the market reaction against
    *  the stock's OWN volatility rather than a fixed percentage. */
   close_30d?: number[] | null;
+  /** One-offs the release itself quantifies INSIDE its adjusted figure
+   *  (see `us-one-offs.ts`). `adj_eps_ex_oneoff` is the company's adjusted EPS
+   *  with those taken back out; `one_off_total_per_share` is what came out. */
+  one_offs?: import('./us-one-offs').OneOff[] | null;
+  adj_eps_ex_oneoff?: number | null;
+  one_off_total_per_share?: number | null;
 }
 
 /**
@@ -3350,7 +3361,11 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // EPS, year over year, from the consensus feed. The GAAP figures stay on the
   // card untouched; only the GROWTH used for grading changes, and the row is
   // tagged so the reason is visible.
-  const epsYAdj = yoyPct(input.adj_eps ?? null, input.adj_eps_prev ?? null);
+  // Adjusted growth is measured on the CORE figure when the release states
+  // that its adjusted EPS includes a quantified one-off (`adj_eps_ex_oneoff`):
+  // Burlington's $2.96 vs $1.71 is +73%; the $2.37 the company itself calls
+  // the ex-refund number is +39%. The card still shows the headline.
+  const epsYAdj = yoyPct(input.adj_eps_ex_oneoff ?? input.adj_eps ?? null, input.adj_eps_prev ?? null);
   const usedAdjEps = epsYGaap == null && epsYAdj != null;
   const epsY = epsYGaap ?? epsYAdj;
   const opm = (f.operating_income != null && revC) ? (f.operating_income / revC) * 100 : null;
@@ -3583,8 +3598,20 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // These are ceilings, never promotions: a row can always be graded lower on
   // its own merits, and none of them invents a number. Each is a fact the
   // filing itself establishes.
+  // A one-off the company put INSIDE its own adjusted number (Burlington's
+  // "$2.96 including an approximate $0.60 benefit related to tariff refunds")
+  // is named here, before the critical flags are counted, because a headline
+  // that is a fifth one-off IS a quality flag. The ceiling it sets is below.
+  const oneOffTot = input.one_off_total_per_share ?? null;
+  const oneOffHd = input.adj_eps ?? null;
+  const oneOffShare = (oneOffTot != null && oneOffHd != null && Math.abs(oneOffHd) > 0.05) ? oneOffTot / Math.abs(oneOffHd) : null;
+  if (oneOffTot != null && input.adj_eps_ex_oneoff != null && Math.abs(oneOffTot) >= 0.02) {
+    const label = (input.one_offs || []).find((o) => o.included)?.label ?? 'discrete item';
+    caveat_tags.push(`one-off ${oneOffTot > 0 ? '+' : '−'}$${Math.abs(oneOffTot).toFixed(2)}/sh in adjusted eps (${label})`);
+  }
   const criticals = caveat_tags.filter((t) =>
-    t === 'low quality' || t === 'ocf divergence' || t === 'optical eps' || t.startsWith('gaap ')).length;
+    t === 'low quality' || t === 'ocf divergence' || t === 'optical eps' || t.startsWith('gaap ')
+    || (t.startsWith('one-off +') && oneOffShare != null && oneOffShare >= 0.2)).length;
   // Caps raised by the FILING (cash, trend, quality flags) are remembered
   // separately from the cap raised by the TAPE, because the floor below has to
   // know which of the two is holding a row down.
@@ -3620,6 +3647,25 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // 4. Two or more critical quality flags at once — a one-off-driven EPS AND
   //    cash that does not back it, say — is not one caveat, it is a pattern.
   if (criticals >= 2) capTier('STRONG', 'multiple quality flags');
+
+  // 5. A ONE-OFF THE COMPANY PUT INSIDE ITS OWN ADJUSTED NUMBER.
+  //    Burlington: adjusted EPS $2.96 "including an approximate $0.60 benefit
+  //    related to the net impact of tariff refunds". The $0.60 is the company's
+  //    figure, the sentence is the company's sentence, and the grade already
+  //    measured the beat ex that item (route). What remains is the ceiling: a
+  //    quarter whose adjusted EPS is a fifth or more one-off is not a
+  //    BLOCKBUSTER, whatever the headline; and one whose beat only exists
+  //    because of the one-off is not STRONG. A filing cap: it holds the floor
+  //    when the tape is also against the print. A charge (negative total)
+  //    works the other way — core earnings were better than shown — and only
+  //    earns the caveat.
+  if (oneOffTot != null && oneOffTot > 0 && input.adj_eps_ex_oneoff != null && oneOffShare != null) {
+    const beatAbs = input.consensus_beat_abs ?? null;   // already ex one-off (route)
+    const beatPct = input.consensus_beat_pct ?? null;
+    const beatGone = (beatPct != null ? beatPct < 3 : beatAbs != null ? beatAbs < 0.03 : false);
+    if (beatGone) capTier('MIXED', 'beat only with the one-off');
+    else if (oneOffShare >= 0.2) capTier('STRONG', 'headline eps leans on a one-off');
+  }
 
   // ═══════════════════════════════════════════════════════════════════════
   // THE TAPE IS NOT THE FUNDAMENTALS — a floor under the price reaction.
@@ -3814,6 +3860,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     fcf_swing: swingKind(fcfC, fcfP),
     eps_adj_curr: input.adj_eps ?? null,
     eps_adj_prev: input.adj_eps_prev ?? null,
+    eps_adj_ex_oneoff: input.adj_eps_ex_oneoff ?? null,
+    one_off_total_per_share: input.one_off_total_per_share ?? null,
+    one_offs: input.one_offs ?? [],
     eps_adj_yoy_pct: epsYAdj,
     eps_adj_swing: swingKind(input.adj_eps ?? null, input.adj_eps_prev ?? null),
     eps_basis_used: epsYGaap != null ? 'gaap' : epsYAdj != null ? 'adjusted' : null,

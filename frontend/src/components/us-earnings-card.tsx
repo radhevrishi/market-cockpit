@@ -360,6 +360,15 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         }}>
           <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>STREET BASIS</span>
           <span>adj. EPS <b style={{ color: 'var(--mc-text-0)' }}>${Number((r as any).eps_adj).toFixed(2)}</b></span>
+          {/* THE ONE-OFF THE COMPANY PUT INSIDE ITS OWN ADJUSTED NUMBER.
+              Burlington's "$2.96 including an approximate $0.60 benefit
+              related to tariff refunds" — the ex-item figure is what the
+              surprise beside it is measured on, and the reader sees both. */}
+          {(r as any).eps_adj_ex_oneoff != null && (r as any).one_off_total_per_share != null && (
+            <span style={{ color: 'var(--mc-caution, #F59E0B)' }} title={((r as any).one_offs || []).map((o: any) => o.quote).join('\n')}>
+              → core <b>${Number((r as any).eps_adj_ex_oneoff).toFixed(2)}</b> ex {Number((r as any).one_off_total_per_share) > 0 ? '+' : '−'}${Math.abs(Number((r as any).one_off_total_per_share)).toFixed(2)} {((r as any).one_offs || []).find((o: any) => o.included)?.label ?? 'one-off'}
+            </span>
+          )}
           {/* A REFUSED ESTIMATE IS NOT PRINTED AT ALL — not even without a
               surprise beside it.
               The engine already declines to compute a surprise when the
@@ -390,6 +399,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           )}
           {(r as any).eps_basis_note
             ? <span style={{ color: 'var(--mc-caution, #F59E0B)' }}>· {(r as any).eps_basis_note}</span>
+            : (r as any).eps_adj_ex_oneoff != null
+            ? <span style={{ color: 'var(--mc-text-4)' }}>· surprise measured on the core figure; the release states the adjusted figure includes the item</span>
             : <span style={{ color: 'var(--mc-text-4)' }}>· adjusted figures exclude one-offs, so they differ from the GAAP tile</span>}
         </div>
       )}
