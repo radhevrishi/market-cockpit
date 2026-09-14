@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v12:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v13:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -694,10 +694,22 @@ async function build(region: ThemeRegion) {
   const newLow  = okRows.filter((r: any) => (r.rangePos ?? 100) <= 10).length;
   const qCount = { Leading: 0, Improving: 0, Weakening: 0, Lagging: 0 } as Record<string, number>;
   okRows.forEach((r: any) => { qCount[r.quadrant] = (qCount[r.quadrant] || 0) + 1; });
+  // ── WEIGHTING, AND THE MISTAKE IT FIXES ──────────────────────────────
+  // The first version scored the high/low spread as (nh − nl) / (nh + nl),
+  // which is a RATIO of the extremes to each other and carries no information
+  // about how few of them there are. Five themes at highs against two at lows
+  // scored +0.43 — as strong a reading as forty against one — and that alone
+  // pushed a board with only 35% of its themes above their 50-day line into
+  // "RISK-ON". It was, at that moment, a narrow market wearing a green label.
+  //
+  // So the spread is now measured against the WHOLE universe, which is what
+  // makes it a breadth statistic rather than a ratio, and the plurality of the
+  // weight sits on the one measure that is reliable at every sample size: how
+  // much of the board holds its own 50-day line.
   let regimeScore = 0;
-  regimeScore += (pctAbove50 - 50) / 50;                              // −1 … +1
-  regimeScore += (newHigh - newLow) / Math.max(1, newHigh + newLow);  // −1 … +1
-  regimeScore += benchAbove50 === true ? 0.5 : benchAbove50 === false ? -0.5 : 0;
+  regimeScore += ((pctAbove50 - 50) / 50) * 1.5;                      // −1.5 … +1.5, dominant
+  regimeScore += ((newHigh - newLow) / Math.max(1, okRows.length)) * 3; // scaled by the universe
+  regimeScore += benchAbove50 === true ? 0.4 : benchAbove50 === false ? -0.4 : 0;
   const regimeLabel = regimeScore >= 0.6 ? 'risk-on' : regimeScore <= -0.6 ? 'risk-off' : 'mixed';
   const breadth = {
     themes: okRows.length,
@@ -712,7 +724,7 @@ async function build(region: ThemeRegion) {
       ? `${pctAbove50}% of themes hold their 50-day line and ${newHigh} sit at the top of their one-year range against ${newLow} at the bottom. Leadership is being rewarded — take the BUY calls at full size.`
       : regimeLabel === 'risk-off'
         ? `Only ${pctAbove50}% of themes hold their 50-day line and ${newLow} sit at the bottom of their one-year range against ${newHigh} at the top. The tape is against you — even a correct theme call gets punished here. Half size, or wait.`
-        : `${pctAbove50}% of themes hold their 50-day line; ${newHigh} at one-year highs against ${newLow} at lows. No broad trend — be selective, and only where the theme AND the stock both confirm.`,
+        : `${pctAbove50}% of themes hold their 50-day line; ${newHigh} at one-year highs against ${newLow} at lows.${benchAbove50 === true && pctAbove50 < 45 ? ` The index is above its own 50-day line while most themes are not — that is a NARROW market, carried by a few leaders, and the index will not protect a position outside them.` : ''} No broad trend — be selective, and only where the theme AND the stock both confirm.`,
   };
 
   return {
