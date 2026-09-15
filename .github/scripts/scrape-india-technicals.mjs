@@ -490,12 +490,24 @@ async function main() {
   // what puts a new filer's stage and RS on its card the day it reports.
   const targets = [...want];
   const out = {};
+  // WHY A SYMBOL HAS NO TECHNICALS, RECORDED RATHER THAN GUESSED.  (zzz667)
+  //
+  // Four bench names came back empty after coverage went from 900 to 2,885,
+  // which ruled out the size cap and left two candidate explanations that
+  // cannot be told apart from outside: the symbol is not in the bhavcopy at
+  // all (an SME/EMERGE listing, which trades under a different series and is
+  // deliberately excluded), or it is there but has traded too few sessions for
+  // a moving average to mean anything. Both are correct behaviour; only one is
+  // worth acting on. So the job says which, instead of leaving it to be
+  // rediscovered by hand every time somebody asks.
+  const skipped = { absent: [], tooFewBars: [] };
   for (const sym of targets) {
     const m = series[sym];
-    if (!m) continue;
+    if (!m) { if (fromBench.includes(sym)) skipped.absent.push(sym); continue; }
     const dates = Object.keys(m).sort();
     const t = technicalsFor(dates.map((d) => m[d]));
     if (t) out[sym] = t;
+    else if (fromBench.includes(sym)) skipped.tooFewBars.push(`${sym}(${dates.length})`);
   }
   assignRs(Object.entries(out), benchmarkRet12m);
 
@@ -530,6 +542,12 @@ async function main() {
     with_rs: Object.values(merged).filter((t) => t.rs_rating != null).length,
     with_ma200: Object.values(merged).filter((t) => t.ma200 != null).length,
     trend_template: Object.values(merged).filter((t) => t.trend_template).length,
+    bench_without_technicals: {
+      not_in_bhavcopy: skipped.absent.length,
+      too_few_bars: skipped.tooFewBars.length,
+      not_in_bhavcopy_sample: skipped.absent.slice(0, 12),
+      too_few_bars_sample: skipped.tooFewBars.slice(0, 12),
+    },
   }, null, 2));
 }
 
