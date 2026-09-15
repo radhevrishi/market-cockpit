@@ -27,7 +27,7 @@ import toast from 'react-hot-toast';
 import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-react';
 import {
   getUsConvictionList, removeUsConviction, clearUsConviction, syncUsConviction,
-  restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError,
+  restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError, mergeServerUsBench,
   usFilingAgeDays, computeUsNewWindow, usVerdict, usRule40, usRoce,
   passesUsConvictionFilter, usPresetFilters, isUsPresetActive,
   US_FILTER_DEFAULT, US_PRESET,
@@ -198,7 +198,22 @@ export default function UsConvictionBeatsPage() {
   const hydratedRef = useRef(false);
   useEffect(() => {
     let alive = true;
-    void hydrateUsConviction().finally(() => { hydratedRef.current = true; if (alive) reload(); });
+    // zzz665 — hydrate LOCAL first, then fold in the server bench that
+    // refresh-us-bench keeps warm. Order matters: merging before hydration
+    // would let the server copy write into an empty map and look like it had
+    // rebuilt a book that was merely not loaded yet. The merge is additive and
+    // skips anything in the recycle bin, so a name removed by hand stays
+    // removed — see mergeServerUsBench in lib/conviction-beats-us.ts.
+    void hydrateUsConviction()
+      .catch(() => { /* memory-only bench; the merge below still helps */ })
+      .then(() => mergeServerUsBench())
+      .then((r) => {
+        if (r && r.merged > 0) {
+          toast.success(`${r.merged} name${r.merged === 1 ? '' : 's'} added from the server bench`);
+        }
+      })
+      .catch(() => { /* the server bench is a bonus, never load-bearing */ })
+      .finally(() => { hydratedRef.current = true; if (alive) reload(); });
     return () => { alive = false; };
   }, [reload]);
 

@@ -29,8 +29,29 @@ const ROW_TTL = 60 * 60 * 24 * 90;
 // become "stale" after 25h and pollute mc-guardian's alert. The actual rows
 // still show in the `rows[]` response for debugging — they just don't trigger
 // the alert flag.
+// zzz665 — THE REGEX ONLY EVER MATCHED THE PREFIX.
+//
+// `^manual-` catches nothing we actually run, because the bridge writes the
+// suffix form: `intelligence-manual`, `movers-manual`, `prewarm-us-manual`,
+// `earnings-guidance-manual`. Those fire only when a human presses "Run
+// workflow", so the moment one is used it is permanently 25 hours from being
+// called stale — and it then sits red in the health view for ever, which is
+// how `stale_count: 5` came to contain three rows that were working perfectly.
+//
+// A monitor that cries wolf is worse than no monitor: it trains you to ignore
+// it, and the one row that mattered — prewarm-us-earnings, which had NEVER
+// succeeded — was sitting in that same list being ignored with the rest.
+const MANUAL_OR_RETIRED = /^manual-|-manual$|^test-|-test$|^validation|smoke-test/i;
+
+// Jobs whose SCHEDULE was deliberately removed but whose workflow still exists
+// as a manual backup. refresh-movers-live lost its cron on 2026-06-10 when the
+// work moved to the Cloudflare Worker (workers/mc-movers) because GitHub cron
+// starvation fired only ~2 of ~75 expected runs a day. It is not broken; it is
+// retired, and the health view should say neither.
+const RETIRED = new Set<string>(['refresh-movers-live']);
+
 function isTestName(name: string): boolean {
-  return /^manual-|^test-|-test$|^validation|smoke-test/i.test(name);
+  return MANUAL_OR_RETIRED.test(name) || RETIRED.has(name);
 }
 
 interface HeartbeatRow {

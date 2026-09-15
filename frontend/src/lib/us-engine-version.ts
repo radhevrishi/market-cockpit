@@ -21,4 +21,7 @@
 // a change that cannot alter output (a comment, a page layout, a button).
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const US_ENGINE_VERSION = '2026.09.14-i';
+// zzz665 — the magnitude gates no longer treat an ABSENT year-ago EPS as a
+// failed test, so a spin-off or newly-listed company can grade above MIXED for
+// the first time. This changes what grades SAY, so every cached day re-reads.
+export const US_ENGINE_VERSION = '2026.09.15-a';

@@ -2353,3 +2353,82 @@ export function withUsCohort<T>(cohort: UsCohort | null, run: () => T): T {
   _cohortForFilter = cohort;
   try { return run(); } finally { _cohortForFilter = prev; }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE SERVER BENCH, MERGED IN.  (zzz665)
+//
+// Until now the US bench existed in exactly one place: this browser. India's
+// bench has been server-side since zzz427, whose own header records the reason
+// — "previously the bench only updated when a human opened the Earnings tab" —
+// and that fix was never carried across. So the US bench did not accumulate
+// while the tab was shut, did not follow the owner to a second machine, and
+// could not remember a name that graded BLOCKBUSTER further back than the
+// client sweep's 21/42/63-session window reaches.
+//
+// /api/v1/cron/refresh-us-bench now keeps a server copy, swept over 130
+// sessions. This merges it in.
+//
+// ADDITIVE ONLY — AND THAT IS THE WHOLE DESIGN.
+//
+// A cron must not overrule a decision. When the owner removes a name from the
+// bench that is a judgement about a company, and a nightly job that quietly
+// puts it back would be worse than useless: it would make the remove button
+// look broken and teach him not to trust the page. So anything sitting in the
+// recycle bin is filtered out BEFORE the merge, and the local entry always
+// wins on conflict — `syncUsConviction` already prefers the newer filing date,
+// which is the correct rule for the same ticker reporting twice.
+//
+// The bin is capped at 200 entries, so a tombstone can in principle age out
+// after a great many removals and let a long-forgotten name return. That is a
+// real limit and is written down here rather than hidden: the alternative, an
+// uncapped tombstone list in localStorage, trades a rare surprise for a
+// storage leak on a bench that is already fighting the 5 MB quota.
+//
+// A bench built by an OLDER ENGINE IS IGNORED. Grades change when the rules
+// change (see lib/us-engine-version.ts), and merging yesterday's verdicts into
+// today's engine would silently reintroduce exactly the bugs a version bump
+// exists to flush out.
+// ═══════════════════════════════════════════════════════════════════════════
+export async function mergeServerUsBench(): Promise<{
+  merged: number; skipped_removed: number; server_count: number;
+  updatedAt: string | null; stale_engine: boolean;
+}> {
+  const empty = { merged: 0, skipped_removed: 0, server_count: 0, updatedAt: null, stale_engine: false };
+  if (typeof window === 'undefined') return empty;
+
+  let payload: any = null;
+  try {
+    const res = await fetch('/api/v1/bench-us', { cache: 'no-store' });
+    if (!res.ok) return empty;
+    payload = await res.json();
+  } catch { return empty; }
+
+  const entries: any[] = Array.isArray(payload?.entries) ? payload.entries : [];
+  if (!entries.length) return { ...empty, updatedAt: payload?.updatedAt ?? null };
+
+  // Refuse a bench graded by an engine that is no longer the current one.
+  if (payload?.engine_version && payload?.current_engine_version
+      && payload.engine_version !== payload.current_engine_version) {
+    return {
+      merged: 0, skipped_removed: 0, server_count: entries.length,
+      updatedAt: payload?.updatedAt ?? null, stale_engine: true,
+    };
+  }
+
+  const removed = new Set(
+    readUsConvictionBin()
+      .map((e: any) => String(e?.ticker || '').toUpperCase())
+      .filter(Boolean),
+  );
+
+  const fresh = entries.filter((e) => !removed.has(String(e?.ticker || '').toUpperCase()));
+  const merged = syncUsConviction(fresh as any);
+
+  return {
+    merged,
+    skipped_removed: entries.length - fresh.length,
+    server_count: entries.length,
+    updatedAt: payload?.updatedAt ?? null,
+    stale_engine: false,
+  };
+}

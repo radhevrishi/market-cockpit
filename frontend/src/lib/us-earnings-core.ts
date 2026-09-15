@@ -3575,9 +3575,62 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   let methodology = mCount === 4 ? 100 : mCount === 3 ? 80 : mCount === 2 ? 60 : mCount === 1 ? 35 : 10;
   if (t1 >= 1) methodology = Math.max(methodology, 55);
   if (methodology_tags.includes('sepa')) methodology = Math.min(100, methodology + 5);
-  const megaMagFloor = salesY != null && salesY >= 40 && patY != null && patY >= 75 && epsY != null && epsY >= 75;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // A COMPANY WITH NO YEAR-AGO EPS COULD NEVER GRADE ABOVE MIXED  (zzz665)
+  //
+  // Forgent Power Solutions filed Q4 FY26 with revenue +94%, operating income
+  // +1009%, net income +1489%, operating margin +16.4pp, free cash flow from
+  // −$48.2m to +$42.6m, a guide ABOVE the street on both revenue and adjusted
+  // EPS, and a BACKLOG OF $3.00 BILLION, up 256% year on year. Quality 87,
+  // Inflection 79, Rule-of-40 103.5, and exactly one caveat on the whole card.
+  //
+  // It was published MIXED.
+  //
+  // Not because of anything in those numbers. FPS is a 2026 spin-off, so it has
+  // no year-ago per-share figure — `eps_prev` is absent and `yoyPct` correctly
+  // returns null. Every magnitude flag below reads `epsY != null && epsY >= N`,
+  // so all five went false, `blockbusterGate` was false before a single figure
+  // was weighed, and the STRONG ladder then failed too: the quality path wants
+  // `epsY >= 15` and the beat-and-raise path wants a consensus BEAT, which a
+  // company no analyst covers yet cannot have. The row fell to `composite >= 35`
+  // — MIXED, the label that means "look at this twice".
+  //
+  // This is a CLASS of bug, not one row: every spin-off, IPO and newly-listed
+  // company is structurally incapable of grading above MIXED, for ever, however
+  // good the quarter. Vera Bradley sat on the same session.
+  //
+  // THE SUBSTITUTION, AND WHY IT IS NARROW. The EPS leg exists to confirm that
+  // profit growth actually reached the shareholder — that it was not spent on
+  // dilution. When there is no prior per-share figure at all, net-income growth
+  // corroborated by the top line is the honest substitute for that evidence, so
+  // `patY` stands in — and ONLY then:
+  //
+  //   · the company must have a CURRENT per-share figure (so this is a missing
+  //     comparable, not a filing we could not read);
+  //   · the prior figure must be genuinely ABSENT, never merely non-positive —
+  //     a loss turning into a profit keeps its null, because `turnaroundBase`
+  //     is the rule that governs growth off a negative base and it must keep
+  //     governing it;
+  //   · revenue must not be shrinking, so the growth is visible in the business
+  //     and not only in the per-share arithmetic.
+  //
+  // Everything downstream is untouched. `epsY` itself stays null on the card
+  // and in `decideTier`, because it IS null — the card still prints "no prior
+  // base", which is the truth. Only the magnitude flags stop treating an absent
+  // comparable as though it were a failed test.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const noPriorEpsBase =
+    (f.eps != null || (input.adj_eps ?? null) != null)          // we read a current EPS
+    && f.eps_prev == null                                        // and no GAAP comparable
+    && (input.adj_eps_prev ?? null) == null;                     // and no adjusted one
+  /** EPS growth for the MAGNITUDE tests only. Never shown, never stored. */
+  const epsYMag: number | null = epsY ?? (
+    noPriorEpsBase && patY != null && salesY != null && salesY >= 0 ? patY : null
+  );
+
+  const megaMagFloor = salesY != null && salesY >= 40 && patY != null && patY >= 75 && epsYMag != null && epsYMag >= 75;
   if (megaMagFloor) methodology = Math.max(methodology, 75);
-  const exceptMagFloor = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
+  const exceptMagFloor = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsYMag != null && epsYMag >= 50;
   if (exceptMagFloor) methodology = Math.max(methodology, 65);
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
@@ -3605,11 +3658,13 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     && (input.adj_eps as number) > (input.adj_eps_prev as number);
   const earningsBroken = epsY != null && epsY < 0 && patY != null && patY < -10 && !adjImproving;
   const broken = earningsBroken;
-  const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
-  const exceptMag = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
+  // `epsYMag` is `epsY`, except for a company that has no year-ago per-share
+  // comparable at all — see the zzz665 note above. Nothing else reads it.
+  const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsYMag != null && epsYMag >= 25;
+  const exceptMag = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsYMag != null && epsYMag >= 50;
   const megaMag = megaMagFloor;
-  const marginInflection = patY != null && patY >= 100 && epsY != null && epsY >= 100 && salesY != null && salesY >= -5;
-  const marginInflectionLoose = patY != null && patY >= 75 && epsY != null && epsY >= 75 && salesY != null && salesY >= 0 && stage !== 4;
+  const marginInflection = patY != null && patY >= 100 && epsYMag != null && epsYMag >= 100 && salesY != null && salesY >= -5;
+  const marginInflectionLoose = patY != null && patY >= 75 && epsYMag != null && epsYMag >= 75 && salesY != null && salesY >= 0 && stage !== 4;
   const chartOk = stage !== 4 && (pct52 == null || pct52 >= -25);
 
   let tier = decideTier({
@@ -3619,7 +3674,11 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     // The measurement refusal is not a caveat about the BUSINESS, so it is not
     // counted towards the caveat budget the BLOCKBUSTER gates are scored on.
     caveatCount: caveat_tags.filter((t) => t !== PER_SHARE_BLOCKED_TAG).length, mCount, stage,
-    salesY, patY, epsY, opmExp,
+    // `epsYMag` not `epsY` — the QUALITY-STRONG path (PATCH 1022) tests
+    // `epsY >= 15`, and for a company with no year-ago per-share comparable
+    // that test can only ever fail. Same substitution, same three guards, same
+    // reason (zzz665). `decideTier` reads this field nowhere else.
+    salesY, patY, epsY: epsYMag, opmExp,
     cleanMag, exceptMag, megaMag,
     marginInflection, marginInflectionLoose,
     tier1MethodCount: t1,
