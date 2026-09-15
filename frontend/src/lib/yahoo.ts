@@ -42,12 +42,39 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
     if (!result) return null;
 
     const meta = result.meta;
-    // PATCH 0771: previousClose fallback chain now also drives the
-    // changePercent calc (was: only meta.previousClose was checked, so
-    // a quote with only chartPreviousClose returned changePercent=0
-    // even when price + chartPreviousClose were both valid).
+    const _closes: any[] = result.indicators?.quote?.[0]?.close || [];
+
+    // ═══ THE DAY CHANGE IS A DAY CHANGE  (zzz634) ═══════════════════════════
+    //
+    // PATCH 0771 added `meta.chartPreviousClose` to the previousClose fallback
+    // chain to stop changePercent coming back as 0. It replaced a zero with
+    // something far worse: a wrong number that looks plausible.
+    //
+    // `chartPreviousClose` is the close immediately BEFORE THE REQUESTED RANGE
+    // BEGINS — not the previous session. On a `range=2y` request it is the
+    // price two years ago, so "changePercent" silently became a TWO-YEAR
+    // RETURN. On the theme board that surfaced as Hydrogen "+815% today",
+    // Memory "+790%", Gold Miners "+135%" — every one of them simply its
+    // two-year move wearing the wrong label. It was wrong for proxy ETFs and
+    // synthetic baskets alike, and wrong everywhere else this helper is used:
+    // the dashboard's day-change tiles, the portfolio heatmap, and the
+    // risk-regime advance/decline count, which counts anything above +0.05%
+    // as an advancer and therefore read permanently bullish.
+    //
+    // The series already in hand answers it exactly: on a daily-or-coarser
+    // interval the previous bar's close IS the previous close, whatever range
+    // was asked for. meta.previousClose is still preferred when present — it
+    // is the authoritative value — and chartPreviousClose is used only when
+    // the series is too short to say, which is the one case where it is
+    // genuinely the previous close.
+    const _dailyBars = /^(1d|5d|1wk|1mo|3mo)$/.test(String(interval));
+    const _validCloses = _closes.filter((c: any) => c != null && !isNaN(c));
     const _price = meta.regularMarketPrice || 0;
-    const _prevClose = meta.previousClose || meta.chartPreviousClose || 0;
+    let _prevClose = meta.previousClose || 0;
+    if (!(_prevClose > 0) && _dailyBars && _validCloses.length >= 2) {
+      _prevClose = _validCloses[_validCloses.length - 2];
+    }
+    if (!(_prevClose > 0)) _prevClose = meta.chartPreviousClose || 0;
     const _change = (_price > 0 && _prevClose > 0) ? (_price - _prevClose) : 0;
     const _changePercent = (_price > 0 && _prevClose > 0) ? ((_price - _prevClose) / _prevClose) * 100 : 0;
     const data = {
@@ -61,7 +88,7 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
       volume: meta.regularMarketVolume || 0,
       marketCap: 0, // not available in chart API
       timestamps: result.timestamp || [],
-      closes: result.indicators?.quote?.[0]?.close || [],
+      closes: _closes,
     };
 
     setCache(cacheKey, data);
