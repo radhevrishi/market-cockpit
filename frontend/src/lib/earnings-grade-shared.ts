@@ -163,7 +163,24 @@ export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveat
   let tier: EarningsTier;
   if (i.broken && i.composite < 70) tier = 'AVOID';
   else if (i.stillLossMaking && blockbusterGate) tier = 'MIXED';                    // PATCH 1001
-  else if (i.turnaroundBase && blockbusterGate) tier = 'MIXED';                     // PATCH 1008
+  // PATCH 1008, amended by zzz665c.
+  //
+  // This line exists to stop a MEANINGLESS PERCENTAGE earning a tier: a growth
+  // rate measured off a negative base is arithmetic noise, so a row that only
+  // opened the gate on such a number is capped here.
+  //
+  // But Path F opens the gate WITHOUT using a percentage at all. It is strictly
+  // harder to satisfy than `turnaroundBase` is to trip: profitable now, cash
+  // positive, revenue up at least 25% and operating margin up at least 5pp.
+  // Capping it here made Path F unreachable for every company that has no
+  // parsed adjusted EPS — MongoDB (revenue +30%, margin +14.7pp, net income
+  // −$47.0m → +$40.9m, operating cash flow $141.9m, composite 78, Inflection
+  // 92) and Duos Technologies were both still published MIXED after Path F
+  // shipped, for that reason and no other.
+  //
+  // So the cap now applies to a turnaround that has NOT cleared Path F. An
+  // unfinished or small recovery is still capped, exactly as before.
+  else if (i.turnaroundBase && blockbusterGate && !i.swingMag) tier = 'MIXED';
   else if (blockbusterGate && i.marginSevereContraction) tier = 'MIXED';            // PATCH 1020
   else if (blockbusterGate && !i.marginContracting) tier = 'BLOCKBUSTER';
   else if (blockbusterGate && i.marginContracting) tier = 'STRONG';                 // PATCH 1000

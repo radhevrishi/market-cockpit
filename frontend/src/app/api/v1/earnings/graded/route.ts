@@ -25,7 +25,7 @@
 import { NextResponse } from 'next/server';
 import { gradedKey } from '@/lib/graded-cache-key';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
 // hard-coded 'Q4' that mislabelled every non-Jan–Mar filing (an August/Q1-FY27
@@ -355,7 +355,7 @@ function gradeRow(row: any): ParsedEarning | null {
   }
 
   const methodology_tags: string[] = [];
-  const caveat_tags: string[] = [];
+  let caveat_tags: string[] = [];   // zzz665c — reassigned by the dedupe below
   const rs = row?.rs_rating ?? null;
   const stage = row?.stage ?? null;
   const ttPass = !!row?.trend_template_passes;
@@ -399,6 +399,34 @@ function gradeRow(row: any): ParsedEarning | null {
   }
   if (stage === 4) caveat_tags.push('low quality');
   else if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DEDUPE BEFORE ANYTHING COUNTS THEM.  (zzz665c)
+  //
+  // THREE separate conditions push the identical string 'low quality': still
+  // loss-making, growth measured off a negative base, and a broken chart
+  // (Stage 4, or more than 25% off the 52-week high). A company in all three
+  // states carried the tag three times, and the array was only de-duplicated
+  // at the very end, on its way to the card. Everything in between counted
+  // the duplicates:
+  //
+  //   · `quality` subtracts a penalty PER ENTRY, so 'low quality' cost 75
+  //     points instead of 25 — on a score that starts at 100, that alone is
+  //     three quarters of the axis for one flag.
+  //   · `caveatCount` feeds every `<= 1` / `<= 2` / `<= 3` gate in the tier
+  //     ladder. One tag consumed the entire caveat budget, so a Blockbuster
+  //     path that allows three caveats was closed by a single fact.
+  //
+  // The card showed the tag once, which is why this was invisible: the screen
+  // and the arithmetic disagreed and only the screen was ever read.
+  //
+  // De-duplicating here, before quality and before the ladder, makes one fact
+  // cost one penalty. The three conditions remain three conditions — a company
+  // that is loss-making AND in a downtrend is still worse than one that is
+  // only loss-making, because each pushes other tags and moves other inputs.
+  // It is the double-charging for the SAME label that was never intended.
+  // ═══════════════════════════════════════════════════════════════════════
+  caveat_tags = [...new Set(caveat_tags)];
 
   const scoreYoy = (y: number) =>
     y >= 100 ? 100 : y >= 50 ? 90 : y >= 25 ? 75 : y >= 15 ? 60 : y >= 5 ? 40 : y >= 0 ? 25 : Math.max(0, 25 + y);
@@ -509,7 +537,25 @@ function gradeRow(row: any): ParsedEarning | null {
   //
   // Logic is one-way (only downgrades). A negative D1 reaction never elevates a tier.
   {
-    const _mr = marketReactionDelta(tier, row?.d1_pct, row?.gap_pct);
+    // zzz665c — SCALE THE THRESHOLDS BY THE STOCK'S OWN VOLATILITY.
+    //
+    // The 3-argument form falls back to a flat −7% "sold off" and −3% "market
+    // rejected print" for every company on the exchange. The shared module's
+    // own comment explains why that is wrong, using a US example: a stock whose
+    // median daily move is over 3% did not reject anything by falling 3.2% —
+    // that was an ordinary session. Indian smallcaps are more volatile than the
+    // stock in that example, not less, so the flat threshold has been calling
+    // ordinary sessions verdicts on exactly the names where it matters most,
+    // and one-way demoting them for it.
+    //
+    // The 4th argument scales both thresholds by the stock's own median daily
+    // move (2.5× and 1.5×, floored at the old constants and capped at 20%/10%
+    // so a violently volatile microcap cannot become unfalsifiable). The US has
+    // passed it since the fix; India dropped the input before it got here.
+    const _mr = marketReactionDelta(
+      tier, row?.d1_pct, row?.gap_pct,
+      typicalDailyMovePct((row as any)?.close_30d ?? null),
+    );
     tier = _mr.tier;
     for (const c of _mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
@@ -926,6 +972,9 @@ export async function GET(req: Request) {
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
             market_cap_cr: e.market_cap_cr ?? (c as any).market_cap_cr ?? null,
             adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
+      // zzz665c — enrich has computed this all along and the row builder dropped
+      // it, which is the only reason India's reaction ladder ran unscaled.
+      close_30d: e.close_30d ?? null,
             source_url: c.filing_url,
             sales_curr_cr: e.sales_curr_cr, sales_prev_cr: e.sales_prev_cr, sales_yoy_pct: e.sales_yoy_pct,
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,

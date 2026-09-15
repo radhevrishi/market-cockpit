@@ -773,13 +773,35 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
 async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<any | null> {  // PATCH 0986
   // PATCH 0998 — multi-endpoint retry. Yahoo sometimes blocks Railway IPs
   // on query1. Try query1 → query2 → suffix .BO as last resort. Use a richer
-  // browser UA. range=6mo gives us 120+ trading days — enough for MA50/150
-  // and the filing-date D1 lookback. range=1y was unnecessarily large.
+  // browser UA.
+  //
+  // zzz665c — THE RANGE WAS TOO SHORT FOR ITS OWN MOVING AVERAGES.
+  //
+  // This said "range=6mo gives us 120+ trading days — enough for MA50/150",
+  // and range=1y was removed as "unnecessarily large". 120 bars is not enough
+  // for a 150-day average, let alone a 200-day one, and `sma()` returns null
+  // rather than averaging whatever it has. So ma150 and ma200 came back null
+  // on EVERY Yahoo-sourced India row — and everything built on them collapsed
+  // quietly:
+  //
+  //   · Weinstein stage needs ma200 → always null → stageBase defaulted to the
+  //     neutral 50 for every Indian company, good chart or bad.
+  //   · The Minervini trend template needs ma150 AND ma200 → always false → the
+  //     'trend template' methodology tag could never fire.
+  //   · `chartOk` is `stage !== 4 && …` → null is not 4, so it passed always.
+  //   · Every `stage !== 4` veto in the tier ladder became a no-op.
+  //
+  // None of it errored. The technical score just quietly lost its shape, and a
+  // quarter of the composite has been a constant for every Indian row.
+  //
+  // 2y is the smallest range that leaves headroom above 200 sessions after
+  // holidays and suspensions. It costs one extra year of daily bars per symbol
+  // on a call that is already being made.
   const stronger_ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
   const candidates = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=6mo&interval=1d`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=6mo&interval=1d`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.BO?range=6mo&interval=1d`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=2y&interval=1d`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=2y&interval=1d`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.BO?range=2y&interval=1d`,
   ];
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), YAHOO_TIMEOUT_MS);

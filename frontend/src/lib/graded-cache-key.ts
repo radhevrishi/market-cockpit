@@ -32,7 +32,13 @@
 // served. Bumping abandons the previous namespace, which is the intent.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const GRADED_CACHE_VERSION = 'v14';
+// zzz665c — v14 → v15. Four changes alter what an India grade SAYS:
+//   · the price range now reaches far enough to compute MA150/MA200, so
+//     Weinstein stage and the trend template exist for the first time;
+//   · duplicate caveat tags no longer double-charge quality or the ladder;
+//   · the reaction ladder is scaled by each stock's own volatility;
+//   · Path F (a completed profit swing at scale) is no longer overruled.
+export const GRADED_CACHE_VERSION = 'v15';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -45,7 +51,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

@@ -26,4 +26,4 @@
 // is now Path F, so a company that recovered from a loss — and a spin-off with
 // no per-share history — can grade above MIXED for the first time. This changes
 // what grades SAY, so every cached day re-reads.
-export const US_ENGINE_VERSION = '2026.09.15-b';
+export const US_ENGINE_VERSION = '2026.09.15-c';
