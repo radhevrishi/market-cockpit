@@ -178,3 +178,24 @@ export async function GET(req: NextRequest) {
       : 'Window fully warm for this engine version.',
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THIS ONE LINE EXISTS  (zzz664)
+//
+// This route was written by copying its India sibling, prewarm-earnings — and
+// the copy stopped one line short. That sibling ends with the same POST shim
+// below; this file did not have it, so it exported GET alone.
+//
+// The scheduled job POSTs. Next answers a POST to a GET-only route with 405,
+// before any of the code above runs. The heartbeat recorded the failure
+// faithfully and nobody read it: `prewarm-us-earnings` and `prewarm-us-manual`
+// both showed last_ok_at = null — not stale, NEVER SUCCEEDED. The US earnings
+// window has therefore never once been warmed on schedule since the route was
+// added. Every US deck the page has served was graded on demand, by whoever
+// happened to open the tab first.
+//
+// Nothing else was wrong with the route, which is exactly why it went unnoticed
+// for so long: run it by hand in a browser and it works perfectly, because a
+// browser sends GET.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function POST(req: NextRequest) { return GET(req); }

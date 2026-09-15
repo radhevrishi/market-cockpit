@@ -29,3 +29,14 @@ export async function GET(req: NextRequest) {
   const j = await r.json();
   return NextResponse.json({ ok: true, snapshot_date: j.snapshot?.date, top_count: j.snapshot?.top?.length, ts: new Date().toISOString() });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST SHIM  (zzz664)
+// A scheduled caller that POSTs to a GET-only route is answered 405 by Next
+// before any code here runs — the job reports failure and the route looks fine
+// when tried by hand in a browser, because a browser sends GET. That is exactly
+// how prewarm-us-earnings went un-warmed since it was written. Accepting both
+// verbs everywhere makes the whole class of bug impossible rather than fixing
+// it one route at a time.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function POST(req: NextRequest) { return GET(req); }
