@@ -26,9 +26,16 @@
 //        · the row's own sector/industry, when it ever carries one;
 //        · the nse-ticker-universe blob the breadth engine already maintains
 //          (bulk, free, ~750 of the liquid names);
-//        · NSE's own quote-equity endpoint, per ticker, for the long tail —
-//          the micro-caps that make up most of this book and that no bulk
-//          source carries.
+//        · Yahoo's search endpoint, per ticker, for the long tail — the
+//          micro-caps that make up most of this book and that no bulk source
+//          carries. Chosen after testing: NSE's own API answers 403 to any
+//          datacentre IP (the codebase's own comments warn of exactly this),
+//          so it cannot be the rung that carries the tail however authoritative
+//          it looks. Yahoo needs no auth on this path, is already a core
+//          dependency of the rotation engine, and returns a FINER label than
+//          NSE does — "Steel", "Auto Parts", "Specialty Chemicals" rather than
+//          "Metals & Mining", which is worth more to a keyword classifier.
+//        · NSE last, in case the proxy route ever makes it reachable again.
 //      A fourth source can be added later as one more rung; nothing else changes.
 //
 //   3. RESOLUTION IS BOUNDED AND NEVER BLOCKS. A request answers immediately
@@ -66,15 +73,19 @@ const HIT_TTL = 365 * 24 * 60 * 60;
 /** Long enough to stop re-asking on every page load, short enough that a new
  *  listing resolves by itself the following week. */
 const MISS_TTL = 7 * 24 * 60 * 60;
-const KEY = (t: string) => `industry:v2:${t}`;
+// v3: v2's negative entries were written while the only long-tail rung was
+// NSE, which 403s from this IP — so they record "NSE would not answer", not
+// "this company has no industry". Carrying them forward would cache a
+// diagnosis as a fact.
+const KEY = (t: string) => `industry:v3:${t}`;
 
 /** How many unknown tickers one request may resolve from NSE. Small on
  *  purpose: the page must never wait on this, and the cache means the work is
  *  done once per company in the life of the app, not once per visit. */
 const RESOLVE_BUDGET = 10;
-const NSE_GAP_MS = 220;
+const GAP_MS = 180;
 
-type Src = 'cache' | 'universe' | 'nse' | 'none';
+type Src = 'cache' | 'universe' | 'yahoo' | 'nse' | 'none';
 
 const norm = (s: string) => String(s || '').toUpperCase().replace(/\.(NS|BO)$/, '').trim();
 
@@ -92,7 +103,40 @@ async function universeMap(): Promise<Record<string, string>> {
 }
 
 /**
- * The long-tail rung: NSE's own classification for one ticker.
+ * The long-tail rung that actually works: Yahoo's search endpoint.
+ *
+ * `quoteSummary` would be the natural call and carries a full assetProfile,
+ * but it now demands a crumb; `search` returns sector and industry for the
+ * same names with no auth at all. The exact-symbol match is required — a
+ * fuzzy search will happily return a different company for an unknown ticker,
+ * and a confidently wrong industry is worse than none.
+ */
+async function yahooIndustry(ticker: string): Promise<string | null> {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 7000);
+    try {
+      const r = await fetch(
+        `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}.NS&quotesCount=4&newsCount=0`,
+        { signal: ctl.signal, headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' },
+      );
+      if (!r.ok) return null;
+      const j: any = await r.json();
+      const want = `${ticker}.NS`.toUpperCase();
+      for (const q of (j?.quotes || [])) {
+        if (String(q?.symbol || '').toUpperCase() !== want) continue;
+        const pick = [q.industry, q.industryDisp, q.sector, q.sectorDisp]
+          .map((x: any) => String(x || '').trim())
+          .find((x: string) => x.length > 1);
+        return pick || null;
+      }
+      return null;
+    } finally { clearTimeout(timer); }
+  } catch { return null; }
+}
+
+/**
+ * The last rung: NSE's own classification for one ticker.
  *
  * `industryInfo` carries four levels of increasing precision. The finest one
  * available is taken, because the theme classifier reads keywords and
@@ -160,14 +204,16 @@ export async function GET(request: Request) {
   // here is kept forever, so this cost is paid once per company, not per visit.
   let resolved = 0;
   for (const t of unresolved.slice(0, RESOLVE_BUDGET)) {
-    const ind = await nseIndustry(t);
+    let ind = await yahooIndustry(t);
+    let from: Src = 'yahoo';
+    if (!ind) { ind = await nseIndustry(t); from = 'nse'; }
     if (ind) {
-      out[t] = ind; src[t] = 'nse'; resolved++;
+      out[t] = ind; src[t] = from; resolved++;
       try { await kvSet(KEY(t), ind, HIT_TTL); } catch { /* best effort */ }
     } else {
       try { await kvSet(KEY(t), '-', MISS_TTL); } catch { /* best effort */ }
     }
-    await new Promise((r) => setTimeout(r, NSE_GAP_MS));
+    await new Promise((r) => setTimeout(r, GAP_MS));
   }
 
   const known = Object.values(out).filter(Boolean).length;

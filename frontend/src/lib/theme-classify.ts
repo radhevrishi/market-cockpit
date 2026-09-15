@@ -104,6 +104,42 @@ const IN_NSE_VOCAB: Rule[] = [
   { re: /^media entertainment/i, theme: 'in-media' },
 ];
 
+// zzz632 — YAHOO'S VOCABULARY, which is what now carries the long tail.
+//
+// The industries for micro-caps come from Yahoo, whose taxonomy is finer than
+// NSE's and phrased differently — "Confectioners", "Tools & Accessories",
+// "Utilities—Regulated Electric", "Packaged Foods", "Building Products &
+// Equipment". Testing those against the keyword rules below showed a string of
+// them matching NOTHING, which would have put the very names this work exists
+// to rescue straight back into "Unclassified". These are explicit because they
+// are exact source vocabulary, not guesses, and they run before the keyword
+// rules so a fine label is never swallowed by a coarse one.
+const IN_YAHOO_VOCAB: Rule[] = [
+  { re: /confectioner|packaged food|food distribution|farm product|beverages|household & personal|tobacco|agricultural input/i, theme: 'in-fmcg' },
+  { re: /utilities/i, theme: 'in-power' },
+  { re: /luxury good|apparel (?:manufacturing|retail)|footwear|specialty retail|department store|internet retail|home improvement retail|auto & truck dealership/i, theme: 'in-retail' },
+  { re: /tools & accessories|metal fabrication|industrial distribution|building products|electrical equipment|specialty industrial machinery|engineering & construction|conglomerates|business equipment|security & protection/i, theme: 'in-capgoods' },
+  { re: /auto parts|auto manufacturers|recreational vehicles|tires/i, theme: 'in-auto' },
+  { re: /drug manufacturers|biotechnology|pharmaceutical/i, theme: 'in-pharma' },
+  { re: /medical (?:care facilities|devices|instruments|distribution)|diagnostics & research|health information/i, theme: 'in-hospitals' },
+  { re: /^banks|banks[—-]/i, theme: 'in-bank' },
+  { re: /capital markets|asset management|insurance|credit services|financial data|mortgage finance|financial conglomerates/i, theme: 'in-finserv' },
+  { re: /information technology services|software[—-]|computer hardware|consumer electronics/i, theme: 'in-it' },
+  { re: /electronic component|semiconductor|electronics & computer distribution|scientific & technical instrument/i, theme: 'in-ems' },
+  { re: /oil & gas|coking coal|thermal coal|uranium/i, theme: 'in-energy' },
+  { re: /real estate|^reit/i, theme: 'in-realty' },
+  { re: /building materials|cement/i, theme: 'in-cement' },
+  { re: /marine shipping|integrated freight|railroads|airports & air services|trucking|airlines/i, theme: 'in-ports' },
+  { re: /telecom services|communication equipment/i, theme: 'in-datacenter' },
+  { re: /entertainment|broadcasting|advertising agencies|publishing|electronic gaming/i, theme: 'in-media' },
+  { re: /textile manufacturing|paper & paper products|packaging & containers|rubber|lumber & wood/i, theme: 'in-commodities' },
+  { re: /specialty chemicals|^chemicals$/i, theme: 'in-chemicals' },
+  { re: /aerospace & defense/i, theme: 'in-defence' },
+  { re: /solar|renewable/i, theme: 'in-renewables' },
+  { re: /restaurants|lodging|resorts & casinos|travel services|leisure|education & training|personal services|staffing & employment|specialty business services|consulting services|waste management|furnishings, fixtures|home & personal products/i, theme: 'in-consumption' },
+  { re: /steel|aluminum|copper|gold|other industrial metals|coking/i, theme: 'in-metal' },
+];
+
 const IN_RULES: Rule[] = [
   { re: /software|it services|information technology|\bit - software\b|saas/i, theme: 'in-it' },
   { re: /electronic|\bems\b|contract manufactur|\bcomponent|it - hardware|computer hardware|\bhardware\b|semiconduct/i, theme: 'in-ems' },
@@ -144,7 +180,7 @@ const IN_RULES: Rule[] = [
 // rules (industry is the finer tell, tried before the broader sector).
 export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion, ticker?: string | null): string | null {
   if (ticker) { const ov = TICKER_OVERRIDE[ticker.toUpperCase().replace(/\.(NS|BO)$/, '').trim()]; if (ov) return ov; }
-  const rules = region === 'us' ? US_RULES : [...IN_NSE_VOCAB, ...IN_RULES];
+  const rules = region === 'us' ? US_RULES : [...IN_NSE_VOCAB, ...IN_YAHOO_VOCAB, ...IN_RULES];
   const ind = (industry || '').toString();
   const sec = (sector || '').toString();
   for (const text of [ind, sec]) {
