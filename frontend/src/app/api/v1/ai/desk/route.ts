@@ -29,6 +29,7 @@ import {
   type AnalystInput, type AiAssessment,
 } from '@/lib/ai-analyst';
 import { recordPrediction, ledgerId } from '@/lib/ai-ledger';
+import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 // ═══ WHY THIS SET EXISTS  (zzz639) ═══════════════════════════════════════
 // The ledger write used to fire only when an assessment was computed FRESH.
@@ -43,7 +44,56 @@ import { recordPrediction, ledgerId } from '@/lib/ai-ledger';
 // was really protecting against — so this process remembers what it has already
 // tried, and the cost is paid once per id per instance instead of once per view.
 const LEDGER_TRIED = new Set<string>();
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+
+/**
+ * Record every interpreted row on the deck that this instance has not already
+ * tried — from the FINISHED deck, whether it was just built or served whole
+ * from the half-hour envelope cache.
+ *
+ * zzz639: this used to sit inside the per-company worker, which meant it only
+ * ran when the deck was rebuilt. The envelope cache returns before the worker
+ * is reached at all, so on any warm request — which is nearly all of them — the
+ * ledger was never offered a single row. The desk showed eleven confident
+ * calls and the ledger held zero, for days.
+ *
+ * Nothing here can manufacture hindsight. recordPrediction writes once and
+ * refuses to overwrite, and every score written is the one the model froze when
+ * it looked, carried through the cache unchanged. What the row does NOT carry
+ * is a claim to have been made in real time — the ledger marks that separately,
+ * from the gap between the filing date and when the row was first written.
+ */
+function recordDeck(rows: any[], region: string) {
+  for (const row of rows) {
+    if (!row?.ai || !row?.ticker) continue;
+    const id = ledgerId(row.ticker, row.accession ?? null, String(row.filing_date || ''));
+    if (LEDGER_TRIED.has(id)) continue;
+    LEDGER_TRIED.add(id);
+    const a = row.ai;
+    void recordPrediction({
+      id,
+      ticker: row.ticker, company: row.company || null,
+      filing_date: String(row.filing_date || ''), accession: row.accession ?? null,
+      price_at: row.price ?? null, bench_at: null,
+      // zzz638 — BOTH OF THESE USED TO SAY 'SPY' AND A BARE TICKER, for Indian
+      // filings as much as US ones. An NSE small-cap's excess return was
+      // therefore going to be measured against the S&P 500, and its own price
+      // fetched as whatever American listing shares those letters. Every Indian
+      // row in the ledger was unmarkable-but-plausible, which is the worst
+      // state a record can be in.
+      bench_symbol: region === 'india' ? '^NSEI' : 'SPY',
+      price_symbol: region === 'india'
+        ? (/\.(NS|BO)$/i.test(row.ticker) ? row.ticker : `${row.ticker}.NS`)
+        : row.ticker,
+      tier: row.tier || null, engine_score: row.engine_score ?? null,
+      pead: row.pead ?? null, rs: row.rs ?? null,
+      sales_yoy: row.sales_yoy_pct ?? null, eps_yoy: row.eps_yoy_pct ?? null,
+      guidance_raised: row.guidance_raised ?? null,
+      structural_score: a.structural_score ?? null, change_type: a.change_type ?? null,
+      why_now_score: a.why_now_score ?? null, bear_severity: a.bear_severity ?? null,
+      confidence: a.confidence ?? null, composite: row.composite ?? null,
+    }).catch(() => {});
+  }
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -248,7 +298,11 @@ export async function GET(req: NextRequest) {
   if (!explicit && !wantsFresh && isRedisAvailable()) {
     try {
       const hit = (await kvGet<any>(deckKey)) || (cacheOnly ? await kvGet<any>(deckKeyCO) : null);
-      if (hit?.rows) return NextResponse.json({ ...hit, from_deck_cache: true }, { headers: { 'Cache-Control': 'no-store' } });
+      if (hit?.rows) {
+        // The cached deck still has to reach the ledger — see recordDeck.
+        recordDeck(hit.rows, region);
+        return NextResponse.json({ ...hit, from_deck_cache: true }, { headers: { 'Cache-Control': 'no-store' } });
+      }
     } catch { /* a cold or failing cache just means we build it */ }
   }
 
@@ -325,7 +379,7 @@ export async function GET(req: NextRequest) {
       : (r?.filing_docs?.accession || null);
     let a: AiAssessment | null = await readAssessment(r.ticker, accession);
     let err: string | undefined;
-    let fresh = false;
+
     if (a && !force) { cached++; }
     else if (cacheOnly) { a = null; }
     else {
@@ -359,7 +413,7 @@ export async function GET(req: NextRequest) {
       };
       const res = await assessCompany(inp, { force });
       a = res.assessment; err = res.error;
-      if (a) { assessed++; fresh = true; } else { failed++; if (err && !notes.includes(err)) notes.push(err); }
+      if (a) { assessed++; } else { failed++; if (err && !notes.includes(err)) notes.push(err); }
     }
 
     const comp = compositeScore(r.composite_score ?? 0, a);
@@ -369,39 +423,11 @@ export async function GET(req: NextRequest) {
     // of twelve cost twelve pointless round-trips each time the tab opened —
     // a large part of what made revisiting the desk feel like it was redoing
     // its whole job. A prediction that already exists needs no re-recording.
-    const _ledgerId = ledgerId(r.ticker, accession, String(r.filing_date || ''));
-    if (a && (fresh || !LEDGER_TRIED.has(_ledgerId))) {
-      // THE PREDICTION IS RECORDED AT THE MOMENT IT IS MADE, not when the
-      // reader happens to look. Written once and never rewritten.
-      LEDGER_TRIED.add(_ledgerId);
-      void recordPrediction({
-        id: _ledgerId,
-        ticker: r.ticker, company: r.company || null,
-        filing_date: String(r.filing_date || ''), accession,
-        price_at: n1(r.price), bench_at: null,
-        // zzz638 — BOTH OF THESE USED TO SAY 'SPY' AND A BARE TICKER, for
-        // Indian filings as much as US ones. An NSE small-cap's excess return
-        // was therefore going to be measured against the S&P 500, and its own
-        // price fetched as whatever American listing shares those letters.
-        // Every Indian row in the ledger was unmarkable-but-plausible, which is
-        // the worst state a record can be in.
-        bench_symbol: region === 'india' ? '^NSEI' : 'SPY',
-        price_symbol: region === 'india'
-          ? (/\.(NS|BO)$/i.test(r.ticker) ? r.ticker : `${r.ticker}.NS`)
-          : r.ticker,
-        tier: r.tier || null, engine_score: n1(r.composite_score),
-        pead: n1(r.pead_score), rs: n1(r.rs_rating),
-        sales_yoy: n1(r.sales_yoy_pct), eps_yoy: n1(r.eps_yoy_pct),
-        guidance_raised: /raise/i.test(String(r.guidance || '')) || (r.caveat_tags || []).some((t: string) => /guidance raised/i.test(t)),
-        structural_score: a.structural_score, change_type: a.change_type,
-        why_now_score: a.why_now_score, bear_severity: a.bear_severity,
-        confidence: a.confidence, composite: comp.score,
-      }).catch(() => {});
-    }
-
     out.push({
       ticker: r.ticker, company: r.company, sector: r.sector, quarter: r.quarter,
       filing_date: r.filing_date, tier: r.tier, price: n1(r.price),
+      accession,
+      guidance_raised: /raise/i.test(String(r.guidance || '')) || (r.caveat_tags || []).some((t: string) => /guidance raised/i.test(t)),
       engine_score: n1(r.composite_score), pead: n1(r.pead_score), rs: n1(r.rs_rating),
       sales_yoy_pct: n1(r.sales_yoy_pct), eps_yoy_pct: n1(r.eps_yoy_pct),
       net_profit_yoy_pct: n1(r.net_profit_yoy_pct),
@@ -458,5 +484,6 @@ export async function GET(req: NextRequest) {
   if (!explicit && isRedisAvailable()) {
     try { await kvSet(cacheOnly ? deckKeyCO : deckKey, payload, 30 * 60); } catch { /* best effort */ }
   }
+  recordDeck(out, region);
   return NextResponse.json(payload, { headers: { 'Cache-Control': 'no-store' } });
 }
