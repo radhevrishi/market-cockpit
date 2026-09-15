@@ -270,10 +270,31 @@ async function main() {
   // Symbols already in the stored history are kept even if they have since left
   // the bench, so a name that returns does not start from zero bars.
   const priorHist = (await kvGet(HIST_KEY)) || {};
-  const series = priorHist.series || {};
-  const marketDaily = priorHist.marketDaily || {};
-  const knownEmpty = new Set(priorHist.knownEmpty || []);
-  const have = new Set(priorHist.sessions || []);
+  let series = priorHist.series || {};
+  let marketDaily = priorHist.marketDaily || {};
+  let knownEmpty = new Set(priorHist.knownEmpty || []);
+  let have = new Set(priorHist.sessions || []);
+
+  // WHEN THE MARKET FORMULA CHANGES, THE STORED VALUES ARE WRONG.
+  //
+  // The market leg is computed at FETCH time, from PREV_CLOSE in each session's
+  // file, and then stored. So changing the formula changes nothing: the job
+  // only fetches sessions it does not already hold, finds none missing, and
+  // keeps serving figures computed the old way. That is exactly what happened
+  // when this moved from a median to a trimmed mean — the run reported success
+  // and the benchmark stayed at the old −36.8%.
+  //
+  // The basis is therefore stamped into the blob. Change the formula, change
+  // the stamp, and the history rebuilds itself once instead of silently
+  // disagreeing with its own code.
+  const MARKET_BASIS = 'trimmed-mean-v1';
+  if (priorHist.marketBasis && priorHist.marketBasis !== MARKET_BASIS) {
+    console.log(`market basis changed (${priorHist.marketBasis} → ${MARKET_BASIS}) — refetching the window once.`);
+    series = {}; marketDaily = {}; have = new Set(); knownEmpty = new Set();
+  } else if (!priorHist.marketBasis && Object.keys(marketDaily).length) {
+    console.log(`stored history predates the basis stamp — refetching the window once.`);
+    series = {}; marketDaily = {}; have = new Set(); knownEmpty = new Set();
+  }
 
   const bench = await kvGet(BENCH_KEY);
   const fromBench = Array.isArray(bench?.entries)
@@ -319,7 +340,7 @@ async function main() {
       if (!Object.keys(obj[sym]).length) delete obj[sym];
     }
   };
-  let hist = { generatedAt: new Date().toISOString(), sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
+  let hist = { generatedAt: new Date().toISOString(), marketBasis: MARKET_BASIS, sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
   const LIMIT = 9_000_000;
   let guard = 0;
   while (JSON.stringify(hist).length > LIMIT && guard++ < 12) {
