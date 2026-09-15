@@ -25,6 +25,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { classifyTheme } from '@/lib/theme-classify';
+import { useThemeVerdicts, confluenceFor } from '@/lib/theme-confluence';
 
 type Tab = 'DESK' | 'LEDGER';
 
@@ -115,6 +117,21 @@ export default function AiDeskPage() {
 
   useEffect(() => { void load(false); }, [load]);
   useEffect(() => { if (tab === 'LEDGER' && !ledger) void loadLedger(); }, [tab, ledger, loadLedger]);
+
+  // ═══ WHAT THE TAPE SAYS ABOUT EACH INTERPRETATION  (zzz651) ═════════════
+  // The model reads one filing at a time and has no idea what is happening to
+  // the sector around it. A STRUCTURAL verdict on a company sitting in a theme
+  // the rotation board rates AVOID is not wrong — it is incomplete, and the
+  // missing half is the half that decides when to act rather than whether.
+  const { byId: themeVerdicts } = useThemeVerdicts(region);
+  const confFor = useCallback((r: Row) => confluenceFor(
+    classifyTheme(r.sector, (r as any).industry, region, r.ticker),
+    // On this page the deterministic half is the engine's own tier: the desk
+    // only ever interprets names the filings already qualified, so every row
+    // here has cleared the equivalent of a hunting bucket.
+    true,
+    themeVerdicts,
+  ), [region, themeVerdicts]);
 
   const rows: Row[] = useMemo(() => (data?.rows || []) as Row[], [data]);
   const interpreted = rows.filter((r) => r.ai);
@@ -237,6 +254,7 @@ export default function AiDeskPage() {
                   <span key={r.ticker} style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-text-0)', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 20, padding: '4px 11px' }}>
                     <span style={{ color: 'var(--mc-text-4)' }}>{i + 1}.</span> {r.ticker}
                     <span style={{ color: CHANGE_COLOR[r.ai!.change_type], marginLeft: 6 }}>{r.composite}</span>
+                    {(() => { const c = confFor(r); return c.theme ? <span title={c.line} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 900, color: c.color }}>{c.kind === 'aligned' ? '▲' : c.kind === 'against' ? '▼' : '·'}</span> : null; })()}
                   </span>
                 ))}
               </div>
@@ -260,6 +278,19 @@ export default function AiDeskPage() {
                     <span style={{ fontSize: 12.5, color: 'var(--mc-text-2)' }}>{r.company}</span>
                     <span style={{ fontSize: 10, fontWeight: 800, color: r.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981', border: '1px solid currentColor', borderRadius: 5, padding: '1px 6px' }}>{r.tier}</span>
                     {r.quarter && <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>{r.quarter} · filed {r.filing_date}</span>}
+                    {/* THE NEIGHBOURHOOD, NEXT TO THE VERDICT  (zzz651). The
+                        model judged one filing in isolation; this is the only
+                        thing on the card it could not have known. */}
+                    {(() => {
+                      const c = confFor(r);
+                      if (!c.theme) return null;
+                      return (
+                        <span title={c.line} style={{
+                          fontSize: 9.5, fontWeight: 900, borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap',
+                          color: c.color, background: `${c.color}1a`, border: `1px solid ${c.color}55`,
+                        }}>{c.kind === 'aligned' ? '🎯 ' : c.kind === 'against' ? '⚠ ' : ''}{c.theme.emoji} {c.theme.name} · {c.theme.verdict}</span>
+                      );
+                    })()}
                     <span style={{ flex: 1 }} />
                     <span title="Engine grade blended with the AI's structural and why-now scores, minus a drag for the severity of the bear case."
                       style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-text-0)', fontFamily: 'ui-monospace,monospace' }}>{r.composite}</span>

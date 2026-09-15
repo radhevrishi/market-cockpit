@@ -45,6 +45,7 @@ import { buildTvExport } from '@/lib/us-tradingview';
 import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-process';
 import { classifyTheme } from '@/lib/theme-classify';
+import { useThemeVerdicts, confluenceFor, type ConfluenceKind } from '@/lib/theme-confluence';
 
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -598,6 +599,28 @@ export default function UsConvictionBeatsPage() {
     return e ? classifyTheme(e.sector, (e as any).industry, 'us', e.ticker) : null;
   }, [entries]);
   const funnel = useMemo(() => buildFunnel(entries, { themeOf }), [entries, themeOf]);
+
+  // ═══ CONFLUENCE — WHAT THE TAPE SAYS ABOUT EACH FILING  (zzz651) ═════════
+  // The rotation board's verdict for the theme each name sits in, joined here
+  // so the reader stops doing it by hand across two tabs. See
+  // lib/theme-confluence.ts for why the intersection is the only combination
+  // that is a position.
+  const { byId: themeVerdicts, loading: tvLoading } = useThemeVerdicts('us');
+  const [confFilter, setConfFilter] = useState<ConfluenceKind | null>(null);
+  const confOf = useCallback((e: UsConvictionEntry) => {
+    const b = funnel.bucketOf.get(`${e.ticker}|${e.filing_date}`);
+    const hunting = !!b && (b.bucket === 'A' || b.bucket === 'B' || b.bucket === 'C');
+    return confluenceFor(classifyTheme(e.sector, (e as any).industry, 'us', e.ticker), hunting, themeVerdicts);
+  }, [funnel, themeVerdicts]);
+  const confCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const e of entries) { const k = confOf(e).kind; c[k] = (c[k] || 0) + 1; }
+    return c;
+  }, [entries, confOf]);
+  /** The aligned names, best engine score first — the strip at the top. */
+  const aligned = useMemo(() => entries
+    .filter((e) => confOf(e).kind === 'aligned')
+    .sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0)), [entries, confOf]);
   const bucketCounts = useMemo(() => {
     const c: Record<string, number> = {};
     funnel.bucketOf.forEach((v) => { c[v.bucket] = (c[v.bucket] || 0) + 1; });
@@ -610,6 +633,7 @@ export default function UsConvictionBeatsPage() {
     // stage shows exactly what survived it, which is the only way to check the
     // staircase rather than take its word for it.
     if (bucketFilter) rows = rows.filter((e) => funnel.bucketOf.get(`${e.ticker}|${e.filing_date}`)?.bucket === bucketFilter);
+    if (confFilter) rows = rows.filter((e) => confOf(e).kind === confFilter);
     if (funnelStop) {
       const st = funnel.stages.find((x) => x.key === funnelStop);
       if (st) { const keep = new Set(st.survivors); rows = rows.filter((e) => keep.has(`${e.ticker}|${e.filing_date}`)); }
@@ -635,7 +659,7 @@ export default function UsConvictionBeatsPage() {
       if (c !== 0) return c * dir;
       return (b.composite_score ?? 0) - (a.composite_score ?? 0);
     });
-  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel]);
+  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf]);
 
   // ═══ NAMES THE SIZE FILTER IS HIDING  (zzz623) ══════════════════════════
   //
@@ -1079,6 +1103,98 @@ export default function UsConvictionBeatsPage() {
         </div>
       )}
 
+      {/* ═══ CONFLUENCE — THE ANSWER, BEFORE THE EVIDENCE  (zzz651) ════════
+          The bench has always opened with a hundred-row table and left the
+          reader to find the four names that matter. An institutional desk
+          leads with the call and keeps the evidence underneath it, because
+          the person reading has ninety seconds, not ninety minutes.
+
+          What makes this a call and not a summary: every name here cleared
+          BOTH independent tests — its own filing changed the earning power,
+          AND the rotation board rates its neighbourhood a buy. Neither tab
+          could say this alone. The two disagreements are one click away and
+          deliberately not hidden: a screen that shows only its agreements is
+          a screen that flatters you. */}
+      {entries.length > 0 && !tvLoading && (
+        <div style={{
+          padding: 13, borderRadius: 'var(--mc-radius)', marginBottom: 12,
+          backgroundColor: 'var(--mc-bg-1)',
+          border: `1px solid ${aligned.length ? 'rgba(34,197,94,0.35)' : 'var(--mc-bg-4)'}`,
+          borderLeft: `3px solid ${aligned.length ? '#22C55E' : 'var(--mc-bg-4)'}`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap', marginBottom: 7 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--mc-text-0)', letterSpacing: 0.3 }}>
+              🎯 CONFLUENCE — the filing and the tape agreeing
+            </span>
+            <span style={{ fontSize: 10.5, color: 'var(--mc-text-3)' }}>
+              a qualifying quarter, inside a theme the rotation board rates BUY or EARLY BUY
+            </span>
+          </div>
+
+          {aligned.length === 0 ? (
+            <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
+              <b style={{ color: '#F59E0B' }}>Nothing is aligned in this window.</b> Every qualifying
+              print is sitting in a theme the board does not currently rate a buy. That is a real
+              finding and not a gap — it usually means the market has rotated away from wherever the
+              good quarters happen to be landing, and the honest response is to wait rather than to
+              relax one of the two tests.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {aligned.slice(0, 8).map((e) => {
+                const c = confOf(e);
+                return (
+                  <button key={`${e.ticker}|${e.filing_date}`}
+                    onClick={() => { setConfFilter('aligned'); setOpenCards((p) => { const n = new Set(p); n.add(cardKey(e)); return n; }); }}
+                    title={c.line}
+                    style={{
+                      textAlign: 'left', cursor: 'pointer', borderRadius: 8, padding: '7px 10px',
+                      background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.32)',
+                      minWidth: 150,
+                    }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-0)', fontFamily: 'ui-monospace,monospace' }}>{e.ticker}</span>
+                      <span style={{ fontSize: 9.5, fontWeight: 900, color: '#22C55E' }}>{e.composite_score ?? '·'}</span>
+                    </div>
+                    <div style={{ fontSize: 9.5, color: 'var(--mc-text-2)', marginTop: 2 }}>
+                      {c.theme?.emoji} {c.theme?.name} · <b style={{ color: c.theme?.verdictColor }}>{c.theme?.verdict}</b>
+                    </div>
+                  </button>
+                );
+              })}
+              {aligned.length > 8 && (
+                <button onClick={() => setConfFilter('aligned')} style={{ cursor: 'pointer', borderRadius: 8, padding: '7px 10px', background: 'transparent', border: '1px dashed var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10.5, fontWeight: 800 }}>
+                  +{aligned.length - 8} more →
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* The two disagreements, as first-class chips rather than an
+              afterthought — each one is a distinct and expensive mistake. */}
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 9, paddingTop: 8, borderTop: '1px solid var(--mc-bg-4)' }}>
+            {([
+              ['aligned', `${confCounts.aligned || 0} aligned`, '#22C55E', 'A qualifying quarter inside a theme rated BUY or EARLY BUY. The only combination that is a position rather than an argument.'],
+              ['against', `${confCounts.against || 0} tape against`, '#EF4444', 'The quarter qualifies and the theme is rated TRIM or AVOID. A real print into a falling theme is the setup that grinds sideways for a year — it needs a reason the company escapes its own sector.'],
+              ['orphan', `${confCounts.orphan || 0} theme only`, '#F59E0B', 'The theme is rated a buy but this company\u2019s own filing did not qualify it as a place to hunt. A bet on the theme carrying a business that has not itself changed — a trade, not a holding.'],
+              ['neutral', `${confCounts.neutral || 0} neither`, '#94A3B8', 'Neither the filing nor the tape is arguing strongly.'],
+              ['unknown', `${confCounts.unknown || 0} no theme`, '#64748B', 'Not matched to a tracked rotation theme — judge on the filing alone.'],
+            ] as const).map(([k, label, col, hint]) => (
+              <button key={k} title={hint} onClick={() => setConfFilter(confFilter === k ? null : (k as ConfluenceKind))}
+                style={{
+                  fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                  border: `1px solid ${confFilter === k ? col : 'var(--mc-bg-4)'}`,
+                  background: confFilter === k ? `${col}22` : 'transparent',
+                  color: confFilter === k ? col : 'var(--mc-text-2)',
+                }}>{label}</button>
+            ))}
+            {confFilter && (
+              <button onClick={() => setConfFilter(null)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-3)' }}>clear</button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ═══ THE PROCESS · THE FUNNEL AND THE FIVE BUCKETS  (zzz630) ═══════
           "Earnings strength ≠ future multibagger" cannot be carried by one
           tier: BLOCKBUSTER is handed to a structural compounder and to a
@@ -1358,7 +1474,7 @@ export default function UsConvictionBeatsPage() {
           {filtered.map((e) => {
             const k = cardKey(e);
             return (
-              <BenchCard key={k} e={e}
+              <BenchCard key={k} e={e} conf={confOf(e)}
                 open={openCards.has(k)} onToggle={() => toggleCard(k)}
                 onRemove={() => { removeUsConviction(e.bench_key || e.ticker); reload(); }} />
             );
@@ -1430,8 +1546,12 @@ function ChipRow<T extends number>({ label, value, opts, fmt, onSet, count }: {
  *   • the two tag arrays, which the card reads `.length` off.
  * Nothing else is touched, and nothing is invented.
  */
-function BenchCard({ e, open, onToggle, onRemove }: {
+function BenchCard({ e, open, onToggle, onRemove, conf }: {
   e: UsConvictionEntry; open: boolean; onToggle: () => void; onRemove: () => void;
+  /** zzz651 — what the rotation board says about this name's neighbourhood.
+   *  Passed down rather than recomputed so the card and the strip at the top
+   *  of the page can never disagree. */
+  conf?: ReturnType<typeof confluenceFor>;
 }) {
   const v = usVerdict(e);
   const age = usFilingAgeDays(e.filing_date);
@@ -1472,6 +1592,15 @@ function BenchCard({ e, open, onToggle, onRemove }: {
             <Chip text={`ARCHIVED · ${e.quarter || 'earlier quarter'}`} color="#8B5CF6" />
           )}
           <Chip text={e.tier} color={e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981'} />
+          {/* THE TAPE, ON THE CARD  (zzz651). A BLOCKBUSTER chip and a
+              "TAPE AGAINST" chip side by side is the single most useful pair
+              of words on this page: the quarter is real AND nobody is paying
+              for quarters like it. Only the two states that carry an
+              instruction are shown — a neutral theme earns no chip, because a
+              chip on every card is a chip nobody reads. */}
+          {conf && (conf.kind === 'aligned' || conf.kind === 'against') && (
+            <span title={conf.line}><Chip text={conf.badge} color={conf.color} /></span>
+          )}
           {/* The bench's own earnings-quality verdict, with the reasons behind
               it on the tooltip — the card is a scanning surface and a second
               line of prose under every one of them is what made the old bench
