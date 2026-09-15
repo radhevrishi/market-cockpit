@@ -1,0 +1,83 @@
+name: Scrape India stock technicals
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS  (zzz666)
+#
+# Across all 438 names on the India conviction bench, every Yahoo-sourced field
+# is null: stage 0/438, rs_rating 0/438, pct_from_52w_high 0/438, close_30d
+# 0/438. The NSE-bhavcopy fields are fine (d1_pct, adtv_cr, price 434/438).
+# Yahoo is simply not reachable from Railway for Indian symbols.
+#
+# The cost is a quarter of the composite. `technical` resolves to a constant 50
+# for every Indian company — stageBase defaults to 50 with no stage, RS adds
+# nothing, the 52-week term adds nothing, the trend template adds nothing. And
+# because `trend template`, `sepa` and `canslim` all require RS, the only
+# methodology tag that has ever fired on the bench is `bonde ep` (428 of 438).
+#
+# The neighbouring scraper established that GitHub Actions IPs can read what
+# Railway cannot. This is that pattern applied to stocks.
+#
+# CADENCE. Once a day after the Indian close. Moving averages move slowly and
+# nothing here is intraday, so more often would buy nothing.
+#
+# SAFETY. The output is an overlay. Every consumer already handles a missing
+# value, because a missing value is what it gets today. If this job never runs,
+# the app behaves exactly as it does now.
+# ══════════════════════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    - cron: '45 12 * * 1-5'   # 18:15 IST, weekdays — after the NSE close settles
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: 'Cap on symbols fetched this run'
+        required: false
+        default: '700'
+      extra_symbols:
+        description: 'Comma-separated extra symbols to include (e.g. a name not yet benched)'
+        required: false
+        default: ''
+
+concurrency:
+  group: scrape-india-technicals
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch technicals from a clean IP
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          MAX_SYMBOLS:   ${{ github.event.inputs.max_symbols || '700' }}
+          EXTRA_SYMBOLS: ${{ github.event.inputs.extra_symbols || '' }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-india-technicals.mjs
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ job.status }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-india-technicals\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

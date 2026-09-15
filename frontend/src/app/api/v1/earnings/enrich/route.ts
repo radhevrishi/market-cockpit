@@ -2063,9 +2063,64 @@ export async function GET(req: Request) {
       }
     }
   }
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE TECHNICALS OVERLAY.  (zzz666)
+  //
+  // Across all 438 names on the India bench, every Yahoo-sourced field is
+  // null — stage 0/438, rs_rating 0/438, pct_from_52w_high 0/438, close_30d
+  // 0/438 — while every NSE-bhavcopy field is present on 434. Yahoo is not
+  // reachable from Railway for Indian symbols; the comments in this file have
+  // said "sometimes blocks" for months and the measurement says always.
+  //
+  // The cost is that `technical` — a quarter of the composite — resolves to a
+  // flat 50 for every Indian company, and that `trend template`, `sepa` and
+  // `canslim` are not rare but impossible, because all three need RS. The one
+  // methodology tag that has ever fired on the bench is `bonde ep`.
+  //
+  // .github/scripts/scrape-india-technicals.mjs fetches the same bars from a
+  // GitHub Actions runner, whose IP Yahoo does answer — the same reasoning
+  // that put the NSE index-history scraper there — computes the moving
+  // averages, Weinstein stage, trend template, 52-week distance and a cohort
+  // RS, and writes them here.
+  //
+  // FILL-ONLY, NEVER OVERWRITE. If a live Yahoo call did succeed for a symbol,
+  // that value is fresher and wins. The overlay only supplies what came back
+  // null, so this can add information and cannot replace it. An empty or
+  // missing blob leaves every row exactly as it is today, which is what makes
+  // shipping this safe.
+  // ═══════════════════════════════════════════════════════════════════════
+  let overlayApplied = 0;
+  let overlayAge: string | null = null;
+  try {
+    const blob = await kvGet<any>('india-tech:v1:latest');
+    const bySym = blob?.symbols || null;
+    if (bySym) {
+      overlayAge = blob?.generatedAt ?? null;
+      const FIELDS = [
+        'stage', 'ma50', 'ma150', 'ma200', 'ma200_slope', 'trend_template',
+        'pct_from_52w_high', 'rs_rating', 'ret1m', 'ret3m', 'ret6m', 'ret12m', 'close_30d',
+      ] as const;
+      for (const sym of Object.keys(data)) {
+        const t = bySym[sym];
+        if (!t) continue;
+        let touched = false;
+        for (const f of FIELDS) {
+          if (data[sym][f] == null && t[f] != null) { data[sym][f] = t[f]; touched = true; }
+        }
+        // The app's own field name for the Minervini test, kept in step.
+        if (data[sym].trend_template != null && data[sym].trendTemplate == null) {
+          data[sym].trendTemplate = data[sym].trend_template;
+        }
+        if (touched) { data[sym]._tech_source = 'india-tech-scraper'; overlayApplied++; }
+      }
+    }
+  } catch { /* the overlay is a bonus; never let it fail an enrichment */ }
+
   return NextResponse.json({
     data, generated_at: new Date().toISOString(),
     requested: symbols.length, enriched: ok, ms: Date.now() - t0,
     truncated_at: truncatedAt,
+    tech_overlay_applied: overlayApplied,
+    tech_overlay_generated_at: overlayAge,
   });
 }

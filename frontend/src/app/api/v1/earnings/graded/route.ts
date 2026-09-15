@@ -573,6 +573,72 @@ function gradeRow(row: any): ParsedEarning | null {
     for (const c of _tf.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // HARD CEILINGS — INDIA HAD NONE.  (zzz666)
+  //
+  // The US engine can REFUSE a quarter on fourteen separate grounds. India
+  // could only ever subtract points, and a high composite absorbs a penalty:
+  // an Indian company with negative operating cash flow against a reported
+  // profit could still publish BLOCKBUSTER, because −25 off a quality score
+  // that starts at 100 is survivable when magnitude and technical are strong.
+  //
+  // A ceiling is different from a penalty. It says "whatever else is true,
+  // this is not a top-tier quarter" — and that is the engine's own stated
+  // philosophy about cash, applied on the side of the world where it was
+  // never implemented.
+  //
+  // ONLY THREE, AND ONLY WHERE INDIA'S DATA MEANS WHAT THE TEST NEEDS.
+  // The US ceilings for guidance, one-off items and adjusted-EPS reconciliation
+  // are deliberately NOT ported: India ingests no guidance and no adjusted
+  // figures, so those tests would be reading fields that do not exist — which
+  // is exactly the failure mode (`positiveGuidance`, `row.promoter`) this
+  // codebase already has too much of.
+  //
+  // NOTE ON BASIS: India's cash-flow figures are ANNUAL, not quarterly —
+  // Screener publishes no quarterly capex or CFO. An annual cash test against
+  // a quarterly grade is a coarser instrument than the US equivalent, so the
+  // thresholds below are the unambiguous ones only. Negative cash against a
+  // positive profit is wrong at any frequency.
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    const TIER_ORDER = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
+    const capTier = (max: string, why: string) => {
+      if (TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(max)) {
+        tier = max as typeof tier;
+        if (!caveat_tags.includes(why)) caveat_tags.push(why);
+      }
+    };
+
+    const _ocfAnnual = typeof row?.ocf_annual_cr === 'number' ? row.ocf_annual_cr : null;
+    const _patAnnual = typeof row?.pat_annual_cr === 'number' ? row.pat_annual_cr : null;
+    const _cfoPat = typeof row?.ocf_to_pat_ratio === 'number' ? row.ocf_to_pat_ratio : null;
+
+    // 1. CASH WENT THE OTHER WAY. The company reports a profit for the year and
+    //    its operations consumed cash. The US caps this at MIXED and calls it
+    //    "profit without operating cash"; there is no reading of it that
+    //    belongs in a top tier.
+    if (_ocfAnnual != null && _ocfAnnual < 0 && _patAnnual != null && _patAnnual > 0) {
+      capTier('MIXED', 'profit without operating cash');
+    }
+
+    // 2. EARNINGS OUTRAN BOTH THE REVENUE AND THE CASH. This is the rule that
+    //    caught Optical Cable on the US side: EPS growing a multiple of the top
+    //    line ('optical eps') while conversion is under 1. Either alone is
+    //    survivable — real operating leverage converts cash, and a
+    //    working-capital quarter still grows revenue. Both together is a
+    //    quarter to look at twice, which is what MIXED means.
+    if (_cfoPat != null && _cfoPat < 1 && caveat_tags.includes('optical eps')) {
+      capTier('MIXED', 'earnings outrun both revenue and cash');
+    }
+
+    // 3. TWO OR MORE CRITICAL FLAGS. Any one of these is a caveat the tier
+    //    ladder already prices. Two at once is a pattern, and the US caps it at
+    //    STRONG rather than letting a strong composite carry it to the top.
+    const _criticals = ['low quality', 'ocf divergence', 'optical eps', 'tax distortion']
+      .filter((t) => caveat_tags.includes(t)).length;
+    if (_criticals >= 2) capTier('STRONG', 'multiple quality flags');
+  }
+
   // Narrative
   const co = row.company || row.symbol;
   const q = row.quarter || deriveQuarterLabel(row.filing_date);

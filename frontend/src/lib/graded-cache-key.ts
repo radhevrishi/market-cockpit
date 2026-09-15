@@ -38,7 +38,12 @@
 //   · duplicate caveat tags no longer double-charge quality or the ladder;
 //   · the reaction ladder is scaled by each stock's own volatility;
 //   · Path F (a completed profit swing at scale) is no longer overruled.
-export const GRADED_CACHE_VERSION = 'v15';
+// zzz666 — v15 → v16. Two more:
+//   · three HARD CEILINGS now exist on the India side (cash against profit,
+//     earnings outrunning revenue and cash, two or more critical flags);
+//   · stage / RS / 52-week / close series arrive from the technicals scraper,
+//     so the technical axis stops being a constant 50 for every company.
+export const GRADED_CACHE_VERSION = 'v16';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -51,7 +56,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {
