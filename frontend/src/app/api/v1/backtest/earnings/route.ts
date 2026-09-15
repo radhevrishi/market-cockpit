@@ -293,18 +293,53 @@ export async function GET(req: Request) {
   // quietly uses closes to model stops is the most common way this particular
   // measurement lies.
   const top = obs.filter((o) => o.tier === 'BLOCKBUSTER' || o.tier === 'STRONG');
+  //
+  // AND IT REPORTS THE WHOLE STRATEGY, NOT THE SURVIVORS.
+  //
+  // "Names that did not hit a 5% stop went on to make 10.7%" is TRUE and
+  // USELESS: a tighter stop removes precisely the names that dipped, so the
+  // remainder looks better the tighter you set it, and reading that column
+  // alone argues for a stop of zero. The only honest figure counts the trades
+  // the stop CLOSED at their loss alongside the ones it let run — which is
+  // what `strategy_avg_excess` does, and why it is the column to read.
   const stop_study = [5, 7, 10, 15, 20].map((pct) => {
     const stopped = top.filter((o) => o.mae != null && o.mae <= -pct);
     const survived = top.filter((o) => o.mae != null && o.mae > -pct);
     const sv = survived.map((o) => o.excess[2] ?? o.excess[1]).filter((x): x is number => x != null);
+    const svAvg = sv.length ? sv.reduce((a, b) => a + b, 0) / sv.length : null;
+
+    // Every trade, stopped or not. A stopped trade is booked at exactly −pct,
+    // which is OPTIMISTIC: a gap through the level fills lower, and this model
+    // cannot see intraday. Treat it as the best case for the stop.
+    const withOutcome = top.filter((o) => o.mae != null && (o.excess[2] ?? o.excess[1]) != null);
+    const all = withOutcome.map((o) =>
+      (o.mae as number) <= -pct ? -pct : (o.excess[2] ?? o.excess[1]) as number,
+    );
+    const stratAvg = all.length ? all.reduce((a, b) => a + b, 0) / all.length : null;
+
     return {
       stop_pct: pct,
       stopped_out: stopped.length,
       stopped_pct: top.length ? Math.round((stopped.length / top.length) * 100) : null,
       survivors: sv.length,
-      survivor_avg_excess: sv.length ? Math.round((sv.reduce((a, b) => a + b, 0) / sv.length) * 10) / 10 : null,
+      survivor_avg_excess: svAvg == null ? null : Math.round(svAvg * 10) / 10,
+      // ── read this one ──
+      strategy_n: all.length,
+      strategy_avg_excess: stratAvg == null ? null : Math.round(stratAvg * 10) / 10,
+      strategy_worst_case: -pct,
     };
   });
+
+  // The same population with NO stop at all — the baseline every row above has
+  // to beat before a stop can be said to have paid for itself in return terms.
+  const noStopVals = top.map((o) => o.excess[2] ?? o.excess[1]).filter((x): x is number => x != null);
+  const no_stop_baseline = {
+    n: noStopVals.length,
+    avg_excess: noStopVals.length
+      ? Math.round((noStopVals.reduce((a, b) => a + b, 0) / noStopVals.length) * 10) / 10
+      : null,
+    worst_observed: noStopVals.length ? Math.round(Math.min(...noStopVals) * 10) / 10 : null,
+  };
 
   const maes = top.map((o) => o.mae).filter((x): x is number => x != null).sort((a, b) => a - b);
 
@@ -332,6 +367,7 @@ export async function GET(req: Request) {
     by_tier_setup,
     by_preset,
     stop_study,
+    no_stop_baseline,
     drawdown_percentiles: maes.length
       ? { p10: maes[Math.floor(maes.length * 0.1)], p25: maes[Math.floor(maes.length * 0.25)], median: maes[Math.floor(maes.length * 0.5)] }
       : null,
