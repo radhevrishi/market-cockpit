@@ -105,8 +105,23 @@ const stampOf = (d) => {
 };
 const isoOf = (d) => d.toISOString().slice(0, 10);
 
-/** One session's closes keyed by symbol. `holiday` means NSE has no such file. */
-async function fetchSession(ddmmyyyy) {
+/**
+ * One session's closes, keyed by symbol, plus that session's MARKET return.
+ *
+ * `want` filters to the symbols we actually store. The first build kept every
+ * symbol in the file — about two thousand of them across 283 sessions — and the
+ * resulting blob was 10,485,801 bytes against Upstash's 10,485,760 limit. Forty
+ * one bytes over, after a clean four-minute fetch. Keeping only the working set
+ * makes the blob a few megabytes and leaves room to grow.
+ *
+ * The market leg of RS still needs a BROAD comparison, not a comparison against
+ * the bench (which is all strong-earnings names by construction and would
+ * flatter everything on it). The bhavcopy carries PREV_CLOSE on every row, so
+ * each session yields its own breadth figure — the median daily return across
+ * every listed equity — without storing any of those symbols. One number per
+ * session instead of two thousand series.
+ */
+async function fetchSession(ddmmyyyy, want) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -119,8 +134,10 @@ async function fetchSession(ddmmyyyy) {
     if (lines.length < 5) return { holiday: false, closes: null };
     const head = lines[0].split(',').map((h) => h.trim().toUpperCase());
     const iSym = head.indexOf('SYMBOL'), iSer = head.indexOf('SERIES'), iCls = head.indexOf('CLOSE_PRICE');
+    const iPrv = head.indexOf('PREV_CLOSE');
     if (iSym < 0 || iCls < 0) return { holiday: false, closes: null };
     const closes = {};
+    const dayRets = [];
     for (let i = 1; i < lines.length; i++) {
       const c = lines[i].split(',');
       if (c.length <= iCls) continue;
@@ -130,9 +147,16 @@ async function fetchSession(ddmmyyyy) {
       if (ser !== 'EQ' && ser !== 'BE') continue;
       const sym = String(c[iSym] || '').trim().toUpperCase();
       const px = Number(String(c[iCls] || '').trim());
-      if (sym && Number.isFinite(px) && px > 0) closes[sym] = px;
+      if (!sym || !Number.isFinite(px) || px <= 0) continue;
+      if (iPrv >= 0) {
+        const pv = Number(String(c[iPrv] || '').trim());
+        if (Number.isFinite(pv) && pv > 0) dayRets.push(((px - pv) / pv) * 100);
+      }
+      if (!want || want.has(sym)) closes[sym] = px;
     }
-    return { holiday: false, closes };
+    dayRets.sort((a, b) => a - b);
+    const mktRet = dayRets.length >= 50 ? dayRets[Math.floor(dayRets.length / 2)] : null;
+    return { holiday: false, closes, mktRet };
   } catch { clearTimeout(t); return { holiday: false, closes: null }; }
 }
 
@@ -222,12 +246,26 @@ function assignRs(entries, benchRet12m) {
 }
 
 async function main() {
-  // ── 1. which sessions are missing from the stored history ──────────────
-  const prior = (await kvGet(HIST_KEY)) || {};
-  const series = prior.series || {};          // { SYMBOL: { "YYYY-MM-DD": close } }
-  const knownEmpty = new Set(prior.knownEmpty || []);
-  const have = new Set(prior.sessions || []);
+  // WHICH SYMBOLS WE KEEP HISTORY FOR. The bench is the working set — these are
+  // the names whose cards get read, and the bench cron adds a fresh filer the
+  // morning after it reports. Storing the whole exchange is what blew the 10 MB
+  // Redis limit on the first run; storing the working set is a few megabytes.
+  // Symbols already in the stored history are kept even if they have since left
+  // the bench, so a name that returns does not start from zero bars.
+  const priorHist = (await kvGet(HIST_KEY)) || {};
+  const series = priorHist.series || {};
+  const marketDaily = priorHist.marketDaily || {};
+  const knownEmpty = new Set(priorHist.knownEmpty || []);
+  const have = new Set(priorHist.sessions || []);
 
+  const bench = await kvGet(BENCH_KEY);
+  const fromBench = Array.isArray(bench?.entries)
+    ? bench.entries.map((e) => String(e?.ticker || '').toUpperCase()).filter(Boolean) : [];
+  const extra = String(process.env.EXTRA_SYMBOLS || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+  const want = new Set([...Object.keys(series), ...fromBench, ...extra].slice(0, MAX_SYMBOLS));
+  console.log(`working set: ${want.size} symbols (bench ${fromBench.length}, already in history ${Object.keys(series).length})`);
+
+  // ── 1. fetch the sessions we do not already hold ──────────────────────
   const wanted = [];
   for (let i = 1; i <= BACKFILL_DAYS; i++) {
     const d = new Date(Date.now() - i * 86_400_000);
@@ -237,69 +275,71 @@ async function main() {
     if (have.has(st) || knownEmpty.has(st)) continue;
     wanted.push({ stamp: st, iso: isoOf(d) });
   }
-  // Newest first: a cold start should make the RECENT end usable immediately,
-  // because a 30-day close series is worth more than a 400-day gap filled from
-  // the wrong end.
+  // Newest first: on a cold start a usable 30-day series at the RECENT end is
+  // worth more than a 400-day gap filled from the wrong end.
   const todo = wanted.slice(0, MAX_FETCH_PER_RUN);
   console.log(`history: ${have.size} sessions stored, ${wanted.length} missing, fetching ${todo.length} this run`);
 
   let fetched = 0, holidays = 0, failures = 0;
   for (const { stamp, iso } of todo) {
-    const r = await fetchSession(stamp);
+    const r = await fetchSession(stamp, want);
     if (r.holiday) { knownEmpty.add(stamp); holidays++; }
     else if (r.closes) {
-      for (const [sym, px] of Object.entries(r.closes)) {
-        (series[sym] ||= {})[iso] = px;
-      }
+      for (const [sym, px] of Object.entries(r.closes)) (series[sym] ||= {})[iso] = px;
+      if (r.mktRet != null) marketDaily[iso] = Math.round(r.mktRet * 1000) / 1000;
       have.add(stamp); fetched++;
     } else failures++;
     await sleep(GAP_MS);
   }
   console.log(`fetched=${fetched} holidays=${holidays} failures=${failures}`);
 
-  // NEVER TRUNCATE. Every merge starts from what is stored and only adds, so a
-  // bad day at NSE costs nothing.
-  await kvSet(HIST_KEY, {
-    generatedAt: new Date().toISOString(),
-    sessions: [...have], knownEmpty: [...knownEmpty], series,
-  }, HIST_TTL);
-
-  // ── 2. compute technicals for the names that matter ────────────────────
-  const bench = await kvGet(BENCH_KEY);
-  const fromBench = Array.isArray(bench?.entries)
-    ? bench.entries.map((e) => String(e?.ticker || '').toUpperCase()).filter(Boolean) : [];
-  const extra = String(process.env.EXTRA_SYMBOLS || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-  const symbols = [...new Set([...fromBench, ...extra])].slice(0, MAX_SYMBOLS);
-
-  // The market leg of RS. NIFTY 50 is not in the equity bhavcopy, so the
-  // benchmark is the equal-weighted median return of everything the archive
-  // carries — a broader and, for a smallcap book, more honest comparison than
-  // a 50-name large-cap index.
-  const allSyms = Object.keys(series);
-  const marketRets = [];
-  for (const sym of allSyms) {
-    const dates = Object.keys(series[sym]).sort();
-    if (dates.length < 250) continue;
-    const c = dates.map((d) => series[sym][d]);
-    const r = retPct(c, 252);
-    if (r != null && Number.isFinite(r)) marketRets.push(r);
+  // NEVER TRUNCATE ON FAILURE, but DO stay under the store's limit. Oldest
+  // sessions go first if the blob has outgrown the cap — a 200-day moving
+  // average needs 200 sessions, not 400.
+  const trimTo = (obj, keepIso) => {
+    for (const sym of Object.keys(obj)) {
+      for (const d of Object.keys(obj[sym])) if (!keepIso.has(d)) delete obj[sym][d];
+      if (!Object.keys(obj[sym]).length) delete obj[sym];
+    }
+  };
+  let hist = { generatedAt: new Date().toISOString(), sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
+  const LIMIT = 9_000_000;
+  let guard = 0;
+  while (JSON.stringify(hist).length > LIMIT && guard++ < 12) {
+    const allIso = [...new Set(Object.values(series).flatMap((m) => Object.keys(m)))].sort();
+    const keep = new Set(allIso.slice(Math.ceil(allIso.length * 0.12)));   // drop the oldest ~12%
+    trimTo(series, keep);
+    for (const d of Object.keys(marketDaily)) if (!keep.has(d)) delete marketDaily[d];
+    hist = { ...hist, series, marketDaily };
+    console.log(`  blob over ${LIMIT} bytes — trimmed to ${keep.size} sessions`);
   }
-  marketRets.sort((a, b) => a - b);
-  const benchmarkRet12m = marketRets.length >= 50
-    ? marketRets[Math.floor(marketRets.length / 2)] : null;
-  console.log(`market 12m median return: ${benchmarkRet12m == null ? 'not enough history yet' : benchmarkRet12m.toFixed(1) + '%'} (from ${marketRets.length} names)`);
+  await kvSet(HIST_KEY, hist, HIST_TTL);
 
+  // ── 2. the market leg of RS ───────────────────────────────────────────
+  // Compounded median daily return over the last 252 sessions. Broad by
+  // construction: it is every listed equity, not the bench.
+  const mdDates = Object.keys(marketDaily).sort();
+  let benchmarkRet12m = null;
+  if (mdDates.length >= 150) {
+    let acc = 1;
+    for (const d of mdDates.slice(-252)) acc *= (1 + (marketDaily[d] || 0) / 100);
+    benchmarkRet12m = (acc - 1) * 100;
+  }
+  console.log(`market ${mdDates.length}-session compounded return: ${benchmarkRet12m == null ? 'not enough history yet' : benchmarkRet12m.toFixed(1) + '%'}`);
+
+  // ── 3. compute technicals ─────────────────────────────────────────────
+  const targets = [...new Set([...fromBench, ...extra])];
   const out = {};
-  for (const sym of symbols) {
-    const s = series[sym];
-    if (!s) continue;
-    const dates = Object.keys(s).sort();
-    const t = technicalsFor(dates.map((d) => s[d]));
+  for (const sym of targets) {
+    const m = series[sym];
+    if (!m) continue;
+    const dates = Object.keys(m).sort();
+    const t = technicalsFor(dates.map((d) => m[d]));
     if (t) out[sym] = t;
   }
   assignRs(Object.entries(out), benchmarkRet12m);
 
-  // A THIN RUN MUST NOT REPLACE A RICH ONE. On a cold start there simply is not
+  // A THIN RUN MUST NOT REPLACE A RICH ONE. On a cold start there is simply not
   // enough history yet, and overwriting a good blob with a handful of names
   // would take the technical axis away again until tomorrow.
   const priorOut = await kvGet(OUT_KEY);
@@ -323,7 +363,7 @@ async function main() {
   for (const t of Object.values(merged)) stages[String(t.stage)] = (stages[String(t.stage)] || 0) + 1;
   console.log(JSON.stringify({
     sessions_stored: have.size,
-    symbols_in_history: allSyms.length,
+    symbols_in_history: Object.keys(series).length,
     computed_this_run: count,
     stored: Object.keys(merged).length,
     stage_distribution: stages,
