@@ -5,7 +5,7 @@
 // strip, an RRG quadrant map (Leading / Improving / Weakening / Lagging), and a
 // multi-timeframe leaderboard. The whole point: always clear what to buy / avoid.
 // ═══════════════════════════════════════════════════════════════════════════
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { getUsConvictionList, hydrateUsConviction } from '@/lib/conviction-beats-us';
 import { classifyTheme } from '@/lib/theme-classify';
@@ -183,19 +183,30 @@ export default function ThemeRotationTab() {
   // Fetched once per region and folded in below, which classifies every India
   // name — including ones the bench has not met yet — with no hand-maintained
   // ticker list anywhere.
-  const [nseIndustry, setNseIndustry] = useState<Record<string, string> | null>(null);
+  const [nseIndustry, setNseIndustry] = useState<Record<string, string>>({});
+  const nseAsked = useRef<Set<string>>(new Set());
+  // Bulk rung first — one call, every liquid name, instant.
   useEffect(() => {
-    if (region !== 'india' || nseIndustry) return;
+    if (region !== 'india') return;
     let alive = true;
     (async () => {
+      // A per-browser copy so a revisit is instant and costs nothing. The
+      // server keeps the authoritative cache; this only avoids re-asking for
+      // what this browser already learned.
+      try {
+        const local = JSON.parse(localStorage.getItem('mc:nse-industry:v2') || 'null');
+        if (alive && local && typeof local === 'object') setNseIndustry((p) => ({ ...local, ...p }));
+      } catch { /* ignore */ }
       try {
         const r = await fetch('/api/v1/nse-industry', { cache: 'force-cache' });
         const j = await r.json();
-        if (alive && j?.map) setNseIndustry(j.map);
+        if (alive && j?.map) setNseIndustry((p) => ({ ...j.map, ...p }));
       } catch { /* the book simply stays as it was */ }
     })();
     return () => { alive = false; };
-  }, [region, nseIndustry]);
+  }, [region]);
+
+
 
   useEffect(() => { if (!data[region]) load(region); }, [region, data, load]);
   useEffect(() => { setExpandedIds(new Set()); }, [region]);
@@ -367,6 +378,45 @@ export default function ThemeRotationTab() {
     const fromBench = all.filter((x) => x.inBench).length;
     return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups, graded, fromBench };
   }, [region, payload, userLists, benchReady, nseIndustry]);
+
+  /** The book's names that still have no theme — the only ones worth asking about. */
+  const userBookSymbols = useMemo(
+    () => (region === 'india' ? userBook.other.map((o) => String(o.symbol).toUpperCase()) : []),
+    [region, userBook],
+  );
+
+  // ── THE LONG TAIL, FILLED IN OVER A FEW PASSES ──────────────────────────
+  // Most of this book is micro-caps that no bulk source carries. They are
+  // asked for in small batches, only once each, and every answer is kept
+  // server-side forever — so this runs a handful of times and then never
+  // again. Nothing on the page waits for it: names appear in their theme as
+  // the answers arrive.
+  useEffect(() => {
+    if (region !== 'india' || !userBookSymbols.length) return;
+    const missing = userBookSymbols.filter((t) => !nseIndustry[t] && !nseAsked.current.has(t));
+    if (!missing.length) return;
+    const batch = missing.slice(0, 10);
+    batch.forEach((t) => nseAsked.current.add(t));
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/v1/nse-industry?tickers=${encodeURIComponent(batch.join(','))}`, { cache: 'no-store' });
+        const j = await r.json();
+        if (!alive || !j?.map) return;
+        const add: Record<string, string> = {};
+        for (const [k, v] of Object.entries(j.map as Record<string, string | null>)) if (v) add[k] = v;
+        if (Object.keys(add).length) {
+          setNseIndustry((p) => {
+            const next = { ...p, ...add };
+            try { localStorage.setItem('mc:nse-industry:v2', JSON.stringify(next)); } catch { /* quota — the server still has it */ }
+            return next;
+          });
+        }
+      } catch { /* a failed batch is retried on the next render pass */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [region, userBookSymbols, nseIndustry]);
 
   // zzz495 — DUMMY PORTFOLIO. The best 25 of YOUR names, taken ONLY from themes the
   // engine currently rates BUY or EARLY BUY (Leading / genuine early-turn). Nothing
