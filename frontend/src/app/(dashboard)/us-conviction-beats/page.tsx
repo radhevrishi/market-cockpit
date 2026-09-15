@@ -664,6 +664,47 @@ export default function UsConvictionBeatsPage() {
   const aligned = useMemo(() => entries
     .filter((e) => confOf(e).kind === 'aligned')
     .sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0)), [entries, confOf]);
+
+  // ═══ ALIGNMENT CONCENTRATES, AND THAT IS THE TRAP  (zzz663) ══════════════
+  //
+  // A theme is rated as one thing, so when the board turns a theme green EVERY
+  // qualifying name inside it becomes "aligned" at the same moment. The strip
+  // then reads as eight independent confirmations when it is often one theme
+  // wearing eight tickers — and the top of the list, being sorted by score, is
+  // where that clusters hardest. Buying the top eight can be buying one bet on
+  // one commodity with the diversification entirely imaginary.
+  //
+  // This is the same fact the rotation board's crowding panel makes about the
+  // whole book, applied to the shortlist a reader actually acts on. It is
+  // stated as a count, not enforced as a filter: the concentration may be
+  // exactly what he wants, but it should never be a surprise.
+  const alignedConcentration = useMemo(() => {
+    const byTheme = new Map<string, { name: string; emoji: string; n: number }>();
+    for (const e of aligned) {
+      const t = confOf(e).theme;
+      if (!t) continue;
+      const cur = byTheme.get(t.id) || { name: t.name, emoji: t.emoji, n: 0 };
+      cur.n++; byTheme.set(t.id, cur);
+    }
+    const ranked = [...byTheme.values()].sort((a, b) => b.n - a.n);
+    const top = ranked[0] || null;
+    // The first eight are what the strip shows and what a reader is most
+    // likely to act on, so that is the slice the warning is measured over.
+    const firstEight = aligned.slice(0, 8);
+    const eightByTheme = new Map<string, number>();
+    for (const e of firstEight) {
+      const t = confOf(e).theme; if (!t) continue;
+      eightByTheme.set(t.id, (eightByTheme.get(t.id) || 0) + 1);
+    }
+    const worstOfEight = [...eightByTheme.entries()].sort((a, b) => b[1] - a[1])[0];
+    const heaviest = worstOfEight ? aligned.find((e) => confOf(e).theme?.id === worstOfEight[0]) : null;
+    return {
+      themes: ranked.length,
+      top,
+      inTopEight: worstOfEight ? worstOfEight[1] : 0,
+      heaviestTheme: heaviest ? confOf(heaviest).theme : null,
+    };
+  }, [aligned, confOf]);
   const bucketCounts = useMemo(() => {
     const c: Record<string, number> = {};
     funnel.bucketOf.forEach((v) => { c[v.bucket] = (c[v.bucket] || 0) + 1; });
@@ -1239,6 +1280,18 @@ export default function UsConvictionBeatsPage() {
                   +{aligned.length - 8} more →
                 </button>
               )}
+            </div>
+          )}
+
+          {/* HOW MANY BETS IS THIS SHORTLIST REALLY MAKING  (zzz663) */}
+          {aligned.length > 0 && alignedConcentration.inTopEight >= 3 && alignedConcentration.heaviestTheme && (
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-caution,#F59E0B)', lineHeight: 1.6 }}>
+              <b>⧉ {alignedConcentration.inTopEight} of the eight above are {alignedConcentration.heaviestTheme.emoji} {alignedConcentration.heaviestTheme.name}.</b>{' '}
+              <span style={{ color: 'var(--mc-text-2)' }}>
+                A theme is rated as one thing, so every qualifying name inside it turns green on the same day — this strip can read as eight
+                confirmations when it is one theme wearing {alignedConcentration.inTopEight} tickers. The {aligned.length} aligned names spread across{' '}
+                {alignedConcentration.themes} theme{alignedConcentration.themes === 1 ? '' : 's'} in total, so the diversification is further down the list, not at the top of it.
+              </span>
             </div>
           )}
 
