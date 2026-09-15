@@ -67,16 +67,42 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
     // is the authoritative value — and chartPreviousClose is used only when
     // the series is too short to say, which is the one case where it is
     // genuinely the previous close.
-    const _dailyBars = /^(1d|5d|1wk|1mo|3mo)$/.test(String(interval));
+    // ═══ AND THE TWO WAYS THE FALLBACK ITSELF LIES  (zzz636) ════════════════
+    //
+    // (a) ONLY DAILY BARS HAVE A "PREVIOUS SESSION". On interval=1wk the
+    //     previous bar is a WEEK ago, on 1mo a month — the same category of
+    //     error one notch smaller, and harder to spot because the number looks
+    //     survivable. The fallback is therefore daily-only; on coarser bars a
+    //     missing previousClose is reported as no change rather than guessed.
+    //
+    // (b) THE SERIES AND meta.regularMarketPrice ARE NOT ALWAYS ON ONE BASIS.
+    //     Around a split Yahoo can serve an unadjusted tail while meta is
+    //     already post-split. FIVG on the day this was written: series last
+    //     close 80.96, regularMarketPrice 42.32, meta.previousClose null — the
+    //     pure split ratio, which printed on the board as 5G "-47.7% today".
+    //     So when the fallback is used the change is measured INSIDE the
+    //     series, where both sides are the same basis. meta's price is kept
+    //     only when it agrees with the series to within a quarter, which no
+    //     split ratio does and no real session does either.
     const _validCloses = _closes.filter((c: any) => c != null && !isNaN(c));
     const _price = meta.regularMarketPrice || 0;
+    let _changeBase = _price;
     let _prevClose = meta.previousClose || 0;
-    if (!(_prevClose > 0) && _dailyBars && _validCloses.length >= 2) {
-      _prevClose = _validCloses[_validCloses.length - 2];
+    if (!(_prevClose > 0) && String(interval) === '1d' && _validCloses.length >= 2) {
+      const _sLast = _validCloses[_validCloses.length - 1];
+      const _sPrev = _validCloses[_validCloses.length - 2];
+      if (_sLast > 0 && _sPrev > 0) {
+        const _drift = Math.abs(_price - _sLast) / _sLast;
+        if (!(_price > 0) || _drift > 0.25) _changeBase = _sLast;
+        _prevClose = _sPrev;
+      }
     }
-    if (!(_prevClose > 0)) _prevClose = meta.chartPreviousClose || 0;
-    const _change = (_price > 0 && _prevClose > 0) ? (_price - _prevClose) : 0;
-    const _changePercent = (_price > 0 && _prevClose > 0) ? ((_price - _prevClose) / _prevClose) * 100 : 0;
+    // chartPreviousClose is the close before the range BEGINS, so it is the
+    // previous close only on a one-or-five-day request. Anywhere else it is
+    // the number that caused all of this, and is not used.
+    if (!(_prevClose > 0) && /^(1d|5d)$/.test(String(range))) _prevClose = meta.chartPreviousClose || 0;
+    const _change = (_changeBase > 0 && _prevClose > 0) ? (_changeBase - _prevClose) : 0;
+    const _changePercent = (_changeBase > 0 && _prevClose > 0) ? ((_changeBase - _prevClose) / _prevClose) * 100 : 0;
     const data = {
       symbol: meta.symbol,
       shortName: meta.shortName || meta.symbol,

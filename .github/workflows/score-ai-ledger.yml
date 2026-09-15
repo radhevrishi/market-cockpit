@@ -1,0 +1,66 @@
+name: Mark the AI prediction ledger
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS  (zzz635)
+#
+# /api/v1/ai/ledger?score=1 is the only thing that ever marks a prediction
+# against what the stock actually did. Until now NOTHING called it: the desk
+# recorded predictions faithfully and then left every one of them "pending"
+# for ever, so the `learned` table — the whole point of keeping a ledger —
+# could never fill. A ledger nobody marks is a diary, not evidence.
+#
+# The endpoint is idempotent (it skips anything already marked) and bounded by
+# its own internal deadline, reporting `skipped_for_time` when it runs out.
+# So this fires repeatedly until that count reaches zero rather than assuming
+# one pass finished the job.
+#
+# Once a day is the right cadence: horizons are 7/30/90/180 days, so nothing
+# becomes markable faster than that, and a missed day costs nothing because
+# the next run picks the same entries up.
+# ═══════════════════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    - cron: '20 2 * * *'     # 02:20 UTC daily — after US close, before IST open
+  workflow_dispatch: {}
+
+jobs:
+  mark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Mark every due prediction
+        id: main
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          P="import json,sys;d=json.load(open('/tmp/led.json'));print(d.get(sys.argv[1],0))"
+          TOTAL=0
+          for i in 1 2 3 4 5 6; do
+            CODE=$(curl -s -m 120 "$BASE/api/v1/ai/ledger?score=1" -o /tmp/led.json -w "%{http_code}") || CODE=000
+            echo "pass $i: HTTP $CODE"
+            if [ "$CODE" != "200" ]; then sleep 20; continue; fi
+            MARKED=$(python3 -c "$P" marked)
+            SKIPPED=$(python3 -c "$P" skipped_for_time)
+            SCORED=$(python3 -c "$P" scored)
+            TOT=$(python3 -c "$P" total)
+            echo "  marked=$MARKED  ran_out_of_time=$SKIPPED  scored=$SCORED/$TOT"
+            TOTAL=$((TOTAL + MARKED))
+            if [ "$SKIPPED" = "0" ]; then echo "  pass complete"; break; fi
+            sleep 10
+          done
+          echo "newly marked this run: $TOTAL"
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"score-ai-ledger\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
