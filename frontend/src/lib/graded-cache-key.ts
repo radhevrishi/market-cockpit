@@ -50,7 +50,9 @@
 //   · Path F reaches India too;
 //   · both row builders now carry the same fields — `close_30d` had reached
 //     only one of them, so the volatility-scaled reaction never ran.
-export const GRADED_CACHE_VERSION = 'v17';
+//   · a COMPLETED turnaround is no longer stamped 'low quality' — it earns a
+//     'returned to profit' tag instead, as it already did on the US side.
+export const GRADED_CACHE_VERSION = 'v18';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -63,7 +65,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

@@ -385,7 +385,30 @@ function gradeRow(row: any): ParsedEarning | null {
   // conviction label is not yet earned.
   const turnaroundBase = (row?.pat_prev_cr != null && row.pat_prev_cr < 0)
                       || (row?.eps_prev   != null && row.eps_prev   < 0);
-  if (turnaroundBase) caveat_tags.push('low quality');
+  // ═══════════════════════════════════════════════════════════════════════
+  // A NEGATIVE YEAR-AGO BASE IS NOT A QUALITY PROBLEM ONCE THE COMPANY IS
+  // MAKING MONEY.  (zzz668 — porting the US rule)
+  //
+  // `turnaroundBase` exists because a growth rate measured off a loss is
+  // meaningless, and that remains true. But India was ALSO stamping "low
+  // quality" on the print, which is the opposite of what a completed
+  // turnaround is. With Path F now reaching India, the contradiction became
+  // visible on the card: MOLBIO printed revenue +320%, net profit −₹13cr →
+  // +₹53cr, operating margin −10% → +25%, Quality 87 and Inflection 100 — and
+  // was published BLOCKBUSTER carrying a "low quality" flag.
+  //
+  // The percentage is still refused. The company is simply no longer slandered
+  // for having recovered, and the recovery is recorded as what it is.
+  // ═══════════════════════════════════════════════════════════════════════
+  const _patCurCr = typeof row?.pat_curr_cr === 'number' ? row.pat_curr_cr : null;
+  const _cfoRatio = typeof row?.ocf_to_pat_ratio === 'number' ? row.ocf_to_pat_ratio : null;
+  const turnaroundCompleted = turnaroundBase
+    && _patCurCr != null && _patCurCr > 0
+    && (_cfoRatio == null || _cfoRatio > 0);
+  if (turnaroundBase && !turnaroundCompleted) caveat_tags.push('low quality');
+  else if (turnaroundCompleted && !methodology_tags.includes('returned to profit')) {
+    methodology_tags.push('returned to profit');
+  }
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
   // PATCH 1000 — Margin contraction caveat. Any drop below flat (≤ -0.5 pp)
   // for a stock the grader is otherwise about to call BLOCKBUSTER is a
