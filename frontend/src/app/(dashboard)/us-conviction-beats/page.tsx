@@ -92,7 +92,37 @@ export default function UsConvictionBeatsPage() {
   const [filters, setFilters] = useState<UsConvFilters>(() => {
     try {
       const raw = localStorage.getItem(FILTERS_KEY);
-      if (raw) return { ...US_FILTER_DEFAULT, ...JSON.parse(raw) };
+      if (raw) {
+        const saved = { ...US_FILTER_DEFAULT, ...JSON.parse(raw) } as UsConvFilters;
+        // ═══ A NEW PRESET GATE HAS TO REACH AN OLD SAVED FILTER  (zzz662) ══
+        //
+        // Filters persist in this browser, so a set saved before a gate existed
+        // has no key for it, the spread above leaves the default (off), and the
+        // gate silently does nothing for exactly the person who has been using
+        // the page longest. The preset chip said "customised" and the trend
+        // filter was inert: Stage-1 names — below their 200-day average by
+        // definition — were passing a filter that claims to require the
+        // opposite. Verified against the live bench: AGX, AVGO, STRL, MPWR,
+        // LSCC, AEIS and a dozen more.
+        //
+        // Restoring it cannot be a blanket overwrite, or it would stamp the
+        // preset over genuinely custom thresholds. So the test is whether the
+        // saved set still matches the preset on every gate that existed when it
+        // was saved — if it does, it IS the preset, merely an older edition of
+        // it, and it is brought up to date. Anything the reader actually
+        // changed fails that test and is left exactly as they left it.
+        const legacyMatchesPreset =
+          saved.sales === US_PRESET.sales
+          && saved.eps === US_PRESET.eps
+          && saved.opmDelta === US_PRESET.opmDelta
+          && saved.cfoPatMin === US_PRESET.cfoPatMin
+          && saved.mktCapMin === US_PRESET.mktCapMinMusd
+          && JSON.stringify((saved.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
+        if (legacyMatchesPreset) {
+          return { ...saved, ...usPresetFilters(), cap: saved.cap, sector: saved.sector, q: saved.q };
+        }
+        return saved;
+      }
     } catch {}
     return US_FILTER_DEFAULT;
   });

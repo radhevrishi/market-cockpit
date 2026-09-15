@@ -2242,8 +2242,24 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   if (f.cfoPatMin != null && !e.is_financial) {
     // A null ratio PASSES (a data gap is not evidence of poor quality) —
     // identical to the India rule.
+    //
+    // ═══ BUT A LOSS IS NOT A DATA GAP  (zzz662) ═════════════════════════
+    // The ratio is also null when net income is NEGATIVE, because cash flow
+    // divided by a loss is not a number. Treating that as "missing" let every
+    // loss-making company through a gate that exists to ask whether earnings
+    // turn into cash — and the honest answer for a loss-maker is not "unknown",
+    // it is "there are no earnings to convert". So the two cases are now told
+    // apart by the one thing that distinguishes them: whether the filing shows
+    // a loss. A genuine gap still passes; a loss does not.
     const c = num(e.cfo_to_pat_ratio);
-    if (c != null && c < f.cfoPatMin) return false;
+    if (c != null) {
+      if (c < f.cfoPatMin) return false;
+    } else {
+      const epsNow = num(e.eps_curr);
+      const lossMaking = (epsNow != null && epsNow < 0)
+        || e.eps_swing === 'loss-widened' || e.eps_swing === 'loss-narrowed';
+      if (lossMaking) return false;
+    }
   }
   if (f.mktCapMin != null) {
     if (num(e.market_cap_musd) == null || (e.market_cap_musd as number) < f.mktCapMin) return false;
