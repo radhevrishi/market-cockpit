@@ -84,17 +84,57 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
     //     series, where both sides are the same basis. meta's price is kept
     //     only when it agrees with the series to within a quarter, which no
     //     split ratio does and no real session does either.
-    const _validCloses = _closes.filter((c: any) => c != null && !isNaN(c));
+    //
+    // (c) A DAILY SERIES IS NOT ALWAYS DAILY. Yahoo's coverage of the Indian
+    //     sector indices is sparse: ^CNXREALTY on a 2y request returns bars
+    //     dated days or weeks apart, so "the previous bar" was a week-old
+    //     close and the board read Realty "-9.9% today" while the Nifty was
+    //     down 0.4%. The gap between the two bars is therefore checked against
+    //     the calendar — four days covers a weekend plus a holiday, and
+    //     anything wider is not a previous session however the series is
+    //     labelled. When it is wider the day change is reported as zero,
+    //     because the honest answer here is "not known", and a zero is the
+    //     only thing downstream reads as no claim.
+    const _validPairs: Array<[number, number]> = [];
+    const _tsAll: number[] = result.timestamp || [];
+    for (let i = 0; i < _closes.length; i++) {
+      const c = _closes[i];
+      if (c == null || isNaN(c)) continue;
+      _validPairs.push([Number(_tsAll[i] ?? 0), Number(c)]);
+    }
+    const _validCloses = _validPairs.map((p) => p[1]);
     const _price = meta.regularMarketPrice || 0;
     let _changeBase = _price;
     let _prevClose = meta.previousClose || 0;
-    if (!(_prevClose > 0) && String(interval) === '1d' && _validCloses.length >= 2) {
-      const _sLast = _validCloses[_validCloses.length - 1];
-      const _sPrev = _validCloses[_validCloses.length - 2];
-      if (_sLast > 0 && _sPrev > 0) {
+    if (!(_prevClose > 0) && String(interval) === '1d' && _validPairs.length >= 2) {
+      const [_tLast, _sLast] = _validPairs[_validPairs.length - 1];
+      const [_tPrev, _sPrev] = _validPairs[_validPairs.length - 2];
+      const _gapDays = (_tLast > 0 && _tPrev > 0) ? (_tLast - _tPrev) / 86_400 : 99;
+      if (_sLast > 0 && _sPrev > 0 && _gapDays <= 4.5) {
         const _drift = Math.abs(_price - _sLast) / _sLast;
-        if (!(_price > 0) || _drift > 0.25) _changeBase = _sLast;
-        _prevClose = _sPrev;
+        const _base = (!(_price > 0) || _drift > 0.25) ? _sLast : _price;
+        // (d) AND A BAR THAT IS THERE CAN STILL BE WRONG. Yahoo's ^CNXFMCG and
+        //     ^CNXREALTY series carried a bar on a day the exchange was shut,
+        //     one day wide and on a different basis, so the calendar check
+        //     above passes and the board still read Realty "-9.9% today" while
+        //     every Realty constituent moved about a percent. There is no way
+        //     to tell a bad bar from a good one by looking at it — but the
+        //     series says how big a day this name normally has, and a move
+        //     many times that size, derived from a GUESSED previous close, is
+        //     far more likely to be a data fault than a crash. So the fallback
+        //     is held to the name's own typical move. This test is applied
+        //     ONLY here: when Yahoo states previousClose, a limit-down day is
+        //     reported at full size, because that is a fact, not an inference.
+        const _rets: number[] = [];
+        for (let i = Math.max(1, _validCloses.length - 40); i < _validCloses.length - 1; i++) {
+          const a = _validCloses[i - 1], b = _validCloses[i];
+          if (a > 0 && b > 0) _rets.push(Math.abs((b - a) / a) * 100);
+        }
+        _rets.sort((x, y) => x - y);
+        const _typical = _rets.length >= 10 ? _rets[Math.floor(_rets.length / 2)] : 0;
+        const _implied = Math.abs((_base - _sPrev) / _sPrev) * 100;
+        const _ceiling = _typical > 0 ? Math.max(_typical * 6, 8) : Infinity;
+        if (_implied <= _ceiling) { _changeBase = _base; _prevClose = _sPrev; }
       }
     }
     // chartPreviousClose is the close before the range BEGINS, so it is the

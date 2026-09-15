@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v15:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v16:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
