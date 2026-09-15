@@ -15,9 +15,45 @@ import { classifyCatalyst, getHaikuBudget } from '@/lib/anthropic-classifier';
 export const runtime = 'nodejs';
 export const maxDuration = 15;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THIS ENDPOINT IS PUBLIC. IT WAS TELLING THE INTERNET ABOUT THE KEY. (zzz678)
+//
+// PATCH 0931-followup3 added a key-format diagnostic to debug a 401, and its
+// commit message says "no key value exposed". That was true of the VALUE and
+// false of everything around it: the response carried the key's exact length
+// and its LAST FOUR CHARACTERS, to anyone who asked, with no authentication,
+// on a deployment whose repository is public.
+//
+// Four characters are not a key. But they are enough to confirm that a key
+// found somewhere else belongs to this account, and the exact length narrows
+// the format. Neither has any business being readable by a stranger.
+//
+// `?probe=1` was worse than the diagnostic. It spends real money — an
+// unauthenticated GET that calls the Anthropic API on the owner's account.
+// The daily cap bounds the damage, but the cap is a budget control, not a
+// security control: anyone could exhaust the day's allowance on a loop and
+// switch the classifier off for everyone.
+//
+// So both now require the same secret the cron routes use. What stays public
+// is the part that is genuinely useful for a health check and tells an
+// outsider nothing they could use: whether a key is configured at all, and
+// what the budget looks like. A debug aid should not outlive the debugging.
+// ═══════════════════════════════════════════════════════════════════════════
+function isAuthorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET || '';
+  // No secret configured means the diagnostic stays SHUT, not open. A missing
+  // environment variable must never be the thing that unlocks a diagnostic.
+  if (!secret) return false;
+  const auth = req.headers.get('authorization') || '';
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const headerKey = req.headers.get('x-cron-secret') || '';
+  return bearer === secret || headerKey === secret;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const probe = url.searchParams.get('probe') === '1';
+  const authed = isAuthorized(req);
+  const probe = url.searchParams.get('probe') === '1' && authed;
 
   const rawKey = process.env.ANTHROPIC_API_KEY || '';
   const hasApiKey = !!rawKey;
@@ -26,7 +62,7 @@ export async function GET(req: Request) {
   // PATCH 0931-followup3 — surface key FORMAT (length / prefix / suffix / whitespace)
   // without exposing the value, so we can diagnose 401 invalid_x_api_key.
   // Anthropic keys start with sk-ant-api03- and are ~108 chars long.
-  const keyDiagnostic = rawKey ? {
+  const keyDiagnostic = (rawKey && authed) ? {
     length: rawKey.length,
     first12: rawKey.slice(0, 12),
     last4: rawKey.slice(-4),
@@ -43,9 +79,15 @@ export async function GET(req: Request) {
     ok: true,
     service: 'haiku-classifier',
     hasApiKey,
-    keyDiagnostic,
     budget,
   };
+  // Only attached for an authorised caller — `keyDiagnostic` is null otherwise,
+  // and the field is omitted entirely rather than sent as null, so the response
+  // does not advertise that a richer version exists.
+  if (authed && keyDiagnostic) out.keyDiagnostic = keyDiagnostic;
+  if (!authed && url.searchParams.get('probe') === '1') {
+    out.probe = { error: 'probe requires authorisation (zzz678)' };
+  }
 
   if (probe) {
     if (!hasApiKey) {
