@@ -71,7 +71,26 @@ const WANT = {
   'Nifty Media': '^CNXMEDIA',
   'Nifty India Consumption': '^CNXCONSUM',
   'Nifty Commodities': '^CNXCMDT',
+  // zzz656 — six themes that were running on hand-built baskets because Yahoo
+  // carries no ticker for them, while NSE has published a real index all along.
+  // These symbols are internal: nothing outside this app resolves them, which
+  // is exactly right — they are not Yahoo tickers and must never be fetched as
+  // though they were. The board reads them from this blob or falls back to the
+  // basket it used before, so adding one can only improve a theme.
+  'Nifty India Defence': '^NSE:DEFENCE',
+  'Nifty Chemicals': '^NSE:CHEMICALS',
+  'Nifty India Internet': '^NSE:INTERNET',
+  'Nifty Hospitals': '^NSE:HOSPITALS',
+  'Nifty Power': '^NSE:POWER',
+  'Nifty Cement': '^NSE:CEMENT',
 };
+
+// Bumped whenever WANT gains an index. The stored `fetched` list records which
+// SESSIONS have been pulled, not which symbols were in them — so after adding a
+// symbol every session already looks done and the new index would stay empty
+// for ever. Changing this forces exactly one full re-ingest and then the
+// incremental behaviour resumes.
+const WANT_VERSION = 2;
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -162,10 +181,24 @@ async function fetchSession(ddmmyyyy) {
   const indices = prior.indices && typeof prior.indices === 'object' ? prior.indices : {};
   const knownEmpty = new Set(Array.isArray(prior.knownEmpty) ? prior.knownEmpty : []);
 
-  // Which sessions do we already hold? Any date present on the benchmark is a
-  // session we have; the benchmark trades every day the exchange is open, so
-  // it is the right yardstick.
-  const have = new Set((indices['^NSEI']?.ts || []).map(Number));
+  // WHICH SESSIONS HAVE BEEN PULLED — recorded as sessions, not inferred from
+  // any one symbol's coverage. Inferring it from the benchmark breaks the
+  // moment a new index is added (every session looks done, the new symbol
+  // stays empty for ever) and inferring it from ALL symbols breaks for an
+  // index that launched mid-history and legitimately has no early sessions.
+  // A session is done when it has been fetched. That is the fact; the rest is
+  // a consequence of it.
+  const versionChanged = Number(prior.wantVersion || 0) !== WANT_VERSION;
+  if (versionChanged) console.log(`WANT changed (v${prior.wantVersion || 0} -> v${WANT_VERSION}) — re-ingesting every session once so the new indices fill in`);
+  const fetched = new Set(versionChanged ? [] : (Array.isArray(prior.fetched) ? prior.fetched : []));
+  // A first run after this change has no `fetched` list at all, so fall back to
+  // the benchmark's own dates rather than re-pulling two years for nothing.
+  if (!versionChanged && fetched.size === 0) {
+    for (const t of (indices['^NSEI']?.ts || [])) {
+      const d = new Date(Number(t) * 1000);
+      fetched.add(stamp(d));
+    }
+  }
 
   // Newest first: a cold start should make the RECENT window usable before it
   // worries about two years ago, because that is the window every return and
@@ -178,11 +211,11 @@ async function fetchSession(ddmmyyyy) {
     if (dow === 0 || dow === 6) continue;                 // NSE does not trade weekends
     const st = stamp(d);
     if (knownEmpty.has(st)) continue;                     // a holiday we already learned
-    if (have.has(secOf(d))) continue;                     // already stored
+    if (fetched.has(st)) continue;                        // this session is done
     wanted.push({ d, st });
   }
 
-  console.log(`held sessions: ${have.size} · known non-trading days: ${knownEmpty.size} · missing: ${wanted.length}`);
+  console.log(`sessions already pulled: ${fetched.size} · known non-trading days: ${knownEmpty.size} · missing: ${wanted.length}`);
   const todo = wanted.slice(0, MAX_FETCH_PER_RUN);
   let added = 0, holidays = 0, failed = 0;
 
@@ -192,6 +225,7 @@ async function fetchSession(ddmmyyyy) {
     catch (e) { failed++; console.log(`  ${st}: ${e.message}`); await new Promise((r) => setTimeout(r, GAP_MS)); continue; }
     if (row === null) { knownEmpty.add(st); holidays++; await new Promise((r) => setTimeout(r, GAP_MS)); continue; }
     const ts = secOf(d);
+    fetched.add(st);
     for (const [sym, close] of Object.entries(row)) {
       const s = indices[sym] || (indices[sym] = { ts: [], close: [] });
       s.ts.push(ts); s.close.push(close);
@@ -221,6 +255,10 @@ async function fetchSession(ddmmyyyy) {
 
   const blob = {
     generatedAt: new Date().toISOString(),
+    wantVersion: WANT_VERSION,
+    // Bounded to roughly three years of sessions — older ones can never be
+    // asked for again because the backfill window does not reach them.
+    fetched: [...fetched].slice(-820),
     source: 'archives.nseindia.com ind_close_all — NSE published closes',
     sessions: indices['^NSEI']?.ts.length || longest,
     indices,

@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v20:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v21:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -411,7 +411,14 @@ async function build(region: ThemeRegion) {
   // Every symbol we need (benchmark + proxies + all basket members), fetched once.
   const symbols = new Set<string>([bench.symbol]);
   for (const t of themes) { if (t.proxy) symbols.add(t.proxy); (t.basket || []).forEach((s) => symbols.add(s)); }
-  const data = await fetchChunked([...symbols], range, interval);
+  // zzz656 — `^NSE:DEFENCE` and its siblings are INTERNAL names for indices NSE
+  // publishes and Yahoo does not carry. Sending them to Yahoo would be twenty-odd
+  // guaranteed 404s on every build, so they are never fetched: they come from the
+  // published-history blob below, and a theme whose symbol is not in that blob
+  // falls back to the constituent basket it used before, which is precisely the
+  // behaviour we want when an ingestion has not run yet.
+  const isInternal = (sym: string) => sym.startsWith('^NSE:');
+  const data = await fetchChunked([...symbols].filter((x) => !isInternal(x)), range, interval);
 
   // ═══ NSE'S OWN CLOSES BEAT ANYBODY'S COPY OF THEM  (zzz654) ═════════════
   //
