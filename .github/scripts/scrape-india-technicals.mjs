@@ -331,8 +331,27 @@ async function main() {
       console.log(`universe rebuilt from ${isoOf(d)}: ${universe.length} symbols by turnover`);
     }
   }
-  const want = new Set([...fromBench, ...extra, ...Object.keys(series), ...universe].slice(0, MAX_SYMBOLS));
-  console.log(`working set: ${want.size} symbols (bench ${fromBench.length}, universe ${universe.length}, in history ${Object.keys(series).length})`);
+  // DE-DUPLICATE BEFORE CAPPING, NOT AFTER. Slicing the concatenated array
+  // first meant the bench and the stored history filled the 900 slots twice
+  // over and only 25 universe names survived — a working set of 455 that
+  // looked like it had honoured the cap.
+  const want = new Set([...new Set([...fromBench, ...extra, ...Object.keys(series), ...universe])].slice(0, MAX_SYMBOLS));
+
+  // A SESSION ALREADY FETCHED ONLY HOLDS THE SYMBOLS WE WANTED AT THE TIME.
+  //
+  // Sessions are filtered on the way in, so widening the working set does not
+  // retroactively fill the new names — the loop below sees nothing missing and
+  // fetches nothing, and the new symbols stay empty for ever. The set the
+  // history was actually built against is therefore recorded, and a material
+  // widening re-opens the window once. Five per cent of tolerance so a couple
+  // of new bench names do not trigger a full refetch every morning.
+  const coverage = new Set(priorHist.coverage || Object.keys(series));
+  const missingFromCoverage = [...want].filter((x) => !coverage.has(x)).length;
+  if (coverage.size && missingFromCoverage > want.size * 0.05) {
+    console.log(`working set widened by ${missingFromCoverage} symbols beyond what the history covers — re-opening the window once.`);
+    have = new Set(); knownEmpty = new Set();
+  }
+  console.log(`working set: ${want.size} symbols (bench ${fromBench.length}, universe ${universe.length}, in history ${Object.keys(series).length}, new vs coverage ${missingFromCoverage})`);
 
   // ── 1. fetch the sessions we do not already hold ──────────────────────
   const wanted = [];
@@ -372,7 +391,8 @@ async function main() {
     }
   };
   let hist = { generatedAt: new Date().toISOString(), marketBasis: MARKET_BASIS,
-    universe, universeAt: universe.length ? new Date().toISOString() : (priorHist.universeAt || null), sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
+    universe, universeAt: universe.length ? new Date().toISOString() : (priorHist.universeAt || null),
+    coverage: [...want], sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
   const LIMIT = 9_000_000;
   let guard = 0;
   while (JSON.stringify(hist).length > LIMIT && guard++ < 12) {
