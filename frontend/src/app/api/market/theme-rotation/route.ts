@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v18:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v19:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -413,7 +413,66 @@ async function build(region: ThemeRegion) {
   for (const t of themes) { if (t.proxy) symbols.add(t.proxy); (t.basket || []).forEach((s) => symbols.add(s)); }
   const data = await fetchChunked([...symbols], range, interval);
 
-  const enough = (sym: string) => { const d = data.get(sym); return !!d && d.closes.filter((x) => x != null && !isNaN(x)).length >= 20; };
+  // ═══ A SERIES CAN BE LONG, CURRENT, AND STILL BROKEN  (zzz650) ══════════
+  //
+  // `enough` used to ask one question — are there twenty closes — and eleven of
+  // the fifteen NSE sector indices passed it while being unusable. Yahoo
+  // stopped publishing them on 2026-07-17 and resumed on 2026-09-15: 452 bars
+  // across two years, the newest one from today, and a SIXTY-DAY HOLE
+  // immediately before it. Neither a bar count nor a staleness check can see
+  // that, because both ends are healthy. It is the middle that is missing.
+  //
+  // The damage was never confined to the day change. A fifty-bar moving average
+  // over a series with forty bars missing reaches back five months, so
+  // `aboveSMA50` and `dist50` were answering a different question than the one
+  // the label asks. The one-month return resolved to the last bar before the
+  // hole and was really a two-month return. The weekly resample that feeds
+  // RS-Ratio and RS-Momentum lost eight recent weeks, so the RRG trail — and
+  // every verdict computed from it — was describing July.
+  //
+  // So the health check now asks what it always meant to ask: is this series
+  // DENSE ENOUGH, RECENTLY ENOUGH, to support the windows we compute on it.
+  // Everything that fails routes to the constituent-basket fallback that
+  // already existed for dead proxies — which is exactly the right answer, and
+  // needed no new machinery. ^CNXFIN, which returns a single bar at every
+  // range, has presumably been failing this way silently for months.
+  const MAX_GAP_DAYS = 10;
+  const RECENT_WINDOW_DAYS = 200;
+  const seriesHealth = (sym: string): { ok: boolean; why: string } => {
+    const d = data.get(sym);
+    if (!d) return { ok: false, why: 'no series returned' };
+    const pts: Array<[number, number]> = [];
+    for (let i = 0; i < d.closes.length; i++) {
+      const c = d.closes[i];
+      if (c == null || isNaN(c)) continue;
+      pts.push([Number(d.ts[i] ?? 0), Number(c)]);
+    }
+    if (pts.length < 20) return { ok: false, why: `only ${pts.length} usable closes` };
+    const newest = pts[pts.length - 1][0];
+    // The windows this engine computes on reach back about six months, so that
+    // is the stretch that has to be continuous. Older gaps are real market
+    // history (an index that did not exist yet) and are not this check's
+    // business.
+    const from = newest - RECENT_WINDOW_DAYS * 86_400;
+    let worst = 0, worstAt = 0;
+    for (let i = 1; i < pts.length; i++) {
+      if (pts[i][0] < from) continue;
+      const gap = (pts[i][0] - pts[i - 1][0]) / 86_400;
+      if (gap > worst) { worst = gap; worstAt = pts[i - 1][0]; }
+    }
+    if (worst > MAX_GAP_DAYS) {
+      const at = new Date(worstAt * 1000).toISOString().slice(0, 10);
+      return { ok: false, why: `${Math.round(worst)}-day hole in the series from ${at} — the moving average and the 1M/3M windows would be measured across it` };
+    }
+    return { ok: true, why: '' };
+  };
+  const healthCache = new Map<string, { ok: boolean; why: string }>();
+  const healthOf = (sym: string) => {
+    let h = healthCache.get(sym);
+    if (!h) { h = seriesHealth(sym); healthCache.set(sym, h); }
+    return h;
+  };
+  const enough = (sym: string) => healthOf(sym).ok;
 
   // zzz483 — SELF-HEAL for the long term: a proxy ETF/index can be delisted or
   // renamed over the years. Any proxy theme whose series failed to fetch falls
@@ -422,7 +481,8 @@ async function build(region: ThemeRegion) {
   // maintenance — the leaders can drift over a decade, but the tab never goes dark.
   const rescue = new Set<string>();
   for (const t of themes) {
-    // A proxy whose SERIES failed — the original self-heal.
+    // A proxy whose SERIES failed — the original self-heal, now catching the
+    // gappy indices too.
     if (t.proxy && !enough(t.proxy)) { leadersFor(t).forEach((s) => { if (!data.has(s)) rescue.add(s); }); continue; }
     // zzz644 — AND A PROXY WHOSE SERIES IS FINE BUT WHOSE DAY MOVE IS NOT.
     // Yahoo's Indian sector indices are the case: the 2y history is usable, so
@@ -455,6 +515,7 @@ async function build(region: ThemeRegion) {
     // their ETF/index failed — the self-heal above).
     let ts: number[] = [], closes: number[] = [], price = 0, dayChg = 0, breadthAbove50: number | null = null, members: string[] = [];
     let sourceKind: 'proxy' | 'basket' | 'proxy-fallback' = 'basket';
+    let fallbackReason: string | null = null;
     let dayChgFrom: 'proxy' | 'members' | 'none' = 'none';
     if (t.proxy && enough(t.proxy)) {
       const d = data.get(t.proxy)!;
@@ -473,6 +534,10 @@ async function build(region: ThemeRegion) {
       const memberSyms = (t.basket && t.basket.length) ? t.basket : leadersFor(t);
       members = memberSyms;
       sourceKind = t.proxy ? 'proxy-fallback' : 'basket';
+      // zzz650 — WHY it fell back, in words, carried to the card. "This is a
+      // basket" is not the same information as "the index this theme is named
+      // after has a sixty-day hole in it and cannot be used".
+      if (t.proxy) fallbackReason = healthOf(t.proxy).why || 'the proxy index series was unusable';
       const memberSeries = memberSyms.map((s) => data.get(s)).filter(Boolean) as { ts: number[]; closes: number[]; price: number; dayChg: number; dayKnown: boolean }[];
       const synth = synthesize(memberSeries.map((m) => ({ ts: m.ts, closes: m.closes })));
       ts = synth.ts; closes = synth.closes;
@@ -588,7 +653,7 @@ async function build(region: ThemeRegion) {
     }
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
-      proxy: t.proxy || null, members, sourceKind,
+      proxy: t.proxy || null, members, sourceKind, fallbackReason,
       price: +price.toFixed(2), dayChangePct: +dayChg.toFixed(2),
       // Where today's move came from, so a reader can tell a real flat day from
       // an index the feed could not price and a constituent-average stand-in.

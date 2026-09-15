@@ -405,6 +405,56 @@ export default function AiDeskPage() {
             </div>
           </div>
 
+          {/* ═══ A TABLE OF EDGES COMPUTED ENTIRELY FROM HINDSIGHT  (zzz649) ══
+              Every row in this ledger so far was recorded after its filing, so
+              the table below is retrospective in full. It is still arithmetic
+              on real outcomes — nothing is fitted and nothing is cherry-picked
+              — but it is NOT a track record, and a green "+5.6pp" over four
+              observations is the most seductively wrong thing this whole site
+              can show. So while the record is entirely backfilled, or too
+              small to mean anything, the table is desaturated and carries this
+              ribbon. It regains its colour on its own as live rows accumulate;
+              nothing has to be remembered or switched off later. */}
+          {(() => {
+            const total = ledger?.total ?? 0;
+            const scored = ledger?.scored ?? 0;
+            const back = ledger?.backfilled ?? 0;
+            const live = Math.max(0, total - back);
+            const allRetro = total > 0 && live === 0;
+            const tooThin = scored < 30;
+            if (!(ledger?.learned || []).length) return null;
+            if (!allRetro && !tooThin) return null;
+            return (
+              <div style={{
+                ...panel(),
+                borderLeft: '3px solid #EF4444',
+                background: 'rgba(239,68,68,0.06)',
+                borderColor: 'rgba(239,68,68,0.35)',
+              }}>
+                <div style={{ fontSize: 11.5, fontWeight: 900, color: '#EF4444', letterSpacing: 0.4 }}>
+                  {allRetro ? '⚠ RETROSPECTIVE ONLY — THIS IS NOT A TRACK RECORD' : '⚠ SAMPLE TOO SMALL TO BE EVIDENCE'}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)', marginTop: 5, lineHeight: 1.6 }}>
+                  {allRetro
+                    ? <>All {total} entries were recorded <b>after</b> their filing dates, so every number below is arithmetic on outcomes that had already happened. Nothing is fitted and nothing is cherry-picked — the inputs are the filing&rsquo;s own and none were chosen knowing the result — but a retrospective sample cannot tell you whether the desk <i>predicts</i>. It can only tell you what these conditions looked like in the past. The table earns its colour back on its own once live calls accumulate.</>
+                    : <>Only {scored} marked prediction{scored === 1 ? '' : 's'} so far. A difference of a few percentage points across a handful of observations is noise wearing a number.</>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginTop: 6, fontFamily: 'ui-monospace,monospace' }}>
+                  {live} live · {back} backfilled · {scored} marked — the table below greys out until both counts are healthy.
+                </div>
+              </div>
+            );
+          })()}
+
+          <div style={(() => {
+            const total = ledger?.total ?? 0;
+            const scored = ledger?.scored ?? 0;
+            const live = Math.max(0, total - (ledger?.backfilled ?? 0));
+            const suppress = (ledger?.learned || []).length > 0 && (( total > 0 && live === 0) || scored < 30);
+            return suppress
+              ? { filter: 'saturate(0.2) opacity(0.5)', pointerEvents: 'none' as const }
+              : {};
+          })()}>
           {(ledger?.learned || []).map((L: any) => (
             <div key={L.horizon} style={panel()}>
               <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 8 }}>
@@ -441,6 +491,7 @@ export default function AiDeskPage() {
               </div>
             </div>
           ))}
+          </div>
 
           {(ledger?.entries || []).length > 0 && (
             <div style={panel()}>

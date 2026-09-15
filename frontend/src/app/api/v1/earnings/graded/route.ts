@@ -1349,10 +1349,29 @@ export async function GET(req: Request) {
           existingHasData = n > 0;
         }
       } catch {}
-      // TTL slashed: 1 hour instead of 365 days. If today is legit empty,
-      // we'll re-resolve quickly tomorrow. PATCH 1002.
+      // ═══ AN HOUR IS RIGHT FOR TODAY AND WRONG FOR LAST WEEK  (zzz647) ═══
+      //
+      // PATCH 1002 cut this to one hour so a day that looked empty only
+      // because the filings had not propagated would re-resolve quickly. That
+      // is correct for a session still settling — and badly wrong once it has
+      // settled, because after the hour expires the day reverts to having NO
+      // CACHE AT ALL, and every cache_only reader is told `pending: true`
+      // for ever. The AI Research Desk reads exactly that way, so 2026-09-09
+      // — a session on which no Indian company filed anything, a completed and
+      // entirely ordinary fact — showed on the page as "1 session not graded
+      // yet", permanently, alongside a genuinely ungraded today.
+      //
+      // "Nothing was filed" and "we have not looked yet" are opposite
+      // statements and the page can only tell them apart if the first one is
+      // actually stored. So the TTL now follows the age of the SESSION rather
+      // than being one number for all of them: a few days of settling time at
+      // an hour, and after that the empty is a fact and is kept like one. A
+      // force rebuild still overrides it at any time.
+      const SETTLE_DAYS = 4;
+      const ageDays = Math.floor((Date.now() - Date.parse(`${date}T00:00:00Z`)) / 86_400_000);
+      const emptyTtl = ageDays > SETTLE_DAYS ? 180 * 24 * 3600 : 3600;
       if (!existingHasData) {
-        try { await kvSet(cacheKey, empty, 3600); } catch {}
+        try { await kvSet(cacheKey, empty, emptyTtl); } catch {}
       } else {
         console.log(`[graded] PATCH 1002: kept existing non-empty cache for ${date}, skipped empty overwrite`);
       }

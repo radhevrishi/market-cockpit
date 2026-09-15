@@ -76,10 +76,19 @@ export interface BucketVerdict {
 /** Where the latest operating margin sits inside its own filed range, 0-100. */
 function opmPercentile(e: UsConvictionEntry): number | null {
   const s: any = e.series;
-  if (!s || !Array.isArray(s.revenue) || !Array.isArray(s.operating_income)) return null;
+  if (!s || !Array.isArray(s.revenue)) return null;
+  // zzz648 — operating income where it was filed, gross profit where it was
+  // not. Without this the percentile was null for every company XBRL tags
+  // with a gross-profit line and no operating-income line, which is a large
+  // and entirely arbitrary slice of the field.
+  const profitLine: any[] | null =
+    Array.isArray(s.operating_income) && s.operating_income.filter((x: any) => x != null).length >= 6 ? s.operating_income
+    : Array.isArray(s.gross_profit) && s.gross_profit.filter((x: any) => x != null).length >= 6 ? s.gross_profit
+    : null;
+  if (!profitLine) return null;
   const opm: number[] = [];
   for (let i = 0; i < s.revenue.length; i++) {
-    const rev = fin(s.revenue[i]), oi = fin(s.operating_income[i]);
+    const rev = fin(s.revenue[i]), oi = fin(profitLine[i]);
     if (rev != null && rev > 0 && oi != null) opm.push((oi / rev) * 100);
   }
   if (opm.length < 6) return null;
@@ -100,17 +109,172 @@ function revenueDecelerating(e: UsConvictionEntry): boolean | null {
   return (now / prev - 1) < (prev / prev2 - 1) - 0.02;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE INPUTS, DERIVED FROM THE FILINGS WHEN THE ENGINE DID NOT CARRY THEM
+// (zzz648)
+//
+// Seven of ninety-three bench entries came back "? — too few filed quarters".
+// Four of them had SIXTEEN OR SEVENTEEN filed quarters of revenue, earnings and
+// cash flow sitting on the entry. What was missing was never the history; it
+// was the engine's pre-computed SCALARS — opm_pct, cfo_to_pat_ratio,
+// fcf_curr_musd — which XBRL does not always tag in a shape the grader picks
+// up. The classifier was refusing to judge companies whose numbers it was
+// holding the whole time.
+//
+// So each gate input is taken from the engine when the engine has it, and
+// otherwise computed from the filed series. Nothing is invented and nothing is
+// estimated: these are the same figures, summed from the same filings, and
+// every one records how it was obtained so a derived number can never be
+// mistaken for a reported one.
+//
+// Everything is measured on TRAILING TWELVE MONTHS rather than on single
+// quarters, for the reason the valuation engine already learned the hard way:
+// a business whose December quarter is twice its September one reads as
+// compounding furiously on raw quarters and as dying on the next step. Summing
+// the year first removes the season and leaves the trend.
+// ═══════════════════════════════════════════════════════════════════════════
+interface DerivedInputs {
+  salesY: number | null;
+  cfoNi: number | null;
+  opmDelta: number | null;
+  opm: number | null;
+  fcf: number | null;
+  fcfPrev: number | null;
+  /** Which of these did not come from the engine, and how they were obtained.
+   *  Printed on the card — a derived margin is not a reported one. */
+  derived: string[];
+  /** True when the margin below is a GROSS margin because no operating-income
+   *  line was filed. A different thing, said so rather than blended in. */
+  marginIsGross: boolean;
+  /** Cash conversion is UNDEFINED, not unknown: the company lost money over
+   *  the trailing twelve months, so there is no net income to convert into.
+   *  Treating that as a missing input made every loss-making company
+   *  unclassifiable — which is the opposite of the truth, because a loss is
+   *  one of the most informative things a filing can say. */
+  cfoNiNotApplicable: boolean;
+  /** Trailing-twelve-month net income and operating income, where filed. */
+  ttmNetIncome: number | null;
+  ttmOperatingIncome: number | null;
+}
+
+const seriesOf = (e: UsConvictionEntry, k: string): number[] => {
+  const raw = (e.series as any)?.[k];
+  return Array.isArray(raw) ? raw.map(fin).filter((x): x is number => x != null) : [];
+};
+/** Sum of the four periods ending `endExclusive`. */
+const ttmAt = (v: number[], endExclusive: number): number | null =>
+  endExclusive >= 4 && endExclusive <= v.length
+    ? v.slice(endExclusive - 4, endExclusive).reduce((a, b) => a + b, 0)
+    : null;
+
+function derivedInputs(e: UsConvictionEntry): DerivedInputs {
+  const out: DerivedInputs = {
+    salesY: fin(e.sales_yoy_pct),
+    cfoNi: fin(e.cfo_to_pat_ratio),
+    opm: fin(e.opm_pct),
+    opmDelta: null,
+    fcf: fin(e.fcf_curr_musd),
+    fcfPrev: fin(e.fcf_prev_musd),
+    derived: [],
+    marginIsGross: false,
+    cfoNiNotApplicable: false,
+    ttmNetIncome: null,
+    ttmOperatingIncome: null,
+  };
+  const opmRep = fin(e.opm_pct), opmPrevRep = fin(e.opm_prev_pct);
+  if (opmRep != null && opmPrevRep != null) out.opmDelta = opmRep - opmPrevRep;
+
+  const rev = seriesOf(e, 'revenue');
+  const ni = seriesOf(e, 'net_income');
+  const cfo = seriesOf(e, 'cfo');
+  const fcfS = seriesOf(e, 'fcf');
+  const oi = seriesOf(e, 'operating_income');
+  const gp = seriesOf(e, 'gross_profit');
+
+  // ── revenue growth, year on year, on trailing years ──────────────────────
+  if (out.salesY == null && rev.length >= 8) {
+    const now = ttmAt(rev, rev.length), prev = ttmAt(rev, rev.length - 4);
+    if (now != null && prev != null && prev > 0) {
+      out.salesY = +(((now / prev) - 1) * 100).toFixed(1);
+      out.derived.push(`Revenue growth ${out.salesY >= 0 ? '+' : ''}${out.salesY.toFixed(0)}% computed from the filed revenue series (trailing twelve months against the prior twelve), because the engine carried no year-over-year figure.`);
+    }
+  }
+
+  // ── cash conversion ──────────────────────────────────────────────────────
+  out.ttmNetIncome = ni.length >= 4 ? ttmAt(ni, ni.length) : null;
+  out.ttmOperatingIncome = oi.length >= 4 ? ttmAt(oi, oi.length) : null;
+  if (out.cfoNi == null && cfo.length >= 4 && ni.length >= 4) {
+    const c = ttmAt(cfo, cfo.length), n = out.ttmNetIncome;
+    if (c != null && n != null && n > 0) {
+      out.cfoNi = +(c / n).toFixed(2);
+      out.derived.push(`Cash conversion ${out.cfoNi.toFixed(2)}× computed from the filed cash-flow and net-income series over the trailing twelve months, because the engine carried no ratio.`);
+    } else if (n != null && n <= 0) {
+      // NOT MISSING — UNDEFINED, and the difference decides whether the
+      // company can be judged at all. Dividing cash flow by a loss produces a
+      // number with no meaning, so none is produced; but the loss itself is a
+      // fact we hold, and the classifier is entitled to use it.
+      out.cfoNiNotApplicable = true;
+      out.derived.push(`Cash conversion cannot be stated: the company lost money over the trailing twelve months (${n.toFixed(0)}), and cash flow against a loss is not a ratio. This is a known fact about the business, not a gap in the data.`);
+    }
+  }
+
+  // ── margin, and its change ───────────────────────────────────────────────
+  // Operating income where it was filed; gross profit only when it was not,
+  // and never silently — a gross margin moves for different reasons and the
+  // card says which one it is looking at.
+  if (out.opmDelta == null && rev.length >= 8) {
+    const useOi = oi.length >= 8;
+    const prof = useOi ? oi : gp;
+    if (prof.length >= 8) {
+      const n = Math.min(prof.length, rev.length);
+      const pNow = ttmAt(prof, n), rNow = ttmAt(rev, n);
+      const pPrev = ttmAt(prof, n - 4), rPrev = ttmAt(rev, n - 4);
+      if (pNow != null && rNow != null && rNow > 0 && pPrev != null && rPrev != null && rPrev > 0) {
+        const mNow = (pNow / rNow) * 100, mPrev = (pPrev / rPrev) * 100;
+        out.opm = out.opm ?? +mNow.toFixed(1);
+        out.opmDelta = +(mNow - mPrev).toFixed(1);
+        out.marginIsGross = !useOi;
+        out.derived.push(`${useOi ? 'Operating' : 'Gross'} margin ${mNow.toFixed(1)}% against ${mPrev.toFixed(1)}% a year ago, computed from the filed ${useOi ? 'operating-income' : 'gross-profit'} and revenue series, because the engine carried no margin${useOi ? '' : '. No operating-income line was filed, so this is a GROSS margin — it moves with mix and input costs, not with operating leverage'}.`);
+      }
+    }
+  }
+
+  // ── free cash flow ───────────────────────────────────────────────────────
+  if (out.fcf == null && fcfS.length >= 4) {
+    const f = ttmAt(fcfS, fcfS.length);
+    if (f != null) {
+      out.fcf = +f.toFixed(1);
+      out.derived.push(`Free cash flow ${out.fcf.toFixed(0)} over the trailing twelve months, summed from the filed series, because the engine carried no quarterly figure.`);
+    }
+  }
+  if (out.fcfPrev == null && fcfS.length >= 8) {
+    const f = ttmAt(fcfS, fcfS.length - 4);
+    if (f != null) out.fcfPrev = +f.toFixed(1);
+  }
+  return out;
+}
+
 export function bucketFor(e: UsConvictionEntry): BucketVerdict {
   const reasons: string[] = [];
   const against: string[] = [];
 
-  const salesY = fin(e.sales_yoy_pct);
+  // Engine scalars where they exist, the filed series where they do not.
+  const D = derivedInputs(e);
+  const salesY = D.salesY;
   const epsY = fin(e.eps_yoy_pct) ?? fin(e.eps_adj_yoy_pct);
-  const cfoNi = fin(e.cfo_to_pat_ratio);
-  const fcf = fin(e.fcf_curr_musd);
-  const fcfPrev = fin(e.fcf_prev_musd);
-  const opm = fin(e.opm_pct), opmPrev = fin(e.opm_prev_pct);
-  const opmDelta = (opm != null && opmPrev != null) ? opm - opmPrev : null;
+  const cfoNi = D.cfoNi;
+  const fcf = D.fcf;
+  const fcfPrev = D.fcfPrev;
+  const opmDelta = D.opmDelta;
+  const opm = D.opm;
+  const opmPrev = (D.opm != null && D.opmDelta != null) ? +(D.opm - D.opmDelta).toFixed(1) : null;
+  // A gross margin is not an operating margin, and the sentences below say
+  // "operating". Where the figure had to come from gross profit the noun is
+  // corrected at the point of use rather than the reader being left to guess.
+  const marginNoun = D.marginIsGross ? 'Gross margin' : 'Operating margin';
+  // Every derived figure is disclosed on the card next to the verdict it
+  // helped reach, so nobody reads a computed margin as a reported one.
+  if (D.derived.length) against.push(...D.derived.map((d) => `Derived, not reported — ${d}`));
   const caveats = (e.caveat_tags || []).map((c) => String(c).toLowerCase());
   const has = (frag: string) => caveats.some((c) => c.includes(frag));
   const growth = growthEvidenceOf(e);
@@ -187,8 +351,8 @@ export function bucketFor(e: UsConvictionEntry): BucketVerdict {
   // one — and it is the YEAR that changed, not one quarter inside it.
   {
     const r: string[] = [];
-    if (opmDelta != null && opmDelta >= 4) r.push(`Operating margin expanded ${opmDelta.toFixed(1)}pp year over year — a step change, not a drift.`);
-    if (opmPrev != null && opmPrev < 5 && opm != null && opm >= 8) r.push(`Margin went from ${opmPrev.toFixed(1)}% to ${opm.toFixed(1)}% — a different business at the operating line.`);
+    if (opmDelta != null && opmDelta >= 4) r.push(`${marginNoun} expanded ${opmDelta.toFixed(1)}pp year over year — a step change, not a drift.`);
+    if (opmPrev != null && opmPrev < 5 && opm != null && opm >= 8) r.push(`${marginNoun} went from ${opmPrev.toFixed(1)}% to ${opm.toFixed(1)}% — a different business at the ${D.marginIsGross ? 'gross' : 'operating'} line.`);
     if (String(e.eps_swing || '') === 'loss-to-profit' || String(e.net_income_swing || '') === 'loss-to-profit') r.push('Swung from a loss to a profit.');
     if (growth.trend === 'accelerating') r.push('The growth rate itself is accelerating, measured on rolling twelve-month periods.');
     // ONE STRONG SIGNAL IS ENOUGH HERE. Demanding two meant a company whose
@@ -244,19 +408,46 @@ export function bucketFor(e: UsConvictionEntry): BucketVerdict {
   // If the inputs were there and nothing qualified, that IS the verdict: a
   // real quarter with nothing in it that compounds. If the inputs were not
   // there, say that instead — the two must never be reported as one thing.
-  const haveInputs = [salesY, cfoNi, opmDelta, fcf].filter((x) => x != null).length >= 3
-    && (growth.seriesCagr != null || (e.series as any)?.eps?.length >= 6);
+  //
+  // zzz648 — THE GATE COUNTS WHAT IS KNOWN, NOT WHAT IS POPULATED. It used to
+  // demand three of four non-null scalars, which failed two different ways:
+  // a company with sixteen filed quarters whose scalars XBRL never tagged, and
+  // a LOSS-MAKING company, whose cash-conversion ratio is undefined by
+  // definition and was therefore counted as an absence. A trailing-twelve-month
+  // loss is one of the most informative things a filing can state; it should
+  // never be the reason a company cannot be judged.
+  const known = [salesY, cfoNi, opmDelta, fcf].filter((x) => x != null).length
+    + (D.cfoNiNotApplicable ? 1 : 0);
+  const enoughHistory = growth.seriesCagr != null || ((e.series as any)?.eps?.length ?? 0) >= 6;
+  const haveInputs = known >= 3 && enoughHistory;
   if (haveInputs) {
+    const lossMaking = (D.ttmNetIncome != null && D.ttmNetIncome <= 0)
+      || (D.ttmOperatingIncome != null && D.ttmOperatingIncome <= 0);
     return {
       bucket: 'F',
       reasons: reasons.length ? reasons
-        : ['The print holds up, but nothing here argues for a multibagger: growth, margin, cash conversion and valuation are all ordinary.'],
+        : lossMaking
+          ? [`No multibagger case here yet, and the reason is specific: the company is still loss-making over the trailing twelve months${D.ttmOperatingIncome != null ? ` (operating income ${D.ttmOperatingIncome.toFixed(0)})` : ''}${opmDelta != null ? `, with the margin ${opmDelta >= 0 ? `improving ${opmDelta.toFixed(1)}pp` : `deteriorating ${Math.abs(opmDelta).toFixed(1)}pp`} year over year` : ''}. That is a turnaround to watch for, not a compounder to own — the inflection bucket above is where it would land once the shape actually changes.`]
+          : ['The print holds up, but nothing here argues for a multibagger: growth, margin, cash conversion and valuation are all ordinary.'],
       against,
     };
   }
   return {
     bucket: '?',
-    reasons: ['Too few filed quarters, or missing revenue / margin / cash-flow inputs, to place this honestly.'],
+    // SAY WHICH ONE IS MISSING. "Not enough data" is the least useful thing a
+    // classifier can print; the reader wants to know whether to wait a quarter
+    // or go and look at the filing themselves.
+    reasons: [(() => {
+      const q = ((e.series as any)?.eps ?? []).filter((x: any) => x != null).length;
+      if (!enoughHistory) return `Only ${q} filed quarter${q === 1 ? '' : 's'} of earnings on this entry — fewer than the six needed to say anything about a trend. This is a timing gap, not a judgement: it becomes classifiable on its own as the filings accumulate.`;
+      const missing = [
+        salesY == null ? 'revenue growth' : null,
+        (cfoNi == null && !D.cfoNiNotApplicable) ? 'cash conversion' : null,
+        opmDelta == null ? 'margin change' : null,
+        fcf == null ? 'free cash flow' : null,
+      ].filter(Boolean);
+      return `${q} filed quarters are on this entry, but ${missing.join(', ')} could not be obtained from them or from the engine — too little to place this honestly. The filing itself will have the figure; the grader did not capture it.`;
+    })()],
     against,
   };
 }
