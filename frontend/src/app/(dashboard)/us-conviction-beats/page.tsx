@@ -44,6 +44,7 @@ import {
 import { buildTvExport } from '@/lib/us-tradingview';
 import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-process';
+import { classifyTheme } from '@/lib/theme-classify';
 
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -587,7 +588,16 @@ export default function UsConvictionBeatsPage() {
   // full of one-offs, and that is worth knowing before reading any single card.
   const [bucketFilter, setBucketFilter] = useState<BucketId | null>(null);
   const [funnelStop, setFunnelStop] = useState<string | null>(null);
-  const funnel = useMemo(() => buildFunnel(entries), [entries]);
+  // THE BOTTLENECK STEP NEEDS A THEME, OR IT MATCHES ALMOST NOTHING. Without
+  // this resolver the step could only see the handful of hand-curated US proxy
+  // tickers, and the staircase collapsed 159 → 1 — which looks like a verdict
+  // and is really just a missing argument. The same classifier the rotation
+  // board uses places each name in a theme, and the chain map does the rest.
+  const themeOf = useCallback((ticker: string) => {
+    const e = entries.find((x) => x.ticker === ticker);
+    return e ? classifyTheme(e.sector, (e as any).industry, 'us', e.ticker) : null;
+  }, [entries]);
+  const funnel = useMemo(() => buildFunnel(entries, { themeOf }), [entries, themeOf]);
   const bucketCounts = useMemo(() => {
     const c: Record<string, number> = {};
     funnel.bucketOf.forEach((v) => { c[v.bucket] = (c[v.bucket] || 0) + 1; });
