@@ -137,6 +137,8 @@ async function fetchSession(ddmmyyyy, want) {
     const iPrv = head.indexOf('PREV_CLOSE');
     if (iSym < 0 || iCls < 0) return { holiday: false, closes: null };
     const closes = {};
+    const turnover = {};
+    const iTov = head.indexOf('TURNOVER_LACS');
     const dayRets = [];
     for (let i = 1; i < lines.length; i++) {
       const c = lines[i].split(',');
@@ -153,6 +155,10 @@ async function fetchSession(ddmmyyyy, want) {
         if (Number.isFinite(pv) && pv > 0) dayRets.push(((px - pv) / pv) * 100);
       }
       if (!want || want.has(sym)) closes[sym] = px;
+      if (!want && iTov >= 0) {
+        const tv = Number(String(c[iTov] || '').trim());
+        if (Number.isFinite(tv)) turnover[sym] = tv;
+      }
     }
     // THE MEAN, NOT THE MEDIAN.
     //
@@ -173,7 +179,7 @@ async function fetchSession(ddmmyyyy, want) {
       const core = dayRets.slice(cut, dayRets.length - cut);
       mktRet = core.reduce((a, b) => a + b, 0) / core.length;
     }
-    return { holiday: false, closes, mktRet };
+    return { holiday: false, closes, turnover, mktRet };
   } catch { clearTimeout(t); return { holiday: false, closes: null }; }
 }
 
@@ -300,8 +306,33 @@ async function main() {
   const fromBench = Array.isArray(bench?.entries)
     ? bench.entries.map((e) => String(e?.ticker || '').toUpperCase()).filter(Boolean) : [];
   const extra = String(process.env.EXTRA_SYMBOLS || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
-  const want = new Set([...Object.keys(series), ...fromBench, ...extra].slice(0, MAX_SYMBOLS));
-  console.log(`working set: ${want.size} symbols (bench ${fromBench.length}, already in history ${Object.keys(series).length})`);
+  // THE BENCH IS NOT ENOUGH, AND THAT IS THE WHOLE POINT.
+  //
+  // The first version stored history only for names already on the bench. But
+  // the names being GRADED are new filers, and a new filer is not on the bench
+  // until the morning after it reports — so the company whose card you are
+  // reading is precisely the one with no technicals. MOLBIO graded on 08 Sep
+  // with stage null and RS null for exactly this reason.
+  //
+  // So the working set is the bench PLUS the most liquid part of the exchange,
+  // up to the cap. Then a company that reports tomorrow already has two hundred
+  // sessions of history waiting for it. Turnover is the filter because a name
+  // nobody trades is one the thin-float gate would demote anyway.
+  let universe = Array.isArray(priorHist.universe) ? priorHist.universe : [];
+  const universeAge = priorHist.universeAt ? (Date.now() - Date.parse(priorHist.universeAt)) / 86_400_000 : 999;
+  if (!universe.length || universeAge > 7) {
+    for (let i = 1; i <= 8 && !universe.length; i++) {
+      const d = new Date(Date.now() - i * 86_400_000);
+      if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+      const probe = await fetchSession(stampOf(d), null);      // unfiltered: one file
+      if (probe.holiday || !probe.turnover) continue;
+      universe = Object.entries(probe.turnover)
+        .sort((a, b) => b[1] - a[1]).map(([sym]) => sym).slice(0, MAX_SYMBOLS);
+      console.log(`universe rebuilt from ${isoOf(d)}: ${universe.length} symbols by turnover`);
+    }
+  }
+  const want = new Set([...fromBench, ...extra, ...Object.keys(series), ...universe].slice(0, MAX_SYMBOLS));
+  console.log(`working set: ${want.size} symbols (bench ${fromBench.length}, universe ${universe.length}, in history ${Object.keys(series).length})`);
 
   // ── 1. fetch the sessions we do not already hold ──────────────────────
   const wanted = [];
@@ -340,7 +371,8 @@ async function main() {
       if (!Object.keys(obj[sym]).length) delete obj[sym];
     }
   };
-  let hist = { generatedAt: new Date().toISOString(), marketBasis: MARKET_BASIS, sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
+  let hist = { generatedAt: new Date().toISOString(), marketBasis: MARKET_BASIS,
+    universe, universeAt: universe.length ? new Date().toISOString() : (priorHist.universeAt || null), sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
   const LIMIT = 9_000_000;
   let guard = 0;
   while (JSON.stringify(hist).length > LIMIT && guard++ < 12) {
@@ -366,7 +398,9 @@ async function main() {
   console.log(`market ${mdDates.length}-session compounded return: ${benchmarkRet12m == null ? 'not enough history yet' : benchmarkRet12m.toFixed(1) + '%'}`);
 
   // ── 3. compute technicals ─────────────────────────────────────────────
-  const targets = [...new Set([...fromBench, ...extra])];
+  // Compute for everything we hold history for, not just the bench — that is
+  // what puts a new filer's stage and RS on its card the day it reports.
+  const targets = [...want];
   const out = {};
   for (const sym of targets) {
     const m = series[sym];
