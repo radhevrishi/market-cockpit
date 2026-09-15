@@ -171,6 +171,32 @@ export default function ThemeRotationTab() {
   const [benchReady, setBenchReady] = useState(false);
   useEffect(() => { void hydrateUsConviction().finally(() => setBenchReady(true)); }, []);
 
+  // ═══ INDIA NAMES HAD NO SECTOR AT ALL  (zzz631) ═══════════════════════════
+  //
+  // Every India-graded row comes back with sector:'' and industry:null — all
+  // 962 in a five-day sample — and the theme classifier reads exactly those two
+  // fields. So 257 of the 478 names in the India book sat under "Unclassified ·
+  // no theme call": more than half the book with no rotation call on it.
+  //
+  // The industry does exist, just not on that row: the nse-ticker-universe blob
+  // the breadth engine already uses carries one for the whole NSE universe.
+  // Fetched once per region and folded in below, which classifies every India
+  // name — including ones the bench has not met yet — with no hand-maintained
+  // ticker list anywhere.
+  const [nseIndustry, setNseIndustry] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (region !== 'india' || nseIndustry) return;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/nse-industry', { cache: 'force-cache' });
+        const j = await r.json();
+        if (alive && j?.map) setNseIndustry(j.map);
+      } catch { /* the book simply stays as it was */ }
+    })();
+    return () => { alive = false; };
+  }, [region, nseIndustry]);
+
   useEffect(() => { if (!data[region]) load(region); }, [region, data, load]);
   useEffect(() => { setExpandedIds(new Set()); }, [region]);
 
@@ -309,7 +335,15 @@ export default function ThemeRotationTab() {
     const all = [...map.values()];
     const groups = new Map<string, typeof all>();
     const other: typeof all = [];
-    for (const st of all) { const tid = classifyTheme(st.sector, st.industry, region, st.symbol); if (tid) { if (!groups.has(tid)) groups.set(tid, []); groups.get(tid)!.push(st); } else other.push(st); }
+    for (const st of all) {
+      // The row's own sector/industry first; the NSE universe industry as the
+      // fallback that actually carries India. Both go through the same keyword
+      // classifier, so there is one set of rules, not two.
+      const nse = nseIndustry ? nseIndustry[String(st.symbol).toUpperCase()] : undefined;
+      const tid = classifyTheme(st.sector || nse, st.industry || nse, region, st.symbol);
+      if (tid) { if (!groups.has(tid)) groups.set(tid, []); groups.get(tid)!.push(st); }
+      else { if (nse && !st.sector) st.sector = nse; other.push(st); }
+    }
     // zzz487 — anything the classifier can't place still gets shown, grouped by its
     // raw sector (no rotation call, but visible) so NONE of the user's names vanish.
     const sectorGroups = new Map<string, typeof all>();
@@ -332,7 +366,7 @@ export default function ThemeRotationTab() {
     const graded = all.filter((x) => x.grade).length;
     const fromBench = all.filter((x) => x.inBench).length;
     return { total: all.length, themed: all.length - other.length, groups, other, sectorGroups, graded, fromBench };
-  }, [region, payload, userLists, benchReady]);
+  }, [region, payload, userLists, benchReady, nseIndustry]);
 
   // zzz495 — DUMMY PORTFOLIO. The best 25 of YOUR names, taken ONLY from themes the
   // engine currently rates BUY or EARLY BUY (Leading / genuine early-turn). Nothing

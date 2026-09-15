@@ -34,6 +34,7 @@ import { fyLike, ownGuideMove, ownGuideVerdict } from '@/lib/us-guide-verdict';
 import { QUADRANT_META, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { fmtKeyMetric, KEY_METRIC_LABEL, type KeyMetric, type KeyMetricId } from '@/lib/us-key-metrics';
 import UsValuationPanel from './us-valuation-panel';
+import UsProcessPanel from './us-process-panel';
 
 /** The neutral third state, used everywhere a comparison can land between two
  *  verdicts. A guided range that BRACKETS the estimate is IN LINE and reads
@@ -549,6 +550,9 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
               from the filed quarters already on this row, so it costs no
               fetch and contains no estimate anyone else made. */}
           <UsValuationPanel e={r as any} />
+          {/* THE PROCESS — which kind of quarter this is, whether management
+              does what it says, and what is holding the demand up (zzz630). */}
+          <UsProcessPanel e={r as any} />
           <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={pid} style={moreStrip(true)}>
             <ChevronUp className="w-3 h-3" /> LESS
           </button>

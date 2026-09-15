@@ -43,6 +43,7 @@ import {
 } from '@/components/us-earnings-card';
 import { buildTvExport } from '@/lib/us-tradingview';
 import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
+import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-process';
 
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -577,8 +578,32 @@ export default function UsConvictionBeatsPage() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [entries]);
 
+  // ═══ THE FUNNEL  (zzz630) ════════════════════════════════════════════════
+  //
+  // The process is a staircase — 264 → clean → durable → hunting ground →
+  // bottleneck → management — and the bench only ever showed the top step. A
+  // ranked list cannot tell you WHERE the field collapsed, and that is the
+  // information: if two hundred names die at "clean earnings", the window was
+  // full of one-offs, and that is worth knowing before reading any single card.
+  const [bucketFilter, setBucketFilter] = useState<BucketId | null>(null);
+  const [funnelStop, setFunnelStop] = useState<string | null>(null);
+  const funnel = useMemo(() => buildFunnel(entries), [entries]);
+  const bucketCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    funnel.bucketOf.forEach((v) => { c[v.bucket] = (c[v.bucket] || 0) + 1; });
+    return c;
+  }, [funnel]);
+
   const filtered = useMemo(() => {
-    const rows = entries.filter((e) => passesUsConvictionFilter(e, filters, newWindow));
+    let rows = entries.filter((e) => passesUsConvictionFilter(e, filters, newWindow));
+    // The funnel and the bucket chips are filters like any other — clicking a
+    // stage shows exactly what survived it, which is the only way to check the
+    // staircase rather than take its word for it.
+    if (bucketFilter) rows = rows.filter((e) => funnel.bucketOf.get(`${e.ticker}|${e.filing_date}`)?.bucket === bucketFilter);
+    if (funnelStop) {
+      const st = funnel.stages.find((x) => x.key === funnelStop);
+      if (st) { const keep = new Set(st.survivors); rows = rows.filter((e) => keep.has(`${e.ticker}|${e.filing_date}`)); }
+    }
     const num = (v: number | null | undefined, missing = -1e12) => (v == null || !Number.isFinite(v) ? missing : v);
     const key: Record<SortKey, (e: UsConvictionEntry) => number | string> = {
       fresh: (e) => e.filing_date,
@@ -600,7 +625,7 @@ export default function UsConvictionBeatsPage() {
       if (c !== 0) return c * dir;
       return (b.composite_score ?? 0) - (a.composite_score ?? 0);
     });
-  }, [entries, filters, sort, sortDir, newWindow]);
+  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel]);
 
   // ═══ NAMES THE SIZE FILTER IS HIDING  (zzz623) ══════════════════════════
   //
@@ -1041,6 +1066,77 @@ export default function UsConvictionBeatsPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══ THE PROCESS · THE FUNNEL AND THE FIVE BUCKETS  (zzz630) ═══════
+          "Earnings strength ≠ future multibagger" cannot be carried by one
+          tier: BLOCKBUSTER is handed to a structural compounder and to a
+          commodity business at the top of its cycle alike. The staircase below
+          is where the field actually collapses, and each step is clickable so
+          the claim can be checked rather than believed. */}
+      {entries.length > 0 && (
+        <div style={{ padding: 12, borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.5, color: 'var(--mc-text-2)' }}>🧭 THE PROCESS — where the field collapses</span>
+            {(bucketFilter || funnelStop) && (
+              <button onClick={() => { setBucketFilter(null); setFunnelStop(null); }}
+                style={{ fontSize: 10.5, fontWeight: 800, padding: '3px 9px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-3)' }}>
+                clear process filter
+              </button>
+            )}
+          </div>
+          {/* the staircase */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 9 }}>
+            {funnel.stages.map((st, i) => {
+              const on = funnelStop === st.key;
+              const pct = funnel.stages[0].survivors.length ? (st.survivors.length / funnel.stages[0].survivors.length) : 0;
+              return (
+                <button key={st.key} onClick={() => setFunnelStop(on ? null : st.key)} title={`${st.test}${st.dropped ? `\n\n${st.dropped} dropped at this step.` : ''}`}
+                  style={{
+                    flex: '1 1 130px', minWidth: 118, textAlign: 'left', cursor: 'pointer',
+                    padding: '7px 9px', borderRadius: 8,
+                    border: `1px solid ${on ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                    background: on ? 'color-mix(in srgb, var(--mc-cyan) 12%, transparent)' : 'var(--mc-bg-2)',
+                  }}>
+                  <div style={{ fontSize: 9, color: 'var(--mc-text-3)', letterSpacing: 0.3 }}>{i === 0 ? 'START' : `STEP ${i}`}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--mc-text-0)', lineHeight: 1.3, margin: '1px 0 3px' }}>{st.label}</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                    <span style={{ fontSize: 16, fontWeight: 900, fontFamily: 'ui-monospace,monospace', color: on ? 'var(--mc-cyan)' : 'var(--mc-text-0)' }}>{st.survivors.length}</span>
+                    {st.dropped > 0 && <span style={{ fontSize: 9.5, color: '#F87171' }}>−{st.dropped}</span>}
+                  </div>
+                  <div style={{ height: 3, borderRadius: 2, background: 'var(--mc-bg-4)', marginTop: 4 }}>
+                    <div style={{ height: '100%', width: `${Math.round(pct * 100)}%`, borderRadius: 2, background: on ? 'var(--mc-cyan)' : 'var(--mc-text-3)' }} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {/* the five buckets — click to see one */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 800 }}>Which kind of quarter:</span>
+            {(['A', 'B', 'C', 'D', 'E', 'F', '?'] as BucketId[]).map((b) => {
+              const meta = BUCKET_META[b];
+              const n = bucketCounts[b] || 0;
+              if (!n) return null;
+              const on = bucketFilter === b;
+              return (
+                <button key={b} onClick={() => setBucketFilter(on ? null : b)} title={meta.blurb}
+                  style={{
+                    fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 6, cursor: 'pointer',
+                    border: `1px solid ${on ? meta.color : `${meta.color}55`}`,
+                    background: on ? `${meta.color}26` : 'transparent', color: meta.color,
+                  }}>
+                  {b !== 'F' && b !== '?' ? `${b} · ` : ''}{meta.short} ({n})
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 9.5, color: 'var(--mc-text-3)', marginTop: 7, lineHeight: 1.55 }}>
+            {funnelStop
+              ? funnel.stages.find((x) => x.key === funnelStop)?.test
+              : 'Each step is a filter with a stated test; the number is what survived it. Click a step or a bucket to see exactly those names — the staircase is checkable, not decorative. Every classification is on the card, with the reasons that produced it and what argued against it.'}
+          </div>
         </div>
       )}
 
