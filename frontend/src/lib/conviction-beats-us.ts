@@ -274,6 +274,9 @@ export interface UsConvictionEntry {
   rs_rating?: number | null;
   stage?: number | null;
   pct_from_52w_high?: number | null;
+  /** zzz661 — distance from the 50- and 200-day averages, in percent. */
+  pct_vs_ma50?: number | null;
+  pct_vs_ma200?: number | null;
   addv_musd?: number | null;
   vol_ratio_20d?: number | null;
 
@@ -480,6 +483,8 @@ export function usBenchFields(rawIn: Record<string, any>): Record<string, any> {
     rs_rating: num(r.rs_rating),
     stage: num(r.stage),
     pct_from_52w_high: num(r.pct_from_52w_high),
+    pct_vs_ma50: num(r.pct_vs_ma50),
+    pct_vs_ma200: num(r.pct_vs_ma200),
     addv_musd: num(r.addv_musd),
     vol_ratio_20d: num(r.vol_ratio_20d),
 
@@ -2002,6 +2007,20 @@ export const US_PRESET = {
   opmDelta: 0,
   cfoPatMin: 0.5,
   mktCapMinMusd: 300,
+  // ═══ THE TREND GATE  (zzz661) ═════════════════════════════════════════
+  // A great quarter in a downtrend is a great quarter you will hold through
+  // a drawdown. Above BOTH averages is the classic definition of a stock the
+  // market is still paying for: the 50-day says the recent trend is intact,
+  // the 200-day says the primary one is. Requiring both is stricter than
+  // either and much stricter than "not stage 4", which was the only trend
+  // test anywhere in the preset before this.
+  //
+  // Deliberately NOT the Weinstein stage. Stage 2 additionally demands the
+  // 50 above the 200 and the 200 rising, which is a different and later
+  // condition — a stock reclaiming both averages after a base is exactly
+  // what this bench exists to catch, and stage 2 would not see it for weeks.
+  requireAboveMa50: true,
+  requireAboveMa200: true,
   verdicts: ['STRONG BUY', 'BUY', 'WATCH'] as string[],
 };
 
@@ -2074,6 +2093,9 @@ export interface UsConvFilters {
   mktCapMin: number | null;      // $M
   peMax: number | null;
   score: number | null;
+  /** zzz661 — trend gates: price above its 50- / 200-day average. */
+  aboveMa50?: boolean;
+  aboveMa200?: boolean;
   /** Net-income growth ÷ revenue growth — the India bench's op-leverage gate. */
   opLev: number | null;
   /** Minimum winners-scorecard composite. Names the scorecard refused to score
@@ -2117,6 +2139,7 @@ export interface UsConvFilters {
 export const US_FILTER_DEFAULT: UsConvFilters = {
   sales: null, eps: null, pat: null, pead: null, opmDelta: null, opmMin: null,
   cfoPatMin: null, mktCapMin: null, peMax: null, score: null, opLev: null, winMin: null,
+  aboveMa50: false, aboveMa200: false,
   d1Bucket: null, driftBucket: null, guidance: null, guideBeatOnly: false,
   marginSlopeUp: false, shareShrinkOnly: false, thesis: null,
   quarter: null, fy: null, fromDate: null, toDate: null,
@@ -2131,6 +2154,7 @@ export function usPresetFilters(): UsConvFilters {
     sales: US_PRESET.sales, eps: US_PRESET.eps, pead: US_PRESET.pead,
     opmDelta: US_PRESET.opmDelta, cfoPatMin: US_PRESET.cfoPatMin,
     mktCapMin: US_PRESET.mktCapMinMusd, verdicts: [...US_PRESET.verdicts],
+    aboveMa50: US_PRESET.requireAboveMa50, aboveMa200: US_PRESET.requireAboveMa200,
   };
 }
 
@@ -2138,6 +2162,7 @@ export function isUsPresetActive(f: UsConvFilters): boolean {
   return f.sales === US_PRESET.sales && f.eps === US_PRESET.eps && f.pead === US_PRESET.pead
     && f.opmDelta === US_PRESET.opmDelta && f.cfoPatMin === US_PRESET.cfoPatMin
     && f.mktCapMin === US_PRESET.mktCapMinMusd
+    && !!f.aboveMa50 === US_PRESET.requireAboveMa50 && !!f.aboveMa200 === US_PRESET.requireAboveMa200
     && JSON.stringify((f.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
 }
 
@@ -2228,6 +2253,30 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
     if (p == null || p <= 0 || p > f.peMax) return false;
   }
   if (f.pead != null && (num(e.pead_score) ?? 0) < f.pead) return false;
+  // ── ABOVE THE 50- AND 200-DAY AVERAGES  (zzz661) ────────────────────────
+  //
+  // The distance is used where the grader captured it. Where it did not — an
+  // entry benched before this field existed — the STAGE is the fallback, and
+  // only for the 200-day leg, because the stage is defined by the 200: stages
+  // 2 and 3 are above it, 1 and 4 below. That covers every existing entry
+  // exactly, with no re-grade and no guessing.
+  //
+  // A 50-day test has no such fallback, so an entry that carries neither the
+  // figure nor a way to derive it is NOT silently failed: it would empty the
+  // bench of every name graded before today, which is a filter lying about
+  // its universe rather than filtering it. Those names pass this leg and the
+  // page reports how many were unverified, so the gap is visible rather than
+  // hidden. Each sweep re-prices older entries, so the count falls to zero on
+  // its own.
+  if (f.aboveMa50) {
+    const d50 = num(e.pct_vs_ma50);
+    if (d50 != null && d50 <= 0) return false;
+  }
+  if (f.aboveMa200) {
+    const d200 = num(e.pct_vs_ma200);
+    if (d200 != null) { if (d200 <= 0) return false; }
+    else { const st = num(e.stage); if (st != null && st !== 2 && st !== 3) return false; }
+  }
   if (f.elite && !e.is_elite) return false;
   if (f.multibagger && !e.multibagger_setup) return false;
   // A refusal is not a zero and is not a pass: a name whose Rule of 40 or ROCE

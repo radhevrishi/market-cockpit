@@ -3193,6 +3193,10 @@ export interface UsGradedRow {
   rs_rating: number | null;
   stage: 1 | 2 | 3 | 4 | null;
   pct_from_52w_high: number | null;
+  // zzz661 — distance from the two moving averages, so the Quality Preset can
+  // gate on the trend instead of inferring it from the stage label.
+  pct_vs_ma50: number | null;
+  pct_vs_ma200: number | null;
   addv_musd: number | null;         // 20-day median dollar volume, $M
   vol_ratio_20d: number | null;
 
@@ -3242,6 +3246,7 @@ export interface UsGradeInput {
   price?: {
     price: number | null; d1_pct: number | null; gap_pct: number | null;
     move_pct: number | null; pct_from_52w_high: number | null;
+    pct_vs_ma50?: number | null; pct_vs_ma200?: number | null;
     stage: 1 | 2 | 3 | 4 | null; rs_rating: number | null;
     addv_musd: number | null; vol_ratio_20d: number | null;
   } | null;
@@ -4097,6 +4102,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     eps_basis_used: epsYGaap != null ? 'gaap' : epsYAdj != null ? 'adjusted' : null,
     gap_pct: p?.gap_pct ?? null, d1_pct: p?.d1_pct ?? null, move_pct: p?.move_pct ?? null,
     rs_rating: rs, stage, pct_from_52w_high: pct52,
+    pct_vs_ma50: p?.pct_vs_ma50 ?? null, pct_vs_ma200: p?.pct_vs_ma200 ?? null,
     addv_musd: addv, vol_ratio_20d: p?.vol_ratio_20d ?? null,
     quarters_revenue: f.quarters_revenue, quarters_eps: f.quarters_eps, quarters_opm: f.quarters_opm,
     quarters_ends: f.quarters_ends, opm_basis: f.operating_income_basis,

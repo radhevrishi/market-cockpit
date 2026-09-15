@@ -188,6 +188,15 @@ export interface UsTechnicals {
   move_pct: number | null;
   pct_from_52w_high: number | null;
   stage: 1 | 2 | 3 | 4 | null;
+  // ═══ THE TWO MOVING AVERAGES, EXPOSED  (zzz661) ═════════════════════════
+  // Both were already being computed here to derive the Weinstein stage and
+  // then thrown away. The stage compresses them into one of four labels, and
+  // "stage 2" is a stricter test than "above its 50-DMA" — it also demands the
+  // 50 above the 200 and the 200 rising — so it cannot answer the simple
+  // question a trend filter asks. These are that answer, as a distance in
+  // percent so the card can show HOW far above rather than merely whether.
+  pct_vs_ma50: number | null;
+  pct_vs_ma200: number | null;
   addv_musd: number | null;
   vol_ratio_20d: number | null;
   ret1m: number | null;
@@ -310,6 +319,8 @@ export async function usTechnicals(ticker: string, filingDate: string): Promise<
     move_pct: move_pct != null ? Math.round(move_pct * 100) / 100 : null,
     pct_from_52w_high: pct_from_52w_high != null ? Math.round(pct_from_52w_high * 100) / 100 : null,
     stage,
+    pct_vs_ma50: (ma50 != null && ma50 > 0) ? Math.round(((last / ma50 - 1) * 100) * 100) / 100 : null,
+    pct_vs_ma200: (ma200 != null && ma200 > 0) ? Math.round(((last / ma200 - 1) * 100) * 100) / 100 : null,
     addv_musd: addv_musd != null ? Math.round(addv_musd * 100) / 100 : null,
     vol_ratio_20d: vol_ratio_20d != null ? Math.round(vol_ratio_20d * 100) / 100 : null,
     ret1m: retFrom(21), ret3m: retFrom(63), ret6m: retFrom(126), ret12m: retFrom(251),

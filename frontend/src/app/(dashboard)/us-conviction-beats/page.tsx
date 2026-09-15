@@ -613,6 +613,18 @@ export default function UsConvictionBeatsPage() {
     const hunting = !!b && (b.bucket === 'A' || b.bucket === 'B' || b.bucket === 'C');
     return confluenceFor(classifyTheme(e.sector, (e as any).industry, 'us', e.ticker), hunting, themeVerdicts);
   }, [funnel, themeVerdicts]);
+  // ═══ HOW MANY NAMES THE TREND GATE COULD NOT VERIFY  (zzz661) ═══════════
+  // The 50-day leg has no fallback for an entry benched before the figure was
+  // captured, so those names pass it. A filter that cannot see part of its own
+  // universe has to say so — otherwise the count at the top is a claim it has
+  // not earned. Each sweep re-prices older entries, so this falls to zero by
+  // itself and the line disappears with it.
+  const maUnverified = useMemo(() => {
+    if (!filters.aboveMa50 && !filters.aboveMa200) return 0;
+    return entries.filter((e) => passesUsConvictionFilter(e, filters, newWindow)
+      && (e as any).pct_vs_ma50 == null).length;
+  }, [entries, filters, newWindow]);
+
   const confCounts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const e of entries) { const k = confOf(e).kind; c[k] = (c[k] || 0) + 1; }
@@ -901,6 +913,10 @@ export default function UsConvictionBeatsPage() {
             onClick: () => setConfFilter(confFilter === 'against' ? null : 'against'),
             hint: 'The quarter qualifies and the theme is rated TRIM or AVOID — real prints nobody is paying for right now. Click to filter.' },
           { value: filtered.length, label: 'passing filters', hint: 'What survives every chip and threshold currently set.' },
+          ...(maUnverified > 0 ? [{
+            value: maUnverified, label: 'trend unverified', color: '#F59E0B',
+            hint: `${maUnverified} of the names passing the filters were benched before the 50-day distance was captured, so the trend gate could not test them and let them through rather than dropping them. Each sweep re-prices older entries, so this falls to zero on its own.`,
+          }] : []),
           ...(tierCounts.drifting > 0 ? [{
             value: tierCounts.drifting, label: 'drifting', color: '#EF4444',
             hint: 'Top-tier names down more than 12% since their print.',
@@ -979,9 +995,9 @@ export default function UsConvictionBeatsPage() {
       {/* ── quality preset + quick toggles ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <button onClick={togglePreset}
-          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · Verdict STRONG BUY / BUY / WATCH. No promoter-pledge gate — that concept does not exist in US markets.`}
+          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · price above BOTH its 50-day and 200-day averages · Verdict STRONG BUY / BUY / WATCH. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
           style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '7px 12px', borderRadius: 999, cursor: 'pointer', border: '1px solid #F59E0B', color: '#F59E0B', backgroundColor: presetOn ? 'color-mix(in srgb, #F59E0B 14%, transparent)' : 'var(--mc-bg-2)' }}>
-          ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M{' '}
+          ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M · &gt;50DMA · &gt;200DMA{' '}
           {presetOn ? '✓ ON' : presetCustom ? '✓ ON · customised' : '· OFF — click to enable'}
         </button>
         {/* Deliberately a SEPARATE control. Folding "show the numbers" into the
