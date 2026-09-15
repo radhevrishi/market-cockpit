@@ -1090,9 +1090,22 @@ export default function ThemeRotationTab() {
                         // Foundry / Equipment / Test it becomes four readable
                         // positions, and the same vocabulary the drill-down
                         // already uses.
+                        // ═══ A GRID, NOT A WRAPPED RUN  (zzz658) ═══════════
+                        // Sixty tickers in a flex-wrap is a ragged wall: every
+                        // row starts at a different place, so the eye has no
+                        // column to run down and finding one name means reading
+                        // all of them. A fixed-cell grid puts them in columns
+                        // that align top to bottom, which is the whole reason
+                        // a terminal is scannable and a dashboard is not.
+                        const tickerGrid: React.CSSProperties = {
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(78px, 1fr))',
+                          gap: '3px 4px',
+                          alignItems: 'start',
+                        };
                         const groups = subGroupsFor(tid, sts as any);
                         if (!groups) {
-                          return <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{sts.map(chip)}</div>;
+                          return <div style={tickerGrid}>{sts.map(chip)}</div>;
                         }
                         return (
                           <div>
@@ -1101,7 +1114,7 @@ export default function ThemeRotationTab() {
                                 <div style={{ fontSize: 9, fontWeight: 800, color: g.name === 'Other' ? DIM : MUT, letterSpacing: 0.2, marginBottom: 2 }}>
                                   {g.name} <span style={{ color: DIM, fontWeight: 600 }}>· {g.items.length}</span>
                                 </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 6, borderLeft: `2px solid ${(th?.verdictColor || '#64748B')}33` }}>
+                                <div style={{ ...tickerGrid, paddingLeft: 6, borderLeft: `2px solid ${(th?.verdictColor || '#64748B')}33` }}>
                                   {g.items.map(chip as any)}
                                 </div>
                               </div>
@@ -1376,10 +1389,19 @@ export default function ThemeRotationTab() {
                     <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#22C55E', textTransform: 'uppercase', marginBottom: 6 }}>✓ Aligned — in leading / early-buy themes, hold or add</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {leading.map((r) => (
-                        <div key={r.theme.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11.5 }}>
-                          <span style={{ color: TXT, fontWeight: 700, minWidth: 150 }}>{r.theme.emoji} {r.theme.name}</span>
-                          <span style={{ fontSize: 9.5, fontWeight: 800, color: '#22C55E', background: 'color-mix(in srgb, #22C55E 12%, transparent)', border: '1px solid color-mix(in srgb, #22C55E 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
-                          <span style={{ color: MUT, fontFamily: 'ui-monospace, Menlo, monospace' }}>{r.names.join(', ')}</span>
+                        // zzz658 — the theme and its count on one line, the
+                        // names in an aligned grid under it. A comma-run of
+                        // sixty tickers beside a label is unreadable at any
+                        // width and unusable at phone width.
+                        <div key={r.theme.id} style={{ fontSize: 11.5 }}>
+                          <div style={{ display: 'flex', gap: 7, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 3 }}>
+                            <span style={{ color: TXT, fontWeight: 700 }}>{r.theme.emoji} {r.theme.name}</span>
+                            <span style={{ fontSize: 9.5, fontWeight: 800, color: '#22C55E', background: 'color-mix(in srgb, #22C55E 12%, transparent)', border: '1px solid color-mix(in srgb, #22C55E 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
+                            <span style={{ fontSize: 9.5, color: DIM }}>{r.names.length} name{r.names.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(66px, 1fr))', gap: '2px 4px', paddingLeft: 8, borderLeft: '2px solid rgba(34,197,94,0.25)', color: MUT, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10.5 }}>
+                            {r.names.map((n: string) => <span key={n}>{n}</span>)}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1390,10 +1412,15 @@ export default function ThemeRotationTab() {
                     <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', color: '#EF4444', textTransform: 'uppercase', marginBottom: 6 }}>✂️ Exposed to fading themes — trim candidates</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {fading.map((r) => (
-                        <div key={r.theme.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11.5 }}>
-                          <span style={{ color: TXT, fontWeight: 700, minWidth: 150 }}>{r.theme.emoji} {r.theme.name}</span>
-                          <span style={{ fontSize: 9.5, fontWeight: 800, color: '#EF4444', background: 'color-mix(in srgb, #EF4444 12%, transparent)', border: '1px solid color-mix(in srgb, #EF4444 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
-                          <span style={{ color: MUT, fontFamily: 'ui-monospace, Menlo, monospace' }}>{r.names.join(', ')}</span>
+                        <div key={r.theme.id} style={{ fontSize: 11.5 }}>
+                          <div style={{ display: 'flex', gap: 7, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 3 }}>
+                            <span style={{ color: TXT, fontWeight: 700 }}>{r.theme.emoji} {r.theme.name}</span>
+                            <span style={{ fontSize: 9.5, fontWeight: 800, color: '#EF4444', background: 'color-mix(in srgb, #EF4444 12%, transparent)', border: '1px solid color-mix(in srgb, #EF4444 30%, transparent)', padding: '1px 6px', borderRadius: 4 }}>{r.theme.verdict}</span>
+                            <span style={{ fontSize: 9.5, color: DIM }}>{r.names.length} name{r.names.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(66px, 1fr))', gap: '2px 4px', paddingLeft: 8, borderLeft: '2px solid rgba(239,68,68,0.25)', color: MUT, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10.5 }}>
+                            {r.names.map((n: string) => <span key={n}>{n}</span>)}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1473,7 +1500,7 @@ export default function ThemeRotationTab() {
               {dummyPortfolio.top.length > 0 && <div style={{ fontSize: 10.5, color: DIM }}><b style={{ color: MUT }}>{dummyPortfolio.graded}</b> with a Fundo grade · across <b style={{ color: MUT }}>{dummyPortfolio.themeSpread}</b> themes · equal-weight <b style={{ color: MUT }}>{dummyPortfolio.wt}%</b> each</div>}
             </div>
             <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>Your Multibagger / Technicals names that sit in a theme the engine rates <b style={{ color: '#22C55E' }}>BUY</b> or <b style={{ color: '#22C55E' }}>EARLY BUY</b> right now — <b style={{ color: MUT }}>nothing from Weakening or Lagging</b>. {dummyPortfolio.graded === 0
-              ? <>Ranked by the <b style={{ color: MUT }}>tier the engine gave each name on its last filing</b> — BLOCKBUSTER ahead of STRONG, engine score separating names inside a tier — because no Fundo grades are loaded. Upload the {region === 'us' ? 'USA' : 'India'} Multibagger sheet and the ranking switches to your own grades.</>
+              ? <>Ranked by the <b style={{ color: MUT }}>tier the engine gave each name on its last filing</b> — BLOCKBUSTER ahead of STRONG, engine score separating names inside a tier — because no Fundo grades are loaded. Upload the {region === 'us' ? 'USA' : 'India'} Multibagger sheet and the ranking switches to your own grades</>
               : <>Ranked by your Fundo grade (A+ first){dummyPortfolio.graded < dummyPortfolio.top.length ? <>, with the engine&rsquo;s bench tier standing in for the {dummyPortfolio.top.length - dummyPortfolio.graded} name{dummyPortfolio.top.length - dummyPortfolio.graded > 1 ? 's' : ''} you have not graded</> : null}</>}, <b style={{ color: MUT }}>capped at {dummyPortfolio.cap} names per theme</b> so the book spreads across the rotation instead of stacking into whichever theme your best grades happen to sit in{dummyPortfolio.excluded ? <> — {dummyPortfolio.excluded} eligible name{dummyPortfolio.excluded > 1 ? 's' : ''} left out by that cap</> : null}. A simple starter book, not advice.</div>
             {dummyPortfolio.top.length === 0 ? (
               <div style={{ fontSize: 11.5, color: DIM, padding: '10px 0' }}>No names from your lists currently sit in a BUY / EARLY-BUY theme. When a theme you own rotates into a buy call, its best-graded names appear here.</div>
@@ -1524,7 +1551,7 @@ export default function ThemeRotationTab() {
           </div>
 
           <div style={{ marginTop: 12, fontSize: 10, color: DIM, lineHeight: 1.6 }}>
-            <b style={{ color: MUT }}>How to read it:</b> Leading (green) = strong &amp; rising → buy leaders. Improving (blue) = weak but turning up → early buy on 50-DMA reclaim. Weakening (orange) = strong but rolling over → trim. Lagging (red) = weak &amp; falling → avoid. Verdicts combine the quadrant with the price’s position vs its 50-DMA. Live prices via {payload.source}. Themes with no clean ETF use an equal-weight basket of leaders. Educational, not investment advice.
+            <b style={{ color: MUT }}>How to read it:</b> The four quadrants describe a theme&rsquo;s position against the market only — Leading = above it and accelerating, Improving = below it and turning up, Weakening = above it but no longer accelerating, Lagging = below it and still falling. <b style={{ color: MUT }}>None of them is an instruction.</b> The verdict is, and it combines the quadrant with the theme&rsquo;s own price against its 50-day line — which is why a Weakening theme that is six percent above its 50-DMA and beating the market by fifteen points reads HOLD rather than TRIM. Live prices via {payload.source}. Themes with no clean ETF use an equal-weight basket of leaders. Educational, not investment advice.
             {payload.asOf && <span> · updated {new Date(payload.asOf).toLocaleString()}</span>}
           </div>
         </>
@@ -1541,14 +1568,35 @@ function QuadrantBoard({ themes, onPick, expandedIds }: { themes: ThemeRow[]; on
   const bucket = (q: string) => themes.filter((t) => t.quadrant === q);
   const strength = (t: ThemeRow) => (t.rsRatio || 0) + (t.rsMomentum || 0);
   const boxes: { q: string; label: string; action: string; color: string; tint: string; emoji: string; items: ThemeRow[] }[] = [
-    { q: 'Improving', label: 'IMPROVING', action: 'rotating in — early buy', color: '#3B82F6', tint: 'rgba(59,130,246,0.07)', emoji: '🔵', items: bucket('Improving').sort((a, b) => (b.rsMomentum || 0) - (a.rsMomentum || 0)) },
-    { q: 'Leading', label: 'LEADING', action: 'strongest — buy leaders', color: '#16A34A', tint: 'rgba(22,163,74,0.08)', emoji: '🟢', items: bucket('Leading').sort((a, b) => strength(b) - strength(a)) },
-    { q: 'Lagging', label: 'LAGGING', action: 'weak & falling — avoid', color: '#EF4444', tint: 'rgba(239,68,68,0.07)', emoji: '🔴', items: bucket('Lagging').sort((a, b) => strength(a) - strength(b)) },
-    { q: 'Weakening', label: 'WEAKENING', action: 'rolling over — trim', color: '#F97316', tint: 'rgba(249,115,22,0.07)', emoji: '🟠', items: bucket('Weakening').sort((a, b) => (a.rsMomentum || 0) - (b.rsMomentum || 0)) },
+    // ═══ A QUADRANT IS A POSITION, NOT AN INSTRUCTION  (zzz657) ═══════════
+    //
+    // These four headers used to end in a verb — "buy leaders", "early buy",
+    // "trim", "avoid" — and that verb contradicted the engine's own verdict
+    // for roughly fifteen themes on any given day. Cybersecurity was the one
+    // that surfaced it: beating the S&P by fifteen points over three months,
+    // six percent above its 50-day line, at 95% of its 52-week range, rated
+    // HOLD by the engine — and filed under "WEAKENING · rolling over — TRIM".
+    // The numbers were all correct; the label was an instruction the numbers
+    // did not support, and it is the fastest way to make a reader distrust a
+    // board that is actually right.
+    //
+    // It was systematic, not a one-off. IMPROVING said "early buy" over eight
+    // themes of which one was rated EARLY BUY. LAGGING said "avoid" over
+    // Crypto, which is rated WATCH. LEADING said "buy leaders" over Biotech,
+    // Copper and Obesity, all rated HOLD.
+    //
+    // The quadrant is RS-Ratio against RS-Momentum and nothing else — a point
+    // on a chart, which is exactly what it should say. The instruction comes
+    // from the verdict, which already weighs the quadrant AGAINST the price's
+    // own trend, and every chip below now carries its own.
+    { q: 'Improving', label: 'IMPROVING', action: 'below the market, momentum turning up', color: '#3B82F6', tint: 'rgba(59,130,246,0.07)', emoji: '🔵', items: bucket('Improving').sort((a, b) => (b.rsMomentum || 0) - (a.rsMomentum || 0)) },
+    { q: 'Leading', label: 'LEADING', action: 'above the market, still accelerating', color: '#16A34A', tint: 'rgba(22,163,74,0.08)', emoji: '🟢', items: bucket('Leading').sort((a, b) => strength(b) - strength(a)) },
+    { q: 'Lagging', label: 'LAGGING', action: 'below the market, momentum still falling', color: '#EF4444', tint: 'rgba(239,68,68,0.07)', emoji: '🔴', items: bucket('Lagging').sort((a, b) => strength(a) - strength(b)) },
+    { q: 'Weakening', label: 'WEAKENING', action: 'above the market, no longer accelerating', color: '#F97316', tint: 'rgba(249,115,22,0.07)', emoji: '🟠', items: bucket('Weakening').sort((a, b) => (a.rsMomentum || 0) - (b.rsMomentum || 0)) },
   ];
   return (
     <div>
-      <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Rotation board — where every theme sits right now. <b style={{ color: '#22C55E' }}>Top-right = buy</b>, moving clockwise to <b style={{ color: '#EF4444' }}>bottom-left = avoid</b>. A <span style={{ color: '#FBBF24', fontWeight: 800 }}>◆</span> marks a theme that crossed into this quadrant <b style={{ color: MUT }}>this week</b> — newly arrived, not long-settled. Click any theme to see its stocks.</div>
+      <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6, lineHeight: 1.6 }}>Rotation board — where every theme sits on <b style={{ color: MUT }}>relative strength against its own momentum</b>, and nothing else. A quadrant is a <b style={{ color: MUT }}>position, not an instruction</b>: it measures a theme against the market, which is only half the test, so the engine&rsquo;s verdict — which also weighs the theme&rsquo;s own price against its 50-day line — is on every chip and is the one to act on. Where the two disagree, that disagreement is the information: a theme can stop accelerating while still beating the market and still rising, and that is a HOLD, not a trim. A <span style={{ color: '#FBBF24', fontWeight: 800 }}>◆</span> marks a theme that crossed into this quadrant <b style={{ color: MUT }}>this week</b> — newly arrived, not long-settled. Click any theme to see its stocks.</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         {boxes.map((b) => (
           <div key={b.q} style={{ background: b.tint, border: `1px solid ${b.color}55`, borderRadius: 10, padding: '10px 11px', minHeight: 92 }}>
@@ -1563,6 +1611,12 @@ function QuadrantBoard({ themes, onPick, expandedIds }: { themes: ThemeRow[]; on
                   {t.quadrantMove && <span title={`Crossed ${t.quadrant1w} → ${t.quadrant} this week`} style={{ color: '#FBBF24', fontSize: 9 }}>◆</span>}
                   {t.emoji} {t.name}
                   <span style={{ color: (t.rsMomentum || 100) >= 100 ? (expandedIds.has(t.id) ? '#fff' : '#22C55E') : (expandedIds.has(t.id) ? '#fff' : '#EF4444'), fontWeight: 900 }}>{(t.rsMomentum || 100) >= 100 ? '↑' : '↓'}</span>
+                  {/* THE VERDICT TRAVELS WITH THE THEME  (zzz657). Without it
+                      the quadrant a theme sits in is the only instruction on
+                      screen, and the quadrant is only half the test. */}
+                  {t.verdict && (
+                    <span title={t.verdictNote} style={{ fontSize: 8, fontWeight: 900, letterSpacing: 0.2, borderRadius: 4, padding: '0 4px', marginLeft: 1, whiteSpace: 'nowrap', color: expandedIds.has(t.id) ? '#fff' : t.verdictColor, background: expandedIds.has(t.id) ? 'rgba(255,255,255,0.22)' : `${t.verdictColor}26`, border: `1px solid ${expandedIds.has(t.id) ? 'rgba(255,255,255,0.4)' : `${t.verdictColor}55`}` }}>{t.verdict}</span>
+                  )}
                 </button>
               )) : <span style={{ fontSize: 11, color: DIM }}>—</span>}
             </div>
