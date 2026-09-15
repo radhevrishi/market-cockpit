@@ -18,6 +18,10 @@ interface ThemeRow {
   id: string; name: string; emoji: string; group: string; note?: string;
   proxy: string | null; members: string[];
   price?: number; dayChangePct?: number;
+  /** zzz644 — where today's move came from: the proxy index itself, an average
+   *  of the theme's constituents when the index could not be priced, or
+   *  nothing at all. A stand-in must never read as the index's own move. */
+  dayChangeFrom?: 'proxy' | 'members' | 'none';
   ret?: Ret; rsRatio?: number; rsMomentum?: number; quadrant?: string; trail?: { x: number; y: number }[];
   aboveSMA50?: boolean; breadthAbove50?: number | null;
   trendState?: string; trendColor?: string; trendNote?: string;
@@ -777,14 +781,24 @@ export default function ThemeRotationTab() {
                             <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
                             <div style={{ position: 'absolute', top: 2, bottom: 2, borderRadius: 3, background: c, opacity: 0.85, ...(v >= 0 ? { left: '50%', width: `${w}%` } : { right: `${50}%`, width: `${w}%` }) }} />
                           </div>
-                          <span style={{ fontSize: 10, fontFamily: 'ui-monospace,monospace', width: 54, textAlign: 'right', color: v >= 0 ? '#22C55E' : '#F87171' }}>{fmtPct(v)}</span>
+                          <span
+                            title={trackTf !== 'day' ? undefined
+                              : t.dayChangeFrom === 'members'
+                                ? 'The index itself could not be priced today, so this is the average move of the theme’s own constituents — a stand-in, not the index’s own number.'
+                                : t.dayChangeFrom === 'none'
+                                  ? 'No day move could be established for this theme today. Shown as flat because that is what “not known” looks like — it is not a claim that nothing moved.'
+                                  : undefined}
+                            style={{ fontSize: 10, fontFamily: 'ui-monospace,monospace', width: 54, textAlign: 'right', color: trackTf === 'day' && t.dayChangeFrom === 'none' ? DIM : v >= 0 ? '#22C55E' : '#F87171' }}>
+                            {trackTf === 'day' && t.dayChangeFrom === 'none' ? '—' : fmtPct(v)}
+                            {trackTf === 'day' && t.dayChangeFrom === 'members' ? <span style={{ color: DIM }}>*</span> : null}
+                          </span>
                           <span title={t.verdictNote} style={{ fontSize: 8.5, fontWeight: 900, width: 66, textAlign: 'center', color: t.verdictColor, background: `${t.verdictColor}1a`, border: `1px solid ${t.verdictColor}44`, borderRadius: 4, padding: '1px 3px', whiteSpace: 'nowrap' }}>{t.verdict}</span>
                         </div>
                       </React.Fragment>
                     );
                   })}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }}>
-                    <span style={{ fontSize: 9.5, color: DIM }}>Bar length is the move over the chosen window; colour is the rotation call, so a long green bar the engine still rates TRIM cannot read as a buy. Click any row to open its constituents.</span>
+                    <span style={{ fontSize: 9.5, color: DIM }}>Bar length is the move over the chosen window; colour is the rotation call, so a long green bar the engine still rates TRIM cannot read as a buy. Click any row to open its constituents.{trackTf === 'day' ? ' A * marks a day move averaged from the theme’s constituents because the index itself could not be priced; a — means no day move could be established, which is not the same as flat.' : ''}</span>
                     <button onClick={() => setTrackN((n) => (n >= themes.length ? 14 : themes.length))} style={{ fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${BORD}`, background: 'transparent', color: DIM, whiteSpace: 'nowrap' }}>{trackN >= themes.length ? 'show top & bottom' : `show all ${themes.length}`}</button>
                   </div>
                 </div>

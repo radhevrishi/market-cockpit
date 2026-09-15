@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v17:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v18:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -422,7 +422,20 @@ async function build(region: ThemeRegion) {
   // maintenance — the leaders can drift over a decade, but the tab never goes dark.
   const rescue = new Set<string>();
   for (const t of themes) {
-    if (t.proxy && !enough(t.proxy)) leadersFor(t).forEach((s) => { if (!data.has(s)) rescue.add(s); });
+    // A proxy whose SERIES failed — the original self-heal.
+    if (t.proxy && !enough(t.proxy)) { leadersFor(t).forEach((s) => { if (!data.has(s)) rescue.add(s); }); continue; }
+    // zzz644 — AND A PROXY WHOSE SERIES IS FINE BUT WHOSE DAY MOVE IS NOT.
+    // Yahoo's Indian sector indices are the case: the 2y history is usable, so
+    // every relative-strength number built on it is sound, but previousClose is
+    // null and the series is too gappy to infer one — eleven of the twenty-nine
+    // India themes had no day change at all once the guessing was removed. The
+    // constituents DO have a day change, and the average of a theme's own
+    // members is a better answer than a blank. Only the day number is taken
+    // from them; the series stays the proxy's, because that part was never
+    // broken and a synthetic basket is a different, noisier measure.
+    if (t.proxy && data.get(t.proxy)?.dayKnown === false) {
+      leadersFor(t).forEach((s) => { if (!data.has(s)) rescue.add(s); });
+    }
   }
   if (rescue.size) {
     const more = await fetchChunked([...rescue], range, interval);
@@ -442,9 +455,20 @@ async function build(region: ThemeRegion) {
     // their ETF/index failed — the self-heal above).
     let ts: number[] = [], closes: number[] = [], price = 0, dayChg = 0, breadthAbove50: number | null = null, members: string[] = [];
     let sourceKind: 'proxy' | 'basket' | 'proxy-fallback' = 'basket';
+    let dayChgFrom: 'proxy' | 'members' | 'none' = 'none';
     if (t.proxy && enough(t.proxy)) {
       const d = data.get(t.proxy)!;
-      ts = d.ts; closes = d.closes; price = d.price; dayChg = d.dayChg; sourceKind = 'proxy';
+      ts = d.ts; closes = d.closes; price = d.price; sourceKind = 'proxy';
+      if (d.dayKnown) { dayChg = d.dayChg; dayChgFrom = 'proxy'; }
+      else {
+        // The index itself cannot say what it did today; its constituents can.
+        const ms = leadersFor(t).map((x) => data.get(x)).filter(Boolean) as { dayChg: number; dayKnown: boolean }[];
+        const spoken = ms.filter((m) => m.dayKnown);
+        if (spoken.length >= 2) {
+          dayChg = +(spoken.reduce((a, m) => a + (m.dayChg || 0), 0) / spoken.length).toFixed(2);
+          dayChgFrom = 'members';
+        }
+      }
     } else {
       const memberSyms = (t.basket && t.basket.length) ? t.basket : leadersFor(t);
       members = memberSyms;
@@ -463,9 +487,10 @@ async function build(region: ThemeRegion) {
         // of them have one the theme reports no day change at all rather
         // than a figure standing on a minority of its own constituents.
         const spoken = memberSeries.filter((m) => m.dayKnown);
-        dayChg = spoken.length >= Math.max(2, Math.ceil(memberSeries.length / 2))
-          ? +(spoken.reduce((a, m) => a + (m.dayChg || 0), 0) / spoken.length).toFixed(2)
-          : 0;
+        if (spoken.length >= Math.max(2, Math.ceil(memberSeries.length / 2))) {
+          dayChg = +(spoken.reduce((a, m) => a + (m.dayChg || 0), 0) / spoken.length).toFixed(2);
+          dayChgFrom = 'members';
+        } else { dayChg = 0; dayChgFrom = 'none'; }
         const above = memberSeries.filter((m) => { const s = sma(m.closes, 50); const cc = m.closes.filter((x) => x != null && !isNaN(x)); const last = cc[cc.length - 1]; return s != null && last != null && last > s; }).length;   // zzz487 — use last VALID close (was reading a trailing null → always 0%)
         breadthAbove50 = Math.round((above / memberSeries.length) * 100);
       }
@@ -565,6 +590,9 @@ async function build(region: ThemeRegion) {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
       proxy: t.proxy || null, members, sourceKind,
       price: +price.toFixed(2), dayChangePct: +dayChg.toFixed(2),
+      // Where today's move came from, so a reader can tell a real flat day from
+      // an index the feed could not price and a constituent-average stand-in.
+      dayChangeFrom: dayChgFrom,
       ret, rsRatio, rsMomentum, quadrant, trail,
       quadrant1w, quadrant4w, quadrantMove, quadrantMove4w, rsDelta1w, momDelta1w,
       fallingLeader,
