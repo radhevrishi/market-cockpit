@@ -10,6 +10,50 @@ import { TICKER_OVERRIDE, type ThemeRegion } from './theme-universe';
 type Rule = { re: RegExp; theme: string };
 
 // Checked in order; first match wins. Industry (finer) is matched before sector.
+// ═══════════════════════════════════════════════════════════════════════════
+// THE US ENGINE'S OWN SECTOR WORDS  (zzz652)
+//
+// A third of the US bench — 31 of 93 names — matched no theme at all, and the
+// reason was not that the classifier is bad at its job. The US rules below are
+// written against LONG industry strings, the kind Yahoo returns: "Software—
+// Infrastructure", "Semiconductors & Semiconductor Equipment". The US grader,
+// however, reuses the Indian sector vocabulary and stamps every row with a
+// SHORT label — "IT", "FMCG", "Consumer", "Electronics", "Capital Goods" —
+// and `industry` is undefined on every single one of them. So ORCL, SNOW and
+// GWRE arrived carrying the word "IT", which matches nothing in a list built
+// around the word "software", and fell out of the confluence read entirely.
+//
+// These rules sit FIRST so an exact engine label is never reinterpreted by a
+// looser rule further down, the same ordering the Indian NSE vocabulary already
+// uses. They are anchored (^...$) because these are complete labels, not
+// fragments of prose: matching "IT" loosely inside a sentence would classify
+// half the field as software.
+//
+// The mapping is deliberately COARSE. "IT" does not tell you whether a company
+// is cloud, cybersecurity or plain software, so it resolves to the broad
+// software theme rather than guessing at a narrower one — a name in roughly the
+// right neighbourhood is useful, and a name confidently in the wrong one is
+// worse than no answer. Anything carrying a real industry string still matches
+// the precise rules below, because `industry` is tried before `sector`.
+const US_ENGINE_VOCAB: Rule[] = [
+  { re: /^it$|^information technology$|^tech(nology)?$/i, theme: 'us-software' },
+  { re: /^electronics?$|^hardware$|^electrical equipment$/i, theme: 'us-semis' },
+  { re: /^fmcg$|^consumer staples?$|^food(\s*&?\s*beverages?)?$/i, theme: 'us-staples' },
+  { re: /^consumer$|^consumer discretionary$|^retail(ing)?$/i, theme: 'us-condisc' },
+  { re: /^capital goods$|^industrials?$|^manufacturing$|^machinery$/i, theme: 'us-industrials' },
+  { re: /^healthcare$|^health care$|^pharma(ceuticals?)?$|^life sciences$/i, theme: 'us-healthcare' },
+  // NOTE: no rule for a bare "Financials" / "BFSI". The only financial theme
+  // on the board is Regional Banks, and routing an asset manager or an insurer
+  // there would be confidently wrong — which is worse than leaving it
+  // unmatched and saying so on the card.
+  { re: /^energy$|^oil\s*&?\s*gas$/i, theme: 'us-energy' },
+  { re: /^power$|^utilities$|^electric utilities$/i, theme: 'us-utilities' },
+  { re: /^materials?$|^metals?(\s*&?\s*mining)?$|^chemicals?$|^commodities$/i, theme: 'us-materials' },
+  { re: /^real estate$|^realty$/i, theme: 'us-reit' },
+  { re: /^telecom(munications?)?$|^communication services?$|^media$/i, theme: 'us-comm' },
+  { re: /^transport(ation)?$|^logistics$|^shipping$/i, theme: 'us-transport' },
+];
+
 const US_RULES: Rule[] = [
   { re: /semiconduct|chip|foundry|wafer|fabless/i, theme: 'us-semis' },
   { re: /\bmemory\b|dram|nand|flash memory/i, theme: 'us-memory' },
@@ -180,7 +224,7 @@ const IN_RULES: Rule[] = [
 // rules (industry is the finer tell, tried before the broader sector).
 export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion, ticker?: string | null): string | null {
   if (ticker) { const ov = TICKER_OVERRIDE[ticker.toUpperCase().replace(/\.(NS|BO)$/, '').trim()]; if (ov) return ov; }
-  const rules = region === 'us' ? US_RULES : [...IN_NSE_VOCAB, ...IN_YAHOO_VOCAB, ...IN_RULES];
+  const rules = region === 'us' ? [...US_ENGINE_VOCAB, ...US_RULES] : [...IN_NSE_VOCAB, ...IN_YAHOO_VOCAB, ...IN_RULES];
   const ind = (industry || '').toString();
   const sec = (sector || '').toString();
   for (const text of [ind, sec]) {
