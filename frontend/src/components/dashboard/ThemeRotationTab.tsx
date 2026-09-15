@@ -22,6 +22,8 @@ interface ThemeRow {
    *  'proxy-fallback' — it has one and the index could not be used. */
   sourceKind?: 'proxy' | 'basket' | 'proxy-fallback';
   fallbackReason?: string | null;
+  /** zzz654 — NSE's own published closes, or a vendor's copy of them. */
+  proxySource?: 'nse-published' | 'vendor';
   /** zzz644 — where today's move came from: the proxy index itself, an average
    *  of the theme's constituents when the index could not be priced, or
    *  nothing at all. A stand-in must never read as the index's own move. */
@@ -1188,7 +1190,11 @@ export default function ThemeRotationTab() {
                               <span title={`RRG quadrant (relative strength only): ${t.quadrant}`} style={{ color: DIM }}> · RRG {t.quadrant}</span>
                               {t.quadrantMove ? <span style={{ color: MUT }}> (was {t.quadrantMove.from})</span> : t.quadrant4w && t.quadrant4w !== t.quadrant ? <span style={{ color: MUT }}> (was {t.quadrant4w} a month ago)</span> : ''}{t.aboveSMA50 ? ' · >50DMA' : ' · <50DMA'}{t.breadthAbove50 != null ? ` · ${t.breadthAbove50}% brdth` : ''}{t.sourceKind === 'proxy-fallback'
                                 ? <span title={`This theme is named after ${t.proxy}, but that index could not be used: ${t.fallbackReason || 'its series was unusable'}. Every number on this row is therefore computed from an equal-weight basket of the theme's constituents instead — which is current and correct, but is a different measure from the published index.`} style={{ color: '#F59E0B', fontWeight: 800 }}> · ⚠ {t.proxy} unusable → basket</span>
-                                : t.proxy ? ` · ${t.proxy}` : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}
+                                : t.proxy
+                                  ? <span title={t.proxySource === 'nse-published'
+                                      ? `Priced from NSE's own published closes for ${t.proxy} — the figures the exchange itself puts out, ingested nightly from its archive. This is the index, not a reconstruction of it.`
+                                      : `Priced from a market-data vendor's series for ${t.proxy}.`}> · {t.proxy}{t.proxySource === 'nse-published' ? <span style={{ color: '#22C55E', fontWeight: 900 }}> ✓NSE</span> : null}</span>
+                                  : ' · basket'}{t.rotation === 'fast' ? ' · ⚡ fast rotator' : t.rotation === 'steady' ? ' · 🐢 steady' : ''}
                               {/* WHERE IN THE MOVE YOU ARE. "Above the 50-DMA"
                                   is a yes/no; 22% above it is a different entry
                                   from 1% above, and a theme can lead on relative

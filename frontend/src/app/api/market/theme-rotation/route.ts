@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v19:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v20:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -413,6 +413,55 @@ async function build(region: ThemeRegion) {
   for (const t of themes) { if (t.proxy) symbols.add(t.proxy); (t.basket || []).forEach((s) => symbols.add(s)); }
   const data = await fetchChunked([...symbols], range, interval);
 
+  // ═══ NSE'S OWN CLOSES BEAT ANYBODY'S COPY OF THEM  (zzz654) ═════════════
+  //
+  // For the Indian board the proxies ARE NSE indices, and NSE publishes their
+  // closes itself — one CSV per session on its static archive, ingested nightly
+  // by .github/workflows/scrape-nse-index-history.yml because NSE answers 403
+  // to datacentre IPs and will not talk to Railway directly.
+  //
+  // This is not belt-and-braces. Yahoo served a bar dated 2026-09-14 for Nifty
+  // Realty at 918.7 — on a day the exchange was SHUT, and 918.7 is NSE's actual
+  // close for 17 JULY. A stale value was relabelled as current, which is the
+  // one failure mode a health check cannot catch, because the series looks
+  // perfectly well-formed at both ends.
+  //
+  // So where the published history covers a symbol, it REPLACES the Yahoo
+  // series rather than merely filling its gaps: mixing two sources inside one
+  // price series would leave a seam at the join that every return spanning it
+  // would measure across. Yahoo stays as the fallback for anything the blob
+  // does not carry, and the constituent basket stays as the fallback after
+  // that, so a failure of this ingestion degrades the board by one step rather
+  // than breaking it.
+  //
+  // The day's move is deliberately kept from the live feed. The archive is an
+  // END-OF-DAY file: it is authoritative about closes and silent about what is
+  // happening right now, and a board that showed yesterday's move as today's
+  // would be repeating the exact error this whole fix exists to correct.
+  const nsePublished = new Set<string>();
+  if (region === 'india' && isRedisAvailable()) {
+    try {
+      const hist = await kvGet<{ indices?: Record<string, { ts: number[]; close: number[] }> }>('nse-index-history:v1:latest');
+      for (const [sym, series] of Object.entries(hist?.indices || {})) {
+        if (!symbols.has(sym)) continue;
+        const ts = Array.isArray(series?.ts) ? series.ts.map(Number) : [];
+        const close = Array.isArray(series?.close) ? series.close.map(Number) : [];
+        // Below this there is not enough to compute a fifty-day average on, so
+        // a partly-backfilled blob is ignored for that symbol rather than
+        // quietly shortening every window the board reports.
+        if (ts.length < 60 || ts.length !== close.length) continue;
+        const live = data.get(sym);
+        data.set(sym, {
+          ts, closes: close,
+          price: live?.price || close[close.length - 1] || 0,
+          dayChg: live?.dayKnown ? live.dayChg : 0,
+          dayKnown: !!live?.dayKnown,
+        });
+        nsePublished.add(sym);
+      }
+    } catch { /* the board falls back to Yahoo, then to baskets */ }
+  }
+
   // ═══ A SERIES CAN BE LONG, CURRENT, AND STILL BROKEN  (zzz650) ══════════
   //
   // `enough` used to ask one question — are there twenty closes — and eleven of
@@ -516,10 +565,14 @@ async function build(region: ThemeRegion) {
     let ts: number[] = [], closes: number[] = [], price = 0, dayChg = 0, breadthAbove50: number | null = null, members: string[] = [];
     let sourceKind: 'proxy' | 'basket' | 'proxy-fallback' = 'basket';
     let fallbackReason: string | null = null;
+    /** Where the proxy series came from — NSE's own published closes, or a
+     *  third party's reconstruction of them. Not the same warranty. */
+    let proxySource: 'nse-published' | 'vendor' = 'vendor';
     let dayChgFrom: 'proxy' | 'members' | 'none' = 'none';
     if (t.proxy && enough(t.proxy)) {
       const d = data.get(t.proxy)!;
       ts = d.ts; closes = d.closes; price = d.price; sourceKind = 'proxy';
+      if (nsePublished.has(t.proxy)) proxySource = 'nse-published';
       if (d.dayKnown) { dayChg = d.dayChg; dayChgFrom = 'proxy'; }
       else {
         // The index itself cannot say what it did today; its constituents can.
@@ -654,6 +707,7 @@ async function build(region: ThemeRegion) {
     return {
       id: t.id, name: t.name, emoji: t.emoji, group: t.group, note: t.note,
       proxy: t.proxy || null, members, sourceKind, fallbackReason,
+      proxySource: sourceKind === 'proxy' ? proxySource : undefined,
       price: +price.toFixed(2), dayChangePct: +dayChg.toFixed(2),
       // Where today's move came from, so a reader can tell a real flat day from
       // an index the feed could not price and a constituent-average stand-in.
