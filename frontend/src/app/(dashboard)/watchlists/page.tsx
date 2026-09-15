@@ -1495,6 +1495,64 @@ type ConvFilters = {
 
 const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, newOnly: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, verdicts: null /* zzz362 */, cap: 'all' };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE INDIA QUALITY PRESET — ONE DEFINITION, THREE READERS.        (zzz672)
+//
+// These numbers used to be written out three times: once in the auto-apply on
+// mount, once in the button's click handler, and once in the `presetActive`
+// test that decides whether the chip reads ON. zzz659 lowered PEAD from 60 to
+// 40 and edited the first two. The third kept demanding `pead === 60`, and a
+// state nobody could ever produce reads as "not active" forever.
+//
+// The visible symptom is worse than a wrong label. Auto-apply DID set pead 40
+// on mount, so the screen was running with the preset on while the chip said
+// "OFF — click to enable". Clicking it took the `else` branch and applied the
+// very same values, so nothing changed on screen and the chip stayed OFF. The
+// button looked dead because it was writing a state its own test rejected.
+//
+// So the gate is written once. `indiaPresetFilters()` applies it, and
+// `isIndiaPresetActive()` recognises it, off the same constant — the next
+// threshold change is one edit, and the applier and the detector cannot
+// disagree about what the preset IS.
+// ═══════════════════════════════════════════════════════════════════════════
+const INDIA_PRESET = {
+  sales: 20,
+  eps: 25,
+  pead: 40,        // zzz659 — was 60. PEAD is a drift proxy, not a quality score.
+  opmDelta: 0,
+  cfoPatMin: 0.5,
+  mktCapMin: 3000, // ₹ Cr
+  pledgedMax: 0,   // zzz360 — a null pledge passes; this gates known pledges.
+  verdicts: ['STRONG BUY', 'BUY', 'WATCH'] as string[],
+};
+
+/** The preset as a filter patch. Spread over FILTER_DEFAULT (or prev). */
+const indiaPresetFilters = () => ({
+  sales: INDIA_PRESET.sales,
+  eps: INDIA_PRESET.eps,
+  pead: INDIA_PRESET.pead,
+  opmDelta: INDIA_PRESET.opmDelta,
+  cfoPatMin: INDIA_PRESET.cfoPatMin,
+  mktCapMin: INDIA_PRESET.mktCapMin,
+  pledgedMax: INDIA_PRESET.pledgedMax,
+  verdicts: [...INDIA_PRESET.verdicts],
+});
+
+const VERDICTS_SORTED = JSON.stringify([...INDIA_PRESET.verdicts].sort());
+
+/** True when the live filters ARE the preset — what lights the chip. */
+function isIndiaPresetActive(f: ConvFilters): boolean {
+  return f.sales === INDIA_PRESET.sales
+    && f.eps === INDIA_PRESET.eps
+    && f.pead === INDIA_PRESET.pead
+    && f.opmDelta === INDIA_PRESET.opmDelta
+    && f.cfoPatMin === INDIA_PRESET.cfoPatMin
+    && f.mktCapMin === INDIA_PRESET.mktCapMin
+    && f.pledgedMax === INDIA_PRESET.pledgedMax
+    && f.driftBucket == null
+    && JSON.stringify((f.verdicts || []).slice().sort()) === VERDICTS_SORTED;
+}
+
 // zzz543 — SINGLE source of truth for "days since filing". The NEW·Nd filter and
 // the "·Nd" freshness badge MUST use the exact same formula, or a name can badge
 // "31d" yet still pass a "30d" filter (which is exactly the bug Rishi hit). We
@@ -2327,7 +2385,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       // (Avoids clobbering filters restored from a saved view later.)
       setFilters((prev) => (
         prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null && prev.cfoPatMin == null && prev.mktCapMin == null && prev.verdicts == null /* zzz362 */
-          ? { ...prev, sales: 20, eps: 25, pead: 40, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 — user: preset auto-ON with SB+BUY+WATCH */ }
+          ? { ...prev, ...indiaPresetFilters() } /* zzz366 — preset auto-ON with SB+BUY+WATCH; zzz672 — off the shared constant */
           : prev
       ));
     } catch {}
@@ -3474,7 +3532,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           // zzz659 — PEAD 60 -> 40 across every preset. PEAD is a drift proxy
           // (35% of it is the one-day reaction), not a quality score, so a gate
           // at 60 silently excluded good quarters the market sold on the day.
-          const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.pledgedMax === 0 /* zzz360 */ && filters.driftBucket == null && JSON.stringify((filters.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']) /* zzz366 */;
+          // zzz672 — the test lives with the values it tests (see INDIA_PRESET).
+          const presetActive = isIndiaPresetActive(filters);
           const OPT_OUT_KEY = 'mc:cb:preset:v3:optout';
           const handleToggle = () => {
             setFilters((prev) => {
@@ -3483,7 +3542,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 return { ...FILTER_DEFAULT, cap: prev.cap };
               } else {
                 try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 40, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 */ };
+                return { ...FILTER_DEFAULT, cap: prev.cap, ...indiaPresetFilters() };
               }
             });
           };
@@ -3491,7 +3550,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥60 · OPM Δ ≥0pp · CFO/PAT ≥0.5 · MktCap ≥₹3k Cr · Promoter pledge 0% (zzz360; null pledge passes). Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
+                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥40 · OPM Δ ≥0pp · CFO/PAT ≥0.5 · MktCap ≥₹3k Cr · Promoter pledge 0% (zzz360; null pledge passes). Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
