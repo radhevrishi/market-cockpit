@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-15T13:04:22Z",
+  "lastSync": "2026-09-15T15:48:53Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -40,12 +40,12 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4483,
+      "size": 4082,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 8752,
+      "size": 8349,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -90,12 +90,12 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65695,
+      "size": 65691,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 6693,
+      "size": 6289,
       "displayName": "Weekly Volume Pockets"
     }
   ]
