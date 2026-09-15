@@ -3534,6 +3534,61 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   else if (turnaroundCompleted && !methodology_tags.includes('returned to profit')) {
     methodology_tags.push('returned to profit');
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // A COMPANY THAT RECOVERED FROM A LOSS COULD NEVER EARN A TIER  (zzz665)
+  //
+  // `yoyPct` returns null whenever the prior base is zero or negative, and it
+  // is RIGHT to: a loss of $4.8m becoming a profit of $66.1m is not "+1489%
+  // growth", it is a different kind of event and a percentage would lie about
+  // it. That refusal has been correct since the day it was written.
+  //
+  // What was never noticed is what the refusal costs downstream. `patY` and
+  // `epsY` both come back null, and EVERY magnitude flag — cleanMag, exceptMag,
+  // megaMag, marginInflection, marginInflectionLoose — requires both. So they
+  // all go false, `blockbusterGate` is false, and the STRONG ladder then fails
+  // too because its quality path wants `epsY >= 15` and its main path wants
+  // `mCount >= 1` from methodology tags that are themselves keyed off the same
+  // dead flags. The row lands on `composite >= 35` — MIXED — and there is no
+  // arrangement of facts that could ever have produced anything else.
+  //
+  // Forgent Power Solutions is the case that exposed it. Revenue +94%,
+  // operating margin 3.5% → 19.9%, net income −$4.8m → +$66.1m, operating cash
+  // flow $73.9m, free cash flow −$48.2m → +$42.6m, a guide above the street on
+  // both lines, a BACKLOG OF $3.00 BILLION up 256%, Quality 87, Inflection 79,
+  // and one single caveat on the card. Published MIXED — "look at this twice".
+  //
+  // Note what this is NOT. It is not the missing year-ago EPS: FPS is a 2026
+  // spin-off and has none, but even a full per-share history would not have
+  // helped, because `patY` was already null and every gate needs `patY` too.
+  // The missing EPS was the visible half of a deeper fault.
+  //
+  // THE FIX USES THE EVIDENCE THAT SURVIVES. A swing from loss to profit has no
+  // meaningful growth RATE, but it has three facts that need no ratio at all:
+  // the top line grew, the margin expanded, and the company now earns real cash.
+  // That is the magnitude evidence, stated in the only terms this quarter can
+  // honestly be stated in.
+  //
+  // THE SAFETY VALVE IS UNTOUCHED. An INCOMPLETE recovery — still loss-making,
+  // or profitable only on paper — sets `turnaroundBase`, and `decideTier` caps
+  // any turnaround-based row at MIXED regardless of what fires here (PATCH
+  // 1008). So this path can lift a recovery that is finished, cash-backed and
+  // growing, and it cannot launder one that is still in progress.
+  // ═══════════════════════════════════════════════════════════════════════════
+  /** Last year lost money, this year makes it, and the cash agrees. */
+  const profitSwing = niP != null && niP < 0
+    && niC != null && niC > 0
+    && (f.cfo == null || f.cfo > 0);
+  /** The swing happened AT SCALE: the business grew and the margin expanded,
+   *  so this is an operating recovery and not a one-off credit landing below
+   *  the line. Thresholds mirror cleanMag's revenue bar and the margin step
+   *  `marginQualityDelta` already treats as decisive. */
+  const swingMag = profitSwing
+    && salesY != null && salesY >= 25
+    && opmExp != null && opmExp >= 5;
+  if (swingMag && !methodology_tags.includes('returned to profit')) {
+    methodology_tags.push('returned to profit');
+  }
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
   else if (opmExp != null && opmExp <= -0.5) caveat_tags.push('segment mix shift');
   // Earnings not backed by cash.
@@ -3680,7 +3735,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     // reason (zzz665). `decideTier` reads this field nowhere else.
     salesY, patY, epsY: epsYMag, opmExp,
     cleanMag, exceptMag, megaMag,
-    marginInflection, marginInflectionLoose,
+    marginInflection, marginInflectionLoose, swingMag,
     tier1MethodCount: t1,
     positiveGuidance: !!input.positive_guidance,   // from the 8-K press release (lib/us-guidance)
     chartOk,

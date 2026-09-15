@@ -23,6 +23,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { gradedKey } from '@/lib/graded-cache-key';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
@@ -672,7 +673,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v14:${date}`;  // zzz622 — CACHE-ONLY READ. Callers that are assembling a multi-day
+  const cacheKey = gradedKey(date);  // zzz665 — ONE definition, shared with refresh-bench (lib/graded-cache-key.ts)  // zzz622 — CACHE-ONLY READ. Callers that are assembling a multi-day
   // window (the AI Research Desk) must never be able to trigger a full
   // enrichment sweep on a reader's clock: thirty sessions × one sweep is a
   // ten-minute page load and a rate-limit apology. cache_only answers from

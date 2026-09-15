@@ -99,6 +99,19 @@ export interface DecideTierInputs {
   megaMag: boolean;
   marginInflection: boolean;         // PAT>=100 & EPS>=100 & sales>=-5
   marginInflectionLoose: boolean;    // PAT>=75 & EPS>=75 & sales>=0 & stage!=4
+  /**
+   * zzz665 — Path F. A COMPLETED swing from loss to profit, at scale: last year
+   * lost money, this year earns it with the cash to match, revenue up >=25% and
+   * operating margin up >=5pp.
+   *
+   * Every flag above it is a percentage test, and a percentage off a negative
+   * base does not exist — `yoyPct` refuses it, correctly. That refusal left
+   * `patY` and `epsY` null for every recovering company, which made all five
+   * paths unreachable and every such row MIXED for ever, however complete the
+   * recovery. This path carries the same evidence in the only terms the quarter
+   * can honestly be stated in. Optional so the India caller is unaffected.
+   */
+  swingMag?: boolean;
   tier1MethodCount: number;          // TT / SEPA / CANSLIM count
   positiveGuidance: boolean;
   chartOk: boolean;
@@ -139,7 +152,13 @@ export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveat
   const bbPathC = i.megaMag && i.caveatCount <= 3 && i.stage !== 4;
   const bbPathD = i.marginInflection && i.caveatCount <= 3 && i.stage !== 4;        // PATCH 0837
   const bbPathE = i.marginInflectionLoose && i.caveatCount <= 2;                    // PATCH 0838
-  const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD || bbPathE;
+  // zzz665 — the completed profit swing. Caveat budget matches Paths C and D,
+  // which are the other two that let magnitude speak without a clean chart.
+  // `decideTier` still caps any row whose recovery is UNFINISHED at MIXED two
+  // lines below (PATCH 1008), so this can only lift a swing that is genuinely
+  // done, cash-backed and growing.
+  const bbPathF = !!i.swingMag && i.caveatCount <= 3 && i.stage !== 4;
+  const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD || bbPathE || bbPathF;
 
   let tier: EarningsTier;
   if (i.broken && i.composite < 70) tier = 'AVOID';

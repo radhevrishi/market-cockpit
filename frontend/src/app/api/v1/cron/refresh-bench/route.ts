@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { verifyCronSecret } from '@/lib/verifyAuth';
+import { gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -77,15 +78,36 @@ export async function GET(req: Request) {
   let blockbuster = 0;
   let strong = 0;
   let scannedDays = 0;
+  // How many days could only be answered by an ABANDONED cache namespace. A
+  // healthy steady state is 0; a high number right after a version bump is
+  // expected and should fall to 0 as the new engine re-grades each session.
+  let legacyDays = 0;
 
   for (let offset = 0; offset < SCAN_DAYS; offset++) {
     const dateStr = istDateStr(offset);
+    // zzz665 — this read used a HARD-CODED 'graded:v10:' while the graded route
+    // had moved on to v14. A kvGet on a key nobody writes returns null, and
+    // null here means "nothing filed that day", so the cron rebuilt the bench
+    // from the previous generation of cached sessions and reported success
+    // every night. The key now comes from ONE definition both sides import.
+    //
+    // The legacy fallback is deliberate: on the day a version is bumped nothing
+    // has been written to the new namespace yet, and without it the bench would
+    // empty itself overnight. Current key always wins; older ones only answer
+    // for a day the current engine has not graded yet.
     let payload: GradedPayload | null = null;
-    try {
-      payload = await kvGet<GradedPayload>('graded:v10:' + dateStr);
-    } catch {
-      payload = null;
+    let usedLegacy = false;
+    for (const key of gradedKeyCandidates(dateStr)) {
+      try {
+        const hit = await kvGet<GradedPayload>(key);
+        if (hit?.by_tier) {
+          payload = hit;
+          if (!key.startsWith(`graded:${GRADED_CACHE_VERSION}:`)) usedLegacy = true;
+          break;
+        }
+      } catch { /* try the next namespace */ }
     }
+    if (usedLegacy) legacyDays++;
     scannedDays++;
     if (!payload || !payload.by_tier) continue;
 
@@ -115,6 +137,11 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     ok: true,
+    graded_cache_version: GRADED_CACHE_VERSION,
+    legacyDays,
+    legacy_note: legacyDays > 0
+      ? `${legacyDays} of ${scannedDays} day(s) were only available under an older cache namespace. Expected right after a version bump; it should fall to 0 as those sessions are re-graded.`
+      : undefined,
     scannedDays,
     blockbuster,
     strong,
