@@ -67,8 +67,13 @@ function recordDeck(rows: any[], region: string) {
     if (!row?.ai || !row?.ticker) continue;
     const id = ledgerId(row.ticker, row.accession ?? null, String(row.filing_date || ''));
     if (LEDGER_TRIED.has(id)) continue;
-    LEDGER_TRIED.add(id);
     const a = row.ai;
+    // zzz645 — MARKED TRIED ONLY ONCE IT ACTUALLY LANDED. The first version
+    // added the id before the write, so a single failed round-trip — a Redis
+    // blip, a cold connection — retired that prediction from this instance for
+    // its whole lifetime, silently, and the next reader was told nothing. Six
+    // of seven India rows went missing that way. 'exists' counts as landed:
+    // the record is there, which is the whole point of the check.
     void recordPrediction({
       id,
       ticker: row.ticker, company: row.company || null,
@@ -91,7 +96,9 @@ function recordDeck(rows: any[], region: string) {
       structural_score: a.structural_score ?? null, change_type: a.change_type ?? null,
       why_now_score: a.why_now_score ?? null, bear_severity: a.bear_severity ?? null,
       confidence: a.confidence ?? null, composite: row.composite ?? null,
-    }).catch(() => {});
+    })
+      .then((r) => { if (r === 'written' || r === 'exists') LEDGER_TRIED.add(id); })
+      .catch(() => { /* left untried on purpose — the next request retries it */ });
   }
 }
 
