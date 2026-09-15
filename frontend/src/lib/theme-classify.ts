@@ -70,6 +70,40 @@ const US_RULES: Rule[] = [
   { re: /technology services|internet software|it (?:service|consulting)|packaged software|information technology|software|computer services/i, theme: 'us-software' },
 ];
 
+// zzz631 — NSE'S OWN MACRO-INDUSTRY VOCABULARY, FIRST.
+//
+// India rows carry no sector of their own, so the industry now comes from the
+// nse-ticker-universe blob — which uses NSE's fixed macro-industry names. Two
+// of them fell through every rule below and left the biggest groups on the
+// bench unclassified:
+//
+//   "Healthcare"                 — matched neither the pharma rule (which wants
+//                                  the word "pharma") nor the hospitals rule
+//                                  (which wants "healthcare services").
+//   "Fast Moving Consumer Goods" — does not contain the string "fmcg", so it
+//                                  fell past the FMCG rule into the generic
+//                                  consumer catch-all.
+//
+// These are checked first because they are EXACT source vocabulary rather than
+// keyword guesses. Healthcare resolves to pharma as the majority case for this
+// universe; a hospital chain is corrected by TICKER_OVERRIDE, which is what
+// that map is for.
+const IN_NSE_VOCAB: Rule[] = [
+  // "Automobile and Auto Components" was landing in EMS, because the EMS rule
+  // matches the word "component" and is tried first. Every auto ancillary in
+  // the book was being called an electronics manufacturer.
+  { re: /^automobile and auto components?$/i, theme: 'in-auto' },
+  // "Construction Materials" is cement and its neighbours; it was falling past
+  // the cement rule (which wants "building material") into capital goods.
+  { re: /^construction materials?$/i, theme: 'in-cement' },
+  { re: /^fast moving consumer goods$/i, theme: 'in-fmcg' },
+  { re: /^healthcare$/i, theme: 'in-pharma' },
+  { re: /^consumer services$/i, theme: 'in-consumption' },
+  { re: /^oil gas .*fuels?$/i, theme: 'in-energy' },
+  { re: /^forest materials$/i, theme: 'in-commodities' },
+  { re: /^media entertainment/i, theme: 'in-media' },
+];
+
 const IN_RULES: Rule[] = [
   { re: /software|it services|information technology|\bit - software\b|saas/i, theme: 'in-it' },
   { re: /electronic|\bems\b|contract manufactur|\bcomponent|it - hardware|computer hardware|\bhardware\b|semiconduct/i, theme: 'in-ems' },
@@ -110,7 +144,7 @@ const IN_RULES: Rule[] = [
 // rules (industry is the finer tell, tried before the broader sector).
 export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion, ticker?: string | null): string | null {
   if (ticker) { const ov = TICKER_OVERRIDE[ticker.toUpperCase().replace(/\.(NS|BO)$/, '').trim()]; if (ov) return ov; }
-  const rules = region === 'us' ? US_RULES : IN_RULES;
+  const rules = region === 'us' ? US_RULES : [...IN_NSE_VOCAB, ...IN_RULES];
   const ind = (industry || '').toString();
   const sec = (sector || '').toString();
   for (const text of [ind, sec]) {
