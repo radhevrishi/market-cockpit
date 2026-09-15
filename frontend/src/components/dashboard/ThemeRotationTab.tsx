@@ -833,13 +833,24 @@ export default function ThemeRotationTab() {
             const placed = CARDS.reduce((a, [k]) => a + (bv[k]?.length || 0), 0);
             return (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: 10, marginBottom: 6 }}>
+                {/* ═══ BANDS, NOT COLUMNS  (zzz660) ═══════════════════════
+                    These six buckets were an auto-fit grid of equal-width
+                    columns, and their contents are wildly unequal: BUY holds
+                    twelve themes plus four sub-theme panels while EARLY BUY
+                    holds one chip. Every column stretched to the tallest, so
+                    four of six were mostly empty space and AVOID's nineteen
+                    themes were squeezed into a single narrow stack nineteen
+                    rows tall. That is the "mess": not the content, the shape.
+                    A verdict bucket is a HEADING with a list under it, so it
+                    is now a full-width band whose chips wrap across the whole
+                    page — six short rows instead of six ragged columns. */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 6 }}>
                   {CARDS.map(([k, label, col, bg]) => {
                     const ids = bv[k] || (k === 'BUY' ? payload.topBuy : k === 'EARLY BUY' ? payload.rotatingIn : k === 'AVOID' ? payload.topAvoid : []);
                     return (
-                      <div key={k} style={{ background: bg, border: `1px solid ${col}4d`, borderRadius: 10, padding: '11px 13px' }}>
-                        <div style={{ fontSize: 11, fontWeight: 900, color: col, letterSpacing: 0.5, marginBottom: 7 }}>{label} <span style={{ color: DIM, fontWeight: 700 }}>({ids.length})</span></div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{ids.length ? ids.map((id) => chip(id, col)) : <span style={{ color: DIM, fontSize: 11.5 }}>none right now</span>}</div>
+                      <div key={k} style={{ background: bg, border: `1px solid ${col}4d`, borderLeft: `3px solid ${col}`, borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: col, letterSpacing: 0.4, minWidth: 186, flexShrink: 0 }}>{label} <span style={{ color: DIM, fontWeight: 700 }}>({ids.length})</span></div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1, minWidth: 260 }}>{ids.length ? ids.map((id) => chip(id, col)) : <span style={{ color: DIM, fontSize: 11.5 }}>none right now</span>}</div>
                         {/* ── WHICH HALF OF THE THEME  (zzz629) ─────────────
                             A verdict on a theme is only half an instruction:
                             "buy Photonics" is wrong when the transceivers are
@@ -848,40 +859,79 @@ export default function ThemeRotationTab() {
                             relative strength, strongest first, right here on
                             the first screen — so the reader sees WHICH PART to
                             act on without opening anything. */}
-                        {ACTIONABLE.includes(k) && ids.map((id) => {
-                          const dd = drill[`${region}:${id}`];
-                          const subs: any[] = (dd?.subs || []).filter((x: any) => !x.residual);
-                          if (subs.length < 2) return null;
-                          const th = byId.get(id);
-                          const mx = Math.max(1, ...subs.map((x: any) => Math.abs(x.rs3m ?? 0)));
-                          return (
-                            <div key={`sub-${id}`} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${col}33` }}>
-                              <div style={{ fontSize: 9.5, fontWeight: 800, color: MUT, marginBottom: 3 }}>{th?.emoji} {th?.name} — by sub-theme</div>
-                              {subs.map((sub: any) => {
-                                const v = sub.rs3m ?? 0;
-                                const w = Math.min(50, (Math.abs(v) / mx) * 50);
-                                const c = v >= 0 ? '#16A34A' : '#EF4444';
-                                return (
-                                  <div key={sub.name} title={`${sub.count} names · 3M ${fmtPct(sub.m3)} · ${sub.breadth}% above their 50-DMA · ${sub.buyReady} buy-ready · ${sub.symbols.join(', ')}`}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
-                                    <span style={{ fontSize: 9.5, color: TXT, width: 132, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub.name}</span>
-                                    <div style={{ flex: 1, position: 'relative', height: 8, minWidth: 40 }}>
-                                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
-                                      <div style={{ position: 'absolute', top: 1, bottom: 1, borderRadius: 2, background: c, opacity: 0.85, ...(v >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` }) }} />
-                                    </div>
-                                    <span style={{ fontSize: 9, fontFamily: 'ui-monospace,monospace', width: 38, textAlign: 'right', color: v >= 0 ? '#22C55E' : '#F87171' }}>{v > 0 ? '+' : ''}{v.toFixed(0)}</span>
-                                    <span style={{ fontSize: 8.5, color: sub.buyReady ? '#22C55E' : DIM, width: 26, textAlign: 'right' }} title={`${sub.buyReady} of ${sub.count} above their 50-DMA and outperforming`}>{sub.buyReady}/{sub.count}</span>
-                                  </div>
-                                );
-                              })}
-                              <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>Strongest: <b style={{ color: '#22C55E' }}>{subs[0]?.name}</b>{subs.length > 1 ? <> · weakest <b style={{ color: '#F87171' }}>{subs[subs.length - 1]?.name}</b></> : null}. Bar = relative strength vs the benchmark over 3M; <b>n/m</b> = buy-ready of members.</div>
-                            </div>
-                          );
-                        })}
                       </div>
                     );
                   })}
                 </div>
+                {/* ═══ SUB-THEMES GET THEIR OWN GRID  (zzz660) ════════════
+                    These panels used to hang underneath whichever verdict
+                    bucket their theme belonged to, which is what made the BUY
+                    column four times the height of every other one. They are
+                    the same information wherever they sit, and they tile far
+                    better on their own: an even grid, sorted so the strongest
+                    internal split comes first, because a theme where the best
+                    and worst sub-theme are fifty points apart is the one where
+                    "buy the theme" is most wrong. */}
+                {(() => {
+                  const panels: React.ReactNode[] = [];
+                  for (const [k, , col] of CARDS) {
+                    if (!ACTIONABLE.includes(k)) continue;
+                    const ids = bv[k] || [];
+                    for (const id of ids) {
+                      const dd = drill[`${region}:${id}`];
+                      const subs: any[] = (dd?.subs || []).filter((x: any) => !x.residual);
+                      if (subs.length < 2) continue;
+                      const th = byId.get(id);
+                      const mx = Math.max(1, ...subs.map((x: any) => Math.abs(x.rs3m ?? 0)));
+                      const spread = Math.round(Math.abs((subs[0]?.rs3m ?? 0) - (subs[subs.length - 1]?.rs3m ?? 0)));
+                      panels.push(
+                        <div key={`sub-${id}`} data-spread={spread} style={{ background: 'var(--mc-bg-1)', border: `1px solid ${col}3d`, borderTop: `2px solid ${col}`, borderRadius: 8, padding: '9px 11px' }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 5 }}>
+                            <span style={{ fontSize: 10.5, fontWeight: 800, color: TXT }}>{th?.emoji} {th?.name}</span>
+                            <span style={{ fontSize: 8.5, fontWeight: 900, color: col }}>{k}</span>
+                            <span style={{ flex: 1 }} />
+                            <span title="Points of relative strength between the best and worst sub-theme. The wider it is, the more wrong it is to act on the theme as one thing."
+                              style={{ fontSize: 8.5, fontWeight: 800, color: spread >= 25 ? '#F59E0B' : DIM }}>spread {spread}</span>
+                          </div>
+                          {subs.map((sub: any) => {
+                            const v = sub.rs3m ?? 0;
+                            const w = Math.min(50, (Math.abs(v) / mx) * 50);
+                            const c = v >= 0 ? '#16A34A' : '#EF4444';
+                            return (
+                              <div key={sub.name} title={`${sub.count} names · 3M ${fmtPct(sub.m3)} · ${sub.breadth}% above their 50-DMA · ${sub.buyReady} buy-ready · ${sub.symbols.join(', ')}`}
+                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
+                                <span style={{ fontSize: 9.5, color: TXT, width: 132, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub.name}</span>
+                                <div style={{ flex: 1, position: 'relative', height: 8, minWidth: 40 }}>
+                                  <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.14)' }} />
+                                  <div style={{ position: 'absolute', top: 1, bottom: 1, borderRadius: 2, background: c, opacity: 0.85, ...(v >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` }) }} />
+                                </div>
+                                <span style={{ fontSize: 9, fontFamily: 'ui-monospace,monospace', width: 38, textAlign: 'right', color: v >= 0 ? '#22C55E' : '#F87171' }}>{v > 0 ? '+' : ''}{v.toFixed(0)}</span>
+                                <span style={{ fontSize: 8.5, color: sub.buyReady ? '#22C55E' : DIM, width: 26, textAlign: 'right' }} title={`${sub.buyReady} of ${sub.count} above their 50-DMA and outperforming`}>{sub.buyReady}/{sub.count}</span>
+                              </div>
+                            );
+                          })}
+                          <div style={{ fontSize: 8.5, color: DIM, marginTop: 3 }}>Strongest <b style={{ color: '#22C55E' }}>{subs[0]?.name}</b>{subs.length > 1 ? <> · weakest <b style={{ color: '#F87171' }}>{subs[subs.length - 1]?.name}</b></> : null}</div>
+                        </div>,
+                      );
+                    }
+                  }
+                  if (!panels.length) return null;
+                  panels.sort((a: any, b: any) => (b.props['data-spread'] || 0) - (a.props['data-spread'] || 0));
+                  return (
+                    <div style={{ marginTop: 10, marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 0.5, color: MUT, marginBottom: 6 }}>
+                        WHICH HALF OF THE THEME — {panels.length} actionable theme{panels.length === 1 ? '' : 's'} split by sub-theme, widest internal spread first
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 8, alignItems: 'start' }}>
+                        {panels}
+                      </div>
+                      <div style={{ fontSize: 9, color: DIM, marginTop: 5 }}>
+                        Bar = relative strength against the benchmark over three months; <b>n/m</b> = how many members are above their 50-DMA and outperforming. A verdict on a theme is only half an instruction — &ldquo;buy Photonics&rdquo; is wrong when the transceivers are working and the lasers are not.
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div style={{ fontSize: 10, color: DIM, marginBottom: 14 }}>
                   Every theme on the board sits in exactly one bucket above — {placed} of {themes.length} placed. Nothing is truncated, so a theme you cannot find here is one the engine could not price, not one it left out. Click any chip to open it.
                 </div>
