@@ -32,13 +32,13 @@ on:
   workflow_dispatch:
     inputs:
       max_symbols:
-        description: 'Cap on bench symbols to compute this run'
+        description: 'Safety cap on symbols (the whole NSE equity list is ~2000)'
         required: false
-        default: '900'
+        default: '5000'
       max_fetch:
         description: 'Sessions to fetch this run (raise it to force a faster backfill)'
         required: false
-        default: '120'
+        default: '300'
       extra_symbols:
         description: 'Comma-separated extra symbols to include (e.g. a name not yet benched)'
         required: false
@@ -65,8 +65,8 @@ jobs:
         env:
           UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          MAX_SYMBOLS:   ${{ github.event.inputs.max_symbols || '900' }}
-          MAX_FETCH:     ${{ github.event.inputs.max_fetch || '120' }}
+          MAX_SYMBOLS:   ${{ github.event.inputs.max_symbols || '5000' }}
+          MAX_FETCH:     ${{ github.event.inputs.max_fetch || '300' }}
           EXTRA_SYMBOLS: ${{ github.event.inputs.extra_symbols || '' }}
         run: |
           if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then

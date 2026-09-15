@@ -62,15 +62,95 @@
 //   KV  india-tech:v1:latest       — the computed technicals the app reads
 // ═══════════════════════════════════════════════════════════════════════════
 
-const OUT_KEY   = 'india-tech:v1:latest';
-const HIST_KEY  = 'india-tech-hist:v1:latest';
+const OUT_KEY    = 'india-tech:v1:latest';
+// ═══════════════════════════════════════════════════════════════════════════
+// THE HISTORY IS CHUNKED AND COLUMN-ENCODED.  (zzz667)
+//
+// The first build stored one JSON object, `{SYM: {"2026-09-15": 339, ...}}`,
+// and Upstash refused it at 10,485,801 bytes against a 10,485,760 limit. The
+// working set was then capped at 900 symbols to fit — which is why a company
+// outside the most-traded 900 had no stage and no RS on the day it reported.
+//
+// Neither half of that shape was necessary.
+//
+// THE DATE WAS STORED ONCE PER SYMBOL PER DAY. Every point carried its own
+// "2026-09-15" key: about 22 bytes to record one number. Holding the dates ONCE
+// in the metadata and storing each symbol's closes as an array aligned to that
+// index costs about 8. Same information, a third of the space.
+//
+// AND THE 10 MB LIMIT IS PER VALUE, NOT PER DATABASE. Splitting the symbols
+// across chunk keys by a stable hash of the symbol multiplies the ceiling by
+// the number of chunks, and a symbol always lands in the same chunk so a run
+// only rewrites what it touched.
+//
+// Together: roughly 8,000 symbols over 400 sessions. The entire NSE equity list
+// is about 2,000 names, so this does not raise the cap — it removes it, and the
+// universe filter can stop pretending to be a size decision.
+// ═══════════════════════════════════════════════════════════════════════════
+const HIST_META  = 'india-tech-hist:v2:meta';
+const HIST_CHUNK = (i) => `india-tech-hist:v2:c${i}`;
+const CHUNKS = 6;
+/** Stable so a symbol keeps its chunk across runs. */
+function chunkOf(sym) {
+  let h = 0;
+  for (let i = 0; i < sym.length; i++) h = (Math.imul(h, 31) + sym.charCodeAt(i)) >>> 0;
+  return h % CHUNKS;
+}
+/** Reads meta + every chunk and rebuilds { SYM: { iso: close } } for the run. */
+async function loadHistory() {
+  const meta = await kvGet(HIST_META);
+  if (!meta) return null;
+  const dates = Array.isArray(meta.dates) ? meta.dates : [];
+  const series = {};
+  for (let i = 0; i < (meta.chunks || CHUNKS); i++) {
+    const c = await kvGet(HIST_CHUNK(i));
+    if (!c) continue;
+    for (const [sym, arr] of Object.entries(c)) {
+      if (!Array.isArray(arr)) continue;
+      const m = {};
+      for (let j = 0; j < arr.length; j++) if (arr[j] != null) m[dates[j]] = arr[j];
+      series[sym] = m;
+    }
+  }
+  return { ...meta, series };
+}
+/** Column-encodes and writes meta + chunks, trimming the oldest sessions only
+ *  if a chunk would still be over the limit. */
+async function saveHistory(meta, series) {
+  let dates = [...new Set(Object.values(series).flatMap((m) => Object.keys(m)))].sort();
+  const LIMIT = 9_000_000;
+  for (let guard = 0; guard < 12; guard++) {
+    const chunks = Array.from({ length: CHUNKS }, () => ({}));
+    for (const [sym, m] of Object.entries(series)) {
+      chunks[chunkOf(sym)][sym] = dates.map((d) => {
+        const v = m[d];
+        return v == null ? null : Math.round(v * 100) / 100;
+      });
+    }
+    const biggest = Math.max(...chunks.map((c) => JSON.stringify(c).length));
+    if (biggest > LIMIT) {
+      const drop = Math.ceil(dates.length * 0.12);
+      dates = dates.slice(drop);
+      console.log(`  a chunk was ${biggest} bytes — dropping the oldest ${drop} sessions`);
+      continue;
+    }
+    await kvSet(HIST_META, { ...meta, dates, chunks: CHUNKS }, HIST_TTL);
+    for (let i = 0; i < CHUNKS; i++) await kvSet(HIST_CHUNK(i), chunks[i], HIST_TTL);
+    return { dates, biggestChunkBytes: biggest };
+  }
+  throw new Error('history could not be reduced under the chunk limit');
+}
 const BENCH_KEY = 'bench:server:v1';
 const OUT_TTL  = 30 * 24 * 60 * 60;
 const HIST_TTL = 400 * 24 * 60 * 60;
 
 const BACKFILL_DAYS      = Number(process.env.BACKFILL_DAYS || 400);
 const MAX_FETCH_PER_RUN  = Number(process.env.MAX_FETCH || 120);
-const MAX_SYMBOLS        = Number(process.env.MAX_SYMBOLS || 900);
+// zzz667 — was 900, which was never a judgement about which companies matter;
+// it was the largest number that fit in one 10 MB value. The store is chunked
+// and column-encoded now, so this is a safety valve rather than a ceiling: the
+// whole NSE equity list is about 2,000 names and all of them fit.
+const MAX_SYMBOLS        = Number(process.env.MAX_SYMBOLS || 5000);
 const GAP_MS             = Number(process.env.GAP_MS || 250);
 const TIMEOUT_MS         = 30_000;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
@@ -269,13 +349,13 @@ function assignRs(entries, benchRet12m) {
 }
 
 async function main() {
-  // WHICH SYMBOLS WE KEEP HISTORY FOR. The bench is the working set — these are
-  // the names whose cards get read, and the bench cron adds a fresh filer the
-  // morning after it reports. Storing the whole exchange is what blew the 10 MB
-  // Redis limit on the first run; storing the working set is a few megabytes.
-  // Symbols already in the stored history are kept even if they have since left
-  // the bench, so a name that returns does not start from zero bars.
-  const priorHist = (await kvGet(HIST_KEY)) || {};
+  // WHICH SYMBOLS WE KEEP HISTORY FOR. Every listed equity, now that the store
+  // can hold them. The earlier 900-name limit was a storage constraint wearing
+  // the costume of a relevance filter, and it showed: MOLBIO graded on 08 Sep
+  // with stage null and RS null purely because it sat outside the most-traded
+  // 900. A company you have never heard of reporting tomorrow is exactly the
+  // one this engine exists to find.
+  const priorHist = (await loadHistory()) || {};
   let series = priorHist.series || {};
   let marketDaily = priorHist.marketDaily || {};
   let knownEmpty = new Set(priorHist.knownEmpty || []);
@@ -384,26 +464,14 @@ async function main() {
   // NEVER TRUNCATE ON FAILURE, but DO stay under the store's limit. Oldest
   // sessions go first if the blob has outgrown the cap — a 200-day moving
   // average needs 200 sessions, not 400.
-  const trimTo = (obj, keepIso) => {
-    for (const sym of Object.keys(obj)) {
-      for (const d of Object.keys(obj[sym])) if (!keepIso.has(d)) delete obj[sym][d];
-      if (!Object.keys(obj[sym]).length) delete obj[sym];
-    }
-  };
-  let hist = { generatedAt: new Date().toISOString(), marketBasis: MARKET_BASIS,
+  const saved = await saveHistory({
+    generatedAt: new Date().toISOString(),
+    marketBasis: MARKET_BASIS,
     universe, universeAt: universe.length ? new Date().toISOString() : (priorHist.universeAt || null),
-    coverage: [...want], sessions: [...have], knownEmpty: [...knownEmpty], marketDaily, series };
-  const LIMIT = 9_000_000;
-  let guard = 0;
-  while (JSON.stringify(hist).length > LIMIT && guard++ < 12) {
-    const allIso = [...new Set(Object.values(series).flatMap((m) => Object.keys(m)))].sort();
-    const keep = new Set(allIso.slice(Math.ceil(allIso.length * 0.12)));   // drop the oldest ~12%
-    trimTo(series, keep);
-    for (const d of Object.keys(marketDaily)) if (!keep.has(d)) delete marketDaily[d];
-    hist = { ...hist, series, marketDaily };
-    console.log(`  blob over ${LIMIT} bytes — trimmed to ${keep.size} sessions`);
-  }
-  await kvSet(HIST_KEY, hist, HIST_TTL);
+    coverage: [...want],
+    sessions: [...have], knownEmpty: [...knownEmpty], marketDaily,
+  }, series);
+  console.log(`history saved: ${Object.keys(series).length} symbols \u00d7 ${saved.dates.length} sessions, biggest chunk ${(saved.biggestChunkBytes / 1e6).toFixed(2)} MB of 9`);
 
   // ── 2. the market leg of RS ───────────────────────────────────────────
   // Compounded median daily return over the last 252 sessions. Broad by
