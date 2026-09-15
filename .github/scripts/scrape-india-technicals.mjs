@@ -500,14 +500,27 @@ async function main() {
   // a moving average to mean anything. Both are correct behaviour; only one is
   // worth acting on. So the job says which, instead of leaving it to be
   // rediscovered by hand every time somebody asks.
-  const skipped = { absent: [], tooFewBars: [] };
+  // A PER-SYMBOL REASON, FOR EVERY SYMBOL, NOT A COUNT FOR THE BENCH.  (zzz670)
+  //
+  // The first version of this only explained bench names, so the first question
+  // asked of it — "BLEL trades ₹113 Cr a day and has no stage, why?" — could
+  // not be answered from the job's own output. A missing value that cannot
+  // explain itself gets rediscovered by hand every time somebody notices it.
+  //
+  // `skipped` is now keyed by symbol and stored WITH the overlay, so the
+  // enrichment route can hand the reason straight back on the card:
+  //   "absent"  — no such symbol in the bhavcopy EQ/BE series (an SME/EMERGE
+  //               listing, a REIT/InvIT, or a ticker that simply is not there)
+  //   "bars:N"  — present, but only N sessions of history. A 200-day average on
+  //               twelve bars is not a cautious estimate, it is a fabrication.
+  const skipped = {};
   for (const sym of targets) {
     const m = series[sym];
-    if (!m) { if (fromBench.includes(sym)) skipped.absent.push(sym); continue; }
+    if (!m) { skipped[sym] = 'absent'; continue; }
     const dates = Object.keys(m).sort();
     const t = technicalsFor(dates.map((d) => m[d]));
     if (t) out[sym] = t;
-    else if (fromBench.includes(sym)) skipped.tooFewBars.push(`${sym}(${dates.length})`);
+    else skipped[sym] = `bars:${dates.length}`;
   }
   assignRs(Object.entries(out), benchmarkRet12m);
 
@@ -529,6 +542,7 @@ async function main() {
     count: Object.keys(merged).length,
     benchmarkRet12m, sessions_stored: have.size,
     symbols: merged,
+    skipped,
   }, OUT_TTL);
 
   const stages = {};
@@ -542,12 +556,10 @@ async function main() {
     with_rs: Object.values(merged).filter((t) => t.rs_rating != null).length,
     with_ma200: Object.values(merged).filter((t) => t.ma200 != null).length,
     trend_template: Object.values(merged).filter((t) => t.trend_template).length,
-    bench_without_technicals: {
-      not_in_bhavcopy: skipped.absent.length,
-      too_few_bars: skipped.tooFewBars.length,
-      not_in_bhavcopy_sample: skipped.absent.slice(0, 12),
-      too_few_bars_sample: skipped.tooFewBars.slice(0, 12),
-    },
+    skipped_total: Object.keys(skipped).length,
+    skipped_absent: Object.values(skipped).filter((v) => v === 'absent').length,
+    skipped_too_few_bars: Object.values(skipped).filter((v) => String(v).startsWith('bars:')).length,
+    bench_without_technicals: fromBench.filter((s2) => skipped[s2]).map((s2) => `${s2}:${skipped[s2]}`).slice(0, 15),
   }, null, 2));
 }
 

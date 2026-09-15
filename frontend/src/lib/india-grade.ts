@@ -173,6 +173,38 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
       narrative,
       filing_url: row.source_url,
       source: hasAnyAbsolute ? (row.financials_source || 'screener-worker') : 'NSE+BSE',
+      // ── zzz670 — A NEWLY-LISTED COMPANY IS NOT AN UNMEASURABLE ONE ───────
+      //
+      // This early return is the preview path for a filer with no year-ago
+      // comparable, and it skipped the Quality × Inflection axes entirely — so
+      // Shiprocket showed no Q and no I despite the feed carrying ROCE −2.7%,
+      // operating margin −1.8% against −2.2% and a sequential revenue trend.
+      // Those are exactly the inputs the quadrant is built from, and NONE of
+      // them needs a year-ago quarter.
+      //
+      // `quadrantScore` already refuses to judge on too little evidence — it
+      // returns a null quadrant below 25 assessable points — so letting it look
+      // can only produce an honest answer or an honest absence. Hard-coding the
+      // absence was the one option that could be wrong.
+      //
+      // PEAD is deliberately still omitted here: post-earnings drift is built
+      // on a surprise and a reaction, and a first-ever print has neither. A
+      // number computed from zeros would look like a reading.
+      ...(() => {
+        try {
+          const _pq = quadrantForIndiaRow(row, {
+            salesY: row?.sales_yoy_pct ?? null,
+            opmExp: (row?.opm_pct != null && row?.opm_prev_pct != null)
+              ? row.opm_pct - row.opm_prev_pct : null,
+          });
+          return {
+            quality_score: _pq.quality,
+            inflection_score: _pq.inflection,
+            quadrant: _pq.quadrant,
+            quadrant_parts: { quality: _pq.quality_parts, inflection: _pq.inflection_parts },
+          };
+        } catch { return {}; }
+      })(),
     };
   }
 

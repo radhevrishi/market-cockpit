@@ -2113,6 +2113,20 @@ export async function GET(req: Request) {
         }
         if (touched) { data[sym]._tech_source = 'india-tech-scraper'; overlayApplied++; }
       }
+      // zzz670 — WHY a symbol has no technicals, carried to the card.
+      // Without this, a name like BLEL (₹113 Cr traded a day, no stage, no RS)
+      // looks like a bug and has to be investigated by hand every time. The
+      // scraper already knows the answer; it just had nowhere to put it.
+      const sk = blob?.skipped || null;
+      if (sk) {
+        for (const sym of Object.keys(data)) {
+          if (data[sym].stage != null || !sk[sym]) continue;
+          const why = String(sk[sym]);
+          data[sym]._tech_missing_reason = why === 'absent'
+            ? 'not in the NSE bhavcopy EQ/BE series (SME/EMERGE, REIT/InvIT, or not listed there)'
+            : `only ${why.replace('bars:', '')} sessions of price history — too few for a moving average`;
+        }
+      }
     }
   } catch { /* the overlay is a bonus; never let it fail an enrichment */ }
 

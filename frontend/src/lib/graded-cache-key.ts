@@ -59,7 +59,11 @@
 //     bench's decay-aware formula, tilted by the now-measured volume ratio;
 //   · guidance is real: refresh-guidance builds a per-symbol overlay from the
 //     concall pipeline that was already running and never connected.
-export const GRADED_CACHE_VERSION = 'v19';
+// zzz670 — v19 → v20. A newly-listed filer now gets Quality × Inflection: the
+//   preview path returned before the quadrant was computed, so Shiprocket
+//   showed no Q and no I while the feed carried ROCE, operating margin and a
+//   sequential trend — none of which needs a year-ago quarter.
+export const GRADED_CACHE_VERSION = 'v20';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -72,7 +76,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {
