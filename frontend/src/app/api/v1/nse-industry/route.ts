@@ -183,13 +183,17 @@ export async function GET(request: Request) {
   const unresolved: string[] = [];
 
   // ── Rung 1 and 2: what is already known, at no cost ──────────────────────
+  // The cache reads go out TOGETHER. Sequentially they were ten round-trips to
+  // Upstash for ten tickers — three seconds to return data we already had,
+  // which is a silly price for the fast path and would only get worse as the
+  // book grows.
+  const cached = await Promise.all(want.map(async (t) => {
+    try { return { t, v: await kvGet<string>(KEY(t)) }; } catch { return { t, v: null }; }
+  }));
+  const cacheMap = new Map(cached.map((c) => [c.t, c.v]));
   for (const t of want) {
-    let hit: string | null = null;
-    try {
-      const c = await kvGet<string>(KEY(t));
-      if (c != null) { hit = c === '-' ? null : c; src[t] = 'cache'; }
-    } catch { /* treat a cache miss and a cache outage the same: resolve it */ }
-    if (src[t] === 'cache') { out[t] = hit; if (hit == null) continue; continue; }
+    const c = cacheMap.get(t);
+    if (c != null) { out[t] = c === '-' ? null : c; src[t] = 'cache'; continue; }
     if (uni[t]) {
       out[t] = uni[t]; src[t] = 'universe';
       try { await kvSet(KEY(t), uni[t], HIT_TTL); } catch { /* best effort */ }
