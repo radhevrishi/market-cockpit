@@ -29,6 +29,20 @@ import {
   type AnalystInput, type AiAssessment,
 } from '@/lib/ai-analyst';
 import { recordPrediction, ledgerId } from '@/lib/ai-ledger';
+
+// ═══ WHY THIS SET EXISTS  (zzz639) ═══════════════════════════════════════
+// The ledger write used to fire only when an assessment was computed FRESH.
+// That is one round-trip too few: an assessment is cached for days, so after
+// any deploy that changes the ledger's shape — or simply on a quiet week —
+// every name on the deck is served from cache, nothing is "fresh", and the
+// ledger stays at zero while the desk confidently shows eleven calls. The
+// record itself is idempotent and refuses to overwrite, so attempting it for a
+// served-from-cache assessment cannot manufacture hindsight: the scores written
+// are the frozen ones the model produced when it looked. What it CAN do is cost
+// a pointless round-trip on every page load, which is what the fresh-only guard
+// was really protecting against — so this process remembers what it has already
+// tried, and the cost is paid once per id per instance instead of once per view.
+const LEDGER_TRIED = new Set<string>();
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
@@ -355,11 +369,13 @@ export async function GET(req: NextRequest) {
     // of twelve cost twelve pointless round-trips each time the tab opened —
     // a large part of what made revisiting the desk feel like it was redoing
     // its whole job. A prediction that already exists needs no re-recording.
-    if (a && fresh) {
+    const _ledgerId = ledgerId(r.ticker, accession, String(r.filing_date || ''));
+    if (a && (fresh || !LEDGER_TRIED.has(_ledgerId))) {
       // THE PREDICTION IS RECORDED AT THE MOMENT IT IS MADE, not when the
       // reader happens to look. Written once and never rewritten.
+      LEDGER_TRIED.add(_ledgerId);
       void recordPrediction({
-        id: ledgerId(r.ticker, accession, String(r.filing_date || '')),
+        id: _ledgerId,
         ticker: r.ticker, company: r.company || null,
         filing_date: String(r.filing_date || ''), accession,
         price_at: n1(r.price), bench_at: null,
