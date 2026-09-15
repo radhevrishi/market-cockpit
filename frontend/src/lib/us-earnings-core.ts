@@ -75,6 +75,7 @@ import {
   marketReactionDelta,
   typicalDailyMovePct,
   quadrantScore,
+  fundamentalComposite, setupGrade,
   type EarningsTier,
   type EarningsQuadrant,
   type QuadrantResult,
@@ -3212,6 +3213,12 @@ export interface UsGradedRow {
   opm_basis?: OperatingIncomeBasis;
 
   composite_score: number;
+  /** zzz673 — composite with the technical term removed, renormalised to 0–100.
+   *  Display only until the tier gates are switched over. */
+  fund_composite?: number;
+  /** zzz673 — the chart as an ENTRY grade. Null means no technical data, which
+   *  is NOT the same as a bad setup and must never render as 'D'. */
+  setup_grade?: 'A' | 'B' | 'C' | 'D' | null;
   tier: EarningsTier;
   methodology_tags: string[];
   caveat_tags: string[];
@@ -3689,6 +3696,13 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   if (exceptMagFloor) methodology = Math.max(methodology, 65);
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
+
+  // zzz673 — the quarter scored without the chart, and the chart graded on its
+  // own as an ENTRY. COMPUTED AND RETURNED ONLY: `decideTier` below still gets
+  // `composite`, so this deploy moves no verdict. See `fundamentalComposite` in
+  // earnings-grade-shared for why the gate switch is a separate change.
+  const _fund_composite = fundamentalComposite(magnitude, quality, methodology);
+  const _setup_grade = setupGrade(technical, stage != null || rs != null);
 
   // WHAT "BROKEN" IS ALLOWED TO MEAN.
   //
@@ -4221,6 +4235,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     quarters_revenue: f.quarters_revenue, quarters_eps: f.quarters_eps, quarters_opm: f.quarters_opm,
     quarters_ends: f.quarters_ends, opm_basis: f.operating_income_basis,
     composite_score: Math.round(composite), tier,
+    fund_composite: Math.round(_fund_composite), setup_grade: _setup_grade,  // zzz673 — display only
     methodology_tags: uniqMeth, caveat_tags: uniqCav,
     narrative, narrative_stem, is_elite, pead_score, multibagger_setup,
     quality_score: quadrant.quality,

@@ -85,6 +85,73 @@ export function marginQualityDelta(opmExp: number | null | undefined): number {
 
 export type EarningsTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE CHART IS EVIDENCE ABOUT THE ENTRY, NOT ABOUT THE QUARTER.     (zzz673)
+//
+// `composite` is mag·0.35 + quality·0.25 + TECHNICAL·0.25 + methodology·0.15,
+// and `decideTier` gates BLOCKBUSTER on `composite >= 78` and STRONG on
+// `composite >= 68`. So a quarter's TIER — the label that says how good the
+// EARNINGS were — moves when the chart moves. Path A and Path B then ask for
+// `chartOk` on top, which means the tape sits on the top gate twice.
+//
+// That is backwards for finding an inflection early. The whole point of
+// catching a company at the turn is that the chart has NOT caught up yet: a
+// Stage-1 base is a 45 against a Stage-2 trend's 70, so an identical set of
+// filings grades 6 composite points lower purely for being early. The engine
+// was rewarding confirmation and calling it quality.
+//
+// The separation is the fix, and it loses nothing: the technical work already
+// done (Weinstein stage, JdK RS, 52-week position, trend template) keeps every
+// bit of its value as a SETUP grade sitting beside the tier, so a card can say
+// BLOCKBUSTER · Setup C — superb quarter, poor entry — which is both more
+// honest and more useful than quietly demoting the quarter to STRONG.
+//
+// ROLLOUT. `fundamentalComposite` and `setupGrade` ship COMPUTED AND DISPLAYED
+// but NOT TIERING (zzz673). `decideTier` still reads `composite` exactly as it
+// did, so this deploy cannot change a single verdict. The gate switch is a
+// separate change, made only after the two numbers have been diffed across the
+// whole bench and every moved verdict accounted for.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The composite with the chart taken out, renormalised to the same 0–100 range
+ * so it stays comparable with the thresholds calibrated against `composite`.
+ *
+ * Weights are the surviving three in their existing proportions (35/25/15,
+ * summing to 0.75). Dividing by that sum — rather than silently letting the
+ * score top out at 75 — is what keeps `>= 78` meaning the same thing on both
+ * numbers, which is the precondition for switching the gates over later
+ * without recalibrating every threshold in `decideTier` at the same time.
+ *
+ * Forward Durability joins this as a fourth term in V2-2; when it does, the
+ * divisor changes with it and this comment is the place that has to say so.
+ */
+export function fundamentalComposite(
+  magnitude: number, quality: number, methodology: number,
+): number {
+  const raw = magnitude * 0.35 + quality * 0.25 + methodology * 0.15;
+  return Math.max(0, Math.min(100, raw / 0.75));
+}
+
+export type SetupGrade = 'A' | 'B' | 'C' | 'D' | null;
+
+/**
+ * The chart, graded on its own terms: how good is the ENTRY, given that the
+ * quarter has already been judged elsewhere.
+ *
+ * Null — not 'D' — when there is no technical evidence at all. A newly listed
+ * company has no stage and no RS, and stamping that absence with the same
+ * letter as a Stage-4 downtrend would be inventing a fact. Callers must render
+ * null as "no setup data", never as a bad setup.
+ */
+export function setupGrade(technical: number, hasTechData: boolean): SetupGrade {
+  if (!hasTechData) return null;
+  if (technical >= 75) return 'A';
+  if (technical >= 55) return 'B';
+  if (technical >= 35) return 'C';
+  return 'D';
+}
+
 /**
  * Inputs for {@link decideTier}. These are the exact values both call sites
  * already compute inline; the caller derives the magnitude / margin-inflection

@@ -27,6 +27,7 @@
 import {
   CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier,
   marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow,
+  fundamentalComposite, setupGrade,
   type EarningsTier,
 } from '@/lib/earnings-grade-shared';
 import { peadScore } from '@/lib/pead-score';
@@ -431,6 +432,17 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
 
+  // zzz673 — the same quarter scored with the chart taken out, and the chart
+  // graded separately as an ENTRY. Both are COMPUTED AND RETURNED ONLY; nothing
+  // below reads them, and `decideTier` still receives `composite`. See the long
+  // note on `fundamentalComposite` in earnings-grade-shared for why the switch
+  // is deliberately a second, separate change.
+  const _fund_composite = fundamentalComposite(magnitude, quality, methodology);
+  // "Has technical evidence" is stage OR relative strength actually arriving
+  // from the scraper. Both null means a newly listed or uncovered symbol, whose
+  // setup is UNKNOWN — never 'D'.
+  const _setup_grade = setupGrade(technical, stage != null || rs != null);
+
   // Tier rules — PATCH 0173 BLOCKBUSTER v3 (EarningsPulse-matched).
   // Ignore RS, Stage 2, bonde ep as hard gates. Use Magnitude + Quality +
   // Tier-1 method count + Guidance + chart-not-broken.
@@ -779,6 +791,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     net_profit_yoy_pct: patY,
     eps_yoy_pct: epsY,
     composite_score: composite,
+    fund_composite: Math.round(_fund_composite), setup_grade: _setup_grade,  // zzz673 — display only
     d1_pct: row?.d1_pct ?? null,
     gap_pct: row?.gap_pct ?? null,
     tier,
@@ -836,6 +849,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     gap_pct: row.gap_pct ?? null, d1_pct: row.d1_pct ?? null, move_pct: row.move_pct ?? null,
     rs_rating: rs, stage, pct_from_52w_high: pct52,
     composite_score: Math.round(composite), tier,
+    fund_composite: Math.round(_fund_composite), setup_grade: _setup_grade,  // zzz673 — display only
     methodology_tags: [...new Set(methodology_tags)], caveat_tags: [...new Set(caveat_tags)],
     narrative, filing_url: row.source_url, source: row.financials_source || 'NSE+BSE',
     // PATCH 1006
