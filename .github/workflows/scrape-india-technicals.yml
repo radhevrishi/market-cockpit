@@ -17,8 +17,9 @@ name: Scrape India stock technicals
 # The neighbouring scraper established that GitHub Actions IPs can read what
 # Railway cannot. This is that pattern applied to stocks.
 #
-# CADENCE. Once a day after the Indian close. Moving averages move slowly and
-# nothing here is intraday, so more often would buy nothing.
+# CADENCE. Once a day after the Indian close. Past closes are immutable, so the
+# job fetches only the sessions it does not already hold: a cold start converges
+# over a few runs and then costs one file a day for ever.
 #
 # SAFETY. The output is an overlay. Every consumer already handles a missing
 # value, because a missing value is what it gets today. If this job never runs,
@@ -31,9 +32,13 @@ on:
   workflow_dispatch:
     inputs:
       max_symbols:
-        description: 'Cap on symbols fetched this run'
+        description: 'Cap on bench symbols to compute this run'
         required: false
-        default: '700'
+        default: '900'
+      max_fetch:
+        description: 'Sessions to fetch this run (raise it to force a faster backfill)'
+        required: false
+        default: '120'
       extra_symbols:
         description: 'Comma-separated extra symbols to include (e.g. a name not yet benched)'
         required: false
@@ -46,7 +51,7 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -60,7 +65,8 @@ jobs:
         env:
           UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          MAX_SYMBOLS:   ${{ github.event.inputs.max_symbols || '700' }}
+          MAX_SYMBOLS:   ${{ github.event.inputs.max_symbols || '900' }}
+          MAX_FETCH:     ${{ github.event.inputs.max_fetch || '120' }}
           EXTRA_SYMBOLS: ${{ github.event.inputs.extra_symbols || '' }}
         run: |
           if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
