@@ -692,6 +692,53 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     const _excShare = typeof row?.exceptional_pct_pbt === 'number' ? Math.abs(row.exceptional_pct_pbt) : null;
     if (_excShare != null && _excShare >= 50) capTier('MIXED', 'headline leans on a one-off');
     else if (_excShare != null && _excShare >= 25) capTier('STRONG', 'headline leans on a one-off');
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. YOU CANNOT BUY IT.  (zzz674)
+    //
+    // This ceiling exists because of something the chart was doing by accident.
+    //
+    // Measuring the fundamentals-only composite against the live one across
+    // 2026-08-14 (276 rows) turned up eleven names whose FILINGS clear the
+    // BLOCKBUSTER threshold while the blended composite does not — the chart
+    // holding a good quarter down, which is the defect zzz673 exists to fix.
+    // Eight of those eleven were shells:
+    //
+    //   ICSA ₹0.96 Cr · BHARATIDIL ₹9.8 Cr · GLOBALE ₹11.1 Cr · RADAAN ₹15.2 Cr
+    //   SUVIDHAA ₹47.6 Cr · EROSMEDIA ₹74.9 Cr — every one at ~zero daily value.
+    //
+    // A company that small has no stage and no relative strength, so it scores
+    // near the floor on the technical axis, and THAT is what has been keeping
+    // it out of the top tier. The chart term was moonlighting as a junk filter.
+    // Take the chart out of the tier — which is the whole point of the V2 split
+    // — and the junk walks straight in, promoted by the very change meant to
+    // surface Bharat Dynamics.
+    //
+    // So the filter becomes explicit, and states its own reason: below this
+    // size you cannot take a position worth taking, and the reported numbers
+    // are the least scrutinised in the market. That is a statement about
+    // TRADEABILITY, not about the quarter — which is why it caps the tier and
+    // leaves every score and caveat untouched.
+    //
+    // MARKET CAP IS THE PRIMARY TEST, NOT LIQUIDITY. `adtv_cr` is missing or
+    // zero for 17 of 276 rows, and three of those are large: Bharat Dynamics
+    // (₹41,587 Cr), Indo Tech (₹4,150 Cr), MBECL (₹1,157 Cr). Gating on volume
+    // alone would have thrown away the exact name this work set out to rescue.
+    // So ADTV only ever speaks about a company ALREADY known to be small, and
+    // a null ADTV never counts against anyone.
+    //
+    // Calibrated to demote NOTHING currently above MIXED (verified: 0 of 276 on
+    // 2026-08-14) while blocking six of the eight shells. Puravankara ₹4,873 Cr,
+    // Pakka ₹357 Cr and Aartech ₹162 Cr all pass — genuine microcaps are the
+    // hunting ground, and this is not a smallcap filter.
+    // ═══════════════════════════════════════════════════════════════════════
+    const _mcap = typeof row?.market_cap_cr === 'number' ? row.market_cap_cr : null;
+    const _adtv = typeof row?.adtv_cr === 'number' ? row.adtv_cr : null;
+    if (_mcap != null && _mcap < 100) {
+      capTier('MIXED', 'below investable size');
+    } else if (_mcap != null && _mcap < 500 && _adtv != null && _adtv < 0.10) {
+      capTier('MIXED', 'barely trades');
+    }
   }
 
   // Narrative

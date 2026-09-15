@@ -63,7 +63,14 @@
 //   preview path returned before the quadrant was computed, so Shiprocket
 //   showed no Q and no I while the feed carried ROCE, operating margin and a
 //   sequential trend — none of which needs a year-ago quarter.
-export const GRADED_CACHE_VERSION = 'v20';
+// zzz674 — v20 → v21. A FIFTH India hard ceiling: a company below ₹100 Cr of
+//   market cap (or below ₹500 Cr and barely trading) is capped at MIXED. The
+//   chart term had been filtering these out by accident — a shell has no stage
+//   and no RS, so it scored near the technical floor — and zzz673 is about to
+//   take the chart out of the tier. Making the filter explicit is what keeps
+//   the V2 split from promoting ₹1 Cr shells alongside Bharat Dynamics.
+//   Demotes nothing that was above MIXED (verified 0 of 276 on 2026-08-14).
+export const GRADED_CACHE_VERSION = 'v21';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -76,7 +83,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {
