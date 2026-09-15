@@ -93,15 +93,41 @@ async function readIndex(): Promise<string[]> {
 export async function recordPrediction(e: Omit<LedgerEntry, 'made_at'>): Promise<'written' | 'exists' | 'failed'> {
   try {
     const existing = await kvGet<LedgerEntry>(entryKey(e.id));
-    if (existing?.id) return 'exists';
-    const entry: LedgerEntry = { ...e, made_at: new Date().toISOString() };
-    await kvSet(entryKey(e.id), entry, TTL_S);
-    const idx = await readIndex();
-    if (!idx.includes(e.id)) {
+    if (!existing?.id) {
+      const entry: LedgerEntry = { ...e, made_at: new Date().toISOString() };
+      await kvSet(entryKey(e.id), entry, TTL_S);
+    }
+    // THE INDEX REPAIR RUNS EITHER WAY, and that is the point. The race below
+    // left entries written but unindexed — present in Redis, invisible to every
+    // reader. Returning early on 'exists' would have stranded them for ever,
+    // because the one thing that could have re-listed them is this line. So an
+    // already-written entry still gets its id checked into the index, which
+    // makes the orphans heal themselves on the next pass rather than needing a
+    // migration. The ENTRY is still never rewritten — only the list of ids.
+    // ═══ THE INDEX IS A READ-MODIFY-WRITE, AND IT WAS LOSING ENTRIES ══════
+    // (zzz646) The entry blob is keyed by id and never collides. The INDEX is
+    // one shared list, read and written whole — so when a deck records seven
+    // predictions at once, all seven read the same list and all seven write
+    // their own version back, and six ids vanish. The entries themselves were
+    // sitting in Redis perfectly intact; nothing could find them. Observed
+    // exactly: seven India rows on the desk, one in the ledger.
+    //
+    // Upstash gives no list-append through this helper, so the write is made
+    // to VERIFY ITSELF instead: append, read back, and if the id did not
+    // survive somebody else's concurrent write, do it again. A few attempts
+    // with a little jitter is enough — the collision window is a single
+    // round-trip and the retries de-synchronise on the first bounce.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const idx = await readIndex();
+      if (idx.includes(e.id)) break;
       idx.unshift(e.id);
       await kvSet(INDEX_KEY, idx.slice(0, INDEX_MAX), TTL_S);
+      const check = await readIndex();
+      if (check.includes(e.id)) break;
+      // Lost a race. Wait a random sliver so the contenders stop colliding.
+      await new Promise((r) => setTimeout(r, 40 + Math.floor(Math.random() * 120)));
     }
-    return 'written';
+    return existing?.id ? 'exists' : 'written';
   } catch { return 'failed'; }
 }
 

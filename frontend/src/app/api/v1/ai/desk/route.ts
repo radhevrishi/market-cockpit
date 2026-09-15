@@ -63,10 +63,21 @@ const LEDGER_TRIED = new Set<string>();
  * from the gap between the filing date and when the row was first written.
  */
 function recordDeck(rows: any[], region: string) {
-  for (const row of rows) {
-    if (!row?.ai || !row?.ticker) continue;
+  // ONE AT A TIME  (zzz646). These used to go out together. The ledger's index
+  // is a single list read and written whole, so a deck of seven firing at once
+  // had seven writers reading the same list and six of them losing — the
+  // entries landed, the index forgot them. recordPrediction now verifies its
+  // own append, and serialising here removes the contention that made it
+  // necessary in the first place. It is a detached chain, not awaited: the
+  // reader's response is never held up by bookkeeping.
+  void rows.reduce<Promise<void>>((chain, row) => chain.then(() => recordOne(row, region)), Promise.resolve());
+}
+
+async function recordOne(row: any, region: string): Promise<void> {
+  {
+    if (!row?.ai || !row?.ticker) return;
     const id = ledgerId(row.ticker, row.accession ?? null, String(row.filing_date || ''));
-    if (LEDGER_TRIED.has(id)) continue;
+    if (LEDGER_TRIED.has(id)) return;
     const a = row.ai;
     // zzz645 — MARKED TRIED ONLY ONCE IT ACTUALLY LANDED. The first version
     // added the id before the write, so a single failed round-trip — a Redis
@@ -74,7 +85,7 @@ function recordDeck(rows: any[], region: string) {
     // its whole lifetime, silently, and the next reader was told nothing. Six
     // of seven India rows went missing that way. 'exists' counts as landed:
     // the record is there, which is the whole point of the check.
-    void recordPrediction({
+    const pending = ({
       id,
       ticker: row.ticker, company: row.company || null,
       filing_date: String(row.filing_date || ''), accession: row.accession ?? null,
@@ -96,9 +107,11 @@ function recordDeck(rows: any[], region: string) {
       structural_score: a.structural_score ?? null, change_type: a.change_type ?? null,
       why_now_score: a.why_now_score ?? null, bear_severity: a.bear_severity ?? null,
       confidence: a.confidence ?? null, composite: row.composite ?? null,
-    })
-      .then((r) => { if (r === 'written' || r === 'exists') LEDGER_TRIED.add(id); })
-      .catch(() => { /* left untried on purpose — the next request retries it */ });
+    });
+    try {
+      const r = await recordPrediction(pending);
+      if (r === 'written' || r === 'exists') LEDGER_TRIED.add(id);
+    } catch { /* left untried on purpose — the next request retries it */ }
   }
 }
 
