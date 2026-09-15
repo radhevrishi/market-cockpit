@@ -46,6 +46,7 @@ import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-process';
 import { classifyTheme } from '@/lib/theme-classify';
 import { useThemeVerdicts, confluenceFor, type ConfluenceKind } from '@/lib/theme-confluence';
+import { DeskHeader, deskNumerals } from '@/components/desk-chrome';
 
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -62,7 +63,7 @@ const VERDICT_COLOR: Record<string, string> = {
 };
 const VERDICTS = ['STRONG BUY', 'BUY', 'WATCH', 'AVOID'];
 
-type SortKey = 'fresh' | 'score' | 'pead' | 'sales' | 'eps' | 'drift' | 'mcap' | 'pe' | 'addv' | 'age';
+type SortKey = 'fresh' | 'score' | 'pead' | 'sales' | 'eps' | 'drift' | 'mcap' | 'pe' | 'addv' | 'age' | 'align';
 
 function etToday(): string {
   return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
@@ -650,6 +651,15 @@ export default function UsConvictionBeatsPage() {
       pe: (e) => (e.pe != null && e.pe > 0 ? e.pe : 1e12),
       addv: (e) => num(e.addv_musd),
       age: (e) => -(usFilingAgeDays(e.filing_date) ?? 1e9),
+      // zzz653 — RANK THE WHOLE BENCH BY ALIGNMENT. The strip at the top shows
+      // the best eight; this sorts all two hundred and seventy-four by it, with
+      // the engine score breaking ties inside each band, so "show me everything
+      // where the filing and the tape agree, best first" is one click.
+      align: (e) => {
+        const k = confOf(e).kind;
+        const band = k === 'aligned' ? 4 : k === 'orphan' ? 3 : k === 'neutral' ? 2 : k === 'unknown' ? 1 : 0;
+        return band * 1000 + Math.min(999, e.composite_score ?? 0);
+      },
     };
     const k = key[sort];
     const dir = sortDir === 'desc' ? -1 : 1;
@@ -870,32 +880,48 @@ export default function UsConvictionBeatsPage() {
   }, [filtered]);
 
   return (
-    <div style={{ padding: 20, maxWidth: 1500, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-        <Award className="w-5 h-5" style={{ color: 'var(--mc-warn)' }} />
-        <h1 style={{ fontSize: 'var(--mc-text-h3)', fontWeight: 800, color: 'var(--mc-text-0)', margin: 0 }}>
-          US Conviction Beats
-        </h1>
-        <span style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 8px', borderRadius: 999, border: '1px solid var(--mc-cyan)', color: 'var(--mc-cyan)' }}>NYSE · NASDAQ</span>
-        {tierCounts.drifting > 0 && (
-          <span title="Top-tier names down more than 12% since their print" style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '3px 9px', borderRadius: 999, border: '1px solid #EF4444', color: '#EF4444', backgroundColor: 'color-mix(in srgb, #EF4444 10%, transparent)' }}>
-            ⚠ {tierCounts.drifting} drifting
-          </span>
-        )}
-        {/* A ROUTE CHANGE, NOT A PAGE LOAD. `<a href>` tore the whole app down
-            and rebuilt it: the React Query cache went with it, the day cache had
-            to be re-read from IndexedDB, and this page then opened on an
-            auto-sweep — which is what "not smooth" meant. `Link` keeps the
-            client alive and prefetches the other tab on hover. */}
-        <Link href="/us-earnings-opportunities" prefetch style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, border: '1px solid #F59E0B', color: '#F59E0B', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <Star className="w-3 h-3" /> US Earnings Opportunities →
-        </Link>
-      </div>
-      <p style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-sm)', margin: '0 0 14px' }}>
-        The bench of US names that graded BLOCKBUSTER or STRONG. It accumulates on its own from every graded window,
-        demotes a name automatically when a later quarter drops out of the top tiers, and re-prices older entries on
-        each sweep. Stored in this browser — nothing is sent anywhere. Educational, not investment advice.
-      </p>
+    <div style={{ padding: 20, maxWidth: 1500, margin: '0 auto', ...deskNumerals }}>
+      {/* ═══ STATE FIRST, DOCUMENTATION SECOND  (zzz653) ═══════════════════
+          A paragraph explaining what a bench is sat where the numbers should
+          be, and two hundred and fifty pixels of preamble stood between
+          opening this page and seeing a single name. The explanation is not
+          deleted — it is one click away, and it remembers whether you wanted
+          it open. What takes its place is the state of the book, which is what
+          a desk actually opens with. */}
+      <DeskHeader
+        icon="🏅" title="US Conviction Beats"
+        tagline="NYSE · NASDAQ"
+        storageKey="us-conviction"
+        stats={[
+          { value: entries.length, label: 'on the bench', hint: 'Every US name that has graded BLOCKBUSTER or STRONG and has not since been demoted.' },
+          { value: confCounts.aligned || 0, label: 'aligned', color: (confCounts.aligned || 0) > 0 ? '#22C55E' : undefined,
+            onClick: () => setConfFilter(confFilter === 'aligned' ? null : 'aligned'),
+            hint: 'A qualifying quarter inside a theme the rotation board rates BUY or EARLY BUY — the filing and the tape pointing the same way. Click to filter.' },
+          { value: confCounts.against || 0, label: 'tape against', color: (confCounts.against || 0) > 0 ? '#EF4444' : undefined,
+            onClick: () => setConfFilter(confFilter === 'against' ? null : 'against'),
+            hint: 'The quarter qualifies and the theme is rated TRIM or AVOID — real prints nobody is paying for right now. Click to filter.' },
+          { value: filtered.length, label: 'passing filters', hint: 'What survives every chip and threshold currently set.' },
+          ...(tierCounts.drifting > 0 ? [{
+            value: tierCounts.drifting, label: 'drifting', color: '#EF4444',
+            hint: 'Top-tier names down more than 12% since their print.',
+          }] : []),
+        ]}
+        right={
+          <Link href="/us-earnings-opportunities" prefetch style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, border: '1px solid #F59E0B', color: '#F59E0B', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Star className="w-3 h-3" /> US Earnings Opportunities →
+          </Link>
+        }
+        about={<>
+          The bench of US names that graded BLOCKBUSTER or STRONG. It accumulates on its own from every graded window,
+          demotes a name automatically when a later quarter drops out of the top tiers, and re-prices older entries on
+          each sweep. Stored in this browser — nothing is sent anywhere. Educational, not investment advice.
+          <br /><br />
+          <b>Aligned</b> and <b>tape against</b> come from joining this bench to the rotation board: a name is aligned when its own
+          filing put it in a hunting bucket AND the board rates its theme a buy. Neither page can say that alone, and the
+          disagreement is worth more than the agreement — a real print into a falling theme is the setup that grinds sideways
+          for a year.
+        </>}
+      />
 
       {/* ── BENCH CONTROLS ─────────────────────────────────────────────────
           Its own bar, above the filters, because the two actions that rebuild
@@ -1304,7 +1330,7 @@ export default function UsConvictionBeatsPage() {
           );
         })}
         <span style={rowLabel}>Sort</span>
-        {([['fresh', 'Freshest'], ['score', 'Score'], ['pead', 'PEAD'], ['sales', 'Revenue'], ['eps', 'EPS'], ['drift', 'Since print'], ['mcap', 'Mkt cap'], ['pe', 'P/E'], ['addv', '$ Volume']] as Array<[SortKey, string]>).map(([v, l]) => (
+        {([['align', '🎯 Aligned'], ['fresh', 'Freshest'], ['score', 'Score'], ['pead', 'PEAD'], ['sales', 'Revenue'], ['eps', 'EPS'], ['drift', 'Since print'], ['mcap', 'Mkt cap'], ['pe', 'P/E'], ['addv', '$ Volume']] as Array<[SortKey, string]>).map(([v, l]) => (
           <button key={v} onClick={() => setSortKey(v)} style={chip(sort === v)}>{l}{sort === v ? (sortDir === 'desc' ? ' ▼' : ' ▲') : ''}</button>
         ))}
         <span style={{ flex: 1 }} />

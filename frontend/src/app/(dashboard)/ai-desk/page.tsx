@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { classifyTheme } from '@/lib/theme-classify';
 import { useThemeVerdicts, confluenceFor } from '@/lib/theme-confluence';
+import { DeskHeader, deskNumerals } from '@/components/desk-chrome';
 
 type Tab = 'DESK' | 'LEDGER';
 
@@ -148,21 +149,45 @@ export default function AiDeskPage() {
     color: on ? col : 'var(--mc-text-2)',
   });
 
+  // ═══ THE STATE OF THE DECK, AS FIGURES  (zzz653) ════════════════════════
+  // What replaces four lines of prose at the top of the page. A reader learns
+  // more from "11 interpreted · 4 with the tape · 6 against it" than from any
+  // sentence describing what the desk is — and the sentence is still one click
+  // away for the day they want it.
+  const confCounts = useMemo(() => {
+    const c = { aligned: 0, against: 0 };
+    for (const r of interpreted) { const k = confFor(r).kind; if (k === 'aligned') c.aligned++; else if (k === 'against') c.against++; }
+    return c;
+  }, [interpreted, confFor]);
+
   return (
-    <div style={{ padding: '18px 20px 60px', maxWidth: 1400 }}>
-      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: 19, fontWeight: 900, color: 'var(--mc-text-0)' }}>🧠 AI Research Desk</h1>
-        <span style={{ fontSize: 11, color: 'var(--mc-text-3)', border: '1px solid var(--mc-bg-4)', borderRadius: 20, padding: '2px 10px' }}>
-          Machines calculate · AI interprets · You decide
-        </span>
-      </div>
-      <p style={{ fontSize: 12, color: 'var(--mc-text-2)', lineHeight: 1.6, marginBottom: 14, maxWidth: 940 }}>
-        Every figure on this page was computed by the engine — {region === 'us' ? 'from SEC XBRL filings' : 'from the filed Indian quarterly results the engine grades'} — and is reproducible. The interpretation blocks
-        are a model reading those same figures and {region === 'us' ? ' the company\u2019s own release' : ' the engine\u2019s own read of the print'}, and answering the four things arithmetic cannot:
-        is the change <b>structural</b>, why would the market re-rate it <b>now</b>, what is the strongest case <b>against</b>, and
-        what would prove the read wrong. The model is forbidden to compute anything or to use knowledge of the company from
-        outside the filing. Every assessment is written to a prediction ledger and marked against the market later.
-      </p>
+    <div style={{ padding: '18px 20px 60px', maxWidth: 1400, ...deskNumerals }}>
+      <DeskHeader
+        icon="🧠" title="AI Research Desk"
+        tagline="Machines calculate · AI interprets · You decide"
+        storageKey="ai-desk"
+        stats={[
+          { value: interpreted.length, label: 'interpreted', hint: 'Names the engine qualified and the model has read in full.' },
+          { value: confCounts.aligned, label: 'with the tape', color: confCounts.aligned ? '#22C55E' : undefined,
+            hint: 'Interpreted names whose rotation theme the board rates BUY or EARLY BUY — the filing and the tape pointing the same way.' },
+          { value: confCounts.against, label: 'against the tape', color: confCounts.against ? '#EF4444' : undefined,
+            hint: 'Interpreted names sitting in a theme rated TRIM or AVOID. The quarter is real and nobody is paying for quarters like it right now.' },
+          { value: data?.window_days_used ?? days, label: 'day window',
+            hint: data?.window_note || 'How far back the desk looked for filings the engine had already qualified.' },
+          ...(data?.cached ? [{ value: data.cached, label: 'from cache', hint: 'A filed quarter never changes, so an assessment is read rather than recomputed.' }] : []),
+          ...(data?.failed ? [{ value: data.failed, label: 'could not assess', color: '#F59E0B' }] : []),
+        ]}
+        about={<>
+          Every figure on this page was computed by the engine — {region === 'us' ? 'from SEC XBRL filings' : 'from the filed Indian quarterly results the engine grades'} — and is reproducible. The interpretation blocks
+          are a model reading those same figures and {region === 'us' ? ' the company\u2019s own release' : ' the engine\u2019s own read of the print'}, and answering the four things arithmetic cannot:
+          is the change <b>structural</b>, why would the market re-rate it <b>now</b>, what is the strongest case <b>against</b>, and
+          what would prove the read wrong. The model is forbidden to compute anything or to use knowledge of the company from
+          outside the filing. Every assessment is written to a prediction ledger and marked against the market later.
+          <br /><br />
+          The theme chip beside each name is the one thing the model could not have known: it reads one filing in isolation, and the
+          rotation board is what the rest of the market is doing to that company&rsquo;s neighbourhood at the same moment.
+        </>}
+      />
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <button onClick={() => setTab('DESK')} style={chip(tab === 'DESK')}>Today&rsquo;s deck</button>
