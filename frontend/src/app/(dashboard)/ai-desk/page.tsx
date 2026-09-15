@@ -206,6 +206,25 @@ export default function AiDeskPage() {
               <span style={{ color: 'var(--mc-text-3)' }}>Nothing interpreted yet — press <b>Run the analyst</b>.</span>
             )}
           </div>
+          {/* HOW FAR BACK THE DESK HAD TO LOOK  (zzz640). India files in
+              quarterly bursts, so for most of a quarter a ten-day window is
+              empty — not because nothing is worth reading, but because nothing
+              was filed lately. The window widens on its own; this is the page
+              saying so, because a silently-widened window is a lie about how
+              current these names are. */}
+          {data?.window_note ? (
+            <div style={{
+              ...panel(),
+              borderColor: data?.tier_relaxed ? 'rgba(245,158,11,0.5)' : 'rgba(148,163,184,0.35)',
+              color: data?.tier_relaxed ? 'var(--mc-caution,#F59E0B)' : 'var(--mc-text-2)',
+              fontSize: 11.5, lineHeight: 1.6,
+            }}>
+              <b style={{ letterSpacing: 0.3 }}>
+                {data?.tier_relaxed ? '⚠ GATE LOWERED TO FILL THE DESK' : `WINDOW WIDENED — LAST ${data.window_days_used} DAYS`}
+              </b>
+              <br />{data.window_note}
+            </div>
+          ) : null}
           {(data?.notes || []).map((n: string, i: number) => (
             <div key={i} style={{ ...panel(), borderColor: 'rgba(245,158,11,0.35)', color: 'var(--mc-caution,#F59E0B)', fontSize: 11.5 }}>{n}</div>
           ))}

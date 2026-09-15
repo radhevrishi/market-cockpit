@@ -18,6 +18,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { valuationFor, type ValuationOpts } from '@/lib/us-valuation';
+import { bucketFor, BUCKET_META } from '@/lib/us-process';
 import type { UsConvictionEntry } from '@/lib/conviction-beats-us';
 
 const DIM = 'var(--mc-text-3)';
@@ -48,7 +49,14 @@ export default function UsValuationPanel({ e }: { e: UsConvictionEntry }) {
   const [over, setOver] = useState<ValuationOpts>({});
   const [showWork, setShowWork] = useState(false);
 
-  const res = useMemo(() => valuationFor(e, { ...over, horizonYears: horizon }), [e, over, horizon]);
+  // THE SAME BUCKET THE PROCESS PANEL BELOW SHOWS  (zzz642). Passed in so the
+  // 3× arithmetic is judged against what kind of quarter this actually is,
+  // rather than the two panels reaching opposite conclusions on one card.
+  const bucket = useMemo(() => bucketFor(e).bucket, [e]);
+  const res = useMemo(
+    () => valuationFor(e, { ...over, horizonYears: horizon, bucket }),
+    [e, over, horizon, bucket],
+  );
 
   if (!res.ok) {
     return (
@@ -144,6 +152,30 @@ export default function UsValuationPanel({ e }: { e: UsConvictionEntry }) {
             3× POTENTIAL · {tx.score} · {tx.verdict}
           </span>
           <span style={{ fontSize: 11, color: MUT, flex: 1, minWidth: 220, lineHeight: 1.5 }}>{tx.sentence}</span>
+          {/* WHETHER THE OTHER PANEL AGREES, ON THE HEADLINE  (zzz642). Two
+              independent reads agreeing is worth as much as either alone;
+              two disagreeing is worth more than both, and neither belongs
+              buried three lines down in a caveat list. */}
+          {tx.agreesWithProcess && (
+            <span
+              title={tx.agreesWithProcess === 'undermines'
+                ? `The Process panel calls this ${BUCKET_META[bucket].label} — that finding argues against the assumption this arithmetic rests on, and the score above is capped because of it.`
+                : tx.agreesWithProcess === 'supports'
+                  ? `The Process panel independently classified this ${BUCKET_META[bucket].label}. Two separate reads pointing the same way.`
+                  : `The Process panel classified this ${BUCKET_META[bucket].label} — neither support nor objection to the arithmetic above.`}
+              style={{
+                fontSize: 8.5, fontWeight: 900, borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap',
+                color: tx.agreesWithProcess === 'undermines' ? '#EF4444' : tx.agreesWithProcess === 'supports' ? '#22C55E' : '#94A3B8',
+                background: tx.agreesWithProcess === 'undermines' ? 'rgba(239,68,68,0.15)' : tx.agreesWithProcess === 'supports' ? 'rgba(34,197,94,0.15)' : 'rgba(148,163,184,0.13)',
+                border: `1px solid ${tx.agreesWithProcess === 'undermines' ? '#EF444455' : tx.agreesWithProcess === 'supports' ? '#22C55E55' : '#94A3B855'}`,
+              }}>
+              {tx.agreesWithProcess === 'undermines'
+                ? `⚠ PROCESS DISAGREES · ${BUCKET_META[bucket].short}`
+                : tx.agreesWithProcess === 'supports'
+                  ? `✓ PROCESS AGREES · ${BUCKET_META[bucket].short}`
+                  : `PROCESS · ${BUCKET_META[bucket].short}`}
+            </span>
+          )}
         </div>
         {tx.caveats.length > 0 && (
           <ul style={{ margin: '6px 0 0', paddingLeft: 16, fontSize: 10, color: '#F59E0B', lineHeight: 1.5 }}>

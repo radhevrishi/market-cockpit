@@ -1,18 +1,27 @@
-name: Mark the AI prediction ledger
+name: Warm the AI desk, then mark the prediction ledger
 
 # ═══════════════════════════════════════════════════════════════════════════
-# WHY THIS EXISTS  (zzz635)
+# WHY THIS EXISTS  (zzz635, extended zzz641)
 #
-# /api/v1/ai/ledger?score=1 is the only thing that ever marks a prediction
-# against what the stock actually did. Until now NOTHING called it: the desk
-# recorded predictions faithfully and then left every one of them "pending"
+# Two halves of one loop that was never closed.
+#
+# MARKING. /api/v1/ai/ledger?score=1 is the only thing that ever marks a
+# prediction against what the stock actually did, and NOTHING called it. The
+# desk recorded predictions faithfully and left every one of them "pending"
 # for ever, so the `learned` table — the whole point of keeping a ledger —
 # could never fill. A ledger nobody marks is a diary, not evidence.
 #
-# The endpoint is idempotent (it skips anything already marked) and bounded by
-# its own internal deadline, reporting `skipped_for_time` when it runs out.
-# So this fires repeatedly until that count reaches zero rather than assuming
-# one pass finished the job.
+# RECORDING. And a prediction only ever reached the ledger when somebody
+# happened to open the tab. The record therefore grew at READING speed, not at
+# filing speed, and was biased towards whatever Rishi looked at. Warming both
+# decks first means every name the engine qualifies gets recorded whether or
+# not anyone was watching that day — which is the only way the eventual sample
+# is a sample of the ENGINE rather than a sample of his attention.
+#
+# Order matters: warm, then mark. Both endpoints are idempotent — an existing
+# assessment is a cache read, an existing prediction refuses to be rewritten,
+# and an already-marked horizon is skipped — so a double run costs nothing and
+# corrupts nothing.
 #
 # Once a day is the right cadence: horizons are 7/30/90/180 days, so nothing
 # becomes markable faster than that, and a missed day costs nothing because
@@ -27,8 +36,25 @@ on:
 jobs:
   mark:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
+      - name: Warm both decks so the ledger records without a reader
+        id: warm
+        continue-on-error: true      # a quiet market must never fail the marking step
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          for R in us india; do
+            CODE=$(curl -s -m 280 "$BASE/api/v1/ai/desk?region=$R" -o "/tmp/desk-$R.json" -w "%{http_code}") || CODE=000
+            echo "desk $R: HTTP $CODE"
+            [ "$CODE" = "200" ] || continue
+            F="/tmp/desk-$R.json"
+            Q="import json,sys;d=json.load(open(sys.argv[1]));r=d.get('rows') or [];print(len(r),sum(1 for x in r if x.get('ai')),d.get('assessed'),d.get('cached'),d.get('failed'),d.get('window_days_used'),bool(d.get('tier_relaxed')))"
+            echo "  $R: rows/interpreted/assessed/cached/failed/window/relaxed = $(python3 -c "$Q" "$F")"
+            python3 -c "import json,sys;n=json.load(open(sys.argv[1])).get('window_note');print('  note:',n) if n else None" "$F"
+          done
+
       - name: Mark every due prediction
         id: main
         env:
@@ -38,14 +64,15 @@ jobs:
           P="import json,sys;d=json.load(open('/tmp/led.json'));print(d.get(sys.argv[1],0))"
           TOTAL=0
           for i in 1 2 3 4 5 6; do
-            CODE=$(curl -s -m 120 "$BASE/api/v1/ai/ledger?score=1" -o /tmp/led.json -w "%{http_code}") || CODE=000
+            CODE=$(curl -s -m 280 "$BASE/api/v1/ai/ledger?score=1" -o /tmp/led.json -w "%{http_code}") || CODE=000
             echo "pass $i: HTTP $CODE"
             if [ "$CODE" != "200" ]; then sleep 20; continue; fi
             MARKED=$(python3 -c "$P" marked)
             SKIPPED=$(python3 -c "$P" skipped_for_time)
             SCORED=$(python3 -c "$P" scored)
             TOT=$(python3 -c "$P" total)
-            echo "  marked=$MARKED  ran_out_of_time=$SKIPPED  scored=$SCORED/$TOT"
+            BACK=$(python3 -c "$P" backfilled)
+            echo "  marked=$MARKED  ran_out_of_time=$SKIPPED  scored=$SCORED/$TOT  recorded_after_the_fact=$BACK"
             TOTAL=$((TOTAL + MARKED))
             if [ "$SKIPPED" = "0" ]; then echo "  pass complete"; break; fi
             sleep 10

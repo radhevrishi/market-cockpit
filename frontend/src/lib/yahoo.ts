@@ -141,8 +141,17 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
     // previous close only on a one-or-five-day request. Anywhere else it is
     // the number that caused all of this, and is not used.
     if (!(_prevClose > 0) && /^(1d|5d)$/.test(String(range))) _prevClose = meta.chartPreviousClose || 0;
-    const _change = (_changeBase > 0 && _prevClose > 0) ? (_changeBase - _prevClose) : 0;
-    const _changePercent = (_changeBase > 0 && _prevClose > 0) ? ((_changeBase - _prevClose) / _prevClose) * 100 : 0;
+    // ZERO MEANS TWO DIFFERENT THINGS, so the caller is told which  (zzz643).
+    // Every guard above answers "not known" by leaving the change at 0, which
+    // is indistinguishable from a flat day to anything downstream. A basket
+    // theme averaging its members' day moves was therefore pulling its average
+    // toward zero for every member whose change could not be determined —
+    // quietly, and worse the more members were unresolvable. `changeKnown`
+    // lets an aggregate average only over the members it can actually speak
+    // for, and say so when too few remain.
+    const _changeKnown = _changeBase > 0 && _prevClose > 0;
+    const _change = _changeKnown ? (_changeBase - _prevClose) : 0;
+    const _changePercent = _changeKnown ? ((_changeBase - _prevClose) / _prevClose) * 100 : 0;
     const data = {
       symbol: meta.symbol,
       shortName: meta.shortName || meta.symbol,
@@ -151,6 +160,7 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
       previousClose: _prevClose,
       change: _change,
       changePercent: _changePercent,
+      changeKnown: _changeKnown,
       volume: meta.regularMarketVolume || 0,
       marketCap: 0, // not available in chart API
       timestamps: result.timestamp || [],

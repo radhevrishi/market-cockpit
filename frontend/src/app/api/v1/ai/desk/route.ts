@@ -285,7 +285,7 @@ export async function GET(req: NextRequest) {
   // date does — so it is cached whole. A revisit is now one Redis read.
   // ↻ Refresh (refresh=1) and an explicit ticker list always bypass it, so
   // nothing is ever stuck behind the cache.
-  const deckKey = `ai-desk:v2:${region}:${days}:${limit}:${AI_ANALYST_VERSION}:${region === 'india' ? istToday() : etToday()}`;
+  const deckKey = `ai-desk:v3:${region}:${days}:${limit}:${AI_ANALYST_VERSION}:${region === 'india' ? istToday() : etToday()}`;
   const wantsFresh = force || u.searchParams.get('refresh') === '1';
   //
   // Two shapes are cached under two keys, and the distinction matters. A
@@ -314,6 +314,11 @@ export async function GET(req: NextRequest) {
   let rows: any[] = [];
   const sessionsAsked: string[] = [];
   const sessionsPending: string[] = [];
+  // How far back the desk actually had to look, whether the deterministic gate
+  // had to be lowered to fill it, and the sentence that says so on the page.
+  let windowUsed = days;
+  let windowNote: string | null = null;
+  let tierRelaxed = false;
   // India grades off Screener/NSE through its own endpoint; the shape of the
   // answer (by_tier of graded cards) is identical, which is the whole reason
   // one desk can serve both.
@@ -324,34 +329,81 @@ export async function GET(req: NextRequest) {
       const j: any = await res.json();
       for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) rows.push(...(j?.by_tier?.[t] || []));
     } else {
-      const sessions = region === 'india' ? indiaSessions(istToday(), days) : windowSessions(etToday(), days);
-      sessions.forEach((d) => sessionsAsked.push(d));
-      // ── READ THE SESSIONS IN PARALLEL ────────────────────────────────────
-      // These are cache-only reads of days that are already built; running
-      // them one after another made the desk's latency the SUM of thirty
-      // round-trips for no benefit whatsoever. Six at a time is well inside
-      // what a loopback to our own process handles, and the order of the
-      // results does not matter because everything is re-sorted below.
-      const SESSION_CONCURRENCY = 6;
-      const bucket: any[][] = [];
-      let si = 0;
-      await Promise.all(Array.from({ length: SESSION_CONCURRENCY }, async () => {
-        while (si < sessions.length) {
-          const d = sessions[si++];
-          const q = region === 'india'
-            ? `${gradedBase}?date=${d}&cache_only=1`
-            : `${gradedBase}?date=${d}&days=1&cache_only=1`;
-          try {
-            const res = await fetch(`${self}${q}`, { cache: 'no-store' });
-            if (!res.ok) { sessionsPending.push(d); continue; }
-            const j: any = await res.json();
-            if (!j?.by_tier) { sessionsPending.push(d); continue; }
-            // Only the tiers the engine already vouches for reach the AI layer.
-            bucket.push([...(j.by_tier.BLOCKBUSTER || []), ...(j.by_tier.STRONG || [])]);
-          } catch { sessionsPending.push(d); }
-        }
-      }));
-      for (const b of bucket) rows.push(...b);
+      // ═══ THE WINDOW REACHES BACK UNTIL IT FINDS SOMETHING  (zzz640) ══════
+      //
+      // A fixed ten-day window is right for the US, where 8-Ks land every
+      // week of the year. INDIA DOES NOT FILE THAT WAY. Results arrive in
+      // dense quarterly bursts and then nothing for six or seven weeks, so
+      // for most of every quarter the India desk asked for ten days, found
+      // BLOCKBUSTER: 0, STRONG: 0 on every one of them, and rendered an empty
+      // page — as if there were nothing worth looking at, when the truth was
+      // only that nothing had been FILED LATELY. Verified on the day this was
+      // written: 09-04 through 09-14 held one MIXED name and nothing above it.
+      //
+      // An analyst does not stop researching because the calendar is quiet;
+      // they look further back. So the window widens until it has enough to
+      // work with, and the page says how far back it had to go. The requested
+      // window is always tried first, so nothing changes in a busy week — this
+      // only ever fires when the alternative was a blank desk.
+      //
+      // Deliberately NOT a different rule for India. A quiet US week gets the
+      // same treatment, and neither market needs a special case in the code.
+      const CANDIDATE_FLOOR = 6;
+      const LADDER = [days, 30, 60, 120].filter((d, i, a) => d >= days && a.indexOf(d) === i);
+      const readSessions = async (sessions: string[]) => {
+        // ── READ THE SESSIONS IN PARALLEL ──────────────────────────────────
+        // These are cache-only reads of days that are already built; running
+        // them one after another made the desk's latency the SUM of thirty
+        // round-trips for no benefit whatsoever. Six at a time is well inside
+        // what a loopback to our own process handles, and the order of the
+        // results does not matter because everything is re-sorted below.
+        const SESSION_CONCURRENCY = 6;
+        const bucket: any[][] = [];
+        const mixed: any[][] = [];
+        let si = 0;
+        await Promise.all(Array.from({ length: SESSION_CONCURRENCY }, async () => {
+          while (si < sessions.length) {
+            const d = sessions[si++];
+            const q = region === 'india'
+              ? `${gradedBase}?date=${d}&cache_only=1`
+              : `${gradedBase}?date=${d}&days=1&cache_only=1`;
+            try {
+              const res = await fetch(`${self}${q}`, { cache: 'no-store' });
+              if (!res.ok) { sessionsPending.push(d); continue; }
+              const j: any = await res.json();
+              if (!j?.by_tier) { sessionsPending.push(d); continue; }
+              // Only the tiers the engine already vouches for reach the AI layer.
+              bucket.push([...(j.by_tier.BLOCKBUSTER || []), ...(j.by_tier.STRONG || [])]);
+              mixed.push([...(j.by_tier.MIXED || [])]);
+            } catch { sessionsPending.push(d); }
+          }
+        }));
+        return { strong: bucket.flat(), mixed: mixed.flat() };
+      };
+
+      let mixedPool: any[] = [];
+      for (const w of LADDER) {
+        sessionsAsked.length = 0; sessionsPending.length = 0;
+        const sessions = region === 'india' ? indiaSessions(istToday(), w) : windowSessions(etToday(), w);
+        sessions.forEach((d) => sessionsAsked.push(d));
+        const got = await readSessions(sessions);
+        rows = got.strong; mixedPool = got.mixed; windowUsed = w;
+        const uniq = new Set(rows.map((r: any) => r?.ticker).filter(Boolean)).size;
+        if (uniq >= CANDIDATE_FLOOR) break;
+      }
+      if (windowUsed > days) {
+        windowNote = `Nothing the engine grades BLOCKBUSTER or STRONG was filed in the last ${days} days, so the desk looked back ${windowUsed}. These are real calls on real filings — they are simply not this week's.`;
+      }
+      // LAST RESORT, AND LABELLED AS ONE. If even a four-month window holds
+      // nothing the engine vouches for, showing MIXED names is more useful
+      // than showing nothing — but only if the page is explicit that the
+      // deterministic gate was lowered to fill it. An empty desk and a desk
+      // quietly filled with second-tier names are both lies; this is neither.
+      if (!rows.length && mixedPool.length) {
+        rows = mixedPool;
+        tierRelaxed = true;
+        windowNote = `In ${windowUsed} days nothing cleared the engine's BLOCKBUSTER or STRONG gate. These are MIXED-tier prints — shown so the desk is not blank, NOT because they qualified. Treat the interpretation below as reading of a mediocre quarter, not as a recommendation.`;
+      }
     }
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: `Could not read the graded engine (${String(e?.message || e)}).` }, { status: 200 });
@@ -470,6 +522,9 @@ export async function GET(req: NextRequest) {
     region,
     analyst_version: AI_ANALYST_VERSION,
     window_days: days,
+    window_days_used: windowUsed,
+    window_note: windowNote || undefined,
+    tier_relaxed: tierRelaxed || undefined,
     candidates_considered: candidates.length,
     assessed, cached, failed,
     sessions_pending: sessionsPending,

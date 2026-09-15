@@ -182,6 +182,9 @@ export interface ThreeX {
   /** The one sentence that is worth more than the score. */
   sentence: string;
   caveats: string[];
+  /** Whether the Process panel's bucket supports or undermines the assumption
+   *  this arithmetic rests on. Null when no bucket was supplied. */
+  agreesWithProcess?: 'supports' | 'undermines' | 'neutral' | null;
 }
 
 export interface ValuationOpts {
@@ -193,6 +196,9 @@ export interface ValuationOpts {
   bearGrowthPct?: number;
   baseGrowthPct?: number;
   bullGrowthPct?: number;
+  /** The Process panel's bucket for this same entry, so the two reads are
+   *  reconciled out loud rather than left to contradict each other. */
+  bucket?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | '?';
 }
 
 /**
@@ -365,6 +371,46 @@ export function valuationFor(e: UsConvictionEntry, opts: ValuationOpts = {}):
   if (currentMultiple >= 60) score -= 8;
   score = Math.round(clamp(score, 0, 100));
 
+  // ═══ THE TWO PANELS MUST NOT CONTRADICT EACH OTHER IN SILENCE  (zzz642) ══
+  //
+  // The Process panel decides WHAT KIND of quarter this is; this function
+  // decides whether a triple is arithmetically plausible. They were computed
+  // in complete ignorance of one another, so the same card could — and did —
+  // print "E · EARNINGS TRAP: cash is not following the earnings" directly
+  // above "3× Plausible", a target built on compounding exactly the earnings
+  // the panel above had just called into question.
+  //
+  // The bucket is EVIDENCE ABOUT THE INPUT, not a second opinion on the
+  // output. Where it undermines the assumption the arithmetic rests on, the
+  // score is cut and the reason is printed; where it supports it, that is
+  // stated too, because agreement between two independent reads is itself
+  // information. Nothing is silently reconciled: the tension is the product.
+  let agreesWithProcess: 'supports' | 'undermines' | 'neutral' | null = null;
+  if (opts.bucket) {
+    const b = opts.bucket;
+    if (b === 'E') {
+      // The trap bucket's whole finding is that reported earnings are not
+      // economic. Compounding them for three years is compounding a number
+      // the Process panel has already disowned.
+      score = Math.min(score, 35); agreesWithProcess = 'undermines';
+      caveats.push('The Process panel classified this an EARNINGS TRAP — cash is not following the reported earnings, or one-offs are doing the work. This 3× is built on compounding those same earnings, so it is capped here rather than left to read as plausible.');
+    } else if (b === 'D') {
+      // Peak-cycle margins with decelerating revenue: the bull growth rate is
+      // precisely the thing the bucket says will not repeat.
+      score = Math.min(score, 48); agreesWithProcess = 'undermines';
+      caveats.push('The Process panel classified this a CYCLICAL PEAK — margins at the top of their own filed range with growth decelerating. The bull case assumes the rate continues; the bucket is the argument that it will not.');
+    } else if (b === '?') {
+      agreesWithProcess = 'neutral';
+      caveats.push('The Process panel could not place this company — too few filed quarters. The growth rate underneath this arithmetic rests on the same thin history.');
+    } else if (b === 'A' || b === 'B') {
+      // No score bonus. Two reads agreeing is worth SAYING and not worth
+      // paying for twice — the growth evidence is already in the score once.
+      agreesWithProcess = 'supports';
+    } else {
+      agreesWithProcess = 'neutral';
+    }
+  }
+
   const verdict = score >= 70 ? 'Plausible' : score >= 45 ? 'A stretch' : 'Not on this arithmetic';
   const sentence = deliveredGrowthPct != null
     ? `To 3× in ${horizonYears} years at ${bullM.toFixed(0)}× earnings, EPS must compound ${requiredGrowthPct.toFixed(0)}%/yr. It has compounded ${deliveredGrowthPct.toFixed(0)}%/yr — ${deliveredBasis}.`
@@ -375,7 +421,7 @@ export function valuationFor(e: UsConvictionEntry, opts: ValuationOpts = {}):
     value: {
       ttm, price, currentMultiple, feedMultiple, multipleDisagrees,
       growth, horizonYears, scenarios,
-      threeX: { requiredGrowthPct, deliveredGrowthPct, deliveredBasis, atMultiple: +bullM.toFixed(1), score, verdict, sentence, caveats },
+      threeX: { requiredGrowthPct, deliveredGrowthPct, deliveredBasis, atMultiple: +bullM.toFixed(1), score, verdict, sentence, caveats, agreesWithProcess },
     },
   };
 }

@@ -28,7 +28,7 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v16:${r}`;
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v17:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -317,7 +317,7 @@ function synthesize(series: { ts: number[]; closes: number[] }[]): { ts: number[
 
 // chunked parallel fetch so Yahoo isn't hit with 50 requests at once
 async function fetchChunked(symbols: string[], range: string, interval: string) {
-  const out = new Map<string, { ts: number[]; closes: number[]; price: number; dayChg: number }>();
+  const out = new Map<string, { ts: number[]; closes: number[]; price: number; dayChg: number; dayKnown: boolean }>();
   const size = 8;
   for (let i = 0; i < symbols.length; i += size) {
     const chunk = symbols.slice(i, i + size);
@@ -325,10 +325,15 @@ async function fetchChunked(symbols: string[], range: string, interval: string) 
       try {
         const ch = await fetchChart(sym, range, interval);
         if (!ch || !ch.closes || ch.closes.length < 10) return null;
-        return { sym, ts: ch.timestamps as number[], closes: ch.closes as number[], price: ch.regularMarketPrice || 0, dayChg: ch.changePercent || 0 };
+        return {
+          sym, ts: ch.timestamps as number[], closes: ch.closes as number[],
+          price: ch.regularMarketPrice || 0, dayChg: ch.changePercent || 0,
+          // zzz643 — whether that 0 means "flat" or "could not be determined".
+          dayKnown: (ch as any).changeKnown !== false,
+        };
       } catch { return null; }
     }));
-    for (const r of res) if (r) out.set(r.sym, { ts: r.ts, closes: r.closes, price: r.price, dayChg: r.dayChg });
+    for (const r of res) if (r) out.set(r.sym, { ts: r.ts, closes: r.closes, price: r.price, dayChg: r.dayChg, dayKnown: r.dayKnown });
   }
   return out;
 }
@@ -444,11 +449,23 @@ async function build(region: ThemeRegion) {
       const memberSyms = (t.basket && t.basket.length) ? t.basket : leadersFor(t);
       members = memberSyms;
       sourceKind = t.proxy ? 'proxy-fallback' : 'basket';
-      const memberSeries = memberSyms.map((s) => data.get(s)).filter(Boolean) as { ts: number[]; closes: number[]; price: number; dayChg: number }[];
+      const memberSeries = memberSyms.map((s) => data.get(s)).filter(Boolean) as { ts: number[]; closes: number[]; price: number; dayChg: number; dayKnown: boolean }[];
       const synth = synthesize(memberSeries.map((m) => ({ ts: m.ts, closes: m.closes })));
       ts = synth.ts; closes = synth.closes;
       if (memberSeries.length) {
-        dayChg = +(memberSeries.reduce((a, m) => a + (m.dayChg || 0), 0) / memberSeries.length).toFixed(2);
+        // ═══ AVERAGE ONLY THE MEMBERS THE FEED CAN SPEAK FOR  (zzz643) ═════
+        // A member whose previous close could not be established returns a
+        // day change of zero — the honest "not known". Averaging those in
+        // with the rest silently drags the basket's move toward flat, and
+        // does it worse the more members are unresolvable, which is exactly
+        // the case where the reader most needs to know. So the mean is taken
+        // over the members with a determinable move, and if fewer than half
+        // of them have one the theme reports no day change at all rather
+        // than a figure standing on a minority of its own constituents.
+        const spoken = memberSeries.filter((m) => m.dayKnown);
+        dayChg = spoken.length >= Math.max(2, Math.ceil(memberSeries.length / 2))
+          ? +(spoken.reduce((a, m) => a + (m.dayChg || 0), 0) / spoken.length).toFixed(2)
+          : 0;
         const above = memberSeries.filter((m) => { const s = sma(m.closes, 50); const cc = m.closes.filter((x) => x != null && !isNaN(x)); const last = cc[cc.length - 1]; return s != null && last != null && last > s; }).length;   // zzz487 — use last VALID close (was reading a trailing null → always 0%)
         breadthAbove50 = Math.round((above / memberSeries.length) * 100);
       }
