@@ -373,13 +373,16 @@ export default function AiDeskPage() {
             <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-0)', marginBottom: 4 }}>Prediction ledger</div>
             <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
               Every assessment is recorded the moment it is made, with the engine&rsquo;s inputs and the model&rsquo;s scores frozen beside it,
-              and marked later against what the stock actually did at 7 / 30 / 90 / 180 days — <b>relative to the S&amp;P 500</b>, because a
-              rising tide is not a signal. Entries are written once and never rewritten, so this measures foresight rather than hindsight.
+              and marked later against what the stock actually did at 7 / 30 / 90 / 180 days — <b>relative to its own market&rsquo;s index</b>
+              (S&amp;P 500 for a US filing, Nifty 50 for an Indian one), because a rising tide is not a signal. Entries are written once and
+              never rewritten, so this measures foresight rather than hindsight.
               {ledger?.note && <><br /><span style={{ color: 'var(--mc-caution,#F59E0B)' }}>{ledger.note}</span></>}
+              {ledger?.backfilled_note && <><br /><span style={{ color: 'var(--mc-caution,#F59E0B)' }}>{ledger.backfilled_note}</span></>}
             </div>
             <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--mc-text-3)' }}>
               <b style={{ color: 'var(--mc-text-1)' }}>{ledger?.total ?? 0}</b> predictions recorded ·{' '}
               <b style={{ color: 'var(--mc-text-1)' }}>{ledger?.scored ?? 0}</b> marked so far
+              {ledger?.backfilled ? <> · <b style={{ color: 'var(--mc-caution,#F59E0B)' }}>{ledger.backfilled}</b> recorded after the fact</> : null}
             </div>
           </div>
 

@@ -57,23 +57,40 @@ export async function GET(req: NextRequest) {
   let marked = 0, skipped = 0;
 
   if (doScore) {
-    // One benchmark series for the whole pass — every excess return is measured
-    // against the same SPY history, so entries are comparable with each other.
-    let bench: { ts: number[]; closes: number[] } | null = null;
-    try {
-      const ch = await fetchChart('SPY', '2y', '1d');
-      if (ch?.timestamps && ch?.closes) bench = { ts: ch.timestamps as number[], closes: ch.closes as number[] };
-    } catch { /* without it nothing can be marked honestly */ }
-    if (!bench) {
+    // ONE BENCHMARK PER MARKET, FETCHED ONCE  (zzz638)
+    //
+    // This used to fetch SPY and measure every entry against it. For the US
+    // half that is right; for an Indian filing it asks whether an NSE small-cap
+    // beat the S&P 500, which is a question about the rupee and the Fed, not
+    // about the quarter. Each entry now carries the benchmark it was recorded
+    // against, and each distinct benchmark is fetched once for the whole pass,
+    // so entries stay comparable WITHIN a market and are never compared across.
+    const benches = new Map<string, { ts: number[]; closes: number[] } | null>();
+    const benchFor = async (sym: string) => {
+      const key = sym || 'SPY';
+      if (benches.has(key)) return benches.get(key)!;
+      let b: { ts: number[]; closes: number[] } | null = null;
+      try {
+        const ch = await fetchChart(key, '2y', '1d');
+        if (ch?.timestamps && ch?.closes) b = { ts: ch.timestamps as number[], closes: ch.closes as number[] };
+      } catch { /* leave null — the entry stays unmarked rather than guessed */ }
+      benches.set(key, b);
+      return b;
+    };
+    if (!(await benchFor('SPY')) && !entries.some((e) => e.bench_symbol && e.bench_symbol !== 'SPY')) {
       return NextResponse.json({ ok: false, error: 'The benchmark history was unavailable, so nothing was marked. An unmarked ledger is better than one marked against nothing.' });
     }
     for (const e of entries) {
+      const bench = await benchFor(e.bench_symbol || 'SPY');
+      if (!bench) continue;
       if (Date.now() - t0 > DEADLINE_MS) { skipped++; continue; }
       const due = dueHorizons(e);
       if (!due.length) continue;
       let series: { ts: number[]; closes: number[] } | null = null;
       try {
-        const ch = await fetchChart(e.ticker, '2y', '1d');
+        // price_symbol, never the bare ticker: `LCL` is an NSE name here and a
+        // different American company on Yahoo.
+        const ch = await fetchChart(e.price_symbol || e.ticker, '2y', '1d');
         if (ch?.timestamps && ch?.closes) series = { ts: ch.timestamps as number[], closes: ch.closes as number[] };
       } catch { /* delisted or renamed — leave the entry unmarked, never guessed */ }
       if (!series) continue;
@@ -123,10 +140,23 @@ export async function GET(req: NextRequest) {
   }
 
   const scoredCount = entries.filter((e) => e.out && Object.keys(e.out).length).length;
+  // A ROW WRITTEN LONG AFTER THE FILING IS NOT A LIVE CALL  (zzz638). It is
+  // still a legitimate observation — the inputs are the filing's own, and none
+  // of them were chosen knowing the outcome — but it is not a track record, and
+  // the difference has to be visible on the page rather than assumed away. Two
+  // days covers the normal lag between a filing landing and the desk reading it.
+  const backfilled = entries.filter((e) => {
+    const f = Date.parse(`${e.filing_date}T00:00:00Z`), m = Date.parse(e.made_at);
+    return !isNaN(f) && !isNaN(m) && (m - f) > 2 * 86_400_000;
+  }).length;
   return NextResponse.json({
     ok: true,
     total: entries.length,
     scored: scoredCount,
+    backfilled,
+    backfilled_note: backfilled
+      ? `${backfilled} of ${entries.length} entries were recorded more than two days after the filing. Their inputs are still the filing's own, so they are honest observations — but they were not made in real time, and a live track record they are not.`
+      : undefined,
     marked, skipped_for_time: skipped,
     learned,
     entries: entries.slice(0, 250),

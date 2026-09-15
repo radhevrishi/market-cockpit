@@ -362,7 +362,17 @@ export async function GET(req: NextRequest) {
         id: ledgerId(r.ticker, accession, String(r.filing_date || '')),
         ticker: r.ticker, company: r.company || null,
         filing_date: String(r.filing_date || ''), accession,
-        price_at: n1(r.price), bench_at: null, bench_symbol: 'SPY',
+        price_at: n1(r.price), bench_at: null,
+        // zzz638 — BOTH OF THESE USED TO SAY 'SPY' AND A BARE TICKER, for
+        // Indian filings as much as US ones. An NSE small-cap's excess return
+        // was therefore going to be measured against the S&P 500, and its own
+        // price fetched as whatever American listing shares those letters.
+        // Every Indian row in the ledger was unmarkable-but-plausible, which is
+        // the worst state a record can be in.
+        bench_symbol: region === 'india' ? '^NSEI' : 'SPY',
+        price_symbol: region === 'india'
+          ? (/\.(NS|BO)$/i.test(r.ticker) ? r.ticker : `${r.ticker}.NS`)
+          : r.ticker,
         tier: r.tier || null, engine_score: n1(r.composite_score),
         pead: n1(r.pead_score), rs: n1(r.rs_rating),
         sales_yoy: n1(r.sales_yoy_pct), eps_yoy: n1(r.eps_yoy_pct),

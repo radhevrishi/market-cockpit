@@ -22,7 +22,13 @@
 import { kvGet, kvSet } from './kv';
 import type { AiAssessment } from './ai-analyst';
 
-export const LEDGER_VERSION = 'v1';
+// v2 (zzz638): v1 entries recorded EVERY name — Indian ones included — with
+// bench_symbol 'SPY' and a bare NSE ticker. An Indian small-cap's excess return
+// would have been measured against the S&P, and its own price fetched from
+// whatever US listing happened to share those letters. Neither is recoverable
+// after the fact, and a ledger holding entries that cannot be marked honestly
+// is worse than an empty one, so v1 is left behind rather than migrated.
+export const LEDGER_VERSION = 'v2';
 const INDEX_KEY = `ai:pred-index:${LEDGER_VERSION}`;
 const entryKey = (id: string) => `ai:pred:${LEDGER_VERSION}:${id}`;
 const TTL_S = 3 * 365 * 24 * 3600;
@@ -40,7 +46,15 @@ export interface LedgerEntry {
   /** The price the prediction was made against, and the benchmark's level. */
   price_at: number | null;
   bench_at: number | null;
+  /** The benchmark this entry's excess return is measured against — SPY for a
+   *  US filing, ^NSEI for an Indian one. Stored per entry, not assumed, so a
+   *  mixed ledger stays comparable within each market. */
   bench_symbol: string;
+  /** The EXACT symbol to fetch this company's price with — `RELIANCE.NS`, not
+   *  `RELIANCE`. A bare NSE ticker fetched from Yahoo silently returns whatever
+   *  US listing shares those letters, which is the quietest possible way to
+   *  mark a prediction against the wrong company. */
+  price_symbol?: string;
   // ── the inputs, frozen ──
   tier: string | null;
   engine_score: number | null;
@@ -111,9 +125,24 @@ export async function writeEntry(e: LedgerEntry): Promise<void> {
   try { await kvSet(entryKey(e.id), e, TTL_S); } catch { /* best effort */ }
 }
 
-/** Which horizons are due to be marked for an entry made on `madeAt`. */
+/**
+ * Which horizons are due to be marked.
+ *
+ * MEASURED FROM THE FILING, NOT FROM THE MOMENT THE ROW WAS WRITTEN (zzz638).
+ * The outcome itself is anchored on filing_date — d7 means "seven days after
+ * the filing" — so the due test has to use the same anchor or the two disagree.
+ * It used to count from `made_at`, which meant a ledger populated in one sitting
+ * from four weeks of filings had nothing due for a week, and nothing at 180 days
+ * for half a year, even though every one of those prices was already history.
+ * The window that matters is the one being measured; when the row was typed up
+ * has no bearing on whether the market has already answered.
+ *
+ * What DOES depend on made_at is whether a row is a live call or a backfill,
+ * and that is reported separately rather than resolved by delaying the marking.
+ */
 export function dueHorizons(e: LedgerEntry, now = Date.now()): Array<'d7' | 'd30' | 'd90' | 'd180'> {
-  const days = (now - Date.parse(e.made_at)) / 86_400_000;
+  const anchor = Date.parse(`${e.filing_date}T00:00:00Z`);
+  const days = (now - (isNaN(anchor) ? Date.parse(e.made_at) : anchor)) / 86_400_000;
   const want: Array<['d7' | 'd30' | 'd90' | 'd180', number]> = [['d7', 7], ['d30', 30], ['d90', 90], ['d180', 180]];
   return want.filter(([k, d]) => days >= d && !e.out?.[k]).map(([k]) => k);
 }
