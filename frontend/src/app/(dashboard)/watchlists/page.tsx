@@ -4034,9 +4034,31 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         compact
         tickers={allTickers}
         groups={[
-          // zzz224 — ELITE leads: in the sectioned TradingView copy, elite
-          // names land under ###ELITE and are deduped out of the tier
-          // sections below (strongest names on top of the watchlist).
+          // ── zzz671 — THE JUST-REPORTED COHORT LEADS THE EXPORT ───────────
+          //
+          // ELITE / BLOCKBUSTER / STRONG sorts by how good a quarter was and
+          // says nothing about WHEN it was. A name that reported last night and
+          // one that reported in July land in the same block, so the list that
+          // reaches TradingView cannot be read in the order the work happens:
+          // fresh prints first, the standing book behind them.
+          //
+          // The export dedupes each ticker into the FIRST section that claims
+          // it, which makes this a reordering rather than a duplication — a
+          // name that reported four days ago appears under ###NEW 10D and is
+          // removed from its tier section below.
+          //
+          // The window is the page's own adaptive one (`computeNewWindow`),
+          // which widens past ten days when nothing reported in ten. Between
+          // earnings seasons this stays useful instead of being an empty
+          // heading, and the label says which window it actually used.
+          {
+            label: `NEW ${__NEW_WIN.days}D`, emoji: '🆕', color: '#38BDF8',
+            tickers: [...blockbusters, ...strongs]
+              .filter((e: any) => { const d = filingAgeDays(e?.filing_date); return d !== null && d <= __NEW_WIN.days; })
+              .map((e) => e.ticker),
+          },
+          // zzz224 — ELITE leads the standing book: elite names land under
+          // ###ELITE and are deduped out of the tier sections below.
           { label: 'ELITE', emoji: '🏆', tickers: [...blockbusters, ...strongs].filter((e: any) => e.is_elite).map((e) => e.ticker), color: '#22D3EE' },
           { label: 'BLOCKBUSTER', emoji: '⭐', tickers: blockbusters.map((e) => e.ticker), color: '#F59E0B' },
           { label: 'STRONG', emoji: '🟢', tickers: strongs.map((e) => e.ticker), color: '#10B981' },

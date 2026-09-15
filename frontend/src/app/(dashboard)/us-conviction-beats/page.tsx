@@ -935,7 +935,30 @@ export default function UsConvictionBeatsPage() {
       e.exchange ?? venues[e.ticker.toUpperCase().split('@')[0]] ?? null;
     const rowsOf = (list: UsConvictionEntry[]) => list.map((e) => ({ ticker: e.ticker, exchange: venueFor(e) }));
 
+    // ── zzz671 — THE JUST-REPORTED COHORT LEADS THE EXPORT ────────────────
+    //
+    // The sections were ELITE / BLOCKBUSTER / STRONG, which sorts by how good a
+    // quarter was and says nothing about WHEN. A name that reported last night
+    // and one that reported in July arrive in the same block, so the list that
+    // lands in TradingView cannot be read in the order the work happens —
+    // fresh prints first, the standing book behind them.
+    //
+    // `buildTvExport` already dedupes every symbol into the FIRST section that
+    // claims it, which is what makes this a reordering rather than a
+    // duplication: a name that reported four days ago appears under ###NEW 10D
+    // and is removed from its tier section below.
+    //
+    // The window matches the NEW chip on the page — `computeUsNewWindow`
+    // widens past ten days when nothing reported in ten, so between earnings
+    // seasons this stays useful instead of being an empty heading.
+    const _newDays = newWindow?.days ?? 10;
+    const _isFresh = (e: UsConvictionEntry) => {
+      const d = usFilingAgeDays(e.filing_date);
+      return d != null && d <= _newDays;
+    };
+    const _fresh = filtered.filter(_isFresh);
     const out = buildTvExport([
+      { label: `NEW ${_newDays}D`, rows: rowsOf(_fresh) },
       { label: 'ELITE', rows: rowsOf(filtered.filter((e) => e.is_elite)) },
       { label: 'BLOCKBUSTER', rows: rowsOf(filtered.filter((e) => e.tier === 'BLOCKBUSTER')) },
       { label: 'STRONG', rows: rowsOf(filtered.filter((e) => e.tier === 'STRONG')) },
@@ -975,7 +998,7 @@ export default function UsConvictionBeatsPage() {
       download(`us-conviction-beats-${etToday()}-tradingview.txt`, out.text, 'text/plain');
       toast.error('Clipboard blocked — downloaded the list as a file instead');
     }
-  }, [filtered]);
+  }, [filtered, newWindow, entries.length]);
 
   return (
     <div style={{ padding: 20, maxWidth: 1500, margin: '0 auto', ...deskNumerals }}>

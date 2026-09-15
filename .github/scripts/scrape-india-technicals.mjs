@@ -427,7 +427,18 @@ async function main() {
   // of new bench names do not trigger a full refetch every morning.
   const coverage = new Set(priorHist.coverage || Object.keys(series));
   const missingFromCoverage = [...want].filter((x) => !coverage.has(x)).length;
-  if (coverage.size && missingFromCoverage > want.size * 0.05) {
+  // ANY new symbol re-opens the window, not five per cent of them.  (zzz671)
+  //
+  // Sessions are filtered on the way in, so a symbol added to the working set
+  // today has NO history in the sessions already stored — and with a 5%
+  // threshold, adding a handful never crossed it. A company benched tomorrow
+  // would therefore start from one bar and take two hundred sessions to earn a
+  // stage, while the file it needed was sitting in the archive all along.
+  //
+  // Re-fetching is ~280 files and about four minutes, bounded by MAX_FETCH, on
+  // a job that runs once a day. Paying that whenever the working set actually
+  // changes is cheaper than a name being silently unmeasurable for months.
+  if (coverage.size && missingFromCoverage > 0) {
     console.log(`working set widened by ${missingFromCoverage} symbols beyond what the history covers — re-opening the window once.`);
     have = new Set(); knownEmpty = new Set();
   }

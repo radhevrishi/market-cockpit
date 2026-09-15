@@ -23,7 +23,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { gradedKey } from '@/lib/graded-cache-key';
+import { gradedKey, gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 // zzz669 — the grader and its two date helpers now live in ONE place, shared
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
 import { gradeIndiaRow as gradeRow, deriveQuarterLabel } from '@/lib/india-grade';
@@ -178,7 +178,49 @@ export async function GET(req: Request) {
     try {
       const cached = await kvGet<any>(cacheKey);
       if (cached?.by_tier) return NextResponse.json(cached, { status: 200 });
-    } catch { /* fall through to pending */ }
+    } catch { /* fall through */ }
+    // ═══════════════════════════════════════════════════════════════════
+    // A COLD VERSION IS NOT AN EMPTY DAY.  (zzz671)
+    //
+    // Bumping the engine version abandons every cached session on purpose:
+    // a verdict produced by older rules should not be served as though the
+    // new rules produced it. That is right, and it has a cost nobody had
+    // priced — on the day of a bump EVERY date is cold, so the page asks for
+    // the new namespace, gets nothing, and shows an empty screen while 274
+    // companies re-grade eight at a time against Screener's rate limit.
+    //
+    // The bench cron already falls back through the abandoned namespaces for
+    // exactly this reason. The page did not, so the two disagreed about
+    // whether the data existed, and the one the owner looks at was the one
+    // that said no.
+    //
+    // So: serve the newest verdict that DOES exist, clearly stamped with the
+    // engine that produced it, rather than nothing at all. `engine_stale`
+    // travels with the payload so the caller can mark the rows rather than
+    // pass them off as current, and the background grade still runs — the
+    // fresh payload replaces this one as soon as it lands.
+    //
+    // Honest, not silent: a stale verdict labelled stale is strictly better
+    // than a blank page, and strictly worse than a current one. It is a
+    // bridge across a bump, not a substitute for grading.
+    // ═══════════════════════════════════════════════════════════════════
+    for (const legacyKey of gradedKeyCandidates(date).slice(1)) {
+      try {
+        const old = await kvGet<any>(legacyKey);
+        const rows = old?.by_tier
+          ? (Object.values(old.by_tier) as any[][]).reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0)
+          : 0;
+        if (rows > 0) {
+          return NextResponse.json({
+            ...old,
+            engine_stale: true,
+            engine_stale_key: legacyKey.split(':')[1],
+            engine_current: GRADED_CACHE_VERSION,
+            engine_stale_note: `Graded by engine ${legacyKey.split(':')[1]}; the current engine is ${GRADED_CACHE_VERSION} and is re-grading this session now.`,
+          }, { status: 200 });
+        }
+      } catch { /* try the next namespace */ }
+    }
     return NextResponse.json({ pending: true, date }, { status: 200 });
   }
 // zzz503: v10->v11 to regenerate cards with honest "newly listed"/"no YoY yet" labels + richer newly-listed narrative (was "prior-year missing")
