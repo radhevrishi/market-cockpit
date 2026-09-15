@@ -1971,12 +1971,34 @@ export function usCyclicality(e: UsConvictionEntry): UsCyclicality | null {
 //     names, and a higher floor would have cut PRO DEX ($235M) and TWIN DISC
 //     ($347M) out of the first live run. Tradeability is enforced separately
 //     and better by the $2M/day dollar-volume gate in the grader.
-// Everything else is identical: Sales ≥20 · EPS ≥25 · PEAD ≥60 · OPM Δ ≥0 ·
+// Everything else is identical: Sales ≥20 · EPS ≥25 · PEAD ≥40 · OPM Δ ≥0 ·
 // CFO/PAT ≥0.5 (skipped for financials) · verdict ∈ {STRONG BUY, BUY, WATCH}.
+//
+// ═══ WHY PEAD MOVED FROM 60 TO 40  (zzz659) ══════════════════════════════
+//
+// PEAD is not a quality score and was being used as one. It is a Bernard–Thomas
+// DRIFT proxy: 35% of it is the one-day reaction, 15% the gap, 25% the volume
+// confirmation, 25% the surprise. It answers "is the market set up to keep
+// paying for this print", which is a question about the TAPE, not about the
+// business.
+//
+// At 60 the gate therefore threw away every good quarter the market happened to
+// sell on the day. Fastly is the case: revenue +23%, adjusted EPS from a loss to
+// $0.15 against a $0.07 estimate, operating margin +17pp, own outlook raised —
+// and a -9.1% reaction, which scores ZERO on the one-day leg and drags the whole
+// figure to 21. The engine correctly tagged it "market rejected print". A
+// preset that exists to find good businesses should not be silently filtering
+// on whether the market liked them that afternoon, because the entire premise
+// of this bench is buying quality the tape has mispriced.
+//
+// 40 keeps the gate doing its real job — excluding prints with no drift setup
+// AND nothing else going for them — while letting a sold-off quality print onto
+// the bench, where the drift state is shown on the card as its own chip and the
+// reader can judge it. The other five gates are unchanged and still strict.
 export const US_PRESET = {
   sales: 20,
   eps: 25,
-  pead: 60,
+  pead: 40,
   opmDelta: 0,
   cfoPatMin: 0.5,
   mktCapMinMusd: 300,

@@ -2327,7 +2327,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       // (Avoids clobbering filters restored from a saved view later.)
       setFilters((prev) => (
         prev.sales == null && prev.eps == null && prev.pead == null && prev.opmDelta == null && prev.cfoPatMin == null && prev.mktCapMin == null && prev.verdicts == null /* zzz362 */
-          ? { ...prev, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 — user: preset auto-ON with SB+BUY+WATCH */ }
+          ? { ...prev, sales: 20, eps: 25, pead: 40, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 — user: preset auto-ON with SB+BUY+WATCH */ }
           : prev
       ));
     } catch {}
@@ -3470,7 +3470,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
         {(() => {
-          // zzz309 → zzz319 → zzz330 — Quality Preset v5: Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ ≥0 · CFO/PAT ≥0.5.
+          // zzz309 → zzz319 → zzz330 — Quality Preset v5: Sales≥20 · EPS≥25 · PEAD≥40 · OPM Δ ≥0 · CFO/PAT ≥0.5.
+          // zzz659 — PEAD 60 -> 40 across every preset. PEAD is a drift proxy
+          // (35% of it is the one-day reaction), not a quality score, so a gate
+          // at 60 silently excluded good quarters the market sold on the day.
           const presetActive = filters.sales === 20 && filters.eps === 25 && filters.pead === 60 && filters.opmDelta === 0 && filters.cfoPatMin === 0.5 && filters.mktCapMin === 3000 && filters.pledgedMax === 0 /* zzz360 */ && filters.driftBucket == null && JSON.stringify((filters.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']) /* zzz366 */;
           const OPT_OUT_KEY = 'mc:cb:preset:v3:optout';
           const handleToggle = () => {
@@ -3480,7 +3483,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 return { ...FILTER_DEFAULT, cap: prev.cap };
               } else {
                 try { localStorage.removeItem(OPT_OUT_KEY); } catch {}
-                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 60, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 */ };
+                return { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, eps: 25, pead: 40, opmDelta: 0, cfoPatMin: 0.5, mktCapMin: 3000, pledgedMax: 0 /* zzz360 */, verdicts: ['STRONG BUY', 'BUY', 'WATCH'] /* zzz366 */ };
               }
             });
           };
@@ -3492,7 +3495,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: STRONG BUY·BUY·WATCH {presetActive ? '✓ ON' : '· OFF — click to enable'}
+                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥40 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: STRONG BUY·BUY·WATCH {presetActive ? '✓ ON' : '· OFF — click to enable'}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}

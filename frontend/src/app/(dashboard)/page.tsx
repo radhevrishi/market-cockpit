@@ -5290,7 +5290,10 @@ function passesQualityPreset(b: any): boolean {
   if (!(b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG')) return false;      // Verdict: STRONG BUY / BUY / WATCH
   if (!(typeof b.sales_yoy_pct === 'number' && b.sales_yoy_pct >= 20)) return false;
   if (!(typeof b.eps_yoy_pct === 'number' && b.eps_yoy_pct >= 25)) return false;
-  if (!(typeof b.pead_score === 'number' && b.pead_score >= 60)) return false;              // PEAD ≥ 60
+  // zzz659 — 60 -> 40, mirroring the US preset. PEAD is a drift proxy, not a
+  // quality score: 35% of it is the one-day reaction, so a gate at 60 quietly
+  // excluded every good quarter the market sold on the day. See US_PRESET.
+  if (!(typeof b.pead_score === 'number' && b.pead_score >= 40)) return false;              // PEAD ≥ 40
   if (!(typeof b.market_cap_cr === 'number' && b.market_cap_cr >= 3000)) return false;
   if (!(typeof b.opm_pct === 'number' && typeof b.opm_prev_pct === 'number' && (b.opm_pct - b.opm_prev_pct) >= 0)) return false; // OPM Δ ≥ 0
   const cfo = typeof b.cfo_to_pat_ratio === 'number' ? b.cfo_to_pat_ratio : (Array.isArray(b.annual_cfo_pat) && b.annual_cfo_pat.length ? b.annual_cfo_pat[b.annual_cfo_pat.length - 1] : null);
@@ -5600,7 +5603,7 @@ function DailySignalInbox() {
               <span style={{ fontSize: 9.5, color: DIM }}>{pullbacks.length ? `top ${pullbacks.length}` : ''}</span>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginTop: 3, lineHeight: 1.5 }}>
-              Your full preset — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥60 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — every gate strict, ranked by pullback, biggest dip first. Red = on sale; green = still near its high. Buy great earnings on the dip.
+              Your full preset — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥40 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — every gate strict, ranked by pullback, biggest dip first. Red = on sale; green = still near its high. Buy great earnings on the dip.
             </div>
             {pullbacks.length === 0 ? (
               <div style={{ fontSize: 10.5, color: DIM, marginTop: 12, lineHeight: 1.55 }}>
