@@ -1470,9 +1470,11 @@ export default function ThemeRotationTab() {
           <div style={{ marginTop: 18, background: CARD, border: `1px solid ${BORD}`, borderRadius: 12, padding: 15 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 3 }}>
               <div style={{ fontSize: 14, fontWeight: 900, color: TXT }}>🧪 Dummy Portfolio — Best {dummyPortfolio.top.length} <span style={{ color: DIM, fontWeight: 700 }}>({region === 'us' ? '🇺🇸 USA' : '🇮🇳 India'})</span></div>
-              {dummyPortfolio.top.length > 0 && <div style={{ fontSize: 10.5, color: DIM }}><b style={{ color: MUT }}>{dummyPortfolio.graded}</b> graded · across <b style={{ color: MUT }}>{dummyPortfolio.themeSpread}</b> themes · equal-weight <b style={{ color: MUT }}>{dummyPortfolio.wt}%</b> each</div>}
+              {dummyPortfolio.top.length > 0 && <div style={{ fontSize: 10.5, color: DIM }}><b style={{ color: MUT }}>{dummyPortfolio.graded}</b> with a Fundo grade · across <b style={{ color: MUT }}>{dummyPortfolio.themeSpread}</b> themes · equal-weight <b style={{ color: MUT }}>{dummyPortfolio.wt}%</b> each</div>}
             </div>
-            <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>Your Multibagger / Technicals names that sit in a theme the engine rates <b style={{ color: '#22C55E' }}>BUY</b> or <b style={{ color: '#22C55E' }}>EARLY BUY</b> right now — <b style={{ color: MUT }}>nothing from Weakening or Lagging</b>. Ranked by your Fundo grade (A+ first), <b style={{ color: MUT }}>capped at {dummyPortfolio.cap} names per theme</b> so the book spreads across the rotation instead of stacking into whichever theme your best grades happen to sit in{dummyPortfolio.excluded ? <> — {dummyPortfolio.excluded} eligible name{dummyPortfolio.excluded > 1 ? 's' : ''} left out by that cap</> : null}. A simple starter book, not advice.</div>
+            <div style={{ fontSize: 10.5, color: DIM, marginBottom: 11, lineHeight: 1.5 }}>Your Multibagger / Technicals names that sit in a theme the engine rates <b style={{ color: '#22C55E' }}>BUY</b> or <b style={{ color: '#22C55E' }}>EARLY BUY</b> right now — <b style={{ color: MUT }}>nothing from Weakening or Lagging</b>. {dummyPortfolio.graded === 0
+              ? <>Ranked by the <b style={{ color: MUT }}>tier the engine gave each name on its last filing</b> — BLOCKBUSTER ahead of STRONG, engine score separating names inside a tier — because no Fundo grades are loaded. Upload the {region === 'us' ? 'USA' : 'India'} Multibagger sheet and the ranking switches to your own grades.</>
+              : <>Ranked by your Fundo grade (A+ first){dummyPortfolio.graded < dummyPortfolio.top.length ? <>, with the engine&rsquo;s bench tier standing in for the {dummyPortfolio.top.length - dummyPortfolio.graded} name{dummyPortfolio.top.length - dummyPortfolio.graded > 1 ? 's' : ''} you have not graded</> : null}</>}, <b style={{ color: MUT }}>capped at {dummyPortfolio.cap} names per theme</b> so the book spreads across the rotation instead of stacking into whichever theme your best grades happen to sit in{dummyPortfolio.excluded ? <> — {dummyPortfolio.excluded} eligible name{dummyPortfolio.excluded > 1 ? 's' : ''} left out by that cap</> : null}. A simple starter book, not advice.</div>
             {dummyPortfolio.top.length === 0 ? (
               <div style={{ fontSize: 11.5, color: DIM, padding: '10px 0' }}>No names from your lists currently sit in a BUY / EARLY-BUY theme. When a theme you own rotates into a buy call, its best-graded names appear here.</div>
             ) : (
@@ -1482,7 +1484,18 @@ export default function ThemeRotationTab() {
                     <tr style={{ color: DIM, textAlign: 'left' }}>
                       <th style={{ padding: '5px 8px', fontWeight: 700, width: 30 }}>#</th>
                       <th style={{ padding: '5px 8px', fontWeight: 700 }}>Ticker</th>
-                      <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'center' }}>Fundo</th>
+                      {/* zzz655 — THE COLUMN IS NAMED AFTER WHAT IS IN IT. It
+                          was headed "Fundo" while showing bench tiers, because
+                          the grade falls back to the tier when no Multibagger
+                          sheet is loaded — so the page simultaneously read
+                          "0 graded", "ranked by your Fundo grade", and a column
+                          of 🔥 BB. Three statements, one of them true. */}
+                      <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'center' }}
+                        title={dummyPortfolio.graded === 0
+                          ? 'No Fundo grades are loaded, so this column shows the tier the engine gave each name on its last filing.'
+                          : 'Your Fundo grade where one is loaded; the engine tier from the last filing otherwise.'}>
+                        {dummyPortfolio.graded === 0 ? 'Bench tier' : 'Fundo / tier'}
+                      </th>
                       <th style={{ padding: '5px 8px', fontWeight: 700 }}>Theme</th>
                       <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'center' }}>Call</th>
                       <th style={{ padding: '5px 8px', fontWeight: 700, textAlign: 'right' }}>Wt</th>

@@ -52,6 +52,13 @@ const US_ENGINE_VOCAB: Rule[] = [
   { re: /^real estate$|^realty$/i, theme: 'us-reit' },
   { re: /^telecom(munications?)?$|^communication services?$|^media$/i, theme: 'us-comm' },
   { re: /^transport(ation)?$|^logistics$|^shipping$/i, theme: 'us-transport' },
+  // zzz655 — the last five unthemed names on the book. "Auto" and
+  // "Professional Services" are engine labels no rule below matches, because
+  // the long US rules expect "automobile manufacturing" and "consulting".
+  // BorgWarner, Lear and Atmus are auto suppliers; the EV theme is where the
+  // board tracks that chain, and it is a better answer than none.
+  { re: /^auto(mobile|motive)?(\s*(&|and)?\s*(components?|parts?|ancillar(y|ies)))?$/i, theme: 'us-ev' },
+  { re: /^(professional|business)\s*services?$|^consulting$|^staffing$|^outsourcing$/i, theme: 'us-industrials' },
 ];
 
 const US_RULES: Rule[] = [
