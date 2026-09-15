@@ -154,8 +154,25 @@ async function fetchSession(ddmmyyyy, want) {
       }
       if (!want || want.has(sym)) closes[sym] = px;
     }
+    // THE MEAN, NOT THE MEDIAN.
+    //
+    // The first version compounded the MEDIAN daily return and produced a
+    // 282-session market return of −36.8%, which is not what the Indian market
+    // did. Daily cross-sectional returns are right-skewed — a few large winners
+    // pull the mean above the median every day — so compounding the median
+    // manufactures a steady drag and would have told the engine that almost
+    // every stock beat the market. An equal-weighted index return is the
+    // compounded MEAN, and that is the comparison RS is supposed to make.
+    //
+    // A trimmed mean, because a single mis-parsed row or a 400% listing-day
+    // move should not set the market's return for that session.
     dayRets.sort((a, b) => a - b);
-    const mktRet = dayRets.length >= 50 ? dayRets[Math.floor(dayRets.length / 2)] : null;
+    let mktRet = null;
+    if (dayRets.length >= 50) {
+      const cut = Math.floor(dayRets.length * 0.02);
+      const core = dayRets.slice(cut, dayRets.length - cut);
+      mktRet = core.reduce((a, b) => a + b, 0) / core.length;
+    }
     return { holiday: false, closes, mktRet };
   } catch { clearTimeout(t); return { holiday: false, closes: null }; }
 }
