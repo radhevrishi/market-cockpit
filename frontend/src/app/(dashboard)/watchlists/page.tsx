@@ -91,6 +91,7 @@ import DecayWatch from '@/components/DecayWatch';
 import { openPassport } from '@/lib/engines'; // zzz525 — 🪪 passport from bench rows // zzz514
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
+import { INDIA_PRESET } from '@/lib/quality-preset';
 import {
   EarningsCardComponent,
   CoverageStatsBar,
@@ -1515,16 +1516,9 @@ const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: 
 // threshold change is one edit, and the applier and the detector cannot
 // disagree about what the preset IS.
 // ═══════════════════════════════════════════════════════════════════════════
-const INDIA_PRESET = {
-  sales: 20,
-  eps: 25,
-  pead: 40,        // zzz659 — was 60. PEAD is a drift proxy, not a quality score.
-  opmDelta: 0,
-  cfoPatMin: 0.5,
-  mktCapMin: 3000, // ₹ Cr
-  pledgedMax: 0,   // zzz360 — a null pledge passes; this gates known pledges.
-  verdicts: ['STRONG BUY', 'BUY', 'WATCH'] as string[],
-};
+// zzz675 — INDIA_PRESET now lives in lib/quality-preset so the alert path
+// (which runs with no browser) tests rows against the SAME numbers this chip
+// applies. Imported at the top of this file.
 
 /** The preset as a filter patch. Spread over FILTER_DEFAULT (or prev). */
 const indiaPresetFilters = () => ({
