@@ -25,13 +25,24 @@ export const CAVEAT_PENALTY: Record<string, number> = {
   'ocf divergence': 25,
   'low quality': 25,
   'segment mix shift': 10,
+  // zzz668 — `exceptional item` now has an emitter on the India side (the
+  // exceptional line as a share of pre-tax profit). It had a penalty and no
+  // producer for its whole life, while the app's methodology panel listed it
+  // to the reader as a live rule.
   'exceptional item': 10,
-  'forex gain': 8,
-  'forex loss': 8,
-  'accelerated depreciation': 10,
-  'accounting change': 12,
-  'pooling of interests restate': 12,
-  'one time order': 10,
+  // ─── THE REMAINING SIX HAVE NO EMITTER ON EITHER SIDE ───────────────────
+  // Nothing in this codebase has ever pushed these strings. They are kept,
+  // rather than deleted, ONLY so that a row carrying one from an older cached
+  // payload is still priced instead of falling to the 8-point default — and
+  // they are marked so nobody reads the table as a description of what the
+  // engine tests. Do not add one to the in-app documentation without adding
+  // the rule that emits it.
+  'forex gain': 8,                        // no emitter
+  'forex loss': 8,                        // no emitter
+  'accelerated depreciation': 10,         // no emitter
+  'accounting change': 12,                // no emitter
+  'pooling of interests restate': 12,     // no emitter
+  'one time order': 10,                   // no emitter
   // NOT A QUALITY PROBLEM — a MEASUREMENT one, so it costs nothing. The US
   // engine raises this when a stock split (usually a reverse split) sits
   // between the two quarters and the filer's own record does not establish the

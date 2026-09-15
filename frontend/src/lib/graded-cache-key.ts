@@ -43,7 +43,14 @@
 //     earnings outrunning revenue and cash, two or more critical flags);
 //   · stage / RS / 52-week / close series arrive from the technicals scraper,
 //     so the technical axis stops being a constant 50 for every company.
-export const GRADED_CACHE_VERSION = 'v16';
+// zzz668 — v16 → v17. The fields the scraper fetched and the grader never saw:
+//   · PEAD's volume leg is measured instead of the constant 50;
+//   · `exceptional item` finally has an emitter, and a 4th ceiling with it;
+//   · a Stage-4 chart no longer forces AVOID by itself (matching the US);
+//   · Path F reaches India too;
+//   · both row builders now carry the same fields — `close_30d` had reached
+//     only one of them, so the volatility-scaled reaction never ran.
+export const GRADED_CACHE_VERSION = 'v17';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -56,7 +63,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

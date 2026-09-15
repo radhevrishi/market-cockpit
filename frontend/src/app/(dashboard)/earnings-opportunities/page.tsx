@@ -2974,7 +2974,8 @@ export default function EarningsOpportunitiesPage() {
                   </div>
                   <div>
                     <strong style={{ color: 'var(--mc-text-2)' }}>2 · QUALITY (25%)</strong> — starts at 100, each caveat deducts:<br/>
-                    ocf divergence −25 · low quality −25 · optical eps −20 · tax distortion −15 · accounting change −12 · segment mix shift −10 · one-time / exceptional item −10 · forex −8. Bonus: OPM expanding ≥ +3pp adds +8.
+                    ocf divergence −25 · low quality −25 · optical eps −20 · tax distortion −15 · segment mix shift −10 · exceptional item −10 · thin float / reaction tags −8.
+                    Margin ladder: OPM ≥ +5pp adds +14 · ≥ +3pp adds +10 · ≥ +1pp adds +5 · ≤ −0.5pp costs −8 · ≤ −2pp costs −14.
                   </div>
                   <div>
                     <strong style={{ color: 'var(--mc-text-2)' }}>3 · TECHNICALS (25%)</strong> — Stage base + RS + 52-wk proximity:<br/>
@@ -3003,7 +3004,11 @@ export default function EarningsOpportunitiesPage() {
                   <strong>A · Clean triple-beat:</strong> Sales, PAT &amp; EPS all ≥ 25% YoY + score ≥ 78 + ≤ 1 caveat + (≥ 1 playbook pass OR strong forward guidance) + chart OK<br/>
                   <strong>B · Exceptional:</strong> Sales ≥ 40 / PAT ≥ 50 / EPS ≥ 50% + score ≥ 72 + ≤ 2 caveats + chart OK<br/>
                   <strong>C · Mega:</strong> Sales ≥ 40 / PAT ≥ 75 / EPS ≥ 75% + ≤ 3 caveats + not Stage 4<br/>
-                  <em>Chart OK = not Stage 4 and within 25% of 52-wk high.</em>
+                  <strong>D · Margin inflection:</strong> PAT &amp; EPS ≥ 100% + Sales ≥ −5% + ≤ 3 caveats + not Stage 4<br/>
+                  <strong>E · Inflection (loose):</strong> PAT &amp; EPS ≥ 75% + Sales ≥ 0 + ≤ 2 caveats + not Stage 4<br/>
+                  <strong>F · Completed profit swing:</strong> last year lost money, this year earns it with cash to match + Sales ≥ +25% + OPM ≥ +5pp + ≤ 3 caveats + not Stage 4<br/>
+                  <em>Chart OK = not Stage 4 and within 25% of 52-wk high.</em><br/>
+                  <em>Opening a path is not the label: still loss-making, an unfinished turnaround, or margins down ≥ 1.5pp caps the row at MIXED.</em>
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 30%, transparent)', borderRadius: 8 }}>
                   <strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong> — all four required:<br/>
@@ -4194,7 +4199,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {((stock as any).is_elite || typeof (stock as any).pead_score === 'number' || (stock as any).multibagger_setup) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
           {(stock as any).is_elite && (
-            <span title="ELITE — passes BLOCKBUSTER + all institutional gates" style={{
+            <span title="ELITE — an independent institutional gate, not a tier. Every criterion required; a missing figure fails it." style={{
               fontSize: 10, fontWeight: 900, letterSpacing: '0.3px',
               padding: '2px 8px', borderRadius: 4,
               border: '1px solid #FCD34D', background: '#78350F',
@@ -4219,7 +4224,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             );
           })()}
           {(stock as any).multibagger_setup && (
-            <span title="MULTIBAGGER SETUP — 6-criterion SQGLP compounder filter" style={{
+            <span title="MULTIBAGGER SETUP — at least 2 of 4 quality signals (ROCE ≥ 25% · OPM ≥ 18% · OPM expanding ≥ +1pp · pledge ≤ 5%) and not loss-making" style={{
               fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
               padding: '2px 8px', borderRadius: 4,
               border: '1px solid #67E8F9', background: '#164E63',

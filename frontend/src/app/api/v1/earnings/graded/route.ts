@@ -397,6 +397,21 @@ function gradeRow(row: any): ParsedEarning | null {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
     if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
   }
+  // zzz668 — A PENALTY WITH NO EMITTER IS NOT A RULE.
+  //
+  // `exceptional item` has carried a 10-point penalty in the shared table since
+  // it was written, is listed to you in the app's methodology panel as though
+  // it were live, and NOTHING in the India grader has ever pushed it. Seven
+  // tags were in that state; this is the one the data supports, because
+  // enrichment already scrapes the exceptional line and its share of pre-tax
+  // profit — and, until today, the row builder threw both away.
+  //
+  // A fifth of pre-tax profit arriving from something that will not repeat is
+  // the difference between a quarter and an event.
+  {
+    const _excPct = typeof row?.exceptional_pct_pbt === 'number' ? Math.abs(row.exceptional_pct_pbt) : null;
+    if (_excPct != null && _excPct >= 20) caveat_tags.push('exceptional item');
+  }
   if (stage === 4) caveat_tags.push('low quality');
   else if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
 
@@ -470,7 +485,28 @@ function gradeRow(row: any): ParsedEarning | null {
   // Ignore RS, Stage 2, bonde ep as hard gates. Use Magnitude + Quality +
   // Tier-1 method count + Guidance + chart-not-broken.
   let tier: EarningsTier;
-  const broken = (stage === 4 && (rs == null || rs < 40)) || (epsY != null && epsY < 0 && patY != null && patY < -10);
+  // ═══════════════════════════════════════════════════════════════════════
+  // WHAT "BROKEN" IS ALLOWED TO MEAN.  (zzz668 — matching the US engine)
+  //
+  // This flag routes a row straight to AVOID, the worst grade the engine
+  // gives, and it used to fire on two unrelated things: a chart in a stage-4
+  // downtrend, and earnings that actually fell. Those are not the same
+  // evidence and must not carry the same power.
+  //
+  // The US removed the chart half after Synopsys — revenue +42%, a 6% beat, a
+  // raised guide and a 13.7% rise on the day — was published AVOID purely
+  // because its chart sat 35% off its high. The note left behind reads: "That
+  // is the tape overruling the filing, which the owner has already ruled
+  // against once." India never got the same fix, and until today India had no
+  // stage at all, so the rule has been dormant rather than correct. Now that
+  // stage is real, it would have started firing.
+  //
+  // A stage-4 downtrend is still a genuine risk and still costs the row: it
+  // adds a `low quality` caveat, it vetoes every Blockbuster path, and the
+  // reaction ladder can demote on top. It simply may no longer, by itself,
+  // produce the worst grade available.
+  // ═══════════════════════════════════════════════════════════════════════
+  const broken = (epsY != null && epsY < 0 && patY != null && patY < -10);
   const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
   const exceptMag = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
   const megaMag = salesY != null && salesY >= 40 && patY != null && patY >= 75 && epsY != null && epsY >= 75;
@@ -515,6 +551,31 @@ function gradeRow(row: any): ParsedEarning | null {
     salesY, patY, epsY, opmExp,
     cleanMag, exceptMag, megaMag,
     marginInflection, marginInflectionLoose,
+    // zzz668 — PATH F ON THE INDIA SIDE TOO.
+    //
+    // Path F shipped for the US this morning: a company that recovered from a
+    // loss could never clear any magnitude gate, because `yoyPct` correctly
+    // refuses a percentage off a negative base and every gate requires both
+    // patY and epsY. India's grader has exactly the same shape and exactly the
+    // same hole — MIXED for ever, however complete the recovery.
+    //
+    // The evidence that survives a negative base is the same in both markets:
+    // the company earns money now, the cash agrees, the top line grew and the
+    // margin expanded. India's cash figure is ANNUAL rather than quarterly, so
+    // it is treated as a veto when negative and ignored when absent, never as
+    // a reason to promote on its own.
+    //
+    // The safety valve is the shared one: an UNFINISHED recovery still sets
+    // `turnaroundBase` and is still capped at MIXED a line above.
+    swingMag: (() => {
+      const patC = typeof row?.pat_curr_cr === 'number' ? row.pat_curr_cr : null;
+      const patP = typeof row?.pat_prev_cr === 'number' ? row.pat_prev_cr : null;
+      const ocfA = typeof row?.ocf_annual_cr === 'number' ? row.ocf_annual_cr : null;
+      return patP != null && patP < 0 && patC != null && patC > 0
+        && (ocfA == null || ocfA > 0)
+        && salesY != null && salesY >= 25
+        && opmExp != null && opmExp >= 5;
+    })(),
     tier1MethodCount: _t1MethodCount,
     positiveGuidance,
     chartOk,
@@ -637,6 +698,15 @@ function gradeRow(row: any): ParsedEarning | null {
     const _criticals = ['low quality', 'ocf divergence', 'optical eps', 'tax distortion']
       .filter((t) => caveat_tags.includes(t)).length;
     if (_criticals >= 2) capTier('STRONG', 'multiple quality flags');
+
+    // 4. THE HEADLINE LEANS ON SOMETHING THAT WILL NOT REPEAT.  (zzz668)
+    //    The US caps a quarter whose beat disappears without its one-off. India
+    //    has no consensus to test a beat against, but it does have the size of
+    //    the exceptional item relative to pre-tax profit — and half of PBT
+    //    arriving from a one-off is not a quarter the business produced.
+    const _excShare = typeof row?.exceptional_pct_pbt === 'number' ? Math.abs(row.exceptional_pct_pbt) : null;
+    if (_excShare != null && _excShare >= 50) capTier('MIXED', 'headline leans on a one-off');
+    else if (_excShare != null && _excShare >= 25) capTier('STRONG', 'headline leans on a one-off');
   }
 
   // Narrative
@@ -688,7 +758,23 @@ function gradeRow(row: any): ParsedEarning | null {
   const _gapS = _sc(row?.gap_pct, [[3,100],[1,75],[0,55],[-1,30]]);
   const _surS = _sc(patY, [[100,100],[50,80],[25,60],[10,40],[0,25]]);
   const _salesS = _sc(salesY, [[50,100],[25,80],[15,60],[5,40],[0,25]]);
-  const _volS = 50;
+  // zzz668 — THE REAL VOLUME RATIO, NOT THE CONSTANT.
+  //
+  // This was 50, with the US engine's comment naming it as a known India
+  // limitation: "the India engine has to hardcode it to 50 because Screener
+  // does not expose the series". Enrichment computes `vol_ratio_20d` and the
+  // row builder was dropping it, so the limitation was in the plumbing, not
+  // the data. A quarter of the PEAD score is now measured.
+  //
+  // Post-earnings drift needs CONVICTION behind the move: the same 5% rise on
+  // triple normal volume and on half normal volume are not the same event. 50
+  // remains the reading when the ratio is genuinely unknown, which is the only
+  // honest value for "no opinion".
+  const _vr = (typeof (row as any)?.vol_ratio_20d === 'number' && Number.isFinite((row as any).vol_ratio_20d))
+    ? (row as any).vol_ratio_20d
+    : ((typeof (row as any)?.rvol === 'number' && Number.isFinite((row as any).rvol)) ? (row as any).rvol : null);
+  const _volS = _vr == null ? 50
+    : _vr >= 3 ? 100 : _vr >= 2 ? 88 : _vr >= 1.5 ? 75 : _vr >= 1 ? 60 : _vr >= 0.7 ? 40 : 20;
   // Available signal mix: when d1+gap known, use full PEAD formula.
   // When missing, fall back to fundamentals-weighted (sales 25% + pat 50% + vol 25%).
   const _pead = (_d1Known || _gapKnown)
@@ -698,13 +784,23 @@ function gradeRow(row: any): ParsedEarning | null {
   const _roce = (row as any)?.roce;
   const _opm = row?.opm_pct;
   const _prom = (row as any)?.promoter;
-  // PATCH 1009 — MULTIBAGGER: relaxed. Requires AT LEAST ONE quality signal
-  // (roce or opm or opmExp positive) + not loss-making. Stricter than ELITE
-  // but doesn't require ALL fields populated.
+  // MULTIBAGGER  (PATCH 1009, corrected zzz668)
+  //
+  // The fourth signal read `row.promoter` — promoter holding — and NOTHING in
+  // the pipeline has ever set that field. Enrichment returns `pledged_pct`; it
+  // does not return promoter holding, and a repo-wide search finds no producer.
+  // So the badge has always been a THREE-signal test needing two, while its
+  // tooltip described a "6-criterion SQGLP compounder filter".
+  //
+  // The dead leg is removed rather than left to look like a rule. Pledge is
+  // used in its place, which is the governance figure that IS scraped: a
+  // promoter who has pledged a quarter of the company is the risk the promoter
+  // leg was gesturing at, and unlike the original it can actually fire.
+  const _pledge = typeof (row as any)?.pledged_pct === 'number' ? (row as any).pledged_pct : null;
   const _mbSignals = ((typeof _roce === 'number' && _roce >= 25) ? 1 : 0)
                    + ((typeof _opm === 'number' && _opm >= 18) ? 1 : 0)
                    + ((opmExp != null && opmExp >= 1) ? 1 : 0)
-                   + ((typeof _prom === 'number' && _prom >= 45) ? 1 : 0);
+                   + ((_pledge != null && _pledge <= 5) ? 1 : 0);
   const _multibagger = !!(_mbSignals >= 2 && !_stillLoss);
 
   // ── QUALITY × INFLECTION (the second axis) ────────────────────────────────
@@ -1038,6 +1134,23 @@ export async function GET(req: Request) {
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
             market_cap_cr: e.market_cap_cr ?? (c as any).market_cap_cr ?? null,
             adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
+      announcement_text: (c as any).announcement_text ?? null,  // zzz668
+      // ─── zzz668 — FIELDS THE SCRAPER FETCHED AND THE GRADER NEVER SAW ───
+      //
+      // Enrichment has been returning all of these for months. The row builder
+      // dropped every one, so they reached the card and could not influence a
+      // single grade — the US engine uses its equivalents as tier ceilings.
+      //
+      // `vol_ratio_20d` is the one that stings: PEAD's volume leg has been the
+      // hard-coded constant 50 because "the India feed does not carry a volume
+      // ratio", and the feed has carried it all along. A quarter of that score
+      // was a placeholder sitting next to the real number.
+      vol_ratio_20d: e.vol_ratio_20d ?? null,
+      rvol: e.rvol ?? null,
+      exceptional_curr_cr: e.exceptional_curr_cr ?? null,
+      exceptional_pct_pbt: e.exceptional_pct_pbt ?? null,
+      pledged_pct: e.pledged_pct ?? null,
+      int_coverage: e.int_coverage ?? null,
       // zzz665c — enrich has computed this all along and the row builder dropped
       // it, which is the only reason India's reaction ladder ran unscaled.
       close_30d: e.close_30d ?? null,
@@ -1316,6 +1429,15 @@ export async function GET(req: Request) {
             quality: 'Confirmed',  // it's a real NSE filing, not a board-meeting forecast
             source_url: f.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
             filing_iso: f.filing_iso,
+            // zzz668 — the announcement's own subject line. The grader has
+            // scanned six text fields for guidance signals since it was
+            // written and NOTHING has ever populated any of them, so
+            // `positiveGuidance` was permanently false and Blockbuster Path A's
+            // guidance alternative was unreachable. This is the one real text
+            // the pipeline already holds. Expect a LOW yield — a subject line
+            // is usually "Outcome of Board Meeting", not a narrative — but a
+            // field that is sometimes true beats one that cannot be.
+            announcement_text: f.subject || null,
             __source: 'nse-live',
           });
           existingTickers.add(sym);
@@ -1628,6 +1750,22 @@ export async function GET(req: Request) {
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
       market_cap_cr: e.market_cap_cr ?? null,
       adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
+      // ─── zzz668 — THIS IS THE BUILDER THE NORMAL GRADING PATH USES ───────
+      //
+      // There are TWO row builders in this file: this one, and a second inside
+      // the partial-refresh branch. They must carry the same fields, and twice
+      // now a field has been added to only one of them — `close_30d` went to
+      // the partial-refresh copy alone, so the volatility-scaled reaction
+      // ladder it was fetched for never ran on the main path and reported no
+      // error while not working. Anything added here gets added there too.
+      close_30d: e.close_30d ?? null,
+      vol_ratio_20d: e.vol_ratio_20d ?? null,
+      rvol: e.rvol ?? null,
+      exceptional_curr_cr: e.exceptional_curr_cr ?? null,
+      exceptional_pct_pbt: e.exceptional_pct_pbt ?? null,
+      pledged_pct: e.pledged_pct ?? null,
+      int_coverage: e.int_coverage ?? null,
+      announcement_text: (m as any).announcement_text ?? null,
       source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
       sales_yoy_pct: e.sales_yoy_pct ?? null,
