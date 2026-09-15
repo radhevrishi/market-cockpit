@@ -509,34 +509,89 @@ export default function ThemeRotationTab() {
   // already use.
   const [tvBusy, setTvBusy] = useState(false);
   const [tvDone, setTvDone] = useState(false);
+  // ═══ WHAT GOES TO TRADINGVIEW  (zzz633) ═══════════════════════════════════
+  //
+  // It used to copy EVERYTHING in Your Book — 442 names in the US, 478 in
+  // India — grouped by the theme's verdict. That meant a watchlist of every
+  // ticker on a Technicals or Multibagger upload, most of which the engine has
+  // never graded, sitting next to genuinely benched names with no way to tell
+  // them apart once they were in TradingView.
+  //
+  // The list worth exporting is the INTERSECTION of the two things this app
+  // measures, because neither on its own is a reason to watch anything:
+  //
+  //     earnings strength        (graded BLOCKBUSTER or STRONG on its filing)
+  //   × theme strength           (the rotation call on the theme it sits in)
+  //
+  // A BLOCKBUSTER in a theme the board rates AVOID is a good quarter fighting
+  // its sector, and a BUY-rated theme full of ungraded uploads is a sector
+  // call with nothing underneath it. Only names that clear both go.
+  //
+  // And the export SAYS which combination each name is, rather than merging
+  // them: "###BB · BUY" and "###STRONG · EARLY BUY" are different convictions
+  // and stay separate groups in the watchlist, so the judgement survives the
+  // trip. Nothing is silently removed either — 'all names' restores the old
+  // behaviour for anyone who wants the whole book.
+  const TV_SCOPES = useMemo(() => ({
+    combo: { label: 'BB/STRONG × BUY', verdicts: ['BUY', 'EARLY BUY'], benchOnly: true,
+             hint: 'Only names graded BLOCKBUSTER or STRONG on their last filing AND sitting in a theme the board rates BUY or EARLY BUY. Earnings strength confirmed by sector strength — the combination.' },
+    hold:  { label: '+ HOLD', verdicts: ['BUY', 'EARLY BUY', 'HOLD'], benchOnly: true,
+             hint: 'The same, plus themes rated HOLD — still leading, no longer accelerating. Own them; do not add.' },
+    all:   { label: 'all names', verdicts: ['BUY', 'EARLY BUY', 'HOLD', 'WATCH', 'TRIM', 'AVOID'], benchOnly: false,
+             hint: 'The whole book, every verdict, graded or not — what this button used to do.' },
+  } as const), []);
+  const [tvScope, setTvScope] = useState<'combo' | 'hold' | 'all'>('combo');
+
+  /** The names the current scope would export, grouped by tier × verdict. */
+  const tvGroups = useMemo(() => {
+    const cfg = TV_SCOPES[tvScope];
+    const groups = new Map<string, string[]>();
+    for (const [tid, sts] of userBook.groups.entries()) {
+      const th = byId.get(tid);
+      const v = th?.verdict || '';
+      if (!cfg.verdicts.includes(v as any)) continue;
+      for (const st of sts as any[]) {
+        const tier = String(st.benchTier || '').toUpperCase();
+        const graded = tier === 'BLOCKBUSTER' || tier === 'STRONG';
+        if (cfg.benchOnly && !graded) continue;
+        const label = cfg.benchOnly
+          ? `${tier === 'BLOCKBUSTER' ? 'BB' : 'STRONG'} · ${v}`
+          : v;
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label)!.push(String(st.symbol).toUpperCase());
+      }
+    }
+    // Strongest combination first: a blockbuster in a buying theme is the top
+    // of the list, and the ordering carries into TradingView.
+    const rank = (k: string) => {
+      const [a, b] = k.includes(' · ') ? k.split(' · ') : ['', k];
+      const tierR = a === 'BB' ? 0 : a === 'STRONG' ? 1 : 2;
+      const vR = ['BUY', 'EARLY BUY', 'HOLD', 'WATCH', 'TRIM', 'AVOID'].indexOf(b);
+      return tierR * 10 + (vR < 0 ? 9 : vR);
+    };
+    const ordered = [...groups.entries()].sort((x, y) => rank(x[0]) - rank(y[0]));
+    return { ordered, total: ordered.reduce((a, [, v]) => a + v.length, 0) };
+  }, [TV_SCOPES, tvScope, userBook, byId]);
+
   const copyToTradingView = useCallback(async () => {
     setTvBusy(true);
     try {
-      const buckets: Record<string, string[]> = { BUY: [], 'EARLY BUY': [], HOLD: [], WATCH: [], TRIM: [], AVOID: [] };
-      for (const [tid, sts] of userBook.groups.entries()) {
-        const th = byId.get(tid);
-        const v = th?.verdict || '';
-        if (!buckets[v]) continue;
-        for (const st of sts as any[]) buckets[v].push(String(st.symbol).toUpperCase());
-      }
+      const { ordered } = tvGroups;
+      const all = ordered.flatMap(([, v]) => v);
+      if (!all.length) return;
       let venues: Record<string, string | null> = {};
       if (region === 'us') {
-        const all = Object.values(buckets).flat();
-        if (all.length) {
-          try {
-            const res = await fetch(`/api/v1/us/exchange?tickers=${encodeURIComponent(all.slice(0, 600).join(','))}`, { cache: 'no-store' });
-            venues = (await res.json())?.map || {};
-          } catch { /* a bare ticker still imports */ }
-        }
+        try {
+          const res = await fetch(`/api/v1/us/exchange?tickers=${encodeURIComponent(all.slice(0, 600).join(','))}`, { cache: 'no-store' });
+          venues = (await res.json())?.map || {};
+        } catch { /* a bare ticker still imports */ }
       }
       const rowsOf = (list: string[]) => list.map((t) => ({
         ticker: t,
         exchange: region === 'us' ? (venues[t] ?? null) : (/^\d+$/.test(t) ? 'BSE' : 'NSE'),
       }));
       const out = buildTvExport(
-        (['BUY', 'EARLY BUY', 'HOLD', 'WATCH', 'TRIM', 'AVOID'] as const)
-          .filter((k) => buckets[k].length)
-          .map((k) => ({ label: `${region === 'us' ? 'US' : 'IN'} ${k}`, rows: rowsOf(buckets[k]) })),
+        ordered.map(([label, list]) => ({ label: `${region === 'us' ? 'US' : 'IN'} ${label}`, rows: rowsOf(list) })),
       );
       if (!out.count) return;
       try {
@@ -550,7 +605,7 @@ export default function ThemeRotationTab() {
         a.click(); URL.revokeObjectURL(a.href);
       }
     } finally { setTvBusy(false); }
-  }, [region, userBook, byId]);
+  }, [region, tvGroups]);
 
   const regime = useMemo(() => {
     if (!payload || !themes.length) return null;
@@ -604,11 +659,27 @@ export default function ThemeRotationTab() {
               <button key={r} onClick={() => setRegion(r)} style={{ padding: '7px 16px', border: 'none', cursor: 'pointer', background: region === r ? '#1E40AF' : 'transparent', color: region === r ? '#fff' : MUT, fontSize: 13, fontWeight: 800 }}>{r === 'us' ? '🇺🇸 USA' : '🇮🇳 India'}</button>
             ))}
           </div>
-          <button onClick={copyToTradingView} disabled={tvBusy || !userBook.total}
-            title="Copy your book to TradingView, grouped by the rotation call — ###BUY, ###EARLY BUY, ###TRIM, ###AVOID — so the judgement travels with the watchlist."
-            style={{ fontSize: 11, fontWeight: 800, padding: '6px 11px', borderRadius: 7, cursor: tvBusy ? 'wait' : 'pointer', border: `1px solid ${tvDone ? '#10B981' : 'rgba(96,165,250,0.45)'}`, background: 'transparent', color: tvDone ? '#10B981' : '#60A5FA' }}>
-            {tvBusy ? '⏳' : tvDone ? '✓ Copied' : '📋 Copy → TradingView'}
-          </button>
+          {/* THE BUTTON STATES ITS OWN SCOPE AND COUNT. It used to say only
+              "Copy → TradingView" while quietly exporting all 442 names, so
+              there was no way to know what landed in the watchlist without
+              importing it and counting. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', background: CARD, border: `1px solid ${BORD}`, borderRadius: 7, overflow: 'hidden' }}>
+              {(['combo', 'hold', 'all'] as const).map((k) => (
+                <button key={k} onClick={() => setTvScope(k)} title={TV_SCOPES[k].hint}
+                  style={{ padding: '5px 8px', border: 'none', cursor: 'pointer', fontSize: 10, fontWeight: 800,
+                    background: tvScope === k ? 'rgba(96,165,250,0.22)' : 'transparent',
+                    color: tvScope === k ? '#93C5FD' : DIM }}>
+                  {TV_SCOPES[k].label}
+                </button>
+              ))}
+            </div>
+            <button onClick={copyToTradingView} disabled={tvBusy || !tvGroups.total}
+              title={`${TV_SCOPES[tvScope].hint}\n\n${tvGroups.total} name${tvGroups.total === 1 ? '' : 's'} would be copied, in ${tvGroups.ordered.length} group${tvGroups.ordered.length === 1 ? '' : 's'}: ${tvGroups.ordered.map(([l, v]) => `${l} (${v.length})`).join(' · ') || 'none'}`}
+              style={{ fontSize: 11, fontWeight: 800, padding: '6px 11px', borderRadius: 7, cursor: tvBusy ? 'wait' : tvGroups.total ? 'pointer' : 'not-allowed', border: `1px solid ${tvDone ? '#10B981' : 'rgba(96,165,250,0.45)'}`, background: 'transparent', color: tvDone ? '#10B981' : tvGroups.total ? '#60A5FA' : DIM }}>
+              {tvBusy ? '⏳' : tvDone ? '✓ Copied' : `📋 Copy ${tvGroups.total} → TradingView`}
+            </button>
+          </div>
           <button onClick={() => load(region, true)} disabled={loading} title="Recompute from live prices (bypasses the 30-min cache)" style={{ fontSize: 11, fontWeight: 800, padding: '6px 11px', borderRadius: 7, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(34,197,94,0.4)', background: 'transparent', color: '#22C55E' }}>{loading ? '⏳' : '↻ Refresh'}</button>
         </div>
       </div>
