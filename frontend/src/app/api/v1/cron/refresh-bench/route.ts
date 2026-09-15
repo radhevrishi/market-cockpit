@@ -95,12 +95,35 @@ export async function GET(req: Request) {
     // has been written to the new namespace yet, and without it the bench would
     // empty itself overnight. Current key always wins; older ones only answer
     // for a day the current engine has not graded yet.
+    // zzz665c — AN EMPTY PAYLOAD IS NOT AN ANSWER, IT IS AN ABSENCE.
+    //
+    // Re-grading a date more than ~14 days old legitimately returns ZERO rows:
+    // the hub only carries the current month and the live-NSE augment window has
+    // closed, so the discovery sources no longer know that day had filings. The
+    // route then caches that empty result with a long TTL, because for a settled
+    // day "nothing filed" is normally a fact worth remembering.
+    //
+    // Combine those two and a version bump becomes destructive. The first run
+    // after a bump finds the new namespace cold, re-grades the whole window,
+    // gets empty for every old date, and an earlier version of this loop would
+    // have accepted those empties because `by_tier` EXISTS — it is just an
+    // object full of empty arrays. The bench would have been wiped of every
+    // name older than a fortnight, permanently, and the cron would have
+    // reported success while doing it.
+    //
+    // So a payload only wins if it actually CONTAINS something. A genuinely
+    // empty day falls through to the older namespaces, finds nothing there
+    // either, and is skipped — which costs nothing and is the same outcome.
+    const rowCount = (p: GradedPayload | null): number =>
+      !p?.by_tier ? 0 : (Object.values(p.by_tier) as any[][])
+        .reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
+
     let payload: GradedPayload | null = null;
     let usedLegacy = false;
     for (const key of gradedKeyCandidates(dateStr)) {
       try {
         const hit = await kvGet<GradedPayload>(key);
-        if (hit?.by_tier) {
+        if (rowCount(hit) > 0) {
           payload = hit;
           if (!key.startsWith(`graded:${GRADED_CACHE_VERSION}:`)) usedLegacy = true;
           break;
