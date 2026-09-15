@@ -2116,11 +2116,42 @@ export async function GET(req: Request) {
     }
   } catch { /* the overlay is a bonus; never let it fail an enrichment */ }
 
+  // ── THE GUIDANCE OVERLAY  (zzz669) ──────────────────────────────────────
+  //
+  // The grader has scanned six text fields for forward guidance since it was
+  // written and nothing has ever populated one of them, so `positiveGuidance`
+  // was permanently false. /api/v1/cron/refresh-guidance builds the missing
+  // side from the concall-intelligence pipeline that was already running.
+  // Fill-only, exactly like the technicals overlay above.
+  let guidanceApplied = 0;
+  let guidanceAge: string | null = null;
+  try {
+    const gBlob = await kvGet<any>('india-guidance:v1:latest');
+    const gBy = gBlob?.symbols || null;
+    if (gBy) {
+      guidanceAge = gBlob?.generatedAt ?? null;
+      for (const sym of Object.keys(data)) {
+        const g = gBy[sym];
+        if (!g) continue;
+        if (data[sym].guidance_raised == null) data[sym].guidance_raised = !!g.raised;
+        if (data[sym].guidance_lowered == null) data[sym].guidance_lowered = !!g.cut;
+        if (data[sym].has_concrete_guidance == null) data[sym].has_concrete_guidance = !!g.concrete;
+        // The text itself, so the grader's own pattern scan has something real
+        // to read and the card can show what the claim was based on.
+        if (!data[sym].guidance_text && g.subject) data[sym].guidance_text = g.subject;
+        data[sym]._guidance_source = 'concall-intel';
+        guidanceApplied++;
+      }
+    }
+  } catch { /* the overlay is a bonus; never let it fail an enrichment */ }
+
   return NextResponse.json({
     data, generated_at: new Date().toISOString(),
     requested: symbols.length, enriched: ok, ms: Date.now() - t0,
     truncated_at: truncatedAt,
     tech_overlay_applied: overlayApplied,
     tech_overlay_generated_at: overlayAge,
+    guidance_overlay_applied: guidanceApplied,
+    guidance_overlay_generated_at: guidanceAge,
   });
 }
