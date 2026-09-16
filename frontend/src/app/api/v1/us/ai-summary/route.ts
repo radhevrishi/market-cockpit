@@ -34,7 +34,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v4';  // zzz679 — structured output; old prose cache abandoned
+const PROMPT_VERSION = 'us-ai-summary-v5';  // zzz681 — source-document check; v4 cached summaries of the wrong document
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // The release in full wherever it fits. A long retail release puts its income
 // statement and its reconciliation tables well past 60k characters, and a model
@@ -296,6 +296,47 @@ function supportedPct(p: { v: number; dp: number }, values: number[]): boolean {
 }
 
 /**
+ * Does this text read like an earnings press release?  (zzz681)
+ *
+ * Generic by construction — it reads the words every filer uses, never a
+ * company or a filename. Two families of evidence:
+ *
+ *  · a HARD REJECT for the documents that are reliably NOT releases and that
+ *    the filename ranker is most likely to pick by accident: the Sarbanes-Oxley
+ *    certifications that accompany every 10-Q and 10-K, which announce
+ *    themselves in fixed statutory language;
+ *  · a POSITIVE test needing at least two independent release markers, so a
+ *    document that merely mentions revenue in passing does not qualify.
+ *
+ * Deliberately permissive on the positive side. A false negative costs a
+ * summary the owner could have had; a false positive costs a summary OF THE
+ * WRONG DOCUMENT, which is worse, and the reject list is where that is caught.
+ */
+function looksLikeEarningsRelease(t: string): boolean {
+  if (!t || t.length < 800) return false;
+  const head = t.slice(0, 6000);
+
+  // Statutory certification language — never an earnings release.
+  if (/pursuant to\s+(?:rule\s+13a-14|section\s+(?:302|906))/i.test(head)) return false;
+  if (/\bI,\s+[A-Z][^,]{2,60},\s+certify that\b/i.test(head)) return false;
+  if (/certification\s+(?:of|pursuant)/i.test(head) && !/press release/i.test(head)) return false;
+
+  let marks = 0;
+  // "X reports/announces ... results/earnings" — the headline of nearly every release.
+  if (/\b(?:reports?|reported|announces?|announced|posts?|delivers?)\b[\s\S]{0,60}\b(?:results|earnings|revenue|quarter|financial)\b/i.test(head)) marks++;
+  // A period statement.
+  if (/\b(?:first|second|third|fourth)\s+quarter\b|\bQ[1-4]\s*(?:FY)?\s*20\d\d\b|\b(?:quarter|year)\s+ended\b/i.test(head)) marks++;
+  // Income-statement vocabulary in quantity, not in passing.
+  if ((t.match(/\b(?:net income|net revenue|total revenue|revenues?|net sales|earnings per share|operating income|EBITDA)\b/gi) || []).length >= 4) marks++;
+  // Money, repeatedly.
+  if ((t.match(/\$\s?\d/g) || []).length >= 8) marks++;
+  // The furniture of a release.
+  if (/\b(?:conference call|webcast|investor relations|forward-looking statements|non-GAAP)\b/i.test(t)) marks++;
+
+  return marks >= 2;
+}
+
+/**
  * The verified object, written out as the text the previous version returned.
  *
  * This exists so that switching the card to a structured render does not break
@@ -432,11 +473,35 @@ export async function GET(req: NextRequest) {
   } catch { /* handled below */ }
   // The row's own filing had no readable release — try the company's earnings
   // 8-K for the same quarter before giving up.
-  if (text.length < 800 && !usedFallback && await findEarnings8K()) {
+  //
+  // zzz681 — LENGTH WAS NEVER THE RIGHT TEST.
+  //
+  // The only guard here used to be `text.length < 800`, and the exhibit picker
+  // upstream ranks candidates BY FILENAME: a filing whose documents carry no
+  // press-release-shaped name has every candidate tie, and the tie breaks on
+  // size, so the largest .htm wins. In a 10-Q filing that is the 10-Q itself or
+  // a Sarbanes-Oxley certification — thousands of characters of text, sailing
+  // through a length check, and then summarised as though it were a results
+  // announcement. RCMT is exactly this: the model was handed a Form 10-Q
+  // certification and asked what the quarter established.
+  //
+  // Under the old prose contract that produced something shapeless, which the
+  // `/Positives:/i` check discarded, and the card said the summary came back
+  // unusable — blaming the model for being handed the wrong document. So the
+  // check now asks what the document IS before deciding it is good enough, and
+  // an answer of "not a release" reaches for the earnings 8-K exactly as an
+  // empty answer already did.
+  if ((text.length < 800 || !looksLikeEarningsRelease(text)) && !usedFallback && await findEarnings8K()) {
     try {
       const doc = await releaseDocument(cikN, acc, idxUrl);
       if (doc.html) { text = htmlToText(doc.html); sourceUrl = doc.url; }
     } catch { /* fall through to the honest refusal below */ }
+  }
+  if (text.length >= 800 && !looksLikeEarningsRelease(text)) {
+    return NextResponse.json({
+      ok: false, available: false,
+      error: 'The document filed here is not an earnings release — it reads as a periodic report or a certification exhibit — and no separate results release was filed near it, so there is nothing to summarise.',
+    });
   }
   if (text.length < 800) {
     return NextResponse.json({

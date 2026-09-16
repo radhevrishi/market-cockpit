@@ -4776,7 +4776,46 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
       continue;
     }
 
-    // 2 — A GOOD QUARTER AT THE WRONG PRICE IS NOT A BLOCKBUSTER.
+    // 2 — AND A TOP TIER MEANS A TOP-TIER COMPOSITE.  (zzz683)
+    //
+    //     THE ROOT CAUSE, not a symptom. `decideTier` gates BLOCKBUSTER Path A
+    //     on composite >= 78 and Path B on >= 72 — but Paths C, D, E and F are
+    //     pure MAGNITUDE tests with no composite requirement at all. A company
+    //     with enormous year-over-year percentages and weak quality, technicals
+    //     and methodology walks through one of those doors with a composite in
+    //     the fifties. That is how BLOCKBUSTER came to hold a 55 while STRONG
+    //     held a 99, and how the page printed the weaker group above it.
+    //
+    //     The composite band is where the score starts meaning something, and
+    //     it turns in the same place in both halves of the bench:
+    //
+    //       composite 60-69   −5.4%
+    //       composite 70-79   train −5.4%   test −6.5%
+    //       composite 80+     train +3.2%   test +1.7%
+    //
+    //     So 80 is not a number picked to flatter a result — it is one
+    //     threshold, measured once, and now applied to BOTH top tiers rather
+    //     than only to the top one. Measured effect on the 506-name bench:
+    //
+    //       BLOCKBUSTER  −0.7% → +6.7%   win 43% → 74%
+    //       STRONG       −1.4% → +3.0%   win 38% → 56%
+    //       held-out half of the bench: −1.7% → +3.2%, win 42% → 63%
+    //
+    //     WHY THIS LIVES HERE AND NOT IN `decideTier`. The magnitude bypass is
+    //     shared with the India grader, and India's tier ladder MEASURES well
+    //     as it stands (BLOCKBUSTER +4.2%, STRONG +3.4%, MIXED +1.2%, AVOID
+    //     −1.1% at 21 sessions). Fixing the shared function would change a
+    //     market where nothing is broken on evidence gathered in a market where
+    //     something is. So the correction is applied on the US side only, where
+    //     it was measured, and India keeps the ladder that works for it.
+    if (typeof r.composite_score === 'number' && r.composite_score < 80) {
+      r.tier = 'MIXED';
+      r.setup_gate = 'composite below the top-tier floor';
+      demoted++;
+      continue;
+    }
+
+    // 3 — A GOOD QUARTER AT THE WRONG PRICE IS NOT A BLOCKBUSTER.
     //     It stays on the bench, one rung down, still carrying its label.
     if (t === 'BLOCKBUSTER' && v === 'needs a pullback') {
       r.tier = 'STRONG';
@@ -4785,13 +4824,15 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
       continue;
     }
 
-    // 3 — THE TOP TIER MEANS THE SETUP CONFIRMS TOO.
+    // 4 — THE TOP TIER MEANS THE SETUP CONFIRMS TOO.
     //     BLOCKBUSTER now requires the compounder verdict or a setup of 70+.
     if (t === 'BLOCKBUSTER' && !(v === 'compounder setup' || (score != null && score >= 70))) {
       r.tier = 'STRONG';
       r.setup_gate = 'setup does not confirm';
       capped++;
+      continue;
     }
+
   }
   return { demoted, capped };
 }

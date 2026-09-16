@@ -31,4 +31,13 @@
 // 'compounder setup' +3.2%, and the tier ignored both. BLOCKBUSTER moves from
 // −0.7% to +5.1% (win 43% → 64%) on the same rows. Every cached grade changes,
 // so the namespace changes with it.
-export const US_ENGINE_VERSION = '2026.09.16-a';
+// 2026.09.16-b (zzz683) — the root cause, not a symptom. `decideTier` gates
+// BLOCKBUSTER Path A on composite >= 78 and Path B on >= 72, but Paths C-F are
+// pure magnitude tests with NO composite requirement, so a name with huge YoY
+// percentages and weak everything else entered the top tier at a composite of
+// 55 while STRONG held a 99. Both top tiers now require composite >= 80 — one
+// threshold, measured once, replicating in both halves of the bench.
+//   BLOCKBUSTER  -0.7% -> +6.7%   win 43% -> 74%
+//   STRONG       -1.4% -> +3.0%   win 38% -> 56%
+//   held-out half: -1.7% -> +3.2%, win 42% -> 63%
+export const US_ENGINE_VERSION = '2026.09.16-b';
