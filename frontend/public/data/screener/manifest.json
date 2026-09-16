@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-16T09:00:29Z",
+  "lastSync": "2026-09-16T10:08:16Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -35,12 +35,12 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 2574,
+      "size": 1854,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 3647,
+      "size": 4048,
       "displayName": "Lowequitycapital"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65693,
+      "size": 65691,
       "displayName": "Working watchlist"
     },
     {
