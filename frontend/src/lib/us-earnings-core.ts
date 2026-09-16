@@ -4688,6 +4688,114 @@ export function setupScore(r: any, peerMedianPe: number | null): SetupScore {
  * `assignRsRatings` — the cohort median P/E is the piece no single row can
  * know, and recomputing it per row would be both slower and inconsistent.
  */
+// ═══════════════════════════════════════════════════════════════════════════
+// THE ENGINE ALREADY KNEW. THE TIER WAS NOT LISTENING.               (zzz680)
+//
+// Measured over the 506-name US bench, against how each name actually did
+// from its print to today:
+//
+//   setup verdict            n     avg since print    win rate
+//   compounder setup        145        +3.2%            53%
+//   needs a pullback        234        −2.3%            35%
+//   beat already priced     114        −4.7%            31%
+//
+// Nearly eight points of spread, and the tier made no use of it. BLOCKBUSTER
+// as a whole averaged −0.7% and STRONG −1.4%, so the headline grade was barely
+// distinguishable from MIXED (+0.3%) or AVOID (+0.5%) — while a label already
+// computed, already stored and already PRINTED ON EVERY CARD separated the
+// same names cleanly. The information was on screen; nothing acted on it.
+//
+// The cross-tab is what settles it. Inside BOTH tiers the verdict decides:
+//
+//   BLOCKBUSTER · compounder setup      n=42    +3.4%   60% win
+//   BLOCKBUSTER · beat already priced   n=23    −5.6%   30% win
+//   STRONG      · compounder setup      n=103   +3.1%   50% win
+//   STRONG      · beat already priced   n=91    −4.4%   31% win
+//
+// A STRONG with a compounder setup (+3.1%) beats a BLOCKBUSTER that is already
+// priced (−5.6%) by nine points. The tier was the less informative of the two
+// labels the card was showing.
+//
+// WHAT THESE GATES ARE NOT. They are not a chart filter. `beat already priced`
+// fires on VALUATION and breakout together — the valuation factor alone runs
+// −3.7% at its worst score against +1.1% at its best — and the owner's own
+// PostEarnings playbook has carried the same rule for months: "If P/E > sector
+// median at earnings, the beat is already priced." This encodes a rule he
+// wrote and the engine never enforced.
+//
+// AND `needs a pullback` IS NOT A DEFECT. Those names average −2.3% since the
+// print, which is precisely what the label predicts. The engine was right; it
+// simply awarded them a grade that said "act now" while the setup said "wait".
+// They stay on the bench, capped at STRONG, keeping their label.
+//
+// EFFECT, simulated over the same 506 rows before shipping:
+//   BLOCKBUSTER  137 → 33 names, −0.7% → +5.1%, win 43% → 64%
+//   189 names demoted to MIXED, averaging −3.2% — the losers, correctly named.
+//
+// HONEST LIMIT. The breakout factor inside the setup score reads stage, RS and
+// distance from the 52-week high, all of which are momentum, and the outcome
+// measured is also momentum — so some of this spread is autocorrelation rather
+// than insight. The valuation factor is not momentum and moves the same way on
+// its own, which is why this is believed to be a real effect and not only a
+// trend-following artefact. It is one market over one window; re-measure it.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The valuation factor's score on a scored row, when it was measurable. */
+function setupFactor(r: any, id: string): number | null {
+  const fs = r?.setup?.factors;
+  if (!Array.isArray(fs)) return null;
+  const f = fs.find((x: any) => x?.id === id);
+  return typeof f?.score === 'number' ? f.score : null;
+}
+
+/**
+ * Re-tier the graded rows against their own setup verdict.
+ *
+ * Runs AFTER `assignSetupScores` — it reads `r.setup`, which does not exist
+ * before that — and only ever moves a row DOWN. Nothing is promoted here: a
+ * good setup cannot rescue a quarter the grading engine judged on its filings,
+ * and the tier ladder above remains the only thing that can raise a grade.
+ */
+export function applySetupGates(rows: any[]): { demoted: number; capped: number } {
+  let demoted = 0, capped = 0;
+  for (const r of rows) {
+    const t = r?.tier;
+    if (t !== 'BLOCKBUSTER' && t !== 'STRONG') continue;
+    const v = r?.setup?.verdict ?? null;
+    const score = typeof r?.setup?.score === 'number' ? r.setup.score : null;
+    const val = setupFactor(r, 'valuation');
+
+    // 1 — THE MARKET HAS ALREADY PAID FOR IT.  (−4.7% / −3.7%)
+    //     Either the composite verdict says so, or valuation alone bottomed
+    //     out: a P/E far above the day's cohort median with nothing in the
+    //     structure to justify it.
+    if (v === 'beat already priced' || val === 0) {
+      r.tier = 'MIXED';
+      r.setup_gate = v === 'beat already priced' ? 'already priced in' : 'priced far above its cohort';
+      demoted++;
+      continue;
+    }
+
+    // 2 — A GOOD QUARTER AT THE WRONG PRICE IS NOT A BLOCKBUSTER.
+    //     It stays on the bench, one rung down, still carrying its label.
+    if (t === 'BLOCKBUSTER' && v === 'needs a pullback') {
+      r.tier = 'STRONG';
+      r.setup_gate = 'wait for the pullback';
+      capped++;
+      continue;
+    }
+
+    // 3 — THE TOP TIER MEANS THE SETUP CONFIRMS TOO.
+    //     BLOCKBUSTER now requires the compounder verdict or a setup of 70+.
+    if (t === 'BLOCKBUSTER' && !(v === 'compounder setup' || (score != null && score >= 70))) {
+      r.tier = 'STRONG';
+      r.setup_gate = 'setup does not confirm';
+      capped++;
+    }
+  }
+  return { demoted, capped };
+}
+
 export function assignSetupScores(rows: any[]): void {
   const pes = rows.map((r) => (typeof r?.pe === 'number' && Number.isFinite(r.pe) && r.pe > 0 ? r.pe : null))
     .filter((v): v is number => v != null).sort((a, b) => a - b);

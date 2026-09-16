@@ -74,7 +74,7 @@ import { type KeyMetric } from '@/lib/us-key-metrics';
 import {
   extractFundamentals, gradeUsRow, assignRsRatings,
   fiscalPeriodFromFacts, usFiscalLabel, nextFiscalYear, fiscalYearEndingAt,
-  quarterSeries, balanceContext, assignSetupScores, rule40From, roceFrom, splitFactorSince,
+  quarterSeries, balanceContext, assignSetupScores, applySetupGates, rule40From, roceFrom, splitFactorSince,
   US_TIER_ORDER, composeUsNarrative,
   type UsGradedRow, type EarningsTier, type UsBalanceContext,
 } from '@/lib/us-earnings-core';
@@ -2204,6 +2204,14 @@ export async function GET(req: Request) {
     // factor is measured against the day's own median P/E), so it runs once
     // over every graded row — full and PRELIM alike — after grading is done.
     assignSetupScores(graded as any[]);
+
+    // zzz680 — and now the tier is allowed to hear what the setup said. This
+    // only ever moves a row DOWN, and it must run after the line above,
+    // because the verdict it reads does not exist until then.
+    const _gates = applySetupGates(graded as any[]);
+    if (_gates.demoted || _gates.capped) {
+      notes.push(`setup gates: ${_gates.demoted} demoted to MIXED (already priced in), ${_gates.capped} capped at STRONG (setup does not confirm)`);
+    }
 
     const by_tier: Record<EarningsTier, UsGradedRow[]> = {
       BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],

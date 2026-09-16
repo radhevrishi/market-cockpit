@@ -26,4 +26,9 @@
 // is now Path F, so a company that recovered from a loss — and a spin-off with
 // no per-share history — can grade above MIXED for the first time. This changes
 // what grades SAY, so every cached day re-reads.
-export const US_ENGINE_VERSION = '2026.09.15-c';
+// 2026.09.16-a (zzz680) — the setup verdict now gates the tier. Measured over
+// the 506-name bench: 'beat already priced' ran −4.7% since print and
+// 'compounder setup' +3.2%, and the tier ignored both. BLOCKBUSTER moves from
+// −0.7% to +5.1% (win 43% → 64%) on the same rows. Every cached grade changes,
+// so the namespace changes with it.
+export const US_ENGINE_VERSION = '2026.09.16-a';

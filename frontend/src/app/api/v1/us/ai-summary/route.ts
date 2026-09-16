@@ -34,7 +34,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v3';
+const PROMPT_VERSION = 'us-ai-summary-v4';  // zzz679 — structured output; old prose cache abandoned
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // The release in full wherever it fits. A long retail release puts its income
 // statement and its reconciliation tables well past 60k characters, and a model
@@ -43,7 +43,141 @@ const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // so the extra input is paid once per company per quarter.
 const MAX_CHARS = 140_000;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// WHY THIS ENDPOINT NOW ASKS FOR A SHAPE INSTEAD OF A PAGE.          (zzz679)
+//
+// The old contract was prose, and it was enforced with `/Positives:/i`. If the
+// model opened with "Here is the summary" or wrote "**Positives**" or chose
+// "Strengths", the ENTIRE answer was thrown away and the card said "the
+// summary came back in an unusable shape and was discarded". That is what RCMT
+// showed. The summary was not wrong — it simply did not begin with the word
+// the regex wanted, and one brittle string decided whether the owner saw any
+// analysis at all.
+//
+// So the model is now given a TOOL with a typed input schema. The API enforces
+// the shape on its side: a tool call either validates against the schema or
+// the model is asked again. "Unusable shape" stops being a failure mode rather
+// than being handled better.
+//
+// AND THE CONTENT CHANGED, because the old shape was the real complaint. Three
+// buckets — positives, negatives, one paragraph — cannot hold the things that
+// actually decide whether a quarter matters:
+//
+//   · GUIDANCE. What management now says about the future, and whether that is
+//     higher or lower than what they said last time. This is the single most
+//     price-relevant sentence in most releases and the old prompt mentioned it
+//     only as a warning not to mis-state it.
+//   · MIX AND SEGMENTS. "Revenue +20%" means something different when one
+//     segment tripled and another shrank. A blended number hides the business.
+//   · CAPITAL. Capex, buybacks, dividends, debt — what the company is DOING
+//     with the cash, which is management's revealed opinion of its own future.
+//   · PEOPLE. A CFO leaving in the same release as a good quarter is a fact no
+//     bullet list of positives will ever surface.
+//   · NEW BUSINESS. Products, customers, contracts, capacity coming online —
+//     the things that produce the NEXT four quarters rather than explaining
+//     this one.
+//   · WHAT IS NOT THERE. A release that stops giving a number it used to give
+//     has told you something. Absence is evidence, and nothing in the engine
+//     was looking for it.
+//
+// Every field stays bound by the same rule as before: it comes out of the
+// release or it does not get written. The verifier below now runs per field,
+// so one unsupported figure costs its own item instead of the whole summary.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The typed answer. The API validates this before the response reaches us. */
+const SUMMARY_TOOL = {
+  name: 'file_earnings_summary',
+  description: 'Record the structured reading of this earnings release.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      verdict_line: {
+        type: 'string',
+        description: 'ONE sentence, max 22 words: what this quarter establishes. No recommendation, no price view.',
+      },
+      guidance: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['raised', 'maintained', 'lowered', 'initiated', 'withdrawn', 'none'],
+            description: '"none" means the release gives no forward guidance at all. Do not guess — only what the release states.',
+          },
+          detail: { type: 'string', description: 'The guided figures exactly as printed, with the period. Empty string if action is "none".' },
+          period: { type: 'string', description: 'The period guided, e.g. "FY26" or "Q3 FY26". Empty if none.' },
+        },
+        required: ['action', 'detail', 'period'],
+      },
+      segments: {
+        type: 'array',
+        description: 'Per-segment or per-product-line movement, where the release breaks it out. Empty array if it does not.',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            detail: { type: 'string', description: 'The movement with its figure as printed.' },
+            direction: { type: 'string', enum: ['up', 'down', 'flat'] },
+          },
+          required: ['name', 'detail', 'direction'],
+        },
+      },
+      mix_shift: { type: 'string', description: 'Any stated change in product/customer/geographic mix, and what it did to margin. Empty string if the release says nothing about mix.' },
+      capital: {
+        type: 'object',
+        description: 'What the company is doing with its cash, as stated. Empty strings where the release is silent.',
+        properties: {
+          capex: { type: 'string' },
+          buyback: { type: 'string' },
+          dividend: { type: 'string' },
+          debt: { type: 'string' },
+        },
+        required: ['capex', 'buyback', 'dividend', 'debt'],
+      },
+      management: { type: 'string', description: 'Any CEO/CFO/board appointment, departure or succession announced in this release. Empty string if none.' },
+      new_business: {
+        type: 'array',
+        description: 'New products, customers, contracts, awards, facilities or capacity announced in the release. Empty array if none.',
+        items: { type: 'string' },
+      },
+      positives: {
+        type: 'array',
+        description: '2 to 5 items. Each with a short label and the specific fact with its figure.',
+        items: {
+          type: 'object',
+          properties: { label: { type: 'string' }, detail: { type: 'string' } },
+          required: ['label', 'detail'],
+        },
+      },
+      negatives: {
+        type: 'array',
+        description: '0 to 5 items. Declines, margin pressure, cash outflows, elevated spend, stated risks, weak guided lines. Empty array ONLY if the release genuinely contains none.',
+        items: {
+          type: 'object',
+          properties: { label: { type: 'string' }, detail: { type: 'string' } },
+          required: ['label', 'detail'],
+        },
+      },
+      watch_next: {
+        type: 'array',
+        description: '1 to 4 items: what the release itself says will decide the next few quarters.',
+        items: { type: 'string' },
+      },
+      not_disclosed: {
+        type: 'array',
+        description: 'Things a reader would expect and this release does NOT give — no segment breakout, no cash-flow statement, no guidance, no backlog figure, no margin detail. 0 to 4 items. Absence is evidence; say only what is genuinely missing from THIS text.',
+        items: { type: 'string' },
+      },
+    },
+    required: ['verdict_line', 'guidance', 'segments', 'mix_shift', 'capital', 'management', 'new_business', 'positives', 'negatives', 'watch_next', 'not_disclosed'],
+  },
+};
+
 const SYSTEM = `You summarise a single quarterly earnings press release for a professional investor who has already seen the headline numbers.
+
+You MUST answer by calling the file_earnings_summary tool. Do not write prose outside it.
+
+WHAT THE READER ALREADY HAS, so do not repeat it: revenue, EPS, operating margin, cash flow and the year-over-year percentages are already on screen. Your value is everything AROUND those numbers — guidance, mix, segments, capital allocation, people, new business, and what the release quietly does not say.
 
 ABSOLUTE RULES
 - Use ONLY the release text provided. You have no other knowledge of this company. Never add context, history, competitor comparison, valuation or market reaction.
@@ -52,15 +186,11 @@ ABSOLUTE RULES
 - Guidance is what management SAYS WILL happen. Never present it as achieved.
 - If the release genuinely contains no negatives, say so in one line rather than inventing one.
 
-OUTPUT — exactly this structure, no preamble, no headings other than these:
-
-Positives:
-* <3 to 5 bullets. Each names the specific fact and its figure from the release.>
-
-Negatives:
-* <3 to 5 bullets. Segment declines, margin pressure, cash outflows, elevated spend, stated risks, weak guided lines.>
-
-Overall Assessment: <one paragraph, 3-6 sentences: what the quarter establishes, what it leaves open, and what will decide the next few quarters according to the release itself. No recommendation, no price view.>`;
+FIELD DISCIPLINE
+- Every field is filled from the release or left empty. An empty string and an empty array are correct answers and are preferred over a guess.
+- Keep each detail to one sentence. The reader is scanning, not reading.
+- "not_disclosed" is for things genuinely absent from THIS release that a reader would reasonably expect. Do not list something the release does give.
+- Do not editorialise. No recommendation, no valuation, no price view, no comparison to other companies.`;
 
 // ── THE NUMBERS CHECK ──────────────────────────────────────────────────────
 //
@@ -165,6 +295,57 @@ function supportedPct(p: { v: number; dp: number }, values: number[]): boolean {
   return false;
 }
 
+/**
+ * The verified object, written out as the text the previous version returned.
+ *
+ * This exists so that switching the card to a structured render does not break
+ * every other consumer of this endpoint at the same moment. It reads from the
+ * SAME object the card renders, after the same verification, so the two can
+ * never disagree about what the release said.
+ */
+function renderProse(d: any): string {
+  const out: string[] = [];
+  if (d.verdict_line) out.push(String(d.verdict_line), '');
+  const g = d.guidance;
+  if (g?.action && g.action !== 'none') {
+    out.push(`Guidance: ${String(g.action).toUpperCase()}${g.period ? ` (${g.period})` : ''}${g.detail ? ` — ${g.detail}` : ''}`, '');
+  }
+  if (Array.isArray(d.positives) && d.positives.length) {
+    out.push('Positives:');
+    for (const p of d.positives) out.push(`* ${p.label}: ${p.detail}`);
+    out.push('');
+  }
+  if (Array.isArray(d.negatives) && d.negatives.length) {
+    out.push('Negatives:');
+    for (const n of d.negatives) out.push(`* ${n.label}: ${n.detail}`);
+    out.push('');
+  }
+  if (Array.isArray(d.segments) && d.segments.length) {
+    out.push('Segments:');
+    for (const s of d.segments) out.push(`* ${s.name}: ${s.detail}`);
+    out.push('');
+  }
+  if (d.mix_shift) out.push(`Mix: ${d.mix_shift}`, '');
+  if (d.management) out.push(`Management: ${d.management}`, '');
+  if (Array.isArray(d.new_business) && d.new_business.length) {
+    out.push('New business:');
+    for (const b of d.new_business) out.push(`* ${b}`);
+    out.push('');
+  }
+  const cap = d.capital || {};
+  const capBits = ['capex', 'buyback', 'dividend', 'debt'].filter((k) => cap[k]).map((k) => `${k}: ${cap[k]}`);
+  if (capBits.length) out.push(`Capital: ${capBits.join(' · ')}`, '');
+  if (Array.isArray(d.watch_next) && d.watch_next.length) {
+    out.push('What decides the next few quarters:');
+    for (const w of d.watch_next) out.push(`* ${w}`);
+    out.push('');
+  }
+  if (Array.isArray(d.not_disclosed) && d.not_disclosed.length) {
+    out.push(`Not disclosed: ${d.not_disclosed.join('; ')}`);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export async function GET(req: NextRequest) {
   const u = new URL(req.url);
   const cik = Number(u.searchParams.get('cik') || 0);
@@ -231,7 +412,7 @@ export async function GET(req: NextRequest) {
   const key = `us-ai-summary:${PROMPT_VERSION}:${acc}`;
   if (!force) {
     const hit = await kvGet<any>(key);
-    if (hit?.summary) return NextResponse.json({ ok: true, cached: true, ...hit });
+    if (hit?.summary && hit?.structured) return NextResponse.json({ ok: true, cached: true, ...hit });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY || '';
@@ -266,33 +447,103 @@ export async function GET(req: NextRequest) {
   const clipped = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
 
   // ── the call ─────────────────────────────────────────────────────────────
-  let summary = '';
+  // `tool_choice` forces the tool, so the model cannot answer in prose and the
+  // API validates the object against the schema before it reaches this code.
+  let data: any = null;
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 1400,
+        max_tokens: 2600,
         system: SYSTEM,
+        tools: [SUMMARY_TOOL],
+        tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
         messages: [{
           role: 'user',
-          content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — summarise it under the required structure.\n\n<release>\n${clipped}\n</release>`,
+          content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — read it and call file_earnings_summary.\n\n<release>\n${clipped}\n</release>`,
         }],
       }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(50_000),
     });
     if (!resp.ok) {
       return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}.` });
     }
     const j: any = await resp.json();
-    summary = (j?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('\n').trim();
+    const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === SUMMARY_TOOL.name);
+    data = call?.input ?? null;
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: `The summary service did not answer (${String(e?.message || e)}).` });
   }
-  if (!summary || !/Positives:/i.test(summary)) {
-    return NextResponse.json({ ok: false, error: 'The summary came back in an unusable shape and was discarded.' });
+  if (!data || typeof data !== 'object' || !Array.isArray(data.positives)) {
+    return NextResponse.json({ ok: false, error: 'The summary service answered without filing a result.' });
   }
+
+  // ── VERIFICATION, PER FIELD  (zzz679) ────────────────────────────────────
+  //
+  // The same rule as before — a figure the release does not print does not get
+  // shown — applied to each item rather than to a blob of text. An unsupported
+  // number now costs one bullet, one segment or one guidance line, and the rest
+  // of the reading survives. The old whole-answer discard is kept only for the
+  // case where so little remains that what is left would misrepresent the
+  // quarter by omission.
+  const inRelease = numeralsIn(text);
+  const releaseValues = valuesIn(text);
+  const dropped: string[] = [];
+  /** True when every figure in a string appears in the release. */
+  const clean = (s: any): boolean => {
+    const v = typeof s === 'string' ? s : '';
+    if (!v) return true;
+    const badMoney = moneyTokens(v).filter((f) => !supported(f, inRelease));
+    if (badMoney.length) { dropped.push(`$${badMoney[0]}`); return false; }
+    const badPct = pctTokens(v).filter((p) => !supportedPct(p, releaseValues));
+    if (badPct.length) { dropped.push(`${badPct[0].v}%`); return false; }
+    return true;
+  };
+  const keepItems = (arr: any): any[] =>
+    (Array.isArray(arr) ? arr : []).filter((it) =>
+      typeof it === 'string' ? clean(it) : clean(it?.detail) && clean(it?.label));
+
+  const posBefore = Array.isArray(data.positives) ? data.positives.length : 0;
+  data.positives = keepItems(data.positives);
+  data.negatives = keepItems(data.negatives);
+  data.segments = keepItems(data.segments);
+  data.new_business = keepItems(data.new_business);
+  data.watch_next = keepItems(data.watch_next);
+  data.not_disclosed = keepItems(data.not_disclosed);
+  if (!clean(data.mix_shift)) data.mix_shift = '';
+  if (!clean(data.management)) data.management = '';
+  if (!clean(data.verdict_line)) data.verdict_line = '';
+  if (data.guidance && !clean(data.guidance.detail)) {
+    // The direction is still worth keeping when only the figure is doubtful.
+    data.guidance.detail = '';
+  }
+  for (const k of ['capex', 'buyback', 'dividend', 'debt']) {
+    if (data.capital && !clean(data.capital[k])) data.capital[k] = '';
+  }
+
+  // Nothing left to say, or the positives — the substance of the reading —
+  // mostly failed verification.
+  if (!data.positives.length && !data.negatives.length && !data.verdict_line) {
+    return NextResponse.json({
+      ok: false,
+      error: `The summary cited figures that do not appear in the release (${dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown.`,
+    });
+  }
+  if (posBefore >= 3 && data.positives.length < posBefore * 0.5) {
+    return NextResponse.json({
+      ok: false,
+      error: `Most of the summary cited figures absent from the release (${dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown.`,
+    });
+  }
+
+  // ── A PROSE RENDERING, FOR EVERY READER THAT IS NOT THE NEW CARD ─────────
+  // The card renders `structured`. Anything else that asked this endpoint for
+  // `summary` — an email, a scheduled brief, an older cached client — keeps
+  // getting a string, built from the verified object rather than from a second
+  // model call. One source of truth, two renderings.
+  const summary = renderProse(data);
 
   // ── the numbers check ────────────────────────────────────────────────────
   // Every dollar figure in the summary has to be one the release contains. A
@@ -306,36 +557,11 @@ export async function GET(req: NextRequest) {
   // one doubtful one, which is how "AI Summary" came to show nothing at all.
   // The line carrying the unsupported figure is removed and the rest stands;
   // only when the summary loses its substance is the whole thing refused.
-  const inRelease = numeralsIn(text);
-  const releaseValues = valuesIn(text);
-  const lines = summary.split('\n');
-  const dropped: string[] = [];
-  const kept = lines.filter((ln) => {
-    const bad = moneyTokens(ln).filter((f) => !supported(f, inRelease));
-    if (bad.length) { dropped.push(`$${bad[0]}`); return false; }
-    const badPct = pctTokens(ln).filter((p) => !supportedPct(p, releaseValues));
-    if (badPct.length) { dropped.push(`${badPct[0].v}%`); return false; }
-    return true;
-  });
-  const bulletCount = (arr: string[]) => arr.filter((l) => /^\s*[*\-•]/.test(l)).length;
-  if (dropped.length) {
-    const before = bulletCount(lines), after = bulletCount(kept);
-    // More than a third of the substance gone means the summary as a whole is
-    // not trustworthy, not that one line slipped.
-    if (!after || (before && after < before * 0.67)) {
-      return NextResponse.json({
-        ok: false,
-        error: `The summary cited figures that do not appear in the release (${dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown.`,
-      });
-    }
-    summary = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  }
-
   let documents: any[] = [];
   try { documents = (await filingExhibits(idxUrl)).slice(0, 12); } catch { documents = []; }
 
   const payload = {
-    summary, source_url: sourceUrl, model: MODEL, documents,
+    summary, structured: data, source_url: sourceUrl, model: MODEL, documents,
     dropped_lines: dropped.length || undefined,
     generated_at: new Date().toISOString(),
   };

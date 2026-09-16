@@ -1086,6 +1086,9 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
   const stateRef = useRef<'idle' | 'loading' | 'done' | 'error'>('idle');
   useEffect(() => { stateRef.current = state; }, [state]);
   const [text, setText] = useState<string>('');
+  // zzz679 — the structured reading. Null for a cached prose answer, which the
+  // renderer still handles, so an old cache entry degrades instead of breaking.
+  const [struct, setStruct] = useState<any>(null);
   const [err, setErr] = useState<string>('');
   const [files, setFiles] = useState<Array<{ name: string; url: string; type: string; description: string }>>([]);
 
@@ -1111,8 +1114,9 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
       if (filingDate) q.set('filing_date', String(filingDate).slice(0, 10));
       const res = await fetch(`/api/v1/us/ai-summary?${q}`, { cache: 'no-store' });
       const j = await res.json();
-      if (j?.ok && j.summary) {
-        setText(j.summary); setFiles(j.documents || []); setState('done');
+      if (j?.ok && (j.structured || j.summary)) {
+        setText(j.summary || ''); setStruct(j.structured || null);
+        setFiles(j.documents || []); setState('done');
       } else {
         setErr(j?.error || 'No summary is available for this filing.'); setState('error');
       }
@@ -1196,7 +1200,7 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
           {state === 'error' && (
             <div style={{ fontSize: 11, color: 'var(--mc-caution, #F59E0B)' }}>{err}</div>
           )}
-          {state === 'done' && <SummaryText text={text} />}
+          {state === 'done' && (struct ? <SummaryView d={struct} /> : <SummaryText text={text} />)}
           {state === 'done' && files.length > 0 && (
             <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--mc-bg-4)' }}>
               <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', marginBottom: 5 }}>
@@ -1222,8 +1226,9 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
           {state === 'done' && (
             <div style={{ marginTop: 8, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
               Written from the company&rsquo;s own press release only — no news, no estimates, no market reaction. Every
-              dollar figure is checked against the release before the summary is shown; one that is not in the text
-              discards the whole summary. Educational, not investment advice.
+              figure is checked against the release before it is shown, and any line carrying a figure the release does
+              not print is dropped. Empty sections mean the release is silent on them, not that something failed.
+              Educational, not investment advice.
             </div>
           )}
         </div>
@@ -1244,6 +1249,220 @@ function docChip(): React.CSSProperties {
 /** The model answers in the fixed Positives / Negatives / Overall shape; this
  *  renders that shape and nothing else, so a malformed answer degrades to plain
  *  lines rather than to broken markup. */
+// ═══════════════════════════════════════════════════════════════════════════
+// THE STRUCTURED READING, RENDERED.                                  (zzz679)
+//
+// The old card printed whatever prose came back: two grey headings, grey
+// bullets, a grey paragraph. Everything looked equally important because
+// nothing was marked as more important than anything else, and the sections
+// that decide a quarter — guidance, mix, capital, people — were not asked for
+// and so were never there to render.
+//
+// This renders the typed object instead, and the design does one job: put the
+// forward-looking evidence where the eye lands first. Reading order is
+// deliberately NOT the order of the filing.
+//
+//   1. the verdict line — one sentence
+//   2. GUIDANCE — colour-carrying, because raised and lowered are the two most
+//      price-relevant words in any release and they should be legible at a
+//      glance across a page of cards
+//   3. positives and negatives, side by side, each on its own coloured edge
+//   4. segments, with direction arrows — where a blended "+20%" comes apart
+//   5. mix, management, new business — the things that produce NEXT quarter
+//   6. capital allocation — what management is doing rather than saying
+//   7. what decides the next few quarters
+//   8. what the release did NOT disclose, last and muted: real, but it is an
+//      absence, and an absence should never shout louder than a fact
+//
+// Every block renders only when it has content. A release that breaks out no
+// segments shows no segment section rather than an empty heading — the card
+// should never make the reader wonder whether something failed to load.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GUIDE_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
+  raised:      { bg: 'var(--mc-bullish)', fg: 'var(--mc-bullish)', label: 'GUIDANCE RAISED' },
+  initiated:   { bg: 'var(--mc-cyan)',    fg: 'var(--mc-cyan)',    label: 'GUIDANCE INITIATED' },
+  maintained:  { bg: '#F59E0B',           fg: '#F59E0B',           label: 'GUIDANCE MAINTAINED' },
+  lowered:     { bg: 'var(--mc-bearish)', fg: 'var(--mc-bearish)', label: 'GUIDANCE LOWERED' },
+  withdrawn:   { bg: 'var(--mc-bearish)', fg: 'var(--mc-bearish)', label: 'GUIDANCE WITHDRAWN' },
+};
+
+function SectionLabel({ children, color }: { children: React.ReactNode; color?: string }) {
+  return (
+    <div style={{
+      fontSize: 9, fontWeight: 800, letterSpacing: 0.4, marginBottom: 5,
+      color: color || 'var(--mc-text-3)',
+    }}>{children}</div>
+  );
+}
+
+function SummaryView({ d }: { d: any }) {
+  const pos: any[] = Array.isArray(d?.positives) ? d.positives : [];
+  const neg: any[] = Array.isArray(d?.negatives) ? d.negatives : [];
+  const segs: any[] = Array.isArray(d?.segments) ? d.segments : [];
+  const nb: string[] = Array.isArray(d?.new_business) ? d.new_business : [];
+  const watch: string[] = Array.isArray(d?.watch_next) ? d.watch_next : [];
+  const nd: string[] = Array.isArray(d?.not_disclosed) ? d.not_disclosed : [];
+  const cap = d?.capital || {};
+  const capRows = (['capex', 'buyback', 'dividend', 'debt'] as const)
+    .map((k) => ({ k, v: cap[k] })).filter((r) => r.v);
+  const g = d?.guidance;
+  const gs = g?.action && g.action !== 'none' ? GUIDE_STYLE[g.action] : null;
+
+  const Item = ({ it, tone }: { it: any; tone: string }) => (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 5, fontSize: 11.5, lineHeight: 1.5 }}>
+      <span style={{ color: tone, fontWeight: 700, flexShrink: 0 }}>›</span>
+      <span style={{ color: 'var(--mc-text-2)' }}>
+        {it?.label ? <b style={{ color: 'var(--mc-text-0)' }}>{it.label}: </b> : null}
+        {it?.detail || (typeof it === 'string' ? it : '')}
+      </span>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* 1 — the one-line verdict */}
+      {d?.verdict_line && (
+        <div style={{
+          fontSize: 12.5, lineHeight: 1.55, color: 'var(--mc-text-0)', fontWeight: 600,
+          marginBottom: 10, paddingBottom: 9, borderBottom: '1px solid var(--mc-bg-4)',
+        }}>{d.verdict_line}</div>
+      )}
+
+      {/* 2 — guidance, the loudest thing on the card when it exists */}
+      {gs && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 11,
+          padding: '7px 10px', borderRadius: 7,
+          backgroundColor: `color-mix(in srgb, ${gs.bg} 12%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${gs.bg} 40%, transparent)`,
+        }}>
+          <span style={{
+            fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: gs.fg,
+            whiteSpace: 'nowrap', paddingTop: 1,
+          }}>{gs.label}</span>
+          <span style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--mc-text-1)' }}>
+            {g.period ? <b style={{ color: 'var(--mc-text-0)' }}>{g.period} </b> : null}
+            {g.detail || '— the release states the action without a figure.'}
+          </span>
+        </div>
+      )}
+
+      {/* 3 — positives and negatives, side by side */}
+      {(pos.length > 0 || neg.length > 0) && (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
+          {pos.length > 0 && (
+            <div style={{ flex: '1 1 240px', minWidth: 0, paddingLeft: 9, borderLeft: '2px solid var(--mc-bullish)' }}>
+              <SectionLabel color="var(--mc-bullish)">WHAT WENT RIGHT</SectionLabel>
+              {pos.map((p, i) => <Item key={i} it={p} tone="var(--mc-bullish)" />)}
+            </div>
+          )}
+          {neg.length > 0 && (
+            <div style={{ flex: '1 1 240px', minWidth: 0, paddingLeft: 9, borderLeft: '2px solid var(--mc-bearish)' }}>
+              <SectionLabel color="var(--mc-bearish)">WHAT DID NOT</SectionLabel>
+              {neg.map((n, i) => <Item key={i} it={n} tone="var(--mc-bearish)" />)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4 — segments, where a blended number comes apart */}
+      {segs.length > 0 && (
+        <div style={{ marginBottom: 11 }}>
+          <SectionLabel>SEGMENTS</SectionLabel>
+          {segs.map((s, i) => {
+            const up = s?.direction === 'up', down = s?.direction === 'down';
+            const c = up ? 'var(--mc-bullish)' : down ? 'var(--mc-bearish)' : 'var(--mc-text-3)';
+            return (
+              <div key={i} style={{ display: 'flex', gap: 7, marginBottom: 4, fontSize: 11.5, lineHeight: 1.5 }}>
+                <span style={{ color: c, fontWeight: 800, flexShrink: 0, width: 10 }}>
+                  {up ? '▲' : down ? '▼' : '—'}
+                </span>
+                <span style={{ color: 'var(--mc-text-2)' }}>
+                  <b style={{ color: 'var(--mc-text-0)' }}>{s?.name}: </b>{s?.detail}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 5 — mix, people, new business: what produces the NEXT quarter */}
+      {d?.mix_shift && (
+        <div style={{ marginBottom: 10 }}>
+          <SectionLabel>MIX SHIFT</SectionLabel>
+          <div style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--mc-text-2)' }}>{d.mix_shift}</div>
+        </div>
+      )}
+      {d?.management && (
+        <div style={{
+          marginBottom: 10, padding: '7px 10px', borderRadius: 7,
+          backgroundColor: 'color-mix(in srgb, #F59E0B 10%, transparent)',
+          border: '1px solid color-mix(in srgb, #F59E0B 35%, transparent)',
+        }}>
+          <SectionLabel color="#F59E0B">MANAGEMENT CHANGE</SectionLabel>
+          <div style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--mc-text-1)' }}>{d.management}</div>
+        </div>
+      )}
+      {nb.length > 0 && (
+        <div style={{ marginBottom: 11 }}>
+          <SectionLabel color="var(--mc-cyan)">NEW BUSINESS</SectionLabel>
+          {nb.map((b, i) => <Item key={i} it={b} tone="var(--mc-cyan)" />)}
+        </div>
+      )}
+
+      {/* 6 — capital allocation: what management is doing, not saying */}
+      {capRows.length > 0 && (
+        <div style={{ marginBottom: 11 }}>
+          <SectionLabel>CAPITAL ALLOCATION</SectionLabel>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {capRows.map(({ k, v }) => (
+              <div key={k} style={{
+                flex: '1 1 150px', minWidth: 0, padding: '6px 9px', borderRadius: 6,
+                backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)',
+              }}>
+                <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: 'var(--mc-text-4)', marginBottom: 2 }}>
+                  {k.toUpperCase()}
+                </div>
+                <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--mc-text-2)' }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 7 — what decides the next few quarters */}
+      {watch.length > 0 && (
+        <div style={{ marginBottom: nd.length ? 10 : 0 }}>
+          <SectionLabel>WHAT DECIDES THE NEXT FEW QUARTERS</SectionLabel>
+          {watch.map((w, i) => (
+            <div key={i} style={{ display: 'flex', gap: 7, marginBottom: 4, fontSize: 11.5, lineHeight: 1.5 }}>
+              <span style={{ color: 'var(--mc-text-4)', fontWeight: 700, flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ color: 'var(--mc-text-2)' }}>{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 8 — the absences, last and quiet */}
+      {nd.length > 0 && (
+        <div style={{ paddingTop: 8, borderTop: '1px dashed var(--mc-bg-4)' }}>
+          <SectionLabel>NOT DISCLOSED IN THIS RELEASE</SectionLabel>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {nd.map((x, i) => (
+              <span key={i} style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 999,
+                backgroundColor: 'var(--mc-bg-2)', border: '1px dashed var(--mc-bg-4)',
+                color: 'var(--mc-text-3)',
+              }}>{x}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SummaryText({ text }: { text: string }) {
   const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
   const out: React.ReactNode[] = [];
