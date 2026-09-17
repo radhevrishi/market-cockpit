@@ -70,7 +70,15 @@
 //   take the chart out of the tier. Making the filter explicit is what keeps
 //   the V2 split from promoting ₹1 Cr shells alongside Bharat Dynamics.
 //   Demotes nothing that was above MIXED (verified 0 of 276 on 2026-08-14).
-export const GRADED_CACHE_VERSION = 'v21';
+// zzz691 — v21 → v22. 'optical eps' stopped flagging operating leverage. The
+//   tag fired on SIZE alone (EPS >= 3x sales, or EPS >= 200%), which is the
+//   arithmetic of every genuine margin expansion — Morepen took margin from
+//   6.0% to 14.0% on +34% revenue and was capped at MIXED for it, as were BDL
+//   (-18% -> +15%), PTCIL (9% -> 25%) and KMEW (41% -> 64%). The tag now tests
+//   what its name claims: a tiny base, EPS outrunning PAT, operations still
+//   loss-making, or EPS beyond twice what sales and margin together explain.
+//   20 of the 42 tagged rows on 2026-08-14 were mislabelled leverage.
+export const GRADED_CACHE_VERSION = 'v22';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -83,7 +91,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

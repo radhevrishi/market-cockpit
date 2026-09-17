@@ -294,10 +294,71 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 20 && rs != null && rs >= 70) methodology_tags.push('canslim');
   if (epsY != null && epsY >= 20 && (salesY == null || salesY >= 5)) methodology_tags.push('bonde ep');
 
-  if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push('optical eps');
-  if (epsY != null && epsY >= 200) caveat_tags.push('optical eps');
-  if (row?.eps_prev != null && row?.eps_curr != null && Math.abs(row.eps_prev) < 0.5 && Math.abs(row.eps_curr) > 2) {
-    if (!caveat_tags.includes('optical eps')) caveat_tags.push('optical eps');
+  // ═══════════════════════════════════════════════════════════════════════
+  // 'OPTICAL EPS' WAS FLAGGING OPERATING LEVERAGE.                (zzz691)
+  //
+  // The label means one thing: the per-share number is an ILLUSION — flattered
+  // by a share count, a near-zero base, or something below the operating line.
+  // The old tests did not look for any of that. They fired on SIZE alone:
+  //
+  //     epsY >= salesY * 3 && epsY >= 50      // EPS grew 3x faster than sales
+  //     epsY >= 200                           // EPS grew a lot
+  //
+  // Which is the arithmetic of every genuine margin expansion. Morepen grew
+  // revenue 34% and took operating margin from 6.0% to 14.0% — so operating
+  // profit rose about 213%, and EPS rising 415% is what that looks like. The
+  // engine called the most real thing on the card an optical illusion, and
+  // then ceiling 2 below (`CFO/PAT < 1 AND optical eps`) capped the whole
+  // quarter at MIXED on the strength of it. Same story for Bharat Dynamics
+  // (margin −18% → +15%), PTCIL (9% → 25%), KMEW (41% → 64%).
+  //
+  // Measured over the 276-row session of 2026-08-14: 42 rows carried the tag,
+  // and 20 of them carried it only because their margins expanded.
+  //
+  // So the tests now ask what the label claims to ask, in order:
+  //
+  //   (a) a base too small for a percentage to mean anything — always optical;
+  //   (b) EPS outran PAT — then the share count or the capital structure did
+  //       the work, not the business. This is the textbook meaning of the term
+  //       and it was the one test missing entirely;
+  //   (c) still losing money at the operating line — whatever produced that
+  //       EPS, operations did not;
+  //   (d) margin crossed from loss to profit — that IS the leverage, not an
+  //       illusion, and Path F exists precisely to reward it;
+  //   (e) both margins positive — measure EPS against what sales AND margin
+  //       together explain, and flag only what goes well beyond it;
+  //   (f) no usable margin figures — the old blunt test still stands, because
+  //       without margins there is no way to tell leverage from optics.
+  //
+  // What this does NOT excuse: cash. 'ocf divergence' is a separate tag and
+  // still fires, so a quarter whose profit is not converting is still marked —
+  // by the flag that actually measures it.
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    const _opmNow = typeof row?.opm_pct === 'number' ? row.opm_pct : null;
+    const _opmPrev = typeof row?.opm_prev_pct === 'number' ? row.opm_prev_pct : null;
+    /** Growth in operating profit implied by sales growth and the margin move. */
+    const _impliedOp = (salesY != null && _opmNow != null && _opmPrev != null && _opmNow > 0 && _opmPrev > 0)
+      ? ((1 + salesY / 100) * (_opmNow / _opmPrev) - 1) * 100
+      : null;
+    const _optical = (): boolean => {
+      // (a) the prior base was too small for the percentage to carry meaning
+      if (row?.eps_prev != null && row?.eps_curr != null
+          && Math.abs(row.eps_prev) < 0.5 && Math.abs(row.eps_curr) > 2) return true;
+      // (b) EPS outran PAT — per-share arithmetic, not the business
+      if (epsY != null && patY != null && patY > 0 && epsY >= patY * 1.5 && (epsY - patY) >= 25) return true;
+      // (c) operations are still loss-making, so the EPS came from elsewhere
+      if (_opmNow != null && _opmNow <= 0) return true;
+      // (d) loss-making margin turned positive — the leverage is the story
+      if (_opmNow != null && _opmPrev != null && _opmPrev <= 0 && _opmNow > 0) return false;
+      // (e) both margins positive — beyond twice what sales x margin explains
+      if (_impliedOp != null && epsY != null) return epsY >= _impliedOp * 2 && epsY >= 100;
+      // (f) no margin figures to reason with — keep the old test
+      if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) return true;
+      if (epsY != null && epsY >= 200) return true;
+      return false;
+    };
+    if (_optical()) caveat_tags.push('optical eps');
   }
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) caveat_tags.push('tax distortion');
   // PATCH 1001 — Still loss-making gate. Going from bigger loss to smaller
