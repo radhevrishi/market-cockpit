@@ -4808,9 +4808,44 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
     //     market where nothing is broken on evidence gathered in a market where
     //     something is. So the correction is applied on the US side only, where
     //     it was measured, and India keeps the ladder that works for it.
-    if (typeof r.composite_score === 'number' && r.composite_score < 80) {
+    //     AND IT IS MEASURED WITHOUT THE CHART.  (zzz685)
+    //
+    //     The first version of this gate read `composite_score`, which is
+    //     35% magnitude + 25% quality + 25% TECHNICAL + 15% methodology. So
+    //     "composite below 80" quietly meant "fundamentals below 80, OR a bad
+    //     chart" — and it demoted Flexible Solutions to MIXED on a quarter with
+    //     revenue +94%, operating margin +16.4pp, backlog +256% and 6.5× volume,
+    //     for no reason except that the stock sat 51% below its 52-week high.
+    //     Composite 73; fundamental composite 82.
+    //
+    //     That is precisely the defect this engine already has a name for. The
+    //     India side found Bharat Dynamics graded MIXED on +131% revenue and a
+    //     33-point margin swing because its chart was Stage 4, and zzz673 exists
+    //     to separate the two. Gating the US tier on the blended composite
+    //     reintroduced the thing zzz673 was written to remove.
+    //
+    //     So the floor is measured on `fund_composite` — the same three terms
+    //     renormalised, with the chart taken out. The chart is not discarded:
+    //     it is carried alongside as the Setup grade, so a quarter like this
+    //     reads STRONG · Setup C — an excellent result at a poor entry — rather
+    //     than disappearing into MIXED with no explanation.
+    //
+    //     HONEST NOTE ON WHAT THIS COSTS. The names it restores are, by
+    //     construction, fundamentally strong companies whose charts are broken,
+    //     and over this window every one of them fell (11 names, −9.7% average).
+    //     The aggregate still improves — top tiers +3.7% → +3.9%, and +3.2% →
+    //     +3.7% on the held-out half — because the same change also removes
+    //     names that passed on chart strength alone. But a reader who buys the
+    //     tier without reading the Setup grade will be early, repeatedly. The
+    //     grade says the quarter was good. It does not say today is the day.
+    //
+    //     Falls back to the blended composite when `fund_composite` is absent,
+    //     so a row cached before zzz673 is still gated rather than waved through.
+    const floorScore = typeof r.fund_composite === 'number' ? r.fund_composite
+      : (typeof r.composite_score === 'number' ? r.composite_score : null);
+    if (floorScore != null && floorScore < 80) {
       r.tier = 'MIXED';
-      r.setup_gate = 'composite below the top-tier floor';
+      r.setup_gate = 'fundamentals below the top-tier floor';
       demoted++;
       continue;
     }

@@ -31,13 +31,11 @@
 // 'compounder setup' +3.2%, and the tier ignored both. BLOCKBUSTER moves from
 // −0.7% to +5.1% (win 43% → 64%) on the same rows. Every cached grade changes,
 // so the namespace changes with it.
-// 2026.09.16-b (zzz683) — the root cause, not a symptom. `decideTier` gates
-// BLOCKBUSTER Path A on composite >= 78 and Path B on >= 72, but Paths C-F are
-// pure magnitude tests with NO composite requirement, so a name with huge YoY
-// percentages and weak everything else entered the top tier at a composite of
-// 55 while STRONG held a 99. Both top tiers now require composite >= 80 — one
-// threshold, measured once, replicating in both halves of the bench.
-//   BLOCKBUSTER  -0.7% -> +6.7%   win 43% -> 74%
-//   STRONG       -1.4% -> +3.0%   win 38% -> 56%
-//   held-out half: -1.7% -> +3.2%, win 42% -> 63%
-export const US_ENGINE_VERSION = '2026.09.16-b';
+// 2026.09.17-a (zzz685) — the top-tier floor is measured WITHOUT the chart.
+// It read `composite_score` (25% technical), so "composite below 80" also meant
+// "bad chart": Flexible Solutions was demoted to MIXED on revenue +94%, OPM
+// +16.4pp and backlog +256% purely for sitting 51% below its 52-week high —
+// composite 73, fundamental composite 82. That is the Bharat Dynamics defect
+// zzz673 exists to prevent, reintroduced by the gate. Now floors on
+// fund_composite. Top tiers +3.7% -> +3.9%; held-out half +3.2% -> +3.7%.
+export const US_ENGINE_VERSION = '2026.09.17-a';
