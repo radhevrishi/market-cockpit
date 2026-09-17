@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-17T09:38:53.204Z",
+  "lastSync": "2026-09-17T11:04:48.971Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 12,
@@ -11,8 +11,8 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 37025,
-      "rowCount": 32,
+      "size": 34901,
+      "rowCount": 30,
       "error": null
     },
     {
@@ -21,7 +21,7 @@
       "screenerId": "WJDx6FZ9",
       "kind": "screener",
       "ok": true,
-      "size": 19027,
+      "size": 19023,
       "rowCount": 15,
       "error": null
     },
@@ -31,8 +31,8 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 24890,
-      "rowCount": 21,
+      "size": 25931,
+      "rowCount": 22,
       "error": null
     },
     {
@@ -41,8 +41,8 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 39141,
-      "rowCount": 34,
+      "size": 38097,
+      "rowCount": 33,
       "error": null
     },
     {
@@ -51,7 +51,7 @@
       "screenerId": "Neuim2Bm",
       "kind": "screener",
       "ok": true,
-      "size": 27155,
+      "size": 27143,
       "rowCount": 23,
       "error": null
     },
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106481,
+      "size": 106491,
       "rowCount": 100,
       "error": null
     },
@@ -91,7 +91,7 @@
       "screenerId": "oRvEFfVY",
       "kind": "screener",
       "ok": true,
-      "size": 107107,
+      "size": 107112,
       "rowCount": 97,
       "error": null
     },
@@ -111,7 +111,7 @@
       "screenerId": "I0y51g1p",
       "kind": "screener",
       "ok": true,
-      "size": 22737,
+      "size": 22819,
       "rowCount": 23,
       "error": null
     },
@@ -121,7 +121,7 @@
       "screenerId": "339270482",
       "kind": "watchlist",
       "ok": true,
-      "size": 105123,
+      "size": 105113,
       "rowCount": 90,
       "error": null
     }
