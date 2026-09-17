@@ -4850,14 +4850,11 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
       continue;
     }
 
-    // 3 — A GOOD QUARTER AT THE WRONG PRICE IS NOT A BLOCKBUSTER.
-    //     It stays on the bench, one rung down, still carrying its label.
-    if (t === 'BLOCKBUSTER' && v === 'needs a pullback') {
-      r.tier = 'STRONG';
-      r.setup_gate = 'wait for the pullback';
-      capped++;
-      continue;
-    }
+    // (There was a gate here — a BLOCKBUSTER whose verdict read "needs a
+    //  pullback" was capped at STRONG. Measured across the 506-name bench it
+    //  moved exactly ONE name, and that name went on to return +15.3%. Gate 4
+    //  below already catches everything it was aimed at, so it was removed
+    //  rather than kept for the shape of the argument. zzz686.)
 
     // 4 — THE TOP TIER MEANS THE SETUP CONFIRMS TOO.
     //     BLOCKBUSTER now requires the compounder verdict or a setup of 70+.

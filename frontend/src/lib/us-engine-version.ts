@@ -38,4 +38,6 @@
 // composite 73, fundamental composite 82. That is the Bharat Dynamics defect
 // zzz673 exists to prevent, reintroduced by the gate. Now floors on
 // fund_composite. Top tiers +3.7% -> +3.9%; held-out half +3.2% -> +3.7%.
-export const US_ENGINE_VERSION = '2026.09.17-a';
+// 2026.09.17-b (zzz686) — the "needs a pullback" cap is gone. It moved one
+// name in 506 and that name returned +15.3%; gate 4 already covers it.
+export const US_ENGINE_VERSION = '2026.09.17-b';
