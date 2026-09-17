@@ -589,18 +589,25 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
             {autoLoadScope && syncStatus && syncStatus.hasManifest ? (() => {
               const broken = syncStatus.syncBroken;
               const staleByAge = !broken && (syncStatus.hoursOld ?? 0) > 36;
+              // zzz687 — the schedule knows what "late" means; a raw age does not.
+              const overdue = !broken && !staleByAge && !!syncStatus.overdue;
+              const missed = syncStatus.missedRuns ?? 0;
               const accent = broken ? COL.amber : staleByAge ? COL.red : COL.violet;
               const tip = broken
                 ? `screener.in auto-sync ran ${syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : ''} but fetched 0 of ${syncStatus.failCount} screens — the screener.in session cookie has likely expired. Any CSV you uploaded by hand is unaffected and fully current; only the built-in auto-synced screens are affected. Fix: refresh the SCREENER_SESSION GitHub secret, then re-run the sync workflow.`
                 : staleByAge
                 ? 'The built-in auto-synced screener.in screens are more than 36h old. A CSV you uploaded by hand is unaffected.'
+                : overdue
+                ? `The sync is scheduled four times a day (04:00, 05:30, 08:00 and 12:00 UTC, all inside Indian market hours). ${missed} of those run${missed > 1 ? 's have' : ' has'} not landed, counting only runs already more than 4 hours late — so this is not GitHub simply being slow. Last successful sync ${syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h' : '?'} ago, ${syncStatus.okCount} screens fetched. A CSV you uploaded by hand is unaffected. Press Refresh to pull now.`
                 : 'Built-in screener.in screens are up to date.';
               return (
               <span title={tip} style={{ ...chip, borderColor: accent, display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
                 <span style={{ color: (broken || staleByAge) ? accent : COL.muted }}>
                   {broken
                     ? `⚠ auto-sync failed · 0/${syncStatus.failCount} screens (session expired)`
-                    : `🔄 auto-sync · ${syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : '?'}${staleByAge ? ' · STALE' : ''}`}
+                    : overdue
+                      ? `⚠ auto-sync overdue · ${missed} scheduled run${missed > 1 ? 's' : ''} missed`
+                      : `🔄 auto-sync · ${syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : '?'}${staleByAge ? ' · STALE' : ''}`}
                 </span>
                 <button
                   onClick={() => { resetAutoLoadFlag(autoLoadScope); runAutoSync(true); }}

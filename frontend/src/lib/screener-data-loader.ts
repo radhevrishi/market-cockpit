@@ -158,12 +158,76 @@ export type SyncStatus = {
   okCount: number;
   failCount: number;
   files: string[];
+  /** zzz687 — scheduled runs whose grace window has passed without landing. */
+  missedRuns: number;
+  /** zzz687 — at least one scheduled run is genuinely late, not merely due. */
+  overdue: boolean;
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// "15h ago" IS NOT AN ANSWER.                                        (zzz687)
+//
+// The chip printed the age of the manifest and left the reader to work out
+// whether that was fine. It is not a question anyone can answer from a number,
+// because the honest answer depends entirely on the schedule:
+//
+//   · the sync fires at 04:00, 05:30, 08:00 and 12:00 UTC — four times, all
+//     inside Indian market hours, because screener.in does not change while
+//     the market is shut;
+//   · so the gap from the last run of one day to the first of the next is
+//     SIXTEEN HOURS by design, and a perfectly healthy sync reads "15h ago"
+//     every morning;
+//   · but 15h at 06:30 UTC means the 04:00 AND 05:30 runs did not land, which
+//     is a different thing entirely, and the old chip rendered both identically.
+//
+// `syncBroken` did not help: it fires only when the workflow RAN and fetched
+// zero files (the expired-cookie case). A workflow that does not run at all —
+// GitHub cron starvation, which this repo's own workflow documents as "30min-4hr,
+// sometimes skips days" — set no flag whatsoever until the 36-hour staleness
+// threshold, by which point a day of data is gone.
+//
+// So the status is computed against the SCHEDULE instead of against the clock.
+// A run is only overdue once its scheduled time has passed by more than the
+// starvation window the workflow itself budgets for. That turns a number the
+// owner had to interpret into a statement: on time, or this many runs missed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** UTC hours at which screener-sync.yml is scheduled. Keep in step with it. */
+const SYNC_CRON_UTC_HOURS = [4, 5.5, 8, 12] as const;
+/** GitHub's own scheduling delay, per the workflow's comments. */
+const STARVATION_GRACE_H = 4;
+
+/**
+ * How many scheduled runs should have landed since `lastSync` but did not.
+ *
+ * Counts only fires that are already past their grace window, so a run that is
+ * merely late — the normal case on GitHub — is never reported as missed.
+ */
+export function missedSyncRuns(lastSync: Date, now: Date = new Date()): number {
+  let missed = 0;
+  // Walk back over the last three days of scheduled fires; anything older than
+  // that is comfortably covered by the staleness threshold.
+  for (let dayOffset = 0; dayOffset <= 3; dayOffset++) {
+    const day = new Date(Date.UTC(
+      now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - dayOffset,
+    ));
+    for (const h of SYNC_CRON_UTC_HOURS) {
+      const fire = new Date(day.getTime() + h * 3_600_000);
+      if (fire <= lastSync) continue;               // already covered by that sync
+      if (fire.getTime() + STARVATION_GRACE_H * 3_600_000 > now.getTime()) continue; // still within grace
+      missed++;
+    }
+  }
+  return missed;
+}
 
 export async function getSyncStatus(): Promise<SyncStatus> {
   const m = await fetchManifest();
   if (!m) {
-    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, syncBroken: true, okCount: 0, failCount: 0, files: [] };
+    return {
+      hasManifest: false, lastSync: null, hoursOld: null, isStale: true, syncBroken: true,
+      okCount: 0, failCount: 0, files: [], missedRuns: 0, overdue: false,
+    };
   }
   const lastSync = new Date(m.lastSync);
   const hoursOld = (Date.now() - lastSync.getTime()) / 3_600_000;
@@ -172,15 +236,18 @@ export async function getSyncStatus(): Promise<SyncStatus> {
   // runs, all POST /api/export requests return HTTP 403 HTML, IS_HTML guard
   // refuses to overwrite good CSVs, files rot in place while lastSync ticks.
   const syncBroken = m.ok === 0 && m.fail > 0;
+  const missedRuns = missedSyncRuns(lastSync);
   return {
     hasManifest: true,
     lastSync,
     hoursOld,
-    isStale: hoursOld > 36 || syncBroken,
+    isStale: hoursOld > 36 || syncBroken || missedRuns > 0,
     syncBroken,
     okCount: m.ok,
     failCount: m.fail,
     files: m.files.map(f => f.name),
+    missedRuns,
+    overdue: missedRuns > 0,
   };
 }
 
@@ -251,7 +318,7 @@ export async function fetchTradingviewCsvsAsFiles(filenames: readonly string[]):
 export async function getTradingviewSyncStatus(): Promise<SyncStatus> {
   const m = await fetchTradingviewManifest();
   if (!m) {
-    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, syncBroken: true, okCount: 0, failCount: 0, files: [] };
+    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, syncBroken: true, okCount: 0, failCount: 0, files: [], missedRuns: 0, overdue: false };
   }
   const lastSync = new Date(m.lastSync);
   const hoursOld = (Date.now() - lastSync.getTime()) / 3_600_000;
@@ -260,8 +327,13 @@ export async function getTradingviewSyncStatus(): Promise<SyncStatus> {
     hasManifest: true,
     lastSync,
     hoursOld,
+    // The TradingView sync runs on its own cadence, so no schedule check here —
+    // the fields exist to satisfy one shared type, and claiming a missed run
+    // against a schedule this loader does not know would be a guess.
     isStale: hoursOld > 36 || syncBroken,
     syncBroken,
+    missedRuns: 0,
+    overdue: false,
     okCount: m.ok,
     failCount: m.fail,
     files: m.files.map(f => f.name),
