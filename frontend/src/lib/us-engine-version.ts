@@ -40,4 +40,11 @@
 // fund_composite. Top tiers +3.7% -> +3.9%; held-out half +3.2% -> +3.7%.
 // 2026.09.17-b (zzz686) — the "needs a pullback" cap is gone. It moved one
 // name in 506 and that name returned +15.3%; gate 4 already covers it.
-export const US_ENGINE_VERSION = '2026.09.17-b';
+// 2026.09.17-c (zzz692) — 'optical eps' stopped flagging operating leverage.
+// The size tests (EPS >= 3x sales, or EPS >= 200%) fired on 102 bench rows and
+// 69 carried the tag ONLY because margins expanded: HBB 4.7->30.3%, MPC
+// 6.5->14.1% (+37.0% since print), DINO 4.0->11.2% (+23.6%), TER 13.9->32.9%,
+// LMT 4.1->12.4%. The tag spends the caveat budget the BLOCKBUSTER paths are
+// gated on and, with CFO/PAT under 1, trips the outrun-both ceiling to MIXED.
+// A disclosed GAAP-vs-adjusted gap still reports unconditionally.
+export const US_ENGINE_VERSION = '2026.09.17-c';

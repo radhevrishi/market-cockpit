@@ -3505,8 +3505,65 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
       && Math.abs(gaapVsAdj) >= Math.abs(f.eps) * 0.15)
     ? `gaap ${gaapVsAdj > 0 ? 'above' : 'below'} adjusted by $${Math.abs(gaapVsAdj).toFixed(2)}/sh`
     : 'optical eps';
-  if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push(oneOffTag);
-  if (epsY != null && epsY >= 200 && !caveat_tags.includes(oneOffTag)) caveat_tags.push(oneOffTag);
+  // ── OPERATING LEVERAGE IS NOT AN OPTICAL ILLUSION.  (zzz692) ─────────────
+  //
+  // The comment above this block asserted that "EPS running three times
+  // revenue growth is rarely operating leverage". Measured on the 506-name
+  // bench, that is the wrong way round: 102 rows carried the generic tag and
+  // 69 of them carried it ONLY because their margins expanded —
+  //
+  //   HBB   4.7% → 30.3%   EPS +655%   +13.4% since print
+  //   DINO  4.0% → 11.2%   EPS +348%   +23.6%
+  //   MPC   6.5% → 14.1%   EPS +348%   +37.0%
+  //   TER  13.9% → 32.9%   EPS +386%
+  //   LMT   4.1% → 12.4%   EPS +444%
+  //
+  // A company that doubles its operating margin on growing revenue will show
+  // EPS growing a multiple of the top line. That is arithmetic, not accounting.
+  // And the tag is not free: it spends the caveat budget the BLOCKBUSTER paths
+  // are gated on, it costs quality points, and — with cash conversion under 1 —
+  // it trips the "earnings outrun both revenue and cash" ceiling further down
+  // and caps the whole quarter at MIXED.
+  //
+  // So the SIZE tests now run only when margin cannot explain the gap. What is
+  // deliberately left untouched is `gaapVsAdj`: where the company publishes an
+  // adjusted EPS, the difference between the two is a one-off it has measured
+  // and disclosed itself, and that stands whatever the margin did. This block
+  // therefore emits the specific `gaap …` tag on exactly the same terms as
+  // before, and only the generic `optical eps` fallback is gated.
+  //
+  // Same correction as zzz691 on the India side, same four questions in the
+  // same order. The two graders keep separate copies of this logic; the India
+  // header explains why each is written where it is.
+  /** Did EPS grow far enough, versus sales, to be worth questioning at all? */
+  const _sizeTriggered = epsY != null
+    && ((salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) || epsY >= 200);
+
+  /** Given that it did, is the gap something OTHER than margin expansion? */
+  const _notJustMargin = (): boolean => {
+    if (epsY == null) return false;
+    // EPS outran PAT — the share count or the capital structure did the work.
+    if (patY != null && patY > 0 && epsY >= patY * 1.5 && (epsY - patY) >= 25) return true;
+    // Operations are still loss-making, so the EPS came from somewhere else.
+    if (opm != null && opm <= 0) return true;
+    // Margin crossed from loss to profit — that IS the leverage.
+    if (opm != null && opmPrev != null && opmPrev <= 0 && opm > 0) return false;
+    // Both margins positive: beyond twice what sales and margin together explain.
+    if (opm != null && opmPrev != null && opm > 0 && opmPrev > 0 && salesY != null) {
+      const impliedOp = ((1 + salesY / 100) * (opm / opmPrev) - 1) * 100;
+      return epsY >= impliedOp * 2 && epsY >= 100;
+    }
+    // No usable margin figures — the blunt test is all there is.
+    return true;
+  };
+
+  // A DISCLOSED one-off is reported whatever the margin did: where the company
+  // publishes an adjusted EPS, the gap between the two is a number it has
+  // measured itself. Only the GENERIC fallback is gated on margin.
+  if (_sizeTriggered && (oneOffTag !== 'optical eps' || _notJustMargin())
+      && !caveat_tags.includes(oneOffTag)) {
+    caveat_tags.push(oneOffTag);
+  }
   if (f.eps_prev != null && f.eps != null && Math.abs(f.eps_prev) < 0.05 && Math.abs(f.eps) > 0.2
       && !caveat_tags.includes(oneOffTag)) caveat_tags.push('low base · prior-year EPS near zero');
   // A PAT that doubles while operating profit barely moves is below-the-line
