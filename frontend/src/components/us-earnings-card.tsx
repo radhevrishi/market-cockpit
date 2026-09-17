@@ -3586,6 +3586,30 @@ export function DetailPanel({ r }: { r: UsRowX }) {
           Moved here from the collapsed card. These say HOW the grade was built
           and what it is allowed to claim — the kind of thing a reader wants once
           they have decided the name is worth reading, not while scanning a tier. */}
+      {/* zzz684 — WHY THIS NAME WAS CAPPED.
+          The setup gates can move a row two rungs down, and until now they did
+          it silently: a name left the bench and the card gave no reason. That
+          is the one thing a grading change must never do, because the reader
+          cannot tell a deliberate demotion from a pipeline failure — and it is
+          also how you find the exception the rule got wrong. The gates throw
+          away roughly one genuine winner in eight; this is what makes those
+          findable by hand instead of invisible. */}
+      {!!(r as any).setup_gate && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7, marginTop: 8,
+          padding: '6px 10px', borderRadius: 7,
+          backgroundColor: 'color-mix(in srgb, #F59E0B 10%, transparent)',
+          border: '1px solid color-mix(in srgb, #F59E0B 35%, transparent)',
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: '#F59E0B', whiteSpace: 'nowrap' }}>
+            CAPPED
+          </span>
+          <span style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--mc-text-2)' }}>
+            {String((r as any).setup_gate)} — the filings earned a higher grade than this; the setup did not support it.
+          </span>
+        </div>
+      )}
+
       {(r.methodology_tags.length > 0 || r.caveat_tags.length > 0 || !!r.prelim) && (
         <>
           <PanelH note="how this grade was built, and what it is not allowed to claim">
