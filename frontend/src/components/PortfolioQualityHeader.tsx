@@ -58,7 +58,7 @@ interface Metrics {
   coveragePct: number;      // % of holdings that are graded (on the bench)
   medianRoce: number | null;
   cashBackedPct: number | null;   // % of covered with CFO/PAT ≥ 0.8
-  strongPct: number | null;       // % of covered that are BLOCKBUSTER/STRONG
+  strongPct: number | null;       // zzz688 — % of covered carrying the TOP grade
   deterioratingCount: number;     // held names flagged by assessDecay
   bookQuality: number | null;     // composite 0–100
   // zzz528 — the NAMES behind the numbers, so every tile can drill down
@@ -129,8 +129,27 @@ function compute(): Metrics {
     .filter((x): x is { symbol: string; cfoPat: number } => x.cfoPat != null && x.cfoPat < 0.8)
     .sort((a, b) => a.cfoPat - b.cfoPat);
 
-  const strongCount = covered.filter((c) => c.entry.tier === 'BLOCKBUSTER' || c.entry.tier === 'STRONG').length;
-  const strongPct = coveredCount ? (strongCount / coveredCount) * 100 : null;
+  // ═════════════════════════════════════════════════════════════════════════
+  // A METRIC THAT CAN ONLY EVER READ 100%.                          (zzz688)
+  //
+  // This used to count holdings graded BLOCKBUSTER **or STRONG** as a share of
+  // the covered book — and `covered` is, by construction, the intersection of
+  // the book with the Conviction bench. The bench holds nothing else: 184
+  // BLOCKBUSTER and 193 STRONG, zero MIXED, zero AVOID. So the numerator and
+  // the denominator were the same set, the tile printed "100%" for every book
+  // anyone could ever load, and — worse — it carried TWENTY PERCENT of the
+  // composite score as a fixed 100.
+  //
+  // On the owner's own book that inflated Book Quality from 62 to 69 with a
+  // number that measures nothing. A constant cannot tell a good book from a
+  // bad one, and a score that includes one is 20% decoration.
+  //
+  // BLOCKBUSTER share is the same idea and actually varies: it is roughly half
+  // the bench, so a book tilted toward the top grade now scores above one that
+  // merely clears the bar. Same weight, same intent, real discrimination.
+  const blockbusterCount = covered.filter((c) => c.entry.tier === 'BLOCKBUSTER').length;
+  const strongCount = blockbusterCount;
+  const strongPct = coveredCount ? (blockbusterCount / coveredCount) * 100 : null;
 
   // zzz528 — deteriorating NAMES with their reasons, not just a count
   const deteriorating: Metrics['deteriorating'] = [];
@@ -147,7 +166,8 @@ function compute(): Metrics {
   // the remaining weights renormalised so a thin book is not unfairly punished.
   //   • ROCE quality   30% — median ROCE mapped 0%→0, 25%+→100
   //   • Cash-backed    25% — % of covered with CFO/PAT ≥ 0.8
-  //   • Tier strength  20% — % BLOCKBUSTER/STRONG
+  //   • Tier strength  20% — % BLOCKBUSTER (zzz688: was BLOCKBUSTER-or-STRONG,
+  //                         which is a constant 100 over a bench holding only those two)
   //   • Coverage       15% — % of the book that is actually graded
   //   • Health         10% — 100 minus % of covered flagged deteriorating
   const parts: Array<{ w: number; v: number }> = [];
@@ -327,11 +347,11 @@ export function PortfolioQualityHeader() {
           active={open === 'cash'}
         />
         <Tile
-          label="Blockbuster / Strong"
+          label="Blockbuster share"
           value={fmtPct(m.strongPct)}
-          sub="tier mix"
+          sub="of graded names"
           color={m.strongPct != null && m.strongPct >= 50 ? C.accent : C.text}
-          tip="Share of covered holdings graded BLOCKBUSTER or STRONG on the bench."
+          tip="Share of your graded holdings carrying the TOP grade, BLOCKBUSTER. Measured against BLOCKBUSTER + STRONG this read 100% for every possible book — the bench contains nothing else — so it measured nothing while carrying 20% of the composite. (zzz688)"
         />
         <Tile
           label="Deteriorating"
