@@ -404,9 +404,35 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
     const p = isUsaPortfolio ? getTradingviewSyncStatus() : getSyncStatus();
     p.then(setSyncStatus);
   }, [autoLoadScope, isUsaPortfolio]);
+  // zzz689 — what the user presses when the list looks wrong.
+  const [syncNote, setSyncNote] = useState<string>('');
+  /**
+   * Ask GitHub to re-fetch from screener.in NOW.
+   *
+   * The CSV this page reads is committed by a scheduled workflow, so a plain
+   * reload can only ever show the last snapshot. When the owner has just edited
+   * the watchlist on screener.in — which is exactly when he presses Refresh —
+   * the only thing that helps is running the workflow, and only GitHub can do
+   * that. Fire-and-report: the answer is surfaced verbatim rather than being
+   * folded into a generic success.
+   */
+  const requestFreshPull = useCallback(async () => {
+    try {
+      const r = await fetch('/api/v1/cron/trigger-screener-sync', { method: 'POST', cache: 'no-store' });
+      const j = await r.json();
+      setSyncNote(j?.ok ? (j.note || 'A fresh sync has been requested.') : (j?.error || 'Could not start a fresh sync.'));
+    } catch (e: any) {
+      setSyncNote(`Could not start a fresh sync (${String(e?.message || e)}).`);
+    }
+  }, []);
+
   const runAutoSync = useCallback(async (force = false) => {
     if (syncLoading || !autoLoadScope) return;
     setSyncLoading(true);
+    // A manual press means "the file is out of date" — so ask for a new one as
+    // well as re-reading the current one. The scheduled path (force=false)
+    // never dispatches, so opening the page cannot spend workflow minutes.
+    if (force) void requestFreshPull();
     try {
       let filenames: readonly string[] = [];
       if (scope === 'portfolio' && market === 'INDIA') filenames = [SYNC_ROUTING.portfolioIndia];
@@ -616,6 +642,14 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
                 >
                   {syncLoading ? '...' : 'Refresh'}
                 </button>
+                {syncNote && (
+                  <div style={{
+                    marginTop: 6, padding: '6px 9px', borderRadius: 6, maxWidth: 560,
+                    background: 'color-mix(in srgb, var(--mc-cyan) 10%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--mc-cyan) 30%, transparent)',
+                    fontSize: 10.5, lineHeight: 1.5, color: 'var(--mc-text-2)',
+                  }}>{syncNote}</div>
+                )}
               </span>
               );
             })() : null}
