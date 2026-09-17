@@ -517,6 +517,32 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         <span>PEAD <b style={{ color: 'var(--mc-text-0)' }}>{r.pead_score}</b></span>
         <span>RS <b style={{ color: 'var(--mc-text-0)' }}>{r.rs_rating ?? '—'}</b></span>
         <span>Stage <b style={{ color: r.stage === 4 ? 'var(--mc-bearish)' : r.stage === 2 ? 'var(--mc-bullish)' : 'var(--mc-text-0)' }}>{r.stage ?? '—'}</b></span>
+        {/* zzz690 — DISTANCE FROM THE 52-WEEK HIGH, which was the strongest
+            single raw number on the card and the only one not shown.
+            Measured across the 506-name bench, by how far below the high a
+            name sat when it reported:
+                within 5%     +8.0% since print, 80% of them up
+                5-12% below   −0.1%,             34% up
+                12-25% below  −5.6%,             22% up
+                over 25%      −9.7%,             20% up
+            An 18-point spread, monotone — wider than any fundamental field
+            measured (revenue growth spanned 4.6, EPS growth 1.9). Meanwhile
+            PEAD, which runs BACKWARDS in the same sample, was on this row
+            wearing a flame. The number that mattered most was the one the card
+            never printed, so it is printed now.
+            Colour follows the buckets, not a gradient, so the eye reads the
+            bucket rather than interpolating a shade. */}
+        {typeof r.pct_from_52w_high === 'number' && (
+          <span title="How far below its 52-week high the stock sat at this print. Across the bench: within 5% ran +8.0% since print (80% of them up); more than 25% below ran −9.7% (20% up). The widest spread of any single number on this card — and note that two of the strongest predictors here are price, not fundamentals, so read the ordering rather than the magnitude.">
+            52w high{' '}
+            <b style={{
+              color: r.pct_from_52w_high >= -5 ? 'var(--mc-bullish)'
+                : r.pct_from_52w_high >= -12 ? 'var(--mc-text-0)'
+                : r.pct_from_52w_high >= -25 ? 'var(--mc-warn, #F59E0B)'
+                : 'var(--mc-bearish)',
+            }}>{r.pct_from_52w_high >= 0 ? 'at high' : `${r.pct_from_52w_high.toFixed(0)}%`}</b>
+          </span>
+        )}
         <span>{fmtPx(r.price)}{r.pe ? ` · P/E ${r.pe}` : ''}</span>
       </div>
 
