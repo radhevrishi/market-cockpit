@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-17T15:46:52Z",
+  "lastSync": "2026-09-18T08:41:05Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9875,
+      "size": 9453,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10115,
+      "size": 10117,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 6574,
+      "size": 7904,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 4703,
+      "size": 6483,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 8800,
+      "size": 8190,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 4114,
+      "size": 3680,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -65,12 +65,12 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 4486,
+      "size": 4042,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2815,
+      "size": 3232,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23942,
+      "size": 23939,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63512,
+      "size": 63511,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65692,
+      "size": 65689,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 6689,
+      "size": 5292,
       "displayName": "Weekly Volume Pockets"
     }
   ]
