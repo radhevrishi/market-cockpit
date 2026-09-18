@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-18T09:57:29Z",
+  "lastSync": "2026-09-18T12:36:35Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9876,
+      "size": 9454,
       "displayName": "CAPEX"
     },
     {
@@ -25,32 +25,32 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 4532,
+      "size": 4533,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 7906,
+      "size": 6610,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5390,
+      "size": 5756,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4453,
+      "size": 4454,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 8190,
+      "size": 9653,
       "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 3667,
+      "size": 3668,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 4485,
+      "size": 4486,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -75,12 +75,12 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19692,
+      "size": 19690,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23940,
+      "size": 23941,
       "displayName": "Latest Portfolio"
     },
     {
@@ -90,12 +90,12 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65690,
+      "size": 65691,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 5292,
+      "size": 6738,
       "displayName": "Weekly Volume Pockets"
     }
   ]
