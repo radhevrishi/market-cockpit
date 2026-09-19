@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-19T12:13:20Z",
+  "lastSync": "2026-09-19T14:57:07Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -80,7 +80,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 25993,
+      "size": 25554,
       "displayName": "Latest Portfolio"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65702,
+      "size": 65698,
       "displayName": "Working watchlist"
     },
     {
