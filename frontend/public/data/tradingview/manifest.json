@@ -1,9 +1,9 @@
 {
-  "lastSync": "2026-09-20T09:27:36.427Z",
+  "lastSync": "2026-09-20T10:44:50.213Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
-  "ok": 12,
-  "fail": 0,
+  "ok": 11,
+  "fail": 1,
   "files": [
     {
       "name": "minervini-stocks.csv",
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106366,
+      "size": 106774,
       "rowCount": 100,
       "error": null
     },
@@ -101,7 +101,7 @@
       "screenerId": "SwBe8R8b",
       "kind": "screener",
       "ok": true,
-      "size": 36973,
+      "size": 36983,
       "rowCount": 32,
       "error": null
     },
@@ -120,10 +120,10 @@
       "displayName": "USA Portfolio (TradingView 339270482)",
       "screenerId": "339270482",
       "kind": "watchlist",
-      "ok": true,
-      "size": 105080,
-      "rowCount": 90,
-      "error": null
+      "ok": false,
+      "size": 0,
+      "rowCount": 0,
+      "error": "symbols_list returned HTTP 404"
     }
   ]
 }
