@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-19T14:57:07Z",
+  "lastSync": "2026-09-20T08:59:40Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -30,7 +30,7 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 5747,
+      "size": 4444,
       "displayName": "Great Results and Pullback"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 10100,
+      "size": 10552,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 6738,
+      "size": 7191,
       "displayName": "Weekly Volume Pockets"
     }
   ]
