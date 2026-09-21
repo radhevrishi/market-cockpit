@@ -325,6 +325,98 @@ export async function exportUsSummaryPdf(input: UsSummaryPdfInput): Promise<void
     y += 3;
   }
 
+  // ── 3b. v6: why the margin moved, and what is coming ───────────  (zzz699)
+  const mb: any = (d as any).margin_bridge;
+  const mbDrivers: any[] = Array.isArray(mb?.drivers) ? mb.drivers : [];
+  if (mb && (mbDrivers.length || has(mb.opm_change_pp))) {
+    section('Why the margin moved');
+    const VERD: Record<string, [string, [number, number, number]]> = {
+      predominantly_structural: ['MOSTLY STRUCTURAL', GREEN],
+      predominantly_cyclical: ['MOSTLY CYCLICAL', AMBER],
+      mixed: ['MIXED', BLUE],
+      not_explained: ['NOT EXPLAINED', MUTED],
+    };
+    const [vt, vc] = VERD[str(mb.verdict)] || VERD.not_explained;
+    room(6);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...INK);
+    if (has(mb.opm_change_pp)) doc.text(ascii(str(mb.opm_change_pp)), M, y + 3.2);
+    doc.setFontSize(8.5); doc.setTextColor(...vc);
+    doc.text(vt, M + (has(mb.opm_change_pp) ? 22 : 0), y + 3.2);
+    y += 6;
+    for (const dr of mbDrivers) {
+      const nat = str(dr?.nature);
+      const col = nat === 'structural' ? GREEN : nat === 'cyclical' ? AMBER : RED;
+      const word = nat === 'structural' ? 'structural - repeats'
+        : nat === 'cyclical' ? 'cyclical - will not repeat' : 'one-off';
+      bullet('', `${str(dr?.detail)}  (${word})`, col);
+    }
+    const PNL: Record<string, string> = {
+      gross_profit: 'gross profit', ebitda: 'EBITDA', operating_income: 'operating income',
+      other_income: 'other income', finance_cost: 'finance cost', tax: 'tax',
+      exceptional: 'an exceptional item', no_divergence: 'no line - growth tracks revenue',
+    };
+    const pnl = PNL[str(mb.where_in_pnl)];
+    if (pnl) para(`Growth first diverges from revenue at ${pnl}.`, { size: 8.5, color: MUTED });
+    y += 1.5;
+  }
+
+  const cats: any[] = Array.isArray((d as any).catalysts) ? (d as any).catalysts : [];
+  if (cats.length) {
+    section('Catalysts');
+    for (const c of cats) {
+      const sub = [str(c?.size_vs_company), str(c?.expected_impact_period) && str(c?.expected_impact_period) !== 'not stated'
+        ? `impact from ${str(c.expected_impact_period)}` : '']
+        .filter((x) => x && x !== 'not quantified').join(' - ');
+      const st = str(c?.status) && str(c?.status) !== 'not_stated'
+        ? ` [${str(c.status).replace(/_/g, ' ')}]` : '';
+      bullet(str(c?.title) + st, sub, BLUE);
+    }
+    y += 1.5;
+  }
+
+  const capexP: any[] = Array.isArray((d as any).capex_projects) ? (d as any).capex_projects : [];
+  if (capexP.length) {
+    section('Capacity and capex');
+    for (const c of capexP) {
+      const sub = [str(c?.amount), str(c?.capacity_added),
+        str(c?.completion_period) && str(c.completion_period) !== 'not stated' ? `completes ${str(c.completion_period)}` : '',
+        str(c?.revenue_from) && str(c.revenue_from) !== 'not stated' ? `earns from ${str(c.revenue_from)}` : '']
+        .filter(Boolean).join(' - ');
+      bullet(str(c?.name), sub, INK2);
+    }
+    y += 1.5;
+  }
+
+  const kv = (obj: any, keys: string[], labels: Record<string, string>) =>
+    keys.map((k) => ({ k, v: str(obj?.[k]) })).filter((r) => has(r.v))
+      .map((r) => `${labels[r.k]}: ${r.v}`);
+  const utLines = kv((d as any).utilisation, ['current', 'prior', 'expected', 'expected_by', 'basis'],
+    { current: 'Now', prior: 'Was', expected: 'Expected', expected_by: 'By', basis: 'Basis' });
+  if (utLines.length) { section('Utilisation'); para(utLines.join('   |   '), { size: 9.5, color: INK }); y += 1.5; }
+
+  const obLines = kv((d as any).order_book,
+    ['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration'],
+    { closing_value: 'Order book', growth: 'Growth', order_inflow: 'Inflow', book_to_bill: 'Book-to-bill', execution_period: 'Executes over', concentration: 'Concentration' });
+  if (obLines.length) { section('Order book'); para(obLines.join('   |   '), { size: 9.5, color: INK }); y += 1.5; }
+
+  if (has((d as any).operating_leverage_evidence)) {
+    section('Operating leverage');
+    para(str((d as any).operating_leverage_evidence), { size: 9.5 });
+    y += 1.5;
+  }
+
+  const oneOffs: any[] = Array.isArray((d as any).one_offs) ? (d as any).one_offs : [];
+  if (oneOffs.length) {
+    section('One-offs - what will not repeat', RED);
+    for (const o of oneOffs) {
+      const amt = has(o?.amount) ? ` - ${str(o.amount)}` : '';
+      const rec = str(o?.recurring) === 'will_not_recur' ? ' (will not recur)' : '';
+      bullet(str(o?.direction) === 'gain' ? '+' : '-', `${str(o?.item)}${amt}${rec}`,
+        str(o?.direction) === 'gain' ? AMBER : RED);
+    }
+    y += 1.5;
+  }
+
   // ── 4. Positives / negatives ───────────────────────────────────────────
   const pos: any[] = Array.isArray(d.positives) ? d.positives : [];
   const neg: any[] = Array.isArray(d.negatives) ? d.negatives : [];

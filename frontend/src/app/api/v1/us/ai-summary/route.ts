@@ -34,7 +34,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v5';  // zzz681 — source-document check; v4 cached summaries of the wrong document
+const PROMPT_VERSION = 'us-ai-summary-v6';  // zzz681 — source-document check; v4 cached summaries of the wrong document
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // The release in full wherever it fits. A long retail release puts its income
 // statement and its reconciliation tables well past 60k characters, and a model
@@ -168,8 +168,144 @@ const SUMMARY_TOOL = {
         description: 'Things a reader would expect and this release does NOT give — no segment breakout, no cash-flow statement, no guidance, no backlog figure, no margin detail. 0 to 4 items. Absence is evidence; say only what is genuinely missing from THIS text.',
         items: { type: 'string' },
       },
+
+      // ═══════════════════════════════════════════════════════════════════
+      // v6 — THE CATALYSTS, AND WHY THE MARGIN MOVED.            (zzz699)
+      //
+      // v5 answered "what does this release say". It could not answer the
+      // question an owner actually asks next: WHY did the margin move, is it
+      // repeatable, what capacity is being built and when does it earn, how
+      // full are the plants, and how big is the order book. Those are the
+      // fields below, and they are taken from the owner's own catalyst
+      // taxonomy rather than invented here.
+      //
+      // THE STRUCTURAL / CYCLICAL SPLIT IS THE WHOLE POINT of margin_bridge.
+      // A margin built on mix, pricing, operating leverage or automation
+      // repeats. One built on a raw-material tailwind, freight normalisation
+      // or forex does not, and reads identically on the face of the P&L.
+      // ═══════════════════════════════════════════════════════════════════
+      catalysts: {
+        type: 'array',
+        description: 'Every distinct forward-looking catalyst the release names — an order, a customer win, a qualification, a capacity addition, a product launch, an approval, a pricing action, an entry into a new geography. Empty array if the release names none. Do not list ordinary results commentary here.',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: "The catalyst in one clause, using the company's own proper nouns." },
+            category: {
+              type: 'string',
+              enum: ['capacity', 'order_or_contract', 'new_customer', 'product', 'pricing_or_margin', 'industry_structural', 'market_share', 'international', 'balance_sheet', 'turnaround', 'management', 'm_and_a', 'technology', 'other'],
+            },
+            status: {
+              type: 'string',
+              enum: ['announced', 'under_construction', 'commissioned', 'commercial_production', 'ramping', 'at_full_run_rate', 'delayed', 'not_stated'],
+            },
+            size_vs_company: { type: 'string', description: 'How big it is relative to the company — order value against annual revenue, new capacity against existing. "not quantified" if the release gives no denominator.' },
+            expected_impact_period: { type: 'string', description: 'The period from which it should show in the numbers, in the company\'s words ("FY28", "H2 FY27"). "not stated" if absent.' },
+            evidence_quote: { type: 'string', description: 'The sentence from the release that evidences it. Quote, do not paraphrase.' },
+          },
+          required: ['title', 'category', 'status', 'size_vs_company', 'expected_impact_period', 'evidence_quote'],
+        },
+      },
+      margin_bridge: {
+        type: 'object',
+        description: 'Why the operating margin moved. Fill only from what the release states; leave drivers empty rather than guessing.',
+        properties: {
+          opm_change_pp: { type: 'string', description: 'The operating-margin change in percentage points as the release states or as its own figures show, e.g. "+8.8pp". Empty string if not determinable.' },
+          drivers: {
+            type: 'array',
+            description: 'Each stated cause of the margin move. Empty array if the release does not explain it.',
+            items: {
+              type: 'object',
+              properties: {
+                driver: {
+                  type: 'string',
+                  enum: ['mix_shift', 'pricing_power', 'operating_leverage', 'automation', 'yield_improvement', 'in_housing', 'procurement_savings', 'raw_material_tailwind', 'freight_normalisation', 'forex', 'energy_cost', 'one_time_gain', 'volume_only', 'utilisation_increase', 'cost_reduction', 'other'],
+                },
+                nature: {
+                  type: 'string',
+                  enum: ['structural', 'cyclical', 'one_off'],
+                  description: 'Mix, pricing, operating leverage, automation, yield and in-housing are structural. Raw material, freight, forex and energy are cyclical. A gain that will not recur is one_off.',
+                },
+                detail: { type: 'string', description: 'The driver with its figure as the release prints it.' },
+              },
+              required: ['driver', 'nature', 'detail'],
+            },
+          },
+          verdict: {
+            type: 'string',
+            enum: ['predominantly_structural', 'predominantly_cyclical', 'mixed', 'not_explained'],
+          },
+          where_in_pnl: {
+            type: 'string',
+            enum: ['gross_profit', 'ebitda', 'operating_income', 'other_income', 'finance_cost', 'tax', 'exceptional', 'no_divergence', 'not_determinable'],
+            description: 'Walk revenue → gross profit → EBITDA → operating income → pre-tax → net. Name the FIRST line where growth diverges sharply from revenue growth.',
+          },
+        },
+        required: ['opm_change_pp', 'drivers', 'verdict', 'where_in_pnl'],
+      },
+      utilisation: {
+        type: 'object',
+        description: 'Capacity utilisation. Capacity is potential; utilisation is monetisation. Empty strings where the release is silent — most releases are.',
+        properties: {
+          current: { type: 'string', description: 'Utilisation this period as disclosed, e.g. "86%".' },
+          prior: { type: 'string', description: 'Prior-period or prior-year utilisation, for the before-and-after.' },
+          expected: { type: 'string', description: 'The level management guides to.' },
+          expected_by: { type: 'string', description: "The period by which that level is expected, in the company's words." },
+          basis: { type: 'string', description: 'Which plant, line or segment the figure refers to — a consolidated number hides an idle new plant.' },
+        },
+        required: ['current', 'prior', 'expected', 'expected_by', 'basis'],
+      },
+      capex_projects: {
+        type: 'array',
+        description: 'Each named capital project: what is being built, how big, when it completes and when it earns. Empty array if the release names none.',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            type: { type: 'string', enum: ['greenfield', 'brownfield', 'debottlenecking', 'maintenance', 'r_and_d', 'asset_purchase', 'not_stated'] },
+            amount: { type: 'string', description: 'Announced or spent amount as the release prints it. Empty if not given.' },
+            capacity_added: { type: 'string', description: 'The capacity it adds, in the release\'s own units.' },
+            status: { type: 'string', enum: ['announced', 'under_construction', 'commissioned', 'commercial_production', 'ramping', 'delayed', 'not_stated'] },
+            completion_period: { type: 'string', description: 'When it completes, in the company\'s words. "not stated" if absent.' },
+            revenue_from: { type: 'string', description: 'The period from which it is expected to contribute revenue. "not stated" if absent.' },
+          },
+          required: ['name', 'type', 'amount', 'capacity_added', 'status', 'completion_period', 'revenue_from'],
+        },
+      },
+      order_book: {
+        type: 'object',
+        description: 'Backlog and order intake. Backlog is a promise, not revenue. Empty strings where not disclosed.',
+        properties: {
+          closing_value: { type: 'string', description: 'Order book or backlog at period end, as printed.' },
+          growth: { type: 'string', description: 'Its growth, as the release states it.' },
+          order_inflow: { type: 'string', description: 'Orders won during the period.' },
+          book_to_bill: { type: 'string', description: 'Book-to-bill if stated. Above 1 means demand exceeds delivery.' },
+          execution_period: { type: 'string', description: 'Over what period the book converts to revenue, in management\'s words.' },
+          concentration: { type: 'string', description: 'Any statement about a single large order or customer as a share of the book.' },
+        },
+        required: ['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration'],
+      },
+      one_offs: {
+        type: 'array',
+        description: 'Items the release itself identifies as non-recurring, exceptional, one-time, or a settlement/insurance/tax/forex gain or charge. Empty array if none. These are what make a quarter unrepeatable.',
+        items: {
+          type: 'object',
+          properties: {
+            item: { type: 'string' },
+            amount: { type: 'string', description: 'As printed. Empty string if the release names the item but not the amount.' },
+            direction: { type: 'string', enum: ['gain', 'charge'] },
+            recurring: { type: 'string', enum: ['will_not_recur', 'may_recur', 'not_stated'] },
+          },
+          required: ['item', 'amount', 'direction', 'recurring'],
+        },
+      },
+      operating_leverage_evidence: {
+        type: 'string',
+        description: 'Any statement that fixed costs were spread over higher volume, or that operating leverage drove the result. Quote it. Empty string if the release makes no such claim.',
+      },
     },
-    required: ['verdict_line', 'guidance', 'segments', 'mix_shift', 'capital', 'management', 'new_business', 'positives', 'negatives', 'watch_next', 'not_disclosed'],
+    required: ['verdict_line', 'guidance', 'segments', 'mix_shift', 'capital', 'management', 'new_business', 'positives', 'negatives', 'watch_next', 'not_disclosed',
+      'catalysts', 'margin_bridge', 'utilisation', 'capex_projects', 'order_book', 'one_offs', 'operating_leverage_evidence'],
   },
 };
 
@@ -190,7 +326,15 @@ FIELD DISCIPLINE
 - Every field is filled from the release or left empty. An empty string and an empty array are correct answers and are preferred over a guess.
 - Keep each detail to one sentence. The reader is scanning, not reading.
 - "not_disclosed" is for things genuinely absent from THIS release that a reader would reasonably expect. Do not list something the release does give.
-- Do not editorialise. No recommendation, no valuation, no price view, no comparison to other companies.`;
+- Do not editorialise. No recommendation, no valuation, no price view, no comparison to other companies.
+
+THE CATALYST AND MARGIN FIELDS (v6)
+- "catalysts" is for FORWARD-LOOKING events the release names — an order, a customer win, a qualification, a capacity addition, a product launch, an approval, a pricing action, a new geography. It is NOT for results commentary. If the release names none, return an empty array; a quarter with no catalyst is a common and honest answer.
+- "margin_bridge" asks WHY the margin moved, and the structural/cyclical split is the most important judgement in this whole schema. Mix shift, pricing power, operating leverage, automation, yield and in-housing REPEAT and are structural. Raw-material tailwinds, freight normalisation, forex and energy costs DO NOT repeat and are cyclical. A gain the release calls non-recurring is one_off. If the release states no cause, return an empty drivers array and verdict "not_explained" — do not infer a cause from the direction of the number.
+- "where_in_pnl" means: walk revenue → gross profit → EBITDA → operating income → pre-tax → net income, and name the FIRST line where growth diverges sharply from revenue growth. If profit grew far faster than revenue and the operating line does not explain it, the divergence is below operating income and you must say which line.
+- "utilisation" and "capex_projects" are usually absent from a US earnings release. Empty is the correct and expected answer. Never estimate a utilisation percentage, a project cost or a completion date.
+- "one_offs" is only for items the release ITSELF identifies as non-recurring, exceptional, one-time, or a settlement, insurance, tax or forex gain or charge. Do not classify an ordinary operating item as a one-off.
+- Every figure in these fields obeys the same rule as everywhere else: it must appear in the release text.`;
 
 // ── THE NUMBERS CHECK ──────────────────────────────────────────────────────
 //
@@ -587,6 +731,32 @@ export async function GET(req: NextRequest) {
   for (const k of ['capex', 'buyback', 'dividend', 'debt']) {
     if (data.capital && !clean(data.capital[k])) data.capital[k] = '';
   }
+
+  // ── v6 FIELDS GO THROUGH THE SAME GATE.                        (zzz699)
+  //
+  // Every new block carries figures, and a figure the release does not print
+  // is exactly as unacceptable here as it was in a positive. The rule stays
+  // per-item: one unsupported capacity number costs that project, not the
+  // whole capex list. Enum and quote fields carry no arithmetic and are left
+  // alone — an evidence_quote is checked by being a quote, not by numerals.
+  data.catalysts = (Array.isArray(data.catalysts) ? data.catalysts : [])
+    .filter((c: any) => clean(c?.title) && clean(c?.size_vs_company));
+  data.capex_projects = (Array.isArray(data.capex_projects) ? data.capex_projects : [])
+    .filter((c: any) => clean(c?.amount) && clean(c?.capacity_added) && clean(c?.name));
+  data.one_offs = (Array.isArray(data.one_offs) ? data.one_offs : [])
+    .filter((o: any) => clean(o?.amount) && clean(o?.item));
+  if (data.margin_bridge) {
+    if (!clean(data.margin_bridge.opm_change_pp)) data.margin_bridge.opm_change_pp = '';
+    data.margin_bridge.drivers = (Array.isArray(data.margin_bridge.drivers) ? data.margin_bridge.drivers : [])
+      .filter((d: any) => clean(d?.detail));
+  }
+  for (const k of ['current', 'prior', 'expected', 'expected_by', 'basis']) {
+    if (data.utilisation && !clean(data.utilisation[k])) data.utilisation[k] = '';
+  }
+  for (const k of ['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration']) {
+    if (data.order_book && !clean(data.order_book[k])) data.order_book[k] = '';
+  }
+  if (!clean(data.operating_leverage_evidence)) data.operating_leverage_evidence = '';
 
   // Nothing left to say, or the positives — the substance of the reading —
   // mostly failed verification.

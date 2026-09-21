@@ -1415,6 +1415,206 @@ function SectionLabel({ children, color }: { children: React.ReactNode; color?: 
 // result the company declined to stand behind with any forward statement.
 // ═══════════════════════════════════════════════════════════════════════════
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v6 RENDERERS — the catalyst and margin blocks.                    (zzz699)
+//
+// Each renders only when the release actually gave something. A US earnings
+// release usually discloses no utilisation and no capex schedule, so those
+// blocks are absent far more often than present — which is correct, and is
+// why none of them print a heading over an empty body.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const NATURE_STYLE: Record<string, { c: string; word: string }> = {
+  structural: { c: 'var(--mc-bullish)', word: 'structural — repeats' },
+  cyclical:   { c: '#F59E0B',           word: 'cyclical — will not repeat' },
+  one_off:    { c: 'var(--mc-bearish)', word: 'one-off' },
+};
+const VERDICT_STYLE: Record<string, { c: string; t: string }> = {
+  predominantly_structural: { c: 'var(--mc-bullish)', t: 'MOSTLY STRUCTURAL' },
+  predominantly_cyclical:   { c: '#F59E0B',           t: 'MOSTLY CYCLICAL' },
+  mixed:                    { c: 'var(--mc-cyan)',    t: 'MIXED' },
+  not_explained:            { c: 'var(--mc-text-4)',  t: 'NOT EXPLAINED' },
+};
+const PNL_LABEL: Record<string, string> = {
+  gross_profit: 'gross profit', ebitda: 'EBITDA', operating_income: 'operating income',
+  other_income: 'other income', finance_cost: 'finance cost', tax: 'tax',
+  exceptional: 'an exceptional item', no_divergence: 'no line — growth tracks revenue',
+  not_determinable: 'not determinable',
+};
+
+function MarginBridge({ d }: { d: any }) {
+  const mb = d?.margin_bridge;
+  const drivers: any[] = Array.isArray(mb?.drivers) ? mb.drivers : [];
+  const hasChange = typeof mb?.opm_change_pp === 'string' && mb.opm_change_pp.trim().length > 0;
+  if (!mb || (!drivers.length && !hasChange)) return null;
+  const v = VERDICT_STYLE[mb.verdict] || VERDICT_STYLE.not_explained;
+  const pnl = PNL_LABEL[mb.where_in_pnl] || '';
+  return (
+    <div style={{ marginTop: 10 }}>
+      <SectionLabel>WHY THE MARGIN MOVED</SectionLabel>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
+        {hasChange && (
+          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-text-0)' }}>{mb.opm_change_pp}</span>
+        )}
+        <span style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: 0.3, color: v.c,
+          border: `1px solid color-mix(in srgb, ${v.c} 45%, transparent)`,
+          backgroundColor: `color-mix(in srgb, ${v.c} 12%, transparent)`,
+          padding: '2px 7px', borderRadius: 999,
+        }}>{v.t}</span>
+      </div>
+      {drivers.map((dr, i) => {
+        const ns = NATURE_STYLE[dr?.nature] || NATURE_STYLE.one_off;
+        return (
+          <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4, fontSize: 11.5, lineHeight: 1.5 }}>
+            <span style={{ color: ns.c, fontWeight: 700, flexShrink: 0 }}>›</span>
+            <span style={{ color: 'var(--mc-text-2)' }}>
+              {dr?.detail}
+              <span style={{ color: ns.c, fontSize: 10, fontWeight: 700 }}> · {ns.word}</span>
+            </span>
+          </div>
+        );
+      })}
+      {pnl && mb.where_in_pnl !== 'not_determinable' && (
+        <div style={{ marginTop: 3, fontSize: 10, color: 'var(--mc-text-4)' }}>
+          Growth first diverges from revenue at <b style={{ color: 'var(--mc-text-3)' }}>{pnl}</b>.
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CAT_ICON: Record<string, string> = {
+  capacity: '🏭', order_or_contract: '📜', new_customer: '🤝', product: '🧪',
+  pricing_or_margin: '💹', industry_structural: '🌐', market_share: '📈',
+  international: '✈️', balance_sheet: '🏦', turnaround: '🔄', management: '👤',
+  m_and_a: '🧩', technology: '⚙️', other: '•',
+};
+const STATUS_TONE: Record<string, string> = {
+  commercial_production: 'var(--mc-bullish)', at_full_run_rate: 'var(--mc-bullish)',
+  ramping: 'var(--mc-bullish)', commissioned: 'var(--mc-cyan)',
+  under_construction: 'var(--mc-cyan)', announced: 'var(--mc-text-3)',
+  delayed: 'var(--mc-bearish)', not_stated: 'var(--mc-text-4)',
+};
+
+function Catalysts({ d }: { d: any }) {
+  const cats: any[] = Array.isArray(d?.catalysts) ? d.catalysts : [];
+  const capex: any[] = Array.isArray(d?.capex_projects) ? d.capex_projects : [];
+  const ob = d?.order_book || {};
+  const ut = d?.utilisation || {};
+  const oneOffs: any[] = Array.isArray(d?.one_offs) ? d.one_offs : [];
+  const olev = typeof d?.operating_leverage_evidence === 'string' ? d.operating_leverage_evidence.trim() : '';
+  const obRows = (['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration'] as const)
+    .map((k) => ({ k, v: ob[k] })).filter((r) => typeof r.v === 'string' && r.v.trim());
+  const utRows = (['current', 'prior', 'expected', 'expected_by', 'basis'] as const)
+    .map((k) => ({ k, v: ut[k] })).filter((r) => typeof r.v === 'string' && r.v.trim());
+  if (!cats.length && !capex.length && !obRows.length && !utRows.length && !oneOffs.length && !olev) return null;
+  const LBL: Record<string, string> = {
+    closing_value: 'Order book', growth: 'Growth', order_inflow: 'Inflow',
+    book_to_bill: 'Book-to-bill', execution_period: 'Executes over', concentration: 'Concentration',
+    current: 'Now', prior: 'Was', expected: 'Expected', expected_by: 'By', basis: 'Basis',
+  };
+  return (
+    <>
+      {cats.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <SectionLabel color="var(--mc-cyan)">CATALYSTS</SectionLabel>
+          {cats.map((c, i) => (
+            <div key={i} style={{ marginBottom: 6, fontSize: 11.5, lineHeight: 1.5 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ flexShrink: 0 }}>{CAT_ICON[c?.category] || '•'}</span>
+                <b style={{ color: 'var(--mc-text-0)' }}>{c?.title}</b>
+                {c?.status && c.status !== 'not_stated' && (
+                  <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, color: STATUS_TONE[c.status] || 'var(--mc-text-4)' }}>
+                    {String(c.status).replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <div style={{ color: 'var(--mc-text-3)', fontSize: 10.5, marginLeft: 18 }}>
+                {[c?.size_vs_company, c?.expected_impact_period && c.expected_impact_period !== 'not stated'
+                  ? `impact from ${c.expected_impact_period}` : '']
+                  .filter((x) => x && x !== 'not quantified').join(' · ')}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {capex.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <SectionLabel>CAPACITY &amp; CAPEX</SectionLabel>
+          {capex.map((c, i) => (
+            <div key={i} style={{ marginBottom: 5, fontSize: 11.5, lineHeight: 1.5 }}>
+              <b style={{ color: 'var(--mc-text-0)' }}>{c?.name}</b>
+              {c?.status && c.status !== 'not_stated' && (
+                <span style={{ fontSize: 9.5, fontWeight: 800, marginLeft: 6, color: STATUS_TONE[c.status] || 'var(--mc-text-4)' }}>
+                  {String(c.status).replace(/_/g, ' ').toUpperCase()}
+                </span>
+              )}
+              <div style={{ color: 'var(--mc-text-3)', fontSize: 10.5 }}>
+                {[c?.amount, c?.capacity_added,
+                  c?.completion_period && c.completion_period !== 'not stated' ? `completes ${c.completion_period}` : '',
+                  c?.revenue_from && c.revenue_from !== 'not stated' ? `earns from ${c.revenue_from}` : '']
+                  .filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {utRows.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <SectionLabel>UTILISATION</SectionLabel>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11.5 }}>
+            {utRows.map((r) => (
+              <span key={r.k} style={{ color: 'var(--mc-text-2)' }}>
+                <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>{LBL[r.k]} </span>
+                <b style={{ color: 'var(--mc-text-0)' }}>{r.v}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {obRows.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <SectionLabel>ORDER BOOK</SectionLabel>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11.5 }}>
+            {obRows.map((r) => (
+              <span key={r.k} style={{ color: 'var(--mc-text-2)' }}>
+                <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>{LBL[r.k]} </span>
+                <b style={{ color: 'var(--mc-text-0)' }}>{r.v}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {olev && (
+        <div style={{ marginTop: 10 }}>
+          <SectionLabel color="var(--mc-bullish)">OPERATING LEVERAGE</SectionLabel>
+          <div style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--mc-text-2)' }}>{olev}</div>
+        </div>
+      )}
+      {oneOffs.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <SectionLabel color="var(--mc-bearish)">ONE-OFFS — what will not repeat</SectionLabel>
+          {oneOffs.map((o, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4, fontSize: 11.5, lineHeight: 1.5 }}>
+              <span style={{ color: o?.direction === 'gain' ? '#F59E0B' : 'var(--mc-bearish)', fontWeight: 700 }}>
+                {o?.direction === 'gain' ? '+' : '−'}
+              </span>
+              <span style={{ color: 'var(--mc-text-2)' }}>
+                {o?.item}{o?.amount ? ` — ${o.amount}` : ''}
+                {o?.recurring === 'will_not_recur' && (
+                  <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}> · will not recur</span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore; hasTranscript: boolean }) {
   const [open, setOpen] = useState(false);
   // Colour the headline by band. Deliberately the same bands as the grade
@@ -1555,6 +1755,14 @@ function SummaryView({ d }: { d: any }) {
           </span>
         </div>
       )}
+
+      {/* ── v6: WHY THE MARGIN MOVED, AND WHAT IS COMING.        (zzz699)
+          Placed ABOVE the bullets deliberately. "Operating margin +8.8pp" is
+          the headline a reader acts on, and whether it repeats is decided
+          entirely by what caused it. Structural causes print green, cyclical
+          amber, one-off red — so the answer is legible before the detail. */}
+      <MarginBridge d={d} />
+      <Catalysts d={d} />
 
       {/* 3 — positives and negatives, side by side */}
       {(pos.length > 0 || neg.length > 0) && (
