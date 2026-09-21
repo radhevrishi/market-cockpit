@@ -26,19 +26,13 @@
 // the future; that happens one layer up, in status.ts, and is labelled there.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type VarKey =
-  | 'revenue_growth'
-  | 'earnings_growth'
-  | 'operating_leverage'
-  | 'margin'
-  | 'utilisation'
-  | 'capacity'
-  | 'capex'
-  | 'order_book'
-  | 'book_to_bill'
-  | 'guidance'
-  | 'cash_conversion'
-  | 'one_offs';
+import {
+  VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE,
+  type VarKey, type VarGroup, type EvidenceKind,
+} from './taxonomy';
+
+export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
+export type { VarKey, VarGroup, EvidenceKind };
 
 export type VarVerdict = 'improving' | 'flat' | 'deteriorating' | 'unknown';
 export type VarSource = 'grader' | 'filing';
@@ -46,6 +40,11 @@ export type VarSource = 'grader' | 'filing';
 export interface StructuralVar {
   key: VarKey;
   label: string;
+  /** fact | claim | derived — the spec's hallucination firewall. A management
+   *  target is a CLAIM about the future and must never read like a filed
+   *  figure; operating leverage is DERIVED and must never read like something
+   *  the company said. (zzz720) */
+  kind?: EvidenceKind;
   /** As the source stated it. Strings, not numbers: "68%", "₹500 Cr", "2.1x". */
   before: string | null;
   after: string | null;
@@ -58,20 +57,6 @@ export interface StructuralVar {
   source: VarSource;
 }
 
-export const VAR_LABEL: Record<VarKey, string> = {
-  revenue_growth: 'Revenue growth',
-  earnings_growth: 'Earnings growth',
-  operating_leverage: 'Operating leverage',
-  margin: 'Operating margin',
-  utilisation: 'Capacity utilisation',
-  capacity: 'Capacity',
-  capex: 'Capex',
-  order_book: 'Order book',
-  book_to_bill: 'Book-to-bill',
-  guidance: 'Guidance',
-  cash_conversion: 'Cash conversion',
-  one_offs: 'One-offs',
-};
 
 const n = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -124,8 +109,19 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   // YoY cancels). It is used where nothing better exists, and the evidence
   // line says "sequential" so the reader can discount it accordingly. (zzz716)
   const opmChangeQoq = n(graded?.opm_change_pp_qoq);
-  const sequentialOnly = opmChange == null && opmChangeQoq != null;
   const opm = n(graded?.opm_pct);
+  // ── THE MARGIN BRIDGE THAT WAS SITTING THERE UNREAD.            (zzz719)
+  //
+  // The India bench carries `opm_pct` AND `opm_prev_pct` — a genuine
+  // year-on-year margin change, two fields apart. This extractor only looked
+  // for `opm_change_pp`, which the bench does not have, so EVERY graded
+  // holding reported "○ Operating margin — not disclosed" while the number
+  // needed to compute it was in the same row. Twelve holdings sat at EVIDENCE
+  // INCOMPLETE waiting on a filing for a figure already in hand.
+  const opmPrev = n(graded?.opm_prev_pct);
+  const opmChangeYoy = opmChange ?? (opm != null && opmPrev != null
+    ? Math.round((opm - opmPrev) * 10) / 10 : null);
+  const sequentialOnly = opmChangeYoy == null && opmChangeQoq != null;
   const cfoToPat = n(graded?.cfo_to_pat_ratio) ?? n(graded?.ocf_to_pat_ratio);
 
   if (salesY != null) {
@@ -185,8 +181,8 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   const mb = summary?.margin_bridge;
   const mbDelta = said(mb?.opm_change_pp) ? String(mb.opm_change_pp) : null;
   const drivers: any[] = Array.isArray(mb?.drivers) ? mb.drivers : [];
-  if (mbDelta || opmChange != null || opmChangeQoq != null || opm != null) {
-    const dv = opmChange != null ? opmChange : (pctIn(mbDelta) ?? opmChangeQoq);
+  if (mbDelta || opmChangeYoy != null || opmChangeQoq != null || opm != null) {
+    const dv = opmChangeYoy != null ? opmChangeYoy : (pctIn(mbDelta) ?? opmChangeQoq);
     const structural = drivers.filter((d) => d?.nature === 'structural').length;
     const cyclical = drivers.filter((d) => d?.nature === 'cyclical').length;
     const why = drivers.length
@@ -194,23 +190,60 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
       : ' No reason disclosed — the change is a number without a mechanism.';
     push({
       key: 'margin', label: VAR_LABEL.margin,
-      before: opm != null && dv != null ? `${(opm - dv).toFixed(1)}%` : null,
+      // The BEFORE is the prior margin where the source states it, never a
+      // level minus a delta from a different comparison basis. The DELTA is
+      // always populated when one exists: the card shows `delta || after`, so
+      // a null delta made the chip print the LEVEL next to a verdict computed
+      // from the CHANGE — "✕ Operating margin 10.5%", which reads as though
+      // 10.5% itself were the bad news. (zzz719)
+      before: opmPrev != null ? `${opmPrev.toFixed(1)}%` : null,
       after: opm != null ? `${opm.toFixed(1)}%` : null,
-      delta: mbDelta || (opmChange != null ? `${opmChange >= 0 ? '+' : ''}${opmChange.toFixed(1)}pp` : null),
+      delta: mbDelta
+        || (dv != null ? `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' QoQ' : ''}` : null),
       verdict: dv == null ? 'unknown' : dv >= 1 ? 'improving' : dv > -1 ? 'flat' : 'deteriorating',
-      evidence: `Operating margin ${dv == null ? 'change not quantified'
-        : `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' vs last quarter (sequential — no year-on-year bridge available)' : ''}`}.${why}`
+      evidence: `Operating margin ${opm != null ? `${opm.toFixed(1)}%` : ''}`
+        + `${opmPrev != null ? ` (was ${opmPrev.toFixed(1)}%)` : ''}`
+        + `${dv == null ? ' — change not quantified'
+          : ` — ${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly
+            ? ' vs last quarter (sequential — no year-on-year bridge available, so seasonality is not cancelled)'
+            : ' year on year'}`}.${why}`
         + (structural || cyclical ? ` (${structural} structural, ${cyclical} cyclical.)` : ''),
       source: drivers.length ? 'filing' : 'grader',
     });
   }
 
   if (cfoToPat != null) {
+    // ── A NEGATIVE RATIO DOES NOT MEAN BAD CASH.                  (zzz719)
+    //
+    // CFO/PAT goes negative when EITHER side is negative, and the two mean
+    // opposite things: negative cash against positive profit is the warning,
+    // while positive cash against a LOSS is the company funding itself
+    // through a bad quarter — often the best news in the filing. The live
+    // page showed "✕ Cash conversion −21.30×" on TI and "−7.84×" on E2E and
+    // counted both against the thesis without knowing which case it was.
+    //
+    // This is the same sign-inversion that made the profit-leak flag fire on
+    // Raymond at PAT −99%. Where the numerator's sign cannot be established
+    // the variable is UNKNOWN, which costs nothing, rather than a guess that
+    // could push a holding onto the exit radar for the wrong reason.
+    const patSign = n(graded?.pat_curr_cr) ?? n(graded?.net_income_curr_musd)
+      ?? n(graded?.profit_after_tax_latest_quarter);
+    const negative = cfoToPat < 0;
+    const lossMaking = patSign != null && patSign < 0;
     push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
       before: null, after: `${cfoToPat.toFixed(2)}×`, delta: null,
-      verdict: cfoToPat >= 1 ? 'improving' : cfoToPat >= 0.6 ? 'flat' : 'deteriorating',
-      evidence: `Operating cash flow is ${cfoToPat.toFixed(2)}× reported profit.`,
+      verdict: !negative
+        ? (cfoToPat >= 1 ? 'improving' : cfoToPat >= 0.6 ? 'flat' : 'deteriorating')
+        : lossMaking ? 'flat'
+          : patSign != null ? 'deteriorating' : 'unknown',
+      evidence: !negative
+        ? `Operating cash flow is ${cfoToPat.toFixed(2)}× reported profit.`
+        : lossMaking
+          ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}× because the quarter was loss-making. A ratio against a negative base says nothing about cash quality, so it is not counted either way.`
+          : patSign != null
+            ? `Operating cash flow is negative against a positive profit (${cfoToPat.toFixed(2)}×) — profit is not becoming cash.`
+            : `Cash-to-profit reads ${cfoToPat.toFixed(2)}×, and which side is negative is not stated in this row. A negative ratio means the opposite thing depending on that, so it is left unread rather than guessed.`,
       source: 'grader',
     });
   }
@@ -324,6 +357,172 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
         `${o?.direction === 'gain' ? '+' : '−'} ${o?.item}${said(o?.amount) ? ` (${o.amount})` : ''}`).join('; ')
         + (gains.length ? ' — these will not repeat, so the base for next year is lower than it looks.' : ''),
       source: 'filing',
+    });
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // THE STRUCTURAL BLOCK.                                        (zzz720)
+  //
+  // Everything above answers "what happened". Everything below answers "why,
+  // and can it continue" — which is the distinction the owner drew, and the
+  // reason the first engine could say "operating leverage 2.9×" without
+  // knowing whether that was a plant filling up or a one-quarter cost freeze.
+  //
+  // Every field here comes from the figure-verified `structured` object. A
+  // field the summary does not carry produces NO variable at all, which the
+  // card renders as a hollow ○ — never as "flat". A variable nobody looked at
+  // and a variable checked that did not move are different facts.
+  // ═════════════════════════════════════════════════════════════════════
+  const str = (v: unknown): string | null => (said(v) ? String(v).trim() : null);
+
+  /** Push a variable only when the source actually said something. */
+  const push_ = (
+    key: VarKey, after: string | null, verdict: VarVerdict, evidence: string,
+    opts: { before?: string | null; delta?: string | null; kind?: EvidenceKind } = {},
+  ) => {
+    if (!after && !opts.before && !opts.delta) return;
+    push({
+      key, label: VAR_LABEL[key],
+      before: opts.before ?? null, after, delta: opts.delta ?? null,
+      verdict, evidence, source: 'filing', kind: opts.kind ?? 'fact',
+    });
+  };
+
+  const cap = summary?.capacity || {};
+  push_('capacity', str(cap.installed), 'unknown',
+    `Installed capacity ${str(cap.installed)}${str(cap.prior_installed) ? ` (was ${cap.prior_installed})` : ''}.`,
+    { before: str(cap.prior_installed) });
+  push_('capacity_addition', str(cap.added), 'improving',
+    `Capacity added: ${str(cap.added)}${str(cap.added_by) ? `, by ${cap.added_by}` : ''}.`);
+  push_('new_plant', str(cap.new_plant), 'unknown',
+    `New plant: ${str(cap.new_plant)}${str(cap.new_plant_location) ? ` (${cap.new_plant_location})` : ''}.`,
+    { kind: 'fact' });
+  push_('commissioning', str(cap.commissioning), 'unknown',
+    `Commissioning: ${str(cap.commissioning)}.`, { kind: 'claim' });
+  if (str(cap.bottleneck)) {
+    const removed = /remov|eas|resolv|de-?bottleneck/i.test(String(cap.bottleneck));
+    push_('capacity_bottleneck', str(cap.bottleneck), removed ? 'improving' : 'deteriorating',
+      `Capacity bottleneck: ${cap.bottleneck}.`);
+  }
+
+  const dem = summary?.demand || {};
+  if (str(dem.order_intake) || str(dem.order_intake_growth)) {
+    const gg = pctIn(dem.order_intake_growth);
+    push_('order_intake', str(dem.order_intake), gg == null ? 'unknown' : gg >= 0 ? 'improving' : 'deteriorating',
+      `Order intake ${str(dem.order_intake) || ''}${str(dem.order_intake_growth) ? `, ${dem.order_intake_growth}` : ''}.`,
+      { delta: str(dem.order_intake_growth) });
+  }
+  push_('revenue_visibility', str(ob.coverage) || str(dem.revenue_visibility), 'unknown',
+    `Revenue visibility: ${str(ob.coverage) || str(dem.revenue_visibility)}.`);
+  if (str(dem.cancellations)) {
+    push_('execution_delay', str(dem.cancellations), 'deteriorating',
+      `Order cancellations or deferrals: ${dem.cancellations}.`);
+  }
+
+  // ── CAPEX AS A CHAIN, not an announcement. The status and the
+  //    "is it earning" link are the two the owner asked for by name.
+  const capexList: any[] = Array.isArray(summary?.capex_projects) ? summary.capex_projects : [];
+  if (capexList.length) {
+    const statuses = capexList.map((c) => str(c?.status)).filter(Boolean) as string[];
+    if (statuses.length) {
+      const delayed = statuses.some((x) => /delay/i.test(x));
+      const running = statuses.some((x) => /commission|commercial|ramp|full/i.test(x));
+      push_('capex_status', statuses.join('; '),
+        delayed ? 'deteriorating' : running ? 'improving' : 'unknown',
+        `Capex status: ${statuses.join('; ')}.`);
+    }
+    const growth = capexList.filter((c) => !/maintenance/i.test(String(c?.name || '') + String(c?.purpose || '')));
+    if (growth.length !== capexList.length || growth.length) {
+      push_('maintenance_vs_growth', `${growth.length} growth of ${capexList.length} disclosed`, 'unknown',
+        `${growth.length} of ${capexList.length} disclosed programmes are growth rather than maintenance capex. `
+        + 'Maintenance capex buys no new earnings; only growth capex can.');
+    }
+  }
+  if (str(summary?.capex_earning)) {
+    const s_ = String(summary.capex_earning);
+    push_('capex_earning', s_,
+      /not yet|below|under|disappoint|behind/i.test(s_) ? 'deteriorating'
+        : /ramp|earning|contribut|full/i.test(s_) ? 'improving' : 'unknown',
+      `Capex earning: ${s_}.`);
+  }
+
+  const cst = summary?.customers || {};
+  push_('new_customer', str(cst.new_customer), 'improving', `New customer: ${str(cst.new_customer)}.`);
+  push_('customer_loss', str(cst.loss), 'deteriorating', `Customer or programme lost: ${str(cst.loss)}.`);
+  push_('customer_concentration', str(cst.concentration), 'unknown',
+    `Customer concentration: ${str(cst.concentration)}.`);
+  push_('qualification', str(cst.qualification), 'improving', `Qualification: ${str(cst.qualification)}.`);
+  push_('approval', str(cst.approval), 'improving', `Approval: ${str(cst.approval)}.`);
+  push_('new_product', str(cst.new_product), 'improving', `New product: ${str(cst.new_product)}.`);
+
+  const vpm = summary?.volume_price_mix || {};
+  if (str(vpm.volume)) {
+    const vg = pctIn(vpm.volume);
+    push_('volume', str(vpm.volume), vg == null ? 'unknown' : vg > 0 ? 'improving' : vg < 0 ? 'deteriorating' : 'flat',
+      `Volume ${vpm.volume}. Volume growth is the part of revenue that is not price, so it is the part that needs capacity.`);
+  }
+  push_('price', str(vpm.price), 'unknown', `Price: ${str(vpm.price)}.`);
+  push_('mix', str(vpm.mix), 'unknown', `Mix: ${str(vpm.mix)}.`);
+  push_('exports', str(vpm.exports), 'unknown', `Exports / geography: ${str(vpm.exports)}.`);
+
+  const fin = summary?.balance || {};
+  push_('working_capital', str(fin.working_capital), 'unknown',
+    `Working capital: ${str(fin.working_capital)}.`);
+  push_('fcf', str(fin.fcf), 'unknown', `Free cash flow: ${str(fin.fcf)}.`);
+  push_('debt', str(fin.debt), 'unknown', `Debt: ${str(fin.debt)}.`);
+  const roce = n(graded?.roce) ?? n(graded?.roce_pct);
+  if (roce != null) {
+    push({
+      key: 'roce', label: VAR_LABEL.roce, before: null, after: `${roce.toFixed(1)}%`, delta: null,
+      verdict: roce >= 18 ? 'improving' : roce >= 12 ? 'flat' : 'deteriorating',
+      evidence: `Return on capital employed ${roce.toFixed(1)}%.`, source: 'grader', kind: 'fact',
+    });
+  }
+
+  const risk = summary?.risks || {};
+  if (str(risk.supply_bottleneck)) {
+    const removed = /remov|eas|resolv/i.test(String(risk.supply_bottleneck));
+    push_('supply_bottleneck', str(risk.supply_bottleneck), removed ? 'improving' : 'deteriorating',
+      `Supply bottleneck: ${risk.supply_bottleneck}.`);
+  }
+  push_('execution_delay', str(risk.delay), 'deteriorating', `Delay: ${str(risk.delay)}.`);
+  push_('shutdown', str(risk.shutdown), 'deteriorating', `Shutdown: ${str(risk.shutdown)}.`);
+  push_('market_share', str(risk.market_share), 'unknown', `Market share: ${str(risk.market_share)}.`);
+  push_('pricing_power', str(risk.pricing_power), 'unknown', `Pricing power: ${str(risk.pricing_power)}.`);
+  push_('technology', str(risk.technology), 'unknown', `Technology / automation: ${str(risk.technology)}.`);
+  push_('raw_materials', str(risk.raw_materials), 'unknown', `Raw materials: ${str(risk.raw_materials)}.`);
+
+  // ── MANAGEMENT TARGETS ARE CLAIMS, NOT FACTS, and are tagged so. They are
+  //    what the promise ledger will grade a LATER quarter against.
+  for (const t of (Array.isArray(summary?.management_targets) ? summary.management_targets : [])) {
+    if (!said(t?.metric) || !said(t?.target)) continue;
+    push({
+      key: 'management_target', label: VAR_LABEL.management_target,
+      before: null, after: `${t.metric}: ${t.target}`, delta: null,
+      verdict: 'unknown',
+      evidence: `Management target — ${t.metric} ${t.target}${said(t?.by) ? ` by ${t.by}` : ''}. `
+        + 'This is a claim about the future, not a reported figure. The ledger will check it next quarter.',
+      source: 'filing', kind: 'claim',
+    });
+    break;
+  }
+
+  // ── THE MARGIN DRIVER. The owner's point: the reason matters more than the
+  //    number. A margin built on mix, pricing, leverage or automation repeats;
+  //    one built on a raw-material tailwind or forex does not, and the two
+  //    read identically on the face of the P&L.
+  if (drivers.length) {
+    const structuralN = drivers.filter((d) => d?.nature === 'structural').length;
+    push({
+      key: 'margin_driver', label: VAR_LABEL.margin_driver,
+      before: null,
+      after: drivers.map((d) => String(d?.detail || '')).filter(Boolean).slice(0, 2).join('; '),
+      delta: null,
+      verdict: structuralN > 0 ? 'improving' : 'flat',
+      evidence: structuralN > 0
+        ? `${structuralN} of ${drivers.length} disclosed margin drivers are structural — that part repeats.`
+        : 'Every disclosed margin driver is cyclical or one-off. This margin does not repeat on its own.',
+      source: 'filing', kind: 'fact',
     });
   }
 

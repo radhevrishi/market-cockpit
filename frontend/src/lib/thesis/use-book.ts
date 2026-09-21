@@ -116,40 +116,62 @@ export function useBook() {
       if (cancelled) return;
       setRows(next); setLoading(false);
 
-      // Fill every holding the local bench could not answer for.
+      // ── ASK THE SERVER FOR EVERY HOLDING, NOT ONLY THE MISSING ONES.
+      //
+      // The first version only filled holdings the LOCAL bench could not
+      // answer for, on the assumption that a local hit was as good as a
+      // server one. It is not. The localStorage bench stores a trimmed row —
+      // HAPPYFORGE and UNIPARTS came back with cash conversion and nothing
+      // else, no revenue, no margin, and therefore no A/B/F/G pattern — while
+      // the SERVER bench holds the full graded row for the same two names,
+      // including `opm_prev_pct`, which is the entire margin bridge.
+      //
+      // So every symbol is requested, and a server row replaces a local one
+      // whenever it carries more of the fields the thesis engine reads. A
+      // local row is a fast first paint, never the better evidence. (zzz719)
       try {
-        const missing = symbols.filter((s) => !byNorm.get(s));
-        if (missing.length) {
-          const r = await fetch(`/api/v1/portfolio/thesis-data?tickers=${encodeURIComponent(missing.join(','))}`,
-            { cache: 'no-store' });
-          if (r.ok && !cancelled) {
-            const j = await r.json();
-            const got = j?.rows || {};
-            setRows((cur) => {
-              const out = { ...cur };
-              for (const sym of missing) {
-                const hit = got[sym.toUpperCase()];
-                if (!hit || hit.source === 'none') {
-                  out[sym] = { ...out[sym], dataSource: 'none' };
-                  continue;
-                }
-                // The summary already read for this holding, if any, is kept:
-                // a filing beats both stores and must not be thrown away by a
-                // background fill that arrives after it.
-                const prev = out[sym];
-                out[sym] = assess({
-                  ...prev,
-                  market: hit.market === 'US' ? 'US' : 'IN',
-                  graded: hit,
-                  tier: hit.tier || null,
-                  pattern: classifyGradedRow(hit),
-                  sourceUrl: prev.sourceUrl || hit.filing_url || hit.source_url || null,
-                  dataSource: hit.source,
-                });
+        const r = await fetch(`/api/v1/portfolio/thesis-data?tickers=${encodeURIComponent(symbols.join(','))}`,
+          { cache: 'no-store' });
+        if (r.ok && !cancelled) {
+          const j = await r.json();
+          const got = j?.rows || {};
+          const richness = (g: any): number => g ? [
+            'sales_yoy_pct', 'eps_yoy_pct', 'net_profit_yoy_pct', 'opm_pct',
+            'opm_prev_pct', 'opm_change_pp', 'opm_change_pp_qoq',
+            'cfo_to_pat_ratio', 'ocf_to_pat_ratio',
+          ].filter((k) => typeof g[k] === 'number' && Number.isFinite(g[k])).length : 0;
+
+          setRows((cur) => {
+            const out = { ...cur };
+            for (const sym of symbols) {
+              const hit = got[sym.toUpperCase()];
+              const prev = out[sym];
+              if (!prev) continue;
+              if (!hit || hit.source === 'none') {
+                if (!prev.graded) out[sym] = { ...prev, dataSource: 'none' };
+                continue;
               }
-              return out;
-            });
-          }
+              // Keep whichever row the engine can actually read more of. A
+              // graded row also wins a tie over a screener row, because it
+              // was read from the filing rather than from a database.
+              const keepLocal = richness(prev.graded) > richness(hit)
+                || (richness(prev.graded) === richness(hit) && prev.dataSource === 'graded' && hit.source !== 'graded');
+              if (keepLocal) continue;
+              // The summary already read for this holding is preserved: a
+              // filing beats every store and must not be discarded by a
+              // background fill that lands after it.
+              out[sym] = assess({
+                ...prev,
+                market: hit.market === 'US' ? 'US' : 'IN',
+                graded: hit,
+                tier: hit.tier || prev.tier || null,
+                pattern: classifyGradedRow(hit) || prev.pattern,
+                sourceUrl: prev.sourceUrl || hit.filing_url || hit.source_url || null,
+                dataSource: hit.source,
+              });
+            }
+            return out;
+          });
         }
       } catch { /* the filing path still answers for every holding */ }
 

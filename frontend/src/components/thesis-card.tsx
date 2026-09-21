@@ -25,6 +25,7 @@ import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { CAPEX_META, type CapexChain } from '@/lib/thesis/capex-chain';
 import type { VarVerdict } from '@/lib/thesis/variables';
+import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, GRADER_AVAILABLE, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 
 const C = {
@@ -154,38 +155,78 @@ export function ThesisCard(p: ThesisCardProps) {
         </div>
       )}
 
-      {/* ── THE COVERAGE CHECKLIST, ALWAYS VISIBLE.              (zzz717)
-          What has been confirmed, and what has not been looked at. It sits
-          above the fold deliberately: the failure this replaces was a page
-          that said THESIS STRENGTHENING while admitting two lines higher
-          that it had opened no filings. A reader must be able to see the
-          gap without expanding anything. */}
-      {a && (
-        <div style={{ marginTop: 6, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-          {a.checked.filter((c) => c.weight >= 3).map((c) => {
-            const v = VERDICT[c.verdict];
-            const isUnknown = c.verdict === 'unknown';
-            return (
-              <span key={c.key} title={c.evidence}
-                style={{
-                  fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 3,
-                  border: `1px solid ${isUnknown ? C.border : v.color}`,
-                  color: isUnknown ? C.faint : v.color,
-                  background: isUnknown ? 'transparent' : `${v.color}14`,
-                }}>
-                {isUnknown ? '○' : v.mark} {c.label}
-                {!isUnknown && (c.delta || c.after) ? ` ${c.delta || c.after}` : ''}
-              </span>
-            );
-          })}
-        </div>
-      )}
+      {/* ── THE VARIABLE BOARD, GROUPED, ALWAYS VISIBLE.         (zzz720)
+          Revenue and margin tell you WHAT happened; capacity, utilisation,
+          capex, orders and guidance tell you WHY and whether it continues.
+          So the financial group is one row among several rather than the
+          whole card, and a hollow ○ is a variable nobody looked at — never a
+          variable that was checked and did not move. */}
+      {a && (() => {
+        const byGroup = new Map<VarGroup, typeof a.checked>();
+        for (const c of a.checked) {
+          const g = VAR_GROUP[c.key] || 'financial';
+          if (!byGroup.has(g)) byGroup.set(g, [] as any);
+          (byGroup.get(g) as any).push(c);
+        }
+        return (
+          <div style={{ marginTop: 8 }}>
+            {GROUP_ORDER.filter((g) => byGroup.has(g)).map((g) => {
+              const items = byGroup.get(g)!;
+              const read = items.filter((c) => c.verdict !== 'unknown').length;
+              return (
+                <div key={g} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
+                  <span style={{
+                    fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: read ? C.dim : C.faint,
+                    minWidth: 128, textAlign: 'right', paddingTop: 2,
+                  }}>{GROUP_LABEL[g].split(' — ')[0]}</span>
+                  <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1 }}>
+                    {items.map((c) => {
+                      const v = VERDICT[c.verdict];
+                      const un = c.verdict === 'unknown';
+                      const needsFiling = un && !GRADER_AVAILABLE.has(c.key);
+                      return (
+                        <span key={c.key}
+                          title={un
+                            ? `${c.label} — not checked.${needsFiling
+                              ? ' This one only ever appears in a filing or concall, so reading the filing is what fills it.'
+                              : ' The graded row did not carry it.'}${c.weight >= 4 ? ' CORE to this thesis.' : ''}`
+                            : `${c.evidence}${c.weight >= 4 ? '\n\nCORE to this thesis.' : ''}`}
+                          style={{
+                            fontSize: 9.5, fontWeight: c.weight >= 4 ? 800 : 600,
+                            padding: '1px 6px', borderRadius: 3,
+                            border: `1px solid ${un ? (c.weight >= 4 ? C.amber : C.border) : v.color}`,
+                            color: un ? (c.weight >= 4 ? C.amber : C.faint) : v.color,
+                            background: un ? 'transparent' : `${v.color}14`,
+                            opacity: un && c.weight < 4 ? 0.75 : 1,
+                          }}>
+                          {un ? '○' : v.mark} {c.label}
+                          {!un && (c.delta || c.after) ? ` ${c.delta || c.after}` : ''}
+                        </span>
+                      );
+                    })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
-      {a && a.status === 'EVIDENCE_INCOMPLETE' && (
-        <div style={{ marginTop: 6, fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
-          A hollow ○ is a variable nobody has looked at, not a variable that came back flat. No positive verdict is
-          available until the core ones are checked — though a deterioration already visible in the figures would
-          still be flagged.
+      {/* The core tally, stated as a number and a list — never as a mood. */}
+      {a && (
+        <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
+          <b style={{ color: a.coverage.coreDisclosed === a.coverage.corePossible ? C.green : C.amber }}>
+            Core variables checked: {a.coverage.coreDisclosed}/{a.coverage.corePossible}
+          </b>
+          {a.coverage.missingCore.length > 0 && (
+            <> · Missing: <span style={{ color: C.text }}>{a.coverage.missingCore.join(', ')}</span></>
+          )}
+          {a.coverage.missingNeedsFiling.length > 0 && p.needsRead && (
+            <div style={{ color: C.faint, marginTop: 2 }}>
+              {a.coverage.missingNeedsFiling.length} of the unchecked variables exist only in the filing or concall
+              — no amount of screener data will fill them.
+            </div>
+          )}
         </div>
       )}
 

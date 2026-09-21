@@ -113,6 +113,10 @@ async function loadScreener(): Promise<Map<string, any>> {
           // nothing downstream can mistake it for a YoY margin bridge.
           opm_change_pp_qoq: opmNow != null && opmPrev != null ? Math.round((opmNow - opmPrev) * 10) / 10 : null,
           cfo_to_pat_ratio: num(r['CFO to PAT']),
+          // Carried so the cash-conversion guard can tell a negative ratio
+          // caused by negative CASH from one caused by a negative PROFIT —
+          // they mean opposite things. (zzz719)
+          profit_after_tax_latest_quarter: num(r['Profit after tax latest quarter']),
           roce_pct: num(r['Return on capital employed']),
           pe: num(r['Price to Earning']),
           market_cap_cr: num(r['Market Capitalization']),

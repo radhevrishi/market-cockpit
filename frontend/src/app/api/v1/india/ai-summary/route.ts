@@ -48,7 +48,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'india-ai-summary-v6';
+const PROMPT_VERSION = 'india-ai-summary-v7';  // zzz720 — structural block: capacity, demand, customers, volume/price/mix, balance, risks, targets
 const TTL_S = 365 * 24 * 3600;
 const MAX_CHARS = 140_000;
 const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
@@ -299,6 +299,32 @@ export async function GET(req: NextRequest) {
     if (data.order_book && !clean(data.order_book[k])) data.order_book[k] = '';
   }
   if (!clean(data.operating_leverage_evidence)) data.operating_leverage_evidence = '';
+
+  // ── THE v7 STRUCTURAL BLOCK GOES THROUGH THE SAME GATE.        (zzz720)
+  //
+  // Every figure on this portal is checked against the source text before it
+  // is shown, and the structural fields are the ones most worth inventing: a
+  // utilisation percentage, a capacity figure, an order-intake number. Adding
+  // them to the schema without adding them here would have created exactly
+  // the hole the rest of the file exists to close — and a fabricated
+  // utilisation is worse than a missing one, because downstream a stated
+  // figure counts as CHECKED and drives a positive verdict.
+  //
+  // Per field, not per answer: one unsupported figure blanks its own field
+  // and the rest of the reading survives.
+  for (const grp of ['capacity', 'demand', 'customers', 'volume_price_mix', 'balance', 'risks'] as const) {
+    const o = (data as any)[grp];
+    if (!o || typeof o !== 'object') continue;
+    for (const k of Object.keys(o)) {
+      if (typeof o[k] === 'string' && !clean(o[k])) o[k] = '';
+    }
+  }
+  if (!clean((data as any).capex_earning)) (data as any).capex_earning = '';
+  if (Array.isArray((data as any).management_targets)) {
+    (data as any).management_targets = (data as any).management_targets
+      .filter((t: any) => clean(t?.target) && clean(t?.metric));
+  }
+
 
   if (!data.positives.length && !data.negatives.length && !data.verdict_line) {
     return NextResponse.json({

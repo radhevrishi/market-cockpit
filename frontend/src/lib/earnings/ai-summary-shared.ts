@@ -237,9 +237,118 @@ export const SUMMARY_TOOL = {
         type: 'string',
         description: 'Any statement that fixed costs were spread over higher volume, or that operating leverage drove the result. Quote it. Empty string if the release makes no such claim.',
       },
+
+      // ═══════════════════════════════════════════════════════════════════
+      // v7 — THE STRUCTURAL BLOCK.                               (zzz720)
+      //
+      // The owner's distinction, and the reason every field below exists:
+      // revenue, profit and margin tell you WHAT happened; capacity,
+      // utilisation, capex, plants, orders, customers, volume, price/mix,
+      // guidance and bottlenecks tell you WHY it happened and whether it can
+      // continue. v6 read the first kind well and the second barely.
+      //
+      // EVERY FIELD IS AN EMPTY STRING WHEN THE DOCUMENT IS SILENT. Most
+      // releases are silent on most of these, and empty is the correct
+      // answer — a fabricated utilisation percentage is far worse than a
+      // missing one, because the engine downstream treats a stated figure as
+      // checked and an absent one as unchecked, and those drive opposite
+      // verdicts.
+      // ═══════════════════════════════════════════════════════════════════
+      capacity: {
+        type: 'object',
+        description: 'Physical capacity, as stated. Never inferred from revenue.',
+        properties: {
+          installed: { type: 'string', description: 'Total installed capacity with its unit, as printed (e.g. "1.5m units", "120 KTPA").' },
+          prior_installed: { type: 'string', description: 'The prior figure, where the document gives a before-and-after.' },
+          added: { type: 'string', description: 'Capacity added or being added, with its unit.' },
+          added_by: { type: 'string', description: 'When the addition lands, in the company\'s words.' },
+          new_plant: { type: 'string', description: 'A new plant, line or facility announced or commissioned.' },
+          new_plant_location: { type: 'string', description: 'Its location, if stated.' },
+          commissioning: { type: 'string', description: 'Commissioning / commercial-production status and date, in the company\'s words.' },
+          bottleneck: { type: 'string', description: 'Any stated capacity constraint, debottlenecking, or that the plant is running full. Say whether it is being created, persisting or removed, using only what the text states.' },
+        },
+        required: ['installed', 'prior_installed', 'added', 'added_by', 'new_plant', 'new_plant_location', 'commissioning', 'bottleneck'],
+      },
+      demand: {
+        type: 'object',
+        description: 'Order flow, separate from the order-book stock above.',
+        properties: {
+          order_intake: { type: 'string', description: 'Value or description of new orders won in the period, as printed.' },
+          order_intake_growth: { type: 'string', description: 'Its growth, as printed.' },
+          cancellations: { type: 'string', description: 'Any order cancellation, deferral or slippage stated.' },
+          revenue_visibility: { type: 'string', description: 'How far forward revenue is covered, in the company\'s words ("2.7 years of revenue").' },
+        },
+        required: ['order_intake', 'order_intake_growth', 'cancellations', 'revenue_visibility'],
+      },
+      customers: {
+        type: 'object',
+        description: 'Customers, programmes, products and approvals. Use the company\'s proper nouns.',
+        properties: {
+          new_customer: { type: 'string', description: 'A new customer, programme or contract won.' },
+          loss: { type: 'string', description: 'A customer, programme or contract lost or cancelled.' },
+          concentration: { type: 'string', description: 'Any stated dependence on one customer, with its share.' },
+          qualification: { type: 'string', description: 'A customer or vendor qualification milestone reached.' },
+          approval: { type: 'string', description: 'A regulatory, product or certification approval (USFDA, CDSCO, CE, AS9100 and the like).' },
+          new_product: { type: 'string', description: 'A product launch or entry into commercial production.' },
+        },
+        required: ['new_customer', 'loss', 'concentration', 'qualification', 'approval', 'new_product'],
+      },
+      volume_price_mix: {
+        type: 'object',
+        description: 'The decomposition of revenue growth, ONLY where the document separates it. If it gives one blended growth number, every field here is empty — do not split it yourself.',
+        properties: {
+          volume: { type: 'string', description: 'Volume growth in physical units, as printed.' },
+          price: { type: 'string', description: 'Price or realisation change, as printed.' },
+          mix: { type: 'string', description: 'Product, customer or geographic mix change and what it did.' },
+          exports: { type: 'string', description: 'Export growth or entry into a new geography.' },
+        },
+        required: ['volume', 'price', 'mix', 'exports'],
+      },
+      balance: {
+        type: 'object',
+        description: 'Cash, working capital and debt, as stated.',
+        properties: {
+          working_capital: { type: 'string', description: 'Any stated change in inventory, receivables, payables or working-capital days.' },
+          fcf: { type: 'string', description: 'Free cash flow as printed.' },
+          debt: { type: 'string', description: 'New borrowing, repayment or net-debt position as printed.' },
+        },
+        required: ['working_capital', 'fcf', 'debt'],
+      },
+      risks: {
+        type: 'object',
+        description: 'Bottlenecks, execution and competitive position. Only what the document states — never an inference about the industry.',
+        properties: {
+          supply_bottleneck: { type: 'string', description: 'A component, raw-material or labour constraint, and whether it is persisting or resolved.' },
+          delay: { type: 'string', description: 'Any stated delay: capex, commissioning, order execution, customer ramp.' },
+          shutdown: { type: 'string', description: 'A planned or unplanned plant shutdown.' },
+          market_share: { type: 'string', description: 'Market-share gain or loss, ONLY where the document states it with a figure or explicit claim.' },
+          pricing_power: { type: 'string', description: 'Any stated ability (or inability) to pass through input costs.' },
+          technology: { type: 'string', description: 'Automation, new capability or technology adoption stated.' },
+          raw_materials: { type: 'string', description: 'Input-cost movement and its stated margin impact.' },
+        },
+        required: ['supply_bottleneck', 'delay', 'shutdown', 'market_share', 'pricing_power', 'technology', 'raw_materials'],
+      },
+      management_targets: {
+        type: 'array',
+        description: 'Operational promises with a number attached — a utilisation target, a capacity target, a margin target, a commissioning date, a revenue target. These are CLAIMS about the future, not results, and they are what a later quarter gets graded against. Only include a target with both a metric and a stated figure or date; "we are optimistic" is not a target.',
+        items: {
+          type: 'object',
+          properties: {
+            metric: { type: 'string', description: 'What was promised, e.g. "capacity utilisation", "EBITDA margin", "Unit 3 commissioning".' },
+            target: { type: 'string', description: 'The figure or milestone, exactly as stated.' },
+            by: { type: 'string', description: 'By when, in the company\'s words. Empty if no date given.' },
+          },
+          required: ['metric', 'target', 'by'],
+        },
+      },
+      capex_earning: {
+        type: 'string',
+        description: 'Whether capital already spent is producing earnings yet, using ONLY what the document establishes — utilisation of the new asset, revenue from it, its margin contribution, or an explicit statement that it is ramping or below plan. Empty string unless the document actually links the spend to an outcome. Do not infer this from the P&L.',
+      },
     },
     required: ['verdict_line', 'guidance', 'segments', 'mix_shift', 'capital', 'management', 'new_business', 'positives', 'negatives', 'watch_next', 'not_disclosed',
-      'catalysts', 'margin_bridge', 'utilisation', 'capex_projects', 'order_book', 'one_offs', 'operating_leverage_evidence'],
+      'catalysts', 'margin_bridge', 'utilisation', 'capex_projects', 'order_book', 'one_offs', 'operating_leverage_evidence',
+      'capacity', 'demand', 'customers', 'volume_price_mix', 'balance', 'risks', 'management_targets', 'capex_earning'],
   },
 };
 
@@ -268,6 +377,14 @@ THE CATALYST AND MARGIN FIELDS (v6)
 - "margin_bridge" asks WHY the margin moved, and the structural/cyclical split is the most important judgement in this whole schema. Mix shift, pricing power, operating leverage, automation, yield and in-housing REPEAT and are structural. Raw-material tailwinds, freight normalisation, forex and energy costs DO NOT repeat and are cyclical. A gain the release calls non-recurring is one_off. If the release states no cause, return an empty drivers array and verdict "not_explained" — do not infer a cause from the direction of the number.
 - "where_in_pnl" means: walk revenue → gross profit → EBITDA → operating income → pre-tax → net income, and name the FIRST line where growth diverges sharply from revenue growth. If profit grew far faster than revenue and the operating line does not explain it, the divergence is below operating income and you must say which line.
 - "utilisation" and "capex_projects" are usually absent from a US earnings release. Empty is the correct and expected answer. Never estimate a utilisation percentage, a project cost or a completion date.
+
+THE STRUCTURAL BLOCK (capacity, demand, customers, volume_price_mix, balance, risks, management_targets, capex_earning).
+Search the document ACTIVELY for these — they are rarely in the headline table and usually sit in the MD&A paragraphs, the segment notes, the outlook section or a footnote. They are the difference between knowing WHAT happened and knowing WHY, so do not skim past them to fill the financial fields faster.
+Three rules govern every one of them:
+1. EMPTY IS A REAL ANSWER, and the expected one. Most releases say nothing about utilisation, volume split, bottlenecks or market share. A fabricated figure is far worse than a blank: downstream, a stated figure counts as CHECKED and a blank counts as UNCHECKED, and those drive opposite conclusions about the same company.
+2. NEVER SPLIT WHAT THE DOCUMENT BLENDED. If it gives one revenue-growth number, volume/price/mix stay empty. Deriving a volume split from a revenue figure is invention.
+3. SEPARATE FACT FROM CLAIM. "management_targets" holds forward promises — a utilisation target, a commissioning date, a margin goal — and they are claims about the future, never results. Only record one with both a metric and a stated figure or date; "we remain optimistic" is not a target and must not become one.
+"capex_earning" is the one field that asks you to connect two things, and it is still bounded by the text: fill it only when the document itself links spend to an outcome (utilisation of the new asset, revenue from it, a statement that it is ramping or behind plan). Never infer it from the P&L.
 - "one_offs" is only for items the release ITSELF identifies as non-recurring, exceptional, one-time, or a settlement, insurance, tax or forex gain or charge. Do not classify an ordinary operating item as a one-off.
 - Every figure in these fields obeys the same rule as everywhere else: it must appear in the release text.`;
 

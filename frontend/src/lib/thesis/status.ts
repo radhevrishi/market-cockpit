@@ -62,7 +62,8 @@
 
 import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
-import { byKey, type StructuralVar, type VarKey, type VarVerdict } from './variables';
+import { byKey, type StructuralVar, type VarVerdict } from './variables';
+import { VAR_LABEL, GRADER_AVAILABLE, type VarKey } from './taxonomy';
 
 export type ThesisStatus =
   | 'EVIDENCE_INCOMPLETE'
@@ -97,7 +98,17 @@ export interface ThesisAssessment {
   /** One line stating why the status is what it is. */
   because: string;
   /** How much of the thesis could be checked at all. */
-  coverage: { checked: number; disclosed: number; corePossible: number; coreDisclosed: number };
+  coverage: {
+    checked: number; disclosed: number; corePossible: number; coreDisclosed: number;
+    /** The core variables NOT yet checked, by name. The owner asked for this
+     *  exactly: "6/10 core variables checked. Missing: utilisation, capex,
+     *  new capacity, order book" — not a bare "evidence incomplete". */
+    missingCore: string[];
+    /** Of the missing ones, those that can ONLY ever come from a filing. Named
+     *  separately because "read the filing" is actionable and "the company did
+     *  not disclose it" is not. */
+    missingNeedsFiling: string[];
+  };
   /** The action the OWNER takes. Never a trade. */
   action: 'Hold — no action' | 'Watch' | 'Review' | 'EXIT REVIEW' | 'Re-underwrite expectations' | 'Read the filing';
   /** Each link of the thesis mechanism, and whether the evidence confirms it.
@@ -150,7 +161,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const verdict: VarVerdict = v ? v.verdict : 'unknown';
     const fired = !!tv.invalidatedWhen && verdict === 'deteriorating';
     return {
-      key: tv.key, label: v?.label || tv.key, weight: tv.weight, why: tv.why,
+      // An undisclosed variable has no extracted row, so `v` is null and the
+      // label used to fall back to the raw KEY — the page printed
+      // "○ one_offs" and "○ cash_conversion" next to properly-named ones.
+      // VAR_LABEL is the single source of the human name. (zzz719)
+      key: tv.key, label: v?.label || VAR_LABEL[tv.key] || tv.key, weight: tv.weight, why: tv.why,
       verdict,
       before: v?.before ?? null, after: v?.after ?? null, delta: v?.delta ?? null,
       evidence: v?.evidence || 'Not disclosed in the latest filing — this is silence, not bad news.',
@@ -196,24 +211,46 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       ? `${coreDown[0].label} deteriorated. One core variable down is a reason to look, not to act — `
         + 'a single weak quarter is exactly what this ledger exists to stop you selling into.'
       : `${supportDown.length} supporting variables deteriorated (${supportDown.map((c) => c.label.toLowerCase()).join(', ')}).`;
+  } else if (!core.length || disclosed.length < 2) {
+    // ── TWO WAYS TO REACH A VERDICT YOU HAVE NOT EARNED.          (zzz719)
+    //
+    // 1. A thesis with NO core variable (the UNCLASSIFIED ledger, before it
+    //    was given one) made `coreDisclosed.length < core.length` read
+    //    `0 < 0` — false — so it fell straight through to NEUTRAL and printed
+    //    "All 0 core variables checked", which is both meaningless and a
+    //    claim of completeness.
+    // 2. A holding with ZERO variables disclosed did the same: "NO MATERIAL
+    //    CHANGE" on a holding nobody has read anything about. Thirty of the
+    //    owner's fifty-one sat there. Nothing had been shown to change
+    //    because nothing had been looked at, and those are not the same
+    //    statement.
+    //
+    // Both now land at EVIDENCE INCOMPLETE, which is what they are.
+    status = 'EVIDENCE_INCOMPLETE';
+    because = disclosed.length
+      ? `Only ${disclosed.length} of ${checked.length} variables could be read, and none of them is decisive. `
+        + 'Too little has been looked at to call this either way.'
+      : 'Nothing has been read for this holding — no graded result, no screener row, no filing. '
+        + 'This is an unchecked holding, not a quiet one.';
   } else if (coreDisclosed.length < core.length) {
     // Nothing is deteriorating, and the thesis has not been fully checked. A
     // positive verdict is not available here, and neither is a comfortable
     // "no material change" — both would claim more than has been looked at.
     const missing = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
     status = 'EVIDENCE_INCOMPLETE';
-    because = disclosed.length
-      ? `${disclosed.length} variable${disclosed.length === 1 ? '' : 's'} read and nothing is deteriorating — but `
-        + `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} core to this thesis and ${missing.length === 1 ? 'has' : 'have'} not been checked. `
-        + 'Read the filing before calling this one healthy.'
-      : `Nothing has been read for this holding yet. ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} core to its thesis and unchecked.`;
+    because = `${coreDisclosed.length}/${core.length} core variables checked. `
+      + `Missing: ${missing.join(', ')}. `
+      + (disclosed.length
+        ? 'Nothing read so far is deteriorating, but a positive verdict is not available on variables nobody has looked at.'
+        : 'Nothing has been read for this holding at all.');
   } else if (coreUp.length >= 1 && weighted >= 6) {
     status = 'STRENGTHENING';
     because = `${coreUp.map((c) => c.label.toLowerCase()).join(' and ')} improved, `
       + `and every core variable of this thesis was checked — ${core.map((c) => c.label.toLowerCase()).join(', ')}.`;
   } else {
     status = 'NEUTRAL';
-    because = `All ${core.length} core variables checked; ${disclosed.length} of ${checked.length} disclosed, none decisive either way.`;
+    because = `All ${core.length} core variable${core.length === 1 ? '' : 's'} checked and `
+      + `${disclosed.length} of ${checked.length} variables read — none of them decisive either way.`;
   }
 
   const triggered = checked
@@ -280,6 +317,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
       corePossible: core.length, coreDisclosed: coreDisclosed.length,
+      missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
+      missingNeedsFiling: checked
+        .filter((c) => c.verdict === 'unknown' && c.weight >= 3 && !GRADER_AVAILABLE.has(c.key))
+        .map((c) => c.label),
     },
     action: ACTION[status],
   };

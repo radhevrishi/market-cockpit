@@ -38,7 +38,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v6';  // zzz681 — source-document check; v4 cached summaries of the wrong document
+const PROMPT_VERSION = 'us-ai-summary-v7';  // zzz720 — structural block. A version bump invalidates every cached summary, which is correct: a v6 reading has none of the new fields and would read as "not disclosed" forever.
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // The release in full wherever it fits. A long retail release puts its income
 // statement and its reconciliation tables well past 60k characters, and a model
@@ -395,6 +395,32 @@ export async function GET(req: NextRequest) {
     if (data.order_book && !clean(data.order_book[k])) data.order_book[k] = '';
   }
   if (!clean(data.operating_leverage_evidence)) data.operating_leverage_evidence = '';
+
+  // ── THE v7 STRUCTURAL BLOCK GOES THROUGH THE SAME GATE.        (zzz720)
+  //
+  // Every figure on this portal is checked against the source text before it
+  // is shown, and the structural fields are the ones most worth inventing: a
+  // utilisation percentage, a capacity figure, an order-intake number. Adding
+  // them to the schema without adding them here would have created exactly
+  // the hole the rest of the file exists to close — and a fabricated
+  // utilisation is worse than a missing one, because downstream a stated
+  // figure counts as CHECKED and drives a positive verdict.
+  //
+  // Per field, not per answer: one unsupported figure blanks its own field
+  // and the rest of the reading survives.
+  for (const grp of ['capacity', 'demand', 'customers', 'volume_price_mix', 'balance', 'risks'] as const) {
+    const o = (data as any)[grp];
+    if (!o || typeof o !== 'object') continue;
+    for (const k of Object.keys(o)) {
+      if (typeof o[k] === 'string' && !clean(o[k])) o[k] = '';
+    }
+  }
+  if (!clean((data as any).capex_earning)) (data as any).capex_earning = '';
+  if (Array.isArray((data as any).management_targets)) {
+    (data as any).management_targets = (data as any).management_targets
+      .filter((t: any) => clean(t?.target) && clean(t?.metric));
+  }
+
 
   // Nothing left to say, or the positives — the substance of the reading —
   // mostly failed verification.
