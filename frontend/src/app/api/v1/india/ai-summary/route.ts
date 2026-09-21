@@ -107,7 +107,7 @@ const RESULTS_SUBJECT = [
   /earnings\s+(update|presentation)/i,
 ];
 /** Subjects that are never the result, however close their date. */
-const NOT_RESULTS = /(intimation|newspaper|trading window|compliance certificate|voting results|scrutinizer|annual report|postal ballot|disclosure under regulation 30 of|certificate under regulation)/i;
+const NOT_RESULTS = /(intimation|newspaper|trading window|compliance certificate|voting result|scrutinizer|scrutiniser|annual report|postal ballot|\\bagm\\b|\\begm\\b|analyst meet|investor meet|schedule of|certificate under regulation|share transfer|loss of share|duplicate share|credit rating|record date|dividend distribution|related party|corporate governance report|shareholding pattern|reconciliation of share capital)/i;
 
 async function loadFilings(): Promise<CFFilingItem[]> {
   try {
@@ -125,10 +125,24 @@ function rankAttachments(all: CFFilingItem[], ticker: string, filingDate?: strin
   const sym = ticker.toUpperCase();
   const mine = all.filter((f) => String(f?.symbol || '').toUpperCase() === sym && f?.attachment_url);
   const wantMs = filingDate ? Date.parse(`${filingDate}T00:00:00Z`) : NaN;
+  // ── THE SUBJECT LIES; THE FILENAME USUALLY DOES NOT.           (zzz705)
+  //
+  // Live on the first request: Divgi returned
+  // "DTTS_Voting_Results_Final_Submission_signed.pdf" — a voting-results
+  // filing, which `NOT_RESULTS` already lists and which was matched anyway,
+  // because the exclusion was tested against the feed's `subject` field while
+  // the word "Voting_Results" only ever appeared in the URL. The exchange
+  // feed's subjects are frequently generic ("Announcement under Regulation
+  // 30"), so the filename is the more reliable of the two and both are now
+  // read. The downstream content check caught this one and refused honestly —
+  // but refusing a document we could have avoided fetching is a wasted round
+  // trip and, worse, hides the real results PDF sitting further down the list.
   const score = (f: CFFilingItem): number => {
     const subj = String(f.subject || '');
-    if (NOT_RESULTS.test(subj)) return -1;
-    const idx = RESULTS_SUBJECT.findIndex((re) => re.test(subj));
+    const file = decodeURIComponent(String(f.attachment_url || '')).replace(/[_-]+/g, ' ');
+    const hay = `${subj} ${file}`;
+    if (NOT_RESULTS.test(hay)) return -1;
+    const idx = RESULTS_SUBJECT.findIndex((re) => re.test(hay));
     return idx < 0 ? 50 : idx;              // unknown subjects rank after known ones
   };
   return mine
