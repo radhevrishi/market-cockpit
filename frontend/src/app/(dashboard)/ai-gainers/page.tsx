@@ -38,10 +38,10 @@
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type Mkt = 'IN' | 'US';
-type Level = 'scanned' | 'market' | 'signals' | 'queue';
+type Level = 'scanned' | 'market' | 'signals' | 'queue' | 'research';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
@@ -113,6 +113,34 @@ export default function AiGainersPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  // ── THE CATALYST SWEEP.                                         (zzz741)
+  // Runs by itself once the scan is in: every name on the board is researched
+  // in ~40s chunks and persisted server-side, so a reload resumes rather than
+  // restarts. Coverage is a fraction and it is printed.
+  const [research, setResearch] = useState<ResearchPayload | null>(null);
+  const [sweeping, setSweeping] = useState(false);
+  const sweepRef = useRef<{ stop: boolean; running: boolean }>({ stop: false, running: false });
+
+  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned']) => {
+    if (sweepRef.current.running) return;
+    sweepRef.current = { stop: false, running: true };
+    setSweeping(true);
+    try {
+      const rows = (scanned || []).map((g) => ({ ticker: g.ticker, company: g.company, move_pct: g.move_pct, volume: (g as any).volume ?? null, price: (g as any).price ?? null, market_cap: (g as any).market_cap ?? null, perf: (g as any).perf ?? null }));
+      for (let i = 0; i < 40 && !sweepRef.current.stop; i++) {
+        const r = await fetch('/api/v1/ai-gainers/research', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
+          body: JSON.stringify({ market: m, rows: i === 0 ? rows : [], budget_ms: 40_000 }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+        setResearch(j);
+        if (!j.remaining || j.researched_now === 0) break;
+      }
+    } catch (e: any) {
+      setResearch((cur) => cur ? { ...cur, error: String(e?.message || e) } : { ok: false, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, error: String(e?.message || e) } as any);
+    } finally { sweepRef.current.running = false; setSweeping(false); }
+  }, []);
 
   const load = useCallback(async (m: Mkt, fresh = false) => {
     setLoading(true); setErr(null);
@@ -121,13 +149,21 @@ export default function AiGainersPage() {
       const j = await r.json();
       if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setData(j);
+      // What is already researched today shows immediately; the sweep then
+      // fills the rest. A "Rescan" does not re-research: the store is per day.
+      try {
+        const rr = await fetch(`/api/v1/ai-gainers/research?market=${m}`, { cache: 'no-store' });
+        const rj = await rr.json();
+        if (rr.ok && rj?.ok) setResearch(rj);
+      } catch { /* the sweep below will answer */ }
+      void sweep(m, j.scanned || []);
     } catch (e: any) {
       setErr(e?.message || 'The gainers pipeline did not answer.');
       setData(null);
     } finally { setLoading(false); }
-  }, []);
+  }, [sweep]);
 
-  useEffect(() => { load(market); }, [market, load]);
+  useEffect(() => { sweepRef.current.stop = true; setResearch(null); load(market); }, [market, load]);
 
   // The queue is what the API already ranked. The Signals level shows the same
   // events unfiltered; nothing is re-sorted here, because a sort control in
@@ -155,13 +191,20 @@ export default function AiGainersPage() {
           <Chip key={m} on={market === m} onClick={() => setMarket(m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</Chip>
         ))}
         <span style={{ width: 10 }} />
-        {(['scanned', 'market', 'signals', 'queue'] as Level[]).map((l) => (
+        {(['scanned', 'market', 'signals', 'queue', 'research'] as Level[]).map((l) => (
           <Chip key={l} on={level === l} onClick={() => setLevel(l)} color={C.violet}>
             {l === 'scanned' ? '0 · Scanned'
               : l === 'market' ? '1 · Market'
-                : l === 'signals' ? '2 · Signals' : '3 · Research queue'}
+                : l === 'signals' ? '2 · Signals'
+                  : l === 'queue' ? '3 · Research queue'
+                    : `4 · Catalyst research${research ? ` ${research.coverage.researched}/${research.coverage.total}` : ''}`}
           </Chip>
         ))}
+        {sweeping && research && (
+          <span style={{ fontSize: 10.5, color: C.cyan, fontWeight: 700 }}>
+            Researching {research.coverage.researched}/{research.coverage.total}…
+          </span>
+        )}
         <button onClick={() => load(market, true)}
           style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
             border: `1px solid ${C.border}`, background: C.bg, color: C.dim, cursor: 'pointer' }}>
@@ -173,6 +216,11 @@ export default function AiGainersPage() {
       {err && <div style={{ fontSize: 12, color: C.amber }}>{err}</div>}
 
       {data && level === 'scanned' && <ScannedLevel data={data} />}
+
+      {level === 'research' && (
+        <ResearchLevel research={research} sweeping={sweeping} market={market}
+          onResume={() => data && sweep(market, data.scanned || [])} />
+      )}
 
       {data && level === 'market' && (
         <MarketLevel data={data} structural={structural.length} onDrill={() => setLevel('queue')} />
@@ -205,6 +253,136 @@ export default function AiGainersPage() {
 
 /** LEVEL 0 — every row that was read, so "34 gainers scanned" can be checked
  *  rather than believed. The owner asked for this by name. (zzz721) */
+// ── Catalyst research payload + view ─────────────────────────────── (zzz741)
+interface Finding {
+  ticker: string; company: string | null; movePct: number | null; marketCap: number | null; turnover: number | null;
+  status: string; category: string | null; stage: string | null; headline: string | null; evidenceQuote: string | null;
+  sourceUrl: string | null; sourceDate: string | null; ageDays: number | null; valueStated: number | null; valuePctMcap: number | null;
+  net: number | null; components: { freshness: number; materiality: number; transmission: number; persistence: number; sourceMult: number; pricedIn: number } | null;
+  verdict: string | null; returns: { m1: number | null; m3: number | null; m6: number | null; y1: number | null; history: number } | null;
+  bandPrint: boolean; bandLevel: number | null; listingDays: number | null; routine: string[]; filingsInWindow: number; windowDays: number;
+  holding: boolean; notes: string[]; modelRead: boolean; sources: string[];
+}
+interface ResearchPayload {
+  ok: boolean; coverage: { researched: number; total: number; pct: number; byStatus: Record<string, number> };
+  findings: Record<string, Finding>; remaining: number; model_reads?: number; errors?: string[]; error?: string; updated_at?: string;
+}
+
+const VERDICT: Record<string, { label: string; color: string }> = {
+  FIRE: { label: '🔥 investigate', color: C.green }, ROOM: { label: '🟢 room left', color: C.green },
+  PRICED: { label: '🟡 largely priced', color: C.amber }, WEAK: { label: '🟠 weak', color: C.amber },
+  NONE: { label: '🔴 nothing exploitable', color: C.red }, THIN: { label: '⚪ thin (<1% of mcap)', color: C.faint },
+};
+
+function money(v: number | null, m: Mkt): string {
+  if (v == null) return '—';
+  return m === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)}cr` : `$${v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1)}M`;
+}
+
+function ResearchLevel({ research, sweeping, market, onResume }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void }) {
+  if (!research) return <div style={{ fontSize: 12, color: C.dim }}>Waiting for the scan…</div>;
+  const all = Object.values(research.findings || {});
+  const cov = research.coverage;
+  const scored = all.filter((f) => f.status === 'catalyst').sort((a, b) => (b.net ?? -1) - (a.net ?? -1));
+  const rejected = all.filter((f) => f.status === 'denied' || f.status === 'negative');
+  const bands = all.filter((f) => f.bandPrint && f.status !== 'catalyst').sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  const listings = all.filter((f) => f.status === 'listing_artifact');
+  const unexplained = all.filter((f) => (f.status === 'none' || f.status === 'routine_only') && !f.bandPrint).sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  const failed = all.filter((f) => f.status === 'source_failed');
+  const holdings = all.filter((f) => f.holding);
+  const th: React.CSSProperties = { fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: C.faint, textAlign: 'left', padding: '4px 8px', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { fontSize: 11.5, color: C.dim, padding: '5px 8px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' };
+  const Wrap = ({ children }: { children: React.ReactNode }) => <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>{children}</table></div>;
+  const Name = ({ f }: { f: Finding }) => (
+    <span><b style={{ color: C.text }}>{f.ticker}</b>{f.holding && <span title="In your book" style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.cyan }}>📗</span>}
+      {f.company && <div style={{ fontSize: 10, color: C.faint }}>{f.company}</div>}</span>
+  );
+  const Src = ({ f }: { f: Finding }) => f.sourceUrl ? <a href={f.sourceUrl} target="_blank" rel="noreferrer" style={{ color: C.cyan, textDecoration: 'none', fontSize: 10.5 }}>↗ filing · {f.sourceDate ? f.sourceDate.slice(0, 10) : 'undated'}</a> : <span style={{ color: C.faint }}>—</span>;
+  const Section = ({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) => (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg, padding: '10px 12px' }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{title}</div>
+      {sub && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2, marginBottom: 6, lineHeight: 1.5 }}>{sub}</div>}
+      {children}
+    </div>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
+        <b style={{ color: C.text }}>Catalyst coverage {cov.researched}/{cov.total} ({cov.pct}%)</b>
+        {' '}· {scored.length} carry a catalyst · {rejected.length} denied/negative · {bands.length} band prints · {listings.length} listing artifacts · {unexplained.length} unexplained
+        {failed.length > 0 && <> · <span style={{ color: C.amber }}>{failed.length} source failed</span></>}
+        {research.model_reads != null && <> · {research.model_reads} documents model-read</>}
+        {sweeping ? <span style={{ color: C.cyan }}> · researching…</span>
+          : research.remaining > 0 ? <button onClick={onResume} style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>Resume · {research.remaining} remaining</button> : null}
+        {research.error && <div style={{ color: C.amber }}>{research.error}</div>}
+        <div style={{ fontSize: 10.5, color: C.faint }}>
+          Every name is swept against its exchange filings of the last 21 days and a year of price history; a name with nothing is an explicit <i>none</i>, never a silence.
+          {market === 'IN' ? ' Source: the five most recent announcements per company on screener.in (in AGM season that can be eight days of paperwork) — the finding says how many filings were in the window.' : ' Source: SEC EDGAR submissions (8-K items, 424B, S-1/S-3, SC 13D/G); Forms 3/4/144 are excluded.'}
+        </div>
+      </div>
+
+      {holdings.length > 0 && (
+        <Section title="Your book on the board" sub="Position reviews, not ideas.">
+          <Wrap><thead><tr><th style={th}>Name</th><th style={th}>1d</th><th style={th}>Finding</th><th style={th}>Source</th></tr></thead>
+            <tbody>{holdings.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={td}>{f.headline || f.status}{f.notes.length > 0 && <div style={{ fontSize: 10, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}><Src f={f} /></td></tr>)}</tbody></Wrap>
+        </Section>
+      )}
+
+      <Section title={`Scored — ${scored.length} name${scored.length === 1 ? '' : 's'} carry a catalyst`}
+        sub="NET = (0.30 freshness + 0.30 materiality + 0.25 transmission + 0.15 persistence) × source × (1 − priced-in). Materiality is value ÷ market cap where a value is stated; an item under 1% of market cap cannot rank above THIN. A stock that is down has not priced its catalyst.">
+        {scored.length === 0 ? <div style={{ fontSize: 11.5, color: C.dim }}>Nothing on the board carries a dated, sourced catalyst{cov.researched < cov.total ? ' yet' : ''}. An empty top of the table is a valid result.</div> : (
+          <Wrap><thead><tr><th style={th}>#</th><th style={th}>Name</th><th style={th}>1d</th><th style={th}>Catalyst (dated, sourced)</th><th style={th}>Stage</th><th style={th}>Size</th><th style={th}>Fresh</th><th style={th}>Trans</th><th style={th}>Priced</th><th style={th}>NET</th><th style={th}>Verdict</th></tr></thead>
+            <tbody>{scored.map((f, i) => {
+              const v = VERDICT[f.verdict || 'NONE'];
+              return (<tr key={f.ticker}>
+                <td style={td}>{i + 1}</td><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td>
+                <td style={{ ...td, minWidth: 260 }}>
+                  <span style={{ color: C.text }}>{f.headline}</span>
+                  <div style={{ fontSize: 10, color: C.faint }}>{pretty(String(f.category || ''))} · <Src f={f} />{f.modelRead ? ' · quote verified' : ' · summary only'}</div>
+                  {f.evidenceQuote && <div style={{ fontSize: 10, color: C.dim, fontStyle: 'italic', marginTop: 2 }}>“{f.evidenceQuote.slice(0, 220)}{f.evidenceQuote.length > 220 ? '…' : ''}”</div>}
+                  {f.notes.length > 0 && <div style={{ fontSize: 10, color: C.amber, marginTop: 2 }}>{f.notes.join(' ')}</div>}
+                </td>
+                <td style={td}>{f.stage || '—'}</td>
+                <td style={td}>{f.valueStated != null ? <>{money(f.valueStated, market)}{f.valuePctMcap != null && <div style={{ fontSize: 10, color: C.faint }}>{f.valuePctMcap}% of mcap</div>}</> : <span style={{ color: C.faint }}>no value</span>}</td>
+                <td style={td}>{f.components?.freshness ?? '—'}</td><td style={td}>{f.components?.transmission ?? '—'}</td>
+                <td style={td}>{f.components?.pricedIn ?? '—'}{f.returns && <div style={{ fontSize: 10, color: C.faint }}>{pct(f.returns.m1)} 1M · {pct(f.returns.m3)} 3M</div>}</td>
+                <td style={{ ...td, fontWeight: 800, color: C.text }}>{f.net?.toFixed(1)}</td>
+                <td style={{ ...td, color: v.color, fontWeight: 700, whiteSpace: 'nowrap' }}>{v.label}</td>
+              </tr>);
+            })}</tbody></Wrap>
+        )}
+      </Section>
+
+      {(rejected.length > 0 || bands.length > 0 || listings.length > 0) && (
+        <Section title="Denied, negative, or moving on nothing" sub="Rejected catalysts are findings, not omissions. A company formally denying a catalyst while the stock moves is more actionable than most confirmed ones.">
+          <Wrap><thead><tr><th style={th}>Name</th><th style={th}>1d</th><th style={th}>Finding</th><th style={th}>Source</th></tr></thead>
+            <tbody>
+              {rejected.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={{ ...td, minWidth: 300 }}><b style={{ color: f.status === 'denied' ? C.amber : C.red }}>{f.status.toUpperCase()}.</b> <span style={{ color: C.text }}>{f.headline}</span>{f.notes.length > 0 && <div style={{ fontSize: 10, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}><Src f={f} /></td></tr>)}
+              {bands.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={{ ...td, minWidth: 300 }}><b style={{ color: C.amber }}>BAND PRINT {f.bandLevel}%.</b> {f.turnover != null ? `${money(f.turnover, market)} traded · ` : ''}{f.marketCap != null ? `mcap ${money(f.marketCap, market)} · ` : ''}{f.headline}<div style={{ fontSize: 10, color: C.faint }}>{f.notes.filter((n) => !/band print/i.test(n)).join(' ')}</div></td><td style={td}><Src f={f} /></td></tr>)}
+              {listings.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={{ ...td, minWidth: 300 }}><b style={{ color: C.faint }}>LISTING ARTIFACT.</b> {f.headline}</td><td style={td}><Src f={f} /></td></tr>)}
+            </tbody></Wrap>
+        </Section>
+      )}
+
+      {unexplained.length > 0 && (
+        <Section title={`Moves with no explanation — ${unexplained.length}`} sub="Name, move, and what the filings actually show for the window.">
+          <Wrap><thead><tr><th style={th}>Name</th><th style={th}>1d</th><th style={th}>Mcap</th><th style={th}>Traded</th><th style={th}>Filings in window</th><th style={th}>1M / 3M</th></tr></thead>
+            <tbody>{unexplained.slice(0, 80).map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={td}>{money(f.marketCap, market)}</td><td style={td}>{money(f.turnover, market)}</td><td style={{ ...td, minWidth: 260 }}>{f.filingsInWindow === 0 ? <span>no filing in {f.windowDays} days</span> : <span>{f.filingsInWindow} routine: {f.routine.slice(0, 3).map((r) => r.replace(/^announcement under regulation 30 \(lodr\)-?/i, '').replace(/_/g, ' ').slice(0, 40)).join('; ')}</span>}{f.notes.length > 0 && <div style={{ fontSize: 10, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}>{f.returns ? `${pct(f.returns.m1)} / ${pct(f.returns.m3)}` : '—'}</td></tr>)}</tbody></Wrap>
+        </Section>
+      )}
+
+      {failed.length > 0 && (
+        <Section title={`Source failed — ${failed.length}`} sub="The filing source could not be reached for these. That is not 'nothing filed'.">
+          <div style={{ fontSize: 11, color: C.dim }}>{failed.map((f) => f.ticker).join(' · ')}</div>
+        </Section>
+      )}
+      {research.errors && research.errors.length > 0 && (
+        <div style={{ fontSize: 10, color: C.faint }}>Last errors: {research.errors.join(' | ')}</div>
+      )}
+    </div>
+  );
+}
+
 function ScannedLevel({ data }: { data: Payload }) {
   const sl = data.source_list;
   const rows = data.scanned || [];

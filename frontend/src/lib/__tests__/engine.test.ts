@@ -48,6 +48,10 @@ import {
   latestSummary, ledgerView, batchProgress, type CompanyLedger,
 } from '../thesis/evidence-ledger';
 import { varsFromEvents } from '../thesis/variables';
+import { parseCompanyId, parseTopRatios, parseAnnouncements, parseChart } from '../ai-gainers/screener-company';
+import {
+  classifyAnnouncement, buildFinding, returnsFromSeries, bandPrint, pricedInOf, scoreCatalyst, parseStatedValue, coverage,
+} from '../ai-gainers/catalyst-research';
 
 const fx = (n: string) => readFileSync(join(__dirname, 'fixtures', n), 'utf8');
 const benchRows: any[] = JSON.parse(fx('bench-rows.json'));
@@ -908,5 +912,121 @@ describe('evidence ledger — persistence, history, idempotency', () => {
     const p = batchProgress({ started_at: started, tickers: ['A', 'B', 'C', 'D', 'E'] }, JSON.parse(JSON.stringify(ledgers)));
     assert.equal(p.done, 3); assert.equal(p.failed, 1); assert.equal(p.remaining, 1);
     assert.deepEqual(p.failed_tickers, ['C']); assert.deepEqual(p.remaining_tickers, ['E']);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe('catalyst research — the brief\'s method as code', () => {
+  const html = fx('screener-company-kmew.html');
+  const now = new Date('2026-09-21T18:00:00Z');
+  const anns = parseAnnouncements(html, now);
+  const series = parseChart(JSON.parse(fx('screener-chart-kmew.json')));
+  const ann = (subject: string, summary: string | null, ageDays: number): any => ({ subject, summary, url: `https://x/${ageDays}.pdf`, dateIso: new Date(now.getTime() - ageDays * 86_400_000).toISOString(), ageDays });
+
+  test('company page yields id, market cap, price and dated announcements', () => {
+    assert.equal(parseCompanyId(html), '1274846');
+    assert.equal(parseTopRatios(html).marketCapCr, 7298);
+    assert.equal(parseTopRatios(html).price, 2879);
+    assert.equal(anns.length, 5);
+    assert.equal(anns[1].dateIso, '2026-09-19T22:41:24+05:30');
+    assert.match(anns[1].summary || '', /279\.33 crore/);
+  });
+
+  test('the ajax fragment parses the same list', () => {
+    const frag = fx('screener-announcements-kmew.html');
+    assert.equal(parseAnnouncements(frag, now).length, 5);
+  });
+
+  test('an order win is a catalyst with its stated value; AGM paperwork is routine even when the summary names ₹500 Cr', () => {
+    const c = anns.map((a) => classifyAnnouncement(a));
+    assert.equal(c[1].kind, 'catalyst'); assert.equal(c[1].category, 'order_win'); assert.equal(c[1].valueStated, 279.33); assert.equal(c[1].stage, 'executed');
+    assert.equal(c[4].kind, 'routine', 'an AGM notice is an AGM notice');
+    assert.equal(c[0].category, 'rating_action'); assert.equal(c[0].valueStated, null, 'a rated facility size is not an event value');
+  });
+
+  test('denials, negatives, enabling and scheduled items are told apart', () => {
+    assert.equal(classifyAnnouncement(ann('Clarification on spurt in volume', 'The company is not aware of any information that has not been announced', 1)).kind, 'denial');
+    assert.equal(classifyAnnouncement(ann('Resignation of Statutory Auditor', null, 2)).kind, 'negative');
+    assert.equal(classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Update', 'IiAS recommends voting AGAINST four resolutions including reappointment of MD', 0)).kind, 'negative');
+    const en = classifyAnnouncement(ann('Intimation of Board Meeting', 'Board meeting to consider fund raising by way of preferential issue', 3));
+    assert.equal(en.kind, 'routine', 'a board-meeting intimation is paperwork until the outcome');
+    const sch = classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Updates', 'The 2.2 GW plant is expected to be commissioned by Q3 FY27', 2));
+    assert.ok(sch.category === 'capacity_expansion' || sch.category === 'production_ramp'); assert.equal(sch.stage, 'scheduled', 'dated in the future is SCHEDULED, not executed');
+    const ex = classifyAnnouncement(ann('Press Release', 'The company has commenced commercial production at its sixth plant', 2));
+    assert.equal(ex.category, 'production_ramp'); assert.equal(ex.stage, 'executed');
+    const cert = classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Updates', 'Received AS9100D certification for aerospace quality management', 1));
+    assert.equal(cert.category, 'product_qualification');
+  });
+
+  test('stated values parse in crore, lakh and USD', () => {
+    assert.equal(parseStatedValue('order worth ₹1,370 crore', 'IN'), 1370);
+    assert.equal(parseStatedValue('Rs. 126 Cr contract', 'IN'), 126);
+    assert.equal(parseStatedValue('USD 3.22 million export order', 'IN'), 3.22 * 8.5);
+    assert.equal(parseStatedValue('$135 million agreement', 'US'), 135);
+    assert.equal(parseStatedValue('nothing here', 'IN'), null);
+  });
+
+  test('returns and band prints', () => {
+    const r = returnsFromSeries(series);
+    assert.equal(r.history, 247);
+    assert.ok(r.y1 != null && r.y1 > 100, 'a year of closes yields a 1Y return');
+    assert.equal(pricedInOf(r), 60);
+    assert.deepEqual(bandPrint(20.0, 5.5, 'IN'), { band: true, level: 20 });
+    assert.deepEqual(bandPrint(19.99, 2.1, 'IN'), { band: true, level: 20 });
+    assert.deepEqual(bandPrint(4.99, 110, 'IN'), { band: false, level: null }, 'a 5% move on ₹110 Cr is not a band print');
+    assert.deepEqual(bandPrint(4.99, 3, 'IN'), { band: true, level: 5 });
+    assert.deepEqual(bandPrint(20, 5, 'US'), { band: false, level: null });
+  });
+
+  test('the finding picks the highest-scoring filing and prints why', () => {
+    const f = buildFinding({ ticker: 'KMEW', company: 'Knowledge Marine', market: 'IN', movePct: 4.1, marketCap: 7298, turnover: 12, announcements: anns, returns: returnsFromSeries(series), holding: false, sources: ['screener.in'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'order_win');
+    assert.equal(f.valueStated, 279.33); assert.equal(f.valuePctMcap, 3.83);
+    assert.equal(f.verdict, 'PRICED', 'up 23% 3M / 127% 1Y — largely priced');
+    assert.ok(f.notes.some((n) => /not model-read/.test(n)));
+  });
+
+  test('materiality gate: under 1% of market cap cannot rank above THIN', () => {
+    const c = classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Award_of_Order_Receipt_of_Order', 'Order worth ₹33 crore received', 0));
+    const s = scoreCatalyst(c, { marketCap: 5000, returns: { m1: -10, m3: -20, m6: -30, y1: -40, history: 247 }, sourceTier: 'primary', verifiedQuote: true });
+    assert.equal(s.verdict, 'THIN'); assert.ok(s.net <= 17);
+  });
+
+  test('a 100%-priced catalyst scores zero even when primary and fresh', () => {
+    const c = classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Acquisition', 'Acquisition of control worth ₹1,500 crore', 1));
+    const s = scoreCatalyst(c, { marketCap: 5000, returns: { m1: 109, m3: 150, m6: 200, y1: 300, history: 247 }, sourceTier: 'primary', verifiedQuote: true });
+    assert.equal(s.net, 0); assert.equal(s.verdict, 'NONE');
+  });
+
+  test('reject-first: a denial after the last catalyst is the finding; a catalyst filed after the denial is not', () => {
+    // INDORAMA: denial 11 days ago, the only "catalyst" older still → denied.
+    const f = buildFinding({ ticker: 'INDORAMA', company: null, market: 'IN', movePct: 17, marketCap: 2000, turnover: 40, announcements: [ann('Clarification on price movement', 'The movement is market driven; there is no undisclosed price sensitive information', 11), ann('Announcement under Regulation 30 (LODR)-Award_of_Order', 'Order worth ₹40 crore', 15)], returns: { m1: 40, m3: 120, m6: 223, y1: 250, history: 247 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'denied');
+    assert.match(f.headline || '', /no undisclosed information/);
+    // TEGA: denial on the 18th for the 17th's spike, ₹126 Cr contract filed later on the 18th → the contract is the finding, the denial a note.
+    const g = buildFinding({ ticker: 'TEGA', company: null, market: 'IN', movePct: 9.6, marketCap: 15978, turnover: 200, announcements: [ann('Clarification sought for increase in volume by BSE', 'Tega says no undisclosed price-sensitive information is pending', 3), { ...ann('Announcement pursuant to Reg. 30', 'Tega McNally Minerals won a Rs 126 crore domestic contract from Kalpataru Projects', 3), dateIso: new Date(now.getTime() - 3 * 86_400_000 + 3600_000).toISOString() }], returns: { m1: 20, m3: 21, m6: 30, y1: 40, history: 247 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(g.status, 'catalyst'); assert.equal(g.category, 'order_win');
+    assert.equal(g.verdict, 'THIN', '₹126 Cr on ₹15,978 Cr is 0.79% of market cap');
+    assert.ok(g.notes.some((n) => /denied any undisclosed information/.test(n)));
+  });
+
+  test('routine-only, none, listing artifact and source-failed are explicit findings', () => {
+    const routine = buildFinding({ ticker: 'A', company: null, market: 'IN', movePct: 8, marketCap: 800, turnover: 2, announcements: [ann('Notice of AGM', null, 5), ann('Announcement under Regulation 30 (LODR)-Newspaper Publication', null, 6)], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(routine.status, 'routine_only'); assert.equal(routine.filingsInWindow, 2);
+    const none = buildFinding({ ticker: 'B', company: null, market: 'IN', movePct: 9.4, marketCap: 800, turnover: 2, announcements: [ann('Old order', 'Order worth ₹200 crore', 60)], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(none.status, 'none', 'a 60-day-old filing is outside the window');
+    const listing = buildFinding({ ticker: 'GAJA', company: null, market: 'IN', movePct: 14.2, marketCap: 900, turnover: 30, announcements: [], returns: { m1: null, m3: null, m6: null, y1: null, history: 26 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(listing.status, 'listing_artifact'); assert.equal(listing.listingDays, 26);
+    const failed = buildFinding({ ticker: 'C', company: null, market: 'IN', movePct: 5, marketCap: null, turnover: null, announcements: [], returns: null, holding: false, sources: [], sourceFailed: true, windowDays: 21, now });
+    assert.equal(failed.status, 'source_failed');
+    const band = buildFinding({ ticker: 'PROTEAN', company: null, market: 'IN', movePct: 20.0, marketCap: 2401, turnover: 110, announcements: [], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(band.bandPrint, true); assert.equal(band.bandLevel, 20); assert.equal(band.status, 'none');
+  });
+
+  test('coverage is a fraction over the universe, not over what was found', () => {
+    const f = buildFinding({ ticker: 'A', company: null, market: 'IN', movePct: 5, marketCap: 1, turnover: 1, announcements: [], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    const cov = coverage({ A: f }, ['A', 'B', 'C']);
+    assert.equal(cov.researched, 1); assert.equal(cov.total, 3); assert.equal(cov.pct, 33); assert.equal(cov.byStatus.unresearched, 2);
   });
 });

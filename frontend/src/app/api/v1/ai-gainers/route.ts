@@ -99,7 +99,12 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-interface GainerRow { ticker: string; company: string; movePct: number | null; relVol: number | null; gapPct: number | null }
+interface GainerRow {
+  ticker: string; company: string; movePct: number | null; relVol: number | null; gapPct: number | null;
+  // ── carried for the catalyst research sweep (zzz741) ──
+  volume?: number | null; price?: number | null; marketCap?: number | null;   // ₹ Cr (IN) or $ M (US)
+  perf?: { m1: number | null; m3: number | null; m6: number | null; y1: number | null } | null;
+}
 
 /**
  * ── SHOW YOUR WORKING.                                            (zzz721)
@@ -137,6 +142,10 @@ async function readUsGainers(): Promise<{ rows: GainerRow[]; file: string; synce
       movePct: num(r['Performance %, 1 week']) ?? num(r['Performance %, 1 month']),
       relVol: num(r['Relative volume, 1 week']),
       gapPct: num(r['Gap']),
+      volume: num(r['Volume']),
+      price: num(r['Price']),
+      marketCap: num(r['Market capitalization']) != null ? (num(r['Market capitalization'])! / 1e6) : null,
+      perf: { m1: num(r['Performance %, 1 month']), m3: num(r['Performance %, 3 months']), m6: num(r['Performance %, 6 months']), y1: num(r['Performance % 1 year']) },
     })).filter((x) => x.ticker);
     return { rows, file: US_GAINERS_FILE, syncedAt };
   } catch {
@@ -381,6 +390,10 @@ export async function GET(req: NextRequest) {
       movePct: g.movePct,
       relVol: null,
       gapPct: null,
+      volume: g.volume,
+      price: null,
+      marketCap: g.marketCapCr,
+      perf: null,
     }))
     : gainersRes.rows;
   const graded = gradedRes.rows;
@@ -679,6 +692,10 @@ export async function GET(req: NextRequest) {
         move_pct: g.movePct,
         volume_ratio: g.relVol,
         matched: gradedBy.has(g.ticker),
+        volume: g.volume ?? null,
+        price: g.price ?? null,
+        market_cap: g.marketCap ?? null,
+        perf: g.perf ?? null,
       })),
     // The number that belongs in the funnel: filed results BEHIND A GAINER.
     // The bench size is reported separately so nobody reads 320 as the
