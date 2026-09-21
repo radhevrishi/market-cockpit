@@ -120,6 +120,16 @@ export function recordPromises(symbol: string, summary: any, sourceUrl: string |
 export interface PromiseCheck {
   gap: boolean;
   detail: string;
+  /** ── THE COMPARISON ITSELF, not a verdict about it.            (zzz727)
+   *
+   *  "Running behind plan" is only sayable when there is a plan and an actual
+   *  to put beside it. These three fields are what the card prints, and
+   *  assessThesis discards a gap that arrives without them — which stops the
+   *  state from ever being reached on the strength of weak-looking growth. */
+  plan?: string | null;
+  actual?: string | null;
+  variance?: string | null;
+  direction?: 'behind' | 'ahead';
   open: Promise_[];
   /** True on the first read of a holding — nothing to compare against yet. */
   firstRun: boolean;
@@ -155,28 +165,42 @@ export function checkPromises(symbol: string, summary: any | null): PromiseCheck
 
   const utNow = pctIn(summary?.utilisation?.current);
   const misses: string[] = [];
+  let plan: string | null = null, actual: string | null = null, variance: string | null = null;
+  let direction: 'behind' | 'ahead' = 'behind';
   for (const p of open) {
     if (/utilisation/i.test(p.metric) && utNow != null) {
       const t = pctIn(p.target);
-      // A 3pp tolerance: filings round, and a ledger that fires on rounding
-      // is a ledger that cries wolf.
-      if (t != null && utNow < t - 3) {
-        misses.push(`${p.metric}: promised ${p.target}${p.by ? ` by ${p.by}` : ''}, currently ${summary.utilisation.current}.`);
+      // A 3pp tolerance both ways: filings round, and a ledger that fires on
+      // rounding is a ledger that gets ignored. Symmetric because beating a
+      // plan is as much a reason to re-underwrite as missing one.
+      if (t == null) continue;
+      if (utNow < t - 3 || utNow > t + 3) {
+        direction = utNow < t ? 'behind' : 'ahead';
+        plan = `${p.metric} ${p.target}${p.by ? ` by ${p.by}` : ''}`;
+        actual = String(summary.utilisation.current);
+        variance = `${utNow - t >= 0 ? '+' : ''}${(utNow - t).toFixed(0)}pp vs plan`;
+        misses.push(`${p.metric}: stated ${p.target}${p.by ? ` by ${p.by}` : ''}, actual ${summary.utilisation.current}.`);
       }
     }
   }
   if (summary?.guidance?.action === 'lowered') {
     const prior = open.find((p) => /guidance/i.test(p.metric));
-    if (prior) misses.push(`${prior.metric}: previously ${prior.target}; this quarter guidance was lowered${said(summary.guidance.detail) ? ` — ${summary.guidance.detail}` : ''}.`);
+    if (prior) {
+      direction = 'behind';
+      plan = plan || `${prior.metric} ${prior.target}${prior.by ? ` by ${prior.by}` : ''}`;
+      actual = actual || (said(summary.guidance.detail) ? String(summary.guidance.detail) : 'guidance lowered');
+      variance = variance || 'guidance cut against the figure previously stated';
+      misses.push(`${prior.metric}: previously ${prior.target}; this quarter guidance was lowered${said(summary.guidance.detail) ? ` — ${summary.guidance.detail}` : ''}.`);
+    }
   }
 
   if (!misses.length) {
     return { gap: false, open, firstRun: false,
-      detail: `${open.length} promise${open.length > 1 ? 's' : ''} on file, none of them missed by this quarter's evidence.` };
+      detail: `${open.length} promise${open.length > 1 ? 's' : ''} on file, none of them materially missed or beaten by this quarter's evidence.` };
   }
   return {
-    gap: true, open, firstRun: false,
-    detail: `The business is running behind what management stated earlier: ${misses.join(' ')}`,
+    gap: true, open, firstRun: false, plan, actual, variance, direction,
+    detail: `Measured against what management itself documented: ${misses.join(' ')}`,
   };
 }
 

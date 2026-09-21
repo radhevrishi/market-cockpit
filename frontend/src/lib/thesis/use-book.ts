@@ -58,7 +58,10 @@ function assess(row: BookRow): BookRow {
     assessment: assessThesis({
       pattern: row.pattern?.pattern ?? null,
       variables: vars,
-      promiseGap: check ? { gap: check.gap, detail: check.detail, direction: 'behind' } : null,
+      promiseGap: check ? {
+        gap: check.gap, detail: check.detail, direction: check.direction || 'behind',
+        plan: check.plan ?? null, actual: check.actual ?? null, variance: check.variance ?? null,
+      } : null,
       // An evidence document has been read only when a summary came back.
       evidenceReviewed: !!row.summary,
     }),

@@ -32,6 +32,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { kvGet } from '@/lib/kv';
 import { fetchIndiaGainers, INDIA_GAINERS_URL } from '@/lib/ai-gainers/screener-gainers';
+import { readAnnouncement, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
+import { extractPdfText } from '@/lib/pdf-text-extractor';
 import {
   type GainerEvent, type Market, type EventSource,
   sourceTierOf, researchPriority, buildResearchQueue,
@@ -269,6 +271,43 @@ async function readGraded(origin: string, market: Market): Promise<{ rows: any[]
   return { rows, pending, from };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 2 — THE GAINERS WITH NO FILING BEHIND THEM.                 (zzz725)
+//
+// Phase 1 matched gainers to quarterly results, which is the largest class of
+// catalyst and needs no model. It left the rest — a stock up 20% today on an
+// order win, an approval, a qualification, a promoter purchase — reported as
+// "no verified fundamental catalyst identified", which was honest and was also
+// the half the owner actually wanted.
+//
+// So the unmatched gainers are now crossed against the exchange ANNOUNCEMENT
+// feed, and the announcements that survive a cheap noise filter are read.
+//
+// THREE THINGS THAT KEEP THIS HONEST AND AFFORDABLE:
+//   · Only the TOP few unmatched gainers are read. Each reading is a model
+//     call against a PDF, and reading a hundred announcements to find two
+//     catalysts is a cost with no reader.
+//   · The noise filter runs BEFORE any model call, so board-meeting
+//     intimations and AGM notices never cost anything.
+//   · A reading with no verbatim quote found in the document is discarded by
+//     the reader itself. Silence is the expected outcome most days.
+const ANNOUNCEMENT_READ_BUDGET = 6;
+
+async function loadAnnouncements(market: Market): Promise<AnnouncementItem[]> {
+  if (market !== 'IN') return [];          // the US side has no equivalent feed wired yet
+  const base = process.env.CF_WORKER_URL || '';
+  if (!base) return [];
+  try {
+    const r = await fetch(`${base}/api/filings/latest`, {
+      cache: 'no-store', signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j : (j?.items || j?.filings || j?.results || j?.data || []);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
 /** A filing is only NEW information while it is new. After that it is context
  *  for a move, and the scorer weights it accordingly. */
 function statusForAge(ageDays: unknown, tier: unknown): GainerEvent['informationStatus'] {
@@ -413,6 +452,81 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // ── PHASE 2. Read announcements for the gainers nothing has explained.
+  //
+  // Ordered by move, because when the budget only allows six readings the ones
+  // that moved most are where an unexplained move is most worth explaining.
+  // That is a triage rule for WHICH to read, never an input to the SCORE — the
+  // scorer still never sees a price magnitude.
+  let announcementsRead = 0;
+  let announcementsConsidered = 0;
+  if (gainers.length) {
+    const unmatched = gainers
+      .filter((g) => !gradedBy.has(g.ticker))
+      .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity));
+    if (unmatched.length) {
+      const feed = await loadAnnouncements(market as Market);
+      const byTicker = new Map<string, AnnouncementItem[]>();
+      for (const f of feed) {
+        const t = String((f as any)?.symbol || '').toUpperCase();
+        if (!t) continue;
+        if (!byTicker.has(t)) byTicker.set(t, []);
+        byTicker.get(t)!.push(f as AnnouncementItem);
+      }
+      const candidates: Array<{ g: GainerRow; a: AnnouncementItem }> = [];
+      for (const g of unmatched) {
+        const mine = (byTicker.get(g.ticker) || []).filter(worthReading);
+        if (!mine.length) continue;
+        mine.sort((x, y) => String(y.filing_date || '').localeCompare(String(x.filing_date || '')));
+        candidates.push({ g, a: mine[0] });
+        if (candidates.length >= ANNOUNCEMENT_READ_BUDGET) break;
+      }
+      announcementsConsidered = candidates.length;
+
+      // Sequential, not parallel: these are PDF fetches plus model calls, and
+      // the route has a 60-second ceiling. Six in sequence fits; six at once
+      // against the exchange's CDN does not deserve to.
+      for (const { g, a } of candidates) {
+        const read = await readAnnouncement(a, async (url) => {
+          const ext = await extractPdfText(url, { signal: AbortSignal.timeout(20_000) });
+          return ext?.text || '';
+        });
+        if (!read) continue;
+        announcementsRead++;
+        const tier = sourceTierOf(read.sourceUrl);
+        events.push({
+          eventId: `${market}:${g.ticker}:ann:${read.filingDate || now}`,
+          clusterId: '',
+          market: market as Market,
+          ticker: g.ticker,
+          company: g.company || null,
+          eventTime: read.filingDate ? `${String(read.filingDate).slice(0, 10)}T00:00:00Z` : now,
+          detectedAt: now,
+          catalyst: read.catalyst,
+          // An announcement IS new information — that is what an announcement
+          // is. Whether it MATTERS is the materiality field, which the reader
+          // is forbidden from setting high on an unquantified item.
+          informationStatus: 'new_information',
+          attribution: 'company_specific',
+          priceChangePct: g.movePct,
+          volumeRatio: g.relVol,
+          sectorRelativePct: null,
+          sources: [{ url: read.sourceUrl, tier, published: read.filingDate }],
+          claims: [
+            { text: read.headline, sourceUrl: read.sourceUrl, kind: 'fact' },
+            { text: `"${read.evidenceQuote}"`, sourceUrl: read.sourceUrl, kind: 'fact' },
+            ...(read.sizeVsCompany
+              ? [{ text: `Size vs company: ${read.sizeVsCompany}`, sourceUrl: read.sourceUrl, kind: 'fact' as const }] : []),
+            ...(read.impactFrom
+              ? [{ text: `Expected from ${read.impactFrom}`, sourceUrl: read.sourceUrl, kind: 'fact' as const }] : []),
+          ],
+          materiality: read.materiality,
+          structuralDuration: read.structuralDuration,
+        });
+      }
+    }
+  }
+
   const { queue, funnel } = buildResearchQueue(
     events,
     (e) => researchPriority({ event: e, companySpecificShare: null }),
@@ -453,7 +567,13 @@ export async function GET(req: NextRequest) {
       );
     }
   }
-  notes.push('No language model has read anything here. Every catalyst is a filed result and every score component is stated. Phase 2 adds the reader for gainers with no filing behind them.');
+  if (announcementsConsidered) {
+    notes.push(`Phase 2 read ${announcementsConsidered} exchange announcement${announcementsConsidered === 1 ? '' : 's'} `
+      + `for gainers with no filed result behind them, and ${announcementsRead} produced a catalyst. `
+      + 'Board-meeting intimations, AGM notices and voting results are filtered out before any model call, and a '
+      + 'reading whose quote cannot be found verbatim in the document is discarded rather than shown.');
+  }
+  notes.push('Every catalyst from a filed result was found without a model, and every score component is stated. Announcement catalysts are model-read and each carries a verbatim quote from the document.');
 
   return NextResponse.json({
     ok: true,
@@ -461,6 +581,11 @@ export async function GET(req: NextRequest) {
     generated_at: now,
     funnel,
     gainers_scanned: gainers.length,
+    announcements: {
+      considered: announcementsConsidered,
+      produced_a_catalyst: announcementsRead,
+      budget: ANNOUNCEMENT_READ_BUDGET,
+    },
     // ── THE AUDIT TRAIL. Every row that was read, with its move, plus where
     //    the list came from and when it was last synced — so "34 gainers
     //    scanned" is a checkable claim rather than an assertion. (zzz721)

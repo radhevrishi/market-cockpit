@@ -106,6 +106,23 @@ export interface ThesisAssessment {
   /** How much of the thesis could be checked at all. */
   coverage: {
     checked: number; disclosed: number; corePossible: number; coreDisclosed: number;
+    // ── THE EVIDENCE MATRIX, THESIS-SPECIFIC.                     (zzz727)
+    //
+    // "Core variables checked: 2/3" read as though the thesis were almost
+    // fully examined. It was not: GOLDIAM's operating-inflection thesis
+    // depends on revenue, volume, price/mix, operating leverage, margin,
+    // capacity, utilisation, demand and capex — and the denominator counted
+    // three. A fraction whose denominator is a generic model of a thesis
+    // flatters every holding on the page.
+    //
+    // The denominator is now the THESIS-CRITICAL set: every variable this
+    // particular ledger weights 3 or 4. And it is reported as three counts
+    // rather than a fraction, because "2 confirmed, 5 pending, 0
+    // contradicted" cannot be misread as progress towards completion.
+    criticalTotal: number;
+    criticalConfirmed: number;
+    criticalPending: number;
+    criticalContradicted: number;
     /** The core variables NOT yet checked, by name. The owner asked for this
      *  exactly: "6/10 core variables checked. Missing: utilisation, capex,
      *  new capacity, order book" — not a bare "evidence incomplete". */
@@ -164,9 +181,9 @@ export const STATUS_META: Record<ThesisStatus, { label: string; color: string; d
   CONFIRMATION_REQUIRED: { label: 'CONFIRMATION REQUIRED', color: '#FBBF24', dot: '🟡',
     meaning: 'The numbers improved, but the operating mechanism behind them has not been established. Good results are the RESULT of a thesis, never proof that it is intact.' },
   NEGATIVE_EXPECTATION_GAP: { label: 'RUNNING BEHIND PLAN', color: '#C084FC', dot: '🟣',
-    meaning: 'The business is running materially behind what management stated earlier. Not necessarily bad in absolute terms — but it is not what you underwrote.' },
+    meaning: 'The actual result materially TRAILS a figure management itself documented earlier. Reached only by comparing plan against actual — never from weak growth, because a company can shrink and still beat what it promised.' },
   POSITIVE_EXPECTATION_GAP: { label: 'RUNNING AHEAD OF PLAN', color: '#818CF8', dot: '🟣',
-    meaning: 'The business is running ahead of what management stated earlier. Worth re-underwriting upward rather than quietly banking.' },
+    meaning: 'The actual result materially EXCEEDS a figure management itself documented earlier. Never reached from strong growth alone — a company can grow 40% and still miss what it told you.' },
 };
 
 const SIGN: Record<VarVerdict, number> = { improving: 1, flat: 0, deteriorating: -1, unknown: 0 };
@@ -176,7 +193,18 @@ export interface AssessInput {
   variables: StructuralVar[];
   /** From guidance-ledger: a promise made earlier that this quarter can be
    *  checked against. Absent on the first quarter a holding is tracked. */
-  promiseGap?: { gap: boolean; detail: string; direction?: 'behind' | 'ahead' } | null;
+  /** ── AHEAD/BEHIND IS A COMPARISON, NEVER A MOOD.               (zzz727)
+   *
+   *  These two states may be reached ONLY by comparing an actual result to a
+   *  figure management previously documented. Strong growth is not "ahead of
+   *  plan" — a company can grow 40% and still miss what it told you, and a
+   *  company can shrink and still beat it. So the comparison itself travels:
+   *  plan, actual and variance are required and are printed on the card. A
+   *  gap with no plan and actual attached is discarded by assessThesis. */
+  promiseGap?: {
+    gap: boolean; detail: string; direction?: 'behind' | 'ahead';
+    plan?: string | null; actual?: string | null; variance?: string | null;
+  } | null;
   /** True once an evidence document (filing, concall, announcement) has
    *  actually been read for this holding. NO MATERIAL CHANGE is not available
    *  before this: "nothing changed" and "nothing was read" are different
@@ -216,6 +244,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   });
 
   const disclosed = checked.filter((c) => c.verdict !== 'unknown');
+  // Thesis-critical = everything this ledger weights 3 or 4. The denominator
+  // of the evidence matrix, and the only honest answer to "how much of this
+  // thesis has been examined".
+  const critical = checked.filter((c) => c.weight >= 3);
   const core = checked.filter((c) => c.weight === 4);
   const coreDisclosed = core.filter((c) => c.verdict !== 'unknown');
   const coreDown = coreDisclosed.filter((c) => c.verdict === 'deteriorating');
@@ -254,31 +286,44 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   let status: ThesisStatus;
   let because: string;
 
-  if (coreDown.length >= 2) {
+  // ── BROKEN REQUIRES A NAMED CONDITION TO HAVE FIRED.            (zzz727)
+  //
+  // The old rule was arithmetic — two core variables down, or one plus weak
+  // guidance — and produced EXICOM as "THESIS BROKEN" on the sentence "cash
+  // conversion deteriorated with 2 supporting variables down". That is a
+  // reason to investigate. It is not the thesis-break condition this ledger
+  // WROTE DOWN, and a red status that cannot name the condition it met is not
+  // auditable. A weak quarter is not a broken thesis; that distinction is the
+  // entire reason this page exists.
+  //
+  // So BROKEN now requires that a CORE variable's own stated invalidation
+  // condition has fired, and the card prints that condition verbatim. The
+  // arithmetic cases that used to reach red now reach WEAKENING, which is
+  // what they always were.
+  const coreTriggered = checked.filter((c) => c.weight === 4 && c.invalidation);
+  if (coreTriggered.length >= 2 || (coreTriggered.length === 1 && guidanceDown)) {
     status = 'BROKEN';
-    because = `Two core variables deteriorated together — ${coreDown.map((c) => c.label.toLowerCase()).join(' and ')}. `
-      + 'The mechanism that justified owning this is not working.';
-  } else if (coreDown.length === 1 && guidanceDown) {
-    status = 'BROKEN';
-    because = `${coreDown[0].label} deteriorated AND management reduced its own forward expectations. `
-      + 'The company agrees the mechanism has stopped.';
-  } else if (coreDown.length === 1 && supportDown.length >= 2) {
-    status = 'BROKEN';
-    because = `${coreDown[0].label} deteriorated with ${supportDown.length} supporting variables down alongside it — `
-      + 'not one weak quarter, a pattern across the mechanism.';
-  } else if (input.promiseGap?.gap) {
+    because = `Thesis-break condition met — ${coreTriggered.map((c) => `"${c.invalidation}"`).join(' AND ')}`
+      + `${guidanceDown && coreTriggered.length === 1 ? ', alongside management reducing its own forward expectations' : ''}. `
+      + `Evidence: ${coreTriggered.map((c) => `${c.label} ${c.delta || c.after || 'down'}`).join('; ')}.`;
+  } else if (input.promiseGap?.gap && input.promiseGap.plan && input.promiseGap.actual) {
     // Ranked BELOW a break and ABOVE weakening: a company can be delivering
     // fine in absolute terms while missing what it told you, and that is a
     // different problem needing a different response.
     status = input.promiseGap.direction === 'ahead'
       ? 'POSITIVE_EXPECTATION_GAP' : 'NEGATIVE_EXPECTATION_GAP';
-    because = input.promiseGap.detail;
-  } else if (coreDown.length === 1 || supportDown.length >= 2) {
+    because = `Plan: ${input.promiseGap.plan} · Actual: ${input.promiseGap.actual}`
+      + `${input.promiseGap.variance ? ` · Variance: ${input.promiseGap.variance}` : ''}. `
+      + input.promiseGap.detail;
+  } else if (coreDown.length >= 1 || supportDown.length >= 2) {
     status = 'WEAKENING';
-    because = coreDown.length === 1
-      ? `${coreDown[0].label} deteriorated. One core variable down is a reason to look, not to act — `
-        + 'a single weak quarter is exactly what this ledger exists to stop you selling into.'
-      : `${supportDown.length} supporting variables deteriorated (${supportDown.map((c) => c.label.toLowerCase()).join(', ')}).`;
+    const downAll = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating');
+    because = `Thesis-critical mechanism deteriorating — `
+      + `${downAll.map((c) => `${c.label.toLowerCase()} ${c.delta || c.after || ''}`.trim()).join(', ')}. `
+      + (coreTriggered.length
+        ? `The condition "${coreTriggered[0].invalidation}" has fired once; a break needs it confirmed or a second core condition alongside it. `
+        : 'No stated thesis-break condition has been met. ')
+      + 'A weak quarter is not a broken thesis — this is a prompt to look, not to act.';
   } else if (!core.length || disclosed.length < 2) {
     // ── TWO WAYS TO REACH A VERDICT YOU HAVE NOT EARNED.          (zzz719)
     //
@@ -309,7 +354,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `${coreDisclosed.length}/${core.length} core variables checked. `
       + `Missing: ${missing.join(', ')}. `
       + (disclosed.length
-        ? 'Nothing read so far is deteriorating, but a positive verdict is not available on variables nobody has looked at.'
+        ? 'No deterioration is visible in the evidence reviewed so far; remaining thesis-critical variables have not yet been reviewed.'
         : 'Nothing has been read for this holding at all.');
   } else if (coreUp.length >= 1 && weighted >= 6 && allDimsConfirmed && input.evidenceReviewed) {
     // ── THE ONLY PATH TO GREEN.                                   (zzz723)
@@ -426,6 +471,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
       corePossible: core.length, coreDisclosed: coreDisclosed.length,
+      criticalTotal: critical.length,
+      criticalConfirmed: critical.filter((c) => c.verdict === 'improving').length,
+      criticalPending: critical.filter((c) => c.verdict === 'unknown').length,
+      criticalContradicted: critical.filter((c) => c.verdict === 'deteriorating').length,
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
       missingNeedsFiling: checked
         .filter((c) => c.verdict === 'unknown' && c.weight >= 3 && !GRADER_AVAILABLE.has(c.key))

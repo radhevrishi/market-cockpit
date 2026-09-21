@@ -38,6 +38,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
+import { fetchCompanyDocs, pickDocument, type CompanyDoc } from '@/lib/earnings/screener-documents';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -225,25 +226,66 @@ export async function GET(req: NextRequest) {
       error: 'The exchange-filing feed could not be reached, so there is no document to read. It is polled every few minutes; try again shortly.',
     });
   }
+  // ══════════════════════════════════════════════════════════════════════
+  // TWO SOURCES, AND THE SECOND IS USUALLY THE BETTER ONE.        (zzz726)
+  //
+  // Measured on 21 September: the exchange feed held 2,751 filings covering
+  // 14–21 September ONLY — a rolling seven-day window — and the day-level
+  // endpoint returned zero for August. Every holding in the owner's book
+  // reported in August, so this route answered "no results attachment is on
+  // file" for all fifty-one of them. The reader was not broken; it was
+  // looking in the only place it knew, and that place structurally cannot
+  // hold a document more than a week old.
+  //
+  // screener.in's company page can, and carries something better: the concall
+  // TRANSCRIPT. The v7 structural block asks for utilisation, capacity, order
+  // intake, commissioning dates and management targets — a results PDF
+  // contains almost none of those, and a transcript is forty minutes of
+  // analysts asking management exactly those questions. The exchange feed was
+  // the weaker source that happened to be wired first.
+  //
+  // The feed is still tried first, because a company that filed THIS WEEK
+  // should be read at its newest document.
+  // ══════════════════════════════════════════════════════════════════════
   const urls = rankAttachments(filings, ticker, filingDate);
-  if (!urls.length) {
-    return NextResponse.json({
-      ok: false,
-      error: `No results attachment was found for ${ticker} in the exchange feed`
-        + `${filingDate ? ` (searched the recent window and ${filingDate})` : ' (searched the recent window only — no filing date was supplied, so an older result could not be located)'}. `
-        + 'Indian companies sometimes file only an outcome letter with the figures inside the PDF body, and sometimes nothing machine-readable at all.',
-    });
+  let ext = urls.length ? await extractFirstPdf(urls) : null;
+  let usedDoc: CompanyDoc | null = null;
+  let docNote: string | null = null;
+
+  const usable = (e: any) => e && e.text && e.text.length >= 1200;
+  if (!usable(ext) || !looksLikeIndiaResults(String(ext?.text || ''))) {
+    const lib = await fetchCompanyDocs(ticker);
+    const pick = pickDocument(lib.docs, filingDate);
+    if (pick) {
+      const alt = await extractFirstPdf([pick.url]);
+      if (usable(alt)) {
+        ext = alt;
+        usedDoc = pick;
+        docNote = `Read the ${pick.kind === 'transcript' ? 'concall transcript' : pick.kind === 'ppt' ? 'investor presentation' : 'annual report'}`
+          + `${pick.period ? ` for ${pick.period}` : ''}, from the company's screener.in document list — `
+          + 'the exchange feed is a rolling one-week window and no longer carries this quarter\'s results filing.';
+      }
+    }
+    if (!usable(ext)) {
+      return NextResponse.json({
+        ok: false,
+        error: `No readable document was found for ${ticker}. The exchange feed is a rolling one-week window`
+          + `${filingDate ? ` and does not reach ${filingDate}` : ''}, and `
+          + (lib.error
+            ? `the screener.in document list could not be read (${lib.error}).`
+            : lib.docs.length
+              ? `the ${lib.docs.length} documents on its screener.in page are scanned images this reader does not OCR.`
+              : 'its screener.in page lists no concall transcript, presentation or annual report.'),
+      });
+    }
   }
 
-  const ext = await extractFirstPdf(urls);
-  if (!ext || !ext.text || ext.text.length < 1200) {
-    return NextResponse.json({
-      ok: false,
-      error: 'The filed PDF could not be read as text — it is most likely a scanned image, which this reader does not OCR. Nothing is summarised rather than guessed.',
-    });
-  }
-  const text = ext.text.slice(0, MAX_CHARS);
-  if (!looksLikeIndiaResults(text)) {
+  const text = String(ext!.text).slice(0, MAX_CHARS);
+  // A transcript or presentation is NOT a statement of results and must not be
+  // held to that test — it is a better source for the structural block, not a
+  // worse one. The figure-verification gate below is unchanged and still
+  // checks every number against this document.
+  if (!usedDoc && !looksLikeIndiaResults(text)) {
     return NextResponse.json({
       ok: false,
       error: 'The document on file for this date is not a statement of results — most likely an intimation or a notice. It was not summarised.',
@@ -378,7 +420,10 @@ export async function GET(req: NextRequest) {
 
   const payload = {
     structured: data,
-    source_url: (ext as any).url || urls[0],
+    source_url: (ext as any).url || usedDoc?.url || urls[0],
+    document_kind: usedDoc?.kind || 'results_filing',
+    document_period: usedDoc?.period || quarter || null,
+    document_note: docNote,
     model: MODEL,
     ticker,
     quarter: quarter || null,

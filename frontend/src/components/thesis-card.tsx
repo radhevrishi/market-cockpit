@@ -253,18 +253,31 @@ export function ThesisCard(p: ThesisCardProps) {
         );
       })()}
 
-      {/* The core tally, stated as a number and a list — never as a mood. */}
+      {/* ── THE EVIDENCE MATRIX.                                 (zzz727)
+          "Core variables checked: 2/3" read as near-complete on a thesis that
+          actually depends on nine things. Three counts cannot be misread as
+          progress towards a finish line, and the denominator is now this
+          ledger's own thesis-critical set rather than a generic model. */}
       {a && (
-        <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
-          <b style={{ color: a.coverage.coreDisclosed === a.coverage.corePossible ? C.green : C.amber }}>
-            Core variables checked: {a.coverage.coreDisclosed}/{a.coverage.corePossible}
+        <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.55 }}>
+          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>THESIS EVIDENCE </span>
+          <b style={{ color: C.up }}>{a.coverage.criticalConfirmed} confirmed</b>
+          {' · '}
+          <b style={{ color: a.coverage.criticalPending ? C.warn : C.flat }}>{a.coverage.criticalPending} pending</b>
+          {' · '}
+          <b style={{ color: a.coverage.criticalContradicted ? C.down : C.flat }}>
+            {a.coverage.criticalContradicted} contradicted
           </b>
+          <span style={{ color: C.faint }}> · of {a.coverage.criticalTotal} thesis-critical variables</span>
           {a.coverage.missingCore.length > 0 && (
-            <> · Missing: <span style={{ color: C.text }}>{a.coverage.missingCore.join(', ')}</span></>
+            <div style={{ color: C.faint, marginTop: 2 }}>
+              Core still unreviewed: <span style={{ color: C.text }}>{a.coverage.missingCore.join(', ')}</span>
+            </div>
           )}
           {a.coverage.missingNeedsFiling.length > 0 && p.needsRead && (
             <div style={{ color: C.faint, marginTop: 2 }}>
-              {a.coverage.missingNeedsFiling.length} of the unchecked variables exist only in a filing, concall or exchange announcement — no amount of screener data will fill them.
+              {a.coverage.missingNeedsFiling.length} of the pending variables exist only in a filing, concall or
+              exchange announcement — no amount of screener data will fill them.
             </div>
           )}
         </div>

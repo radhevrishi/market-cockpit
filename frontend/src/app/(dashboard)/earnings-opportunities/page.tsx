@@ -3691,7 +3691,14 @@ function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
   const [struct, setStruct] = useState<any>(null);
-  const [prov, setProv] = useState<{ source_url: string | null; model: string | null }>({ source_url: null, model: null });
+  // zzz726 — WHICH document was read now travels with the summary. The reader
+  // falls back from the exchange results filing to the company's concall
+  // transcript, and a transcript read as though it were this quarter's results
+  // would be a quietly wrong answer.
+  const [prov, setProv] = useState<{
+    source_url: string | null; model: string | null;
+    kind: string | null; period: string | null; note: string | null;
+  }>({ source_url: null, model: null, kind: null, period: null, note: null });
   const [err, setErr] = useState('');
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfErr, setPdfErr] = useState('');
@@ -3708,7 +3715,10 @@ function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
       const j = await res.json();
       if (j?.ok && j.structured) {
         setStruct(j.structured);
-        setProv({ source_url: j.source_url || null, model: j.model || null });
+        setProv({
+          source_url: j.source_url || null, model: j.model || null,
+          kind: j.document_kind || null, period: j.document_period || null, note: j.document_note || null,
+        });
         setState('done');
       } else {
         setErr(j?.error || 'No summary is available for this filing.');
@@ -3761,8 +3771,12 @@ function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
           </button>
         )}
         {prov.source_url && (
-          <a href={prov.source_url} target="_blank" rel="noreferrer" style={{ ...chip(false), textDecoration: 'none' }}>
-            📄 Filing
+          <a href={prov.source_url} target="_blank" rel="noreferrer" title={prov.note || undefined}
+            style={{ ...chip(false), textDecoration: 'none' }}>
+            📄 {prov.kind === 'transcript' ? 'Concall transcript'
+              : prov.kind === 'ppt' ? 'Investor presentation'
+                : prov.kind === 'annual_report' ? 'Annual report' : 'Filing'}
+            {prov.period ? ` · ${prov.period}` : ''}
           </a>
         )}
       </div>
@@ -3775,11 +3789,19 @@ function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
         }}>
           {state === 'loading' && (
             <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
-              Fetching and reading {stock.ticker}&rsquo;s filed results PDF — this takes a few seconds the first time.
+              Fetching and reading the latest document for {stock.ticker} — the filed results if the exchange feed still
+              carries them, otherwise the concall transcript from its screener.in document list. A few seconds the first time.
             </div>
           )}
           {state === 'error' && <div style={{ fontSize: 11, color: '#F59E0B' }}>{err}</div>}
-          {state === 'done' && commentary && <CommentaryScoreBlock c={commentary} hasTranscript={false} />}
+          {state === 'done' && prov.note && (
+            <div style={{ marginBottom: 8, fontSize: 10, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+              ℹ {prov.note}
+            </div>
+          )}
+          {state === 'done' && commentary && (
+            <CommentaryScoreBlock c={commentary} hasTranscript={prov.kind === 'transcript'} />
+          )}
           {state === 'done' && struct && <SummaryView d={struct} />}
           {state === 'done' && (
             <div style={{ marginTop: 8, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
