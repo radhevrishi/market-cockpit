@@ -57,6 +57,10 @@ export interface ThesisCardProps {
   error?: string | null;
   /** Said plainly when the ledger has no earlier promise to check against. */
   promiseNote?: string | null;
+  /** 'graded' | 'screener' | 'none' — where the grader-level numbers came
+   *  from. A screener figure and a filing-read figure are not the same
+   *  evidence and the card must never let them look the same. */
+  dataSource?: string | null;
   defaultOpen?: boolean;
 }
 
@@ -106,6 +110,16 @@ export function ThesisCard(p: ThesisCardProps) {
         )}
         {p.radarScore != null && (
           <span style={{ fontSize: 9.5, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
+        )}
+        {p.dataSource === 'screener' && (
+          <span title="These figures are screener.in's, not read from the filing by this portal's own engine. Wider coverage, one step further from the document."
+            style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              border: `1px solid ${C.faint}`, color: C.faint }}>screener.in data</span>
+        )}
+        {p.dataSource === 'none' && (
+          <span title="This holding is in neither the graded bench nor the screener exports. Read the filing to populate it — nothing about it is being reported as clean."
+            style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              border: `1px solid ${C.amber}`, color: C.amber }}>no stored figures</span>
         )}
 
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>

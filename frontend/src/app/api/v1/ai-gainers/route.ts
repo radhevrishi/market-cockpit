@@ -42,6 +42,31 @@ export const maxDuration = 60;
 const TV_DIR = path.join(process.cwd(), 'public', 'data', 'tradingview');
 const US_GAINERS_FILE = 'weekly-gainer-usa.csv';
 
+// ── HOW OLD A FILING MAY BE, AND WHAT IT MEANS AT EACH AGE.       (zzz716)
+//
+// The first recency guard used fourteen days, which was right in principle
+// and empty in practice: checked against the live bench on 21 September it
+// kept 0 of 320 India rows and 2 of 92 US rows, because Indian earnings
+// season ended in mid-August. A pipeline that is correct and returns nothing
+// for three months of the year is not correct, it is unused.
+//
+// The fix is not a looser threshold pretending to be the same claim. It is
+// TWO claims, separated by age:
+//
+//   ≤ FRESH_DAYS   the print is plausibly the catalyst — `new_information`
+//   ≤ WINDOW_DAYS  the print is CONTEXT, not the trigger. A move six weeks
+//                  after a result may be post-earnings drift, which this
+//                  portal tracks separately and which is a real documented
+//                  effect — but claiming the filing caused this week's move
+//                  would be a confident, sourced, wrong causal statement.
+//                  Scored as `confirmation`, which the scorer weights at a
+//                  third of new information.
+//
+// Anything older is dropped. The card shows the age, so the distinction is
+// visible rather than buried in a score.
+const FRESH_DAYS = 14;
+const WINDOW_DAYS = 60;
+
 /** Minimal CSV reader — the TradingView export quotes any field containing a
  *  comma, and a naive split on "," corrupts every company description. */
 function parseCsv(text: string): Record<string, string>[] {
@@ -91,20 +116,119 @@ async function readUsGainers(): Promise<Array<{ ticker: string; company: string;
   }
 }
 
-/** Today's graded results, from the engines that already produce them. */
-async function readGraded(origin: string, market: Market): Promise<any[]> {
-  const url = market === 'US'
-    ? `${origin}/api/v1/earnings/graded-us?days=7&cache_only=1`
-    : `${origin}/api/v1/earnings/graded?date=${new Date().toISOString().slice(0, 10)}&cache_only=1`;
-  try {
-    const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(25_000) });
-    if (!r.ok) return [];
-    const j = await r.json();
-    const bt = j?.by_tier || {};
-    return ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'].flatMap((t) => bt[t] || []);
-  } catch {
-    return [];
+/** The last N calendar days in US Eastern, newest first — the same day keys
+ *  the graders cache under. */
+function recentDays(n: number): string[] {
+  const out: string[] = [];
+  const now = Date.now();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now - i * 86_400_000);
+    out.push(new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d));
   }
+  return out;
+}
+
+/**
+ * Today's graded results, from the engines that already produce them.
+ *
+ * ── ASK FOR THE KEY THAT IS ACTUALLY WARM.                          (zzz714)
+ *
+ * The first version asked `graded-us?days=7&cache_only=1`, which is a
+ * perfectly valid request and was ALWAYS COLD. The grader caches one key per
+ * `date|days` pair, and every writer in the portal — the opportunities page
+ * and the prewarm cron alike — writes `date=<d>&days=1`, one day at a time.
+ * Nothing has ever written `days=7`. So `cache_only=1` correctly answered
+ * `{pending:true}` with no rows, and the gainers page shipped with an empty
+ * queue and no error anywhere: a silent wrong answer, which is the failure
+ * mode this file's header warns about and which it then committed itself.
+ *
+ * Caught by calling the deployed endpoint and reading the numbers, not by
+ * re-reading the code that produced them. `graded_available: 0` next to
+ * `gainers_scanned: 34` is what gave it away.
+ *
+ * The fix is to sweep the same per-day keys the page does. Days still cold
+ * return `pending` and are skipped; they warm on the next prewarm rather than
+ * being computed on this caller's clock.
+ */
+async function readGraded(origin: string, market: Market): Promise<{ rows: any[]; pending: number; from: string }> {
+  // ── READ THE STORE THAT IS ALWAYS WARM.                          (zzz716)
+  //
+  // Two wrong answers preceded this one, and both were silent.
+  //
+  //   1. `graded-us?days=7&cache_only=1` — a valid request for a key nothing
+  //      has ever written. Every writer in the portal caches `date=<d>&days=1`.
+  //   2. Sweeping those per-day keys — correct, and still empty, because
+  //      `cache_only=1` on a day the prewarm cron has not reached returns
+  //      `pending` with no rows. On a quiet week that is every day in the
+  //      window, and the page rendered `0 filed results available` next to
+  //      `34 gainers scanned` as though it were an answer.
+  //
+  // The server bench is the right store and was there the whole time:
+  // /api/v1/bench and /api/v1/bench-us are refreshed by their own crons, hold
+  // roughly 320 India and 92 US graded rows with every field this scorer
+  // needs, and answer in one request whatever the day cache is doing.
+  //
+  // The day cache is still swept afterwards for anything the bench has not
+  // picked up yet — a result graded an hour ago is on the day key before it
+  // reaches the bench — but nothing depends on it being warm.
+  const bench: any[] = [];
+  try {
+    const r = await fetch(`${origin}/api/v1/${market === 'US' ? 'bench-us' : 'bench'}`,
+      { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+    if (r.ok) {
+      const j = await r.json();
+      // THE BENCH IS NOT DATED TO THIS WEEK. It holds every graded result the
+      // crons have kept, some of them months old, and a result from June is
+      // NOT the catalyst behind a move this week. Pairing them would be the
+      // worst class of error this pipeline can make: a confident, sourced,
+      // entirely wrong causal claim. So a filing older than the window is
+      // dropped here rather than explained away on the card.
+      const cutoff = Date.now() - WINDOW_DAYS * 86_400_000;
+      for (const e of (j?.entries || [])) {
+        if (!e?.ticker) continue;
+        const t = Date.parse(String(e.filing_date || ''));
+        if (!Number.isFinite(t) || t < cutoff) continue;
+        bench.push({ ...e, _ageDays: Math.floor((Date.now() - t) / 86_400_000) });
+      }
+    }
+  } catch { /* the day sweep below is the fallback */ }
+
+  const days = recentDays(market === 'US' ? 7 : 4);
+  const urls = market === 'US'
+    ? days.map((d) => `${origin}/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1`)
+    : days.map((d) => `${origin}/api/v1/earnings/graded?date=${d}`);
+  const settled = await Promise.all(urls.map(async (url) => {
+    try {
+      const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  }));
+
+  const rows: any[] = [...bench];
+  let pending = 0;
+  for (const j of settled) {
+    if (!j) continue;
+    const bt = j?.by_tier;
+    if (!bt) { if (j?.pending) pending++; continue; }
+    for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
+      for (const row of (bt[t] || [])) rows.push({ ...row, tier: row?.tier || t });
+    }
+  }
+  const from = bench.length && rows.length > bench.length ? `the server bench (filings within ${WINDOW_DAYS} days) plus the day cache`
+    : bench.length ? `the server bench (filings within ${WINDOW_DAYS} days)`
+      : rows.length ? 'the day cache' : 'neither store';
+  return { rows, pending, from };
+}
+
+/** A filing is only NEW information while it is new. After that it is context
+ *  for a move, and the scorer weights it accordingly. */
+function statusForAge(ageDays: unknown, tier: unknown): GainerEvent['informationStatus'] {
+  const a = typeof ageDays === 'number' ? ageDays : 0;
+  if (a > FRESH_DAYS) return 'confirmation';
+  return tier === 'BLOCKBUSTER' || tier === 'STRONG' ? 'new_information' : 'confirmation';
 }
 
 /** The grader's tier is an assessment of the RESULT, which is the closest
@@ -121,10 +245,11 @@ export async function GET(req: NextRequest) {
   const market = (searchParams.get('market') || 'US').toUpperCase() === 'IN' ? 'IN' : 'US';
   const limit = Math.max(1, Math.min(25, parseInt(searchParams.get('limit') || '10', 10) || 10));
 
-  const [gainers, graded] = await Promise.all([
+  const [gainers, gradedRes] = await Promise.all([
     market === 'US' ? readUsGainers() : Promise.resolve([]),
     readGraded(origin, market as Market),
   ]);
+  const graded = gradedRes.rows;
 
   const gradedBy = new Map<string, any>();
   for (const g of graded) {
@@ -150,14 +275,18 @@ export async function GET(req: NextRequest) {
       eventTime: row.filing_date ? `${String(row.filing_date).slice(0, 10)}T00:00:00Z` : now,
       detectedAt: now,
       catalyst: 'revenue_guidance_increase',
-      informationStatus: row.tier === 'BLOCKBUSTER' || row.tier === 'STRONG' ? 'new_information' : 'confirmation',
+      informationStatus: statusForAge(row._ageDays, row.tier),
       attribution: 'company_specific',
       priceChangePct: g.movePct,
       volumeRatio: g.relVol,
       sectorRelativePct: null,
       sources,
       claims: [{
-        text: String(row.narrative || '').slice(0, 400),
+        text: [String(row.narrative || '').slice(0, 360),
+          typeof row._ageDays === 'number'
+            ? `Filed ${row._ageDays} day${row._ageDays === 1 ? '' : 's'} ago.${row._ageDays > FRESH_DAYS
+              ? ' Too long ago to be this week\u2019s trigger — this is context, not the catalyst.' : ''}`
+            : ''].filter(Boolean).join(' '),
         sourceUrl: url,
         // The grader's narrative is assembled from FILED figures, so it is a
         // fact about the filing — not an inference about the future.
@@ -183,13 +312,20 @@ export async function GET(req: NextRequest) {
       eventTime: row.filing_date ? `${String(row.filing_date).slice(0, 10)}T00:00:00Z` : now,
       detectedAt: now,
       catalyst: 'revenue_guidance_increase',
-      informationStatus: row.tier === 'BLOCKBUSTER' || row.tier === 'STRONG' ? 'new_information' : 'confirmation',
+      informationStatus: statusForAge(row._ageDays, row.tier),
       attribution: 'company_specific',
       priceChangePct: typeof row.d1_pct === 'number' ? row.d1_pct : null,
       volumeRatio: null,
       sectorRelativePct: null,
       sources: url ? [{ url, tier: sourceTierOf(url), published: row.filing_date || null }] : [],
-      claims: [{ text: String(row.narrative || '').slice(0, 400), sourceUrl: url, kind: 'fact' }],
+      claims: [{
+        text: [String(row.narrative || '').slice(0, 360),
+          typeof row._ageDays === 'number'
+            ? `Filed ${row._ageDays} day${row._ageDays === 1 ? '' : 's'} ago.${row._ageDays > FRESH_DAYS
+              ? ' Too long ago to be this week\u2019s trigger — this is context, not the catalyst.' : ''}`
+            : ''].filter(Boolean).join(' '),
+        sourceUrl: url, kind: 'fact',
+      }],
       materiality: materialityFromTier(String(row.tier || '')),
       structuralDuration: row.tier === 'BLOCKBUSTER' ? 'medium' : 'short',
     });
@@ -202,11 +338,26 @@ export async function GET(req: NextRequest) {
   );
 
   const notes: string[] = [];
+  notes.push(`Graded results were read from ${gradedRes.from} — ${gradedRes.rows.length} rows before de-duplication.`);
+  if (gradedRes.pending > 0) {
+    notes.push(`${gradedRes.pending} of the days in the window are not graded yet — the engine was asked for them and has started, but nothing is computed on this page's clock. Rescan in a minute and they will be here.`);
+  }
+  if (!graded.length) {
+    notes.push('No graded result was available for any day in the window, so no gainer could be matched to a filing. This is an empty answer, not a filtered one.');
+  }
   if (market === 'US' && !gainers.length) {
     notes.push('The TradingView gainers export could not be read, so only filed results were scanned. The list is a committed CSV refreshed by the sync workflow.');
   }
   if (market === 'IN') {
     notes.push('No India gainers screen is committed to this repository, so the India pass ranks the day\'s filed results rather than a gainers list. Wiring the screener.in screen is Phase 1 work that is not yet done.');
+  }
+  {
+    const fresh = graded.filter((r: any) => typeof r._ageDays === 'number' && r._ageDays <= FRESH_DAYS).length;
+    if (!fresh) {
+      notes.push(`No result was filed in the last ${FRESH_DAYS} days in this market, so nothing on this page is claimed as THIS week's catalyst. `
+        + `Filings up to ${WINDOW_DAYS} days old are shown as context and scored as confirmation, not as new information. `
+        + 'Outside earnings season a short queue is the correct answer, not a broken one.');
+    }
   }
   notes.push('No language model has read anything here. Every catalyst is a filed result and every score component is stated. Phase 2 adds the reader for gainers with no filing behind them.');
 

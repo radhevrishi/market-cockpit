@@ -178,6 +178,7 @@ export default function PortfolioCatalystsPage() {
           onRead={() => readFiling(r.symbol)}
           error={r.error}
           promiseNote={r.state === 'done' ? r.promiseNote : null}
+          dataSource={r.dataSource}
           sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
         />
       ))}

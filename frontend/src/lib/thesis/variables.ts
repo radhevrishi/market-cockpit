@@ -118,6 +118,13 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   const salesY = n(graded?.sales_yoy_pct);
   const epsY = n(graded?.eps_yoy_pct) ?? n(graded?.net_profit_yoy_pct);
   const opmChange = n(graded?.opm_change_pp) ?? n(graded?.opm_delta_pp);
+  // The screener exports carry no YoY margin bridge — only this quarter's OPM
+  // and last quarter's. That is a SEQUENTIAL change, and it answers a
+  // different question from a year-on-year one (it carries seasonality that
+  // YoY cancels). It is used where nothing better exists, and the evidence
+  // line says "sequential" so the reader can discount it accordingly. (zzz716)
+  const opmChangeQoq = n(graded?.opm_change_pp_qoq);
+  const sequentialOnly = opmChange == null && opmChangeQoq != null;
   const opm = n(graded?.opm_pct);
   const cfoToPat = n(graded?.cfo_to_pat_ratio) ?? n(graded?.ocf_to_pat_ratio);
 
@@ -178,8 +185,8 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   const mb = summary?.margin_bridge;
   const mbDelta = said(mb?.opm_change_pp) ? String(mb.opm_change_pp) : null;
   const drivers: any[] = Array.isArray(mb?.drivers) ? mb.drivers : [];
-  if (mbDelta || opmChange != null || opm != null) {
-    const dv = opmChange != null ? opmChange : pctIn(mbDelta);
+  if (mbDelta || opmChange != null || opmChangeQoq != null || opm != null) {
+    const dv = opmChange != null ? opmChange : (pctIn(mbDelta) ?? opmChangeQoq);
     const structural = drivers.filter((d) => d?.nature === 'structural').length;
     const cyclical = drivers.filter((d) => d?.nature === 'cyclical').length;
     const why = drivers.length
@@ -191,7 +198,8 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
       after: opm != null ? `${opm.toFixed(1)}%` : null,
       delta: mbDelta || (opmChange != null ? `${opmChange >= 0 ? '+' : ''}${opmChange.toFixed(1)}pp` : null),
       verdict: dv == null ? 'unknown' : dv >= 1 ? 'improving' : dv > -1 ? 'flat' : 'deteriorating',
-      evidence: `Operating margin ${dv == null ? 'change not quantified' : `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp`}.${why}`
+      evidence: `Operating margin ${dv == null ? 'change not quantified'
+        : `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' vs last quarter (sequential — no year-on-year bridge available)' : ''}`}.${why}`
         + (structural || cyclical ? ` (${structural} structural, ${cyclical} cyclical.)` : ''),
       source: drivers.length ? 'filing' : 'grader',
     });

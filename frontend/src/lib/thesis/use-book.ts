@@ -40,6 +40,11 @@ export interface BookRow {
   sourceUrl: string | null;
   state: 'idle' | 'loading' | 'done' | 'error';
   error?: string;
+  /** Where the grader-level numbers came from: this portal's own graded
+   *  engine, the screener.in exports, or nothing yet. Shown on the card,
+   *  because a screener figure and a filing-read figure are not the same
+   *  evidence and must never look the same. */
+  dataSource?: string | null;
   assessment: ThesisAssessment | null;
   capex: CapexChain | null;
   promiseNote: string | null;
@@ -78,27 +83,75 @@ export function useBook() {
     if (!symbols.length) { setLoading(false); return; }
     let cancelled = false;
     (async () => {
+      // ── THE BOOK IS NOT THE BENCH.                             (zzz716)
+      //
+      // The local conviction bench is read FIRST because it is instant and
+      // answers for the names on it. But it is a QUALITY SCREEN, so thirty of
+      // fifty holdings were never on it and used to render as a bare ticker.
+      // The server route below covers the rest from the graded bench and the
+      // screener exports, and every holding is then populated regardless of
+      // whether it would pass a conviction filter today.
       let bench: Record<string, any> = {};
       try { bench = readConvictionBeats(); } catch { bench = {}; }
       const byNorm = new Map(Object.entries(bench).map(([k, v]) => [normSymbol(k), v]));
+      const build = (sym: string, g: any | null, src: string | null): BookRow => assess({
+        symbol: sym,
+        market: g?.market === 'US' ? 'US' : 'IN',
+        graded: g,
+        tier: g?.tier || null,
+        pattern: g ? classifyGradedRow(g) : null,
+        radarScore: null,
+        summary: null,
+        sourceUrl: g?.filing_url || g?.source_url || null,
+        state: 'idle',
+        dataSource: src,
+        assessment: null, capex: null, promiseNote: null,
+      });
+
       const next: Record<string, BookRow> = {};
       for (const sym of symbols) {
         const g = byNorm.get(sym) || null;
-        next[sym] = assess({
-          symbol: sym,
-          market: g?.market === 'US' ? 'US' : 'IN',
-          graded: g,
-          tier: g?.tier || null,
-          pattern: g ? classifyGradedRow(g) : null,
-          radarScore: null,
-          summary: null,
-          sourceUrl: g?.filing_url || g?.source_url || null,
-          state: 'idle',
-          assessment: null, capex: null, promiseNote: null,
-        });
+        next[sym] = build(sym, g, g ? 'graded' : null);
       }
       if (cancelled) return;
       setRows(next); setLoading(false);
+
+      // Fill every holding the local bench could not answer for.
+      try {
+        const missing = symbols.filter((s) => !byNorm.get(s));
+        if (missing.length) {
+          const r = await fetch(`/api/v1/portfolio/thesis-data?tickers=${encodeURIComponent(missing.join(','))}`,
+            { cache: 'no-store' });
+          if (r.ok && !cancelled) {
+            const j = await r.json();
+            const got = j?.rows || {};
+            setRows((cur) => {
+              const out = { ...cur };
+              for (const sym of missing) {
+                const hit = got[sym.toUpperCase()];
+                if (!hit || hit.source === 'none') {
+                  out[sym] = { ...out[sym], dataSource: 'none' };
+                  continue;
+                }
+                // The summary already read for this holding, if any, is kept:
+                // a filing beats both stores and must not be thrown away by a
+                // background fill that arrives after it.
+                const prev = out[sym];
+                out[sym] = assess({
+                  ...prev,
+                  market: hit.market === 'US' ? 'US' : 'IN',
+                  graded: hit,
+                  tier: hit.tier || null,
+                  pattern: classifyGradedRow(hit),
+                  sourceUrl: prev.sourceUrl || hit.filing_url || hit.source_url || null,
+                  dataSource: hit.source,
+                });
+              }
+              return out;
+            });
+          }
+        }
+      } catch { /* the filing path still answers for every holding */ }
 
       // The radar is an enrichment and never blocks the paint.
       try {
