@@ -109,14 +109,49 @@ const RESULTS_SUBJECT = [
 /** Subjects that are never the result, however close their date. */
 const NOT_RESULTS = /(intimation|newspaper|trading window|compliance certificate|voting result|scrutinizer|scrutiniser|annual report|postal ballot|\\bagm\\b|\\begm\\b|analyst meet|investor meet|schedule of|certificate under regulation|share transfer|loss of share|duplicate share|credit rating|record date|dividend distribution|related party|corporate governance report|shareholding pattern|reconciliation of share capital)/i;
 
-async function loadFilings(): Promise<CFFilingItem[]> {
+async function fetchFeed(path: string): Promise<CFFilingItem[]> {
   try {
-    const res = await fetch(`${CF_WORKER_URL}/api/results/latest`, { signal: AbortSignal.timeout(20_000) });
+    const res = await fetch(`${CF_WORKER_URL}${path}`, { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) return [];
     const j = await res.json();
     const arr = Array.isArray(j) ? j : (j?.items || j?.data || j?.results || []);
     return Array.isArray(arr) ? arr : [];
   } catch { return []; }
+}
+
+/**
+ * ── THE "LATEST" FEED IS A ROLLING WINDOW, AND IT IS OFF-SEASON.  (zzz724)
+ *
+ * Every India holding tested on 21 September answered "No results attachment
+ * is on file" — KMEW, MARKSANS, AVALON, GOODLUCK, DIVGIITTS, all of them.
+ * Not one of them is missing a filing: they all reported in August, and the
+ * worker's `/api/results/latest` is a ROLLING RECENT window that no longer
+ * contains those dates. So the reader was looking in a feed that structurally
+ * could not hold the document it wanted, and reported that as the company
+ * having filed nothing machine-readable.
+ *
+ * That would have meant "Read evidence" failing on all 51 holdings — a button
+ * whose whole purpose is to fill the thesis ledger, silently unable to.
+ *
+ * The worker already serves `/api/results/day/<date>`, and Portfolio
+ * Catalysts already knows each holding's filing date from the graded row. So
+ * when a filing date is supplied, that day is fetched too and merged. The
+ * latest feed is still read first, because a company that filed again since
+ * should be read at its newest document.
+ *
+ * NOT VERIFIED END-TO-END FROM HERE: the worker URL is a deployment secret
+ * this container cannot read, so the day endpoint is called on the strength of
+ * the worker's own source (cloudflare-worker/scraper.js, line 280) rather than
+ * a live response. If it answers differently, the error text below says which
+ * feed was searched rather than blaming the company.
+ */
+async function loadFilings(filingDate?: string | null): Promise<CFFilingItem[]> {
+  const latest = await fetchFeed('/api/results/latest');
+  if (!filingDate || !/^\d{4}-\d{2}-\d{2}$/.test(filingDate)) return latest;
+  const day = await fetchFeed(`/api/results/day/${filingDate}`);
+  if (!day.length) return latest;
+  const seen = new Set(latest.map((f) => String(f?.attachment_url || '')));
+  return [...latest, ...day.filter((f) => !seen.has(String(f?.attachment_url || '')))];
 }
 
 /** The attachments for this ticker, ranked: results subjects first, then by
@@ -183,7 +218,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'The summary service is not configured on this deployment.' });
   }
 
-  const filings = await loadFilings();
+  const filings = await loadFilings(filingDate);
   if (!filings.length) {
     return NextResponse.json({
       ok: false,
@@ -194,7 +229,9 @@ export async function GET(req: NextRequest) {
   if (!urls.length) {
     return NextResponse.json({
       ok: false,
-      error: `No results attachment is on file for ${ticker}. Indian companies sometimes file only an outcome letter with the figures inside the PDF body, and sometimes nothing machine-readable at all.`,
+      error: `No results attachment was found for ${ticker} in the exchange feed`
+        + `${filingDate ? ` (searched the recent window and ${filingDate})` : ' (searched the recent window only — no filing date was supplied, so an older result could not be located)'}. `
+        + 'Indian companies sometimes file only an outcome letter with the figures inside the PDF body, and sometimes nothing machine-readable at all.',
     });
   }
 

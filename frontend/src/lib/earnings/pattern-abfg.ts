@@ -168,6 +168,44 @@ export function classifyAbfg(input: AbfgInput): AbfgResult | null {
 // Man Industries' preferential allotment is the live example — tells you
 // about the company while EPS tells you about your holding.
 // ═══════════════════════════════════════════════════════════════════════════
+/**
+ * ── B BECOMES REACHABLE ONCE A FILING HAS BEEN READ.               (zzz724)
+ *
+ * B has never once fired on this portal, and the reason was structural rather
+ * than empirical: neither market's graded row carries order-book growth, so
+ * the one input B needs was always null and the branch was dead code wearing
+ * a measurement.
+ *
+ * The v7 filing schema now extracts `order_book.growth` and
+ * `demand.order_intake_growth` from the document. So a holding whose filing
+ * has been read can be re-classified with that number in hand, and B can fire
+ * for the first time — on evidence, not on a proxy.
+ *
+ * Deliberately NOT inferred from revenue: the whole point of B is that the
+ * book is growing faster than revenue, and deriving the book from revenue
+ * would make the test compare a number with itself.
+ */
+export function classifyWithFiling(row: any, summary: any): AbfgResult | null {
+  const pct = (v: unknown): number | null => {
+    const s2 = typeof v === 'string' ? v : '';
+    const m = s2.match(/-?\d+(?:\.\d+)?/);
+    const n2 = m ? Number(m[0]) : NaN;
+    return Number.isFinite(n2) ? n2 : null;
+  };
+  const orderGrowth =
+    pct(summary?.order_book?.growth) ?? pct(summary?.demand?.order_intake_growth);
+  if (orderGrowth == null) return classifyGradedRow(row);
+  const n = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+  return classifyAbfg({
+    salesY: n(row?.sales_yoy_pct),
+    epsY: n(row?.eps_yoy_pct) ?? n(row?.net_profit_yoy_pct),
+    cfoToPat: n(row?.cfo_to_pat_ratio) ?? n(row?.ocf_to_pat_ratio),
+    d1Reaction: n(row?.d1_pct),
+    orderGrowth,
+  });
+}
+
 export function classifyGradedRow(row: any): AbfgResult | null {
   if (!row || typeof row !== 'object') return null;
   const n = (v: unknown): number | null =>

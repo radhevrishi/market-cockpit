@@ -5310,6 +5310,11 @@ function DailySignalInbox() {
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  // zzz724 — which window actually filled the Transform lane, and how many
+  // names the radar saw before the buy-side gate. Both are needed to tell an
+  // empty radar apart from a radar whose names all failed the gate.
+  const [transformWindowDays, setTransformWindowDays] = useState<number>(0);
+  const [transformSeen, setTransformSeen] = useState<number>(0);
   const [laneStatus, setLaneStatus] = useState<Record<LaneKey, boolean>>({ momentum: false, warrant: false, transform: false, bench: false });
 
   const load = useCallback(async (force = false) => {
@@ -5520,9 +5525,40 @@ function DailySignalInbox() {
       setLaneStatus((prev) => ({ ...prev, warrant: true }));
     });
 
-    // TRANSFORM — batch radar.
-    j(`/api/v1/concall-intel/transformation-screener?days=60&limit=24${force ? '&refresh=1' : ''}`, force ? 55000 : 16000).then((transform) => {
-      if (!transform || transform.error) return;
+    // ── TRANSFORM — batch radar, WITH AN ADAPTIVE WINDOW.         (zzz724)
+    //
+    // The lane was pinned to days=60&limit=24 and had gone permanently silent:
+    // checked against the live endpoint on 21 September, that exact query
+    // returns ZERO entries while days=90&limit=200 returns forty. Indian
+    // concall season ended in mid-August, so a 60-day window over the most
+    // recent 24 filings now catches nothing transformational — and the widget
+    // reported that as "quiet — nothing new", which is a different and much
+    // more reassuring statement than "my window is too narrow to see anything".
+    //
+    // So the window widens until it finds something: 60 days first because a
+    // recent signal is worth more than an old one, then 90, then 120. The
+    // widget states which window produced the result, so a lane filled from
+    // 120 days can never be mistaken for a lane filled from this week.
+    const transformWindows = [
+      { days: 60, limit: 60 },
+      { days: 90, limit: 200 },
+      { days: 120, limit: 200 },
+    ];
+    (async () => {
+      let transform: any = null;
+      let usedDays = 0;
+      for (const w of transformWindows) {
+        const got = await j(
+          `/api/v1/concall-intel/transformation-screener?days=${w.days}&limit=${w.limit}${force ? '&refresh=1' : ''}`,
+          force ? 55000 : 22000,
+        );
+        if (got && !got.error) {
+          transform = got; usedDays = w.days;
+          if ((got.entries || []).length) break;   // stop at the first window that sees anything
+        }
+      }
+      if (!transform) { setLaneStatus((prev) => ({ ...prev, transform: true })); return; }
+      setTransformWindowDays(usedDays);
       const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
       // zzz452 — sort by evidence-ladder rung first (most proven at top), then
@@ -5549,9 +5585,13 @@ function DailySignalInbox() {
           score: e.transformation_score || 0, href: '/concall-intel?tab=radar', soft: t.soft });
       });
       setGeneratedAt(transform.generated_at || null);
+      // zzz724 — when the radar HAS names but none of them clears the buy-side
+      // gate, that is a different fact from an empty radar, and the lane says
+      // which. "Quiet" must never be printed over "24 names, none qualified".
+      setTransformSeen(entries.length);
       mergeLane('TRANSFORM', rows, 'transform');
       setLaneStatus((prev) => ({ ...prev, transform: true }));
-    });
+    })();
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -5661,7 +5701,20 @@ function DailySignalInbox() {
                     <span style={{ fontSize: 9, fontWeight: 800, color: laneCount ? meta.c : DIM, fontFamily: 'ui-monospace, monospace', background: laneCount ? `${meta.c}1f` : 'transparent', borderRadius: 20, padding: laneCount ? '1px 7px' : 0, minWidth: 16, textAlign: 'center' }}>{laneCount}</span>
                   </div>
                   {laneSignals.length === 0 ? (
-                    <div style={{ fontSize: 10, color: DIM }}>{laneStatus[lane.toLowerCase() as LaneKey] ? 'quiet — nothing new' : lane === 'BENCH' ? 'no bench names yet' : 'feed warming up'}</div>
+                    <div style={{ fontSize: 10, color: DIM }}>{
+                      !laneStatus[lane.toLowerCase() as LaneKey]
+                        ? (lane === 'BENCH' ? 'no bench names yet' : 'feed warming up')
+                        : lane === 'TRANSFORM'
+                          // zzz724 — three genuinely different silences, and the
+                          // widget used to print the most reassuring one over all
+                          // of them.
+                          ? (transformSeen > 0
+                            ? `${transformSeen} on the radar, none buy-side yet`
+                            : transformWindowDays >= 120
+                              ? 'radar empty back to 120 days — off-season'
+                              : 'radar returned nothing')
+                          : 'quiet — nothing new'
+                    }</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                       {laneSignals.slice(0, 10).map((s, i) => (
@@ -5687,7 +5740,7 @@ function DailySignalInbox() {
 
       {!collapsed && (total > 0 || pullbacks.length > 0) && (
         <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
-          💎 Pullbacks are your quality-preset winners ranked by drop from the 52-week high (buy-the-dip). Lanes aggregate concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar, and your Conviction Bench{generatedAt ? ` · radar ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. <b>watch</b> = best available when no hard event fired. Deterministic reads, not recommendations.
+          💎 Pullbacks are your quality-preset winners ranked by drop from the 52-week high (buy-the-dip). Lanes aggregate concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar{transformWindowDays ? ` (${transformWindowDays}-day window)` : ''}, and your Conviction Bench{generatedAt ? ` · radar ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. <b>watch</b> = best available when no hard event fired. Deterministic reads, not recommendations.
         </div>
       )}
     </div>

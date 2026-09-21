@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readPortfolioSymbols, normSymbol } from '@/lib/portfolio-symbols';
 import { readConvictionBeats } from '@/lib/conviction-beats';
-import { classifyGradedRow, type AbfgResult } from '@/lib/earnings/pattern-abfg';
+import { classifyGradedRow, classifyWithFiling, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
@@ -204,9 +204,14 @@ export function useBook() {
     const isUs = cur.market === 'US';
     setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'loading', error: undefined } }));
     try {
+      // The graded row knows WHEN this holding last reported. Without it the
+      // India reader searches only the rolling recent feed, which off-season
+      // contains none of the book's results. (zzz724)
+      const fd = String(cur.graded?.filing_date || '').slice(0, 10);
+      const dateQ = /^\d{4}-\d{2}-\d{2}$/.test(fd) ? `&filing_date=${fd}` : '';
       const url = isUs
         ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
-        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}`;
+        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}`;
       const res = await fetch(url, { cache: 'no-store' });
       const j = await res.json();
       if (!j?.ok || !j.structured) {
@@ -220,7 +225,13 @@ export function useBook() {
       // statements are recorded for next quarter without being used as
       // evidence against themselves.
       setRows((r) => {
-        const base = { ...r[sym], summary: j.structured, sourceUrl: src || r[sym].sourceUrl, state: 'done' as const };
+        const prev = r[sym];
+        const base = {
+          ...prev, summary: j.structured, sourceUrl: src || prev.sourceUrl, state: 'done' as const,
+          // zzz724 — re-classify with the filing in hand. Order-book growth
+          // exists only in the document, so B can only ever fire here.
+          pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
+        };
         return { ...r, [sym]: assess(base) };
       });
       try { recordPromises(sym, j.structured, src); } catch { /* ledger is best-effort */ }
