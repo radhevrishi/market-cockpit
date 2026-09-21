@@ -41,6 +41,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { kvGet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -125,29 +126,44 @@ async function loadScreener(): Promise<Map<string, any>> {
   return byTicker;
 }
 
-async function loadBench(origin: string, which: 'bench' | 'bench-us'): Promise<Map<string, any>> {
+// ── READ THE KV, NOT OUR OWN HTTP ROUTE.                          (zzz718)
+//
+// The first version fetched `${origin}/api/v1/bench` from inside this route.
+// Both bench endpoints answer perfectly from outside — 320 India rows and 92
+// US — and returned NOTHING from in here: the deployed response reported
+// `india_bench: 0, us_bench: 0` and fell through to the screener for every
+// holding the graded engine actually knew about. A server calling its own
+// public URL depends on the origin the proxy reports and on the platform
+// allowing the loopback, and when it fails the catch cannot tell an
+// unreachable store from an empty one, so it reports coverage it does not
+// have.
+//
+// Those routes are thin readers over two KV keys. Reading the keys here
+// removes the hop: no origin, no proxy, no self-call, and an empty result now
+// genuinely means an empty bench.
+const BENCH_KEYS = { IN: 'bench:server:v1', US: 'bench:us:server:v1' } as const;
+
+async function loadBench(which: 'IN' | 'US'): Promise<Map<string, any>> {
   const out = new Map<string, any>();
   try {
-    const r = await fetch(`${origin}/api/v1/${which}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
-    if (!r.ok) return out;
-    const j = await r.json();
-    for (const e of (j?.entries || [])) {
+    const payload: any = await kvGet(BENCH_KEYS[which]);
+    for (const e of (payload?.entries || [])) {
       const k = norm(e?.ticker);
       if (!k || out.has(k)) continue;
-      out.set(k, { ...e, market: which === 'bench-us' ? 'US' : 'IN', source: 'graded' });
+      out.set(k, { ...e, market: which, source: 'graded' });
     }
-  } catch { /* an unreachable bench is reported as coverage, not thrown */ }
+  } catch { /* an unreadable bench is reported as coverage, not thrown */ }
   return out;
 }
 
 export async function GET(req: NextRequest) {
-  const { searchParams, origin } = new URL(req.url);
+  const { searchParams } = new URL(req.url);
   const wanted = (searchParams.get('tickers') || '')
     .split(',').map((t) => t.trim()).filter(Boolean);
 
   const [india, us, screener] = await Promise.all([
-    loadBench(origin, 'bench'),
-    loadBench(origin, 'bench-us'),
+    loadBench('IN'),
+    loadBench('US'),
     loadScreener(),
   ]);
 

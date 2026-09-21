@@ -30,6 +30,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { kvGet } from '@/lib/kv';
 import {
   type GainerEvent, type Market, type EventSource,
   sourceTierOf, researchPriority, buildResearchQueue,
@@ -173,25 +174,40 @@ async function readGraded(origin: string, market: Market): Promise<{ rows: any[]
   // The day cache is still swept afterwards for anything the bench has not
   // picked up yet — a result graded an hour ago is on the day key before it
   // reaches the bench — but nothing depends on it being warm.
+  // ── READ THE KV DIRECTLY, NOT OUR OWN HTTP ROUTE.                (zzz718)
+  //
+  // The previous version fetched `${origin}/api/v1/bench` from inside this
+  // route. Those endpoints answer perfectly from outside — 320 India and 92
+  // US rows — and returned NOTHING from in here, so the deployed page said
+  // "read from neither store" and showed an empty funnel next to 34 gainers
+  // scanned. A server calling its own public URL depends on the origin the
+  // proxy reports and on the platform allowing the loopback; on Railway that
+  // is one hop too many, and it fails silently because the catch treats an
+  // unreachable store the same as an empty one.
+  //
+  // Both bench routes are thin readers over two KV keys. Reading those keys
+  // here removes the hop entirely: no origin, no proxy, no self-call. The
+  // keys are duplicated from those routes deliberately — a shared constant
+  // across an API boundary is the kind of coupling that breaks silently when
+  // one side bumps a version.
+  const BENCH_KEY = market === 'US' ? 'bench:us:server:v1' : 'bench:server:v1';
   const bench: any[] = [];
+  let benchTotal = 0;
   try {
-    const r = await fetch(`${origin}/api/v1/${market === 'US' ? 'bench-us' : 'bench'}`,
-      { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
-    if (r.ok) {
-      const j = await r.json();
-      // THE BENCH IS NOT DATED TO THIS WEEK. It holds every graded result the
-      // crons have kept, some of them months old, and a result from June is
-      // NOT the catalyst behind a move this week. Pairing them would be the
-      // worst class of error this pipeline can make: a confident, sourced,
-      // entirely wrong causal claim. So a filing older than the window is
-      // dropped here rather than explained away on the card.
-      const cutoff = Date.now() - WINDOW_DAYS * 86_400_000;
-      for (const e of (j?.entries || [])) {
-        if (!e?.ticker) continue;
-        const t = Date.parse(String(e.filing_date || ''));
-        if (!Number.isFinite(t) || t < cutoff) continue;
-        bench.push({ ...e, _ageDays: Math.floor((Date.now() - t) / 86_400_000) });
-      }
+    const payload: any = await kvGet(BENCH_KEY);
+    const entries: any[] = payload?.entries || [];
+    benchTotal = entries.length;
+    // THE BENCH IS NOT DATED TO THIS WEEK. It holds every graded result the
+    // crons have kept, some months old, and a result from June is NOT the
+    // catalyst behind a move this week. Pairing them would be the worst class
+    // of error this pipeline can make: a confident, sourced, entirely wrong
+    // causal claim. Age travels with each row and decides how it is scored.
+    const cutoff = Date.now() - WINDOW_DAYS * 86_400_000;
+    for (const e of entries) {
+      if (!e?.ticker) continue;
+      const t = Date.parse(String(e.filing_date || ''));
+      if (!Number.isFinite(t) || t < cutoff) continue;
+      bench.push({ ...e, _ageDays: Math.floor((Date.now() - t) / 86_400_000) });
     }
   } catch { /* the day sweep below is the fallback */ }
 
@@ -217,9 +233,14 @@ async function readGraded(origin: string, market: Market): Promise<{ rows: any[]
       for (const row of (bt[t] || [])) rows.push({ ...row, tier: row?.tier || t });
     }
   }
-  const from = bench.length && rows.length > bench.length ? `the server bench (filings within ${WINDOW_DAYS} days) plus the day cache`
-    : bench.length ? `the server bench (filings within ${WINDOW_DAYS} days)`
-      : rows.length ? 'the day cache' : 'neither store';
+  const from = bench.length && rows.length > bench.length
+    ? `the server bench (${bench.length} of ${benchTotal} rows filed within ${WINDOW_DAYS} days) plus the day cache`
+    : bench.length
+      ? `the server bench (${bench.length} of ${benchTotal} rows filed within ${WINDOW_DAYS} days)`
+      : rows.length ? 'the day cache'
+        : benchTotal
+          ? `neither — the bench holds ${benchTotal} graded rows but none filed within ${WINDOW_DAYS} days`
+          : 'neither store — the bench is empty, which is a data problem rather than a quiet market';
   return { rows, pending, from };
 }
 
@@ -354,9 +375,11 @@ export async function GET(req: NextRequest) {
   {
     const fresh = graded.filter((r: any) => typeof r._ageDays === 'number' && r._ageDays <= FRESH_DAYS).length;
     if (!fresh) {
-      notes.push(`No result was filed in the last ${FRESH_DAYS} days in this market, so nothing on this page is claimed as THIS week's catalyst. `
-        + `Filings up to ${WINDOW_DAYS} days old are shown as context and scored as confirmation, not as new information. `
-        + 'Outside earnings season a short queue is the correct answer, not a broken one.');
+      notes.push(
+        `No result was filed in the last ${FRESH_DAYS} days in this market, so nothing here is claimed as this week's catalyst. `
+        + `Filings up to ${WINDOW_DAYS} days old are shown as context and scored as confirmation, never as new information. `
+        + 'Outside earnings season a short queue is the correct answer, not a broken one.',
+      );
     }
   }
   notes.push('No language model has read anything here. Every catalyst is a filed result and every score component is stated. Phase 2 adds the reader for gainers with no filing behind them.');
