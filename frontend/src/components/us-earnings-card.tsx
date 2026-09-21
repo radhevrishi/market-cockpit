@@ -1615,7 +1615,7 @@ function Catalysts({ d }: { d: any }) {
   );
 }
 
-function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore; hasTranscript: boolean }) {
+export function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore; hasTranscript: boolean }) {
   const [open, setOpen] = useState(false);
   // Colour the headline by band. Deliberately the same bands as the grade
   // ladder, so the colour and the letter can never disagree.
@@ -1704,7 +1704,10 @@ function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore; hasTra
   );
 }
 
-function SummaryView({ d }: { d: any }) {
+/** zzz700 — exported so the India card renders the IDENTICAL blocks. The
+ *  reading is market-agnostic: it is the shared tool schema's output, and a
+ *  second renderer would drift from this one exactly as a second prompt would. */
+export function SummaryView({ d }: { d: any }) {
   const pos: any[] = Array.isArray(d?.positives) ? d.positives : [];
   const neg: any[] = Array.isArray(d?.negatives) ? d.negatives : [];
   const segs: any[] = Array.isArray(d?.segments) ? d.segments : [];

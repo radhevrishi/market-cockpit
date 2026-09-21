@@ -13,7 +13,7 @@
 // getting correct data'.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText } from 'lucide-react';
 import api from '@/lib/api';
@@ -29,6 +29,8 @@ import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier,
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import { useCardBadges, CardBadgesToggle } from '@/components/card-badges';
+import { SummaryView, CommentaryScoreBlock } from '@/components/us-earnings-card';
+import { scoreReleaseCommentary } from '@/lib/earnings/commentary-score';
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
@@ -3647,6 +3649,124 @@ function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE INDIA AI SUMMARY BLOCK.                                       (zzz700)
+//
+// The 📝 line above this is template text — tier plus three growth rates,
+// assembled in `lib/earnings/grader.ts`. This is the written reading: the
+// same tool schema, the same figure verification and the same renderer the US
+// card uses, against the results PDF filed with the exchange.
+//
+// It is opt-in per card because each open costs a model call against a PDF
+// that must first be fetched and parsed, and most cards are scrolled past.
+// ═══════════════════════════════════════════════════════════════════════════
+function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [struct, setStruct] = useState<any>(null);
+  const [prov, setProv] = useState<{ source_url: string | null; model: string | null }>({ source_url: null, model: null });
+  const [err, setErr] = useState('');
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfErr, setPdfErr] = useState('');
+
+  const commentary = useMemo(() => (struct ? scoreReleaseCommentary(struct) : null), [struct]);
+
+  const load = useCallback(async () => {
+    setState('loading');
+    try {
+      const q = new URLSearchParams({ ticker: stock.ticker });
+      if (stock.quarter) q.set('quarter', stock.quarter);
+      if (stock.filing_date) q.set('filing_date', String(stock.filing_date).slice(0, 10));
+      const res = await fetch(`/api/v1/india/ai-summary?${q}`, { cache: 'no-store' });
+      const j = await res.json();
+      if (j?.ok && j.structured) {
+        setStruct(j.structured);
+        setProv({ source_url: j.source_url || null, model: j.model || null });
+        setState('done');
+      } else {
+        setErr(j?.error || 'No summary is available for this filing.');
+        setState('error');
+      }
+    } catch (e: any) {
+      setErr(`The summary could not be fetched (${String(e?.message || e)}).`);
+      setState('error');
+    }
+  }, [stock.ticker, stock.quarter, stock.filing_date]);
+
+  const downloadPdf = useCallback(async () => {
+    if (!struct) return;
+    setPdfBusy(true); setPdfErr('');
+    try {
+      const { exportUsSummaryPdf } = await import('@/lib/earnings/us-summary-pdf');
+      await exportUsSummaryPdf({
+        ticker: stock.ticker, company: stock.company, quarter: stock.quarter,
+        tier: stock.tier, filingDate: stock.filing_date,
+        sourceUrl: prov.source_url, model: prov.model, d: struct, commentary,
+      });
+    } catch (e: any) {
+      setPdfErr(`The PDF could not be written (${String(e?.message || e)}).`);
+    } finally { setPdfBusy(false); }
+  }, [struct, stock, prov, commentary]);
+
+  const chip = (active: boolean): React.CSSProperties => ({
+    display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+    fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+    border: `1px solid ${active ? 'color-mix(in srgb, var(--mc-cyan) 45%, transparent)' : 'var(--mc-bg-4)'}`,
+    backgroundColor: active ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'var(--mc-bg-1)',
+    color: active ? 'var(--mc-cyan)' : 'var(--mc-text-2)',
+  });
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          onClick={() => { const n = !open; setOpen(n); if (n && state === 'idle') void load(); }}
+          aria-expanded={open}
+          title="A written reading of the results PDF filed with the exchange — why the margin moved, the catalysts, capex, utilisation, order book and what will not repeat. Every figure is checked against the filing."
+          style={chip(open)}
+        >
+          ✨ {state === 'loading' ? 'Reading the filing…' : 'AI Summary'}
+        </button>
+        {state === 'done' && struct && (
+          <button onClick={downloadPdf} disabled={pdfBusy} style={{ ...chip(false), cursor: pdfBusy ? 'progress' : 'pointer', opacity: pdfBusy ? 0.6 : 1 }}
+            title="Download this summary as a one-page A4 PDF on white.">
+            ⬇ {pdfBusy ? 'Writing PDF…' : 'PDF'}
+          </button>
+        )}
+        {prov.source_url && (
+          <a href={prov.source_url} target="_blank" rel="noreferrer" style={{ ...chip(false), textDecoration: 'none' }}>
+            📄 Filing
+          </a>
+        )}
+      </div>
+      {pdfErr && <div style={{ marginTop: 5, fontSize: 10, color: '#F59E0B' }}>{pdfErr}</div>}
+      {open && (
+        <div style={{
+          marginTop: 7, padding: '10px 12px', borderRadius: 8,
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)',
+          borderLeft: '3px solid var(--mc-cyan)',
+        }}>
+          {state === 'loading' && (
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
+              Fetching and reading {stock.ticker}&rsquo;s filed results PDF — this takes a few seconds the first time.
+            </div>
+          )}
+          {state === 'error' && <div style={{ fontSize: 11, color: '#F59E0B' }}>{err}</div>}
+          {state === 'done' && commentary && <CommentaryScoreBlock c={commentary} hasTranscript={false} />}
+          {state === 'done' && struct && <SummaryView d={struct} />}
+          {state === 'done' && (
+            <div style={{ marginTop: 8, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+              Written from the company&rsquo;s own filed results only — no news, no estimates, no market reaction. Every
+              figure is checked against the filing before it is shown, and any line carrying a figure the filing does
+              not print is dropped. Empty sections mean the filing is silent on them. Educational, not investment advice.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh?: boolean; radar?: { transformation_score: number } | null }) {
   const tierColor = TIER_META[stock.tier].color;
   // zzz696 — badge chips are opt-in, shared with the US tab through one key.
@@ -3868,6 +3988,8 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5, fontStyle: 'italic', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 9px' }}>
         📝 {stock.narrative}
       </div>
+
+      <IndiaAiSummary stock={stock} />
 
       {/* ── Methodology + caveat pills ────────────────────────────────────── */}
       {(stock.methodology_tags.length > 0 || stock.caveat_tags.length > 0) && (
