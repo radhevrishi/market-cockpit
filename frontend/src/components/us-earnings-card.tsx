@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText, Download } from 'lucide-react';
 import { scoreReleaseCommentary, type CommentaryScore } from '@/lib/earnings/commentary-score';
 import { useCardBadges } from './card-badges';
+import { classifyGradedRow, ABFG_META } from '@/lib/earnings/pattern-abfg';
 import {
   fmtUsd, fmtPx, fmtPct, SWING_LABEL, SWING_GOOD,
   type UsGradedRow, type EarningsTier, type SwingKind,
@@ -374,6 +375,16 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
             how a reader ends up trusting a number the engine already doubted.
             `extraChips` above carries the TIER on the bench, and stays too. */}
         {(r as any).prelim && <Chip text="PRELIM · GAAP pending" color="#8B5CF6" />}
+        {/* zzz703 — the A/B/F/G pattern is a VERDICT about what kind of
+            quarter this is, not a badge, so it stays visible when badges are
+            switched off. It never affects the tier. */}
+        {(() => {
+          const ab = classifyGradedRow(r);
+          if (!ab) return null;
+          const m = ABFG_META[ab.pattern];
+          return <Chip text={`${m.icon} ${ab.pattern} · ${m.name}`} color={m.color}
+            title={`${ab.because}\n\nThe bet: ${m.bet}\n\nWhat ends it: ${ab.exitCondition}`} />;
+        })()}
         {showBadges && <>
         <QuadrantBadge r={r} />
         <Chip text={r.quarter} />

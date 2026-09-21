@@ -153,3 +153,33 @@ export function classifyAbfg(input: AbfgInput): AbfgResult | null {
   // ── 5. Nothing fits. Leave it that way. ───────────────────────────────
   return null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE ADAPTER, BOTH MARKETS.                                        (zzz703)
+//
+// The India and US graded rows happen to agree on the four field names this
+// classifier needs — `sales_yoy_pct`, `eps_yoy_pct`, a cash ratio and
+// `d1_pct` — with one difference: India calls the cash ratio
+// `ocf_to_pat_ratio` and the US calls it `cfo_to_pat_ratio`. Reading both
+// here, once, keeps that difference out of two call sites.
+//
+// EPS is preferred over PAT deliberately: the spec's fastest classifier is
+// the EPS-to-revenue ratio, and PAT growth on a share count that changed —
+// Man Industries' preferential allotment is the live example — tells you
+// about the company while EPS tells you about your holding.
+// ═══════════════════════════════════════════════════════════════════════════
+export function classifyGradedRow(row: any): AbfgResult | null {
+  if (!row || typeof row !== 'object') return null;
+  const n = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+  return classifyAbfg({
+    salesY: n(row.sales_yoy_pct),
+    epsY: n(row.eps_yoy_pct) ?? n(row.net_profit_yoy_pct),
+    cfoToPat: n(row.cfo_to_pat_ratio) ?? n(row.ocf_to_pat_ratio),
+    d1Reaction: n(row.d1_pct),
+    // Neither market's graded row carries order-book growth today, so B is
+    // structurally unavailable and the classifier says so by never returning
+    // it rather than by guessing from revenue.
+    orderGrowth: n(row.order_book_growth_pct),
+  });
+}

@@ -42,6 +42,7 @@ import {
   type Rule40Like,
 } from '@/components/us-earnings-card';
 import { CardBadgesToggle } from '@/components/card-badges';
+import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { buildTvExport } from '@/lib/us-tradingview';
 import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-process';
@@ -90,6 +91,8 @@ function driftState(e: UsConvictionEntry): 'DRIFTING' | 'FADING' | 'HOLDING' | '
 
 export default function UsConvictionBeatsPage() {
   const [entries, setEntries] = useState<UsConvictionEntry[]>([]);
+  // zzz703 — A/B/F/G pattern filter; independent of tier.
+  const [patternOnly, setPatternOnly] = useState<AbfgPattern | null>(null);
   const [filters, setFilters] = useState<UsConvFilters>(() => {
     try {
       const raw = localStorage.getItem(FILTERS_KEY);
@@ -762,13 +765,16 @@ export default function UsConvictionBeatsPage() {
     };
     const k = key[sort];
     const dir = sortDir === 'desc' ? -1 : 1;
+    // zzz703 — pattern filter, applied before the sort so the count the
+    // toolbar prints and the list the user sees are the same set.
+    if (patternOnly) rows = rows.filter((r: any) => classifyGradedRow(r)?.pattern === patternOnly);
     return rows.slice().sort((a, b) => {
       const va = k(a), vb = k(b);
       const c = typeof va === 'string' ? String(va).localeCompare(String(vb)) : (va as number) - (vb as number);
       if (c !== 0) return c * dir;
       return (b.composite_score ?? 0) - (a.composite_score ?? 0);
     });
-  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf]);
+  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf, patternOnly]);
 
   // ═══ NAMES THE SIZE FILTER IS HIDING  (zzz623) ══════════════════════════
   //
@@ -1475,6 +1481,21 @@ export default function UsConvictionBeatsPage() {
         <button onClick={() => setView((v) => (v === 'cards' ? 'table' : 'cards'))} style={chip(false)}>{view === 'cards' ? '▦ Table' : '▤ Cards'}</button>
         {/* zzz696 — same switch, same stored preference as the other tabs. */}
         <CardBadgesToggle />
+                {/* zzz703 — A/B/F/G, ordered by the spec's ranking. */}
+                {(['A', 'G', 'B', 'F'] as AbfgPattern[]).map((k) => {
+                  const m = ABFG_META[k];
+                  const on = patternOnly === k;
+                  return (
+                    <button key={k} onClick={() => setPatternOnly(on ? null : k)}
+                      title={`${m.name} — ${m.bet}`}
+                      style={{
+                        fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                        border: `1px solid ${m.color}${on ? '' : '50'}`,
+                        backgroundColor: on ? m.color : `${m.color}15`,
+                        color: on ? 'var(--mc-bg-0)' : m.color, whiteSpace: 'nowrap',
+                      }}>{m.icon} {k}</button>
+                  );
+                })}
         {view === 'cards' && filtered.length > 0 && (
           <button onClick={toggleAll} style={chip(allOpen)} aria-expanded={allOpen}
             title="Open the full write-up — guidance, results, margins, balance sheet — on every card that passes the filters">

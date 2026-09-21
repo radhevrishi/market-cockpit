@@ -31,6 +31,7 @@ import DegradedBanner from '@/components/DegradedBanner';
 import { useCardBadges, CardBadgesToggle } from '@/components/card-badges';
 import { SummaryView, CommentaryScoreBlock } from '@/components/us-earnings-card';
 import { scoreReleaseCommentary } from '@/lib/earnings/commentary-score';
+import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
@@ -595,6 +596,10 @@ export default function EarningsOpportunitiesPage() {
   const [eliteOnly, setEliteOnly] = useState(false);
   const [peadOnly, setPeadOnly] = useState(false);
   const [multibaggerOnly, setMultibaggerOnly] = useState(false);
+  // zzz703 — A/B/F/G pattern filter. Independent of the tier filters above:
+  // the tier says how good the quarter was, the pattern says what KIND it was,
+  // and combining them ("show me the A-pattern MIXED prints") is the point.
+  const [patternOnly, setPatternOnly] = useState<AbfgPattern | null>(null);
   // QUALITY × INFLECTION — isolate the highest-variance quadrant. These are the
   // rows a single tier label buries: low proven quality, exceptional rate of
   // change. Filtering across ALL tiers (not just the top two) is the point —
@@ -3008,6 +3013,24 @@ Source label: ${coverageStats.source}`}
                     the same kind of decision: what the card shows you. */}
                 <CardBadgesToggle compact />
                 <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
+                {/* zzz703 — A/B/F/G. Ordered by the spec's own ranking, not
+                    alphabetically: A is the highest-expectancy setup and G the
+                    best base rate, so they lead. */}
+                {(['A', 'G', 'B', 'F'] as AbfgPattern[]).map((k) => {
+                  const m = ABFG_META[k];
+                  const on = patternOnly === k;
+                  return (
+                    <button key={k} onClick={() => setPatternOnly(on ? null : k)}
+                      title={`${m.name} — ${m.bet}`}
+                      style={{
+                        fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                        border: `1px solid ${m.color}${on ? '' : '50'}`,
+                        backgroundColor: on ? m.color : `${m.color}15`,
+                        color: on ? 'var(--mc-bg-0)' : m.color,
+                      }}>{m.icon} {k}</button>
+                  );
+                })}
+                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
@@ -3554,10 +3577,14 @@ Source label: ${coverageStats.source}`}
           if (capFilter !== 'all') {
             stocks = stocks.filter((s: any) => capInRange(s.market_cap_cr, capFilter));
           }
+          // zzz703 — pattern filter, applied last so it composes with the rest.
+          if (patternOnly) {
+            stocks = stocks.filter((s: any) => classifyGradedRow(s)?.pattern === patternOnly);
+          }
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
           // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
-          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all';
+          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all' || !!patternOnly;
           const isOpen = _filterActive ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
@@ -3829,6 +3856,19 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         {/* zzz696 — everything from the quadrant badge to the sector chip is
             opt-in. The PRICE below is not: it shares this row but it is a
             number, not a label, and the card should never lose it. */}
+        {/* zzz703 — pattern verdict, visible whatever the badge switch says. */}
+        {(() => {
+          const ab = classifyGradedRow(stock);
+          if (!ab) return null;
+          const m = ABFG_META[ab.pattern];
+          return (
+            <span title={`${ab.because}\n\nThe bet: ${m.bet}\n\nWhat ends it: ${ab.exitCondition}`}
+              style={{ padding: '1px 7px', borderRadius: 3, border: `1px solid ${m.color}`,
+                backgroundColor: `${m.color}18`, color: m.color, fontWeight: 800, letterSpacing: '0.3px' }}>
+              {m.icon} {ab.pattern} · {m.name}
+            </span>
+          );
+        })()}
         {showBadges && <>
         {/* QUALITY × INFLECTION badge. Sits BESIDE the tier, never replacing it:
             a ⚡ TURNAROUND ACCELERATOR is still whatever tier the grader gave it.

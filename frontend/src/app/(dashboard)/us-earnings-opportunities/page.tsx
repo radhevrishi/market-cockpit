@@ -33,6 +33,7 @@ import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@
 // drift apart again. See src/components/us-earnings-card.tsx.
 import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllAiSummaries, useAiSummaryQueue } from '@/components/us-earnings-card';
 import { CardBadgesToggle } from '@/components/card-badges';
+import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
@@ -195,6 +196,8 @@ export default function UsEarningsOpportunitiesPage() {
   const [date, setDate] = useState<string>(() => {
     try { return getItemSync(LS_DATE) || today; } catch { return today; }
   });
+  // zzz703 — A/B/F/G pattern filter; independent of tier.
+  const [patternOnly, setPatternOnly] = useState<AbfgPattern | null>(null);
   const [days, setDays] = useState<number>(() => {
     try { return parseInt(getItemSync(LS_DAYS) || '5', 10) || 5; } catch { return 5; }
   });
@@ -660,10 +663,16 @@ export default function UsEarningsOpportunitiesPage() {
   const view = useMemo(() => {
     const out: Record<EarningsTier, UsGradedRow[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
     if (!data?.by_tier) return out;
-    for (const t of US_TIER_ORDER) out[t] = (data.by_tier[t] || []).filter(passes);
+    for (const t of US_TIER_ORDER) {
+      let rows = (data.by_tier[t] || []).filter(passes);
+      // zzz703 — pattern filter applied last so it composes with the quality
+      // preset and the cap filters rather than replacing them.
+      if (patternOnly) rows = rows.filter((r: any) => classifyGradedRow(r)?.pattern === patternOnly);
+      out[t] = rows;
+    }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, minCap, capBucket, quality]);
+  }, [data, minCap, capBucket, quality, patternOnly]);
 
   const shownTotal = US_TIER_ORDER.reduce((n, t) => n + view[t].length, 0);
 
@@ -847,6 +856,21 @@ export default function UsEarningsOpportunitiesPage() {
         <span style={{ flex: 1 }} />
         {/* zzz696 — badge chips are opt-in on both markets, one shared key. */}
         <CardBadgesToggle />
+                {/* zzz703 — A/B/F/G, ordered by the spec's ranking. */}
+                {(['A', 'G', 'B', 'F'] as AbfgPattern[]).map((k) => {
+                  const m = ABFG_META[k];
+                  const on = patternOnly === k;
+                  return (
+                    <button key={k} onClick={() => setPatternOnly(on ? null : k)}
+                      title={`${m.name} — ${m.bet}`}
+                      style={{
+                        fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                        border: `1px solid ${m.color}${on ? '' : '50'}`,
+                        backgroundColor: on ? m.color : `${m.color}15`,
+                        color: on ? 'var(--mc-bg-0)' : m.color, whiteSpace: 'nowrap',
+                      }}>{m.icon} {k}</button>
+                  );
+                })}
         {viewMode === 'GRADED' && shownTotal > 0 && (
           <button onClick={toggleAllCards} style={btn(allCardsOpen)} aria-expanded={allCardsOpen}
             title="Open the full write-up on every card that passes the filters">
