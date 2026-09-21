@@ -5861,6 +5861,10 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/portfolio-catalysts', label: '⚡ Portfolio Catalysts', color: '#22D3EE' },
   { href: '/exit-radar', label: '🚨 Exit Radar', color: '#EF4444' },
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
+  // zzz721 — the radar is the discovery half of the same engine Portfolio
+  // Catalysts uses on the book; it deep-links straight to the tab rather than
+  // landing on Live Feeds and making him click again.
+  { href: '/concall-intel?tab=radar', label: '🚀 Transformation Radar', color: '#34D399' },
   // zzz559 — Risk Desk, Position Sizing, Thesis Tracker, Coffee Can, PEAD
   // Tracker, Monte Carlo, Tax Planner and Valuation Bands moved OUT of
   // Favourites and back into the A–Z strip below. A saved drag order that

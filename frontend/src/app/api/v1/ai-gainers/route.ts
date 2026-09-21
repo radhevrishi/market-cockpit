@@ -96,10 +96,33 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-async function readUsGainers(): Promise<Array<{ ticker: string; company: string; movePct: number | null; relVol: number | null; gapPct: number | null }>> {
+interface GainerRow { ticker: string; company: string; movePct: number | null; relVol: number | null; gapPct: number | null }
+
+/**
+ * ── SHOW YOUR WORKING.                                            (zzz721)
+ *
+ * The owner asked, reasonably: "can you check if it really took today's daily
+ * gainers — show me a list somewhere with all gainers so I know it scanned
+ * these." He is right to ask, and the page had no way to answer: it printed
+ * "34 gainers scanned" and nothing that would let anyone check the claim.
+ *
+ * So the file's own name and modification time travel with the response, and
+ * every scanned row is returned. Two honest things fall out of that, which the
+ * page now states rather than hides:
+ *   · the screen is a WEEKLY gainers export, not an intraday one. "Daily" in
+ *     the tab title describes the cadence of the review, not the window of the
+ *     move, and calling a 1-week performance column "today's gainers" would be
+ *     a plain misstatement.
+ *   · it is a committed CSV refreshed by the sync workflow, so it is exactly
+ *     as fresh as the last sync — which is now printed, not assumed.
+ */
+async function readUsGainers(): Promise<{ rows: GainerRow[]; file: string; syncedAt: string | null }> {
+  const full = path.join(TV_DIR, US_GAINERS_FILE);
+  let syncedAt: string | null = null;
+  try { syncedAt = (await fs.stat(full)).mtime.toISOString(); } catch { syncedAt = null; }
   try {
-    const raw = await fs.readFile(path.join(TV_DIR, US_GAINERS_FILE), 'utf8');
-    return parseCsv(raw).map((r) => ({
+    const raw = await fs.readFile(full, 'utf8');
+    const rows = parseCsv(raw).map((r) => ({
       ticker: String(r['Symbol'] || '').toUpperCase(),
       company: r['Description'] || '',
       // The TradingView export quotes any header containing a comma, so the
@@ -112,8 +135,9 @@ async function readUsGainers(): Promise<Array<{ ticker: string; company: string;
       relVol: num(r['Relative volume, 1 week']),
       gapPct: num(r['Gap']),
     })).filter((x) => x.ticker);
+    return { rows, file: US_GAINERS_FILE, syncedAt };
   } catch {
-    return [];
+    return { rows: [], file: US_GAINERS_FILE, syncedAt };
   }
 }
 
@@ -254,11 +278,24 @@ function statusForAge(ageDays: unknown, tier: unknown): GainerEvent['information
 
 /** The grader's tier is an assessment of the RESULT, which is the closest
  *  honest proxy for economic materiality available without a model. */
-function materialityFromTier(tier: string): GainerEvent['materiality'] {
-  if (tier === 'BLOCKBUSTER') return 'high';
-  if (tier === 'STRONG') return 'medium';
-  if (tier === 'MIXED') return 'low';
-  return 'low';
+function materialityFromTier(tier: string, ageDays?: unknown): GainerEvent['materiality'] {
+  const base: GainerEvent['materiality'] =
+    tier === 'BLOCKBUSTER' ? 'high' : tier === 'STRONG' ? 'medium' : 'low';
+  // ── MATERIALITY DECAYS WITH AGE.                                (zzz721)
+  //
+  // The tier is an assessment of the RESULT and does not change. But this
+  // pipeline scores an event as a candidate catalyst for a move happening
+  // NOW, and a blockbuster filed 38 days ago is not a high-materiality
+  // catalyst for this week — the market has had six weeks with it.
+  //
+  // Without this, every stale blockbuster scored 60 and landed in the
+  // "possibly overlooked" quadrant, which reads as "material news the market
+  // has not reacted to". Eight names on one page carried that label for
+  // filings between 16 and 38 days old. Demoting one notch drops them out of
+  // the surprise test entirely, which is the honest place for them.
+  const age = typeof ageDays === 'number' ? ageDays : 0;
+  if (age <= FRESH_DAYS) return base;
+  return base === 'high' ? 'medium' : 'low';
 }
 
 export async function GET(req: NextRequest) {
@@ -266,10 +303,12 @@ export async function GET(req: NextRequest) {
   const market = (searchParams.get('market') || 'US').toUpperCase() === 'IN' ? 'IN' : 'US';
   const limit = Math.max(1, Math.min(25, parseInt(searchParams.get('limit') || '10', 10) || 10));
 
-  const [gainers, gradedRes] = await Promise.all([
-    market === 'US' ? readUsGainers() : Promise.resolve([]),
+  const [gainersRes, gradedRes] = await Promise.all([
+    market === 'US' ? readUsGainers()
+      : Promise.resolve({ rows: [] as GainerRow[], file: '', syncedAt: null as string | null }),
     readGraded(origin, market as Market),
   ]);
+  const gainers = gainersRes.rows;
   const graded = gradedRes.rows;
 
   const gradedBy = new Map<string, any>();
@@ -295,7 +334,7 @@ export async function GET(req: NextRequest) {
       company: g.company || row.company || null,
       eventTime: row.filing_date ? `${String(row.filing_date).slice(0, 10)}T00:00:00Z` : now,
       detectedAt: now,
-      catalyst: 'revenue_guidance_increase',
+      catalyst: 'quarterly_result',
       informationStatus: statusForAge(row._ageDays, row.tier),
       attribution: 'company_specific',
       priceChangePct: g.movePct,
@@ -313,7 +352,7 @@ export async function GET(req: NextRequest) {
         // fact about the filing — not an inference about the future.
         kind: 'fact',
       }],
-      materiality: materialityFromTier(String(row.tier || '')),
+      materiality: materialityFromTier(String(row.tier || ''), row._ageDays),
       structuralDuration: row.tier === 'BLOCKBUSTER' ? 'medium' : 'short',
     });
   }
@@ -332,7 +371,7 @@ export async function GET(req: NextRequest) {
       company: row.company || null,
       eventTime: row.filing_date ? `${String(row.filing_date).slice(0, 10)}T00:00:00Z` : now,
       detectedAt: now,
-      catalyst: 'revenue_guidance_increase',
+      catalyst: 'quarterly_result',
       informationStatus: statusForAge(row._ageDays, row.tier),
       attribution: 'company_specific',
       priceChangePct: typeof row.d1_pct === 'number' ? row.d1_pct : null,
@@ -347,7 +386,7 @@ export async function GET(req: NextRequest) {
             : ''].filter(Boolean).join(' '),
         sourceUrl: url, kind: 'fact',
       }],
-      materiality: materialityFromTier(String(row.tier || '')),
+      materiality: materialityFromTier(String(row.tier || ''), row._ageDays),
       structuralDuration: row.tier === 'BLOCKBUSTER' ? 'medium' : 'short',
     });
   }
@@ -390,6 +429,26 @@ export async function GET(req: NextRequest) {
     generated_at: now,
     funnel,
     gainers_scanned: gainers.length,
+    // ── THE AUDIT TRAIL. Every row that was read, with its move, plus where
+    //    the list came from and when it was last synced — so "34 gainers
+    //    scanned" is a checkable claim rather than an assertion. (zzz721)
+    source_list: {
+      file: gainersRes.file || null,
+      synced_at: gainersRes.syncedAt,
+      window: market === 'US' ? '1-week performance (TradingView weekly gainers export)' : null,
+      rows: gainers.length,
+      matched_to_a_filing: gainers.filter((g) => gradedBy.has(g.ticker)).length,
+    },
+    scanned: gainers
+      .slice()
+      .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity))
+      .map((g) => ({
+        ticker: g.ticker,
+        company: g.company || null,
+        move_pct: g.movePct,
+        volume_ratio: g.relVol,
+        matched: gradedBy.has(g.ticker),
+      })),
     graded_available: gradedBy.size,
     notes,
     queue: queue.map(({ event, priority }) => ({

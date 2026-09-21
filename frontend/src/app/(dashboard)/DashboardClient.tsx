@@ -100,6 +100,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Microscope className="w-5 h-5" />,
     items: [
       { href: '/concall-intel',       label: 'Concall Intelligence', icon: <Microscope className="w-4 h-4" /> },
+      // zzz721 — the radar is a destination in its own right, not a tab you
+      // have to know is hiding behind Concall Intelligence.
+      { href: '/concall-intel?tab=radar', label: 'Transformation Radar', icon: <Rocket className="w-4 h-4" /> },
       { href: '/guidance-extractor',  label: 'Guidance Extractor',   icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/company-intel',  label: 'Company Intelligence', icon: <BookMarked className="w-4 h-4" /> },
       { href: '/ai-desk',        label: 'AI Desk',              icon: <Microscope className="w-4 h-4" /> },

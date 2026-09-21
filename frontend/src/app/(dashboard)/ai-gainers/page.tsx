@@ -41,7 +41,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Mkt = 'IN' | 'US';
-type Level = 'market' | 'signals' | 'queue';
+type Level = 'scanned' | 'market' | 'signals' | 'queue';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
@@ -67,6 +67,12 @@ interface Payload {
   funnel: { scanned: number; withCatalyst: number; structural: number; queue: number };
   gainers_scanned: number; graded_available: number;
   notes: string[]; queue: Row[];
+  source_list?: {
+    file: string | null; synced_at: string | null; window: string | null;
+    rows: number; matched_to_a_filing: number;
+  };
+  scanned?: Array<{ ticker: string; company: string | null; move_pct: number | null;
+    volume_ratio: number | null; matched: boolean }>;
 }
 
 // The quadrant is a DESCRIPTION OF A MISMATCH. Each label says what the
@@ -148,9 +154,11 @@ export default function AiGainersPage() {
           <Chip key={m} on={market === m} onClick={() => setMarket(m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</Chip>
         ))}
         <span style={{ width: 10 }} />
-        {(['market', 'signals', 'queue'] as Level[]).map((l) => (
+        {(['scanned', 'market', 'signals', 'queue'] as Level[]).map((l) => (
           <Chip key={l} on={level === l} onClick={() => setLevel(l)} color={C.violet}>
-            {l === 'market' ? '1 · Market' : l === 'signals' ? '2 · Signals' : '3 · Research queue'}
+            {l === 'scanned' ? '0 · Scanned'
+              : l === 'market' ? '1 · Market'
+                : l === 'signals' ? '2 · Signals' : '3 · Research queue'}
           </Chip>
         ))}
         <button onClick={() => load(market)}
@@ -163,11 +171,13 @@ export default function AiGainersPage() {
       {loading && <div style={{ fontSize: 12, color: C.dim }}>Scanning…</div>}
       {err && <div style={{ fontSize: 12, color: C.amber }}>{err}</div>}
 
+      {data && level === 'scanned' && <ScannedLevel data={data} />}
+
       {data && level === 'market' && (
         <MarketLevel data={data} structural={structural.length} onDrill={() => setLevel('queue')} />
       )}
 
-      {data && level !== 'market' && (
+      {data && level !== 'market' && level !== 'scanned' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {(level === 'queue' ? top : rows).length === 0 && (
             <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
@@ -188,6 +198,66 @@ export default function AiGainersPage() {
           {data.notes.map((n, i) => <div key={i}>· {n}</div>)}
         </div>
       )}
+    </div>
+  );
+}
+
+/** LEVEL 0 — every row that was read, so "34 gainers scanned" can be checked
+ *  rather than believed. The owner asked for this by name. (zzz721) */
+function ScannedLevel({ data }: { data: Payload }) {
+  const sl = data.source_list;
+  const rows = data.scanned || [];
+  if (!sl || !rows.length) {
+    return (
+      <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6, background: C.bg,
+        border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px' }}>
+        No gainers list was read for this market. {data.market === 'IN'
+          ? 'No India gainers screen is committed to this repository, so the India tab ranks the day\u2019s filed results instead — there is no scanned list to show, and inventing one would be worse than saying so.'
+          : 'The TradingView export could not be read.'}
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 11.5, color: C.text, fontWeight: 700 }}>
+          {sl.rows} rows read from <code style={{ color: C.cyan }}>{sl.file}</code>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.dim, marginTop: 3, lineHeight: 1.5 }}>
+          Last synced {sl.synced_at ? new Date(sl.synced_at).toLocaleString() : 'unknown'}
+          {sl.window ? <> · window: <b style={{ color: C.text }}>{sl.window}</b></> : null}
+          {' · '}{sl.matched_to_a_filing} of {sl.rows} matched to a filed result.
+        </div>
+        <div style={{ fontSize: 10, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
+          &ldquo;Daily&rdquo; in this tab&rsquo;s name is the cadence of the review, not the window of the move: the
+          committed screen is a <b>weekly</b> performance export. Calling it today&rsquo;s gainers would be a plain
+          misstatement, so it is named for what it is.
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '84px 1fr 78px 70px 92px',
+        gap: 8, padding: '6px 14px', borderBottom: `1px solid ${C.border}`,
+        fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>
+        <span>TICKER</span><span>COMPANY</span><span style={{ textAlign: 'right' }}>1W MOVE</span>
+        <span style={{ textAlign: 'right' }}>REL VOL</span><span>FILING?</span>
+      </div>
+      {rows.map((r) => (
+        <div key={r.ticker} style={{ display: 'grid', gridTemplateColumns: '84px 1fr 78px 70px 92px',
+          gap: 8, padding: '4px 14px', fontSize: 11, alignItems: 'baseline',
+          borderBottom: `1px solid ${C.border}` }}>
+          <span style={{ fontWeight: 800, color: C.text }}>{r.ticker}</span>
+          <span style={{ color: C.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {r.company}
+          </span>
+          <span style={{ textAlign: 'right', fontWeight: 700,
+            color: (r.move_pct ?? 0) >= 0 ? C.green : C.red }}>{pct(r.move_pct)}</span>
+          <span style={{ textAlign: 'right', color: C.faint }}>
+            {typeof r.volume_ratio === 'number' ? `×${r.volume_ratio.toFixed(1)}` : '—'}
+          </span>
+          <span style={{ fontSize: 9.5, fontWeight: 700, color: r.matched ? C.green : C.faint }}>
+            {r.matched ? '✓ filed result' : 'no filing'}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

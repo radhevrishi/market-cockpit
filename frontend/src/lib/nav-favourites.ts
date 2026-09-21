@@ -34,6 +34,7 @@ const SEED: readonly string[] = [
   '/portfolio-catalysts',
   '/exit-radar',
   '/ai-gainers',
+  '/concall-intel?tab=radar',
 ];
 
 // ── INTRODUCING A NEW TAB TO A RAIL THAT HAS ALREADY BEEN STARRED. (zzz713)
@@ -49,7 +50,7 @@ const SEED: readonly string[] = [
 // later release cannot quietly put it back. Nothing is ever removed from his
 // list by this, only added, and only on its first ever appearance.
 const OFFERED_KEY = 'mc.navFavourites.offered.v1';
-const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-gainers'];
+const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-gainers', '/concall-intel?tab=radar'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];

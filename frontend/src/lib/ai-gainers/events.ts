@@ -36,6 +36,14 @@ export const OPERATING_CATALYSTS = [
   'order_win', 'backlog_increase', 'export_approval', 'new_geography',
   'pricing_increase', 'cost_reduction', 'regulatory_approval', 'new_product',
   'production_ramp', 'customer_ramp',
+  // zzz721 — a quarterly result is its OWN catalyst type. Every event this
+  // pipeline produced was labelled `revenue_guidance_increase`, which was
+  // simply the first value in the list: the page told the owner that Molbio,
+  // Milky Mist, Innova, Kingfa, Solar, Rubicon, Manorama and Bhartiya had all
+  // raised revenue guidance. None of them had. That is a fabricated fact with
+  // a tier-1 filing link under it, which is the worst shape a wrong answer
+  // can take on this portal.
+  'quarterly_result',
 ] as const;
 
 export const CORPORATE_CATALYSTS = [
