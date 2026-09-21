@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        worker: [mc-movers, mc-alerts, mc-guardian]
+        worker: [mc-movers, mc-alerts, mc-guardian, mc-proxy]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
