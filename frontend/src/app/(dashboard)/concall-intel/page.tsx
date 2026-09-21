@@ -17,6 +17,7 @@ import { decodeHTMLEntities } from '@/lib/html-decode';
 // PATCH 0490 QA-#14 — resolve raw BSE codes (e.g. 526612) to NSE symbols
 import { resolveTicker } from '@/lib/bse-nse-mapping';
 // zzz433 — Conviction × Transformation cross-link on the Radar tab
+import { readPortfolioSymbols, normSymbol, classifySource, SOURCE_META, type SymbolSource } from '@/lib/portfolio-symbols';
 import { readConvictionBeats, type ConvictionEntry } from '@/lib/conviction-beats';
 
 // zzz432 — automatic multibagger transformation radar block
@@ -3879,6 +3880,18 @@ function TransformationScreenerTab() {
   const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
   useEffect(() => { try { setBench(readConvictionBeats()); } catch { setBench({}); } }, []);
 
+  // zzz704 — and which of them are in the BOOK. A radar hit on a name he owns
+  // is a reason to re-read a thesis; on a name he has never held it is a
+  // reason to open one. Those are different jobs and the feed could not tell
+  // them apart.
+  const [owned, setOwned] = useState<Set<string>>(new Set());
+  useEffect(() => { try { setOwned(readPortfolioSymbols()); } catch { setOwned(new Set()); } }, []);
+  const benchKeys = useMemo(
+    () => new Set(Object.keys(bench).map((k) => normSymbol(k))),
+    [bench],
+  );
+  const [sourceFilter, setSourceFilter] = useState<SymbolSource | null>(null);
+
   const load = useCallback(async (d: number, force = false) => {
     setLoading(true); setErr(null);
     try {
@@ -3897,7 +3910,15 @@ function TransformationScreenerTab() {
 
   useEffect(() => { load(days); }, [days, load]);
 
-  const entries = data?.entries ?? [];
+  const allEntries = data?.entries ?? [];
+  const sourceOf = useCallback(
+    (sym: unknown): SymbolSource => classifySource(sym, owned, benchKeys),
+    [owned, benchKeys],
+  );
+  const ownedCount = allEntries.filter((e) => sourceOf(e.symbol) === 'portfolio').length;
+  const entries = sourceFilter
+    ? allEntries.filter((e) => sourceOf(e.symbol) === sourceFilter)
+    : allEntries;
   const sweetSpotCount = entries.filter((e) => e.stage_sweet_spot).length;
   const tripleCount = entries.filter((e) => e.triple.count === 3).length;
   const onBenchCount = entries.filter((e) => bench[e.symbol?.toUpperCase()]).length;
@@ -3933,6 +3954,29 @@ function TransformationScreenerTab() {
         </div>
       </div>
 
+      {/* zzz704 — WHOSE NAME IS THIS. Separating the feed by book / bench /
+          neither is the difference between "re-read a thesis I already own"
+          and "open a new one", which the radar could not express. */}
+      {data && allEntries.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontSize: 10, color: TF.dim, fontWeight: 700, letterSpacing: '0.4px' }}>SHOW</span>
+          {([null, 'portfolio', 'bench', 'other'] as (SymbolSource | null)[]).map((k) => {
+            const on = sourceFilter === k;
+            const m = k ? SOURCE_META[k] : { label: 'All', icon: '◈', color: TF.dim };
+            const n = k ? allEntries.filter((e) => sourceOf(e.symbol) === k).length : allEntries.length;
+            return (
+              <button key={String(k)} onClick={() => setSourceFilter(k)}
+                style={{
+                  fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                  border: `1px solid ${m.color}${on ? '' : '55'}`,
+                  background: on ? m.color : `${m.color}18`,
+                  color: on ? '#0B1220' : m.color,
+                }}>{m.icon} {m.label} {n}</button>
+            );
+          })}
+        </div>
+      )}
+
       {/* summary tiles */}
       {data && entries.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
@@ -3941,6 +3985,7 @@ function TransformationScreenerTab() {
             { label: 'In sweet spot (stage 3-7)', v: sweetSpotCount, c: TF.green },
             { label: 'Full triple (ind+co+fin)', v: tripleCount, c: TF.amber },
             { label: '🏆 Also on Conviction Bench', v: onBenchCount, c: TF.green },
+            { label: '📗 In my book', v: ownedCount, c: '#34D399' },
             { label: 'Top score', v: entries[0]?.transformation_score ?? 0, c: TF.purple },
           ].map((t) => (
             <div key={t.label} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
@@ -4034,6 +4079,13 @@ function TransformationScreenerTab() {
                 background: TF.card2, border: `1px solid ${TF.border}`, color: TF.text2,
               }}>{p.emoji} {p.label}{p.hits > 1 ? ` ·${p.hits}` : ''}</span>
             ))}
+                {sourceOf(e.symbol) === 'portfolio' && (
+                  <span title="This name is in your portfolio — a radar hit here is a reason to re-read the thesis you already hold."
+                    style={{ fontSize: 9.5, fontWeight: 900, letterSpacing: '0.3px', padding: '1px 6px',
+                      borderRadius: 3, border: '1px solid #34D399', background: '#064E3B', color: '#6EE7B7' }}>
+                    📗 IN MY BOOK
+                  </span>
+                )}
             {e.patterns.length === 0 && <span style={{ fontSize: 10.5, color: TF.dim }}>no patterns</span>}
           </div>
 
