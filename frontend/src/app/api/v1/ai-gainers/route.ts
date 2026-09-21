@@ -549,8 +549,11 @@ export async function GET(req: NextRequest) {
       // LOUD, never empty. This pipeline has shipped a silently-empty answer
       // three times; a screen that could not be read must never look like a
       // screen with nothing in it.
-      notes.push(`THE GAINERS SCREEN COULD NOT BE READ: ${indiaRes.error}. `
-        + 'Nothing below was matched against a gainers list — treat this page as incomplete, not as an all-clear.');
+      notes.push(`THE GAINERS SCREEN COULD NOT BE READ: ${indiaRes.error} `
+        + 'Nothing below was matched against a gainers list — treat this page as incomplete, not as an all-clear.'
+        + (indiaRes.proxyConfigured ? ''
+          : ' This host is a datacenter IP and screener.in refuses those; the fix is one environment variable '
+            + '(SCREENER_PROXY_URL) pointing at a worker that can reach it.'));
     } else if (indiaRes) {
       notes.push(`Read ${indiaRes.rows.length} gainers live from your screener.in screen `
         + `(${indiaRes.totalReported ?? indiaRes.rows.length} reported, ${indiaRes.pages} page${indiaRes.pages === 1 ? '' : 's'}) `
@@ -598,6 +601,7 @@ export async function GET(req: NextRequest) {
       total_reported: indiaRes?.totalReported ?? null,
       pages_read: indiaRes?.pages ?? 0,
       error: indiaRes?.error ?? null,
+      proxy_configured: indiaRes?.proxyConfigured ?? false,
       matched_to_a_filing: gainers.filter((g) => gradedBy.has(g.ticker)).length,
     } : {
       file: gainersRes.file || null,

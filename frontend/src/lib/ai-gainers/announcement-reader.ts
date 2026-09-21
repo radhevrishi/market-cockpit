@@ -69,6 +69,40 @@ export interface ReadAnnouncement {
   administrative: boolean;
 }
 
+/**
+ * ── THE QUOTE GATE, as a pure function.                            (zzz728)
+ *
+ * A model asked for a verbatim quote will produce something quote-shaped
+ * whether or not it read one, so the quote is checked against the document
+ * rather than trusted. Normalisation handles the three things that legitimately
+ * differ between a PDF's text layer and a quote copied out of it: collapsed
+ * whitespace, Unicode punctuation (curly quotes, en/em dashes, the rupee sign)
+ * and hyphenation across a line break.
+ *
+ * Exported and pure so the fabricated-quote case can be tested directly —
+ * it is the single most important safeguard in the reader.
+ */
+export function normaliseForQuoteMatch(s: string): string {
+  return s
+    .replace(/[\u2018\u2019\u201B\u02BC]/g, "'")
+    .replace(/[\u201C\u201D\u201F]/g, '"')
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/-\s*\n\s*/g, '')          // hyphenation across a PDF line break
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9 .,%$-]/g, '')
+    .trim();
+}
+
+export function quoteIsInDocument(documentText: string, quote: string): boolean {
+  const q = normaliseForQuoteMatch(quote);
+  if (q.length < 25) return false;
+  // Match on a leading window rather than the whole quote: a model may append
+  // a clause from the next sentence, which is a formatting slip rather than a
+  // fabrication. A 60-character run that is absent IS a fabrication.
+  return normaliseForQuoteMatch(documentText).includes(q.slice(0, 60));
+}
+
 const TOOL = {
   name: 'file_announcement_reading',
   description: 'Record what a single exchange announcement actually says.',
@@ -192,9 +226,7 @@ export async function readAnnouncement(
     //    check matters more than the first: a model asked for a quote will
     //    produce something quote-shaped whether or not it read one.
     const quote = String(d.evidence_quote || '').trim();
-    if (quote.length < 25) return null;
-    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9 .,%₹$-]/g, '');
-    if (!norm(text).includes(norm(quote).slice(0, 60))) return null;
+    if (!quoteIsInDocument(text, quote)) return null;
 
     if (!String(d.headline || '').trim()) return null;
 

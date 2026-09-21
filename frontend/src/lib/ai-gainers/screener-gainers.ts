@@ -31,6 +31,8 @@
 // the single most repeated bug.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { fetchScreenerHtml, screenerProxyConfigured } from '@/lib/earnings/screener-fetch';
+
 export interface ScreenerGainer {
   ticker: string;
   company: string;
@@ -45,6 +47,9 @@ export interface ScreenerGainer {
 
 export interface ScreenerGainersResult {
   rows: ScreenerGainer[];
+  /** Whether a reachable proxy is configured — so the page can say whether it
+   *  is one environment variable away from working. */
+  proxyConfigured?: boolean;
   /** Null when the fetch failed; otherwise when this data was read. */
   fetchedAt: string | null;
   pages: number;
@@ -81,7 +86,10 @@ function findCol(headers: string[], re: RegExp): number {
   return headers.findIndex((h) => re.test(h));
 }
 
-function parsePage(html: string): { rows: ScreenerGainer[]; total: number | null; error: string | null } {
+/** Pure: HTML in, rows out. Exported so it can be tested against a captured
+ *  page without touching the network — the parse is where the bugs live
+ *  (the US side once read every move as 0% from a guessed column key). */
+export function parsePage(html: string): { rows: ScreenerGainer[]; total: number | null; error: string | null } {
   const tStart = html.indexOf('<table');
   if (tStart < 0) return { rows: [], total: null, error: 'no results table in the page' };
   const table = html.slice(tStart, html.indexOf('</table>', tStart) + 8);
@@ -155,30 +163,15 @@ export async function fetchIndiaGainers(limitPages = MAX_PAGES): Promise<Screene
 
   for (let p = 1; p <= Math.max(1, Math.min(MAX_PAGES, limitPages)); p++) {
     const url = p === 1 ? INDIA_GAINERS_URL : `${INDIA_GAINERS_URL}?page=${p}`;
-    let html = '';
-    try {
-      const r = await fetch(url, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(PAGE_TIMEOUT_MS),
-        headers: {
-          // screener.in serves a bot page to a bare fetch. This is a public
-          // screen the owner made and is asking his own portal to read.
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml',
-        },
-      });
-      if (!r.ok) {
-        if (!firstError) firstError = `screener.in answered HTTP ${r.status} for page ${p}`;
-        break;
-      }
-      html = await r.text();
-    } catch (e: any) {
-      if (!firstError) {
-        firstError = `screener.in could not be reached (${String(e?.message || e)}). `
-          + 'This is a network failure, not an empty screen.';
-      }
+    // zzz729 — through the proxy chain. A direct fetch from a datacenter IP
+    // is refused by screener.in, which is why this shipped reading 0 rows in
+    // production while working perfectly from a laptop.
+    const got = await fetchScreenerHtml(url, PAGE_TIMEOUT_MS);
+    if (!got.html) {
+      if (!firstError) firstError = `page ${p}: ${got.error}`;
       break;
     }
+    const html = got.html;
 
     const parsed = parsePage(html);
     if (parsed.error && !parsed.rows.length) {
@@ -201,6 +194,7 @@ export async function fetchIndiaGainers(limitPages = MAX_PAGES): Promise<Screene
 
   return {
     rows: out,
+    proxyConfigured: screenerProxyConfigured(),
     fetchedAt: out.length ? new Date().toISOString() : null,
     pages,
     totalReported: total,

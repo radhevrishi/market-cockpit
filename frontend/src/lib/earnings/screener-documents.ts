@@ -29,6 +29,8 @@
 // so the caller is always told which document it got.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { fetchScreenerHtml } from './screener-fetch';
+
 export type DocKind = 'transcript' | 'ppt' | 'annual_report' | 'other';
 
 export interface CompanyDoc {
@@ -77,22 +79,18 @@ const decode = (s: string) => s
  */
 export async function fetchCompanyDocs(ticker: string): Promise<CompanyDocs> {
   const url = `https://www.screener.in/company/${encodeURIComponent(ticker.toUpperCase())}/`;
-  let html = '';
-  try {
-    const r = await fetch(url, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15_000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml',
-      },
-    });
-    if (!r.ok) return { docs: [], url, error: `screener.in answered HTTP ${r.status} for ${ticker}` };
-    html = await r.text();
-  } catch (e: any) {
-    return { docs: [], url, error: `screener.in could not be reached (${String(e?.message || e)})` };
-  }
+  // zzz729 — through the proxy chain, for the same reason the gainers screen
+  // is: screener.in answers a laptop and refuses a datacenter IP.
+  const got = await fetchScreenerHtml(url);
+  if (!got.html) return { docs: [], url, error: got.error };
+  const html = got.html;
 
+  return { ...parseCompanyDocs(html), url };
+}
+
+/** Pure: company-page HTML in, ranked documents out. Exported so the parse
+ *  can be tested against a captured page with no network. */
+export function parseCompanyDocs(html: string): { docs: CompanyDoc[]; error: string | null } {
   const docs: CompanyDoc[] = [];
   const seen = new Set<string>();
   const push = (kind: DocKind, href: string, period: string | null, label: string) => {
@@ -131,7 +129,7 @@ export async function fetchCompanyDocs(ticker: string): Promise<CompanyDocs> {
 
   docs.sort((a, b) => String(b.periodIso || '').localeCompare(String(a.periodIso || '')));
   return {
-    docs, url,
+    docs,
     error: docs.length ? null : 'no readable documents listed on the screener.in company page',
   };
 }
