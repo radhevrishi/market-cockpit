@@ -21,7 +21,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { readPortfolioSymbols, normSymbol } from '@/lib/portfolio-symbols';
+import { normSymbol } from '@/lib/portfolio-symbols';
+import {
+  readHoldingSymbols, fetchServerBook, benchPassingPreset, mergeUniverse,
+  originCounts, type BookOrigin,
+} from './universe';
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { classifyGradedRow, classifyWithFiling, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
@@ -31,6 +35,8 @@ import { recordPromises, checkPromises } from './guidance-ledger';
 
 export interface BookRow {
   symbol: string;
+  /** Book, bench, or both. A bench name is a candidate, never a holding. */
+  origin: BookOrigin;
   market: 'IN' | 'US';
   graded: any | null;
   tier: string | null;
@@ -70,22 +76,61 @@ function assess(row: BookRow): BookRow {
   };
 }
 
-export function useBook() {
+export interface UniverseNote {
+  /** Held names, whatever they grade at. */
+  book: number;
+  /** Bench candidates that passed the preset and are shown. */
+  bench: number;
+  /** Held AND benched. Counted inside both figures above, never double-added
+   *  to the total. */
+  both: number;
+  /** Bench candidates the preset rejected. Shown as a number so the page can
+   *  say what it filtered rather than quietly shrinking. */
+  benchFiltered: number;
+  /** Bench candidates with no graded row anywhere — excluded because the
+   *  preset could not be applied, NOT because it failed. */
+  benchUnchecked: number;
+  /** Non-null when the server book could not be read. */
+  serverError: string | null;
+}
+
+/**
+ * `includeBench` is false on Exit Radar and true on Portfolio Catalysts.
+ *
+ * Exiting a position you do not hold is not a thing that can happen, so the
+ * radar stays strictly the book. Catalysts is the research surface and covers
+ * both populations. The flag is read once, on mount, because the pipeline
+ * runs once — a page does not change its mind about which question it asks.
+ */
+export function useBook(opts?: { includeBench?: boolean }) {
+  const includeBench = opts?.includeBench !== false;
   const [symbols, setSymbols] = useState<string[]>([]);
+  const [origins, setOrigins] = useState<Record<string, BookOrigin>>({});
   const [rows, setRows] = useState<Record<string, BookRow>>({});
   const [loading, setLoading] = useState(true);
   const [batch, setBatch] = useState({ running: false, done: 0, total: 0 });
+  const [note, setNote] = useState<UniverseNote>({
+    book: 0, bench: 0, both: 0, benchFiltered: 0, benchUnchecked: 0, serverError: null,
+  });
   const rowsRef = useRef<Record<string, BookRow>>({});
   const stopRef = useRef(false);
 
   useEffect(() => { rowsRef.current = rows; }, [rows]);
 
+  // ── ONE PASS, IN THREE STAGES.                                   (zzz731)
+  //
+  // It runs once on mount rather than re-running as the universe grows,
+  // because each stage ADDS to the universe: an effect keyed on the symbol
+  // list would re-enter itself every time the server answered.
+  //
+  //   1. The local book paints immediately, from localStorage and the local
+  //      conviction bench. No network, so the page is never blank.
+  //   2. The server book is merged in — held names this browser has never
+  //      seen, and the bench candidate list.
+  //   3. The graded rows arrive for everything at once. Held names take the
+  //      richer row; bench candidates are admitted only if that row passes
+  //      the preset.
   useEffect(() => {
-    try { setSymbols(Array.from(readPortfolioSymbols())); } catch { setSymbols([]); }
-  }, []);
-
-  useEffect(() => {
-    if (!symbols.length) { setLoading(false); return; }
     let cancelled = false;
     (async () => {
       // ── THE BOOK IS NOT THE BENCH.                             (zzz716)
@@ -99,8 +144,10 @@ export function useBook() {
       let bench: Record<string, any> = {};
       try { bench = readConvictionBeats(); } catch { bench = {}; }
       const byNorm = new Map(Object.entries(bench).map(([k, v]) => [normSymbol(k), v]));
+
       const build = (sym: string, g: any | null, src: string | null): BookRow => assess({
         symbol: sym,
+        origin: 'book',
         market: g?.market === 'US' ? 'US' : 'IN',
         graded: g,
         tier: g?.tier || null,
@@ -113,15 +160,50 @@ export function useBook() {
         assessment: null, capex: null, promiseNote: null,
       });
 
-      const next: Record<string, BookRow> = {};
-      for (const sym of symbols) {
-        const g = byNorm.get(sym) || null;
-        next[sym] = build(sym, g, g ? 'graded' : null);
-      }
-      if (cancelled) return;
-      setRows(next); setLoading(false);
+      // ── STAGE 1 — the local book, instantly.
+      const localHeld = readHoldingSymbols();
+      const paint = (universe: Map<string, BookOrigin>) => {
+        if (cancelled) return;
+        const next: Record<string, BookRow> = { ...rowsRef.current };
+        for (const [sym, origin] of universe) {
+          if (next[sym]) { next[sym] = { ...next[sym], origin }; continue; }
+          const g = byNorm.get(sym) || null;
+          next[sym] = { ...build(sym, g, g ? 'graded' : null), origin };
+        }
+        setRows(next);
+        setSymbols(Array.from(universe.keys()));
+        setOrigins(Object.fromEntries(universe));
+        setLoading(false);
+      };
 
-      // ── ASK THE SERVER FOR EVERY HOLDING, NOT ONLY THE MISSING ONES.
+      let universe = mergeUniverse(localHeld, []);
+      paint(universe);
+      setNote((n) => ({ ...n, ...originCounts(universe.values()) }));
+
+      // ── STAGE 2 — the server book. localStorage is per-browser; the book
+      // is not. A name added on another machine is still a holding.
+      const server = await fetchServerBook();
+      if (cancelled) return;
+      const held = new Set<string>([...localHeld, ...server.held]);
+      universe = mergeUniverse(held, []);
+      paint(universe);
+
+      // Bench candidates: the server's bench list, plus anything in this
+      // browser's local bench that the server has not heard of yet.
+      const candidates = includeBench
+        ? Array.from(new Set<string>([
+          ...server.benched,
+          ...Array.from(byNorm.keys()),
+        ])).filter((s) => !held.has(s))
+        : [];
+
+      setNote((n) => ({
+        ...n, ...originCounts(universe.values()), serverError: server.error,
+      }));
+
+      // ── STAGE 3 — graded rows for everything, and the preset gate.
+      //
+      // ASK THE SERVER FOR EVERY HOLDING, NOT ONLY THE MISSING ONES.
       //
       // The first version only filled holdings the LOCAL bench could not
       // answer for, on the assumption that a local hit was as good as a
@@ -134,51 +216,69 @@ export function useBook() {
       // So every symbol is requested, and a server row replaces a local one
       // whenever it carries more of the fields the thesis engine reads. A
       // local row is a fast first paint, never the better evidence. (zzz719)
-      try {
-        const r = await fetch(`/api/v1/portfolio/thesis-data?tickers=${encodeURIComponent(symbols.join(','))}`,
-          { cache: 'no-store' });
-        if (r.ok && !cancelled) {
-          const j = await r.json();
-          const got = j?.rows || {};
-          const richness = (g: any): number => g ? [
-            'sales_yoy_pct', 'eps_yoy_pct', 'net_profit_yoy_pct', 'opm_pct',
-            'opm_prev_pct', 'opm_change_pp', 'opm_change_pp_qoq',
-            'cfo_to_pat_ratio', 'ocf_to_pat_ratio',
-          ].filter((k) => typeof g[k] === 'number' && Number.isFinite(g[k])).length : 0;
+      const richness = (g: any): number => g ? [
+        'sales_yoy_pct', 'eps_yoy_pct', 'net_profit_yoy_pct', 'opm_pct',
+        'opm_prev_pct', 'opm_change_pp', 'opm_change_pp_qoq',
+        'cfo_to_pat_ratio', 'ocf_to_pat_ratio',
+      ].filter((k) => typeof g[k] === 'number' && Number.isFinite(g[k])).length : 0;
 
-          setRows((cur) => {
-            const out = { ...cur };
-            for (const sym of symbols) {
-              const hit = got[sym.toUpperCase()];
-              const prev = out[sym];
-              if (!prev) continue;
-              if (!hit || hit.source === 'none') {
-                if (!prev.graded) out[sym] = { ...prev, dataSource: 'none' };
-                continue;
-              }
-              // Keep whichever row the engine can actually read more of. A
-              // graded row also wins a tie over a screener row, because it
-              // was read from the filing rather than from a database.
-              const keepLocal = richness(prev.graded) > richness(hit)
-                || (richness(prev.graded) === richness(hit) && prev.dataSource === 'graded' && hit.source !== 'graded');
-              if (keepLocal) continue;
-              // The summary already read for this holding is preserved: a
-              // filing beats every store and must not be discarded by a
-              // background fill that lands after it.
-              out[sym] = assess({
-                ...prev,
-                market: hit.market === 'US' ? 'US' : 'IN',
-                graded: hit,
-                tier: hit.tier || prev.tier || null,
-                pattern: classifyGradedRow(hit) || prev.pattern,
-                sourceUrl: prev.sourceUrl || hit.filing_url || hit.source_url || null,
-                dataSource: hit.source,
-              });
-            }
-            return out;
+      // Chunked: the bench runs to three hundred names and a single query
+      // string of that length is a request some proxies simply drop.
+      const wanted = [...Array.from(held), ...candidates];
+      const got: Record<string, any> = {};
+      for (let i = 0; i < wanted.length; i += 100) {
+        const slice = wanted.slice(i, i + 100);
+        try {
+          const r = await fetch(
+            `/api/v1/portfolio/thesis-data?tickers=${encodeURIComponent(slice.join(','))}`,
+            { cache: 'no-store' });
+          if (!r.ok) continue;
+          const j = await r.json();
+          Object.assign(got, j?.rows || {});
+        } catch { /* the filing path still answers for every holding */ }
+        if (cancelled) return;
+      }
+
+      const gate = benchPassingPreset(candidates, got);
+      universe = mergeUniverse(held, gate.passed);
+      paint(universe);
+      setNote((n) => ({
+        ...n, ...originCounts(universe.values()),
+        benchFiltered: gate.failed, benchUnchecked: gate.unchecked.length,
+        serverError: server.error,
+      }));
+
+      setRows((cur) => {
+        const out = { ...cur };
+        for (const sym of Array.from(universe.keys())) {
+          const hit = got[sym.toUpperCase()];
+          const prev = out[sym];
+          if (!prev) continue;
+          if (!hit || hit.source === 'none') {
+            if (!prev.graded) out[sym] = { ...prev, dataSource: 'none' };
+            continue;
+          }
+          // Keep whichever row the engine can actually read more of. A
+          // graded row also wins a tie over a screener row, because it
+          // was read from the filing rather than from a database.
+          const keepLocal = richness(prev.graded) > richness(hit)
+            || (richness(prev.graded) === richness(hit) && prev.dataSource === 'graded' && hit.source !== 'graded');
+          if (keepLocal) continue;
+          // The summary already read for this holding is preserved: a
+          // filing beats every store and must not be discarded by a
+          // background fill that lands after it.
+          out[sym] = assess({
+            ...prev,
+            market: hit.market === 'US' ? 'US' : 'IN',
+            graded: hit,
+            tier: hit.tier || prev.tier || null,
+            pattern: classifyGradedRow(hit) || prev.pattern,
+            sourceUrl: prev.sourceUrl || hit.filing_url || hit.source_url || null,
+            dataSource: hit.source,
           });
         }
-      } catch { /* the filing path still answers for every holding */ }
+        return out;
+      });
 
       // The radar is an enrichment and never blocks the paint.
       try {
@@ -199,7 +299,7 @@ export function useBook() {
       } catch { /* enrichment only */ }
     })();
     return () => { cancelled = true; };
-  }, [symbols]);
+  }, []);
 
   const readFiling = useCallback(async (sym: string) => {
     const cur = rowsRef.current[sym];
@@ -269,5 +369,5 @@ export function useBook() {
 
   const stop = useCallback(() => { stopRef.current = true; }, []);
 
-  return { symbols, rows, loading, batch, readFiling, readAll, stop };
+  return { symbols, origins, note, rows, loading, batch, readFiling, readAll, stop };
 }

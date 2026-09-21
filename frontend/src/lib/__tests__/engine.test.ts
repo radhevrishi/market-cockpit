@@ -35,6 +35,9 @@ import { extractVariables } from '../thesis/variables';
 import { assessThesis } from '../thesis/status';
 import { classifyGradedRow, classifyWithFiling } from '../earnings/pattern-abfg';
 import { sourceTierOf, researchPriority, type GainerEvent } from '../ai-gainers/events';
+import {
+  symbolsFromStoredValue, mergeUniverse, originCounts, benchPassingPreset,
+} from '../thesis/universe';
 
 const fx = (n: string) => readFileSync(join(__dirname, 'fixtures', n), 'utf8');
 const benchRows: any[] = JSON.parse(fx('bench-rows.json'));
@@ -316,5 +319,91 @@ describe('gainers scoring safeguards', () => {
       priceChangePct: 40, materiality: 'low', informationStatus: 'confirmation',
     }) });
     assert.equal(p.quadrant, 'momentum_speculative');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE UNIVERSE — WHICH COMPANIES THE PAGE IS RESPONSIBLE FOR.       (zzz731)
+//
+// This is where the missing-names bug lived: one localStorage key was read,
+// the other three and the entire server bench were not. Every case below is a
+// shape that has actually existed in this store.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('book universe', () => {
+  test('all three stored shapes yield symbols', () => {
+    assert.deepEqual(symbolsFromStoredValue('["kmew","sotl"]'), ['KMEW', 'SOTL']);
+    assert.deepEqual(symbolsFromStoredValue('[{"symbol":"KMEW.NS"},{"ticker":"sotl"}]'), ['KMEW', 'SOTL']);
+    assert.deepEqual(symbolsFromStoredValue('{"KMEW":{"qty":10}}'), ['KMEW']);
+  });
+
+  test('unreadable or absent storage yields nothing, never a guess', () => {
+    assert.deepEqual(symbolsFromStoredValue(null), []);
+    assert.deepEqual(symbolsFromStoredValue('not json'), []);
+    assert.deepEqual(symbolsFromStoredValue('42'), []);
+  });
+
+  test('a name in the book AND on the bench is ONE row marked both', () => {
+    const u = mergeUniverse(['KMEW', 'SOTL'], ['KMEW', 'AVALON']);
+    assert.equal(u.size, 3);
+    assert.equal(u.get('KMEW'), 'both');
+    assert.equal(u.get('SOTL'), 'book');
+    assert.equal(u.get('AVALON'), 'bench');
+  });
+
+  test('counting never merges the two populations into one number', () => {
+    const c = originCounts(['book', 'book', 'bench', 'both']);
+    // The held figure must include the both-name: owning it is not cancelled
+    // by it also being a candidate.
+    assert.deepEqual(c, { book: 3, bench: 2, both: 1, total: 4 });
+  });
+
+  test('a bench candidate with NO graded row is excluded, not waved through', () => {
+    const g = benchPassingPreset(['NOROW'], {});
+    assert.deepEqual(g.passed, []);
+    assert.equal(g.failed, 0, 'an unchecked name must not be counted as a preset failure');
+    assert.deepEqual(g.unchecked, ['NOROW']);
+  });
+
+  test("a row the route returned as source:'none' is unchecked, not passing", () => {
+    const g = benchPassingPreset(['X'], { X: { ticker: 'X', source: 'none', market_cap_cr: 9999 } });
+    assert.deepEqual(g.passed, []);
+    assert.deepEqual(g.unchecked, ['X']);
+  });
+
+  test('the preset gate is the SAME preset the alerts use', () => {
+    // Built to pass, then broken on one gate at a time. If this test and
+    // lib/quality-preset ever disagree, they disagree here and not silently
+    // in production — which is exactly how zzz672 went wrong.
+    const pass = {
+      ticker: 'OK', source: 'graded', market_cap_cr: 5000,
+      sales_yoy_pct: 30, eps_yoy_pct: 40, pead_score: 55,
+      opm_pct: 14, opm_prev_pct: 12, cfo_to_pat_ratio: 1.1, verdict: 'BUY',
+    };
+    assert.deepEqual(benchPassingPreset(['OK'], { OK: pass }).passed, ['OK']);
+
+    const tooSmall = { ...pass, market_cap_cr: 900 };
+    assert.equal(benchPassingPreset(['OK'], { OK: tooSmall }).passed.length, 0);
+
+    const cashLeak = { ...pass, cfo_to_pat_ratio: 0.2 };
+    assert.equal(benchPassingPreset(['OK'], { OK: cashLeak }).passed.length, 0);
+
+    const marginDown = { ...pass, opm_pct: 10, opm_prev_pct: 12 };
+    assert.equal(benchPassingPreset(['OK'], { OK: marginDown }).passed.length, 0);
+  });
+
+  test('a null field passes the preset — absence is not failure', () => {
+    // Deliberate: a filing whose cash-flow line has not been parsed yet must
+    // still surface. Only market cap and verdict are allowed to be strict.
+    const thin = {
+      ticker: 'THIN', source: 'graded', market_cap_cr: 4000,
+      sales_yoy_pct: null, eps_yoy_pct: null, cfo_to_pat_ratio: null, pledged_pct: null,
+    };
+    assert.deepEqual(benchPassingPreset(['THIN'], { THIN: thin }).passed, ['THIN']);
+  });
+
+  test('exchange suffixes and case never split one company into two rows', () => {
+    const u = mergeUniverse(['kmew.ns', 'KMEW'], ['Kmew.BO']);
+    assert.equal(u.size, 1);
+    assert.equal(u.get('KMEW'), 'both');
   });
 });

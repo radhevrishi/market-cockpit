@@ -23,6 +23,7 @@
 
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
+import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
 import { CAPEX_META, type CapexChain } from '@/lib/thesis/capex-chain';
 import type { VarVerdict } from '@/lib/thesis/variables';
 import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, type VarGroup } from '@/lib/thesis/taxonomy';
@@ -98,6 +99,10 @@ export interface ThesisCardProps {
    *  from. A screener figure and a filing-read figure are not the same
    *  evidence and the card must never let them look the same. */
   dataSource?: string | null;
+  /** Whether this name is held, a preset-passing bench candidate, or both.
+   *  A bench card must never be mistaken for a holding, so this is rendered
+   *  next to the ticker rather than buried in a tooltip. (zzz731) */
+  origin?: BookOrigin;
   defaultOpen?: boolean;
 }
 
@@ -135,6 +140,18 @@ export function ThesisCard(p: ThesisCardProps) {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{p.symbol}</span>
         <span style={{ fontSize: 9.5, fontWeight: 800, color: C.faint }}>{p.market}</span>
+        {p.origin && (
+          <span title={p.origin === 'bench'
+            ? 'On the conviction bench and passing the quality preset. NOT a holding — this is a candidate, and nothing here implies you own it.'
+            : p.origin === 'both'
+              ? 'Held, and also on the conviction bench.'
+              : 'In your book.'}
+            style={{
+              fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              border: `1px solid ${ORIGIN_META[p.origin].color}`,
+              color: ORIGIN_META[p.origin].color,
+            }}>{ORIGIN_META[p.origin].icon} {ORIGIN_META[p.origin].short}</span>
+        )}
         {p.tier && (
           <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
             border: `1px solid ${C.border}`, color: C.dim }}>{p.tier}</span>

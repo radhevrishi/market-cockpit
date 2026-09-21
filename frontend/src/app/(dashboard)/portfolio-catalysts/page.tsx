@@ -34,6 +34,7 @@ import { useMemo, useState } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
+import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--mc-text-1)',
@@ -49,23 +50,48 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook();
+  const { symbols, note, rows, loading, batch, readFiling, readAll, stop } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
+  // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
+  //
+  // Defaults to everything, because the owner asked for the bench and the
+  // book on one page. The book can be isolated in one click, and the counts
+  // are always stated separately — a holding and a candidate are different
+  // objects and the header never adds them into a single "holdings" figure
+  // the way this page used to.
+  const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
+  // The preset has a market-cap floor and no ceiling, so it admits TITAN and
+  // HINDALCO. This is on by default and the count it hides is printed beside
+  // it — a size filter is allowed to be opinionated, not allowed to be quiet.
+  // A HOLDING IS NEVER HIDDEN BY IT.
+  const [smallMidOnly, setSmallMidOnly] = useState(true);
 
   const all = useMemo(() => Object.values(rows), [rows]);
 
+  const sized = useMemo(() => all.filter((r) =>
+    // Held names bypass the size filter entirely.
+    r.origin !== 'bench' || !smallMidOnly || isSmallMidCap(r.graded)), [all, smallMidOnly]);
+  const hiddenByCap = all.length - sized.length;
+
+  const inSource = useMemo(() => sized.filter((r) =>
+    source === 'all' ? true
+      : source === 'book' ? (r.origin === 'book' || r.origin === 'both')
+      : (r.origin === 'bench' || r.origin === 'both')), [sized, source]);
+
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const r of all) {
+    for (const r of inSource) {
       const k = r.assessment?.status || 'NEUTRAL';
       c[k] = (c[k] || 0) + 1;
     }
     return c;
-  }, [all]);
+  }, [inSource]);
 
   const list = useMemo(() => {
-    let f = all;
+    let f = sized;
+    if (source === 'book') f = f.filter((r) => r.origin === 'book' || r.origin === 'both');
+    if (source === 'bench') f = f.filter((r) => r.origin === 'bench' || r.origin === 'both');
     if (filter) f = f.filter((r) => r.assessment?.status === filter);
     if (onlyRead) f = f.filter((r) => r.state === 'done');
     // Sorted by SEVERITY, never by price and never alphabetically: the thing
@@ -80,16 +106,20 @@ export default function PortfolioCatalystsPage() {
       if (ad !== bd) return bd - ad;
       return a.symbol.localeCompare(b.symbol);
     });
-  }, [all, filter, onlyRead]);
+  }, [sized, filter, onlyRead, source]);
 
-  const readCount = all.filter((r) => r.state === 'done').length;
+  const readCount = inSource.filter((r) => r.state === 'done').length;
 
   if (!symbols.length && !loading) {
     return (
       <div style={{ padding: 24, color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
         <h1 style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 8 }}>Portfolio Catalysts</h1>
-        Your book is empty, so there is nothing to watch. Add holdings on the Portfolio page and each one will appear
-        here with its thesis, the variables that thesis rests on, and the conditions that would end it.
+        {note.serverError
+          ? <>Your book could not be read — the server answered: <i>{note.serverError}</i>. This is not the same as an
+            empty book, and nothing has been assessed. Reload once the connection is back.</>
+          : <>Your book is empty and no bench name passes the preset, so there is nothing to watch. Add holdings on the
+            Portfolio page and each one will appear here with its thesis, the variables that thesis rests on, and the
+            conditions that would end it.</>}
       </div>
     );
   }
@@ -102,8 +132,49 @@ export default function PortfolioCatalystsPage() {
           Every holding carries a <b style={{ color: C.text }}>thesis ledger</b> — the named variables you own it for —
           and each quarter&apos;s evidence is checked against them. Capex is tracked as a chain to whether it actually
           earned, not as an announcement. <b style={{ color: C.text }}>A price move is never an exit reason</b>, and no
-          price is read anywhere in this engine.
+          price is read anywhere in this engine. Your <b style={{ color: C.text }}>book</b> is watched in full,
+          whatever it grades at; the <b style={{ color: C.text }}>conviction bench</b> joins it filtered by your
+          quality preset. A bench name is a candidate, not a holding, and every card says which it is.
         </div>
+      </div>
+
+      {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {([
+          ['all', `All ${note.book + note.bench - note.both}`, 'Everything below: your book, plus every bench name that passes the preset.'],
+          ['book', `\uD83D\uDCD7 My book ${note.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
+          ['bench', `\uD83C\uDFC6 Bench ${note.bench}`, 'Conviction-bench candidates that pass the quality preset. You do not own these.'],
+        ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
+          const on = source === k;
+          return (
+            <button key={k} title={hint} onClick={() => setSource(k)} style={{
+              fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${on ? C.cyan : C.border}`, color: on ? C.cyan : C.dim,
+              background: on ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
+            }}>{label}</button>
+          );
+        })}
+        <button onClick={() => setSmallMidOnly((v) => !v)}
+          title={`Bench candidates above \u20B9${SMALL_MID_CAP_MAX_CR.toLocaleString('en-IN')} Cr are hidden. Holdings are never hidden by this.`}
+          style={{
+            fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+            border: `1px solid ${smallMidOnly ? C.cyan : C.border}`, color: smallMidOnly ? C.cyan : C.dim,
+            background: smallMidOnly ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
+          }}>
+          {smallMidOnly ? 'Small / mid only' : 'All sizes'}
+          {smallMidOnly && hiddenByCap > 0 && (
+            <span style={{ color: C.faint, fontWeight: 700 }}> · {hiddenByCap} large caps hidden</span>
+          )}
+        </button>
+
+        {(note.benchFiltered > 0 || note.benchUnchecked > 0) && (
+          <span style={{ fontSize: 10.5, color: C.faint }}
+            title="The preset is the same one the alerts use (lib/quality-preset), applied to the same graded row the thesis engine reads.">
+            {note.benchFiltered > 0 && <>{note.benchFiltered} bench names failed the preset</>}
+            {note.benchFiltered > 0 && note.benchUnchecked > 0 && ' · '}
+            {note.benchUnchecked > 0 && <>{note.benchUnchecked} had no graded row, so the preset could not be applied — excluded, not failed</>}
+          </span>
+        )}
       </div>
 
       {/* ── THE FIVE SIGNALS. Not fifty scores. ─────────────────────────── */}
@@ -127,13 +198,13 @@ export default function PortfolioCatalystsPage() {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: C.faint }}>
-          {list.length} of {symbols.length} holdings · {readCount} documents read
+          {list.length} of {inSource.length} shown · {note.book} held · {note.bench} bench · {readCount} documents read
         </span>
         <button onClick={() => setOnlyRead((v) => !v)} style={{
           fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
           border: `1px solid ${onlyRead ? C.cyan : C.border}`, color: onlyRead ? C.cyan : C.dim,
           background: onlyRead ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
-        }}>{onlyRead ? 'Only holdings with evidence read' : 'Show all holdings'}</button>
+        }}>{onlyRead ? 'Only names with evidence read' : 'Show all'}</button>
 
         {!batch.running ? (
           <button onClick={() => readAll(list.map((r) => r.symbol))}
@@ -170,11 +241,11 @@ export default function PortfolioCatalystsPage() {
           whenever the book is under-read, because a thesis engine judging a
           book it has not read is the failure this page was rebuilt to fix.
           (zzz717) */}
-      {!loading && readCount < all.length && (
+      {!loading && readCount < inSource.length && (
         <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
           <b style={{ color: C.text }}>
-            {all.length - readCount} of {all.length} holdings have not had an evidence document read.
+            {inSource.length - readCount} of {inSource.length} names have not had an evidence document read.
           </b>{' '}
           Revenue, earnings, margin and cash come from the graders and are already on the cards.{' '}
           <b style={{ color: C.text }}>Utilisation, capacity, capex, order book and guidance do not</b> — they live in
@@ -186,7 +257,7 @@ export default function PortfolioCatalystsPage() {
               <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
                 fontSize: 11.5, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
                 border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-              }}>&#10024; Read the {all.length - readCount} remaining</button>
+              }}>&#10024; Read the {inSource.length - readCount} remaining</button>
               <span style={{ fontSize: 10.5, color: C.faint, marginLeft: 9 }}>
                 Three at a time. Each is one model call against one filing, and you can stop it at any point.
               </span>
@@ -199,6 +270,7 @@ export default function PortfolioCatalystsPage() {
         <ThesisCard key={r.symbol}
           symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
           radarScore={r.radarScore} assessment={r.assessment} capex={r.capex}
+          origin={r.origin}
           needsRead={r.state === 'idle' || r.state === 'error'}
           reading={r.state === 'loading'}
           onRead={() => readFiling(r.symbol)}

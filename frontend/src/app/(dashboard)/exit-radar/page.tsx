@@ -53,7 +53,10 @@ const ORDER: ThesisStatus[] = [
 const ACTIONABLE: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP'];
 
 export default function ExitRadarPage() {
-  const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook();
+  // BOOK ONLY. The conviction bench joined Portfolio Catalysts in zzz731,
+  // but an exit radar over names that are not owned would be answering a
+  // question nobody asked — you cannot exit a candidate.
+  const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook({ includeBench: false });
   const all = useMemo(() => Object.values(rows), [rows]);
 
   const counts = useMemo(() => {
