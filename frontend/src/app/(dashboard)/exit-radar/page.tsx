@@ -221,6 +221,9 @@ export default function ExitRadarPage() {
         <ThesisCard key={r.symbol} defaultOpen
           symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
           radarScore={r.radarScore} assessment={r.assessment} capex={r.capex}
+          documentsRead={r.documentsRead}
+          discoveryAttempts={r.discoveryAttempts}
+          discoveryState={r.discoveryState}
           needsRead={r.state === 'idle' || r.state === 'error'}
           reading={r.state === 'loading'}
           onRead={() => readFiling(r.symbol)}

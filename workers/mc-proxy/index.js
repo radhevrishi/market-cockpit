@@ -163,6 +163,47 @@ export default {
       // the elapsed milliseconds and the Cloudflare colo that served it —
       // so the next failure names the hop, the duration and the location
       // instead of "timed out". An opaque hang becomes evidence.
+      // ── KV CACHE, AND WHY IT IS NOT AN OPTIMISATION.           (zzz736)
+      //
+      // The 10s deadline above did its job and named the fault: this Worker
+      // gets HTTP 504 on its OWN subrequest when the request arrives at the
+      // colo serving Railway, while the identical subrequest from the colo
+      // serving a laptop answers in 1.5s. screener.in is slow or refusing
+      // from that location specifically. No timeout value fixes that, and
+      // retrying into the same colo mostly repeats it.
+      //
+      // So the read is decoupled from the caller's colo. Any successful
+      // fetch — from any location, including the scheduled warm below —
+      // writes the page to KV, and a request that cannot reach screener.in
+      // serves the cached copy rather than failing. This is exactly what
+      // mc-scraper does, which is why mc-scraper has always worked from
+      // Railway while a live passthrough did not.
+      //
+      // STALENESS IS REPORTED, NEVER HIDDEN. Every cached answer carries its
+      // age in a header, because a gainers screen whose whole content is
+      // today's move must never be served as fresh when it is an hour old.
+      const cacheKey = `page:${target.toString()}`;
+      const FRESH_MS = 15 * 60 * 1000;
+      const STALE_MS = 6 * 60 * 60 * 1000;
+      const kv = env && env.MC_KV;
+
+      if (kv && !url.searchParams.has('nocache')) {
+        try {
+          const hit = await kv.getWithMetadata(cacheKey, { type: 'text' });
+          const at = hit && hit.metadata && hit.metadata.at;
+          if (hit && hit.value && at && Date.now() - at < FRESH_MS) {
+            return new Response(hit.value, {
+              status: 200,
+              headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'X-MC-Proxy-Cache': 'fresh',
+                'X-MC-Proxy-Age-Ms': String(Date.now() - at),
+              },
+            });
+          }
+        } catch { /* a cold or unavailable cache is not an error */ }
+      }
+
       const t0 = Date.now();
       let upstream;
       try {
@@ -173,6 +214,24 @@ export default {
       } catch (e) {
         const ms = Date.now() - t0;
         const timedOut = String((e && e.name) || '') === 'TimeoutError';
+        // STALE BEATS NOTHING — but only when it is labelled stale.
+        if (kv) {
+          try {
+            const hit = await kv.getWithMetadata(cacheKey, { type: 'text' });
+            const at = hit && hit.metadata && hit.metadata.at;
+            if (hit && hit.value && at && Date.now() - at < STALE_MS) {
+              return new Response(hit.value, {
+                status: 200,
+                headers: {
+                  'Content-Type': 'text/html; charset=utf-8',
+                  'X-MC-Proxy-Cache': 'stale',
+                  'X-MC-Proxy-Age-Ms': String(Date.now() - at),
+                  'X-MC-Proxy-Stale-Reason': timedOut ? 'upstream timeout' : 'upstream fetch failed',
+                },
+              });
+            }
+          } catch { /* fall through to the honest failure below */ }
+        }
         return json({
           error: timedOut ? 'upstream timeout' : 'upstream fetch failed',
           detail: timedOut
@@ -203,6 +262,18 @@ export default {
       // nothing and the response either arrives whole or fails loudly.
       const isPdf = /pdf/i.test(ct);
       const body = isPdf ? await upstream.arrayBuffer() : await upstream.text();
+
+      // Write through so the next caller — very likely on a colo screener.in
+      // will not answer — gets this page instead of a 504. HTML only: a PDF
+      // is large and read once.
+      if (kv && !isPdf && upstream.status === 200 && typeof body === 'string' && body.length > 500) {
+        try {
+          await kv.put(cacheKey, body, {
+            metadata: { at: Date.now(), status: upstream.status },
+            expirationTtl: Math.floor(STALE_MS / 1000),
+          });
+        } catch { /* an unwritable cache must never fail the request */ }
+      }
       return new Response(body, {
         status: upstream.status,
         headers: {
@@ -211,11 +282,56 @@ export default {
           'X-MC-Proxy-Upstream-Status': String(upstream.status),
           'X-MC-Proxy-Upstream-Ms': String(upstreamMs),
           'X-MC-Proxy-Colo': (request.cf && request.cf.colo) || 'unknown',
+          'X-MC-Proxy-Cache': 'miss',
         },
       });
     } catch (e) {
       // Reported, never swallowed into an empty 200.
       return json({ error: 'proxy failure', detail: String((e && e.message) || e) }, 502);
+    }
+  },
+
+  /**
+   * SCHEDULED WARM.                                                (zzz736)
+   *
+   * The cache above only helps if something fills it, and the caller that
+   * needs it most is the one that cannot reach screener.in. So the Worker
+   * fetches the pages the portal depends on from Cloudflare's own scheduler,
+   * on its own schedule, with a longer deadline than a user request can wait
+   * for. Every quarter hour through Indian market hours.
+   *
+   * THIS IS A BET, AND WORTH STATING: a cron fires from whichever colo the
+   * scheduler picks, and if that colo is also refused by screener.in the warm
+   * fails too. It retries every fifteen minutes, so it needs to succeed once
+   * an hour to keep the cache inside its six-hour stale window. If the logs
+   * show it never succeeding, the next step is an origin outside Cloudflare
+   * rather than more retries.
+   */
+  async scheduled(event, env, ctx) {
+    const WARM = [
+      'https://www.screener.in/screens/3725746/suresh-daily-gainers/',
+      'https://www.screener.in/screens/3725746/suresh-daily-gainers/?page=2',
+    ];
+    if (!env || !env.MC_KV) return;
+    for (const target of WARM) {
+      try {
+        const r = await fetch(target, {
+          headers: {
+            'User-Agent': BROWSER_HEADERS['User-Agent'],
+            'Accept': BROWSER_HEADERS.Accept,
+            'Accept-Language': BROWSER_HEADERS['Accept-Language'],
+            'Referer': 'https://www.screener.in/',
+          },
+          signal: AbortSignal.timeout(25_000),
+        });
+        if (!r.ok) continue;
+        const html = await r.text();
+        if (html.length < 500) continue;
+        await env.MC_KV.put(`page:${target}`, html, {
+          metadata: { at: Date.now(), status: 200, warmed: true },
+          expirationTtl: 6 * 60 * 60,
+        });
+      } catch { /* the next tick tries again; a failed warm is not an error */ }
     }
   },
 };

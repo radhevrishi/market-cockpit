@@ -66,11 +66,16 @@ export interface HtmlFetch {
   via: ProxyHop | null;
   /** Every hop tried and what it did. Never empty on failure. */
   attempts: Array<{ hop: string; outcome: string }>;
+  /** How old the served page is when it came from the proxy's cache, in ms.
+   *  Null when the read was live. Surfaced so a stale screen can say so. */
+  ageMs?: number | null;
+  /** 'fresh' | 'stale' | 'miss' as the proxy reported it. */
+  cache?: string | null;
   error: string | null;
 }
 
 async function tryFetch(hop: ProxyHop, url: string, timeoutMs: number):
-Promise<{ html: string | null; outcome: string }> {
+Promise<{ html: string | null; outcome: string; ageMs?: number | null; cache?: string | null }> {
   try {
     const r = await fetch(url, {
       cache: 'no-store',
@@ -90,7 +95,19 @@ Promise<{ html: string | null; outcome: string }> {
     // A proxy that answers 200 with an error page is worse than one that
     // fails: it looks like a successful read of an empty screen.
     if (html.length < 500) return { html: null, outcome: `answered ${html.length} bytes — too short to be a page` };
-    return { html, outcome: `ok, ${html.length} bytes` };
+    // zzz736 — the proxy caches, so a 200 is not proof of freshness. Its age
+    // travels with the answer, because a gainers screen whose entire content
+    // is today's move must never be presented as live when it is an hour old.
+    const cache = r.headers.get('x-mc-proxy-cache');
+    const ageRaw = r.headers.get('x-mc-proxy-age-ms');
+    const ageMs = ageRaw && /^\d+$/.test(ageRaw) ? Number(ageRaw) : null;
+    const age = ageMs != null ? `, ${Math.round(ageMs / 60000)}m old` : '';
+    return {
+      html,
+      outcome: `ok, ${html.length} bytes${cache && cache !== 'miss' ? ` (from proxy cache${age})` : ''}`,
+      ageMs,
+      cache,
+    };
   } catch (e: any) {
     const msg = String(e?.name === 'TimeoutError' ? 'timed out' : (e?.message || e));
     return { html: null, outcome: msg };
@@ -119,7 +136,7 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 20_000): Promis
   if (PROXY) {
     const r = await tryFetch('proxy', `${PROXY}${encodeURIComponent(url)}`, timeoutMs);
     attempts.push({ hop: 'proxy', outcome: r.outcome });
-    if (r.html) return { html: r.html, via: 'proxy', attempts, error: null };
+    if (r.html) return { html: r.html, via: 'proxy', attempts, error: null, ageMs: r.ageMs ?? null, cache: r.cache ?? null };
   } else {
     attempts.push({ hop: 'proxy', outcome: 'not configured (SCREENER_PROXY_URL is unset)' });
   }
@@ -129,12 +146,12 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 20_000): Promis
   if (!PROXY.startsWith(FALLBACK_PROXY.split('?')[0])) {
     const m = await tryFetch('mc-proxy', `${FALLBACK_PROXY}${encodeURIComponent(url)}`, timeoutMs);
     attempts.push({ hop: 'mc-proxy', outcome: m.outcome });
-    if (m.html) return { html: m.html, via: 'mc-proxy', attempts, error: null };
+    if (m.html) return { html: m.html, via: 'mc-proxy', attempts, error: null, ageMs: m.ageMs ?? null, cache: m.cache ?? null };
   }
 
   const d = await tryFetch('direct', url, timeoutMs);
   attempts.push({ hop: 'direct', outcome: d.outcome });
-  if (d.html) return { html: d.html, via: 'direct', attempts, error: null };
+  if (d.html) return { html: d.html, via: 'direct', attempts, error: null, ageMs: d.ageMs ?? null, cache: d.cache ?? null };
 
   return {
     html: null, via: null, attempts,

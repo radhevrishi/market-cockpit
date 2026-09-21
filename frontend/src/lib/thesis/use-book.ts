@@ -54,6 +54,15 @@ export interface BookRow {
   assessment: ThesisAssessment | null;
   capex: CapexChain | null;
   promiseNote: string | null;
+  /** The documents actually read, for the card's SOURCES block. (zzz737) */
+  documentsRead?: Array<{ label: string; kind: string; source: string; period: string | null; url: string }>;
+  /** Every retrieval attempt, successful or not. An empty structural field
+   *  can now say which sources were searched instead of showing a bare
+   *  circle — the owner's "empty symbols must mean something". */
+  discoveryAttempts?: Array<{ source: string; outcome: string; detail: string; found: number }>;
+  /** EVIDENCE_FOUND | SEARCH_EXHAUSTED | RETRIEVAL_FAILED. A failed search
+   *  and an absence of disclosure are different facts and are kept apart. */
+  discoveryState?: string | null;
 }
 
 function assess(row: BookRow): BookRow {
@@ -318,8 +327,14 @@ export function useBook(opts?: { includeBench?: boolean }) {
       const res = await fetch(url, { cache: 'no-store' });
       const j = await res.json();
       if (!j?.ok || !j.structured) {
+        // The failure carries its trail: which sources were tried and what
+        // each answered. Previously this collapsed to one sentence and the
+        // card could not distinguish "we could not reach it" from "the
+        // company disclosed nothing". (zzz737)
         setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'error',
-          error: j?.error || 'No readable result on file for this holding.' } }));
+          error: j?.error || 'No readable result on file for this holding.',
+          discoveryAttempts: j?.discovery_attempts || undefined,
+          discoveryState: j?.state || null } }));
         return;
       }
       const src = j.source_url || j.filing_url || null;
@@ -331,6 +346,9 @@ export function useBook(opts?: { includeBench?: boolean }) {
         const prev = r[sym];
         const base = {
           ...prev, summary: j.structured, sourceUrl: src || prev.sourceUrl, state: 'done' as const,
+          documentsRead: j.documents_read || undefined,
+          discoveryAttempts: j.discovery_attempts || undefined,
+          discoveryState: j.discovery_state || null,
           // zzz724 — re-classify with the filing in hand. Order-book growth
           // exists only in the document, so B can only ever fire here.
           pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,

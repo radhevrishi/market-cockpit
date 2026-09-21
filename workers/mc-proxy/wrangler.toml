@@ -11,3 +11,20 @@
 name = "mc-proxy"
 main = "index.js"
 compatibility_date = "2026-01-01"
+
+# zzz736 — KV cache + scheduled warm.
+#
+# The cache exists because screener.in answers this Worker from some
+# Cloudflare colos and returns nothing from others; a live passthrough
+# therefore worked from a laptop and 504'd from Railway every time. Any
+# successful read, from any colo, serves every later one.
+#
+# Every 15 minutes from 03:30 to 11:30 UTC = 09:00 to 17:00 IST, the Indian
+# market day. Nothing runs overnight: the pages do not change and the free
+# tier's write budget is not worth spending on them.
+[triggers]
+crons = ["*/15 3-11 * * 1-5"]
+
+[[kv_namespaces]]
+binding = "MC_KV"
+id = "ab855f730d6f4af9bba1771c15d0d8eb"

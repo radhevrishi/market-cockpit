@@ -88,6 +88,13 @@ export interface ThesisCardProps {
   capex?: CapexChain | null;
   /** Filing links. Never a price, never a chart. */
   sources?: Array<{ label: string; url: string }>;
+  /** Every document actually read for this holding. Several, not one. */
+  documentsRead?: Array<{ label: string; kind: string; source: string; period: string | null; url: string }>;
+  /** Every retrieval attempt and what it answered — so an empty structural
+   *  field can say which sources were searched rather than showing a bare
+   *  circle with no reason. (zzz737) */
+  discoveryAttempts?: Array<{ source: string; outcome: string; detail: string; found: number }>;
+  discoveryState?: string | null;
   /** The AI summary has not been read for this holding yet. */
   needsRead?: boolean;
   reading?: boolean;
@@ -436,7 +443,48 @@ export function ThesisCard(p: ThesisCardProps) {
             </div>
           )}
 
-          {p.sources && p.sources.length > 0 && (
+          {/* ── WHAT WAS READ, AND WHAT WAS TRIED.                  (zzz737)
+              An unexplained circle is the thing this block exists to end:
+              "searched and not disclosed" and "could not be reached" look
+              identical on a card until the trail is shown. */}
+          {p.documentsRead && p.documentsRead.length > 0 && (
+            <div style={{ marginTop: 9, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
+              <span style={{ fontWeight: 800, color: C.faint, letterSpacing: .4 }}>
+                READ {p.documentsRead.length} DOCUMENT{p.documentsRead.length > 1 ? 'S' : ''}
+              </span>{' '}
+              {p.documentsRead.map((d, i) => (
+                <span key={i}>
+                  {i > 0 && ' · '}
+                  <a href={d.url} target="_blank" rel="noreferrer" style={{ color: C.cyan, textDecoration: 'none' }}>
+                    ↗ {d.label}
+                  </a>
+                  {d.period ? <span style={{ color: C.faint }}> ({d.period})</span> : null}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {p.discoveryAttempts && p.discoveryAttempts.length > 0 && (
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}>
+                Evidence search — {p.discoveryAttempts.filter((a) => a.outcome === 'found').length} of{' '}
+                {p.discoveryAttempts.length} source(s) answered
+                {p.discoveryState === 'RETRIEVAL_FAILED' ? ' · a source could not be reached, so nothing here is an absence of disclosure' : ''}
+              </summary>
+              <div style={{ marginTop: 5, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
+                {p.discoveryAttempts.map((a, i) => (
+                  <div key={i}>
+                    <span style={{ color: a.outcome === 'found' ? C.up : a.outcome === 'error' ? C.alarm : C.faint }}>
+                      {a.outcome === 'found' ? '✓' : a.outcome === 'error' ? '✕' : '—'}
+                    </span>{' '}
+                    <b style={{ color: C.text }}>{a.source}</b> — {a.detail}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {p.sources && p.sources.length > 0 && !p.documentsRead?.length && (
             <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {p.sources.map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noreferrer"

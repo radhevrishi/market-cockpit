@@ -38,6 +38,9 @@ import { sourceTierOf, researchPriority, type GainerEvent } from '../ai-gainers/
 import {
   symbolsFromStoredValue, mergeUniverse, originCounts, benchPassingPreset,
 } from '../thesis/universe';
+import {
+  candidatesFromFilings, classifyExchangeDoc, rankCandidates, selectForReading,
+} from '../thesis/evidence-discovery';
 
 const fx = (n: string) => readFileSync(join(__dirname, 'fixtures', n), 'utf8');
 const benchRows: any[] = JSON.parse(fx('bench-rows.json'));
@@ -405,5 +408,103 @@ describe('book universe', () => {
     const u = mergeUniverse(['kmew.ns', 'KMEW'], ['Kmew.BO']);
     assert.equal(u.size, 1);
     assert.equal(u.get('KMEW'), 'both');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVIDENCE DISCOVERY — THE RETRIEVAL LAYER.                         (zzz737)
+//
+// The owner's complaint was exact: "the retrieval/extraction pipeline is
+// failing before those slots get populated". These tests pin the three
+// behaviours that were wrong, so they cannot quietly return.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('evidence discovery', () => {
+  const filing = (subject: string, url: string, date = '2026-08-14') =>
+    ({ symbol: 'KMEW', subject, attachment_url: url, filing_date: date });
+
+  test('an ORDER WIN is kept, not discarded as "not results"', () => {
+    // The old ranker dropped every attachment that was not a results filing.
+    // An order win is the single most direct piece of demand evidence a
+    // company files, and it was being thrown away before anything read it.
+    const got = candidatesFromFilings([
+      filing('Bagging/Receiving of orders/contracts', 'https://x/order-loa.pdf'),
+    ], 'KMEW');
+    assert.equal(got.length, 1);
+    assert.equal(got[0].kind, 'announcement');
+  });
+
+  test('commissioning and capacity announcements are kept too', () => {
+    const got = candidatesFromFilings([
+      filing('Commencement of commercial production at the new plant', 'https://x/commission.pdf'),
+      filing('Capacity expansion update', 'https://x/capex.pdf'),
+    ], 'KMEW');
+    assert.equal(got.length, 2);
+    assert.ok(got.every((c) => c.kind === 'announcement'));
+  });
+
+  test('genuine noise is still dropped', () => {
+    const got = candidatesFromFilings([
+      filing('Newspaper publication of financial results', 'https://x/newspaper.pdf'),
+      filing('Trading window closure', 'https://x/tw.pdf'),
+      filing('Voting results of the AGM', 'https://x/voting.pdf'),
+    ], 'KMEW');
+    assert.deepEqual(got, []);
+  });
+
+  test('the FILENAME is read, not only the subject', () => {
+    // zzz705's lesson: the exchange subject is frequently generic while the
+    // filename carries the truth. A generic subject with a voting-results
+    // filename must still be dropped.
+    const got = candidatesFromFilings([
+      filing('Announcement under Regulation 30', 'https://x/DTTS_Voting_Results_signed.pdf'),
+    ], 'KMEW');
+    assert.deepEqual(got, []);
+  });
+
+  test('another company\'s filings are never picked up', () => {
+    const got = candidatesFromFilings([
+      { symbol: 'SOTL', subject: 'Financial Results', attachment_url: 'https://x/other.pdf', filing_date: '2026-08-14' },
+    ], 'KMEW');
+    assert.deepEqual(got, []);
+  });
+
+  test('a transcript outranks the results PDF', () => {
+    // Deliberate, and the reason the structural block was empty: a results
+    // PDF states financials and rarely mentions utilisation or order intake.
+    const ranked = rankCandidates([
+      { url: 'r', kind: 'results', tier: 1, source: 'x', period: null, dateIso: '2026-08-14', label: 'Results' },
+      { url: 't', kind: 'transcript', tier: 2, source: 'y', period: null, dateIso: '2026-08-14', label: 'Concall' },
+    ], '2026-08-14');
+    assert.equal(ranked[0].kind, 'transcript');
+  });
+
+  test('selection takes one of each kind before a second of any', () => {
+    // Three presentations answer the same questions three times; a
+    // transcript plus a presentation plus the results answer three sets.
+    const cands: any[] = [
+      { url: 'p1', kind: 'investor_presentation', tier: 1, source: 's', period: null, dateIso: '2026-08-01', label: 'PPT 1' },
+      { url: 'p2', kind: 'investor_presentation', tier: 1, source: 's', period: null, dateIso: '2026-05-01', label: 'PPT 2' },
+      { url: 't1', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: '2026-08-01', label: 'Concall' },
+    ];
+    const picked = selectForReading(rankCandidates(cands, '2026-08-01'), 2);
+    assert.deepEqual(picked.map((p) => p.kind), ['transcript', 'investor_presentation']);
+  });
+
+  test('the cap is honoured, and fills with repeats rather than under-reading', () => {
+    const cands: any[] = [
+      { url: 'a', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: '2026-08-01', label: 'A' },
+      { url: 'b', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: '2026-05-01', label: 'B' },
+      { url: 'c', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: '2026-02-01', label: 'C' },
+    ];
+    assert.equal(selectForReading(cands, 3).length, 3);
+    assert.equal(selectForReading(cands, 1).length, 1);
+  });
+
+  test('classification reads intent, not just the word "results"', () => {
+    assert.equal(classifyExchangeDoc('Earnings call transcript Q1', 'x.pdf'), 'transcript');
+    assert.equal(classifyExchangeDoc('Investor Presentation', 'x.pdf'), 'investor_presentation');
+    assert.equal(classifyExchangeDoc('Outcome of Board Meeting', 'x.pdf'), 'results');
+    assert.equal(classifyExchangeDoc('Receipt of Letter of Award', 'x.pdf'), 'announcement');
+    assert.equal(classifyExchangeDoc('Some notice', 'x.pdf'), 'other');
   });
 });

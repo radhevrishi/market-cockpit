@@ -38,7 +38,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
-import { fetchCompanyDocs, pickDocument, type CompanyDoc } from '@/lib/earnings/screener-documents';
+import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -52,6 +52,11 @@ const MODEL = 'claude-haiku-4-5-20251001';
 const PROMPT_VERSION = 'india-ai-summary-v7';  // zzz720 — structural block: capacity, demand, customers, volume/price/mix, balance, risks, targets
 const TTL_S = 365 * 24 * 3600;
 const MAX_CHARS = 140_000;
+/** How many documents one company may cost. Each is a model-budget PDF
+ *  download plus its share of the context window; three covers the results
+ *  filing, the presentation and the concall, which answer different
+ *  questions. (zzz737) */
+const MAX_DOCS = 3;
 const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
 
 // The India addendum to the shared prompt. Everything else — the field
@@ -155,47 +160,11 @@ async function loadFilings(filingDate?: string | null): Promise<CFFilingItem[]> 
   return [...latest, ...day.filter((f) => !seen.has(String(f?.attachment_url || '')))];
 }
 
-/** The attachments for this ticker, ranked: results subjects first, then by
- *  proximity to the filing date we were given. */
-function rankAttachments(all: CFFilingItem[], ticker: string, filingDate?: string | null): string[] {
-  const sym = ticker.toUpperCase();
-  const mine = all.filter((f) => String(f?.symbol || '').toUpperCase() === sym && f?.attachment_url);
-  const wantMs = filingDate ? Date.parse(`${filingDate}T00:00:00Z`) : NaN;
-  // ── THE SUBJECT LIES; THE FILENAME USUALLY DOES NOT.           (zzz705)
-  //
-  // Live on the first request: Divgi returned
-  // "DTTS_Voting_Results_Final_Submission_signed.pdf" — a voting-results
-  // filing, which `NOT_RESULTS` already lists and which was matched anyway,
-  // because the exclusion was tested against the feed's `subject` field while
-  // the word "Voting_Results" only ever appeared in the URL. The exchange
-  // feed's subjects are frequently generic ("Announcement under Regulation
-  // 30"), so the filename is the more reliable of the two and both are now
-  // read. The downstream content check caught this one and refused honestly —
-  // but refusing a document we could have avoided fetching is a wasted round
-  // trip and, worse, hides the real results PDF sitting further down the list.
-  const score = (f: CFFilingItem): number => {
-    const subj = String(f.subject || '');
-    const file = decodeURIComponent(String(f.attachment_url || '')).replace(/[_-]+/g, ' ');
-    const hay = `${subj} ${file}`;
-    if (NOT_RESULTS.test(hay)) return -1;
-    const idx = RESULTS_SUBJECT.findIndex((re) => re.test(hay));
-    return idx < 0 ? 50 : idx;              // unknown subjects rank after known ones
-  };
-  return mine
-    .map((f) => ({ f, s: score(f) }))
-    .filter((x) => x.s >= 0)
-    .sort((a, b) => {
-      if (a.s !== b.s) return a.s - b.s;
-      if (!Number.isNaN(wantMs)) {
-        const da = Math.abs(Date.parse(`${a.f.filing_date}T00:00:00Z`) - wantMs);
-        const db = Math.abs(Date.parse(`${b.f.filing_date}T00:00:00Z`) - wantMs);
-        if (da !== db) return da - db;
-      }
-      return String(b.f.filing_date).localeCompare(String(a.f.filing_date));
-    })
-    .map((x) => x.f.attachment_url!)
-    .slice(0, 6);
-}
+// rankAttachments lived here until zzz737. It ranked exchange attachments
+// and returned at most one usable URL, and it DISCARDED every announcement
+// that was not a results filing — order wins, commissioning notices,
+// approvals, the exact structural evidence the thesis ledger asks for.
+// candidatesFromFilings in lib/thesis/evidence-discovery keeps them.
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -219,77 +188,89 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'The summary service is not configured on this deployment.' });
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // EVIDENCE DISCOVERY, THEN EXTRACTION — IN THAT ORDER.          (zzz737)
+  //
+  // What this replaced: the exchange feed, then ONE screener.in document,
+  // then `return "No readable document was found"`. Three faults in one
+  // chain, and the owner named all three.
+  //
+  //   1. A FAILED FEED ENDED THE SEARCH. `if (!filings.length) return` ran
+  //      before screener.in was consulted at all, so an outage in one source
+  //      reported as the company having filed nothing.
+  //   2. ONE DOCUMENT PER COMPANY. The numbers live in the results PDF;
+  //      capacity, utilisation and order book in the investor presentation;
+  //      the CAUSE and the guidance in the concall. Reading whichever
+  //      answered first structurally cannot populate a structural block, and
+  //      that is why the cards showed ○ against every mechanism variable
+  //      while the financial fields were full.
+  //   3. RETRIEVAL FAILURE BECAME A VERDICT. "No readable document" and "the
+  //      company disclosed nothing" are opposite facts about a holding, and
+  //      both printed the same empty card.
+  //
+  // Now: discovery gathers candidates from every source and records each
+  // attempt; several documents are read, one per kind; and when nothing can
+  // be read the response says WHICH state it is in and what was tried.
+  // ══════════════════════════════════════════════════════════════════════
   const filings = await loadFilings(filingDate);
-  if (!filings.length) {
+  const discovery = await discoverEvidence(ticker, { filings, filingDate });
+  const toRead = selectForReading(discovery.candidates, MAX_DOCS);
+
+  const read: Array<{ doc: DocCandidate; text: string }> = [];
+  let budget = MAX_CHARS;
+  for (const cand of toRead) {
+    if (budget <= 10_000) break;                  // no room left to be useful
+    const e = await extractFirstPdf([cand.url]);
+    const body = String(e?.text || '');
+    // The same 1,200-character floor the single-document path used: below it
+    // a PDF is an intimation, a cover note, or a scan this reader cannot OCR.
+    if (body.length < 1200) continue;
+    const slice = body.slice(0, budget);
+    budget -= slice.length;
+    read.push({ doc: cand, text: slice });
+  }
+
+  if (!read.length) {
+    // THE THREE STATES ARE REPORTED SEPARATELY, because the owner's next
+    // action differs for each: retry, accept the absence, or look elsewhere.
     return NextResponse.json({
       ok: false,
-      error: 'The exchange-filing feed could not be reached, so there is no document to read. It is polled every few minutes; try again shortly.',
+      state: discovery.state,
+      error: discovery.state === 'RETRIEVAL_FAILED'
+        ? discovery.summary
+        : discovery.candidates.length
+          ? `${discovery.candidates.length} document(s) were found for ${ticker} but none could be read — `
+            + 'they are scanned images this reader does not OCR, or the files did not download. '
+            + 'This is a limit of the reader, not an absence of disclosure.'
+          : discovery.summary,
+      discovery_attempts: discovery.attempts,
+      documents_found: discovery.candidates.length,
     });
   }
-  // ══════════════════════════════════════════════════════════════════════
-  // TWO SOURCES, AND THE SECOND IS USUALLY THE BETTER ONE.        (zzz726)
-  //
-  // Measured on 21 September: the exchange feed held 2,751 filings covering
-  // 14–21 September ONLY — a rolling seven-day window — and the day-level
-  // endpoint returned zero for August. Every holding in the owner's book
-  // reported in August, so this route answered "no results attachment is on
-  // file" for all fifty-one of them. The reader was not broken; it was
-  // looking in the only place it knew, and that place structurally cannot
-  // hold a document more than a week old.
-  //
-  // screener.in's company page can, and carries something better: the concall
-  // TRANSCRIPT. The v7 structural block asks for utilisation, capacity, order
-  // intake, commissioning dates and management targets — a results PDF
-  // contains almost none of those, and a transcript is forty minutes of
-  // analysts asking management exactly those questions. The exchange feed was
-  // the weaker source that happened to be wired first.
-  //
-  // The feed is still tried first, because a company that filed THIS WEEK
-  // should be read at its newest document.
-  // ══════════════════════════════════════════════════════════════════════
-  const urls = rankAttachments(filings, ticker, filingDate);
-  let ext = urls.length ? await extractFirstPdf(urls) : null;
-  let usedDoc: CompanyDoc | null = null;
-  let docNote: string | null = null;
 
-  const usable = (e: any) => e && e.text && e.text.length >= 1200;
-  if (!usable(ext) || !looksLikeIndiaResults(String(ext?.text || ''))) {
-    const lib = await fetchCompanyDocs(ticker);
-    const pick = pickDocument(lib.docs, filingDate);
-    if (pick) {
-      const alt = await extractFirstPdf([pick.url]);
-      if (usable(alt)) {
-        ext = alt;
-        usedDoc = pick;
-        docNote = `Read the ${pick.kind === 'transcript' ? 'concall transcript' : pick.kind === 'ppt' ? 'investor presentation' : 'annual report'}`
-          + `${pick.period ? ` for ${pick.period}` : ''}, from the company's screener.in document list — `
-          + 'the exchange feed is a rolling one-week window and no longer carries this quarter\'s results filing.';
-      }
-    }
-    if (!usable(ext)) {
-      return NextResponse.json({
-        ok: false,
-        error: `No readable document was found for ${ticker}. The exchange feed is a rolling one-week window`
-          + `${filingDate ? ` and does not reach ${filingDate}` : ''}, and `
-          + (lib.error
-            ? `the screener.in document list could not be read (${lib.error}).`
-            : lib.docs.length
-              ? `the ${lib.docs.length} documents on its screener.in page are scanned images this reader does not OCR.`
-              : 'its screener.in page lists no concall transcript, presentation or annual report.'),
-      });
-    }
-  }
+  // Every document is labelled in the prompt, so a figure can be traced to
+  // the document it came from rather than to an anonymous blob of text.
+  const text = read
+    .map(({ doc, text: t }) => `### SOURCE: ${doc.label} (${doc.kind}, ${doc.source}${doc.period ? `, ${doc.period}` : ''})\n${t}`)
+    .join('\n\n');
 
-  const text = String(ext!.text).slice(0, MAX_CHARS);
-  // A transcript or presentation is NOT a statement of results and must not be
-  // held to that test — it is a better source for the structural block, not a
-  // worse one. The figure-verification gate below is unchanged and still
-  // checks every number against this document.
-  if (!usedDoc && !looksLikeIndiaResults(text)) {
+  const primary = read[0].doc;
+  const usedDoc = primary;
+  const docNote = read.length > 1
+    ? `Read ${read.length} documents: ${read.map((r) => r.doc.label).join('; ')}.`
+    : `Read ${primary.label}${primary.period ? ` (${primary.period})` : ''} from the ${primary.source}.`;
+
+  // A transcript or a presentation is NOT a statement of results and must not
+  // be held to that test — it is the BETTER source for the structural block.
+  // The check now applies only when every document read is a results filing,
+  // which is the case it was written for. (zzz737)
+  if (read.every((r) => r.doc.kind === 'results') && !looksLikeIndiaResults(text)) {
     return NextResponse.json({
       ok: false,
-      error: 'The document on file for this date is not a statement of results — most likely an intimation or a notice. It was not summarised.',
-      source_url: (ext as any).url || urls[0],
+      state: 'SEARCH_EXHAUSTED',
+      error: 'The documents on file for this date are not statements of results — most likely intimations or notices. They were not summarised.',
+      discovery_attempts: discovery.attempts,
+      source_url: primary.url,
     });
   }
 
@@ -420,10 +401,19 @@ export async function GET(req: NextRequest) {
 
   const payload = {
     structured: data,
-    source_url: (ext as any).url || usedDoc?.url || urls[0],
-    document_kind: usedDoc?.kind || 'results_filing',
-    document_period: usedDoc?.period || quarter || null,
+    source_url: usedDoc.url,
+    document_kind: usedDoc.kind,
+    document_period: usedDoc.period || quarter || null,
     document_note: docNote,
+    // The audit trail the owner asked for: what was read, and what was tried
+    // and failed. A card can now cite its sources and say what it could not
+    // reach, instead of showing an unexplained circle.
+    documents_read: read.map(({ doc }) => ({
+      label: doc.label, kind: doc.kind, source: doc.source, tier: doc.tier,
+      period: doc.period, url: doc.url,
+    })),
+    discovery_attempts: discovery.attempts,
+    discovery_state: discovery.state,
     model: MODEL,
     ticker,
     quarter: quarter || null,
