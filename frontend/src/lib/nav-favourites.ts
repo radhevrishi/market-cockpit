@@ -32,6 +32,7 @@ const SEED: readonly string[] = [
   '/us-conviction-beats',
   '/concall-intel',
   '/portfolio-catalysts',
+  '/exit-radar',
   '/ai-gainers',
 ];
 
@@ -48,7 +49,7 @@ const SEED: readonly string[] = [
 // later release cannot quietly put it back. Nothing is ever removed from his
 // list by this, only added, and only on its first ever appearance.
 const OFFERED_KEY = 'mc.navFavourites.offered.v1';
-const OFFER: readonly string[] = ['/portfolio-catalysts', '/ai-gainers'];
+const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-gainers'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];

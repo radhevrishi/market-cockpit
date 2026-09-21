@@ -1,456 +1,186 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// PORTFOLIO CATALYSTS — WHAT CHANGED IN THE NAMES YOU OWN.          (zzz708)
+// PORTFOLIO CATALYSTS — WHAT CHANGED IN THE NAMES YOU OWN.  (zzz708 → zzz715)
 //
-// Everything else in this portal is a discovery surface: it finds companies.
-// This one finds CHANGES, and only in the book. The question it answers is
-// not "what should I buy" but "has anything happened to what I already hold
-// that should make me add, trim or exit".
+// The first version showed a grade, a pattern chip, and one static sentence
+// about what would end the thesis. The owner's criticism was exact: that
+// sentence was IDENTICAL on every A-pattern holding, and displaying an exit
+// condition is not the same as proving whether it has been reached.
 //
-// WHY THIS IS NOT THE PORTFOLIO PAGE. That page answers "what am I worth" —
-// positions, cost, P&L. It cannot tell you that a holding just commissioned a
-// plant, raised guidance, or quietly stopped converting profit into cash.
-// Those are the facts that end a thesis, and they were scattered across the
-// earnings grader, the concall radar and the AI summary with no surface that
-// gathered them per holding.
+// So the page no longer displays a condition. It EVALUATES one, per holding,
+// against the evidence in the latest filing, and says which conditions have
+// fired, which are being watched, and which could not be checked at all.
 //
-// WHAT IT SHOWS, and where each comes from — all existing engines, nothing
-// new invented:
+// The architecture underneath is the owner's own:
 //
-//   · the GRADE of the latest result (the India/US earnings graders)
-//   · the CATALYSTS the AI Summary read out of the filing — capex with its
-//     completion date, capacity, utilisation before and expected, order book,
-//     guidance changes, one-offs
-//   · WHY THE MARGIN MOVED, split structural vs cyclical
-//   · the A/B/F/G pattern and, more importantly, ITS EXIT CONDITION
-//   · the TRANSFORMATION radar score where the name appears in the concall feed
+//   NEWS/FILING → EVENT → STRUCTURAL VARIABLE → EARNINGS MECHANISM
+//               → THESIS → EXPECTATION → STATUS → ACTION
 //
-// THE EXIT CONDITION IS THE POINT. The owner's own forensic review priced his
-// selling behaviour at roughly Rs 1.9 Cr of foregone gains, and every item on
-// the "what does NOT end it" list — a drawdown, a weak market, one flat
-// quarter — has triggered a sale in his ledger. So each holding carries the
-// pattern-specific condition that actually ends its thesis, in words, next to
-// the evidence. A price is never one of them.
+// and it lives in lib/thesis/: variables.ts extracts, ledger.ts defines what
+// each thesis rests on, status.ts judges, capex-chain.ts asks whether the
+// money earned, guidance-ledger.ts records what management promised so a
+// LATER quarter can check it.
+//
+// THE ONE RULE THIS PAGE ENFORCES ABOVE ALL OTHERS: a price move is never an
+// exit reason. No price, drawdown, day-one reaction or move-since-print is
+// read anywhere in the thesis engine. The owner's own forensic review priced
+// his price-triggered selling at roughly Rs 1.9 Cr of foregone gains, and a
+// holding down 40% with every operating variable improving reads as THESIS
+// STRENGTHENING here. That is not a bug.
 // ═══════════════════════════════════════════════════════════════════════════
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { readPortfolioSymbols, normSymbol } from '@/lib/portfolio-symbols';
-import { classifyGradedRow, ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
-import { readConvictionBeats } from '@/lib/conviction-beats';
-
-type Mkt = 'IN' | 'US';
-
-interface HoldingRow {
-  symbol: string;
-  market: Mkt;
-  graded: any | null;
-  pattern: AbfgResult | null;
-  radarScore: number | null;
-  summary: any | null;          // the verified `structured` AI summary
-  summaryState: 'idle' | 'loading' | 'done' | 'error';
-  summaryError?: string;
-}
+import { useMemo, useState } from 'react';
+import { useBook } from '@/lib/thesis/use-book';
+import { ThesisCard } from '@/components/thesis-card';
+import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--mc-text-1)',
-  dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)',
-  green: 'var(--mc-bullish)', red: 'var(--mc-bearish)', amber: '#F59E0B', cyan: 'var(--mc-cyan)',
+  dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)', amber: '#F59E0B', cyan: 'var(--mc-cyan)',
 };
 
-const said = (v: unknown): boolean => {
-  const s = typeof v === 'string' ? v.trim() : '';
-  return s.length > 0 && !/^(not\s+(stated|disclosed|quantified|available|applicable|given|provided)|n\/?a|none|unknown|—|-)$/i.test(s);
-};
+const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'STRENGTHENING', 'NEUTRAL'];
 
 export default function PortfolioCatalystsPage() {
-  const [symbols, setSymbols] = useState<string[]>([]);
-  const [rows, setRows] = useState<Record<string, HoldingRow>>({});
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [onlyChanged, setOnlyChanged] = useState(false);
-  // zzz713 — a live mirror of `rows` for callbacks that must not read a stale
-  // closure, and the state of the batch reader.
-  const rowsRef = useRef<Record<string, HoldingRow>>({});
-  const [batch, setBatch] = useState<{ running: boolean; done: number; total: number }>(
-    { running: false, done: 0, total: 0 });
-  const stopRef = useRef(false);
+  const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook();
+  const [filter, setFilter] = useState<ThesisStatus | null>(null);
+  const [onlyRead, setOnlyRead] = useState(false);
 
-  // The ref mirrors state on every commit, so any callback can read the
-  // CURRENT rows without being re-created (and without re-creating every
-  // button handler on the page each time one summary lands).
-  useEffect(() => { rowsRef.current = rows; }, [rows]);
+  const all = useMemo(() => Object.values(rows), [rows]);
 
-  // ── 1. The book. ────────────────────────────────────────────────────────
-  useEffect(() => {
-    try { setSymbols(Array.from(readPortfolioSymbols())); }
-    catch { setSymbols([]); }
-  }, []);
-
-  // ── 2. The latest grade for each holding, from the engines that already
-  //      produced one. The conviction bench is read first because it is a
-  //      local store and answers instantly for the names on it.
-  useEffect(() => {
-    if (!symbols.length) { setLoading(false); return; }
-    let cancelled = false;
-    (async () => {
-      setLoading(true); setErr(null);
-      const next: Record<string, HoldingRow> = {};
-      let bench: Record<string, any> = {};
-      try { bench = readConvictionBeats(); } catch { bench = {}; }
-      const benchByNorm = new Map(Object.entries(bench).map(([k, v]) => [normSymbol(k), v]));
-
-      // ── PAINT FIRST, ENRICH SECOND.                               (zzz713)
-      //
-      // The first version awaited the transformation-screener before drawing
-      // anything, so a 52-name book sat on "Reading your book…" for the best
-      // part of twenty seconds with no rows and no counter — long enough for
-      // the owner to conclude the page did not work. It did; it was waiting on
-      // an ENRICHMENT for something it already had.
-      //
-      // The grade and the pattern come from the conviction bench, which is a
-      // local store and answers instantly. So they are drawn immediately, and
-      // the radar score folds in afterwards. Nothing about a row changes when
-      // it arrives except one badge appearing — no re-order that moves a card
-      // out from under the cursor, because the sort is computed from rows that
-      // are already on screen.
-      for (const sym of symbols) {
-        const g = benchByNorm.get(sym) || null;
-        next[sym] = {
-          symbol: sym,
-          market: g?.market === 'US' || /^[A-Z]{1,5}$/.test(sym) && !!g?.eps_adj_curr ? 'US' : 'IN',
-          graded: g,
-          pattern: g ? classifyGradedRow(g) : null,
-          radarScore: null,
-          summary: null,
-          summaryState: 'idle',
-        };
-      }
-      if (cancelled) return;
-      setRows(next); setLoading(false);
-
-      try {
-        const r = await fetch('/api/v1/concall-intel/transformation-screener?days=90&limit=200', { cache: 'no-store' });
-        if (!r.ok || cancelled) return;
-        const j = await r.json();
-        const radar = new Map<string, number>();
-        for (const e of (j?.entries || [])) radar.set(normSymbol(e.symbol), e.transformation_score);
-        if (cancelled || !radar.size) return;
-        setRows((cur) => {
-          const out = { ...cur };
-          for (const sym of Object.keys(out)) {
-            const s = radar.get(sym);
-            if (s != null) out[sym] = { ...out[sym], radarScore: s };
-          }
-          return out;
-        });
-      } catch { /* the radar is an enrichment, not a dependency */ }
-    })().catch((e) => {
-      if (!cancelled) { setErr(String(e?.message || e)); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [symbols]);
-
-  // ── 3. The catalysts, read on demand per holding. Each is a model call
-  //      against a filing, so they are never fired for the whole book at once.
-  const loadSummary = useCallback(async (sym: string) => {
-    // The market is read from a REF, not from the `rows` closure: during a
-    // batch run this callback fires dozens of times against a `rows` value
-    // that is already stale, and reading the closure there is how a US holding
-    // gets sent to the India route. A functional setState would not fix it —
-    // React runs that updater at render time, which is after this line. (zzz713)
-    const isUs = rowsRef.current[sym]?.market === 'US';
-    setRows((r) => ({ ...r, [sym]: { ...r[sym], summaryState: 'loading' } }));
-    try {
-      const url = isUs
-        ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
-        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      const j = await res.json();
-      setRows((r) => ({
-        ...r,
-        [sym]: j?.ok && j.structured
-          ? { ...r[sym], summary: j.structured, summaryState: 'done' }
-          : { ...r[sym], summaryState: 'error', summaryError: j?.error || 'No reading available for this holding.' },
-      }));
-    } catch (e: any) {
-      setRows((r) => ({ ...r, [sym]: { ...r[sym], summaryState: 'error', summaryError: String(e?.message || e) } }));
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of all) {
+      const k = r.assessment?.status || 'NEUTRAL';
+      c[k] = (c[k] || 0) + 1;
     }
-  }, []);
-
-  // ── 3b. READ THE WHOLE BOOK, a few at a time.                    (zzz713)
-  //
-  // Fifty-two holdings behind fifty-two buttons is a feature that exists and
-  // is never used: the owner reported exactly that — functionality shipped and
-  // invisible, because reaching it cost more clicks than it was worth.
-  //
-  // So there is one button, and it is honest about its cost. Each read is a
-  // model call against a filing, so THREE run at a time rather than fifty: the
-  // AI-summary routes are rate-limited upstream and a fan-out of fifty turns
-  // into fifty failures, which is worse than a slow success. The counter is
-  // live and the run can be stopped, because a job you cannot see the end of
-  // and cannot cancel is one you learn not to start.
-  //
-  // Holdings already read are skipped, so stopping and restarting resumes
-  // rather than paying for the same filings twice.
-  const CONCURRENCY = 3;
-  const readAll = useCallback(async (syms: string[]) => {
-    const todo = syms.filter((s) => {
-      const st = rowsRef.current[s]?.summaryState;
-      return st === 'idle' || st === 'error';
-    });
-    if (!todo.length) return;
-    stopRef.current = false;
-    setBatch({ running: true, done: 0, total: todo.length });
-    let i = 0, done = 0;
-    const worker = async () => {
-      while (!stopRef.current) {
-        const k = i++;
-        if (k >= todo.length) return;
-        await loadSummary(todo[k]);
-        done++;
-        setBatch((b) => (b.running ? { ...b, done } : b));
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, worker));
-    setBatch((b) => ({ ...b, running: false }));
-  }, [loadSummary]);
+    return c;
+  }, [all]);
 
   const list = useMemo(() => {
-    const all = Object.values(rows);
-    const scored = all.map((r) => {
-      // A holding is "changed" when an engine has something to say about it.
-      const changed = !!r.pattern || (r.radarScore ?? 0) >= 25
-        || !!(r.summary?.catalysts?.length) || !!(r.summary?.one_offs?.length);
-      return { r, changed };
+    let f = all;
+    if (filter) f = f.filter((r) => r.assessment?.status === filter);
+    if (onlyRead) f = f.filter((r) => r.state === 'done');
+    // Sorted by SEVERITY, never by price and never alphabetically: the thing
+    // that needs looking at should not be forty rows down because its ticker
+    // starts with W.
+    return [...f].sort((a, b) => {
+      const ai = ORDER.indexOf(a.assessment?.status || 'NEUTRAL');
+      const bi = ORDER.indexOf(b.assessment?.status || 'NEUTRAL');
+      if (ai !== bi) return ai - bi;
+      const ad = a.assessment?.triggered.length || 0;
+      const bd = b.assessment?.triggered.length || 0;
+      if (ad !== bd) return bd - ad;
+      return a.symbol.localeCompare(b.symbol);
     });
-    const f = onlyChanged ? scored.filter((x) => x.changed) : scored;
-    return f.sort((a, b) =>
-      (b.r.radarScore ?? 0) - (a.r.radarScore ?? 0)
-      || a.r.symbol.localeCompare(b.r.symbol));
-  }, [rows, onlyChanged]);
+  }, [all, filter, onlyRead]);
+
+  const readCount = all.filter((r) => r.state === 'done').length;
 
   if (!symbols.length && !loading) {
     return (
       <div style={{ padding: 24, color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
         <h1 style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 8 }}>Portfolio Catalysts</h1>
-        Your book is empty, so there is nothing to watch. Add holdings on the Portfolio page and they will appear
-        here with their latest grade, the catalysts read out of their filings, and the condition that ends each thesis.
+        Your book is empty, so there is nothing to watch. Add holdings on the Portfolio page and each one will appear
+        here with its thesis, the variables that thesis rests on, and the conditions that would end it.
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
-        <h1 style={{ fontSize: 18, fontWeight: 800, color: C.text, margin: 0 }}>
-          Portfolio Catalysts
-        </h1>
-        <div style={{ fontSize: 12, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 760 }}>
-          What has <b style={{ color: C.text }}>changed</b> in the names you already own — capex and when it earns,
-          capacity and utilisation, order book, guidance, one-offs, and why the margin moved. Each holding carries the
-          condition that actually ends its thesis. A price is never one of them.
+        <h1 style={{ fontSize: 18, fontWeight: 800, color: C.text, margin: 0 }}>Portfolio Catalysts</h1>
+        <div style={{ fontSize: 12, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 820 }}>
+          Every holding carries a <b style={{ color: C.text }}>thesis ledger</b> — the named variables you own it for —
+          and each quarter&apos;s evidence is checked against them. Capex is tracked as a chain to whether it actually
+          earned, not as an announcement. <b style={{ color: C.text }}>A price move is never an exit reason</b>, and no
+          price is read anywhere in this engine.
         </div>
+      </div>
+
+      {/* ── THE FIVE SIGNALS. Not fifty scores. ─────────────────────────── */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {ORDER.map((s) => {
+          const m = STATUS_META[s];
+          const on = filter === s;
+          return (
+            <button key={s} onClick={() => setFilter(on ? null : s)} title={m.meaning}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8,
+                cursor: 'pointer', border: `1px solid ${on ? m.color : C.border}`,
+                background: on ? `${m.color}18` : C.bg,
+              }}>
+              <span style={{ fontSize: 17, fontWeight: 900, color: m.color }}>{counts[s] || 0}</span>
+              <span style={{ fontSize: 10, fontWeight: 800, color: on ? m.color : C.dim }}>{m.dot} {m.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button onClick={() => setOnlyChanged((v) => !v)}
-          style={{
-            fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
-            border: `1px solid ${onlyChanged ? C.cyan : C.border}`,
-            background: onlyChanged ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
-            color: onlyChanged ? C.cyan : C.dim,
-          }}>
-          {onlyChanged ? 'Showing only what changed' : 'Show only what changed'}
-        </button>
         <span style={{ fontSize: 11, color: C.faint }}>
-          {list.length} of {symbols.length} holdings
+          {list.length} of {symbols.length} holdings · {readCount} filings read
         </span>
+        <button onClick={() => setOnlyRead((v) => !v)} style={{
+          fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+          border: `1px solid ${onlyRead ? C.cyan : C.border}`, color: onlyRead ? C.cyan : C.dim,
+          background: onlyRead ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
+        }}>{onlyRead ? 'Only holdings with a filing read' : 'Show all holdings'}</button>
 
-        {/* zzz713 — one button for the whole book, three reads at a time. */}
         {!batch.running ? (
-          <button onClick={() => readAll(list.map((x) => x.r.symbol))}
-            title="Reads the filing behind each holding on screen, three at a time. Holdings already read are skipped."
+          <button onClick={() => readAll(list.map((r) => r.symbol))}
+            title="Reads the latest filing behind each holding on screen, three at a time. Already-read holdings are skipped."
             style={{
               fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>
-            &#10024; Read catalysts for all {list.length}
-          </button>
+            }}>&#10024; Read filings for all {list.length}</button>
         ) : (
           <>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>
-              Reading {batch.done} of {batch.total}…
-            </span>
-            <button onClick={() => { stopRef.current = true; }}
-              style={{
-                fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
-                border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
-              }}>Stop</button>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
+            <button onClick={stop} style={{
+              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
+            }}>Stop</button>
           </>
         )}
+        <a href="/exit-radar" style={{
+          marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
+          border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none',
+        }}>Exit Radar →</a>
       </div>
 
-      {err && <div style={{ fontSize: 12, color: C.amber }}>{err}</div>}
-      {loading && <div style={{ fontSize: 12, color: C.dim }}>Reading your book…</div>}
       {batch.running && (
         <div style={{ height: 3, background: C.border, borderRadius: 2, overflow: 'hidden' }}>
-          <div style={{
-            height: '100%', background: C.cyan, borderRadius: 2,
-            width: `${batch.total ? Math.round((batch.done / batch.total) * 100) : 0}%`,
-            transition: 'width .3s ease',
-          }} />
+          <div style={{ height: '100%', background: C.cyan, borderRadius: 2, transition: 'width .3s ease',
+            width: `${batch.total ? Math.round((batch.done / batch.total) * 100) : 0}%` }} />
         </div>
       )}
 
-      {list.map(({ r, changed }) => (
-        <div key={r.symbol} style={{
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px',
-          borderLeft: `3px solid ${changed ? C.cyan : C.border}`,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.symbol}</span>
-            <span style={{ fontSize: 9.5, fontWeight: 800, color: C.faint }}>{r.market}</span>
-            {r.graded?.tier && (
-              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
-                border: `1px solid ${C.border}`, color: C.dim }}>{r.graded.tier}</span>
-            )}
-            {r.pattern && (() => {
-              const m = ABFG_META[r.pattern.pattern];
-              return (
-                <span title={r.pattern.because} style={{
-                  fontSize: 9.5, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
-                  border: `1px solid ${m.color}`, background: `${m.color}18`, color: m.color,
-                }}>{m.icon} {r.pattern.pattern} · {m.name}</span>
-              );
-            })()}
-            {r.radarScore != null && (
-              <span style={{ fontSize: 9.5, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{r.radarScore}</span>
-            )}
-            <span style={{ marginLeft: 'auto' }}>
-              {r.summaryState === 'idle' && (
-                <button onClick={() => loadSummary(r.symbol)}
-                  style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                    border: `1px solid ${C.border}`, background: C.bg, color: C.cyan, cursor: 'pointer' }}>
-                  ✨ Read catalysts
-                </button>
-              )}
-              {r.summaryState === 'loading' && <span style={{ fontSize: 10.5, color: C.dim }}>Reading the filing…</span>}
-            </span>
-          </div>
+      {loading && <div style={{ fontSize: 12, color: C.dim }}>Reading your book…</div>}
 
-          {/* THE EXIT CONDITION — the reason this page exists. */}
-          {r.pattern && (
-            <div style={{ marginTop: 7, fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
-              <b style={{ color: C.amber }}>What ends this: </b>{r.pattern.exitCondition}
-            </div>
-          )}
-
-          {r.summaryState === 'error' && (
-            <div style={{ marginTop: 7, fontSize: 11, color: C.amber }}>{r.summaryError}</div>
-          )}
-
-          {r.summaryState === 'done' && r.summary && <CatalystBlock d={r.summary} />}
+      {readCount === 0 && !loading && (
+        <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.6, background: C.bg,
+          border: `1px solid ${C.border}`, borderRadius: 8, padding: '9px 12px' }}>
+          Nothing has been read from a filing yet, so every thesis below is judged on the grader&apos;s numbers alone —
+          revenue, earnings, margin and cash. Utilisation, capex, order book and guidance live in the filings, and
+          they are what turn a grade into a thesis. <b style={{ color: C.text }}>Read the filings</b> to fill them in.
         </div>
+      )}
+
+      {list.map((r) => (
+        <ThesisCard key={r.symbol}
+          symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
+          radarScore={r.radarScore} assessment={r.assessment} capex={r.capex}
+          needsRead={r.state === 'idle' || r.state === 'error'}
+          reading={r.state === 'loading'}
+          onRead={() => readFiling(r.symbol)}
+          error={r.error}
+          promiseNote={r.state === 'done' ? r.promiseNote : null}
+          sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
+        />
       ))}
-    </div>
-  );
-}
-
-/** The structural changes, pulled out of the verified AI summary. Only
- *  sections the filing actually gave are rendered. */
-function CatalystBlock({ d }: { d: any }) {
-  const cats: any[] = Array.isArray(d?.catalysts) ? d.catalysts : [];
-  const capex: any[] = Array.isArray(d?.capex_projects) ? d.capex_projects : [];
-  const oneOffs: any[] = Array.isArray(d?.one_offs) ? d.one_offs : [];
-  const ut = d?.utilisation || {};
-  const ob = d?.order_book || {};
-  const mb = d?.margin_bridge;
-  const g = d?.guidance;
-  const utRow = (['current', 'prior', 'expected', 'expected_by'] as const)
-    .map((k) => ({ k, v: ut[k] })).filter((x) => said(x.v));
-  const obRow = (['closing_value', 'growth', 'book_to_bill'] as const)
-    .map((k) => ({ k, v: ob[k] })).filter((x) => said(x.v));
-  const LBL: Record<string, string> = {
-    current: 'Now', prior: 'Was', expected: 'Expected', expected_by: 'By',
-    closing_value: 'Order book', growth: 'Growth', book_to_bill: 'Book-to-bill',
-  };
-  const Row = ({ label, color, children }: { label: string; color?: string; children: React.ReactNode }) => (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: color || C.faint, marginBottom: 3 }}>
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-
-  return (
-    <div style={{ marginTop: 9, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
-      {g?.action && g.action !== 'none' && (
-        <Row label={`GUIDANCE ${String(g.action).toUpperCase()}`}
-          color={g.action === 'raised' ? C.green : g.action === 'lowered' ? C.red : C.amber}>
-          <div style={{ fontSize: 11.5, color: C.text }}>{said(g.detail) ? g.detail : '—'} {said(g.period) ? `(${g.period})` : ''}</div>
-        </Row>
-      )}
-      {mb && (Array.isArray(mb.drivers) ? mb.drivers.length : 0) > 0 && (
-        <Row label={`WHY THE MARGIN MOVED ${said(mb.opm_change_pp) ? `· ${mb.opm_change_pp}` : ''}`}>
-          {mb.drivers.map((dr: any, i: number) => {
-            const c = dr?.nature === 'structural' ? C.green : dr?.nature === 'cyclical' ? C.amber : C.red;
-            return (
-              <div key={i} style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.5 }}>
-                <span style={{ color: c }}>›</span> {dr?.detail}
-                <span style={{ color: c, fontSize: 9.5 }}> · {String(dr?.nature || '').replace('_', ' ')}</span>
-              </div>
-            );
-          })}
-        </Row>
-      )}
-      {cats.length > 0 && (
-        <Row label="CATALYSTS" color={C.cyan}>
-          {cats.map((c, i) => (
-            <div key={i} style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.5 }}>
-              <b style={{ color: C.text }}>{c?.title}</b>
-              {said(c?.expected_impact_period) && <span> · from {c.expected_impact_period}</span>}
-            </div>
-          ))}
-        </Row>
-      )}
-      {capex.length > 0 && (
-        <Row label="CAPEX &amp; CAPACITY">
-          {capex.map((c, i) => (
-            <div key={i} style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.5 }}>
-              <b style={{ color: C.text }}>{c?.name}</b>
-              {[said(c?.amount) ? c.amount : '', said(c?.capacity_added) ? c.capacity_added : '',
-                said(c?.completion_period) ? `completes ${c.completion_period}` : '',
-                said(c?.revenue_from) ? `earns from ${c.revenue_from}` : '']
-                .filter(Boolean).map((t, k) => <span key={k}> · {t}</span>)}
-            </div>
-          ))}
-        </Row>
-      )}
-      {utRow.length > 0 && (
-        <Row label="UTILISATION">
-          <div style={{ fontSize: 11.5, color: C.text, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {utRow.map((x) => <span key={x.k}><span style={{ color: C.faint, fontSize: 10 }}>{LBL[x.k]} </span><b>{x.v}</b></span>)}
-          </div>
-        </Row>
-      )}
-      {obRow.length > 0 && (
-        <Row label="ORDER BOOK">
-          <div style={{ fontSize: 11.5, color: C.text, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {obRow.map((x) => <span key={x.k}><span style={{ color: C.faint, fontSize: 10 }}>{LBL[x.k]} </span><b>{x.v}</b></span>)}
-          </div>
-        </Row>
-      )}
-      {oneOffs.length > 0 && (
-        <Row label="ONE-OFFS — WHAT WILL NOT REPEAT" color={C.red}>
-          {oneOffs.map((o, i) => (
-            <div key={i} style={{ fontSize: 11.5, color: C.dim }}>
-              {o?.direction === 'gain' ? '+' : '−'} {o?.item}{said(o?.amount) ? ` — ${o.amount}` : ''}
-            </div>
-          ))}
-        </Row>
-      )}
     </div>
   );
 }

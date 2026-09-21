@@ -5853,6 +5853,14 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   // already qualified: structural / why-now / bear case, with every call
   // written to a prediction ledger. Sits beside the two engines it reads.
   { href: '/ai-desk', label: '🧠 AI Research Desk', color: '#A78BFA' },
+  // zzz715 — the three tabs built this week. They were reachable only from the
+  // sidebar, forty items deep, which is the same as not being reachable: the
+  // owner reported them as missing while they were live. A chip added here is
+  // appended to a saved drag order automatically (see the merge below), so a
+  // new tab now reaches a rail that has already been arranged.
+  { href: '/portfolio-catalysts', label: '⚡ Portfolio Catalysts', color: '#22D3EE' },
+  { href: '/exit-radar', label: '🚨 Exit Radar', color: '#EF4444' },
+  { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz559 — Risk Desk, Position Sizing, Thesis Tracker, Coffee Can, PEAD
   // Tracker, Monte Carlo, Tax Planner and Valuation Bands moved OUT of
   // Favourites and back into the A–Z strip below. A saved drag order that
