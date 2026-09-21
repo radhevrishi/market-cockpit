@@ -1,12 +1,13 @@
 'use client';
 
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { getFavourites, toggleFavourite, subscribeFavourites } from '@/lib/nav-favourites';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
-  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory,
+  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory, Zap,
 } from 'lucide-react';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
@@ -26,6 +27,11 @@ interface NavItem { href: string; label: string; icon: ReactNode; }
 // surface into 9 collapsible parents. URLs are unchanged so deep links
 // and bookmarks still work; only the visual organisation changes.
 interface NavGroup { id: string; label: string; icon: ReactNode; items: NavItem[]; }
+
+// zzz707 — the rail has ~40 destinations; the ones opened every morning are
+// scattered across five groups. Favourites pins them without reordering
+// anything: a starred item still appears in its own group, because a tab
+// quietly vanishing from where you expect it is worse than a long rail.
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -163,6 +169,8 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Briefcase className="w-5 h-5" />,
     items: [
       { href: '/portfolio',     label: 'Portfolio',        icon: <Briefcase className="w-4 h-4" /> },
+      // zzz708 — what CHANGED in the book, as opposed to what it is worth.
+      { href: '/portfolio-catalysts', label: 'Portfolio Catalysts', icon: <Zap className="w-4 h-4" /> },
       { href: '/risk',          label: 'Risk Desk',        icon: <Shield className="w-4 h-4" /> },
       { href: '/position-sizing', label: 'Position Sizing', icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/thesis',        label: 'Thesis Tracker',   icon: <BookMarked className="w-4 h-4" /> },
@@ -310,6 +318,21 @@ interface UserProfile {
 }
 
 export default function DashboardClient({ children }: { children: ReactNode }) {
+  // zzz707 — favourites, read once and kept in sync across tabs.
+  const [favs, setFavs] = useState<string[]>([]);
+  useEffect(() => {
+    const sync = () => setFavs(getFavourites());
+    sync();
+    return subscribeFavourites(sync);
+  }, []);
+  const favGroup = useMemo(() => {
+    if (!favs.length) return null;
+    const all = NAV_GROUPS.flatMap((g) => g.items);
+    // Ordered by the rail's own order, not by when each was starred, so the
+    // shortcut list reads the same way the sidebar below it does.
+    const items = all.filter((i) => favs.includes(i.href));
+    return items.length ? { items } : null;
+  }, [favs]);
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -616,6 +639,37 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
         {/* Nav items (PATCH 0603 — grouped) */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
+          {favGroup && (
+            <div key="favourites" style={{ marginBottom: 4 }}>
+              <div style={{
+                margin: '2px 12px 4px', fontSize: 8, color: '#FCD34D', fontWeight: 800,
+                letterSpacing: '0.5px', textAlign: 'center', textTransform: 'uppercase',
+              }}>★ Favourites</div>
+              {favGroup.items.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <Link key={`fav-${item.href}`} href={item.href} title={`Favourite › ${item.label}`}
+                    style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                      padding: '10px 4px', margin: '2px 6px', borderRadius: '10px',
+                      textDecoration: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                      backgroundColor: active ? 'rgba(15,122,191,0.18)' : 'transparent',
+                      color: active ? 'var(--mc-accent)' : 'var(--mc-text-4)',
+                      fontSize: '9px', fontWeight: active ? '600' : '400', letterSpacing: '0.3px',
+                      borderLeft: active ? '2px solid var(--mc-accent)' : '2px solid #FCD34D55',
+                      userSelect: 'none', WebkitUserSelect: 'none',
+                    }}>
+                    <div>{item.icon}</div>
+                    <span style={{ textAlign: 'center', lineHeight: '1.2', width: '100%' }}>
+                      {item.label.split(' ').map((w, i) => (
+                        <span key={i} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w}</span>
+                      ))}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
           {NAV_GROUPS.map((group, gi) => (
             <div key={group.id} style={{ marginBottom: 4 }}>
               {/* Group divider — first group has no top border */}
@@ -636,8 +690,19 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               )}
               {group.items.map(item => {
                 const active = isActive(item.href);
+                const starred = favs.includes(item.href);
                 return (
-                  <Link key={item.href} href={item.href}
+                  <div key={item.href} style={{ position: 'relative' }}>
+                  <button
+                    onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); setFavs(toggleFavourite(item.href)); }}
+                    title={starred ? `Remove ${item.label} from favourites` : `Add ${item.label} to favourites`}
+                    aria-pressed={starred}
+                    style={{
+                      position: 'absolute', top: 2, right: 6, zIndex: 2, lineHeight: 1,
+                      background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                      fontSize: 10, color: starred ? '#FCD34D' : 'var(--mc-bg-4)',
+                    }}>{starred ? '★' : '☆'}</button>
+                  <Link href={item.href}
                     title={`${group.label} › ${item.label}`}
                     style={{
                       display: 'flex',
@@ -679,6 +744,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       ))}
                     </span>
                   </Link>
+                  </div>
                 );
               })}
             </div>
