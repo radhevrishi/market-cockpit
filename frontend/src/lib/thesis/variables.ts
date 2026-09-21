@@ -141,12 +141,13 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       // A figure read off a chart axis is not a fact the card may confirm
       // on: the numbers are on the slide but the text never says which is
       // which. Shown as a claim, labelled, so the reader opens the slide.
-      const chart = a.evidence_quality === 'chart';
+      const chart = a.evidence_quality === 'chart' || a.evidence_quality === 'unit_mismatch';
       out.push({
         key, label,
         kind: a.value_type === 'ACTUAL' && !chart ? 'fact' : 'claim',
         before: a.before, after: a.after, delta, verdict,
-        evidence: (chart ? 'Read from a chart, figures unlabelled — verify on the slide: ' : '')
+        evidence: (a.evidence_quality === 'unit_mismatch' ? 'Value does not fit this variable (wrong unit or no such statement) — shown as a claim only: '
+          : chart ? 'Read from a chart, figures unlabelled — verify on the slide: ' : '')
           + `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
           + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
           + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : ''),

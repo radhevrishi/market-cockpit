@@ -406,13 +406,21 @@ export async function GET(req: NextRequest) {
       signal: AbortSignal.timeout(110_000),
     });
     if (!resp.ok) {
-      return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}.` });
+      // THE API'S OWN MESSAGE, not just the status. "HTTP 400" hid, for a
+      // whole evening, whatever the API was actually saying — a credit
+      // balance, a prompt-length limit, a bad model id all look identical
+      // as a number. The message is safe to show: it never carries the key.
+      let detail = '';
+      try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
+      const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API HTTP ${resp.status}${detail ? `: ${detail}` : ''}`, { documents_found: discovery.candidates.length });
+      return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}${detail ? `: ${detail}` : '.'}`, state: 'RETRIEVAL_FAILED', discovery_attempts: discovery.attempts, document_outcomes: outcomes, ledger: attempt.ledger, persisted: attempt.persisted });
     }
     const j = await resp.json();
     const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === SUMMARY_TOOL.name);
     data = call?.input || null;
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: `The summary service did not answer (${String(e?.message || e)}).` });
+    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API: ${String(e?.message || e)}`.slice(0, 300), { documents_found: discovery.candidates.length });
+    return NextResponse.json({ ok: false, error: `The summary service did not answer (${String(e?.message || e)}).`, state: 'RETRIEVAL_FAILED', discovery_attempts: discovery.attempts, document_outcomes: outcomes, ledger: attempt.ledger, persisted: attempt.persisted });
   }
   if (!data) {
     return NextResponse.json({ ok: false, error: 'The summary service answered without filing a result.' });

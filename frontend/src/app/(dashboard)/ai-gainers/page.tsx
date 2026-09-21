@@ -226,8 +226,18 @@ export default function AiGainersPage() {
         <MarketLevel data={data} structural={structural.length} onDrill={() => setLevel('queue')} />
       )}
 
-      {data && level !== 'market' && level !== 'scanned' && (
+      {data && level === 'queue' && (
+        <ResearchLevel research={research} sweeping={sweeping} market={market} scoredOnly
+          onResume={() => data && sweep(market, data.scanned || [])} />
+      )}
+
+      {data && level !== 'market' && level !== 'scanned' && level !== 'research' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {level === 'queue' && (
+            <div style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>
+              <b style={{ color: C.dim }}>Filed results behind today's gainers — context.</b> A result filed weeks ago explains a re-rating, not today's print; it is scored as confirmation and ranks below a dated catalyst.
+            </div>
+          )}
           {(level === 'queue' ? top : rows).length === 0 && (
             <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
               Nothing cleared the filter for this market today. That is a real answer, not an empty page — no gainer in
@@ -279,7 +289,7 @@ function money(v: number | null, m: Mkt): string {
   return m === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)}cr` : `$${v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1)}M`;
 }
 
-function ResearchLevel({ research, sweeping, market, onResume }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void }) {
+function ResearchLevel({ research, sweeping, market, onResume, scoredOnly }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void; scoredOnly?: boolean }) {
   if (!research) return <div style={{ fontSize: 12, color: C.dim }}>Waiting for the scan…</div>;
   const all = Object.values(research.findings || {});
   const cov = research.coverage;
@@ -353,7 +363,7 @@ function ResearchLevel({ research, sweeping, market, onResume }: { research: Res
         )}
       </Section>
 
-      {(rejected.length > 0 || bands.length > 0 || listings.length > 0) && (
+      {!scoredOnly && (rejected.length > 0 || bands.length > 0 || listings.length > 0) && (
         <Section title="Denied, negative, or moving on nothing" sub="Rejected catalysts are findings, not omissions. A company formally denying a catalyst while the stock moves is more actionable than most confirmed ones.">
           <Wrap><thead><tr><th style={th}>Name</th><th style={th}>1d</th><th style={th}>Finding</th><th style={th}>Source</th></tr></thead>
             <tbody>
@@ -364,19 +374,19 @@ function ResearchLevel({ research, sweeping, market, onResume }: { research: Res
         </Section>
       )}
 
-      {unexplained.length > 0 && (
+      {!scoredOnly && unexplained.length > 0 && (
         <Section title={`Moves with no explanation — ${unexplained.length}`} sub="Name, move, and what the filings actually show for the window.">
           <Wrap><thead><tr><th style={th}>Name</th><th style={th}>1d</th><th style={th}>Mcap</th><th style={th}>Traded</th><th style={th}>Filings in window</th><th style={th}>1M / 3M</th></tr></thead>
-            <tbody>{unexplained.slice(0, 80).map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={td}>{money(f.marketCap, market)}</td><td style={td}>{money(f.turnover, market)}</td><td style={{ ...td, minWidth: 260 }}>{f.filingsInWindow === 0 ? <span>no filing in {f.windowDays} days</span> : <span>{f.filingsInWindow} routine: {f.routine.slice(0, 3).map((r) => r.replace(/^announcement under regulation 30 \(lodr\)-?/i, '').replace(/_/g, ' ').slice(0, 40)).join('; ')}</span>}{f.notes.length > 0 && <div style={{ fontSize: 10, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}>{f.returns ? `${pct(f.returns.m1)} / ${pct(f.returns.m3)}` : '—'}</td></tr>)}</tbody></Wrap>
+            <tbody>{unexplained.slice(0, 80).map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={td}>{money(f.marketCap, market)}</td><td style={td}>{money(f.turnover, market)}</td><td style={{ ...td, minWidth: 260 }}>{f.filingsInWindow === 0 ? <span>no filing in {f.windowDays} days</span> : <span>{f.headline}</span>}{f.notes.length > 0 && <div style={{ fontSize: 10, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}>{f.returns ? `${pct(f.returns.m1)} / ${pct(f.returns.m3)}` : '—'}</td></tr>)}</tbody></Wrap>
         </Section>
       )}
 
-      {failed.length > 0 && (
+      {!scoredOnly && failed.length > 0 && (
         <Section title={`Source failed — ${failed.length}`} sub="The filing source could not be reached for these. That is not 'nothing filed'.">
           <div style={{ fontSize: 11, color: C.dim }}>{failed.map((f) => f.ticker).join(' · ')}</div>
         </Section>
       )}
-      {research.errors && research.errors.length > 0 && (
+      {!scoredOnly && research.errors && research.errors.length > 0 && (
         <div style={{ fontSize: 10, color: C.faint }}>Last errors: {research.errors.join(' | ')}</div>
       )}
     </div>

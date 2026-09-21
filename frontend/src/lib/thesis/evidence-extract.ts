@@ -75,7 +75,7 @@ export interface StructuralEvent {
   /** 'chart' when the evidence is a run of axis labels and figures from a
    *  slide rather than a sentence — the figures are real but nothing in the
    *  text says what they mean, so the pair is capped at LOW confidence. */
-  evidence_quality?: 'sentence' | 'chart';
+  evidence_quality?: 'sentence' | 'chart' | 'unit_mismatch';
 }
 
 export interface ExtractionPipeline {
@@ -266,7 +266,9 @@ export async function extractStructuralEvents(
       signal: AbortSignal.timeout(100_000),
     });
     if (!resp.ok) {
-      pipeline.model_error = `HTTP ${resp.status}`;
+      let detail = '';
+      try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
+      pipeline.model_error = `HTTP ${resp.status}${detail ? `: ${detail}` : ''}`;
       return { events: [], pipeline };
     }
     const j = await resp.json();
@@ -342,10 +344,27 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
     // Such an event is kept — the numbers were not invented — but capped at
     // LOW and labelled, so the ledger shows it as weak and a reader knows to
     // open the slide.
+    // VARIABLE ↔ VALUE SANITY. A utilisation is a percentage (or a shift
+    // count, or "full"); a bare "160 → 374" against it is a headcount or a
+    // rack count the model filed under the wrong variable. An execution
+    // delay needs the passage to talk about delay. Both passed the verbatim
+    // check — the numbers were in the text — and both were wrong facts on
+    // the card (E2E "utilisation 160 → 374", TI "execution delay 90%").
+    // Such events are kept as LOW-confidence claims and never as facts.
+    const valueText = `${before || ''} ${after || ''}`;
+    const PCT_VARS = new Set(['utilisation', 'margin_driver', 'exports', 'mix', 'customer_concentration']);
+    const unitOk = (() => {
+      if (PCT_VARS.has(variable)) return /%|per ?cent|pp\b|full|maximum|peak|near|shift|high|low|double|single/i.test(valueText) || /%/.test(String(e?.unit || ''));
+      if (variable === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
+      if (variable === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
+      if (variable === 'capacity_bottleneck' || variable === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);
+      return true;
+    })();
     const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
     const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
-    const evidence_quality: 'sentence' | 'chart' = (words < 5 || figures > words) ? 'chart' : 'sentence';
-    if (evidence_quality === 'chart') confidence = 'LOW';
+    let evidence_quality: 'sentence' | 'chart' | 'unit_mismatch' = (words < 5 || figures > words) ? 'chart' : 'sentence';
+    if (!unitOk) evidence_quality = 'unit_mismatch';
+    if (evidence_quality !== 'sentence') confidence = 'LOW';
 
     const key = `${variable}|${value_type}|${before}|${after}|${q.slice(0, 40)}`;
     if (seen.has(key)) continue;            // same fact from two passages

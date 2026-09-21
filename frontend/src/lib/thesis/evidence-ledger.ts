@@ -77,7 +77,7 @@ export interface EvidenceFact {
   source_quote: string;
   fact_or_management_statement: 'FACT' | 'GUIDANCE' | 'TARGET' | 'MANAGEMENT_CLAIM';
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  evidence_quality: 'sentence' | 'chart';
+  evidence_quality: 'sentence' | 'chart' | 'unit_mismatch';
   extracted_at: string;
   updated_at: string;
 }
@@ -466,6 +466,7 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
     const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
     for (const f of facts) {
       if (f.fact_or_management_statement !== 'FACT') continue;
+      if (f.evidence_quality === 'unit_mismatch') continue;       // a wrong-unit figure is not a change
       const o = m.get(f.metric_name);
       if (!o || rank[f.confidence] < rank[o.confidence]) m.set(f.metric_name, f);
     }

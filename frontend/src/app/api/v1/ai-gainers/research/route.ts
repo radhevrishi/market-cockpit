@@ -24,6 +24,7 @@ import { buildFinding, coverage, classifyAnnouncement, chooseCandidate, ageDaysO
 import { readAnnouncement, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { istToday } from '@/lib/market-hours';
+import { readBookState } from '@/lib/book-store';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -61,12 +62,13 @@ async function loadState(market: 'IN' | 'US', date: string): Promise<ResearchSta
   try { const s = await kvGet<ResearchState>(KEY(market, date)); return s && s.findings ? s : null; } catch { return null; }
 }
 
-async function loadHoldings(origin: string): Promise<Set<string>> {
+async function loadHoldings(_origin: string): Promise<Set<string>> {
+  // Read the book store directly: a self-fetch through `origin` resolved to
+  // an internal host on Railway and answered nothing, so no gainer was ever
+  // marked as held (MARKSANS sat in "unexplained" without its 📗).
   try {
-    const r = await fetch(`${origin}/api/v1/book/state?feed=0`, { cache: 'no-store', signal: AbortSignal.timeout(8_000) });
-    if (!r.ok) return new Set();
-    const j: any = await r.json();
-    const rows: any[] = j?.book?.tickers || [];
+    const st: any = await readBookState(process.env.NEXT_PUBLIC_CHAT_ID || '5057319640');
+    const rows: any[] = st?.tickers || st?.book?.tickers || [];
     return new Set(rows.filter((x) => x?.held).map((x) => String(x.ticker || '').toUpperCase()));
   } catch { return new Set(); }
 }

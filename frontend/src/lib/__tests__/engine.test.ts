@@ -1030,3 +1030,26 @@ describe('catalyst research — the brief\'s method as code', () => {
     assert.equal(cov.researched, 1); assert.equal(cov.total, 3); assert.equal(cov.pct, 33); assert.equal(cov.byStatus.unresearched, 2);
   });
 });
+
+describe('zzz746 — extraction unit sanity and inferred values', () => {
+  test('a percentage variable with a bare count is a claim, never a fact', () => {
+    const passages: any[] = [{ family: 'utilisation', text: 'Our team grew from 160 to 374 people while utilisation stayed high.', doc: 'ar' }];
+    const { kept } = validateEvents([{ variable: 'utilisation', value_type: 'ACTUAL', before: '160', after: '374', unit: null, period: 'FY26', direction: 'up', evidence_text: 'Our team grew from 160 to 374 people while utilisation stayed high.', source: 'ar', confidence: 'HIGH' }], passages);
+    assert.equal(kept.length, 1); assert.equal(kept[0].evidence_quality, 'unit_mismatch'); assert.equal(kept[0].confidence, 'LOW');
+    assert.equal(varsFromEvents(kept)[0].kind, 'claim');
+  });
+  test('an execution delay needs the passage to say delay', () => {
+    const passages: any[] = [{ family: 'execution', text: 'We achieved 90% of the planned rollout in the quarter as scheduled.', doc: 't' }];
+    const { kept } = validateEvents([{ variable: 'execution_delay', value_type: 'ACTUAL', before: null, after: '90%', unit: '%', period: 'Q1 FY27', direction: 'up', evidence_text: 'We achieved 90% of the planned rollout in the quarter as scheduled.', source: 't', confidence: 'HIGH' }], passages);
+    assert.equal(kept[0].evidence_quality, 'unit_mismatch');
+  });
+  test('an implied or estimated figure is not a stated event value', () => {
+    assert.equal(parseStatedValue('wins LoA for 150 MW BESS, implying ₹42.84 crore annual revenue', 'IN'), null);
+    assert.equal(parseStatedValue('non-binding MoU, estimating ₹500 crore opportunity', 'IN'), null);
+    assert.equal(parseStatedValue('won an order worth ₹279.33 crore', 'IN'), 279.33);
+  });
+  test('"won a Rs. 5.12 crore" is an order even without the word order nearby', () => {
+    const c = classifyAnnouncement({ subject: 'Announcement under Regulation 30 (LODR)-Updates', summary: 'Silver Touch won a Rs. 5.12 crore project from the Gujarat government for IT services', url: 'u', dateIso: '2026-09-11T00:00:00Z', ageDays: 10 });
+    assert.equal(c.category, 'order_win'); assert.equal(c.valueStated, 5.12);
+  });
+});
