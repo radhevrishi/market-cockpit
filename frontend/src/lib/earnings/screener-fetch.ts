@@ -39,19 +39,37 @@
  */
 const PROXY = (process.env.SCREENER_PROXY_URL || '').trim();
 
+/**
+ * The repo's own proxy Worker, tried after the configured one.      (zzz732)
+ *
+ * SCREENER_PROXY_URL was set to the indiaearninghub Worker's `/page` route.
+ * That Worker has no such route: it answered its own 266-byte index JSON to
+ * every request, and all three screener.in features were dark for a day while
+ * the env var looked correctly set. The contract had no implementation.
+ *
+ * `workers/mc-proxy` is that implementation, deployed by the deploy-workers
+ * Action from this repo. It is tried as a SECOND hop rather than replacing the
+ * configured one, so the chain heals itself whatever SCREENER_PROXY_URL
+ * currently holds — a stale or wrong value costs one failed hop instead of the
+ * whole feature, and the hop is named in the error either way.
+ */
+const FALLBACK_PROXY = 'https://mc-proxy.radhev-232.workers.dev/page?url=';
+
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
   + 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
+export type ProxyHop = 'proxy' | 'mc-proxy' | 'direct';
+
 export interface HtmlFetch {
   html: string | null;
-  /** Which hop answered: 'proxy' | 'direct'. Null when none did. */
-  via: 'proxy' | 'direct' | null;
+  /** Which hop answered. Null when none did. */
+  via: ProxyHop | null;
   /** Every hop tried and what it did. Never empty on failure. */
   attempts: Array<{ hop: string; outcome: string }>;
   error: string | null;
 }
 
-async function tryFetch(hop: 'proxy' | 'direct', url: string, timeoutMs: number):
+async function tryFetch(hop: ProxyHop, url: string, timeoutMs: number):
 Promise<{ html: string | null; outcome: string }> {
   try {
     const r = await fetch(url, {
@@ -98,6 +116,14 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 14_000): Promis
     attempts.push({ hop: 'proxy', outcome: 'not configured (SCREENER_PROXY_URL is unset)' });
   }
 
+  // Skipped only when the configured proxy IS this one, so the same hop is
+  // never tried twice and reported as two independent failures.
+  if (!PROXY.startsWith(FALLBACK_PROXY.split('?')[0])) {
+    const m = await tryFetch('mc-proxy', `${FALLBACK_PROXY}${encodeURIComponent(url)}`, timeoutMs);
+    attempts.push({ hop: 'mc-proxy', outcome: m.outcome });
+    if (m.html) return { html: m.html, via: 'mc-proxy', attempts, error: null };
+  }
+
   const d = await tryFetch('direct', url, timeoutMs);
   attempts.push({ hop: 'direct', outcome: d.outcome });
   if (d.html) return { html: d.html, via: 'direct', attempts, error: null };
@@ -105,13 +131,19 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 14_000): Promis
   return {
     html: null, via: null, attempts,
     error: `screener.in could not be read. ${attempts.map((a) => `${a.hop}: ${a.outcome}`).join('; ')}. `
-      + (PROXY
-        ? 'Both hops failed — this is a network or upstream problem, not an empty screen.'
-        : 'screener.in refuses datacenter IPs, so a direct fetch from this host is expected to fail. '
-          + 'Set SCREENER_PROXY_URL to a worker that can reach it.'),
+      + 'Every hop failed — this is a network or upstream problem, not an empty screen. '
+      + 'If the mc-proxy hop reports 404 or too-short, the deploy-workers Action has not '
+      + 'published workers/mc-proxy yet.',
   };
 }
 
-/** True when a proxy is configured — surfaced in diagnostics so the page can
- *  say whether it is one setting away from working. */
-export const screenerProxyConfigured = (): boolean => !!PROXY;
+/** True when a proxy hop exists at all. The repo's own Worker always counts,
+ *  so this is no longer a question of whether one env var is set. */
+export const screenerProxyConfigured = (): boolean => true;
+
+/** What the chain will actually try, in order — for diagnostics panels. */
+export const screenerProxyChain = (): string[] => [
+  PROXY ? `configured: ${PROXY.split('?')[0]}` : 'configured: none (SCREENER_PROXY_URL unset)',
+  `repo worker: ${FALLBACK_PROXY.split('?')[0]}`,
+  'direct',
+];

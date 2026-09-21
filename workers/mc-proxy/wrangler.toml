@@ -1,0 +1,13 @@
+# mc-proxy — screener.in relay for the portal's Railway egress.      (zzz732)
+#
+# No [triggers]: this Worker is request-driven, never scheduled.
+# No KV binding: it holds no state.
+#
+# PROXY_SECRET is a Worker SECRET, never a [vars] entry and never committed:
+#   npx wrangler secret put PROXY_SECRET
+# It gates nseindia / bseindia / trendlyne / yahoo. screener.in is relayed
+# without it by design — see the header of index.js for the trade and the one
+# command that closes it.
+name = "mc-proxy"
+main = "index.js"
+compatibility_date = "2026-01-01"
