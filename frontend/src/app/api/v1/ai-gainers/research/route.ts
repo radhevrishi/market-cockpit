@@ -20,7 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch } from '@/lib/ai-gainers/screener-company';
 import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
-import { buildFinding, coverage, classifyAnnouncement, ageDaysOf, type Finding, type AnnouncementLite } from '@/lib/ai-gainers/catalyst-research';
+import { buildFinding, coverage, classifyAnnouncement, chooseCandidate, ageDaysOf, type Finding, type AnnouncementLite } from '@/lib/ai-gainers/catalyst-research';
 import { readAnnouncement, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { istToday } from '@/lib/market-hours';
@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
   }
 
   const holdings = await loadHoldings(origin);
+  if (body?.reprocess === true) { st.findings = {}; st.model_reads = 0; }   // explicit re-run of the day, e.g. after a rule change
   const todo = st.universe
     .filter((u) => !st.findings[u.ticker] || st.findings[u.ticker].status === 'unresearched' || (st.findings[u.ticker].status === 'source_failed' && body?.retry_failed))
     .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity));
@@ -159,12 +160,12 @@ export async function POST(req: NextRequest) {
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
       let read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null } | null = null;
       const inWindow = announcements.map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, now) })).filter((a) => a.ageDays == null || a.ageDays <= WINDOW_DAYS);
-      const classified = inWindow.map((a) => classifyAnnouncement(a, market));
-      // India: the best catalyst-kind filing. US: an 8-K under Items 1.01 /
-      // 2.01 / 7.01 / 8.01 is where the press release lives and the subject
-      // says nothing — those are read whether or not the subject classified.
-      const cand = classified.find((c) => c.kind === 'catalyst' && c.category !== 'rating_action' && c.category !== 'quarterly_result')
-        || (market === 'US' ? classified.find((c) => c.kind === 'unclassified' && /item (1\.01|2\.01|7\.01|8\.01)/i.test(c.subject)) : undefined);
+      // The SAME candidate the finding will score — the first version chose
+      // "first catalyst in list order" here and "highest-scoring" in the
+      // finding, so every verified quote was attached to the wrong filing
+      // and dropped: 22 model reads, zero verified rows.
+      const cand = chooseCandidate(announcements, market, { marketCap, returns, windowDays: WINDOW_DAYS, now })
+        || (market === 'US' ? inWindow.map((a) => classifyAnnouncement(a, market)).find((c) => c.kind === 'unclassified' && /item (1\.01|2\.01|7\.01|8\.01)/i.test(c.subject)) : undefined);
       if (cand && modelReads < MODEL_READS_PER_CALL && Date.now() - t0 < budget - 12_000) {
         const r = await cachedRead(market, u.ticker, cand);
         modelReads++;

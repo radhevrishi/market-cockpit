@@ -121,7 +121,7 @@ const RX = {
   rating: /credit rating|rating (action|upgrade|downgrade|reaffirm|assign|revis)|(care|crisil|icra|india ratings|ind-ra|brickwork|acuite|infomerics)[^.]{0,40}(upgrad|downgrad|reaffirm|assign)/i,
   guidance: /guidance|outlook (raised|revised|upgrade)|revenue target|order book (of|at|stands)/i,
   newCustomer: /new (customer|client)|onboard|empanelled with|added .{0,30} as (a )?(customer|client)/i,
-  results: /^10-[qk]\b|results of operations|item 2\.02|financial results|outcome of board meeting|unaudited|audited results|quarterly results|results for the (quarter|period)|press release[^.]{0,20}(result|q[1-4])/i,
+  results: /^10-[qk]\b|results of operations|item 2\.02|financial results|unaudited (financial )?results|audited results|quarterly results|results for the (quarter|period)|press release[^.]{0,20}(result|q[1-4])/i,
   enabling: /to consider|consider(ation of)?|proposal|proposed|in-principle|approval of the board (for|to)|authori[sz](e|ation) to|intimation of board meeting|enabling resolution|subject to (shareholder|regulatory) approval/i,
   scheduled: /(expected|likely|scheduled|slated|will be|to be) (commission|complet|operational|commenc)|by (q[1-4]|fy ?\d|h[12] |end of|march|june|september|december|\d{4})|target(ed)? (date|for completion)/i,
   executed: /inaugurat|commenced|started operations|has (been )?(commissioned|received|secured|completed|commenced|won|bagged|signed|executed|allotted|acquired)|commenced commercial|received (an? )?(order|loa|approval)|successfully/i,
@@ -168,9 +168,24 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   // summary mentions "₹500 crore NCD authorisation" is still an AGM notice:
   // the summary supplies a value and a category only when the subject is a
   // substantive one (Reg 30 update, press release, "General Updates").
+  // Some paperwork announces itself in the summary rather than the subject:
+  // a Reg 74(5) share-certificate return, a demat report, a re-lodgement
+  // report. Those never carry an event whatever the subject says.
+  if (/share certificate|dematerialis|regulation 74|reg\.? ?74|re-?lodgement|newspaper (publication|advertisement)|\bbrsr\b|esg (score|rating)|trading window|closure of trading|book closure|record date for|internal auditor|secretarial auditor|cost auditor|appoint(ed|ment)[^.]{0,20}(additional |non-executive |independent )+director|reconstitut(ed|ion) (of )?(the )?(committee|board)/i.test(hay)) {
+    return { ...base, kind: 'routine', valueStated: null, routineReason: 'administrative' };
+  }
+  // A person buying or selling a few thousand shares is an insider trade, an
+  // acquisition only in the regulation's vocabulary. Promoter buying is kept
+  // as its own (small) catalyst; anyone else's is paperwork.
+  if (/(acquired|bought|purchased|sold|disposed)[^.]{0,20}[\d,.]+ (\S+ ){0,3}shares/i.test(hay) && !/open offer|stake|%|per ?cent/i.test(hay)) {
+    return /promoter/i.test(hay) && !/sold|disposed/i.test(hay) ? { ...base, kind: 'catalyst', category: 'promoter_purchase', stage: 'executed', valueStated: null } : { ...base, kind: 'routine', valueStated: null, routineReason: 'insider trade' };
+  }
   const subjectRoutine = RX.routine.test(a.subject) && !RX.order.test(a.subject) && !RX.capacity.test(a.subject) && !RX.certification.test(a.subject) && !RX.mna.test(a.subject) && !RX.rating.test(a.subject);
   if (subjectRoutine) return { ...base, kind: 'routine', valueStated: null, routineReason: (RX.routine.exec(a.subject) || [''])[0].toLowerCase().trim() || 'routine' };
-  const stage: Stage = RX.enabling.test(hay) ? 'enabling' : (RX.scheduled.test(hay) && !RX.executed.test(hay)) ? 'scheduled' : 'executed';
+  // An MoU, a letter of intent or anything "non-binding" is ENABLING: nothing
+  // has been ordered, built or paid for. "Will begin" is SCHEDULED.
+  const stage: Stage = (RX.enabling.test(hay) || /non-binding|memorandum of understanding|\bmou\b|letter of intent|\bloi\b|in-principle|term sheet|proposed/i.test(hay)) ? 'enabling'
+    : ((RX.scheduled.test(hay) || /will (begin|start|commence|be commissioned)|is expected to|likely to/i.test(hay)) && !RX.executed.test(hay)) ? 'scheduled' : 'executed';
   const cat = (c: ClassifiedAnnouncement['category']): ClassifiedAnnouncement => ({ ...base, kind: 'catalyst', category: c, stage });
   if (RX.order.test(hay)) return cat('order_win');
   if (RX.capacity.test(hay)) return cat(/commission|commenc|start|first (batch|dispatch)/i.test(hay) ? 'production_ramp' : 'capacity_expansion');
@@ -196,7 +211,10 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   if (RX.newCustomer.test(hay)) return cat('new_customer');
   if (RX.mgmtChange.test(hay)) return cat('management_change');
   if (RX.guidance.test(hay)) return cat('revenue_guidance_increase');
-  if (RX.results.test(hay)) return cat('quarterly_result');
+  // A results filing is scored by the graded funnel (revenue, PAT, EPS, tier)
+  // with far more than a subject line; in THIS sweep it is context, and
+  // counting it again as a fresh catalyst double-ranks every reporting name.
+  if (RX.results.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'results filing — scored by the graded funnel' };
   if (RX.routine.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: (RX.routine.exec(hay) || [''])[0].toLowerCase().trim() || 'routine' };
   return { ...base, kind: 'unclassified' };
 }
@@ -242,7 +260,7 @@ function materialityOf(c: ClassifiedAnnouncement, marketCap: number | null): { s
   const byType: Record<string, number> = {
     acquisition: 100, open_offer: 100, order_win: 85, production_ramp: 90, capacity_expansion: 70, regulatory_approval: 90,
     revenue_guidance_increase: 85, quarterly_result: 80, new_customer: 75, joint_venture: 70, fundraising: 50, buyback: 55,
-    promoter_purchase: 45, rating_action: 55, product_qualification: 60, demerger: 70, divestiture: 60,
+    promoter_purchase: 45, rating_action: 25, product_qualification: 60, demerger: 70, divestiture: 60,
   };
   const t = byType[String(c.category || '')] ?? 30;
   return { score: Math.min(35, t), pct: null, gated: false };
@@ -251,7 +269,7 @@ function materialityOf(c: ClassifiedAnnouncement, marketCap: number | null): { s
 const TRANSMISSION: Record<string, number> = {
   order_win: 80, production_ramp: 80, capacity_expansion: 60, quarterly_result: 80, revenue_guidance_increase: 80,
   regulatory_approval: 60, product_qualification: 40, new_customer: 60, acquisition: 60, open_offer: 40, joint_venture: 40,
-  demerger: 40, divestiture: 40, fundraising: 20, buyback: 20, promoter_purchase: 20, rating_action: 40, management_change: 20,
+  demerger: 40, divestiture: 40, fundraising: 20, buyback: 20, promoter_purchase: 20, rating_action: 20, management_change: 20,
 };
 const PERSISTENCE: Record<string, number> = {
   order_win: 40, production_ramp: 100, capacity_expansion: 100, quarterly_result: 75, revenue_guidance_increase: 75,
@@ -280,11 +298,28 @@ export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: numb
   let net = (0.30 * freshness + 0.30 * mat.score + 0.25 * transmission + 0.15 * persistence) * sourceMult * (1 - pricedIn / 100);
   let verdict: Verdict;
   if (mat.gated) { net = Math.min(net, 17); verdict = 'THIN'; }
-  else verdict = net >= 45 ? 'FIRE' : net >= 30 ? 'ROOM' : net >= 18 ? 'PRICED' : net >= 8 ? 'WEAK' : 'NONE';
+  else {
+    // An event with no stated value cannot be FIRE: "never let an unmeasured
+    // event pay the same as a measured 30%-of-mcap one." It can still be ROOM.
+    if (mat.pct == null && net >= 45) net = 44.9;
+    verdict = net >= 45 ? 'FIRE' : net >= 30 ? 'ROOM' : net >= 18 ? 'PRICED' : net >= 8 ? 'WEAK' : 'NONE';
+  }
   return { net: Math.round(net * 10) / 10, components: { freshness, materiality: mat.score, transmission, persistence, sourceMult, pricedIn }, verdict, valuePctMcap: mat.pct == null ? null : Math.round(mat.pct * 100) / 100 };
 }
 
 // ── 4. FROM A SWEEP TO A FINDING ───────────────────────────────────────────
+
+/** The filing worth model-reading: the same choice `buildFinding` makes. */
+export function chooseCandidate(announcements: AnnouncementLite[], market: 'IN' | 'US', opts: { marketCap: number | null; returns: Returns | null; windowDays: number; now: Date }): ClassifiedAnnouncement | null {
+  const inWindow = announcements
+    .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, opts.now) }))
+    .filter((a) => a.ageDays == null || a.ageDays <= opts.windowDays)
+    .map((a) => classifyAnnouncement(a, market));
+  const cands = inWindow.filter((a) => a.kind === 'catalyst' && a.category !== 'rating_action')
+    .map((a) => ({ a, s: scoreCatalyst(a, { marketCap: opts.marketCap, returns: opts.returns, sourceTier: 'primary', verifiedQuote: false }).net }))
+    .sort((x, y) => y.s - x.s);
+  return cands.length ? cands[0].a : null;
+}
 
 export interface SweepInput {
   ticker: string; company: string | null; market: 'IN' | 'US';
@@ -349,7 +384,11 @@ export function buildFinding(inp: SweepInput): Finding {
     .map((a) => ({ a, s: scoreCatalyst(a, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: false }).net }))
     .sort((x, y) => y.s - x.s)
     .map((x) => x.a);
-  if (listingDays != null && !cands.length) return { ...base, status: 'listing_artifact', headline: `Listed ~${listingDays} sessions ago — no comparable prior close` };
+  if (listingDays != null) {
+    // A recent listing is not a gainer, whatever it filed: there is no
+    // comparable prior close, so the return is the listing, not the news.
+    return { ...base, status: 'listing_artifact', headline: `Listed ~${listingDays} sessions ago — no comparable prior close${cands.length ? `; filed: ${shorten(cands[0].summary || cands[0].subject, 70)}` : ''}`, sourceUrl: cands[0]?.url || null, sourceDate: cands[0]?.dateIso || null, sourceTier: cands.length ? 'primary' : 'unsourced' };
+  }
   if (!cands.length) {
     if (!inWindow.length) return { ...base, status: 'none', headline: `No filing in the last ${inp.windowDays} days`, notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
     const uncl = inWindow.filter((a) => a.kind === 'unclassified');
