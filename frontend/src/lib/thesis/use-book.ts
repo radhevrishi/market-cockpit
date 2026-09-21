@@ -188,6 +188,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
   });
   const rowsRef = useRef<Record<string, BookRow>>({});
   const stopRef = useRef(false);
+  const resumeRef = useRef<string[] | null>(null);
 
   useEffect(() => { rowsRef.current = rows; }, [rows]);
 
@@ -395,6 +396,12 @@ export function useBook(opts?: { includeBench?: boolean }) {
         for (const r of toPost.slice(0, 60)) { if (cancelled) break; await postStatus(r); }
         if (batchInfo && !batchInfo.finished_at) {
           setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: batchInfo.remaining, failed: batchInfo.failed });
+          // An interrupted batch (tab closed, reload mid-run) resumes by
+          // itself: the owner asked for it once and it was not finished. A
+          // batch that FINISHED — including one stopped by hand — does not.
+          if (batchInfo.remaining > 0 && Array.isArray(batchInfo.remaining_tickers) && batchInfo.remaining_tickers.length) {
+            resumeRef.current = batchInfo.remaining_tickers as string[];
+          }
         } else if (batchInfo) {
           setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: 0, failed: batchInfo.failed });
         }
@@ -421,6 +428,17 @@ export function useBook(opts?: { includeBench?: boolean }) {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Resume an interrupted batch once the rows are painted (see stage 4).
+  useEffect(() => {
+    if (loading) return;
+    const syms = resumeRef.current;
+    if (!syms || !syms.length) return;
+    resumeRef.current = null;
+    const t = setTimeout(() => { void readAll(syms); }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   /**
    * Read a holding's evidence.
@@ -569,7 +587,14 @@ export function useBook(opts?: { includeBench?: boolean }) {
       while (!stopRef.current) {
         const k = i++;
         if (k >= todo.length) return;
-        await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental');
+        // A throw here used to end the worker silently and the batch with it
+        // — three names in, "finished". Every name is attempted; a failure is
+        // recorded on its row and the loop continues. (zzz744)
+        try { await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental'); }
+        catch (e: any) {
+          const sym = todo[k];
+          setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], state: r[sym].summary ? 'done' : 'error', error: `batch: ${String(e?.message || e)}` } } : r));
+        }
         done++;
         setBatch((b) => (b.running ? { ...b, done } : b));
       }

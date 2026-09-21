@@ -41,7 +41,7 @@ import {
   loadLedger, persistEvidenceRun, persistAttempt, persistSeen, docsFromRoute,
 } from '@/lib/thesis/evidence-store';
 import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary } from '@/lib/thesis/evidence-ledger';
-import { extractFirstPdf } from '@/lib/pdf-text-extractor';
+import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
 import {
@@ -302,7 +302,12 @@ export async function GET(req: NextRequest) {
       outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'budget_exhausted', chars: 0, pages: 0 });
       continue;
     }
-    const e = await extractFirstPdf([cand.url]);
+    // Evidence documents are read with evidence-sized limits: SOTL's
+    // presentation is 7.8 MB and its annual report 8 MB, both over the 5 MB
+    // results-PDF cap, and both came back as "no response" because the
+    // convenience wrapper dropped the reason. The real reason is now kept
+    // and shown on the card. (zzz744)
+    const e = await extractPdfText(cand.url, { maxBytes: 25 * 1024 * 1024, timeoutMs: 30_000 });
     const body = String(e?.text || '');
     const pages = Number(e?.pages || 0);
     if (!e || e.source === 'FAILED') {
@@ -333,9 +338,10 @@ export async function GET(req: NextRequest) {
     // Documents exist but none could be read: that is a retrieval failure of
     // ours (download / OCR), never an absence of disclosure.
     const state = discovery.state === 'EVIDENCE_FOUND' && (scanned || failed) ? 'RETRIEVAL_FAILED' : discovery.state;
+    const docReasons = outcomes.filter((o) => o.outcome !== 'read').map((o) => `${o.label}: ${o.outcome.replace('_', ' ')}${o.detail ? ` (${o.detail})` : ''}`).join('; ');
     const attempt = await persistAttempt(ticker, 'IN', runId, startedAt,
       state === 'RETRIEVAL_FAILED' ? 'SOURCE_UNAVAILABLE' : 'NO_DISCLOSURE',
-      state === 'RETRIEVAL_FAILED' ? discovery.summary : null,
+      state === 'RETRIEVAL_FAILED' ? (docReasons || discovery.summary) : null,
       { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate });
     return NextResponse.json({
       ok: false,

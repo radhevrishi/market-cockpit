@@ -32,7 +32,27 @@ function cacheKey(url: string): string {
 
 // PATCH 1057: wrap inner fetch with 1 retry + 500ms backoff for transient
 // NSE archive timeouts. Cache check stays outside the retry loop.
-export async function extractPdfText(url: string, opts: { signal?: AbortSignal } = {}): Promise<ExtractedPdf> {
+export interface ExtractOpts {
+  signal?: AbortSignal;
+  /** Evidence documents (annual reports, presentations) run to 8–15 MB; the
+   *  5 MB default was written for results PDFs. (zzz744) */
+  maxBytes?: number;
+  timeoutMs?: number;
+}
+
+/** bseindia.com refuses datacenter IPs the way screener.in does; the mc-proxy
+ *  Worker relays public exchange PDFs on its open path. Derived from the same
+ *  SCREENER_PROXY_URL contract (`…/page?url=`), so no new configuration. */
+function exchangeProxyFor(url: string): string | null {
+  const base = process.env.SCREENER_PROXY_URL || '';
+  if (!base || !/\/page\?url=$/.test(base)) return null;
+  let host = '';
+  try { host = new URL(url).hostname; } catch { return null; }
+  if (!/(^|\.)bseindia\.com$|(^|\.)nseindia\.com$/i.test(host)) return null;
+  return `${base}${encodeURIComponent(url)}`;
+}
+
+export async function extractPdfText(url: string, opts: ExtractOpts = {}): Promise<ExtractedPdf> {
   // KV cache check (no retry needed for cache hit)
   if (isRedisAvailable()) {
     const cached = await kvGet<ExtractedPdf>(cacheKey(url));
@@ -44,13 +64,25 @@ export async function extractPdfText(url: string, opts: { signal?: AbortSignal }
     await new Promise((r) => setTimeout(r, 500));
     result = await _extractPdfInner(url, opts);
   }
+  // Exchange hosts that refuse this IP: once more through the proxy, and the
+  // failure reason says both hops were tried.
+  if (result.source === 'FAILED' && /HTTP (403|4\d\d|5\d\d)|abort|timeout|fetch|network/i.test(result.failure_reason || '')) {
+    const via = exchangeProxyFor(url);
+    if (via) {
+      const direct = result.failure_reason;
+      result = await _extractPdfInner(via, { ...opts, timeoutMs: Math.max(opts.timeoutMs || 0, 30_000) });
+      if (result.source === 'FAILED') result = { ...result, url, failure_reason: `direct: ${direct}; via proxy: ${result.failure_reason}` };
+      else result = { ...result, url };
+    }
+  }
   return result;
 }
 
-async function _extractPdfInner(url: string, opts: { signal?: AbortSignal } = {}): Promise<ExtractedPdf> {
+async function _extractPdfInner(url: string, opts: ExtractOpts = {}): Promise<ExtractedPdf> {
   // Fetch the PDF
+  const maxBytes = opts.maxBytes || MAX_PDF_BYTES;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs || FETCH_TIMEOUT_MS);
   const signal = opts.signal || controller.signal;
 
   try {
@@ -67,13 +99,13 @@ async function _extractPdfInner(url: string, opts: { signal?: AbortSignal } = {}
     }
     // Read content-length to skip huge PDFs
     const lenHdr = res.headers.get('content-length');
-    if (lenHdr && parseInt(lenHdr) > MAX_PDF_BYTES) {
-      return { url, text: '', bytes: parseInt(lenHdr), source: 'FAILED', failure_reason: 'PDF too large' };
+    if (lenHdr && parseInt(lenHdr) > maxBytes) {
+      return { url, text: '', bytes: parseInt(lenHdr), source: 'FAILED', failure_reason: `PDF too large (${(parseInt(lenHdr) / 1048576).toFixed(1)} MB > ${(maxBytes / 1048576).toFixed(0)} MB)` };
     }
 
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_PDF_BYTES) {
-      return { url, text: '', bytes: buf.length, source: 'FAILED', failure_reason: 'PDF too large' };
+    if (buf.length > maxBytes) {
+      return { url, text: '', bytes: buf.length, source: 'FAILED', failure_reason: `PDF too large (${(buf.length / 1048576).toFixed(1)} MB > ${(maxBytes / 1048576).toFixed(0)} MB)` };
     }
 
     // Lazy import pdf-parse (heavy lib, only on demand)

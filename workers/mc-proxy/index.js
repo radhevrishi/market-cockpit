@@ -56,6 +56,7 @@ const ALLOWED_HOSTS = [
   // Everything below requires PROXY_SECRET.
   'www.nseindia.com',
   'nseindia.com',
+  'nsearchives.nseindia.com',
   'www.bseindia.com',
   'bseindia.com',
   'api.bseindia.com',
@@ -65,8 +66,13 @@ const ALLOWED_HOSTS = [
   'query2.finance.yahoo.com',
 ];
 
-/** Hosts that do not need the shared secret. Public read-only pages only. */
-const OPEN_HOSTS = ['www.screener.in', 'screener.in'];
+/** Hosts that do not need the shared secret. Public read-only pages only.
+ *  bseindia.com joined in zzz744: exchange filing PDFs are public documents
+ *  and BSE refuses datacenter IPs exactly as screener.in does, so the
+ *  evidence reader could not download SOTL's presentation from Railway. The
+ *  same trade as for screener.in applies (see header): GET/HEAD only, no
+ *  body, no cookies, nothing a caller could not fetch from a laptop. */
+const OPEN_HOSTS = ['www.screener.in', 'screener.in', 'www.bseindia.com', 'bseindia.com', 'nsearchives.nseindia.com'];
 
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
@@ -150,10 +156,10 @@ export default {
 
       const isOpenHost = OPEN_HOSTS.includes(target.hostname);
 
-      // /page is screener.in-only. A caller cannot reach a gated host through
-      // it by leaving the secret off.
+      // /page serves the open hosts only. A caller cannot reach a gated host
+      // through it by leaving the secret off.
       if (isPageRoute && !isOpenHost) {
-        return json({ error: '/page serves screener.in only; use /proxy with a secret', host: target.hostname }, 403);
+        return json({ error: '/page serves screener.in and exchange filing PDFs only; use /proxy with a secret', host: target.hostname }, 403);
       }
 
       if (!isOpenHost) {
@@ -239,7 +245,7 @@ export default {
         upstream = await fetch(new Request(target.toString(), {
           method,
           headers: outboundHeaders,
-        }), { cf: { cacheTtl: 60, cacheEverything: false }, signal: AbortSignal.timeout(10_000) });
+        }), { cf: { cacheTtl: 60, cacheEverything: false }, signal: AbortSignal.timeout(/\.pdf(\?|$)|AnnPdfOpen/i.test(target.toString()) ? 30_000 : 10_000) });
       } catch (e) {
         const ms = Date.now() - t0;
         const timedOut = String((e && e.name) || '') === 'TimeoutError';
