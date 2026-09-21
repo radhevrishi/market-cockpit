@@ -77,7 +77,15 @@ Promise<{ html: string | null; outcome: string }> {
       signal: AbortSignal.timeout(timeoutMs),
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
     });
-    if (!r.ok) return { html: null, outcome: `HTTP ${r.status}` };
+    if (!r.ok) {
+      // A proxy that refuses explains WHY in its body — the host it refused,
+      // how long the upstream took, which Cloudflare colo served it. Reporting
+      // only "HTTP 504" throws that away and leaves the next person guessing
+      // at exactly the moment the answer was handed over. (zzz735)
+      let why = '';
+      try { why = (await r.text()).slice(0, 300); } catch { /* body is optional */ }
+      return { html: null, outcome: `HTTP ${r.status}${why ? ` — ${why}` : ''}` };
+    }
     const html = await r.text();
     // A proxy that answers 200 with an error page is worse than one that
     // fails: it looks like a successful read of an empty screen.
