@@ -1,0 +1,380 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// STRUCTURAL EVIDENCE EXTRACTION — SEARCH FIRST, THEN ASK.          (zzz738)
+//
+// THE FAILURE THIS FIXES, measured on EXICOM's August 2026 concall on 21
+// September: the transcript mentions capacity 21 times, utilisation 17 times
+// and the order book 22 times — "Hyderabad facility gives us 3x production
+// capability", "between 90% and 100% utilization", "order book as of today
+// stands at roughly INR1,000 crores" — and the reader returned capacity,
+// utilisation and order book EMPTY. The document was retrieved, parsed and
+// handed to the model in full. The model was told it was reading "an Indian
+// listed company's quarterly result" and asked to fill a structural block
+// "when the document gives them", in one generic call, alongside forty other
+// fields. It did what a summariser does with a 78,000-character transcript:
+// it summarised.
+//
+// So the structural variables get their own stage, built the way an analyst
+// actually reads a transcript:
+//
+//   1. SEARCH THE BODY. Sentences that name a structural variable AND carry a
+//      number are pulled out, per family — capacity, utilisation, capex, plant,
+//      orders, customers, guidance, volume/price/mix, one-offs, working
+//      capital. Everything else is left behind. (The owner's §26 and §38.)
+//   2. ASK ONLY ABOUT THOSE. A forced tool call whose entire job is typed
+//      events: variable, before, after, unit, period, and the VERBATIM
+//      sentence the numbers came from. The schema's enums make an invented
+//      variable name impossible; the evidence field makes an invented number
+//      detectable.
+//   3. VALIDATE EVERY NUMBER. An event survives only if its evidence sentence
+//      is in the passages that were sent, and every figure in `before` and
+//      `after` appears in that sentence. A number the model could not point
+//      to in the text is a number it made up, and it is dropped and counted.
+//
+// EVERY EVENT CARRIES ITS SEMANTIC TYPE. "84% utilisation" reported for the
+// quarter and "84% utilisation" as a target for FY28 are different facts, and
+// a card that shows both as the same thing is wrong in the way that costs
+// money. ACTUAL / GUIDANCE / TARGET / MANAGEMENT_CLAIM travel with the value
+// and the downstream ledger treats only ACTUAL as a filed figure. (§28, §43)
+//
+// PURE where it matters: passage search and validation take text and return
+// data, and are tested against EXICOM's real transcript rather than a
+// browser. The model call is the only asynchronous step.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import type { VarKey } from './taxonomy';
+import { normaliseForQuoteMatch } from '@/lib/ai-gainers/announcement-reader';
+
+export type ValueType = 'ACTUAL' | 'GUIDANCE' | 'TARGET' | 'MANAGEMENT_CLAIM';
+export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
+export type Direction = 'up' | 'down' | 'flat' | 'unknown';
+
+/** The families a passage can belong to. Each maps to the ledger's VarKeys. */
+export type Family =
+  | 'capacity' | 'utilisation' | 'capex' | 'plant' | 'orders' | 'customers'
+  | 'guidance' | 'volume_price_mix' | 'one_offs' | 'working_capital' | 'execution';
+
+export interface Passage {
+  family: Family;
+  text: string;
+  doc: string;
+}
+
+export interface StructuralEvent {
+  variable: VarKey;
+  value_type: ValueType;
+  before: string | null;
+  after: string | null;
+  unit: string | null;
+  period: string | null;
+  direction: Direction;
+  /** Verbatim from the document. Validation checks it really is. */
+  evidence_text: string;
+  /** Which read document this came from, as labelled in the prompt. */
+  source: string;
+  confidence: Confidence;
+}
+
+export interface ExtractionPipeline {
+  passages_by_family: Record<string, number>;
+  passages_sent: number;
+  events_returned: number;
+  events_kept: number;
+  events_by_family: Record<string, number>;
+  dropped: Array<{ variable: string; reason: string; evidence_text: string }>;
+  model_error: string | null;
+}
+
+// ── 1. SEARCH ──────────────────────────────────────────────────────────────
+
+const FAMILY_RE: Record<Family, RegExp> = {
+  capacity: /\b(installed|production|manufacturing|plant|annual|nameplate)\s+capacit|\bcapacit(y|ies)\b|\btonnes?\b|\bTPA\b|\bMW\b|\bMTPA\b|production (run[- ]?rate|capability)/i,
+  utilisation: /utili[sz]ation|utili[sz]ed|operating at|running at|ramp[- ]?up|ramping|full capacity|near full/i,
+  capex: /\bcapex\b|capital expenditure|capital outlay|expansion (plan|programme|program)|₹\s*[\d,]+\s*cr\w*\s+(investment|capex)|invest(ed|ment) of/i,
+  plant: /new (plant|facility|unit|line|factory)|greenfield|brownfield|commission(ed|ing)|commercial production|production (commenced|started|began)|operational (from|since|in)/i,
+  orders: /order\s*book|order\s*backlog|\bbacklog\b|order\s*intake|orders?\s+(received|won|win|booked|booking)|book[- ]to[- ]bill|letter of (award|intent)|\bLOA\b|\bLOI\b|revenue visibility|pipeline of/i,
+  customers: /new customers?|customer (addition|win|added|onboard|loss|lost|churn|concentration)|design win|qualif(ied|ication)|nomination|\bOEMs?\b|programme (win|award)/i,
+  guidance: /\bguidance\b|\bguided\b|\bexpect(s|ed|ing)?\b|\btarget(s|ed|ing)?\b|\boutlook\b|\bFY\s?'?\d{2}\b|by (Q[1-4]|the end of|fiscal)/i,
+  volume_price_mix: /\bvolumes?\b|\brealisations?\b|\brealizations?\b|price (increase|hike|cut|realisation)|product mix|\bmix\b|\bASP\b/i,
+  one_offs: /one[- ]?offs?|one[- ]time|exceptional item|non[- ]recurring|write[- ]?back|provision reversal|tax (reversal|benefit|credit)|forex (gain|loss)|impairment|other income/i,
+  working_capital: /working capital|receivables?|debtors?|inventor(y|ies)|payables?|creditors?|customer advances|cash conversion|operating cash/i,
+  execution: /delay(ed|s)?|deferred|postponed|slippage|behind schedule|ahead of schedule|on track|execution/i,
+};
+
+/** Split into sentences that are long enough to carry a fact. */
+function sentencesOf(text: string): string[] {
+  const t = text.replace(/\s+/g, ' ').trim();
+  // Split on sentence enders followed by a capital, a quote or a digit; keep
+  // page markers out of the middle of sentences.
+  return t.split(/(?<=[.!?])\s+(?=[A-Z"“0-9₹])/).map((s) => s.trim()).filter((s) => s.length >= 40);
+}
+
+const HAS_NUMBER = /\d/;
+
+/**
+ * Pure: the sentences worth asking about.
+ *
+ * A sentence qualifies for a family when it matches that family's vocabulary
+ * AND contains a number — a paragraph saying "capacity utilisation improved"
+ * with no figure is management tone, not evidence, and is deliberately left
+ * out. Neighbouring sentences are attached because a number frequently sits
+ * one sentence away from the noun it belongs to ("...what is the current
+ * utilization? / So the Hyderabad plant... 65%").
+ */
+export function findPassages(text: string, doc: string, opts?: { maxPerFamily?: number; context?: number }): Passage[] {
+  const maxPer = opts?.maxPerFamily ?? 8;
+  const ctx = opts?.context ?? 1;
+  const sents = sentencesOf(text);
+  const out: Passage[] = [];
+
+  for (const fam of Object.keys(FAMILY_RE) as Family[]) {
+    const re = FAMILY_RE[fam];
+    const got = new Set<number>();
+    let count = 0;
+    for (let i = 0; i < sents.length && count < maxPer; i++) {
+      if (!re.test(sents[i])) continue;
+      // The number may be in this sentence or a neighbour.
+      const lo = Math.max(0, i - ctx), hi = Math.min(sents.length - 1, i + ctx);
+      const windowText = sents.slice(lo, hi + 1).join(' ');
+      if (!HAS_NUMBER.test(windowText)) continue;
+      // Skip windows that overlap one already taken for this family.
+      let overlaps = false;
+      for (let k = lo; k <= hi; k++) if (got.has(k)) { overlaps = true; break; }
+      if (overlaps) continue;
+      for (let k = lo; k <= hi; k++) got.add(k);
+      count++;
+      out.push({ family: fam, text: windowText.slice(0, 900), doc });
+    }
+  }
+  return out;
+}
+
+// ── 2. ASK ─────────────────────────────────────────────────────────────────
+
+/** The variables the extractor may name. Anything else is refused by the
+ *  schema, not by a post-hoc filter. */
+const EVENT_VARIABLES: VarKey[] = [
+  'capacity', 'capacity_addition', 'utilisation', 'new_plant', 'commissioning', 'capacity_bottleneck',
+  'order_intake', 'order_book', 'book_to_bill', 'revenue_visibility',
+  'capex', 'capex_status', 'capex_earning',
+  'new_customer', 'customer_loss', 'customer_concentration', 'new_product', 'qualification', 'approval',
+  'volume', 'price', 'mix', 'exports',
+  'guidance', 'management_target',
+  'working_capital', 'one_offs', 'raw_materials', 'margin_driver',
+  'supply_bottleneck', 'execution_delay', 'shutdown',
+];
+
+export const EVENT_TOOL = {
+  name: 'record_structural_events',
+  description: 'Record every structural fact the passages state, one event per fact. Numbers must be copied exactly as printed and the evidence_text must be the verbatim sentence they came from.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      events: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            variable: { type: 'string', enum: EVENT_VARIABLES },
+            value_type: { type: 'string', enum: ['ACTUAL', 'GUIDANCE', 'TARGET', 'MANAGEMENT_CLAIM'] },
+            before: { type: ['string', 'null'], description: 'The earlier value exactly as printed, e.g. "72%", "Rs 1,200 crore". Null when the passage states no earlier value — NEVER derive one.' },
+            after: { type: ['string', 'null'], description: 'The current or stated value exactly as printed.' },
+            unit: { type: ['string', 'null'] },
+            period: { type: ['string', 'null'], description: 'As stated: "Q1 FY27", "FY27", "August 2026".' },
+            direction: { type: 'string', enum: ['up', 'down', 'flat', 'unknown'] },
+            evidence_text: { type: 'string', description: 'The verbatim sentence(s) from the passage, unedited.' },
+            source: { type: 'string', description: 'The SOURCE label of the passage this came from.' },
+            confidence: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+          },
+          required: ['variable', 'value_type', 'before', 'after', 'unit', 'period', 'direction', 'evidence_text', 'source', 'confidence'],
+        },
+      },
+    },
+    required: ['events'],
+  },
+} as const;
+
+const SYSTEM = `You are extracting structural business evidence from passages of a listed company's own documents — concall transcript, investor presentation, results filing, exchange announcement.
+
+RULES THAT ARE NOT NEGOTIABLE
+- Record only what a passage STATES. Copy every number exactly as printed, with its unit. Never convert crore to million, never round, never compute a change the passage does not itself state.
+- "before" is filled ONLY when the passage states an earlier value. If only the current value is stated, before is null. Never infer a prior value from a growth rate.
+- value_type: ACTUAL for a reported figure for a completed period. GUIDANCE for a number management guides to. TARGET for a level management aims for. MANAGEMENT_CLAIM for a qualitative assertion with a number attached ("3x capacity") that is not a reported metric.
+- A management expectation is never ACTUAL. "We expect 80% utilisation by FY28" is TARGET with after="80%", period="FY28".
+- Several product lines may each have their own figure ("90-100% on AC, 65% on DC"). Record each as its own event with the line named in evidence_text; do not average them.
+- evidence_text must be the verbatim sentence. It will be checked against the document; an edited or paraphrased sentence causes the whole event to be discarded.
+- If a family of passages contains no usable figure, record nothing for it. Silence is correct; invention is not.
+- Revenue, profit and margin figures are NOT structural events and must not be recorded here — they come from the financial statements separately.`;
+
+export interface ReadDoc { label: string; kind: string; text: string; }
+
+/**
+ * Extract typed structural events from the documents that were read.
+ *
+ * Returns the events that survived validation and a pipeline record that says
+ * how many passages were found per family, how many events came back, and
+ * every one that was dropped with the reason — so the debug panel can say
+ * whether nothing was found, or something was found and thrown out.
+ */
+export async function extractStructuralEvents(
+  docs: ReadDoc[],
+  ticker: string,
+  opts: { apiKey: string; model: string; maxPassages?: number },
+): Promise<{ events: StructuralEvent[]; pipeline: ExtractionPipeline }> {
+  const passages: Passage[] = [];
+  for (const d of docs) passages.push(...findPassages(d.text, d.label));
+
+  const byFam: Record<string, number> = {};
+  for (const p of passages) byFam[p.family] = (byFam[p.family] || 0) + 1;
+
+  const capped = passages.slice(0, opts.maxPassages ?? 90);
+  const pipeline: ExtractionPipeline = {
+    passages_by_family: byFam,
+    passages_sent: capped.length,
+    events_returned: 0,
+    events_kept: 0,
+    events_by_family: {},
+    dropped: [],
+    model_error: null,
+  };
+  if (!capped.length) return { events: [], pipeline };
+
+  const prompt = `${ticker}\n\n` + capped
+    .map((p, i) => `[${i + 1}] FAMILY: ${p.family} | SOURCE: ${p.doc}\n${p.text}`)
+    .join('\n\n');
+
+  let raw: any[] = [];
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': opts.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: opts.model,
+        max_tokens: 6000,
+        system: SYSTEM,
+        tools: [EVENT_TOOL],
+        tool_choice: { type: 'tool', name: EVENT_TOOL.name },
+        messages: [{ role: 'user', content: prompt }],
+      }),
+      signal: AbortSignal.timeout(100_000),
+    });
+    if (!resp.ok) {
+      pipeline.model_error = `HTTP ${resp.status}`;
+      return { events: [], pipeline };
+    }
+    const j = await resp.json();
+    const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === EVENT_TOOL.name);
+    raw = Array.isArray(call?.input?.events) ? call.input.events : [];
+  } catch (e: any) {
+    pipeline.model_error = String(e?.message || e);
+    return { events: [], pipeline };
+  }
+
+  pipeline.events_returned = raw.length;
+  const { kept, dropped } = validateEvents(raw, capped);
+  pipeline.events_kept = kept.length;
+  pipeline.dropped = dropped;
+  for (const ev of kept) pipeline.events_by_family[ev.variable] = (pipeline.events_by_family[ev.variable] || 0) + 1;
+  return { events: kept, pipeline };
+}
+
+// ── 3. VALIDATE ────────────────────────────────────────────────────────────
+
+const numberTokens = (s: string | null): string[] =>
+  s ? (s.match(/\d[\d,]*(?:\.\d+)?/g) || []).map((x) => x.replace(/,/g, '')) : [];
+
+/**
+ * Pure: keep only events whose numbers the text can vouch for.
+ *
+ * Two checks, both against the passages that were actually sent:
+ *   - the evidence sentence must appear in them (normalised, so a curly
+ *     quote or a line-break hyphen does not fail an honest quote);
+ *   - every number in `before` and `after` must appear in the evidence
+ *     sentence.
+ * A failed check drops the event and records why. The count of dropped
+ * events is itself a signal: a model that invents is a model to distrust.
+ */
+export function validateEvents(raw: any[], passages: Passage[]): { kept: StructuralEvent[]; dropped: ExtractionPipeline['dropped'] } {
+  const corpus = normaliseForQuoteMatch(passages.map((p) => p.text).join(' '));
+  const kept: StructuralEvent[] = [];
+  const dropped: ExtractionPipeline['dropped'] = [];
+  const seen = new Set<string>();
+
+  for (const e of raw) {
+    const variable = String(e?.variable || '') as VarKey;
+    const ev = String(e?.evidence_text || '').trim();
+    const drop = (reason: string) => dropped.push({ variable, reason, evidence_text: ev.slice(0, 160) });
+
+    if (!EVENT_VARIABLES.includes(variable)) { drop('variable not in schema'); continue; }
+    if (ev.length < 25) { drop('evidence too short to verify'); continue; }
+    const q = normaliseForQuoteMatch(ev);
+    // The first 60 normalised characters must be present verbatim. Long
+    // quotes drift at the end (a trailing clause dropped) far more often than
+    // at the start, and 60 characters is already too specific to fake.
+    if (!corpus.includes(q.slice(0, 60))) { drop('evidence sentence not found in the document'); continue; }
+
+    const before = e?.before == null ? null : String(e.before).trim() || null;
+    const after = e?.after == null ? null : String(e.after).trim() || null;
+    if (!before && !after) { drop('no value stated'); continue; }
+    const evNums = numberTokens(ev);
+    const missing = [...numberTokens(before), ...numberTokens(after)].filter((n) => !evNums.includes(n));
+    if (missing.length) { drop(`figure ${missing[0]} does not appear in the evidence sentence`); continue; }
+
+    const vt = String(e?.value_type || '');
+    const value_type: ValueType = (['ACTUAL', 'GUIDANCE', 'TARGET', 'MANAGEMENT_CLAIM'] as const).includes(vt as any) ? vt as ValueType : 'MANAGEMENT_CLAIM';
+    const dir = String(e?.direction || 'unknown');
+    const direction: Direction = (['up', 'down', 'flat', 'unknown'] as const).includes(dir as any) ? dir as Direction : 'unknown';
+    const conf = String(e?.confidence || 'LOW');
+    const confidence: Confidence = (['HIGH', 'MEDIUM', 'LOW'] as const).includes(conf as any) ? conf as Confidence : 'LOW';
+
+    const key = `${variable}|${value_type}|${before}|${after}|${q.slice(0, 40)}`;
+    if (seen.has(key)) continue;            // same fact from two passages
+    seen.add(key);
+
+    kept.push({
+      variable, value_type, before, after,
+      unit: e?.unit == null ? null : String(e.unit),
+      period: e?.period == null ? null : String(e.period),
+      direction,
+      evidence_text: ev.slice(0, 600),
+      source: String(e?.source || passages[0]?.doc || ''),
+      confidence,
+    });
+  }
+  return { kept, dropped };
+}
+
+// ── 4. INTO THE LEDGER ─────────────────────────────────────────────────────
+
+/**
+ * Pure: the strongest event per variable, for the thesis ledger.
+ *
+ * ACTUAL beats everything, then GUIDANCE, then TARGET, then a claim; within a
+ * type, one with a `before` beats one without (it can state a change), and
+ * higher confidence wins ties. Targets and claims are returned too, under
+ * their own key, so a card can show "84% actual · 90% target" and never mix
+ * the two.
+ */
+export function bestEventPerVariable(events: StructuralEvent[]): Map<VarKey, { actual: StructuralEvent | null; forward: StructuralEvent | null }> {
+  const rank: Record<ValueType, number> = { ACTUAL: 0, GUIDANCE: 1, TARGET: 2, MANAGEMENT_CLAIM: 3 };
+  const conf: Record<Confidence, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+  const better = (a: StructuralEvent, b: StructuralEvent) =>
+    (rank[a.value_type] - rank[b.value_type])
+    || ((a.before ? 0 : 1) - (b.before ? 0 : 1))
+    || (conf[a.confidence] - conf[b.confidence]);
+  const out = new Map<VarKey, { actual: StructuralEvent | null; forward: StructuralEvent | null }>();
+  for (const e of events) {
+    const slot = out.get(e.variable) || { actual: null, forward: null };
+    const isForward = e.value_type === 'GUIDANCE' || e.value_type === 'TARGET';
+    if (isForward) {
+      if (!slot.forward || better(e, slot.forward) < 0) slot.forward = e;
+    } else if (!slot.actual || better(e, slot.actual) < 0) {
+      slot.actual = e;
+    }
+    out.set(e.variable, slot);
+  }
+  return out;
+}

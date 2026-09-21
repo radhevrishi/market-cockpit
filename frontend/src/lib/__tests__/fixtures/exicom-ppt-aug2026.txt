@@ -1,0 +1,2367 @@
+Date: August 10, 2026
+BSE Limited
+National Stock Exchange of India Limited
+1st Floor, New Trading Wing, Rotunda Building Exchange Plaza, 5th Floor, C – 1, Block G Bandra
+Phiroze Jeejeebhoy Towers, Dalal Street, Fort – Kurla Complex, Bandra (E) Mumbai – 400051
+Mumbai – 400001
+corp.relations@bseindia.com
+
+cmlist@nse.co.in
+
+SCRIP Code- 544133
+
+Symbol-EXICOM
+
+RE:
+
+Disclosure under Regulation 30 of the Securities and Exchange Board of India
+(Listing Obligations and Disclosure Requirements) Regulations, 2015, as
+amended (“SEBI Listing Regulations”)
+
+Subject:
+
+Investors’ Presentation
+
+Dear Sir/Madam,
+This is in continuation of our intimation dated August 04, 2026.
+In terms of Regulation 30 read with Para A of Part A of Schedule III to the SEBI Listing Regulations, we
+hereby submit a copy of the Investors’ Presentation, inter alia, on the Unaudited Financial Results of
+the Company for the first quarter of the financial year 2026-27 on both standalone and
+consolidated basis (“Financial Results”), to be discussed during the Investors’ Call scheduled to be
+held today, i.e., Monday, August 10, 2026 at 4:00 p.m. (IST).
+It may be noted that the Board of Directors of the Company has considered and approved the Financial
+Results at its meeting held today.
+The aforesaid intimation is also being made available on the Company’s website at www.exicom.com.
+We request you to take the above information on your record.
+Thanking you.
+Yours faithfully,
+For Exicom Tele-Systems Limited
+SANGEETA
+KARNATAK
+
+Digitally signed by SANGEETA
+KARNATAK
+Date: 2026.08.10 14:18:32 +05'30'
+
+Sangeeta Karnatak
+Company Secretary & Compliance Officer
+Encl.: Investors’ Presentation
+
+Investor Presentation
+Q1 FY’2027
+
+1
+
+Message from CEO
+On Overall performance
+
+Standalone revenue rose 57% year on year to ₹237 crore and EBITDA more than doubled to ₹21
+crore, lifting the EBITDA margin to 8.8%. On a Consolidated basis, revenue grew 61% to ₹331
+crore, with the EBITDA loss narrowing to -₹22.5 crore from -₹38.6 crore.
+My confidence comes from what both businesses won: more customers, more geographies, a
+stronger order book, and commitments that deliver through FY27
+
+On Tritium outlook
+
+Tritium's order momentum continues: Q1 bookings of USD 20.8m, ~2x QoQ. GRID-FLEX went live
+at a hyperscale customer in June, supporting a potential 100-unit (~USD 15m) order by endSeptember. TRI-FLEX is in lab validation with the largest US open public charging network,
+targeting public rollout from Q2 CY27. Breakeven remains on track for Q4 FY27.
+
+Mr Anant Nahata
+MD & CEO
+Exicom Tele-Systems Limited
+
+Key Financials: Q1 FY27
+Particular Rs Cr
+Revenue
+EBITDA
+PAT
+
+Standalone
+% of Revenue
+Consolidated % of Revenue
+236.8 57.2% YoY Growth
+331.1 61.2% YoY Growth
+20.9
+8.8%
+(21.9)
+-6.6%
+4.9
+2.1%
+(73.6)
+-22.2%
+
+2
+
+Shaping Tomorrow
+Megatrends Driving Change
+
+Next-gen Technology
+
+Increasing Fuel Prices
+
+Energy Security
+
+Rise In data traffic
+
+Off-grid Solutions
+
+Cutting-edge technology to be
+explored as auto OEMs invest
+Billions of dollars in EV related
+technologies & plant upgrades
+over the next 5-10 years
+
+Skyrocketing fuel prices
+make e-mobility a costeffective choice owing to
+its lower operating costs
+
+Prioritizing EV to
+decouple from fossil fuel
+volatility, creating
+massive policy-led
+demand.
+
+Increasing mobile data
+demand and 4G/5G
+adoption driving DC power
+system & battery upgrades
+to service heavier loads
+
+Expansion of telecom
+network in limited grid
+availability locations.
+Solutions involving
+complete power
+management solutions.
+
+3
+
+Content
+● Business Update
+○
+
+Critical Power
+
+○
+
+EVSE
+
+○
+
+Tritium
+
+● Financial Update Q1 FY27
+● About Exicom
+
+4
+
+Critical Power
+Business Update
+
+5
+
+Business Update – Critical Power
+Consolidated
+Critical Power Revenue (Rs Cr)
+
++72.9%
+
+Highlights of Q1
+Revenue increase largely from new orders won and executing the orders in hand.
+●
+
+Private Telecom Operator
+○
+Entered into supply agreement for power systems and batteries with one of the largest Tower Co's
+○
+Secured large DC Power Systems order from a leading Telco worth ~₹85 Cr.
+○
+Large volume to offset part of cost rise due to forex, commodity
+
+●
+
+Govt Supplies
+○
+Manufactured and supplied Smart Enclosures , Hybrid Power Systems and equivalent Li-ion Batteries in Q1
+○
+Exicom has 60% market share of this project
+○
+Commodity led fluctuations and availability have limited project supply quantity and margins (due to
+fixed price contract) in Q1'F27 for HUPS, Li-ion batteries and Smart Racks 1
+Exports
+○
+Key exports market of Africa, Middle East and SEA with export sales of ~15 Cr in Q1 (~8% of sales) and new order
+booking , expecting a better year of exports sales FY2027
+
+-10.9%
+198.9
+177.2
+
+102.5
+
+●
+
+Q1 FY26
+
+•
+•
+•
+
+Q4 FY26
+
+Q1 FY27
+
+Q1 Performance: ~73% YoY growth.
+Export from India for Q1 : 8% of critical power
+sales
+Order Book of Rs +1000 Cr as of 30th June’26
+
+●
+
+Long Tail Developments
+○
+Added multiple small customers for their requirements of DCPS in their IP networks
+○
+Multiple (>10) BESS deployments between 10-50kWh giving us good learnings on product market with ability to
+scale up in H2 of FY’27
+
+●
+
+Key Future Opportunities ~
+○ Incremental potential over and above the existing order book for FY'27
+Investor Presentation –Q1 FY27
+
+6
+
+Key Future Opportunities ~
+
+~Incremental potential over and above the existing order book
+
+Key customers
+
+Current & Near-term outlook
+
+DC Power System for Private Telco's
+
+Q2 FY27: Won 140Cr+ orders for DC Power systems from India's leading Telco; to
+be executed over FY'27
+Expectation to win more orders for Q4'FY27 supply
+
+BharatNet Phase 3
+
+Already ~700Cr of open supply orders and ~800 Cr 10 years service contract post
+supplies. Target on strong execution
+
+BSNL 4G Saturation – Uncovered
+Villages Phase-2
+
+Won 250 sites PO; overall 2K sites targeted with contract value of ~90 Cr in FY27
+
+Leading Tower Company-1
+
+Started supplies of Li-ion batteries and DC Power systems with leading share of
+business
+
+Leading Tower Company-2
+
+Gearing to start large Li-ion battery supplies from Q4'FY27 onwards
+
+Investor Presentation –Q1 FY27
+
+7
+
+Five forces are redefining how operators buy site power
+
+01
+
+Higher-density 5G loads
+
+Compact, modular and field-expandable power
+
+02
+
+Lead-acid → intelligent lithium
+
+Smaller footprint, cycle life and state visibility
+
+03
+
+Generator → hybrid energy
+
+Grid, solar and storage coordinated as one system
+
+04
+
+Backup → active energy asset
+
+Peak shaving, tariff shifting and priority backup
+
+05
+
+Alarms → fleet intelligence
+
+Remote tests, prediction and fewer site visits
+
+Investor Presentation –Q1 FY27
+
+8
+
+Three growth vectors on a proven, profitable base
+1
+
+2
+
+3
+
+STRENGTHEN THE BASE
+
+DIVERSIFY · NEW APPLICATION
+
+EXPAND · NEW GEOGRAPHIES
+
+Shift the telecom mix to private customers
+
+Build a BESS offering for C&I & home
+
+Grow telecom exports; open the Americas
+
+THE OPPORTUNITY
+
+THE OPPORTUNITY
+
+THE OPPORTUNITY
+
+A large, consolidated tower base is modernizing to 5G, solar
+& lithium — recurring upgrade demand from buyers who
+reward performance over lowest price
+
+Policy tailwinds plus solar-plus-storage reaching ROI viability;
+C&I brings B2B volume and scale, B2C brings margin
+
+Growth markets prefer the solution approach that Exicom
+champions.
+
+Storage engineered to the site — conversion, storage &
+controls — on a shared EV/telecom supply chain.
+
+Operators increasingly evaluate site power through lifetime
+outcomes and Exicom's end to end product stack allows for
+low risk adjusted lifetime cost per network hour
+
+Current progress: Overall revenue on track; large orders
+from private and public sector in India received. Pace of
+exports to increase in Q2'FY27
+
+Current progress: 15 MWh (~ INR 20 Cr) in hand + 34 MWh
+(~ INR 45 Cr) advanced pipeline via direct customers and
+distributor
+
+Current progress: Momentum there across regions with
+~15Cr sales in Q1; ongoing pilots to be converted to mass
+supplies resulting into hgiher quarterly export numbers
+
+TARGET
+
+TARGET
+
+TARGET
+
+~40% wallet share with Strategic Customers in
+FY27
+
+₹150 Cr order book in FY27
+
+₹140 Cr export business in FY27
+
+Exicom is well positioned to cater to the same with end to
+end product stack and powering every telecom use case
+
+ALSO, IN VIEW · DATA CENTRES A fourth opportunity — but our high-C-rate battery offering is still early-stage; we're building the solution with partners.
+
+Exicom | Critical Power — Private & Confidential
+
+Investor Presentation –Q1 FY27
+
+9
+
+EV Chargers
+Business update
+
+10
+
+Market & Revenue Update – EVSE
+Apr – Jun 2026
+Record quarter for e-4W — 85,845 e-PV registrations in Q1 FY27, up 38.1% QoQ and ~93% YoY, with June crossing 31,000 units.
+
+Standalone
+EVSE Revenue (Rs Cr)
+
+Industry Update
+Electric vehicle sales trend
+
++15.1%
+
+31,388
+28,017
+23,806
+18,591
+
+16,343
+13,331
+
+13,318
+
+14,056
+
+284
+
+338
+
+529
+
+363
+
+394
+
+19,377
+
+19,251
+16,688
+
+346
+
+290
+
+87.9
+
+25,266
+
+15,713
+
+15,810
+
+369
+
+569
+
+14,857
+
+391
+
+578
+
+559
+
+347
+
+320
+
+710
+
+Apr-25 May-25 Jun-25 Jul-25 Aug-25 Sep-25 Oct-25 Nov-25 Dec-25 Jan-26 Feb-26 Mar-26 Apr-26 May-26 Jun-26
+e-4W
+
+Q1 FY26
+
+• EV penetration in cars up 4.5% → 6.8%;
+
+Q1 FY27
+
+• New launches: Tata Motors Intra EV Pickup,
+Montra Electric EVIATOR 350 & EVIATOR
+350L+
+• 6,000+ registrations in Q1
+
+Electric passenger-vehicle registrations, revised VAHAN basis
+
+Charging Infra
+
+Commercial Veh
+
+E-4W
+
+Q4 FY26
+
+e-Bus
+
+Monthly figures are archived VAHAN snapshots and must not be summed to the revised quarterly totals shown at right. Sources: EVreporter, Autocar
+Professional, JMK Research.
+
+• New Launches: Tata Sierra.ev , Tiago.ev
+refresh, Toyota Ebella, Mercedes Benz S450,
+Tesla Y L, Vinfast VF MPV 7
+
+60.8
+
+52.8
+
+Charging Infra Build-Out
+
+• Vinfast launched Green SM cabs in Delhi NCR.
+Plans to establish charging station
+• 4,874 new public chargers approved under
+PM E-Drive
+
+EV Industry has crossed its tipping Point in Q1 and looks poised for very steady growth in next few quarters
+Investor Presentation –Q1 FY27
+
+11
+
+Q1 FY27 Market Scorecard: All Three Segments
+Apr – Jun 2026
+Passenger EVs are the volume engine; buses and trucks are the value-per-site engine. Registration timing differs sharply by segment, so each needs a different read.
+PASSENGER EV (e-PV)
+
+85,845
+
+ELECTRIC BUS
+
+Q1 FY27
+registrations
+
+QoQ +38.1%
+
+~1,377
+
+YoY ~+93%
+
+QoQ −9.9%
+
+e-GOODS CARRIERS (N1/N2/N3)
+
+~6,436
+
+Q1 FY27
+registrations
+H1 YoY +40%
+
+Q1 FY27
+registrations
+
+QoQ +28.9%
+
+FY26 YoY +166.9%
+
+• Largest immediately addressable chargervolume pool
+
+• Registrations lag the contracted pipeline —
+buses deploy in batches
+
+• June ~2,487 registrations — highest in the sixmonth series
+
+• June crossed 31,300 registrations
+
+• June was the strongest month at 710
+registrations
+
+• Narrow heavy e-truck series: H1 611 vs 139,
++339.6% YoY
+
+• H1 registrations 2,944; Switch, JBM and PMI
+~70% of H1
+
+• Tata >40% of broad e-goods in May and June
+
+• Growth accompanied by OEM diversification,
+not just leader scaling
+
+Quarterly totals use revised VAHAN-based series for market sizing; monthly figures use archived snapshots for direction only. Sources: EVreporter, Autocar Professional, JMK Research, Sustainable Bus.
+
+What this means for Exicom
+•
+
+Increased demand for AC charger orders
+through both OEM and E commerce Channel
+for Exicom
+
+•
+
+Increase in 240 KW DC fast chargers from both
+existing and new customers;
+
+•
+
+Increase in demand for both wall-box 7.4 kw
+chargers and DC fast chargers
+
+Volume in Passenger EVs, Value per Site in Buses and Trucks — Resulting in Overall Increased demand for EV chargers
+Investor Presentation –Q1 FY27
+
+12
+
+Policy Update: What Changed in Q1 FY27
+Apr – Jun 2026
+Three notifications move charging from incentive to obligation. AC charger demand now has a building-code floor, not just a subsidy.
+HARYANA BUILDING CODE
+
+NEW · Notified 5-Jun-26
+
+DELHI EV POLICY 2026
+
+PM E-DRIVE CHARGING
+
+NEW · Notified 30-Jun-26
+
+UPDATE · Announced 12-May-26
+
+1:3
+
+charge points per car park commercial
+buildings
+
+₹15,000 Cr four-year outlay
+
+₹504 Cr sanctioned in this tranche
+
+1:5
+
+per car park group housing & RWA
+
+30,000+
+
+4,874
+
+charging points planned
+
+public chargers
+
+•
+
+100% EV-ready conduits mandated
+
+•
+
+One charging station per OEM dealer
+
+•
+
+~25% of the ₹2,000 Cr charging pool
+
+•
+
+Basement and stilt charging allowed
+
+•
+
+e-3W and e-N1 only from Jan-27
+
+•
+
+Karnataka largest at 1,243 chargers
+
+•
+
+EV infrastructure exempt from FAR
+
+•
+
+e-2W subsidy up to ₹30,000
+
+•
+
+Unified Bharat eCharge announced
+
+Also progressed: PM E-DRIVE Phase II — 2,900 e-buses awarded 27-May-26; concessions signed in Hyderabad (915) and Surat (600)
+deferred to 1-Sep-26
+
+·
+
+Traction-motor localisation
+
+What this means for Exicom
+Govt Support for Residential charging
+will have a positive upside
+
+Demand for Quality Hardware will improve
+
+GOVT spending on charging Infra will increase
+which is a positive for Industry. Not a very high
+target market for Exicom
+
+Charging Shifts From Incentive to Obligation — Will result in Enhanced Spending in EV Charging Infra from both Govt and Private players
+Investor Presentation –Q1 FY27
+
+13
+
+Key Highlights: Q1 FY27
+Apr – Jun 2026
+A quarter of segment completion — new OEM wins across 2W, 4W and commercial vehicles, three new products launched, and export orders from 10+ new countries.
+
+•
+
+New OEM &
+Strategic Wins
+
+New Product
+Launches
+
+Segment Coverage
+
+Pipeline Building
+
+Secured 100% share of business
+for 7.4 kW chargers with a
+leading 4W OEM
+
+•
+
+Renewed agreement with a
+leading truck OEM,
+strengthening commercial EV
+presence
+
+•
+
+Launched Type-7 chargers for a
+leading 2W OEM
+
+•
+
+Launched new Gen 2 Slim series
+(60 kW and 80 kw)
+
+•
+
+Launched Industry first smart
+power sharing DC chargers with
+proprietary ring technology (2 60
+kW chargers coupled to provide
+max power output of 120 kW per
+gun)
+
+•
+
+Launched 7.4 kW portable
+charger
+
+CPO & Network
+Growth
+
+Global
+Expansion
+
+New Accounts
+
+Exports in Focus
+
+•
+
+Added 15 new CPO customers in
+Q1 with order book of 180+ DC
+chargers under confirmed orders
+till Oct’26
+
+•
+
+Export orders from 10+ new
+countries — Europe, South
+America, South Asia and Western
+Asia .
+
+•
+
+Most of existing CPO customers
+reinvesting in network
+expansion. Repeat orders
+ongoing with value of INR 50 Cr+
+to be delivered by Oct 2026
+
+•
+
+Steady demand maintained
+across SEA markets
+
+Strong order books at end of June'26 for both AC & DC chargers for +200Cr including Exports of $2Mn.
+
+Investor Presentation –Q1 FY27
+
+14
+
+.
+
+Tritium – Momentum Shift in Demand
+Revenue & Bookings Have Started to Accelerate
+$M
+$20.8
+
+Bookings
+
+Revenue
+
+$9.9
+
+$10.3$10.3
+
+$9.3
+
+$5.0
+
+Q1 FY'26 (A)
+
+$5.0
+
+$4.4
+
+$4.0
+
+Q2 FY'26 (A)
+
+Q3 FY'26 (A)
+
+Large jump in bookings
+this quarter as our
+largest customer
+accelerated purchasing
+and deployment
+timelines.
+
+$10.4
+$23Mn current backlog
+will result in steadily
+increasing quarterly
+revenue
+
+Q4 FY'26 (A)
+
+Q1 FY'27 (A)
+
+Investor Presentation –Q1 FY27
+
+15
+
+Focus is on Strategic Customers
+EV Charging Infrastructure
+o
+
+TRI-FLEX, and DCFlex our flagship next-gen charging platform, is
+undergoing field & lab validation testing by one of the largest open
+public charging network and fleet company in the US. Subject to
+successful field trials; Tritium expected to be awarded ~20-30Mn
+contract for CY’27
+
+o
+
+Public deployments are expected in Q2’CY27.
+
+Power Infrastructure
+o
+
+First GRID-FLEX system has been delivered to a hyperscale customer
+and operating since June. Subject to successful field trials; Tritium
+expected to be awarded ~20Mn contract for CY'27
+
+Engineering efforts over the past 2 years has created strong pipeline with strategic customers and Focus is to secure majority of the orders for CY'27 in 2026
+Investor Presentation –Q1 FY27
+
+16
+
+Financial Update
+
+17
+
+Q1 FY27 Financial Highlights
+Standalone Revenue
+
+Consolidated Revenue
+
+Standalone EBITDA
+
+Consolidated EBITDA
+
+236.8 Cr
+
+20.9 Cr
+
+331.1 Cr
+
+(21.9) Cr
+
+57.2% YoY growth
+
+8.8%
+
+61.2% YoY growth
+
+-6.6%
+
+Revenue Mix (Consolidated)
+
+Export Revenue (Rs Cr) *
+
+Consolidated EBITDA Trend
+5
+
+8.5%
+
+0.1%
+
+0
+
+-6.6%
+
+-5
+
+46.0%
+
+-15
+
+Critical Power
+
+Domestic
+
+EVSE
+
+Export
+
+Order Book / Backlog : +1400 Cr
+( As of 1st July’26)
+* Export from Exicom India
+
+-11.6%
+
+-11.7%
+
+Q2 FY26
+
+Q3 FY26
+
+-10
+
+54.0%
+91.5%
+
+-20
+
+-18.8%
+
+Q1 FY26
+
+Q4 FY26
+
+Q1 FY27
+
+Net Debt : 370.1 Cr
+at consolidated level
+18
+
+Financial Highlights – Q1 FY27 (Standalone)
+Amount in Rs Cr and % from Revenue from Operation
+
+Revenue
+
+CP
+
+Gross Margins
+
+EBITDA
+
+PAT
+
+EVSE
+
++40.1%
++57%
+
+-9.4%
+
++137.3%
+
+11.9
+
+29.9
+
+76.2
+
+-16%
+
+-30.2%
+
+4.2%
+
+69.0
+
+282.1
+236.8
+150.7
+
+194.1
+176.0
+
+32.7%
+
+97.8
+
+52.8
+
+Q1 FY26
+
+10.6%
+49.3
+
+87.9
+
+Q4 FY26
+
+27.0%
+
+29.1%
+
+20.9
+8.8%
+
+5.8%
+8.8
+-5.1%
+
+60.8
+
+Q1 FY27
+
+2.1% 4.9
+
+Q1 FY26
+
+Q4 FY26
+
+Q1 FY27
+
+Q1 FY26
+
+Q4 FY26
+
+Q1 FY27
+
+-7.8
+Q1 FY26
+
+• Growth in Revenue from YoY ; 57%
+• Critical Power growth 80% YoY
+• EVSE growth 15% YoY
+
+• Q1: Improvement in GM% by 2% from
+previous quarter on account of better sale
+price in both segments and customer Mix.
+• Q1: YoY decreased by 3.6% majorly due to
+cost increase on account of USD and
+partially offset by segment Mix.
+
+• YoY Upside in revenue & margin helped
+get better operating leverage & EBIITDA
+YoY
+• Increase in fixed cost +8.7 Cr YoY on
+account of both plant running parallel,
+transition of plant from Gurgaon to
+Hyderabad
+
+Q4 FY26
+
+Q1 FY27
+
+• YoY: Depreciation cost increased in
+Q1 on account of HYD plant.
+• Other income lower on account of
+FD interest of IPO funds which have
+now been completely utilised.
+
+Investor Presentation –Q1 FY27
+
+19
+
+Financial Highlights – Q1 FY27 (Consolidated)
+Amount in Rs Cr and % from Revenue from Operation
+
+Revenue
+CP
+
+Gross Margins
+
+EBITDA
+
+PAT
+
+EVSE
+
++29.6%
++61%
+
+-15%
+
+0.3
+0.1%
+
+-16.1%
+
+2
+0
+
+125.0
+
+387.9
+
+-2
+
+104.9
+
+331.1
+81.0
+
+198.9
+
+102.5
+189.1
+
+32.2%
+
+Q4 FY26
+
+• Growth in Revenue 61% YoY
+• Critical Power growth 73% YoY
+• EVSE growth 50% YoY,
+• Tritium second consecutive quarter ~10Mn$
+sales.
+
+-12
+-14
+
+-40.5%
+
+-16
+
+153.9
+
+Q1 FY27
+
+-21.9
+
+31.7%
+
+102.8
+
+Q1 FY26
+
+-54.3
+
+-10
+
+39.4%
+
+Q1 FY26
+
+-22.2%
+
+-6
+-8
+
+177.2
+
+205.3
+
+-14.0%
+
+-4
+
+-6.6%
+
+Q4 FY26
+
+Q1 FY27
+
+• Q1: YoY Gross Margin decreased on
+account of Tritium Mix (Margin getting
+normalized with fresh inventory
+purchase)
+
+-18.8%
+
+-18
+
+-38.6
+
+-20
+
+Q1 FY26
+
+Q4 FY26
+
+Q1 FY27
+
+• Q1 YoY EBITDA improved over last year
+due to improved sales both standalone
+and consolidated, however partially
+offset with lower gross margins and
+increased fixed cost
+
+-73.6
+-83.1
+
+Q1 FY26
+
+Q4 FY26
+
+Q1 FY27
+
+• Depreciation cost increase on account of
+New Hyderabad plant in India +
+Amortization cost
+
+Investor Presentation –Q1 FY27
+
+20
+
+Standalone – Q1 FY27
+Profit and Loss Statement - Standalone
+Particulars (Rs Cr)
+
+Revenue from operations
+Other Income
+(A) Total Income
+Cost of Goods Sold
+Employee Cost
+Manufacturing Expenses
+Finance Costs
+Depreciation and Amortization Expenses
+Other Expenses
+(B) Total Expenses
+Profit/(loss) before tax from continuing operations (C) [A-B)
+(D) Exceptional Items
+(E) Tax Expenses
+(E) Profit/(Loss) for the year from continuing operations [C-D-E]
+Other Comprehensive Income (OCI) (After Tax)
+Total Comprehensive Income for the period/year (XI+XII)
+Earnings per equity share
+Basic
+Diluted
+
+Three months
+ended
+
+Preceding three
+months ended
+
+June 30, 2026
+
+March 31,2026
+
+Corresponding
+three months
+ended in the
+previous year
+June 30, 2025
+
+236.8
+7.3
+244.1
+163.8
+25.6
+4.0
+11.4
+10.3
+22.6
+237.7
+6.4
+1.5
+4.9
+-0.4
+4.6
+
+282.1
+6.3
+288.3
+199.9
+23.5
+6.0
+11.0
+9.1
+22.8
+272.3
+16.1
+4.2
+11.9
+0.6
+12.5
+
+150.7
+12.0
+162.7
+98.8
+18.1
+2.6
+13.3
+6.2
+22.4
+161.3
+1.4
+8.9
+0.3
+-7.8
+0.4
+-7.4
+
+894.8
+29.9
+924.7
+642.3
+80.9
+15.2
+44.0
+29.0
+86.4
+897.8
+26.9
+9.7
+3.6
+13.6
+0.5
+14.1
+
+-64.1%
+-58.7%
+-160.6%
+-63.5%
+
+57.2%
+-39.6%
+50.0%
+65.8%
+41.2%
+55.1%
+-14.1%
+67.4%
+0.9%
+47.3%
+367.0%
+-100.0%
+486.0%
+-163.4%
+-189.5%
+-162.0%
+
+0.35
+0.35
+
+0.88
+0.88
+
+-0.64
+-0.64
+
+1.01
+1.01
+
+-59.8%
+-59.8%
+
+-155.3%
+-155.3%
+
+Current Financial
+year ended
+
+Change
+(Prev Qtr)
+
+Change
+(Prev year
+Qtr)
+
+March 31, 2026
+
+QoQ(%)
+
+YoY(%)
+
+-16.0%
+16.0%
+-15.3%
+-18.1%
+8.9%
+-33.1%
+3.9%
+13.1%
+-1.0%
+-12.7%
+-60.1%
+
+Investor Presentation –Q1 FY27
+
+21
+
+Consolidated – Q1 FY27
+Profit and Loss Statement - Consolidated
+Particulars (Rs Cr)
+
+Revenue from operations
+Other Income
+(A) Total Income
+Cost of Goods Sold
+Employee Cost
+Manufacturing Expenses
+Finance Costs
+Depreciation and Amortization Expenses
+Other Expenses
+(B) Total Expenses
+Profit/(loss) before tax from continuing operations (C) [A-B)
+(D) Exceptional Items
+(E) Tax Expenses
+(E) Profit/(Loss) for the year from continuing operations [C-D-E]
+Other Comprehensive Income (OCI) (After Tax)
+Total Comprehensive Income for the period/year (XI+XII)
+Earnings per equity share
+Basic
+Diluted
+
+Three months
+ended
+
+Preceding three
+months ended
+
+June 30, 2026
+
+March 31,2026
+
+Corresponding
+three months
+ended in the
+previous year
+June 30, 2025
+
+331.1
+4.9
+336.0
+222.1
+50.1
+4.0
+16.2
+38.9
+76.7
+408.0
+-72.0
+1.5
+-73.6
+-18.7
+-92.2
+
+387.9
+1.9
+389.8
+256.9
+56.4
+6.0
+15.5
+35.0
+68.4
+438.2
+-48.3
+0.6
+5.4
+-54.3
+24.1
+-30.2
+
+205.3
+8.2
+213.5
+121.8
+53.1
+2.6
+15.6
+24.8
+66.5
+284.4
+-70.8
+12.0
+0.3
+-83.1
+11.5
+-71.6
+
+1,151.7
+22.8
+1,174.5
+764.1
+218.7
+15.2
+55.8
+116.3
+257.1
+1,427.2
+-252.7
+16.5
+4.9
+-274.1
+52.8
+-221.3
+
+-14.7%
+159.6%
+-13.8%
+-13.5%
+-11.1%
+-32.9%
+4.6%
+11.0%
+12.2%
+-6.9%
+49.1%
+-100.0%
+-71.7%
+35.5%
+-177.5%
+204.9%
+
+61.2%
+-40.1%
+57.3%
+82.4%
+-5.6%
+55.0%
+3.7%
+56.5%
+15.4%
+43.5%
+1.7%
+-100.0%
+509.5%
+-11.5%
+-261.8%
+28.8%
+
+-5.29
+-5.29
+
+-4.03
+-4.03
+
+-6.87
+-6.87
+
+-20.36
+-20.36
+
+31.3%
+31.3%
+
+-23.0%
+-23.0%
+
+Current Financial
+year ended
+
+Change
+(Prev Qtr)
+
+Change
+(Prev year
+Qtr)
+
+March 31, 2026
+
+QoQ(%)
+
+YoY(%)
+
+Investor Presentation –Q1 FY27
+
+22
+
+Segment – Standalone Q1 FY27
+Profit and Loss Statement - Standalone- Segment Result
+
+Particulars (Rs Cr)
+
+Three months
+ended
+
+Preceding three
+months ended
+
+June 30, 2026
+
+March 31,2026
+
+Corresponding
+three months
+ended in the
+previous year
+June 30, 2025
+
+Current Financial
+year ended
+March 31, 2026
+
+1 Segment Revenue
+a. Critical Power
+b. EV Charger
+Revenue fron Operations
+2 Segment Results - Profit /(Loss) before tax and interest from each segment
+a. Critical Power
+b. EV Charger
+Total
+Less:
+i. Interest
+ii. Other un-allocable expenditure net off
+iii Un-allocable expenses / (income)
+Total Profit before Tax (A)
+3 Segment Assets
+a. Critical Power
+b. EV Charger
+c. Unallocated
+Total
+4 Segment Liabilities
+a. Critical Power
+b. EV Charger
+c. Unallocated
+Total
+
+176.0
+60.8
+236.8
+
+194.1
+87.9
+282.1
+
+97.8
+52.8
+150.7
+
+617.7
+277.1
+894.8
+
+15.4
+2.4
+17.8
+
+17.6
+9.4
+27.0
+
+7.8
+6.9
+14.7
+
+38.5
+32.4
+70.9
+
+11.4
+6.4
+
+11.0
+16.1
+
+13.3
+8.9
+-7.5
+
+44.0
+9.7
+17.2
+
+693.9
+1,022.2
+1,716.1
+
+743.9
+1,038.5
+1,782.4
+
+603.7
+833.3
+1,437.1
+
+743.9
+1,038.5
+1,782.4
+
+449.3
+330.4
+779.7
+
+564.8
+286.4
+851.2
+
+470.9
+315.4
+786.3
+
+564.8
+286.4
+851.2
+
+Investor Presentation –Q1 FY27
+
+23
+
+Segment – Consolidated Q1 FY27
+Profit and Loss Statement - Consolidated - Segment Result
+
+Particulars (Rs Cr)
+
+Three months
+ended
+
+Preceding three
+months ended
+
+June 30, 2026
+
+March 31,2026
+
+Corresponding
+three months
+ended in the
+previous year
+June 30, 2025
+
+Current Financial
+year ended
+March 31, 2026
+
+1 Segment Revenue
+a. Critical Power
+b. EV Charger
+Revenue fron Operations
+2 Segment Results - Profit /(Loss) before tax and interest from each segment
+a. Critical Power
+b. EV Charger
+Total
+Less:
+i. Interest
+ii. Other un-allocable expenditure net off
+iii Un-allocable expenses / (income)
+Total Profit before Tax (A)
+3 Segment Assets
+a. Critical Power
+b. EV Charger
+c. Unallocated
+Total
+4 Segment Liabilities
+a. Critical Power
+b. EV Charger
+c. Unallocated
+Total
+
+177.2
+153.9
+331.1
+
+198.9
+189.1
+387.9
+
+102.5
+102.8
+205.3
+
+641.8
+509.9
+1,151.7
+
+12.8
+-68.6
+-55.8
+
+21.4
+-54.2
+-32.8
+
+5.5
+-60.7
+-55.2
+
+38.3
+-235.1
+-196.9
+
+16.2
+-72.0
+
+15.5
+0.6
+-48.9
+
+15.6
+12.0
+-82.9
+
+55.8
+16.5
+-269.2
+
+781.4
+1,110.2
+1,891.7
+
+844.2
+1,144.7
+1,988.9
+
+686.6
+992.6
+1,679.1
+
+844.2
+1,144.7
+1,988.9
+
+460.3
+802.5
+1,262.8
+
+585.3
+752.3
+1,337.6
+
+477.7
+659.2
+1,136.9
+
+585.3
+752.3
+1,337.6
+
+Investor Presentation –Q1 FY27
+
+24
+
+About Exicom
+
+25
+
+Our Purpose: Why We Exist
+
+Agility
+
+Innovation
+
+Ownership
+
+Our
+Core Values
+
+Customer
+Centricity
+
+Transparency
+
+www.exicom-ps.com
+
+Mission
+Exicom's mission is to propel the world
+towards sustainability by leading the
+shift from fossil fuels to renewables.
+Our global presence, technological
+expertise, and unwavering
+commitment make USA key player in
+driving innovation for a cleaner,
+greener future
+Exicom © 2025. All rights reserved
+
+Vision
+The shift towards sustainable
+energy is reshaping industries and
+we’re at the heart of that
+transformation. Exicom develops
+cutting-edge technology to
+accelerate the transition to clean
+energy in mobility &
+telecommunications
+Investor Presentation –Q1 FY27
+
+26
+
+30 Years of Power Electronics Excellence
+
+Electric Mobility
+
+Critical Power
+
+India’s one of the Top
+EV charger company
+
+Leading player for Energy Storage
+Systems & Power Management
+Systems
+
+Strong customer
+base including major CPOs, OEMs and
+fleets
+
+Strong customer base including
+telecom, data centers
+
+Global presence with wide product
+range across end use cases (3.3 kW –
+600 kW power output range), including
+distributed and BESS solutions
+
+Global presence with
+projects deployed across India,
+Malaysia, Singapore, South Africa,
+Nigeria, etc.
+
+Investor Presentation –Q1 FY27
+
+27
+
+Our Journey | 30 Years of Power Electronics
+
+1994–1998
+
+1998–2008
+
+2011–2014
+
+2014–2016
+
+2017–2019
+
+Company incorporated;
+began Critical Power
+operations
+
+Established Solan
+manufacturing first R&D
+centre; expanded into
+telecom & tower segments
+
+Launched Integrated PMS;
+expanded to SEA; entered
+ESS market with Li-ion
+solutions
+
+Established second
+manufacturing facility;
+launched renewable hybrid
+power solutions
+
+Entered African market;
+diversified into EV charger
+solutions and EV battery
+manufacturing
+
+2026
+
+2025
+
+2024
+
+2020–2023
+
+New Plant Launch in
+Hyderabad with 3x
+production capacity
+
+Gen 2 DC charger launch
+Partnership with Hubject for
+Plug & Charge
+Launch of Global Customer
+Support, Coventry (UK)
+
+Successful IPO. Listed on
+NSE and BSE.
+Tritium Acquisition
+
+Launched Spin Home & Gen
+1.5 DC charger.
+OEM partnerships
+established – MG, Hyundai,
+Tata, Mahindra
+
+Investor Presentation –Q1 FY27
+
+28
+
+Built on strong foundations
+Geared for Growth
+Vertical
+Integration
+
+Deep-rooted
+Expertise
+
+30+
+
+In-house
+
+Years
+
+Expertise from R&D, Engineering
+to Production and post sales
+support
+
+innovative solutions
+
+Robust
+Engineering Capability
+
+Extensive Service
+Network
+
+130+
+
+Pan India presence with
+
+A team of
+Engineers and state-ofthe-art manufacturing
+
+200+
+
+engineers. Partner led
+model internationally
+
+Strategic
+Industry-shaping partnerships
+Partnerships with a wide range of players
+Investor Presentation –Q1 FY27
+
+29
+
+Our Global Footprint
+
+Tennessee
+
+Dubai
+New Delhi
+
+Amsterdam
+UK
+
+Los Angeles
+
+Hyderabad Plant, India
+
+Lagos
+Kuala Lumpur
+
+Brisbane
+
+Tennessee Plant, USA
+
+Key Markets - Tritium
+
+Key Markets - Exicom
+
+Service
+
+Hyderabad manufacturing plant
+
+Gurugram / Bangalore R&D
+Centre
+
+PCB assembly, Power electronics for
+DC systems, Li-ion batteries, and EV
+chargers (AC & DC).
+
+Engineering hub for home chargers,
+400kW all-in-one DC chargers, BMS, and
+critical power battery systems.
+
+R&D
+
+HQ
+
+Tennessee manufacturing plant
+
+Brisbane R&D Centre
+
+Fast charging by Tritium.
+Scalable to 30K units p.a.
+
+Brisbane with EMC testing,
+thermal testing, impact
+testing chambers, etc.
+Investor Presentation –Q1 FY27
+
+30
+
+New Hyderabad Manufacturing Facility Launched to Expand Production
+Capacity and Support Future Growth
+
+2,00,000+*
+
+4,000+
+
+AC Chargers / annum
+
+DC Chargers / annum
+
+18.4 Acres
+
+Liquid cooled ACDC
+DCDC modules
+
+Total Area
+*Expandable
+
+Industry 4.0,
+Automation
+
+10K Li-ion battery Pack
+mfg
+
+2,80,000 sqft.
+
+450+
+
+Built up Area
+
+Workforce Deployed
+Investor Presentation –Q1 FY27
+
+31
+
+EVSE: Portfolio spans across Widest Range
+
+Spin Free
+
+Spin Air
+
+Harmony
+Standalone
+
+Harmony
+Distributed
+
+Harmony
+BESS
+
+Tri Flex
+
+DC Flex
+
+Grid Flex
+
+Charging
+Power
+3.3 kW
+
+Charging
+Power
+7-22 kW
+
+Charging
+Power
+30-400 kW
+
+Charging
+Power
+480-600 kW
+
+Charging
+Power
+200-470 kW
+
+Charging
+Power
+200-3200 kW
+
+Charging
+Power
+50 kW
+
+Power
+Infrastructure
+400 kW–3.2 MW
+
+Application
+Home / Onroad
+
+Application
+Home/
+Workplace/
+Malls
+
+Application
+Destination
+/Highways /
+Fleets
+
+Application
+Bus Depots /
+Highways
+
+Application
+Destination /
+Highways /
+Fleets
+
+Application
+Destination /
+Highways /
+Fleets
+
+Application
+Fleets / Depots
+
+Application
+Inverter for
+Data Centre
+
+Time to
+Charge
+~12 hours
+
+Time to
+Charge
+~2-6 hours
+
+Time to
+Charge
+~15-40 mins
+
+Time to
+Charge
+~15-40 mins
+
+Time to
+Charge
+~15-40 mins
+
+Time to
+Charge
+~15-40 mins
+
+Time to
+Charge
+~ 40 - 60 mins
+
+Time to
+Charge
+NA
+
+Investor Presentation –Q1 FY27
+
+32
+
+Critical Power Product Portfolio
+Application
+MSC/BSC (Switching
+Centers)
+
+BTS site (Independent
+or Shared)
+
+Power Conversion Modules
+Rectifier 1KW
+48V / 23A
+
+Rectifier 4KW
+48V / 83A
+
+Rectifier 3KW
+48V / 62A
+
+Renewable Hybrid site
+
+DC Power Systems
+Rectifier 5.8KW
+48V / 120A
+
+Indoor Power
+System
+
+Outdoor power
+system
+
+Small cell site/ Wi-Fi Site
+
+Li-ion Batteries
+Hybrid Power
+system
+
+Li-ion Battery
+(Datacenter)
+
+Li-ion Battery
+(Telecom)
+
+System Controller
+M2000 System
+Controller
+
+Investor Presentation –Q1 FY27
+
+33
+
+Annexures
+
+34
+
+Shareholding Pattern
+Shareholding Pattern as on 30th Jun’26
+
+Retail Investors
+27.8%
+
+13,90,79,771
+Shares
+Institutions (Foreign)
+
+3.9%
+3.1%
+
+65.2%
+Promoter and Promoter Group
+
+Institutions (Domestic)
+
+Investor Presentation –Q1 FY27
+
+35
+
+Disclaimer
+This presentation has been prepared by Exicom Tele-Systems Limited (the “Company”) solely for your information and may not be distributed, reproduced, or redistributed or passed on directly or indirectly to any
+other person, whether within or outside your organization or firm, or published in whole or in part, for any purpose by recipients directly or indirectly to any other person. By accessing this presentation, you agree to
+be bound by the following restrictions and to maintain absolute confidentiality regarding the information disclosed in these materials. The Company may alter, modify or otherwise change in any manner the contents
+of this presentation, without obligation to notify any persons of such change or changes. This presentation and its contents are confidential and may not be copied, published, reproduced or disseminated in any
+manner.
+This presentation may contain certain forward-looking statements based on the currently held beliefs and assumptions of the management of the Company which are expressed in good faith and in their opinion,
+reasonable. These statements include descriptions regarding the intent, belief or current expectations of the Company or its directors and officers with respect to the results of operations and financial condition of the
+Company. Such forward-looking statements are not guarantees of future performance and involve risks and uncertainties, and actual results may differ from those in such forward-looking statements as a result of various
+factors and assumptions which the Company believes to be reasonable in light of its operating experience in recent years. Many factors could cause the actual results, performances, or achievements of the Company to
+be materially different from any future results, performances, or achievements. Significant factors that could make a difference to the Company’s operations include, but are not reasonable to, domestic and international
+economic conditions, changes in government regulations, tax regime and other statutes. The Company does not undertake to revise any forward- looking statement that may be made from time to time by or on behalf of
+the Company.
+This presentation contains certain supplemental measures of performance and liquidity that are not required by or presented in accordance with Ind AS, and should not be considered an alternative to profit,
+operating revenue or any other performance measures derived in accordance with Indian GAAP or an alternative to cash flow from operations as a measure of liquidity of the Company.
+In no event shall the Company be responsible to any person or entity for any loss or damage, whether direct, indirect, incidental, consequential or otherwise, arising out of access or use or dissemination of
+information contained in this presentation, including, but not limited to, loss of profits. No representation, warranty, guarantee or undertaking (express or implied) is made as to, and no reliance should be
+placed on, the accuracy, completeness or correctness of any information, including any estimates, targets and opinions, contained herein, and no liability whatsoever is accepted as to any errors, omissions or
+misstatements contained herein and, accordingly, none of the Company, its advisors and representative and any of its or their affiliates, officers, directors, employees or agents, and anyone acting on behalf of such
+persons accepts any responsibility or liability whatsoever, in negligence or otherwise, arising directly or indirectly from this presentation or its contents or otherwise arising in connection therewith.
+
+Investor Relations:
+Shiraz Khanna
+Chief Financial Officer
+Prateek Jain
+Head Business Finance and
+Investor Relations
+
+investors@exicom.in
+
+You must make your own assessment of the relevance, accuracy and adequacy of the information contained in this presentation and must make such independent analysis as you may consider necessary or
+appropriate for such purpose. Any opinions expressed in this presentation are subject to change without notice and past performance is not indicative of future results. By attending this presentation, you
+acknowledge that you will be solely responsible for your own assessment of the market and the market position of the Company and that you will conduct your own analysis and be solely responsible for forming your
+own view of the potential future performance of the Company’s business.
+
+This presentation and its contents are not and should not be construed as a prospectus or an offer document, including as defined under the Companies Act, 2013, to the extent notified and in force) or an offer document
+under the Securities and Exchange Board of India (Issue of Capital and Disclosure Requirements) Regulations, 2018, as amended. This presentation is not for publication or distribution or release in any country where such
+distribution may lead to a breach of any law or regulatory requirement. The information contained herein does not constitute or form part of an offer, or solicitation of an offer to purchase or subscribe, for securities for
+sale. The distribution of this presentation in certain jurisdictions may be restricted by law and persons into whose possession this presentation comes should inform themselves about and observe any such restrictions.
+None of the Company’s securities may be offered or sold in the United States without registration under the U.S. Securities Act of 1933, as amended, except pursuant to an exemption from registration therefrom.
+By accessing this presentation, you accept that this disclaimer and any claims arising out of the use of the information from this presentation shall be governed by the laws of India and only the courts in Delhi, and
+no other courts, shall have jurisdiction over the same
+
+Investor Presentation –Q1 FY27
+
+36
+
+37
+
+

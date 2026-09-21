@@ -31,6 +31,8 @@ import {
   type VarKey, type VarGroup, type EvidenceKind,
 } from './taxonomy';
 
+import { bestEventPerVariable, type StructuralEvent } from './evidence-extract';
+
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
 export type { VarKey, VarGroup, EvidenceKind };
 
@@ -95,9 +97,80 @@ function pctIn(s: unknown): number | null {
  * thesis evaluated on grader numbers alone, and the UI says so rather than
  * pretending the evidence is complete.
  */
+// ═══════════════════════════════════════════════════════════════════════════
+// FROM TYPED EVENTS.                                                (zzz738)
+//
+// The events stage (lib/thesis/evidence-extract) returns facts that were
+// validated against the document sentence they came from. They take
+// precedence over the summary's loose fields for the same variable, for a
+// reason that matters: an event carries its semantic type. A utilisation
+// ACTUAL of 84% and a utilisation TARGET of 90% are both shown, and the
+// verdict is computed from the actual alone — a card that let a target read
+// as a filed figure would be wrong in the way that costs money.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const numIn = (s: string | null): number | null => {
+  if (!s) return null;
+  const m = s.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+};
+
+/** A stated change between two like-for-like figures, or null. Never
+ *  derived across units, and never derived when either side is missing. */
+function deltaOf(before: string | null, after: string | null): string | null {
+  const b = numIn(before), a = numIn(after);
+  if (b == null || a == null) return null;
+  const pctBoth = /%/.test(before || '') && /%/.test(after || '');
+  if (pctBoth) return `${a - b >= 0 ? '+' : ''}${(a - b).toFixed(0)}pp`;
+  if (b === 0) return null;
+  const g = ((a - b) / Math.abs(b)) * 100;
+  return `${g >= 0 ? '+' : ''}${g.toFixed(0)}%`;
+}
+
+export function varsFromEvents(events: StructuralEvent[] | null | undefined): StructuralVar[] {
+  if (!Array.isArray(events) || !events.length) return [];
+  const out: StructuralVar[] = [];
+  for (const [key, slot] of bestEventPerVariable(events)) {
+    const a = slot.actual, f = slot.forward;
+    const label = VAR_LABEL[key] || key;
+    if (a) {
+      const delta = deltaOf(a.before, a.after);
+      const verdict: VarVerdict = a.direction === 'up' ? 'improving'
+        : a.direction === 'down' ? 'deteriorating'
+          : a.direction === 'flat' ? 'flat' : 'unknown';
+      out.push({
+        key, label,
+        kind: a.value_type === 'ACTUAL' ? 'fact' : 'claim',
+        before: a.before, after: a.after, delta, verdict,
+        evidence: `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
+          + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
+          + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : ''),
+        source: 'filing',
+      });
+    } else if (f) {
+      // A forward statement with no actual behind it is a claim, shown as
+      // such: the verdict is unknown because nothing has been achieved yet.
+      out.push({
+        key, label, kind: 'claim',
+        before: null, after: f.after, delta: null, verdict: 'unknown',
+        evidence: `${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Management target'}: ${f.after}${f.period ? ` by ${f.period}` : ''}. `
+          + `"${f.evidence_text.slice(0, 200)}${f.evidence_text.length > 200 ? '…' : ''}" — ${f.source}`,
+        source: 'filing',
+      });
+    }
+  }
+  return out;
+}
+
 export function extractVariables(graded: any | null, summary: any | null): StructuralVar[] {
   const out: StructuralVar[] = [];
-  const push = (v: StructuralVar) => { out.push(v); };
+  // Typed events first. Any key they cover is not re-pushed from the
+  // summary's loose fields below — one variable, one row, and the row with
+  // the verbatim evidence wins.
+  const fromEvents = varsFromEvents(summary?.events);
+  const covered = new Set<VarKey>(fromEvents.map((v) => v.key));
+  out.push(...fromEvents);
+  const push = (v: StructuralVar) => { if (!covered.has(v.key)) out.push(v); };
 
   // ── GRADER FACTS ────────────────────────────────────────────────────────
   const salesY = n(graded?.sales_yoy_pct);

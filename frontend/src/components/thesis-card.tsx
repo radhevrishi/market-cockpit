@@ -282,17 +282,48 @@ export function ThesisCard(p: ThesisCardProps) {
           actually depends on nine things. Three counts cannot be misread as
           progress towards a finish line, and the denominator is now this
           ledger's own thesis-critical set rather than a generic model. */}
+      {/* ── FINANCIAL WARNING, SEPARATE FROM THE STATUS.         (zzz738)
+          EXICOM read "THESIS WEAKENING" on cash conversion 0.32× with no
+          document read. The figure is real and belongs on the card in red.
+          It does not, on its own, decide the status of a thesis whose
+          mechanism nobody has examined. */}
+      {a && a.financialWarning.length > 0 && (
+        <div style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.55, padding: '6px 9px', borderRadius: 6,
+          border: `1px solid ${C.down}`, background: `${C.down}12` }}>
+          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.down }}>FINANCIAL WARNING </span>
+          {a.financialWarning.map((w, i) => (
+            <span key={i} style={{ color: C.text }}>{i > 0 ? ' · ' : ''}{w.label} <b style={{ color: C.down }}>{w.value}</b></span>
+          ))}
+          <span style={{ color: C.faint }}> — not thesis-critical for this pattern{p.needsRead ? ', and no document has been read' : ''}; shown, not counted.</span>
+        </div>
+      )}
+
+      {/* ── THE EVIDENCE MATRIX, THREE POPULATIONS.              (zzz738)
+          "4 confirmed · 1 pending" counted revenue, margin, earnings and
+          cash conversion as confirmations while every mechanism variable
+          was unread. Output confirms the quarter was good. Mechanism
+          confirms WHY. Forward confirms what comes next. They are never
+          added together again. */}
       {a && (
-        <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.55 }}>
-          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>THESIS EVIDENCE </span>
-          <b style={{ color: C.up }}>{a.coverage.criticalConfirmed} confirmed</b>
-          {' · '}
-          <b style={{ color: a.coverage.criticalPending ? C.warn : C.flat }}>{a.coverage.criticalPending} pending</b>
-          {' · '}
-          <b style={{ color: a.coverage.criticalContradicted ? C.down : C.flat }}>
-            {a.coverage.criticalContradicted} contradicted
-          </b>
-          <span style={{ color: C.faint }}> · of {a.coverage.criticalTotal} thesis-critical variables</span>
+        <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.7 }}>
+          {([
+            ['MECHANISM', a.coverage.mechanism, 'the WHY — capacity, utilisation, orders, capex, customers, one-offs, cash'],
+            ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
+            ['FORWARD', a.coverage.forward, 'what management commits to next'],
+          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; total: number }, string]>)
+            .filter(([, t]) => t.total > 0)
+            .map(([name, t, hint]) => (
+              <div key={name} title={hint}>
+                <span style={{ display: 'inline-block', minWidth: 78, fontSize: 8, fontWeight: 800, letterSpacing: 0.4,
+                  color: name === 'MECHANISM' ? C.text : C.faint }}>{name}</span>
+                <b style={{ color: t.confirmed ? C.up : C.flat }}>{t.confirmed} confirmed</b>
+                {' · '}
+                <b style={{ color: t.pending ? C.warn : C.flat }}>{t.pending} pending</b>
+                {' · '}
+                <b style={{ color: t.contradicted ? C.down : C.flat }}>{t.contradicted} contradicted</b>
+                <span style={{ color: C.faint }}> · of {t.total}</span>
+              </div>
+            ))}
           {a.coverage.missingCore.length > 0 && (
             <div style={{ color: C.faint, marginTop: 2 }}>
               Core still unreviewed: <span style={{ color: C.text }}>{a.coverage.missingCore.join(', ')}</span>

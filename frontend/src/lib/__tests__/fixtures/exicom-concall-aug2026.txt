@@ -1,0 +1,742 @@
+Date: August 12, 2026
+
+BSE Limited
+1st Floor, New Trading Wing, Rotunda Building,
+Phiroze Jeejeebhoy Towers, Dalal Street, Fort,
+Mumbai – 400001
+
+National Stock Exchange of India Limited
+Exchange Plaza, 5th Floor, C – 1, Block G, Bandra –
+Kurla Complex, Bandra (E), Mumbai – 400051
+
+corp.relations@bseindia.com
+
+cmlist@nse.co.in
+
+SCRIP Code- 544133
+
+Symbol-EXICOM
+
+RE:
+
+Intimation under Regulation 30 of the Securities and Exchange Board of India (Listing
+Obligations and Disclosure Requirements) Regulations, 2015, as amended (“SEBI
+Listing Regulations”)
+
+Subject:
+
+Transcript of the Investors’/Analyst Conference Call held on August 10, 2026, on the
+Unaudited Financial Results of the Company for the quarter ended June 30, 2026 of
+Financial Year 2026-27
+
+Dear Sir/Madam,
+This is further to our earlier announcement dated August 4, 2026.
+Pursuant to Regulation 30 read with Para A of Part A of Schedule III to the SEBI Listing Regulations, please ind
+enclosed the Transcript of the Investors’/Analyst Conference Call held on Monday, August 10, 2026 at 4:00 P.M.
+(IST).
+The conference call was organized to discuss the unaudited inancial results of the Company for the quarter
+ended June 30, 2026 of the Financial Year 2026-27, which were considered and approved by the Audit
+Committee and the Board of Directors at their respective meetings held on August 10, 2026.
+The aforesaid transcript is also being uploaded on the website of the Company at www.exicom.com, in
+compliance with the applicable provisions of the SEBI Listing Regulations.
+You are requested to take the above information on record.
+Thanking you.
+Yours faithfully,
+For Exicom Tele-Systems Limited
+signed by
+SANGEETA Digitally
+SANGEETA KARNATAK
+Date: 2026.08.12
+KARNATAK 16:17:47 +05'30'
+
+Sangeeta Karnatak
+Company Secretary & Compliance Officer
+Encl: Transcript of the Investors’/Analyst Conference Call
+
+“Exicom Tele-Systems Limited
+Q1 FY27 Earnings Conference Call”
+August 10, 2026
+
+MANAGEMENT: MR. ANANT NAHATA – MANAGING DIRECTOR AND
+CHIEF EXECUTIVE OFFICER – EXICOM TELE-SYSTEMS
+LIMITED
+MR. SHIRAZ KHANNA – CHIEF FINANCIAL OFFICER –
+EXICOM TELE-SYSTEMS LIMITED
+MODERATOR:
+
+MR. RAHUL DANI – MONARCH NETWORTH CAPITAL
+LIMITED
+
+Page 1 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+Moderator:
+
+Ladies and gentlemen, good day, and welcome to the Exicom Tele-Systems Q1 FY27 Earnings
+Conference Call, hosted by Monarch Networth Capital Limited. As a reminder, all participant
+lines will be in the listen-only mode and there will be an opportunity for you to ask questions
+after the presentation concludes. Should you need assistance during this conference call, please
+signal an operator by pressing star, then zero on your touch-tone phone. Please note that this
+conference is being recorded.
+This conference may contain certain forward-looking statements about the company, which are
+based on the beliefs, opinions, and expectations of the company as on the date of this call. These
+statements are not guarantees of future performance and may involve risks and uncertainties that
+are difficult to predict.
+I now hand the conference over to Mr. Rahul Dani. Thank you, and over to you.
+
+Rahul Dani:
+
+Thank you, Ananya. Good afternoon, everyone. On behalf of Monarch Networth Capital, it's my
+pleasure to host the senior management of Exicom Tele-Systems. We have with us Mr. Anant
+Nahata, Managing Director and CEO of the company; and we have Mr. Shiraz Khanna, CFO of
+the company. We will start the call with opening remarks from the management and then move
+to Q&A. Thank you, and over to you, sir.
+
+Anant Nahata:
+
+Thank you, Rahul. Good evening, dear shareholders. This is Anant Nahata, CEO of the
+company. Let me take you through briefly the results of quarter 1 fiscal '27, and the management
+presentation.
+So the overall performance on a stand-alone revenue rose by 57% year-on-year to INR237 crores
+and our EBITDA more than doubled to INR21 crores lifting the EBITDA margins to 8.8%. On
+a consolidated basis, revenue grew 61% to about INR331 crores and the EBITDA loss narrowed
+from almost INR40 crores in the previous -- in the quarter last year to about INR22.5 crores loss
+in the current quarter.
+I understand that while we grew our revenue, but the profitability is still not in black, but my
+confidence comes from what both the businesses delivered and won, which is more customers,
+so today, we stand with a much more diversified customer base compared to any other previous
+quarters before, more geographies with the focus on exports, and a very strong order book, and
+commitments from our entire organization which can deliver a strong result through fiscal '27.
+On Tritium side, which is a big investment of ours in a DC fast charging company based out of
+the U.S. for the first time, the bookings passed north of USD20 million. It used to be in the range
+of USD10 million every quarter. So the bookings have doubled, so have the revenue to about
+USD10 million last quarter and -- sorry, USD10 million this quarter.
+We are in a phase where our latest products, including TRI-FLEX, DC-FLEX, GRID-FLEX are
+being put under trial by various customers, and these trials are in mid-stages to advanced stages,
+which will be unlocking double-digit, large million dollar order through the course of 2027 -through the course to deliver in 2027.
+
+Page 2 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+Next page. Exicom is a company in the middle of energy transition. We operate in telecom. We
+operate in battery energy storage systems, which connects renewable energy to the point of
+consumption. We operate in electric mobility via our EV charging business. And there are a few
+megatrends which are driving this change.
+There is new technology, which is being invested upon, particularly to do with electrification
+across grid as well as electric mobility. There is increasing fuel prices due to geopolitical
+situation as well as supply chain disruptions. Countries are prioritizing energy security -countries are shifting away from fossil fuel for achieving energy security.
+On the telecom side, there is huge rise in data traffic moving towards 5G networks and taking
+telecoms -- high-speed telecom communication to underserved regions across the world. For
+example, in India, high-speed communication is being taken to Panchayats and smaller towns,
+which were not connected with high-speed Internet earlier. And these megatrends are driving
+the change in our business and the near-term outlook of our business.
+Now moving to business update in Critical Power segment. In Critical Power, we achieved a
+revenue of INR177 crores, which was 73% higher than quarter 1 fiscal '26. On a sequential basis,
+the revenue dropped by 11%, which happens as in most of the industrial business, Q4 tends to
+be the strongest quarter as customers look to scale deployments and exhaust their budgets. The
+key highlights of quarter 1 were across different categories of customers.
+In the private sector, where we work with India's leading telcos as well as tower companies, we
+entered into supply agreement for power systems and batteries with one of the largest tower
+companies, and this is going to be a continuous business. Not much of this business was done in
+Q1, but the business engagement was inked, and this is going to show results in the subsequent
+quarters.
+We also secured large DC power systems order from a leading Indian telco worth INR85 crores
+and more of these will follow in subsequent quarters. Some of these large orders, the margins
+were offset by a rise in forex and commodity prices. But due to large volumes, we were able to
+offset some of these cost increases.
+On government side, we are supplying to system integrators to execute one of the most ambitious
+fiber connectivity projects by Government of India, which is BharatNet. We supply multiple
+products in this project, including smart enclosures, hybrid power systems powered by solar and
+lithium-ion batteries.
+We have a 60% share of business in this project based on the system integrators we are working
+with. And while due to monsoons, the project was slightly slow, but we are still delivering the
+number of systems, which is making this to be one of our highest revenue contributors in quarter
+1 and even going forward.
+In terms of exports, our key markets of Africa, Middle East, and Southeast Asia delivered export
+sales of roughly INR15 crores in the quarter, which is about 8% of our overall sales in critical
+power. And there has been some good new order booking, which makes us hopeful of better-
+
+Page 3 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+than-expected export sales in FY27. Our target is to get the export sales to nearly double of 8%,
+which was achieved this quarter to roughly about 15% of critical power sales in a year.
+Not just some of the big tower companies and telcos, we also added multiple small customers in
+the long tail list for their DC power systems requirement and had more than 10 BESS
+deployment in the commercial industrial sector, which is giving us good operating know-how
+and ability to scale up this business in second half of fiscal '27.
+Our order book as of today stands at roughly INR1,000 crores in critical power, which gives us
+long-term visibility to be able to execute and optimize our operations in a way which expands
+margin to the maximum possible.
+A few key future opportunities on the next slide. So in quarter 2, we have already won some
+more orders in the DC power system and battery space. These are from the customer where we
+had some wins in Q1, and further expanded our order intake in quarter 2.
+In BharatNet, ambitious government program that I was talking about, we already have INR700
+crores of open orders, which is going to be then followed by almost INR800 crores service order
+over the next 10 years. Our target is our strong execution here.
+We also won Phase 2 of BSNL-led program to put telecom infrastructure in some of the
+underserved border -- Indian border regions. These are again awarded to large system integrators
+with whom they are tying up for business. We expect almost 2,000 sites, 2,000 towers to be
+allocated to Exicom based on the conversations we are having with a contract value of
+somewhere between INR90 crores to INR100 crores.
+And as I mentioned before, with India's 2 top tower companies with one of them, we have already
+started supplying batteries and power system on large scale, which effect of which you will see
+in our revenues in quarter 2 and onwards.
+And from quarter 4, we also expect to start supplying lithium-ion batteries to a large tower
+companies. That's most of -- that will only come in the last quarter of the current financial year.
+So point is on a strong order book, we see momentum towards order booking in current quarter
+as well as quarter 3 and quarter 4 to keep the pipeline quite robust.
+In Critical Power, there are 5 forces which are redefining how operators buy site power. This is
+the next slide. So first, 5G BTS stations are much heavier loads and they demand modular and
+expandable field power. So the system has to be very modular in terms of putting more power
+in it or connecting it to solar and we design system, keeping this architecture in mind.
+The second main force is battery technology changing from lead acid to intelligent lithium where
+Exicom plays a major role. Third is grid and generator-based energy is being converted to hybrid
+energy. Telecom sites are increasingly being powered by grid, solar, batteries, and a little bit of
+generator. Lastly, instead of treating telecom site as a passive site, which spurts out alarms in
+case things are not working correctly. That is transitioning to intelligent fleet management.
+
+Page 4 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+So there are so many sensors at the site, so do our products, which send a lot of data both to the
+network operating center and to the cloud to not just give alarms, but to predict to do preventive
+maintenance and enable fewer site visits. So every product that we make has to have this
+connected intelligence to be able to serve the modern telcos. And that's where the first growth
+vector for us comes from.
+It is to selling to global telcos and towercos with this connected intelligence. In terms of current
+progress, we are well positioned here. Overall revenue is on track. As I explained, large orders
+from public and private sector in India are received, pace of exports has to increase. As I
+mentioned, right now, exports are about 8% of our revenue, which we want to increase to 15%
+within this financial year.
+The second growth vector is BESS. Again, for our shareholders, we are in commercial industrial
+BESS system, which are usually 0.5 megawatt hour or smaller. I mean they can be bigger, but
+most of the deployments are under 0.5 megawatt hour. We are not operating in utility scale
+BESS. And the reason is that in solar plus storage for some of these commercial industrial areas,
+there is ROI viability, there is volume, and we are solving the real customer pain point of
+wherever they are trying to deploy the storage solutions.
+Today, we have about 15 megawatt hours of orders in hand, which are worth roughly INR20
+crores and another INR45 crores or 34 megawatt hours of orders in advanced pipeline. There
+has been some disruption of supply chain, especially in the battery materials and the batterylinked commodity pricing. But those have settled down now and regular supply chain is getting
+started, which will allow us to execute a lot of this backlog. And third exports, I already spoke
+about.
+Next page is starting of our EV charging business segment. So on Page 11, what the data shows
+is that industry is at a pivotal point in EV charging. For the first time, we had nearly 31,000
+registrations of passenger cars, which is the highest number till date. That has resulting of a lot
+of new launches across Maruti, Tata, Mahindra, some of the luxury carmakers. There were
+launches in the commercial vehicle segment, especially in the smaller form factor SUVs.
+And there were also intense participation in EV charging infrastructure deployment by
+companies such as Mahindra, Maruti, and VinFast. Because of all that, our stand-alone revenues
+grew 15% from INR53 crores to about INR61 crores. Sequentially, it was a dip. Again, quarter
+4 is not comparable to quarter 1. But some of the infrastructure build-out follows the car
+registration, and we are hopeful for continued growth in this segment based on overall vehicle
+sales that the industry is seeing.
+Another industry slide on Page number 12. In terms of passenger EV in Q1, there were 85,000
+-- almost 86,000 registration, about 1,400 for buses and 6,500 for goods carriers. And this means
+that Exicom from its customers will have continued demand for AC charger orders, not just from
+the OEMs, but even from e-commerce channels as well.
+And this is our standard product, which we obviously continue to evolve based on technology
+from time to time, but it's a high-scale manufacturing product, which we supply to India's top
+
+Page 5 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+OEMs. Rise of goods carriers and electric buses also means we will have increased demand for
+high-power chargers such as 240 kilowatt -- 180 or 240 kilowatts. This industry dynamics,
+favorable dynamics are being shaped by good policies. There are multiple states, cities, which
+have notified mandatory EV-ready apartments to be there to get certificate of occupation.
+Delhi has outlaid a 4-year INR15,000 crores EV policy to put in almost 30,000-plus EV charging
+points. Again, these are not just for cars. These are for 2-wheelers, 3-wheelers as well. Also, any
+OEM dealer must have an EV charging station now. Earlier, it was their choice, but now they
+must have. And PM E-DRIVE continues to sanction money for electric buses and EV charging
+infrastructure for buses. Again, all this means there will be enhanced spending on the EV
+charging infrastructure, both from government and private players.
+In terms of key highlights for Exicom in quarter 1 FY27, we secured 100% share of business for
+a leading international 7 -- brand for wallbox chargers -- home chargers. We renewed our
+agreement with a leading truck OEM for portable chargers. And we also launched a charger with
+a 2-wheeler company as well -- fast chargers with a 2-wheeler company as well.
+We continue to focus on an innovation and our new products include Slim Series chargers. These
+are for very dense spaces where there is not a lot of space to put bigger chargers. We have packed
+a lot of power into a small form factor and also put in innovative technology, which can allow
+these the chargers to share power that is called ring topology.
+A lot of our customers are liking this and because of this differentiation, giving us added orders.
+In terms of our network and growth and our relationship with the CPOs, we've added 15 new
+network operators in terms of order intake in Q1 and have an order book of almost close to 180
+DC chargers, which will continue until October '26, right? And not just in India, but Exicom is
+strong -- is steadily focusing on exports for EV chargers. So we won orders from 10 new
+countries.
+A lot of these are pilot orders and after pilot, we'll move to scale. But today, we have an order
+book of almost INR200 crores for our AC/DC chargers in India, including exports of about
+USD2 million. And I think this will be the first year where export will be a sizable part of revenue
+to -- as a percentage. I don't want to comment on the target at this point, but our effort is to be
+in the similar range in terms of percentage of sales of exports on EV charger, as I mentioned, in
+critical power.
+In Tritium, there is a momentum shift in demand. As I mentioned, the bookings are close to
+USD21 million this quarter, and you can see this is twice as big as the quarters before and the
+sales is roughly USD10.5 million. This will -- this backlog will help in continued sales growth
+over the coming quarters. As far as Tritium is concerned, our focus is on strategic customers.
+On the left, you see our new products being tried by Fortune 100 companies in area of EV
+charging network and fleet. And if these trials are successful, Tritium can be awarded more than
+USD20 million to USD30 million contract for calendar '27. Similarly, we have a new product
+called GRID-FLEX, which comes out from the same platform of TRI-FLEX, but it's a
+bidirectional inverter to connect microgrids or provide even EV charging as well. This is also
+
+Page 6 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+being delivered and being tried at a hyperscale customer and subject to successful trials can be
+expected to be awarded for USD20 million of contract for CY27.
+So overall, engineering efforts for the past 2 years has created a strong pipeline with strategic
+customers and focus is to secure a majority of the orders that we want to execute in CY27 within
+calendar '26. That will put Tritium in a very different trajectory. Yes, it took longer for the
+turnaround, but we see not just green shoots, but we see the momentum and ability to scale to
+large revenue, triple-digit million revenue based on these products that we have developed and
+the customer engagements that we have currently. Thank you. Thank you, dear shareholders.
+And with that, I would like to pass to Shiraz Khanna, our CFO, for a quick update on the
+financials.
+Shiraz Khanna:
+
+Thank you so much, Anant, and good evening, everyone. I will take you through the financial
+performance of the quarter in more detail, and then we will open those for the question and
+answers.
+In terms of stand-alone, as Anant had mentioned, stand-alone revenue for Q1 came in at
+INR236.8 crores against INR150.7 crores done in the previous year same quarter. This is a
+substantial 57% growth year-on-year. While it is a little lower as compared to the previous
+quarter, which is quarter 4 of last year by 16%, which is in line with our usual seasonality of our
+business where Q4 tends to be the strongest quarter of the year.
+Charge point operators, OEMs tend to utilize their budgets and new budgets are taking time to
+be formalized in Q1. So this is a normal phenomenon. Within the stand-alone book, Critical
+Power grew by 80% year-on-year to INR176 crores and EV grew by 15% year-on-year to INR61
+crores. Critical Power was the standout, driven by execution of the new telecom and the
+government orders we won over the last 2 quarters.
+Stand-alone gross margins for Q1 stood at 29.1%, which is 2% above the previous quarter, which
+is Q4 of last year on better pricing and customer mix in both the segments. On a year-on-year
+basis, gross margin was down by about 3.6%, primarily on account of the U.S.-led input cost
+pressure, partially offset by the favorable segment mix that we had.
+Stand-alone EBITDA came in at INR20.9 crores, which is -- with a margin of 8.8% margin. This
+is 137% growth over the same quarter last year, which is quite phenomenal. I mean, in the terms
+of -- which is INR8.8 crores from INR8.8 crores at 5.8% last year, this has really grown up this
+time. The fixed cost was challenging of INR8.7 crores year-on-year, and I'll come back more on
+this in a moment. But the operating leverage on higher revenue and richer mix more than
+absorbed the increase.
+Stand-alone PAT stood at INR4.9 crores at 2.1% margin, far better and a meaningful turnaround
+from the last year same time in first quarter last year, where we had reported actually a little bit
+of loss because of exceptional items. Depreciation has gone up this year, INR10.3 crores we
+have. This is primarily because of post Hyderabad plant was commissioned, and this is flowing
+into P&L. Other income was a little lower than last year year-on-year, primarily because the IPO
+
+Page 7 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+funds which were put in FD have now got utilized and the interest now has been stopped because
+the funds were utilized to get the plant constructed and completed.
+Moving on to consolidated financials. On a consolidated basis, the revenue of Q1 was INR331.1
+crores, which is a good 61% increase year-on-year as compared to the last year same quarter.
+Critical Power grew by 73% and EV grew by 50% on a consolidated basis. Tritium delivered its
+second consecutive quarter of above INR10 million per quarter of revenue.
+Consolidated margins was 31.7%, broadly stable as compared to the last quarter of last year. On
+a year-to-year basis, consolidated gross margin was lower. That is primarily largely because of
+Tritium mix effect as margin normalized with fresh inventory purchases coming through this
+year.
+Consolidated EBITDA loss narrowed, as Anant mentioned, down to INR21.9 crores at a 6.6%
+margin negative. However, it much improved from the previous year INR38.6 crores negative
+that we had. This is a very meaningful and year-on-year improvement driven by better sales at
+both the stand-alone and Tritium level, partially offset by the lower gross margins and higher
+fixed costs.
+The PAT again has shown improvement from the loss of INR83.1 crores, now down to INR73.6
+crores loss, so which we are seeing a healthy improvement happening. I mentioned about
+Hyderabad plant in a few places in my address to you. And Hyderabad plant, as we mentioned,
+since it's showing up in a few places, we shared in financial year '26 that it had got commissioned
+and plant became operational in Q4 financial year '26 and now it's fully into production in Q1.
+This has 2 visible impacts on P&L. First, depreciation is stepping in. Stand-alone depreciation
+is about 67% higher year-on-year and consolidated, it is higher by 57%. Secondly, the running
+and running of the Gurgaon and the Hyderabad plant were in parallel during this transition phase,
+which is additionally approximately INR8.7 crores to our fixed cost while the transition is
+happening. This is a planned and time-bound investment.
+The Hyderabad facility gives us 3x production capability and capacity, positioning us to better
+deliver the INR1,400 crores order book that we have and critically serving the demand pipeline
+that we built for the year -- financial year '27 and beyond. We expect the parallel run costs to
+phase out as Gurgaon transition completes over the coming quarters. The working capital, again,
+is the lifeline for any organization.
+And turning to the balance sheet, I want to walk you through the working capital dynamics that
+you will see in the numbers. Inventory with Hyderabad and Gurgaon plant running in parallel,
+we have a temporary built-up inventory both -- in both the facilities. This is by design. We are
+stocking up both plants to ensure production continuously happens during this transition and to
+be ready for Q3 and Q4 book orders. We expect this to normalize as the transition stabilizes.
+Secondly, receivables, account receivable is elevated, but this is a direct function of a sharp
+revenue increase that we've had in Q1 revenue going up by 57% on a year-on-year basis and
+
+Page 8 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+61% on a consolidation basis. Collections quality remained healthy and the aging profile is
+intact.
+Third, debt and liquidity. Consolidated debt stood at about INR370 crores as on 30 June '26. Our
+debt coverage ratios remain well within the comfortable range. Our liquidity indicators are
+healthy, and we have adequate headroom to fund both growth investment and working capital
+life cycle. We are managing the balance sheet with a lot of good discipline.
+So with this, I think a consolidated book order of INR1,400 crores plus as on 30 of June, a record
+high sales and Tritium also looking up in terms of increased booking. We look forward to the
+next quarters with a positive intent.
+Thank you so much, and back to you, Rahul, for questions answers.
+Moderator:
+
+Thank you very much. We will now begin with the question-and-answer session. The first
+question is from the line of Taksh Gaur from Brighter Mind Asset Management.
+
+Taksh Gaur:
+
+You were at consolidated EBITDA breakeven in Q4, but have moved back to INR22 crores
+EBITDA loss in Q1 despite 61% Y-o-Y growth. So I want to understand that what are the key
+drivers of the sequential margin deterioration? And how quickly do we expect to return to
+EBITDA breakeven? That's my first question, sir.
+
+Anant Nahata:
+
+So thank you for your question. You're right. Last quarter, we did have EBITDA breakeven
+owing to -- partly it was quarter 4, which usually is the highest revenue quarter for us. So in that
+light, the EBITDA on the Indian business was much higher than in Q1.
+And in Tritium also was slightly higher, not because of sales, but because when we acquired the
+company, we had access to a decent bit of low-cost inventory, which over time, as we continue
+to sell has eroded. So that made the margin for Tritium, we were earlier enjoying unreasonably
+high margins to now still good margin, but not as high as we were enjoying earlier. So a
+combination of that resulted in a INR22 crores EBITDA loss.
+However, based on the order book that Tritium has today, based on the order book that Exicom
+has today, I still expect Tritium EBITDA breakeven in quarter 4 '27. But on a consolidated basis,
+the breakeven may be over the next 2 quarters itself. I can't specify whether quarter 2 or 3. But
+on a consolidated basis, it will be breakeven in quarter 2 and on Tritium level by quarter 4, '27.
+
+Taksh Gaur:
+
+So on a follow-up question, Tritium's order intake doubled to USD20.8 million in Q1. So when
+do you expect these orders to start converting into revenue? And does the order pipeline give
+you confidence in achieving the guided 3x revenue growth and EBITDA breakeven by Q4 FY27
+that you have guided in the last con call?
+
+Anant Nahata:
+
+Yes. So now, we are confident of that. As I mentioned, there are 2 types of growth levers
+happening at Tritium. Number one, the current backlog of orders is quite significant. It is USD20
+million. And that just -- that was the backlog on 1st July. That doesn't mean there is not going
+to be more order booking as time progresses. Also, there are some large strategic opportunities.
+
+Page 9 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+These are large double-digit million numbers of revenue, which we are hoping to convert
+through this calendar year into commercial contracts, which can be started executing, which will
+be started -- which will be, which will be executed beginning calendar '27, first quarter, right?
+So based on both 3 things, the order backlog that we have, the pace of order book which we
+continue to build and some of these large strategic wins, I'm sure that we will have 3x revenue
+growth compared to last year as well as EBITDA breakeven in quarter 4, '27.
+Taksh Gaur:
+
+Sir, my last question, with the Hyderabad plant now operational, what is the current capacity
+utilization? And where do you expect it to reach in FY27?
+
+Anant Nahata:
+
+So the Hyderabad plant was built for a much larger capacity, for example, 2x of the AC charging
+capacity that we had, nearly 4,000 DC chargers. The infrastructure was built, and we keep adding
+plant and machinery and lines as and when required. We are seeing a surge in demand in AC
+chargers because of higher vehicle registration in passenger as well as commercial segment. So
+we have just ordered another line for AC chargers.
+So our -- in my view, our AC charger production run rate -- monthly run rate will almost grow
+by 50% in the next 3 months because of the demand. Overall, capacity utilization, I see on the
+DC charging to be about 65% because that's a heavier machinery and it's not a mass
+manufacturing product.
+On AC charger, I see close to 100%. On DC power system line, I see close to between 90% and
+100%. And on our PCBA lines, which manufactures all the critical PCB assemblies that we
+design and develop, I see utilization close to 100% and same in batteries as well.
+So with the current plant and machinery capacity that we have put in most of the product lines,
+we are close to between 90% and 100% utilization for DC charger, it was never meant to be
+100% utilization because of the way that product sells, that's about maybe 65%. But this does
+not prohibit us from expanding and adding new capacities.
+Some of the challenges today is not capacity, it's supply chain disruption. The geopolitical
+situation has caused supply chain disruption in semiconductors, anything plastic related,
+anything copper related has become very expensive. So those disruptions impact availability of
+material, and that's why sometimes don't allow us to fully use our capacity. But our teams have
+been aggressively working on all those challenges. And I think we have been able to sort out
+most of them better than our peers.
+
+Moderator:
+
+The next question is from the line of Suraj C from Vijit Global Securities.
+
+Suraj C:
+
+I had a few questions. So firstly, to start with in the EV charger segment, just wanted to
+understand a couple of things. First is revenue mix, let's say, after 2 years between critical power
+and EV. Secondly, also wanted to understand that what is the kind of growth you're expecting
+in EV chargers stand-alone as well as in Tritium in coming years?
+
+Page 10 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+And sir, lastly, you just said that the capacity utilization was 2x -- the capacity utilization or the
+capacity expansion is 2x of what the current capacity is. But as I could see in the annual report,
+you went from 42,000 AC chargers to 222,000. So is there any confusion on my side?
+Anant Nahata:
+
+Yes. So okay, I remember first of your questions. But on the EV charging side, we did about
+INR277 crores of revenue on a stand-alone basis in FY26, right? And it is about 30% of our
+overall revenue. And I think this year also probably the mix will be similar. It may increase a bit
+for EV, but the mix will be similar.
+And I know first quarter does not project that, but a lot of the EV growth is just happening and
+some of this infrastructure build-out will be as a result of this growth. I think we'll see that in the
+subsequent quarters.
+So since the industry is growing, we also expect growth in our EV hardware business and
+allocate our resources. We cannot target every segment of growth, and we have to make a
+conscious call to allocate our resources, which are the most efficient use of our resources and
+are most profitable.
+So as your question, I do see growth in our EV business from last year and the percentage of
+split between 2 business divisions to be 70-30-ish, maybe 65%, 35%, but in that range, not very
+off. What was the other question?
+
+Suraj C:
+
+So my other question was that in the annual report, I read that we are expanding from 42,000 to
+222,000 in AC chargers. But then I guess you answered to some other participants that the
+capacity expansion has been 2x of EV chargers in AC. So is there a misunderstanding?
+
+Anant Nahata:
+
+I will check this again. I know the number of 222,000 is right. I think 48,000 was a single shift
+operation, whereas this doubling of the capacity is based on double shift operation, but I will
+take your coordinates and come back to you with an exact answer.
+
+Suraj C:
+
+And sir, second question of mine is that I just wanted to understand, I mean, how are we looking
+at depreciation, the kind of depreciation, which I'm looking in the books. That seems to be a bit
+on the higher side, not a bit, I mean, a lot on the higher side. So for example, in FY26, the
+depreciation was INR116 crores and our block -- so I mean that comes to around 20%, 25%. So
+just wanted to get your views on the depreciation?
+
+Anant Nahata:
+
+So on -- there are 2 things over here on a stand-alone and a consolidated basis. So on a standalone, I think the depreciation is quite normal because of the new plant commissioning, it
+increased by INR10 crores to INR12 crores, not much. On Tritium, the -- in last 2 years, we
+were in the product development journey.
+And also as a result of acquisition, we had to service certain customers just to -- because of the
+reasons we were not party to prior to all acquisitions. So there has been capitalization because
+of those reasons, a heavy R&D investment to get the products out, as I just mentioned. And these
+will last for next 5, 7 years of revenue journey for Tritium.
+
+Page 11 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+And yes, that's -- I think that's the primary reason, not because of a lot of physical capex as such.
+But I think as soon as these projects start generating revenue, which I think is going to be quarter
+1 calendar '27 or quarter 4 of this financial year, we'll see all that depreciation getting to use in
+terms of that investment getting to use to start generating revenue.
+But just when you look at the depreciation, look at Tritium as well as India separately because
+there is the R&D based on Australia and America. So the R&D cost is quite massive, quite
+sizable.
+But then the product that they cater to, like the products we make at Exicom, they cater to a -let's say, they'll cater to a USD1 billion market by 2030. But the products that we are making at
+Tritium will cater to a USD10 billion market in 2030. So when you see some of the investment,
+you have to realize the context and the addressable market as well.
+Suraj C:
+
+So is it reasonable to assume that Q4 for Tritium should be significantly higher in terms of top
+line and bottom line we'd be doing good because of these revenues kicking in?
+
+Anant Nahata:
+
+Yes. So that's -- again, in business, there are so many factors. But today, from all the signals that
+we have from backlog, from order pipeline, which we continue to bid every month and some of
+the strategic revenue opportunities, which are large-scale multiyear revenue opportunities, we
+think all of them would have started.
+Some of them have already started, but all of them together to start and giving us the kind of
+revenue and profitability that we have been hoping for the last 2 years that starting point will be
+Q4 FY26. Yes.
+
+Suraj C:
+
+And sir, lastly, in your presentation, so the number of EVs, 4-wheeler EVs that are registered
+this quarter. So what I want to understand or interpret is that, let's say, if your market share in
+these EV chargers is around 50% to 60%. So shouldn't it directly boil down to your number of
+units sold? So when you say that, let's say, 50,000 EV cars were registered this quarter, so
+shouldn't your chargers sold be around 25,000? I mean, doesn't it work that way?
+
+Anant Nahata:
+
+Yes. So good analysis and question. So -- yes and no. We supply what is called as wallbox
+chargers. If you have an EV, you would know there are 2 types of chargers, which are supplied
+with the car. One is a portable charger, which is like an adapter looks like an adapter and one is
+a wallbox charger, which gets mounted on the wall of your house somewhere. We have a very
+high market share in the wallbox charger, not in the portable charger.
+Now what -- it depends on company to company, like MG with every car supplies a wallbox
+charger. So there, your analysis would absolutely be right. But let's take some other car company,
+not taking names, but there are some car companies who have EV models from very low cost to
+very high cost.
+So for the mass models, they do not supply a wallbox charger. So where we'll not end up
+supplying the chargers in those categories, even if there is growth. So it depends. So there is a
+
+Page 12 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+good mix overall. But generally, the fleets and taxis, usually, they are not supplied by -- with
+wallbox chargers.
+But generally speaking, if there is growth, we have to grow. And I don't know if I mentioned
+this, but I see our AC charger monthly volume has already increased by 50% as we speak from
+like levels of last, let's say, December or November, December. And it's further going to increase
+by 50% over the next 3 months. So yes.
+Suraj C:
+
+So any blended market share, if you could provide a number...
+
+Moderator:
+
+Sorry to interrupt, Mr. Suraj, could you please fall back into the queue for any follow-up?
+
+Suraj C:
+
+Yes, yes, I will. So I've asked the question already. I'll just get the number and I'll fall back in
+queue. No worries. Yes, sir. So just ask the question on -- so could you be able to provide the
+blended market share?
+
+Anant Nahata:
+
+Yes. See, blended, I would not know. As in our DRHP dock, on the wallbox home chargers at
+that time, we had 60% market share. I don't know the exact number today, but it will be fairly
+high, like -- this is my estimation, not from a research report, but I think for wallbox charger,
+our share still would be north of 50%.
+
+Moderator:
+
+The next question is from the line of Hemansh Jain from Indira Securities.
+
+Hemansh Jain:
+
+So congrats on a good quarter. So my question was regarding -- can you comment on your
+capacity in the U.S., right? At what capacity is it working?
+
+Anant Nahata:
+
+At what capacity -- sorry, what?
+
+Hemansh Jain:
+
+Is your Tritium manufacturing in the U.S. working right?
+
+Anant Nahata:
+
+Yes. I got that. But what's your question? -- at what capacity?
+
+Hemansh Jain:
+
+I mean at what capacity utilization? Are we -- what is your top line that you can do in terms of
+manufacturing DC chargers over there? And what are we doing currently?
+
+Anant Nahata:
+
+Yes. So as you saw this quarter, we did about USD10 million of revenue. I think the capacity
+there can service 2.5x of this revenue. So roughly, let's say, USD100 million, slightly more
+maybe. And we are doing 1/4 of that today. That's not because of a structural problem, but
+because of the turnaround, which is underway and hopefully, the fag end of it, once those 3
+pillars of legacy products, which we have a backlog and continued pipeline and some of the
+strategic projects, which are new products, they get qualified, I think we'll be utilizing -- we'll
+have good utilization rates for that factory.
+
+Hemansh Jain:
+
+And just another question. As you told in your presentation that our EV business on a
+consolidated basis grew almost 50%. But on a stand-alone basis, it was roughly around 15%. So
+despite several tailwinds in the AC charging, why -- is there a reason that only 15% growth came
+on a stand-alone basis?
+
+Page 13 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+Anant Nahata:
+
+Yes. So on a stand-alone basis, see, first of all, the momentum of EV charging vehicle has just
+picked up this quarter, right? So some of the demand will follow. But what happened is I think
+AC charger still would have grown, but the value of AC charger is much less than a DC charger.
+On DC charger side, what happened, a lot of customers due to realizing commodity, forex, and
+other associated geopolitical risk, they upfront ordered a lot of chargers in Q4. That's why you
+see a very high revenue of EV charging in quarter 4, which is primarily pulling in DC charger
+demand from quarter 1.
+So I don't have the numbers right now, but AC charger may have grown by 30% also, right? But
+DC charger, if it grew only by 10%, that's why you're seeing the effective blended growth rate
+at 15%. So I think it's just a timing issue. But this growth is not 1x. It's continuing. And that's
+why I think we're going to see continued quarter-on-quarter growth for both AC and DC
+chargers.
+
+Moderator:
+
+The next question is from the line of Shashi Kant from Brighter Mind Asset Management.
+
+Shashi Kant:
+
+My first question about the underutilization on the drives about the installation of chargers. I
+mean the recent news articles are pointing towards the underutilization of the fund. I mean can
+you shed some light on this? What could be the possible reason why things are not taking right
+shape on the ground?
+
+Anant Nahata:
+
+Yes. So see, underutilization, so charging is something which has to be deployed at the right
+location of the right power. And when I see some good networks, there is one in South, there is
+one pan-India. There are some networks owned by the India's biggest conglomerates, these are
+all having good utilization rates. And some charging sites even have utilization rates of more
+than 20%, which is like very, very good, excellent.
+Now when we look at charging infrastructure on aggregate, on average, that's not the right way
+to look at it because a lot of older chargers deployed in 2020, '21, '22, they're obsolete in terms
+of technology and power. Today, nobody will go to a 20-kilowatt charger and charge their cars.
+Some of the chargers deployed under tenders are not even working properly at the highway
+location or city location. In fact, there was a study done by an independent consultant who
+gathers a lot of EV charging data.
+Again, I cannot say exactly about the accuracy of the report, but the report that 30% to 35% of
+the deployed DC chargers are not even functional anymore. So our focus has always been on
+producing high-quality, reliable chargers. That's why India's best networks or most reliable
+networks would be on Exicom's charger. So it's a survival of the fittest, eventually, good product
+survives, bad product dies.
+So whether they are charging companies, good networks, people who are providing reliable
+uptime charges and good charging facilities, those will survive, and that's where we need to see
+the utilization, etcetera, right? The locations which don't matter or are obsolete shouldn't figure
+out in this calculation.
+
+Page 14 of 15
+
+Exicom Tele-Systems Limited
+August 10, 2026
+Moderator:
+
+That was the last question for today. I now hand the conference over to the management for
+closing remarks.
+
+Anant Nahata:
+
+So I appreciate all the people, stakeholders, shareholders joining this conversation with the
+management of Exicom. We have a lot of potential, and we have, for the first time, industry
+tailwinds at a pace that we have never had before. We have the new factory.
+We have Tritium on the verge of turnaround, and we have put in all the hard work. I see light at
+the end of the tunnel, which will result in not just scaled revenue, but good profitability as well
+in the coming quarters.
+Thank you for staying with us, sticking with us, and we are here to serve you. And I think that
+journey is not far, maybe a couple of quarters away where you will see the expected results, not
+just on stand-alone but consolidated basis. Thank you.
+
+Moderator:
+
+On behalf of Monarch Networth Capital Limited, that concludes this conference. Thank you for
+joining us, and you may now disconnect your lines.
+
+Page 15 of 15
+
+

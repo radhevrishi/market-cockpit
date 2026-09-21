@@ -39,6 +39,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
+import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -49,7 +50,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'india-ai-summary-v7';  // zzz720 — structural block: capacity, demand, customers, volume/price/mix, balance, risks, targets
+const PROMPT_VERSION = 'india-ai-summary-v8';  // zzz738 — structural events stage  // zzz720 — structural block: capacity, demand, customers, volume/price/mix, balance, risks, targets
 const TTL_S = 365 * 24 * 3600;
 const MAX_CHARS = 140_000;
 /** How many documents one company may cost. Each is a model-budget PDF
@@ -399,8 +400,43 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // THE STRUCTURAL EVENTS STAGE.                                  (zzz738)
+  //
+  // The summary call above is a results summariser and it summarises. On
+  // EXICOM's August 2026 concall it returned capacity, utilisation and order
+  // book EMPTY while the transcript said "3x production capability",
+  // "between 90% and 100% utilization" and "order book ... INR1,000 crores".
+  // This second call is search-first: the sentences that name a structural
+  // variable and carry a number are pulled out and the model is asked about
+  // only those, with the verbatim sentence required for every figure. See
+  // lib/thesis/evidence-extract.ts. Its output is validated against the
+  // passages before anything reaches the ledger.
+  // ══════════════════════════════════════════════════════════════════════
+  let events: StructuralEvent[] = [];
+  let pipeline: ExtractionPipeline | null = null;
+  try {
+    const r = await extractStructuralEvents(
+      read.map(({ doc, text: t }) => ({ label: doc.label, kind: doc.kind, text: t })),
+      ticker,
+      { apiKey: process.env.ANTHROPIC_API_KEY!, model: MODEL },
+    );
+    events = r.events;
+    pipeline = r.pipeline;
+  } catch (e: any) {
+    pipeline = {
+      passages_by_family: {}, passages_sent: 0, events_returned: 0, events_kept: 0,
+      events_by_family: {}, dropped: [], model_error: String(e?.message || e),
+    };
+  }
+  // Carried inside `structured` so the client's extractVariables sees them
+  // without a second shape to plumb through the hook.
+  (data as any).events = events;
+
   const payload = {
     structured: data,
+    events,
+    evidence_pipeline: pipeline,
     source_url: usedDoc.url,
     document_kind: usedDoc.kind,
     document_period: usedDoc.period || quarter || null,

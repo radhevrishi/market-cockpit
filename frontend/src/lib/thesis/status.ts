@@ -65,6 +65,19 @@ import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
 import { VAR_LABEL, GRADER_AVAILABLE, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason } from './taxonomy';
 
+/** A variable the grader can fill without a document is OUTPUT. (zzz738) */
+const isOutput = (k: VarKey): boolean => VAR_DIMENSION[k] === 'financial' || GRADER_AVAILABLE.has(k);
+
+/** Three counts, never a fraction. (zzz738) */
+function tally(vs: Array<{ verdict: string }>): { confirmed: number; pending: number; contradicted: number; total: number } {
+  return {
+    confirmed: vs.filter((c) => c.verdict === 'improving').length,
+    pending: vs.filter((c) => c.verdict === 'unknown').length,
+    contradicted: vs.filter((c) => c.verdict === 'deteriorating').length,
+    total: vs.length,
+  };
+}
+
 export type ThesisStatus =
   | 'EVIDENCE_INCOMPLETE'
   | 'CONFIRMATION_REQUIRED'
@@ -103,6 +116,12 @@ export interface ThesisAssessment {
   nextConfirmation: string[];
   /** One line stating why the status is what it is. */
   because: string;
+  /** Deteriorations in variables that are NOT part of this thesis's own
+   *  mechanism — shown, loudly, but not allowed to set the status. EXICOM's
+   *  cash conversion at 0.32× is a fact worth a red line on the card; it is
+   *  not, on its own, evidence that an unclassified thesis is weakening
+   *  when no document has been read. (zzz738) */
+  financialWarning: Array<{ label: string; value: string }>;
   /** How much of the thesis could be checked at all. */
   coverage: {
     checked: number; disclosed: number; corePossible: number; coreDisclosed: number;
@@ -123,6 +142,18 @@ export interface ThesisAssessment {
     criticalConfirmed: number;
     criticalPending: number;
     criticalContradicted: number;
+    // ── OUTPUT ≠ MECHANISM ≠ FORWARD.                            (zzz738)
+    //
+    // "4 confirmed · 1 pending" on AARTIPHARM counted revenue, margin,
+    // earnings and cash conversion as four confirmations while capacity,
+    // order book, capex, customers and guidance were all unread. Those four
+    // are the OUTPUT of a thesis. They confirm that the quarter was good;
+    // they confirm nothing about why, and "why" is the thesis. The counts
+    // are now kept apart so a good print can never read as a proven
+    // mechanism.
+    output: { confirmed: number; pending: number; contradicted: number; total: number };
+    mechanism: { confirmed: number; pending: number; contradicted: number; total: number };
+    forward: { confirmed: number; pending: number; contradicted: number; total: number };
     /** The core variables NOT yet checked, by name. The owner asked for this
      *  exactly: "6/10 core variables checked. Missing: utilisation, capex,
      *  new capacity, order book" — not a bare "evidence incomplete". */
@@ -250,9 +281,27 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const critical = checked.filter((c) => c.weight >= 3);
   const core = checked.filter((c) => c.weight === 4);
   const coreDisclosed = core.filter((c) => c.verdict !== 'unknown');
-  const coreDown = coreDisclosed.filter((c) => c.verdict === 'deteriorating');
   const coreUp = coreDisclosed.filter((c) => c.verdict === 'improving');
-  const supportDown = checked.filter((c) => c.weight === 3 && c.verdict === 'deteriorating');
+
+  // ── WHICH DETERIORATIONS ARE ALLOWED TO MOVE THE STATUS.       (zzz738)
+  //
+  // A variable can drive WEAKENING or BROKEN only when it belongs to a
+  // dimension THIS thesis says it rests on. For F · PROFIT JUMP, cash
+  // conversion is the forensic test itself and counts. For an UNCLASSIFIED
+  // holding with no document read, the same figure is a financial warning
+  // and nothing more — the ledger has no thesis to weaken yet, and a status
+  // that says "weakening" on a thesis nobody has stated is a verdict without
+  // a subject. Once a document has been read, the ledger has been examined
+  // and the same deterioration may set the status.
+  const requiredDims = new Set(thesis.requiresConfirmationIn);
+  const mayMoveStatus = (c: { key: VarKey }) =>
+    requiredDims.has(VAR_DIMENSION[c.key])
+    && (input.evidenceReviewed === true || thesis.pattern !== 'UNCLASSIFIED');
+  const coreDown = coreDisclosed.filter((c) => c.verdict === 'deteriorating' && mayMoveStatus(c));
+  const supportDown = checked.filter((c) => c.weight === 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
+  const financialWarning = checked
+    .filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && !mayMoveStatus(c))
+    .map((c) => ({ label: c.label, value: c.delta || c.after || 'deteriorating' }));
   const guidanceDown = checked.some((c) => c.key === 'guidance' && c.verdict === 'deteriorating');
 
   const weighted = checked.reduce((a, c) => a + SIGN[c.verdict] * c.weight, 0);
@@ -280,7 +329,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // Any supporting-or-better variable moving the wrong way is a reason to
   // look, whatever else is fine. JINDRILL read "NO MATERIAL CHANGE" with
   // earnings −28.7% on the same card, which is not a defensible sentence.
-  const anyMaterialDown = checked.some((c) => c.weight >= 3 && c.verdict === 'deteriorating');
+  const anyMaterialDown = checked.some((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
 
   // ── THE STATUS LADDER, most severe first. ──────────────────────────────
   let status: ThesisStatus;
@@ -300,7 +349,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // condition has fired, and the card prints that condition verbatim. The
   // arithmetic cases that used to reach red now reach WEAKENING, which is
   // what they always were.
-  const coreTriggered = checked.filter((c) => c.weight === 4 && c.invalidation);
+  const coreTriggered = checked.filter((c) => c.weight === 4 && c.invalidation && mayMoveStatus(c));
   if (coreTriggered.length >= 2 || (coreTriggered.length === 1 && guidanceDown)) {
     status = 'BROKEN';
     because = `Thesis-break condition met — ${coreTriggered.map((c) => `"${c.invalidation}"`).join(' AND ')}`
@@ -466,7 +515,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       : `${thesis.name} CONFIRMED — all ${mechanismCheck.length} links of the mechanism hold on this evidence.`;
 
   return {
-    status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because,
+    status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
     mechanismCheck, mechanismVerdict, dimensions,
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
@@ -475,6 +524,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       criticalConfirmed: critical.filter((c) => c.verdict === 'improving').length,
       criticalPending: critical.filter((c) => c.verdict === 'unknown').length,
       criticalContradicted: critical.filter((c) => c.verdict === 'deteriorating').length,
+      // OUTPUT is anything a grader row can supply — revenue, margin,
+      // earnings, leverage, AND cash conversion / ROCE. MECHANISM is what
+      // only a document can supply. The dividing line is the data source,
+      // because that is exactly the line the "4 confirmed" bug crossed.
+      output: tally(critical.filter((c) => isOutput(c.key))),
+      mechanism: tally(critical.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward')),
+      forward: tally(critical.filter((c) => VAR_DIMENSION[c.key] === 'forward')),
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
       missingNeedsFiling: checked
         .filter((c) => c.verdict === 'unknown' && c.weight >= 3 && !GRADER_AVAILABLE.has(c.key))
