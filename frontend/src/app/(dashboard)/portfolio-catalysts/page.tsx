@@ -40,7 +40,10 @@ const C = {
   dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)', amber: '#F59E0B', cyan: 'var(--mc-cyan)',
 };
 
-const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'STRENGTHENING', 'NEUTRAL'];
+// EVIDENCE_INCOMPLETE ranks ABOVE strengthening and neutral: an unchecked
+// holding is a piece of work outstanding, and burying it under the ones that
+// have been cleared is how it stays unchecked. (zzz717)
+const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL'];
 
 export default function PortfolioCatalystsPage() {
   const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook();
@@ -160,12 +163,32 @@ export default function PortfolioCatalystsPage() {
 
       {loading && <div style={{ fontSize: 12, color: C.dim }}>Reading your book…</div>}
 
-      {readCount === 0 && !loading && (
+      {/* ── THE COVERAGE BANNER. It is the primary action on this page
+          whenever the book is under-read, because a thesis engine judging a
+          book it has not read is the failure this page was rebuilt to fix.
+          (zzz717) */}
+      {!loading && readCount < all.length && (
         <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.6, background: C.bg,
-          border: `1px solid ${C.border}`, borderRadius: 8, padding: '9px 12px' }}>
-          Nothing has been read from a filing yet, so every thesis below is judged on the grader&apos;s numbers alone —
-          revenue, earnings, margin and cash. Utilisation, capex, order book and guidance live in the filings, and
-          they are what turn a grade into a thesis. <b style={{ color: C.text }}>Read the filings</b> to fill them in.
+          border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
+          <b style={{ color: C.text }}>
+            {all.length - readCount} of {all.length} holdings have not had their filing read.
+          </b>{' '}
+          Revenue, earnings, margin and cash come from the graders and are already on the cards.{' '}
+          <b style={{ color: C.text }}>Utilisation, capacity, capex, order book and guidance do not</b> — they live in
+          the filings, and for most theses here they are the <i>core</i> variables. Until they are read, those holdings
+          sit at <b style={{ color: C.text }}>EVIDENCE INCOMPLETE</b>: no positive verdict is claimed on evidence that
+          has not been looked at. A deterioration already visible in the figures would still be flagged.
+          {!batch.running && (
+            <div style={{ marginTop: 7 }}>
+              <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
+                fontSize: 11.5, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
+              }}>&#10024; Read the {all.length - readCount} remaining filings</button>
+              <span style={{ fontSize: 10.5, color: C.faint, marginLeft: 9 }}>
+                Three at a time. Each is one model call against one filing, and you can stop it at any point.
+              </span>
+            </div>
+          )}
         </div>
       )}
 

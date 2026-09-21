@@ -14,9 +14,35 @@
 // owner's own ledger priced his price-triggered selling at roughly Rs 1.9 Cr
 // of foregone gains.
 //
-// FIVE STATUSES, from the spec, and no more. The instruction was explicit:
-// "Don't create 50 scores."
+// SIX STATUSES. Five are the spec's; the sixth exists because the first
+// version failed a test the owner applied the moment he saw the page.
 //
+// ── WHY "EVIDENCE INCOMPLETE" HAD TO BE ADDED.                    (zzz717)
+//
+// With ZERO filings read, the page reported 8 holdings as THESIS
+// STRENGTHENING — and said, two lines above, that utilisation, capex, order
+// book and guidance all live in the filings it had not opened. It reached a
+// conclusion from revenue, earnings and margin alone and dressed it as a
+// verdict on a thesis whose core variables it had never looked at.
+//
+// The rule now, and it is asymmetric on purpose:
+//
+//   A POSITIVE verdict requires that the thesis's CORE variables were
+//   actually checked. Absence of evidence cannot confirm health — the one
+//   variable nobody looked at is exactly where the problem would be.
+//
+//   A NEGATIVE verdict does NOT require full coverage. Damage you can
+//   already see in the filed numbers is not undone by reading more; a
+//   collapsing margin is a collapsing margin whether or not utilisation was
+//   disclosed. Refusing to flag it until everything is read would be the
+//   mirror-image error, and the more expensive one.
+//
+// So an unread holding sits at EVIDENCE INCOMPLETE showing the financial
+// trend it genuinely has, with the unchecked variables listed as unchecked —
+// and can still be pulled straight to WEAKENING or BROKEN if the numbers in
+// hand are bad enough.
+//
+//   EVIDENCE_INCOMPLETE  the core variables have not been checked yet
 //   STRENGTHENING  new evidence supports the thesis
 //   NEUTRAL        nothing material changed
 //   WEAKENING      important evidence deteriorated — REVIEW, not exit
@@ -39,6 +65,7 @@ import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarKey, type VarVerdict } from './variables';
 
 export type ThesisStatus =
+  | 'EVIDENCE_INCOMPLETE'
   | 'STRENGTHENING' | 'NEUTRAL' | 'WEAKENING' | 'BROKEN' | 'EXPECTATION_GAP';
 
 export interface CheckedVariable {
@@ -72,10 +99,15 @@ export interface ThesisAssessment {
   /** How much of the thesis could be checked at all. */
   coverage: { checked: number; disclosed: number; corePossible: number; coreDisclosed: number };
   /** The action the OWNER takes. Never a trade. */
-  action: 'Hold — no action' | 'Watch' | 'Review' | 'EXIT REVIEW' | 'Re-underwrite expectations';
+  action: 'Hold — no action' | 'Watch' | 'Review' | 'EXIT REVIEW' | 'Re-underwrite expectations' | 'Read the filing';
+  /** Each link of the thesis mechanism, and whether the evidence confirms it.
+   *  The spec's "OPERATING LEVERAGE CONFIRMED", rather than "earnings beat". */
+  mechanismCheck: Array<{ link: string; state: 'confirmed' | 'contradicted' | 'unchecked' }>;
+  mechanismVerdict: string;
 }
 
 const ACTION: Record<ThesisStatus, ThesisAssessment['action']> = {
+  EVIDENCE_INCOMPLETE: 'Read the filing',
   STRENGTHENING: 'Hold — no action',
   NEUTRAL: 'Watch',
   WEAKENING: 'Review',
@@ -84,6 +116,8 @@ const ACTION: Record<ThesisStatus, ThesisAssessment['action']> = {
 };
 
 export const STATUS_META: Record<ThesisStatus, { label: string; color: string; dot: string; meaning: string }> = {
+  EVIDENCE_INCOMPLETE: { label: 'EVIDENCE INCOMPLETE', color: '#64748B', dot: '○',
+    meaning: 'The core variables this thesis rests on have not been checked yet. The financial trend is shown for what it is; no verdict is claimed on top of it.' },
   STRENGTHENING: { label: 'THESIS STRENGTHENING', color: '#10B981', dot: '🟢',
     meaning: 'New evidence supports the reason you own this. Nothing to do.' },
   NEUTRAL: { label: 'NO MATERIAL CHANGE', color: '#94A3B8', dot: '⚪',
@@ -162,15 +196,24 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       ? `${coreDown[0].label} deteriorated. One core variable down is a reason to look, not to act — `
         + 'a single weak quarter is exactly what this ledger exists to stop you selling into.'
       : `${supportDown.length} supporting variables deteriorated (${supportDown.map((c) => c.label.toLowerCase()).join(', ')}).`;
+  } else if (coreDisclosed.length < core.length) {
+    // Nothing is deteriorating, and the thesis has not been fully checked. A
+    // positive verdict is not available here, and neither is a comfortable
+    // "no material change" — both would claim more than has been looked at.
+    const missing = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
+    status = 'EVIDENCE_INCOMPLETE';
+    because = disclosed.length
+      ? `${disclosed.length} variable${disclosed.length === 1 ? '' : 's'} read and nothing is deteriorating — but `
+        + `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} core to this thesis and ${missing.length === 1 ? 'has' : 'have'} not been checked. `
+        + 'Read the filing before calling this one healthy.'
+      : `Nothing has been read for this holding yet. ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} core to its thesis and unchecked.`;
   } else if (coreUp.length >= 1 && weighted >= 6) {
     status = 'STRENGTHENING';
-    because = `${coreUp.map((c) => c.label.toLowerCase()).join(' and ')} improved, with nothing core moving against it.`;
-  } else if (!disclosed.length) {
-    status = 'NEUTRAL';
-    because = 'No structural variable was disclosed in the latest evidence. Nothing has been shown to change.';
+    because = `${coreUp.map((c) => c.label.toLowerCase()).join(' and ')} improved, `
+      + `and every core variable of this thesis was checked — ${core.map((c) => c.label.toLowerCase()).join(', ')}.`;
   } else {
     status = 'NEUTRAL';
-    because = `${disclosed.length} variables read, none of them decisive either way.`;
+    because = `All ${core.length} core variables checked; ${disclosed.length} of ${checked.length} disclosed, none decisive either way.`;
   }
 
   const triggered = checked
@@ -202,8 +245,38 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       ? `${c.label} — not disclosed this time. Whether it is disclosed next quarter is itself information.`
       : `${c.label} — flat. It has to turn before the thesis can be called intact.`);
 
+  // ── THE STRUCTURAL CHANGE DETECTOR.                            (zzz717)
+  //
+  // The spec's point: the output should be "OPERATING LEVERAGE CONFIRMED",
+  // not "earnings beat". A mechanism is a chain of links, and a chain is only
+  // confirmed when every link it can be checked on holds. One unchecked link
+  // leaves the whole mechanism UNCONFIRMED — it does not average out to
+  // "mostly confirmed", because a chain with an unexamined link is not a
+  // chain you have examined.
+  const mechanismCheck = thesis.variables
+    .filter((tv) => tv.weight >= 3)
+    .map((tv) => {
+      const c = checked.find((x) => x.key === tv.key)!;
+      return {
+        link: c.label,
+        state: (c.verdict === 'improving' ? 'confirmed'
+          : c.verdict === 'deteriorating' ? 'contradicted'
+            : c.verdict === 'flat' ? 'unchecked' : 'unchecked') as 'confirmed' | 'contradicted' | 'unchecked',
+      };
+    });
+  const confirmedLinks = mechanismCheck.filter((m) => m.state === 'confirmed').length;
+  const contradicted = mechanismCheck.filter((m) => m.state === 'contradicted');
+  const unchecked = mechanismCheck.filter((m) => m.state === 'unchecked');
+  const mechanismVerdict = contradicted.length
+    ? `${thesis.name} CONTRADICTED — ${contradicted.map((m) => m.link.toLowerCase()).join(', ')} moving the wrong way.`
+    : unchecked.length
+      ? `${thesis.name} NOT YET CONFIRMED — ${confirmedLinks} of ${mechanismCheck.length} links hold; `
+        + `${unchecked.map((m) => m.link.toLowerCase()).join(', ')} still open.`
+      : `${thesis.name} CONFIRMED — all ${mechanismCheck.length} links of the mechanism hold on this evidence.`;
+
   return {
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because,
+    mechanismCheck, mechanismVerdict,
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
       corePossible: core.length, coreDisclosed: coreDisclosed.length,

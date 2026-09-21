@@ -39,7 +39,14 @@ const C = {
   red: 'var(--mc-bearish)',
 };
 
-const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'STRENGTHENING', 'NEUTRAL'];
+// EVIDENCE_INCOMPLETE ranks ABOVE strengthening and neutral: an unchecked
+// holding is a piece of work outstanding, and burying it under the ones that
+// have been cleared is how it stays unchecked. (zzz717)
+const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL'];
+// What belongs on the radar. EVIDENCE_INCOMPLETE is deliberately NOT here:
+// the radar answers "what has deteriorated", and an unchecked holding has not
+// been shown to do anything. It is counted in the header and called out in the
+// coverage banner instead, so it cannot be mistaken for an all-clear. (zzz717)
 const ACTIONABLE: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP'];
 
 export default function ExitRadarPage() {
@@ -71,6 +78,7 @@ export default function ExitRadarPage() {
 
   const readCount = all.filter((r) => r.state === 'done').length;
   const unread = all.filter((r) => r.state !== 'done').length;
+  const incomplete = all.filter((r) => r.assessment?.status === 'EVIDENCE_INCOMPLETE').length;
 
   return (
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -140,7 +148,9 @@ export default function ExitRadarPage() {
       {!loading && unread > 0 && (
         <div style={{ fontSize: 11.5, color: C.amber, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.border}`, borderRadius: 8, padding: '9px 12px' }}>
-          <b>{unread} of {symbols.length} holdings have not had their filing read.</b> Their theses are judged on the
+          <b>{unread} of {symbols.length} holdings have not had their filing read{incomplete
+            ? `, and ${incomplete} sit at EVIDENCE INCOMPLETE — a core variable of their thesis is unchecked`
+            : ''}.</b> Their theses are judged on the
           grader&apos;s numbers alone — utilisation, capex, order book and guidance all live in the filings. An empty
           radar with unread holdings means <b>not yet checked</b>, not <b>nothing wrong</b>.
         </div>

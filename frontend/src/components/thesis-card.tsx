@@ -154,6 +154,41 @@ export function ThesisCard(p: ThesisCardProps) {
         </div>
       )}
 
+      {/* ── THE COVERAGE CHECKLIST, ALWAYS VISIBLE.              (zzz717)
+          What has been confirmed, and what has not been looked at. It sits
+          above the fold deliberately: the failure this replaces was a page
+          that said THESIS STRENGTHENING while admitting two lines higher
+          that it had opened no filings. A reader must be able to see the
+          gap without expanding anything. */}
+      {a && (
+        <div style={{ marginTop: 6, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          {a.checked.filter((c) => c.weight >= 3).map((c) => {
+            const v = VERDICT[c.verdict];
+            const isUnknown = c.verdict === 'unknown';
+            return (
+              <span key={c.key} title={c.evidence}
+                style={{
+                  fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 3,
+                  border: `1px solid ${isUnknown ? C.border : v.color}`,
+                  color: isUnknown ? C.faint : v.color,
+                  background: isUnknown ? 'transparent' : `${v.color}14`,
+                }}>
+                {isUnknown ? '○' : v.mark} {c.label}
+                {!isUnknown && (c.delta || c.after) ? ` ${c.delta || c.after}` : ''}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {a && a.status === 'EVIDENCE_INCOMPLETE' && (
+        <div style={{ marginTop: 6, fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+          A hollow ○ is a variable nobody has looked at, not a variable that came back flat. No positive verdict is
+          available until the core ones are checked — though a deterioration already visible in the figures would
+          still be flagged.
+        </div>
+      )}
+
       {a && open && (
         <>
           {/* ── WHAT CHANGED — facts only. ─────────────────────────────── */}
@@ -183,13 +218,28 @@ export function ThesisCard(p: ThesisCardProps) {
 
           {/* ── STRUCTURAL SIGNAL — the mechanism, as a chain. ─────────── */}
           <Section label="STRUCTURAL SIGNAL — the mechanism this thesis depends on">
-            <div style={{ fontSize: 11.5, color: C.text, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 11.5, color: C.text, display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
               {a.thesis.mechanism.map((m, i) => (
                 <span key={i}>
                   <span style={{ color: C.text }}>{m}</span>
                   {i < a.thesis.mechanism.length - 1 && <span style={{ color: C.faint }}> → </span>}
                 </span>
               ))}
+            </div>
+            {a.mechanismCheck.map((m) => {
+              const col = m.state === 'confirmed' ? C.green : m.state === 'contradicted' ? C.red : C.faint;
+              const mark = m.state === 'confirmed' ? '✓' : m.state === 'contradicted' ? '✕' : '○';
+              return (
+                <div key={m.link} style={{ fontSize: 11, color: C.dim, padding: '1px 0' }}>
+                  <span style={{ color: col, fontWeight: 900, marginRight: 6 }}>{mark}</span>{m.link}
+                  <span style={{ color: C.faint, fontSize: 10 }}> · {m.state}</span>
+                </div>
+              );
+            })}
+            <div style={{ marginTop: 5, fontSize: 11, fontWeight: 800,
+              color: a.mechanismVerdict.includes('CONTRADICTED') ? C.red
+                : a.mechanismVerdict.includes('NOT YET') ? C.amber : C.green }}>
+              → {a.mechanismVerdict}
             </div>
           </Section>
 
