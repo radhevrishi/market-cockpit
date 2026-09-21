@@ -1425,6 +1425,25 @@ function SectionLabel({ children, color }: { children: React.ReactNode; color?: 
 // why none of them print a heading over an empty body.
 // ═══════════════════════════════════════════════════════════════════════════
 
+
+// ── "NOT STATED" IS AN ABSENCE, NOT A VALUE.                        (zzz702)
+//
+// The schema asks the model to write "not stated" when a field is absent,
+// which is right for the model and wrong for the card: the renderer checked
+// for a non-empty string and duly printed it. Forgent's card carried
+// "not stated · not stated · completes Substantially complete as of June 30,
+// 2026" and an order-book row reading "Executes over not stated |
+// Concentration not stated" — the engine reporting its own silence as though
+// it were a finding, which is exactly what every empty section in this card
+// is designed to avoid.
+const PLACEHOLDER_RE = /^(not\s+(stated|disclosed|quantified|available|applicable|given|provided)|n\/?a|none|unknown|—|-)$/i;
+/** A string that carries real content — not an empty field and not the
+ *  model's way of saying the document was silent. */
+function said(v: unknown): boolean {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s.length > 0 && !PLACEHOLDER_RE.test(s);
+}
+
 const NATURE_STYLE: Record<string, { c: string; word: string }> = {
   structural: { c: 'var(--mc-bullish)', word: 'structural — repeats' },
   cyclical:   { c: '#F59E0B',           word: 'cyclical — will not repeat' },
@@ -1504,11 +1523,11 @@ function Catalysts({ d }: { d: any }) {
   const ob = d?.order_book || {};
   const ut = d?.utilisation || {};
   const oneOffs: any[] = Array.isArray(d?.one_offs) ? d.one_offs : [];
-  const olev = typeof d?.operating_leverage_evidence === 'string' ? d.operating_leverage_evidence.trim() : '';
+  const olev = said(d?.operating_leverage_evidence) ? String(d.operating_leverage_evidence).trim() : '';
   const obRows = (['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration'] as const)
-    .map((k) => ({ k, v: ob[k] })).filter((r) => typeof r.v === 'string' && r.v.trim());
+    .map((k) => ({ k, v: ob[k] })).filter((r) => said(r.v));
   const utRows = (['current', 'prior', 'expected', 'expected_by', 'basis'] as const)
-    .map((k) => ({ k, v: ut[k] })).filter((r) => typeof r.v === 'string' && r.v.trim());
+    .map((k) => ({ k, v: ut[k] })).filter((r) => said(r.v));
   if (!cats.length && !capex.length && !obRows.length && !utRows.length && !oneOffs.length && !olev) return null;
   const LBL: Record<string, string> = {
     closing_value: 'Order book', growth: 'Growth', order_inflow: 'Inflow',
@@ -1532,9 +1551,9 @@ function Catalysts({ d }: { d: any }) {
                 )}
               </div>
               <div style={{ color: 'var(--mc-text-3)', fontSize: 10.5, marginLeft: 18 }}>
-                {[c?.size_vs_company, c?.expected_impact_period && c.expected_impact_period !== 'not stated'
-                  ? `impact from ${c.expected_impact_period}` : '']
-                  .filter((x) => x && x !== 'not quantified').join(' · ')}
+                {[said(c?.size_vs_company) ? c.size_vs_company : '',
+                  said(c?.expected_impact_period) ? `impact from ${c.expected_impact_period}` : '']
+                  .filter(Boolean).join(' · ')}
               </div>
             </div>
           ))}
@@ -1552,9 +1571,16 @@ function Catalysts({ d }: { d: any }) {
                 </span>
               )}
               <div style={{ color: 'var(--mc-text-3)', fontSize: 10.5 }}>
-                {[c?.amount, c?.capacity_added,
-                  c?.completion_period && c.completion_period !== 'not stated' ? `completes ${c.completion_period}` : '',
-                  c?.revenue_from && c.revenue_from !== 'not stated' ? `earns from ${c.revenue_from}` : '']
+                {[said(c?.amount) ? c.amount : '',
+                  said(c?.capacity_added) ? c.capacity_added : '',
+                  // A completion field is sometimes a date ("Q4 FY2027") and
+                  // sometimes a sentence ("Substantially complete as of June
+                  // 30, 2026"). "completes" reads correctly before the first
+                  // and absurdly before the second, so it is only prefixed
+                  // when the value is short enough to be a period.
+                  said(c?.completion_period)
+                    ? (String(c.completion_period).length <= 18 ? `completes ${c.completion_period}` : c.completion_period) : '',
+                  said(c?.revenue_from) ? `earns from ${c.revenue_from}` : '']
                   .filter(Boolean).join(' · ')}
               </div>
             </div>
@@ -1602,7 +1628,7 @@ function Catalysts({ d }: { d: any }) {
                 {o?.direction === 'gain' ? '+' : '−'}
               </span>
               <span style={{ color: 'var(--mc-text-2)' }}>
-                {o?.item}{o?.amount ? ` — ${o.amount}` : ''}
+                {o?.item}{said(o?.amount) ? ` — ${o.amount}` : ''}
                 {o?.recurring === 'will_not_recur' && (
                   <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}> · will not recur</span>
                 )}

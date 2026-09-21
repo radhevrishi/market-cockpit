@@ -64,7 +64,13 @@ const GUIDE_LABEL: Record<string, { label: string; rgb: [number, number, number]
 };
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-const has = (v: unknown): boolean => str(v).length > 1;
+// zzz702 — "not stated" is the model's way of reporting silence, and printing
+// it turns an absence into a finding. Matches the card's `said()` exactly.
+const PLACEHOLDER_RE = /^(not\s+(stated|disclosed|quantified|available|applicable|given|provided)|n\/?a|none|unknown|—|-)$/i;
+const has = (v: unknown): boolean => {
+  const t = str(v);
+  return t.length > 1 && !PLACEHOLDER_RE.test(t);
+};
 
 /** jsPDF's helvetica has no Unicode beyond Latin-1, so anything that would
  *  render as a black box is replaced with an ASCII equivalent up front. */
@@ -364,9 +370,9 @@ export async function exportUsSummaryPdf(input: UsSummaryPdfInput): Promise<void
   if (cats.length) {
     section('Catalysts');
     for (const c of cats) {
-      const sub = [str(c?.size_vs_company), str(c?.expected_impact_period) && str(c?.expected_impact_period) !== 'not stated'
-        ? `impact from ${str(c.expected_impact_period)}` : '']
-        .filter((x) => x && x !== 'not quantified').join(' - ');
+      const sub = [has(c?.size_vs_company) ? str(c.size_vs_company) : '',
+        has(c?.expected_impact_period) ? `impact from ${str(c.expected_impact_period)}` : '']
+        .filter(Boolean).join(' - ');
       const st = str(c?.status) && str(c?.status) !== 'not_stated'
         ? ` [${str(c.status).replace(/_/g, ' ')}]` : '';
       bullet(str(c?.title) + st, sub, BLUE);
@@ -378,9 +384,11 @@ export async function exportUsSummaryPdf(input: UsSummaryPdfInput): Promise<void
   if (capexP.length) {
     section('Capacity and capex');
     for (const c of capexP) {
-      const sub = [str(c?.amount), str(c?.capacity_added),
-        str(c?.completion_period) && str(c.completion_period) !== 'not stated' ? `completes ${str(c.completion_period)}` : '',
-        str(c?.revenue_from) && str(c.revenue_from) !== 'not stated' ? `earns from ${str(c.revenue_from)}` : '']
+      const cp = str(c?.completion_period);
+      const sub = [has(c?.amount) ? str(c.amount) : '',
+        has(c?.capacity_added) ? str(c.capacity_added) : '',
+        has(cp) ? (cp.length <= 18 ? `completes ${cp}` : cp) : '',
+        has(c?.revenue_from) ? `earns from ${str(c.revenue_from)}` : '']
         .filter(Boolean).join(' - ');
       bullet(str(c?.name), sub, INK2);
     }
