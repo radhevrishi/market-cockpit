@@ -58,7 +58,9 @@ function assess(row: BookRow): BookRow {
     assessment: assessThesis({
       pattern: row.pattern?.pattern ?? null,
       variables: vars,
-      promiseGap: check ? { gap: check.gap, detail: check.detail } : null,
+      promiseGap: check ? { gap: check.gap, detail: check.detail, direction: 'behind' } : null,
+      // An evidence document has been read only when a summary came back.
+      evidenceReviewed: !!row.summary,
     }),
     capex: buildCapexChain(row.summary, vars),
     promiseNote: check ? check.detail : null,

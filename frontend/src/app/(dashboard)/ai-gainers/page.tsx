@@ -68,8 +68,9 @@ interface Payload {
   gainers_scanned: number; graded_available: number;
   notes: string[]; queue: Row[];
   source_list?: {
-    file: string | null; synced_at: string | null; window: string | null;
-    rows: number; matched_to_a_filing: number;
+    file: string | null; url?: string | null; synced_at: string | null; window: string | null;
+    rows: number; total_reported?: number | null; pages_read?: number;
+    error?: string | null; matched_to_a_filing: number;
   };
   scanned?: Array<{ ticker: string; company: string | null; move_pct: number | null;
     volume_ratio: number | null; matched: boolean }>;
@@ -211,9 +212,12 @@ function ScannedLevel({ data }: { data: Payload }) {
     return (
       <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6, background: C.bg,
         border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px' }}>
-        No gainers list was read for this market. {data.market === 'IN'
-          ? 'No India gainers screen is committed to this repository, so the India tab ranks the day\u2019s filed results instead — there is no scanned list to show, and inventing one would be worse than saying so.'
-          : 'The TradingView export could not be read.'}
+        <b style={{ color: C.amber }}>No gainers list was read for this market.</b>{' '}
+        {sl?.error || (data.market === 'IN'
+          ? 'The screener.in screen returned nothing.'
+          : 'The TradingView export could not be read.')}
+        {' '}This is a failure to read the list, not a day with no gainers — nothing on the other tabs has been
+        checked against a gainers list.
       </div>
     );
   }
@@ -221,23 +225,33 @@ function ScannedLevel({ data }: { data: Payload }) {
     <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
         <div style={{ fontSize: 11.5, color: C.text, fontWeight: 700 }}>
-          {sl.rows} rows read from <code style={{ color: C.cyan }}>{sl.file}</code>
+          {sl.rows} rows read from{' '}
+          {sl.url
+            ? <a href={sl.url} target="_blank" rel="noreferrer" style={{ color: C.cyan }}>{sl.file}</a>
+            : <code style={{ color: C.cyan }}>{sl.file}</code>}
+          {sl.total_reported && sl.total_reported !== sl.rows
+            ? <span style={{ color: C.faint, fontWeight: 400 }}> (of {sl.total_reported} reported)</span> : null}
         </div>
         <div style={{ fontSize: 10.5, color: C.dim, marginTop: 3, lineHeight: 1.5 }}>
-          Last synced {sl.synced_at ? new Date(sl.synced_at).toLocaleString() : 'unknown'}
+          Read {sl.synced_at ? new Date(sl.synced_at).toLocaleString() : 'unknown'}
           {sl.window ? <> · window: <b style={{ color: C.text }}>{sl.window}</b></> : null}
           {' · '}{sl.matched_to_a_filing} of {sl.rows} matched to a filed result.
         </div>
-        <div style={{ fontSize: 10, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
-          &ldquo;Daily&rdquo; in this tab&rsquo;s name is the cadence of the review, not the window of the move: the
-          committed screen is a <b>weekly</b> performance export. Calling it today&rsquo;s gainers would be a plain
-          misstatement, so it is named for what it is.
-        </div>
+        {sl.error && (
+          <div style={{ fontSize: 10.5, color: C.amber, marginTop: 4 }}>⚠ {sl.error}</div>
+        )}
+        {data.market === 'US' && (
+          <div style={{ fontSize: 10, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
+            &ldquo;Daily&rdquo; in this tab&rsquo;s name is the cadence of the review, not the window of the move: the
+            US screen is a <b>weekly</b> performance export. India reads a genuine 1-day-return screen, live.
+          </div>
+        )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '84px 1fr 78px 70px 92px',
         gap: 8, padding: '6px 14px', borderBottom: `1px solid ${C.border}`,
         fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>
-        <span>TICKER</span><span>COMPANY</span><span style={{ textAlign: 'right' }}>1W MOVE</span>
+        <span>TICKER</span><span>COMPANY</span>
+        <span style={{ textAlign: 'right' }}>{data.market === 'IN' ? '1D MOVE' : '1W MOVE'}</span>
         <span style={{ textAlign: 'right' }}>REL VOL</span><span>FILING?</span>
       </div>
       {rows.map((r) => (

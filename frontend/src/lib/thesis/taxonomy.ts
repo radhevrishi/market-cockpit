@@ -173,6 +173,104 @@ export const GRADER_AVAILABLE: ReadonlySet<VarKey> = new Set<VarKey>([
   'cash_conversion', 'roce',
 ]);
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DIMENSIONS — WHY A GOOD NUMBER IS NOT A CONFIRMED THESIS.         (zzz723)
+//
+// The owner's closing rule: "Never let a good number automatically create a
+// green status. Revenue +50%, margin +500bp, earnings +100% does not mean
+// thesis strengthening. The engine must ask WHY."
+//
+// Groups are for READING the card. Dimensions are for JUDGING it. A thesis is
+// a claim that a MECHANISM will keep producing earnings, and a mechanism has
+// parts: the financial output, the operating driver that caused it, the demand
+// that sustains it, the capital that funds it, and what management says comes
+// next. Financial output alone is the RESULT of the mechanism, never evidence
+// that the mechanism is intact — which is exactly how AETHER reached "THESIS
+// STRENGTHENING" on revenue and cash with capacity, orders, capex, customers
+// and guidance all untouched.
+export type VarDimension =
+  | 'financial'          // the output: revenue, margin, earnings, leverage
+  | 'operating_driver'   // WHY: capacity, utilisation, volume, mix, plant
+  | 'demand'             // whether it sustains: orders, backlog, customers
+  | 'capital'            // what funds it: capex and whether it is earning
+  | 'forward'            // what management commits to next
+  | 'quality'            // whether the output is real: one-offs, cash, WC
+  | 'execution';         // what could stop it: delays, bottlenecks, shutdowns
+
+export const VAR_DIMENSION: Record<VarKey, VarDimension> = {
+  revenue_growth: 'financial', earnings_growth: 'financial',
+  operating_leverage: 'financial', margin: 'financial',
+  margin_driver: 'operating_driver', raw_materials: 'operating_driver',
+
+  capacity: 'operating_driver', capacity_addition: 'operating_driver',
+  utilisation: 'operating_driver', new_plant: 'operating_driver',
+  commissioning: 'capital', capacity_bottleneck: 'execution',
+
+  order_intake: 'demand', order_book: 'demand',
+  book_to_bill: 'demand', revenue_visibility: 'demand',
+
+  capex: 'capital', capex_status: 'capital', capex_earning: 'capital',
+  maintenance_vs_growth: 'capital',
+
+  new_customer: 'demand', customer_loss: 'demand',
+  customer_concentration: 'demand', new_product: 'operating_driver',
+  qualification: 'operating_driver', approval: 'operating_driver',
+
+  volume: 'operating_driver', price: 'operating_driver',
+  mix: 'operating_driver', exports: 'demand',
+
+  guidance: 'forward', management_target: 'forward', promise_vs_actual: 'forward',
+
+  cash_conversion: 'quality', working_capital: 'quality', fcf: 'quality',
+  debt: 'quality', roce: 'quality', one_offs: 'quality',
+
+  supply_bottleneck: 'execution', execution_delay: 'execution', shutdown: 'execution',
+  market_share: 'demand', pricing_power: 'operating_driver', technology: 'operating_driver',
+};
+
+export const DIMENSION_LABEL: Record<VarDimension, string> = {
+  financial: 'financial output',
+  operating_driver: 'operating driver',
+  demand: 'demand',
+  capital: 'capital deployment',
+  forward: 'forward commitment',
+  quality: 'earnings quality',
+  execution: 'execution',
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHY A VARIABLE IS ABSENT.                                         (zzz723)
+//
+// A hollow ○ used to mean seven different things at once: not searched, not
+// read, not disclosed, mentioned unclearly, not applicable, present in another
+// document, or an extraction that failed. Those are completely different facts
+// and they lead to different actions — "read the filing" versus "the company
+// does not disclose this" versus "this does not apply to a services business".
+//
+// NOT_READ is the only one that is the reader's fault and the only one a
+// button can fix. Keeping them apart is what turns this from a dashboard into
+// a database worth querying next quarter.
+export type AbsenceReason =
+  /** No evidence document has been read for this holding yet. */
+  | 'not_read'
+  /** A document WAS read and is silent on this. Absence is itself evidence. */
+  | 'not_disclosed'
+  /** The variable cannot apply to this business (utilisation of a lender). */
+  | 'not_applicable'
+  /** Mentioned, but not in a form that can be read as a figure or direction. */
+  | 'unclear';
+
+export const ABSENCE_MARK: Record<AbsenceReason, { mark: string; label: string; hint: string }> = {
+  not_read: { mark: '○', label: 'not read',
+    hint: 'No evidence document has been read for this holding yet. This is the only absence a button can fix.' },
+  not_disclosed: { mark: '—', label: 'not disclosed',
+    hint: 'A document was read and says nothing about this. Absence is evidence: a company that stops disclosing utilisation has told you something.' },
+  not_applicable: { mark: 'n/a', label: 'not applicable',
+    hint: 'This variable cannot apply to this kind of business, so it is never counted against the thesis.' },
+  unclear: { mark: '?', label: 'unclear',
+    hint: 'Mentioned in the document but not in a form that can be read as a figure or a direction.' },
+};
+
 /** A variable's evidence can only ever be one of these three things, and the
  *  spec is explicit that they must never merge. */
 export type EvidenceKind =

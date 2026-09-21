@@ -63,11 +63,13 @@
 import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
-import { VAR_LABEL, GRADER_AVAILABLE, type VarKey } from './taxonomy';
+import { VAR_LABEL, GRADER_AVAILABLE, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason } from './taxonomy';
 
 export type ThesisStatus =
   | 'EVIDENCE_INCOMPLETE'
-  | 'STRENGTHENING' | 'NEUTRAL' | 'WEAKENING' | 'BROKEN' | 'EXPECTATION_GAP';
+  | 'CONFIRMATION_REQUIRED'
+  | 'STRENGTHENING' | 'NEUTRAL' | 'WEAKENING' | 'BROKEN'
+  | 'NEGATIVE_EXPECTATION_GAP' | 'POSITIVE_EXPECTATION_GAP';
 
 export interface CheckedVariable {
   key: VarKey;
@@ -81,6 +83,10 @@ export interface CheckedVariable {
   evidence: string;
   /** Present only when this variable's invalidation condition has fired. */
   invalidation: string | null;
+  /** Why the variable has no value: nobody read a document, a document was
+   *  read and was silent, it cannot apply, or it was mentioned unclearly.
+   *  Null when the variable DOES have a value. (zzz723) */
+  absence: AbsenceReason | null;
 }
 
 export interface ThesisAssessment {
@@ -110,20 +116,38 @@ export interface ThesisAssessment {
     missingNeedsFiling: string[];
   };
   /** The action the OWNER takes. Never a trade. */
-  action: 'Hold — no action' | 'Watch' | 'Review' | 'EXIT REVIEW' | 'Re-underwrite expectations' | 'Read the filing';
+  action:
+    | 'EVIDENCE NOT YET REVIEWED' | 'CONFIRMATION REQUIRED'
+    | 'NO THESIS ACTION TRIGGERED' | 'MONITORING — NO THESIS INVALIDATION'
+    | 'THESIS WEAKENING — REVIEW EVIDENCE' | 'EXIT REVIEW'
+    | 'RE-UNDERWRITE — RUNNING BEHIND STATED PLAN'
+    | 'RE-UNDERWRITE — RUNNING AHEAD OF STATED PLAN';
+  /** Per required dimension: has the mechanism been established there? */
+  dimensions: Array<{ dimension: VarDimension; label: string;
+    state: 'confirmed' | 'contradicted' | 'unestablished'; by: string[] }>;
   /** Each link of the thesis mechanism, and whether the evidence confirms it.
    *  The spec's "OPERATING LEVERAGE CONFIRMED", rather than "earnings beat". */
   mechanismCheck: Array<{ link: string; state: 'confirmed' | 'contradicted' | 'unchecked' }>;
   mechanismVerdict: string;
 }
 
+// ── THIS IS AN EVIDENCE ENGINE, NOT A PORTFOLIO ENGINE.            (zzz723)
+//
+// "Hold — no action" and "Watch" were portfolio instructions wearing the
+// clothes of an evidence verdict, and the owner was right to want them gone:
+// this module has no idea what he paid, what weight the position is, or what
+// else he owns. It knows what the evidence says about the thesis. The decision
+// stays with him, so the labels now describe the EVIDENCE state and nothing
+// more.
 const ACTION: Record<ThesisStatus, ThesisAssessment['action']> = {
-  EVIDENCE_INCOMPLETE: 'Read the filing',
-  STRENGTHENING: 'Hold — no action',
-  NEUTRAL: 'Watch',
-  WEAKENING: 'Review',
+  EVIDENCE_INCOMPLETE: 'EVIDENCE NOT YET REVIEWED',
+  CONFIRMATION_REQUIRED: 'CONFIRMATION REQUIRED',
+  STRENGTHENING: 'NO THESIS ACTION TRIGGERED',
+  NEUTRAL: 'MONITORING — NO THESIS INVALIDATION',
+  WEAKENING: 'THESIS WEAKENING — REVIEW EVIDENCE',
   BROKEN: 'EXIT REVIEW',
-  EXPECTATION_GAP: 'Re-underwrite expectations',
+  NEGATIVE_EXPECTATION_GAP: 'RE-UNDERWRITE — RUNNING BEHIND STATED PLAN',
+  POSITIVE_EXPECTATION_GAP: 'RE-UNDERWRITE — RUNNING AHEAD OF STATED PLAN',
 };
 
 export const STATUS_META: Record<ThesisStatus, { label: string; color: string; dot: string; meaning: string }> = {
@@ -137,8 +161,12 @@ export const STATUS_META: Record<ThesisStatus, { label: string; color: string; d
     meaning: 'Important evidence deteriorated. This is a prompt to look, not to sell.' },
   BROKEN: { label: 'THESIS BROKEN', color: '#EF4444', dot: '🔴',
     meaning: 'A core assumption behind owning this has been invalidated by the evidence.' },
-  EXPECTATION_GAP: { label: 'EXPECTATION GAP', color: '#A78BFA', dot: '🟣',
-    meaning: 'The business is running materially away from what management implied. Neither good nor bad — re-underwrite.' },
+  CONFIRMATION_REQUIRED: { label: 'CONFIRMATION REQUIRED', color: '#FBBF24', dot: '🟡',
+    meaning: 'The numbers improved, but the operating mechanism behind them has not been established. Good results are the RESULT of a thesis, never proof that it is intact.' },
+  NEGATIVE_EXPECTATION_GAP: { label: 'RUNNING BEHIND PLAN', color: '#C084FC', dot: '🟣',
+    meaning: 'The business is running materially behind what management stated earlier. Not necessarily bad in absolute terms — but it is not what you underwrote.' },
+  POSITIVE_EXPECTATION_GAP: { label: 'RUNNING AHEAD OF PLAN', color: '#818CF8', dot: '🟣',
+    meaning: 'The business is running ahead of what management stated earlier. Worth re-underwriting upward rather than quietly banking.' },
 };
 
 const SIGN: Record<VarVerdict, number> = { improving: 1, flat: 0, deteriorating: -1, unknown: 0 };
@@ -148,7 +176,13 @@ export interface AssessInput {
   variables: StructuralVar[];
   /** From guidance-ledger: a promise made earlier that this quarter can be
    *  checked against. Absent on the first quarter a holding is tracked. */
-  promiseGap?: { gap: boolean; detail: string } | null;
+  promiseGap?: { gap: boolean; detail: string; direction?: 'behind' | 'ahead' } | null;
+  /** True once an evidence document (filing, concall, announcement) has
+   *  actually been read for this holding. NO MATERIAL CHANGE is not available
+   *  before this: "nothing changed" and "nothing was read" are different
+   *  statements and the page must never print the first when it means the
+   *  second. (zzz723) */
+  evidenceReviewed?: boolean;
 }
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
@@ -168,8 +202,16 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       key: tv.key, label: v?.label || VAR_LABEL[tv.key] || tv.key, weight: tv.weight, why: tv.why,
       verdict,
       before: v?.before ?? null, after: v?.after ?? null, delta: v?.delta ?? null,
-      evidence: v?.evidence || 'Not disclosed in the latest filing — this is silence, not bad news.',
+      evidence: v?.evidence || (input.evidenceReviewed
+        ? 'A document was read and is silent on this. Absence is evidence — a company that stops disclosing a figure has told you something — but it is never counted against the thesis.'
+        : 'No evidence document has been read for this holding yet.'),
       invalidation: fired ? tv.invalidatedWhen : null,
+      // The four absences are different facts and only one of them is fixable
+      // by pressing a button. A grader-available variable that is still blank
+      // after the row was loaded means the source simply did not carry it.
+      absence: v ? null
+        : input.evidenceReviewed ? 'not_disclosed'
+          : GRADER_AVAILABLE.has(tv.key) ? 'not_disclosed' : 'not_read',
     };
   });
 
@@ -182,6 +224,31 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const guidanceDown = checked.some((c) => c.key === 'guidance' && c.verdict === 'deteriorating');
 
   const weighted = checked.reduce((a, c) => a + SIGN[c.verdict] * c.weight, 0);
+
+  // ── HAS THE MECHANISM BEEN ESTABLISHED, DIMENSION BY DIMENSION? (zzz723)
+  //
+  // A dimension is CONFIRMED when at least one of its variables improved,
+  // CONTRADICTED when one deteriorated and none improved, and UNESTABLISHED
+  // when nobody has looked. Financial output being confirmed says the quarter
+  // was good; it says nothing about why, and "why" is the thesis.
+  const dimensions = thesis.requiresConfirmationIn.map((dim) => {
+    const inDim = checked.filter((c) => VAR_DIMENSION[c.key] === dim);
+    const up = inDim.filter((c) => c.verdict === 'improving');
+    const down = inDim.filter((c) => c.verdict === 'deteriorating');
+    const state: 'confirmed' | 'contradicted' | 'unestablished' =
+      up.length ? 'confirmed' : down.length ? 'contradicted' : 'unestablished';
+    return {
+      dimension: dim, label: DIMENSION_LABEL[dim], state,
+      by: (up.length ? up : down).map((c) => c.label),
+    };
+  });
+  const unestablished = dimensions.filter((d) => d.state === 'unestablished');
+  const allDimsConfirmed = dimensions.every((d) => d.state === 'confirmed');
+
+  // Any supporting-or-better variable moving the wrong way is a reason to
+  // look, whatever else is fine. JINDRILL read "NO MATERIAL CHANGE" with
+  // earnings −28.7% on the same card, which is not a defensible sentence.
+  const anyMaterialDown = checked.some((c) => c.weight >= 3 && c.verdict === 'deteriorating');
 
   // ── THE STATUS LADDER, most severe first. ──────────────────────────────
   let status: ThesisStatus;
@@ -203,7 +270,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // Ranked BELOW a break and ABOVE weakening: a company can be delivering
     // fine in absolute terms while missing what it told you, and that is a
     // different problem needing a different response.
-    status = 'EXPECTATION_GAP';
+    status = input.promiseGap.direction === 'ahead'
+      ? 'POSITIVE_EXPECTATION_GAP' : 'NEGATIVE_EXPECTATION_GAP';
     because = input.promiseGap.detail;
   } else if (coreDown.length === 1 || supportDown.length >= 2) {
     status = 'WEAKENING';
@@ -243,14 +311,55 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + (disclosed.length
         ? 'Nothing read so far is deteriorating, but a positive verdict is not available on variables nobody has looked at.'
         : 'Nothing has been read for this holding at all.');
-  } else if (coreUp.length >= 1 && weighted >= 6) {
+  } else if (coreUp.length >= 1 && weighted >= 6 && allDimsConfirmed && input.evidenceReviewed) {
+    // ── THE ONLY PATH TO GREEN.                                   (zzz723)
+    //
+    // Three gates, and the third is the one the owner caught. AETHER reached
+    // STRENGTHENING on revenue +27.2% and cash 2.25× with capacity, order
+    // book, capex, customers and guidance all untouched — because its ledger
+    // happens to be the unclassified one, whose required dimensions are both
+    // answerable from a grader row. The dimension gate alone therefore let a
+    // good number produce a green status with NO document read, which is
+    // precisely the rule it was built to enforce.
+    //
+    // So green also requires that an evidence document was actually read.
+    // "The mechanism is confirmed" is a claim about what a filing, concall or
+    // announcement said; it cannot be made from a row of ratios.
     status = 'STRENGTHENING';
     because = `${coreUp.map((c) => c.label.toLowerCase()).join(' and ')} improved, `
-      + `and every core variable of this thesis was checked — ${core.map((c) => c.label.toLowerCase()).join(', ')}.`;
+      + `and the mechanism is established in every dimension this thesis rests on — `
+      + `${dimensions.map((d) => `${d.label} (${d.by[0]?.toLowerCase() || 'confirmed'})`).join(', ')}.`;
+  } else if (unestablished.length) {
+    // ── THE NEW MIDDLE. Good numbers, unproven mechanism.         (zzz723)
+    //
+    // This is the status AETHER and ANTELOPUS should have had: revenue and
+    // cash improving, and capacity, orders, capex, customers and guidance all
+    // untouched. Calling that STRENGTHENING told the owner his operating
+    // thesis was confirmed when only its output had been observed.
+    status = 'CONFIRMATION_REQUIRED';
+    because = `The numbers improved, but ${unestablished.map((d) => d.label).join(' and ')} `
+      + `${unestablished.length === 1 ? 'has' : 'have'} not been established. `
+      + 'A good result is the OUTPUT of this thesis, not evidence that the mechanism behind it is intact.';
+  } else if (anyMaterialDown) {
+    status = 'CONFIRMATION_REQUIRED';
+    const down = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating');
+    because = `${down.map((c) => c.label.toLowerCase()).join(', ')} moved the wrong way. `
+      + 'Not enough to call the thesis weakening, too much to call it unchanged.';
+  } else if (!input.evidenceReviewed) {
+    // Good numbers, every core variable checked, and no document read. That
+    // is not "nothing changed" and it is certainly not confirmation — it is a
+    // result whose cause is unexamined.
+    status = 'CONFIRMATION_REQUIRED';
+    because = coreUp.length
+      ? `${coreUp.map((c) => c.label.toLowerCase()).join(' and ')} improved on the reported figures, `
+        + 'but no filing, concall or announcement has been read — so nothing establishes WHY, '
+        + 'and a result without a cause is not a confirmed thesis.'
+      : 'Every variable available without reading a document has been checked and none is decisive. '
+        + 'No filing, concall or announcement has been read, so "nothing changed" is not a claim this page can make yet.';
   } else {
     status = 'NEUTRAL';
-    because = `All ${core.length} core variable${core.length === 1 ? '' : 's'} checked and `
-      + `${disclosed.length} of ${checked.length} variables read — none of them decisive either way.`;
+    because = `Every dimension this thesis rests on was reviewed and ${disclosed.length} of ${checked.length} `
+      + 'variables carried evidence. None of it moves the thesis either way.';
   }
 
   const triggered = checked
@@ -313,7 +422,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
 
   return {
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because,
-    mechanismCheck, mechanismVerdict,
+    mechanismCheck, mechanismVerdict, dimensions,
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
       corePossible: core.length, coreDisclosed: coreDisclosed.length,

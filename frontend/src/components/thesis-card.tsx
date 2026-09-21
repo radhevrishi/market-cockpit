@@ -25,20 +25,56 @@ import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { CAPEX_META, type CapexChain } from '@/lib/thesis/capex-chain';
 import type { VarVerdict } from '@/lib/thesis/variables';
-import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, GRADER_AVAILABLE, type VarGroup } from '@/lib/thesis/taxonomy';
+import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 
+// ── THE PALETTE.                                                   (zzz723)
+//
+// The first version reached for whatever colour was nearest — the portal's
+// bullish green for "improving", a hard red for anything down, and the same
+// muted grey for four completely different kinds of absence. The result was a
+// wall of red and green in which a deteriorating CORE variable and a routine
+// flat one carried the same visual weight, and a variable nobody had read
+// looked identical to one that had been read and was fine.
+//
+// Three rules, and they are about legibility rather than taste:
+//
+//   1. THE VERDICT SCALE IS SEQUENTIAL, NOT BINARY. Improving, flat and
+//      deteriorating are three points on one axis, so they get one hue family
+//      each at a consistent lightness — emerald, slate, rose — rather than
+//      maximum-saturation green and red shouting over everything else.
+//   2. ABSENCE IS NEVER COLOURED. Four absence states share one low-contrast
+//      grey and are distinguished by their MARK (○ — n/a ?), because an
+//      absence is not a finding and must not compete with one for attention.
+//   3. SEVERITY GETS THE ONLY SATURATED COLOUR ON THE CARD. A broken thesis
+//      is the single thing that should pull the eye across a fifty-row page.
+//
+// Every value is fixed rather than themed: these carry meaning, and a theme
+// that repainted "deteriorating" would repaint the meaning with it.
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
   text: 'var(--mc-text-1)', dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)',
-  green: 'var(--mc-bullish)', red: 'var(--mc-bearish)', amber: '#F59E0B', cyan: 'var(--mc-cyan)',
+
+  // Verdict scale — one step of lightness apart, readable on dark and light.
+  up: '#34D399',        // emerald 400
+  flat: '#94A3B8',      // slate 400
+  down: '#FB7185',      // rose 400 — a warning, not an alarm
+  absent: '#64748B',    // slate 500, deliberately quiet
+
+  // Reserved for severity and for the one call to action.
+  alarm: '#F43F5E',     // rose 500 — thesis broken only
+  warn: '#FBBF24',      // amber 400 — confirmation required
+  cyan: 'var(--mc-cyan)',
+  amber: '#FBBF24',
+  green: '#34D399',
+  red: '#FB7185',
 };
 
 const VERDICT: Record<VarVerdict, { mark: string; color: string; word: string }> = {
-  improving: { mark: '✓', color: C.green, word: 'improving' },
-  flat: { mark: '→', color: C.faint, word: 'flat' },
-  deteriorating: { mark: '✕', color: C.red, word: 'deteriorating' },
-  unknown: { mark: '·', color: C.faint, word: 'not disclosed' },
+  improving: { mark: '▲', color: C.up, word: 'improving' },
+  flat: { mark: '–', color: C.flat, word: 'flat, and checked' },
+  deteriorating: { mark: '▼', color: C.down, word: 'deteriorating' },
+  unknown: { mark: '○', color: C.absent, word: 'no value' },
 };
 
 export interface ThesisCardProps {
@@ -134,9 +170,9 @@ export function ThesisCard(p: ThesisCardProps) {
             <button onClick={p.onRead} style={{
               fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
               border: `1px solid ${C.border}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
-            }}>✨ Read the filing</button>
+            }}>✨ Read evidence</button>
           )}
-          {p.reading && <span style={{ fontSize: 10.5, color: C.dim }}>Reading the filing…</span>}
+          {p.reading && <span style={{ fontSize: 10.5, color: C.dim }}>Reading the latest document…</span>}
           {a && (
             <button onClick={() => setOpen((v) => !v)} style={{
               fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999,
@@ -183,23 +219,28 @@ export function ThesisCard(p: ThesisCardProps) {
                     {items.map((c) => {
                       const v = VERDICT[c.verdict];
                       const un = c.verdict === 'unknown';
-                      const needsFiling = un && !GRADER_AVAILABLE.has(c.key);
+                      const ab = un ? (c.absence ? ABSENCE_MARK[c.absence] : ABSENCE_MARK.not_read) : null;
+                      const isCore = c.weight >= 4;
+                      // Absence is never coloured and never competes with a
+                      // finding; a CORE absence is the one exception and gets
+                      // a dotted outline rather than a colour, so it reads as
+                      // "missing" rather than as "bad". (zzz723)
                       return (
                         <span key={c.key}
                           title={un
-                            ? `${c.label} — not checked.${needsFiling
-                              ? ' This one only ever appears in a filing or concall, so reading the filing is what fills it.'
-                              : ' The graded row did not carry it.'}${c.weight >= 4 ? ' CORE to this thesis.' : ''}`
-                            : `${c.evidence}${c.weight >= 4 ? '\n\nCORE to this thesis.' : ''}`}
+                            ? `${c.label} — ${ab!.label}. ${ab!.hint}${isCore ? '\n\nCORE to this thesis.' : ''}`
+                            : `${c.label} — ${v.word}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
                           style={{
-                            fontSize: 9.5, fontWeight: c.weight >= 4 ? 800 : 600,
-                            padding: '1px 6px', borderRadius: 3,
-                            border: `1px solid ${un ? (c.weight >= 4 ? C.amber : C.border) : v.color}`,
-                            color: un ? (c.weight >= 4 ? C.amber : C.faint) : v.color,
-                            background: un ? 'transparent' : `${v.color}14`,
-                            opacity: un && c.weight < 4 ? 0.75 : 1,
+                            fontSize: 9.5, fontWeight: isCore ? 800 : 600,
+                            padding: '1px 6px', borderRadius: 4,
+                            border: un
+                              ? `1px ${isCore ? 'dashed' : 'solid'} ${isCore ? C.absent : 'transparent'}`
+                              : `1px solid ${v.color}55`,
+                            color: un ? C.absent : v.color,
+                            background: un ? 'transparent' : `${v.color}1A`,
                           }}>
-                          {un ? '○' : v.mark} {c.label}
+                          <span style={{ opacity: un ? 0.85 : 1 }}>{un ? ab!.mark : v.mark}</span>
+                          {' '}{c.label}
                           {!un && (c.delta || c.after) ? ` ${c.delta || c.after}` : ''}
                         </span>
                       );
@@ -223,8 +264,7 @@ export function ThesisCard(p: ThesisCardProps) {
           )}
           {a.coverage.missingNeedsFiling.length > 0 && p.needsRead && (
             <div style={{ color: C.faint, marginTop: 2 }}>
-              {a.coverage.missingNeedsFiling.length} of the unchecked variables exist only in the filing or concall
-              — no amount of screener data will fill them.
+              {a.coverage.missingNeedsFiling.length} of the unchecked variables exist only in a filing, concall or exchange announcement — no amount of screener data will fill them.
             </div>
           )}
         </div>

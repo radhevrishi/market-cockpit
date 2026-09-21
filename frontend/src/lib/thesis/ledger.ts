@@ -45,7 +45,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
-import type { VarKey } from './taxonomy';
+import type { VarKey, VarDimension } from './taxonomy';
 
 export interface ThesisVariable {
   key: VarKey;
@@ -64,6 +64,18 @@ export interface Thesis {
    *  this: volume ↑ → revenue ↑ → absorption ↑ → margin ↑. */
   mechanism: string[];
   variables: ThesisVariable[];
+  /** ── THE DIMENSIONS THAT MUST CARRY EVIDENCE.                  (zzz723)
+   *
+   *  A thesis is a claim that a MECHANISM keeps producing earnings. Financial
+   *  output is the RESULT of that mechanism, never proof it is intact — which
+   *  is how AETHER reached "THESIS STRENGTHENING" on revenue and cash while
+   *  capacity, orders, capex, customers and guidance sat untouched.
+   *
+   *  A thesis can only be called CONFIRMED when every dimension listed here
+   *  carries at least one confirming variable. Financial evidence alone gets
+   *  CONFIRMATION REQUIRED: the numbers are good and nobody has established
+   *  why. */
+  requiresConfirmationIn: VarDimension[];
 }
 
 const V = (key: VarKey, weight: 1 | 2 | 3 | 4, why: string, invalidatedWhen: string): ThesisVariable =>
@@ -78,6 +90,10 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
   A: {
     pattern: 'A', name: 'OPERATING INFLECTION',
     mechanism: ['Volume ↑', 'Utilisation ↑', 'Fixed-cost absorption ↑', 'Operating margin ↑', 'Earnings ↑↑'],
+    // Absorption is a PHYSICAL claim. Without an operating driver — utilisation,
+    // volume, capacity, a named margin driver — "operating inflection" is just
+    // a quarter with good numbers.
+    requiresConfirmationIn: ['financial', 'operating_driver'],
     variables: [
       V('operating_leverage', 4, 'The thesis IS this: profit compounding faster than revenue.',
         'Earnings grow slower than revenue for two consecutive quarters.'),
@@ -112,6 +128,7 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
   B: {
     pattern: 'B', name: 'DEMAND EXPLOSION',
     mechanism: ['Orders ↑', 'Backlog ↑', 'Capacity committed', 'Execution', 'Revenue ↑ at booked margin'],
+    requiresConfirmationIn: ['demand', 'financial'],
     variables: [
       V('order_book', 4, 'The thesis IS the book. Revenue is last year\'s orders.',
         'Order intake turns negative, or the book shrinks.'),
@@ -147,6 +164,10 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
   F: {
     pattern: 'F', name: 'PROFIT JUMP · FORENSICS',
     mechanism: ['Profit ↑↑ vs revenue', 'Is it operational?', 'Cash confirms', 'Next quarter repeats', 'Re-rating'],
+    // For F the QUALITY dimension is the whole question — one-offs, cash,
+    // working capital. A profit jump with no quality evidence is the suspicion
+    // the pattern names, not a thesis that has been confirmed.
+    requiresConfirmationIn: ['quality', 'financial', 'operating_driver'],
     variables: [
       V('one_offs', 4, 'The whole question: was the jump operational, or below the line?',
         'The jump is traced to one-off or below-the-line items.'),
@@ -175,6 +196,7 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
   G: {
     pattern: 'G', name: 'SILENT QUALITY',
     mechanism: ['Steady growth', 'Cash-backed', 'No reaction yet', 'Catalyst ahead', 'Re-rating'],
+    requiresConfirmationIn: ['quality', 'financial'],
     variables: [
       V('cash_conversion', 4, 'The quality in "silent quality" is the cash.',
         'Operating cash flow falls below reported profit for two quarters.'),
@@ -204,6 +226,10 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
   UNCLASSIFIED: {
     pattern: 'UNCLASSIFIED', name: 'NO PATTERN ON FILE',
     mechanism: ['No classified setup — general fundamental monitoring'],
+    // With no stated setup on file there is no structural mechanism to prove,
+    // so financial and quality evidence is the whole bar. This is the one
+    // ledger where good numbers legitimately carry the verdict.
+    requiresConfirmationIn: ['financial', 'quality'],
     variables: [
       V('revenue_growth', 4, 'With no classified setup on file, revenue direction IS the base case for owning it.',
         'Revenue growth turns negative.'),

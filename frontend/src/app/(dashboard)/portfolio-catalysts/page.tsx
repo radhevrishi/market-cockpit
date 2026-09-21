@@ -43,7 +43,10 @@ const C = {
 // EVIDENCE_INCOMPLETE ranks ABOVE strengthening and neutral: an unchecked
 // holding is a piece of work outstanding, and burying it under the ones that
 // have been cleared is how it stays unchecked. (zzz717)
-const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL'];
+const ORDER: ThesisStatus[] = [
+  'BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP', 'POSITIVE_EXPECTATION_GAP',
+  'CONFIRMATION_REQUIRED', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL',
+];
 
 export default function PortfolioCatalystsPage() {
   const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook();
@@ -124,21 +127,21 @@ export default function PortfolioCatalystsPage() {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: C.faint }}>
-          {list.length} of {symbols.length} holdings · {readCount} filings read
+          {list.length} of {symbols.length} holdings · {readCount} documents read
         </span>
         <button onClick={() => setOnlyRead((v) => !v)} style={{
           fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
           border: `1px solid ${onlyRead ? C.cyan : C.border}`, color: onlyRead ? C.cyan : C.dim,
           background: onlyRead ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
-        }}>{onlyRead ? 'Only holdings with a filing read' : 'Show all holdings'}</button>
+        }}>{onlyRead ? 'Only holdings with evidence read' : 'Show all holdings'}</button>
 
         {!batch.running ? (
           <button onClick={() => readAll(list.map((r) => r.symbol))}
-            title="Reads the latest filing behind each holding on screen, three at a time. Already-read holdings are skipped."
+            title="Reads the latest evidence document behind each holding — results filing, exchange announcement or concall material — three at a time. Already-read holdings are skipped."
             style={{
               fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>&#10024; Read filings for all {list.length}</button>
+            }}>&#10024; Read evidence for all {list.length}</button>
         ) : (
           <>
             <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
@@ -171,7 +174,7 @@ export default function PortfolioCatalystsPage() {
         <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
           <b style={{ color: C.text }}>
-            {all.length - readCount} of {all.length} holdings have not had their filing read.
+            {all.length - readCount} of {all.length} holdings have not had an evidence document read.
           </b>{' '}
           Revenue, earnings, margin and cash come from the graders and are already on the cards.{' '}
           <b style={{ color: C.text }}>Utilisation, capacity, capex, order book and guidance do not</b> — they live in
@@ -183,7 +186,7 @@ export default function PortfolioCatalystsPage() {
               <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
                 fontSize: 11.5, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
                 border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-              }}>&#10024; Read the {all.length - readCount} remaining filings</button>
+              }}>&#10024; Read the {all.length - readCount} remaining</button>
               <span style={{ fontSize: 10.5, color: C.faint, marginLeft: 9 }}>
                 Three at a time. Each is one model call against one filing, and you can stop it at any point.
               </span>

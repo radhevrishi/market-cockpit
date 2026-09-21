@@ -42,12 +42,15 @@ const C = {
 // EVIDENCE_INCOMPLETE ranks ABOVE strengthening and neutral: an unchecked
 // holding is a piece of work outstanding, and burying it under the ones that
 // have been cleared is how it stays unchecked. (zzz717)
-const ORDER: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL'];
+const ORDER: ThesisStatus[] = [
+  'BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP', 'POSITIVE_EXPECTATION_GAP',
+  'CONFIRMATION_REQUIRED', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL',
+];
 // What belongs on the radar. EVIDENCE_INCOMPLETE is deliberately NOT here:
 // the radar answers "what has deteriorated", and an unchecked holding has not
 // been shown to do anything. It is counted in the header and called out in the
 // coverage banner instead, so it cannot be mistaken for an all-clear. (zzz717)
-const ACTIONABLE: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'EXPECTATION_GAP'];
+const ACTIONABLE: ThesisStatus[] = ['BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP'];
 
 export default function ExitRadarPage() {
   const { symbols, rows, loading, batch, readFiling, readAll, stop } = useBook();
@@ -110,13 +113,13 @@ export default function ExitRadarPage() {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: C.faint }}>
-          {symbols.length} holdings · {readCount} filings read
+          {symbols.length} holdings · {readCount} documents read
         </span>
         {!batch.running ? (
           <button onClick={() => readAll(all.map((r) => r.symbol))} style={{
             fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
             border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-          }}>&#10024; Read every unread filing</button>
+          }}>&#10024; Read every unread document</button>
         ) : (
           <>
             <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
@@ -148,7 +151,7 @@ export default function ExitRadarPage() {
       {!loading && unread > 0 && (
         <div style={{ fontSize: 11.5, color: C.amber, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.border}`, borderRadius: 8, padding: '9px 12px' }}>
-          <b>{unread} of {symbols.length} holdings have not had their filing read{incomplete
+          <b>{unread} of {symbols.length} holdings have not had an evidence document read{incomplete
             ? `, and ${incomplete} sit at EVIDENCE INCOMPLETE — a core variable of their thesis is unchecked`
             : ''}.</b> Their theses are judged on the
           grader&apos;s numbers alone — utilisation, capex, order book and guidance all live in the filings. An empty

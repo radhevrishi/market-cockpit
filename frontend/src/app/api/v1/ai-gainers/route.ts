@@ -31,6 +31,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { kvGet } from '@/lib/kv';
+import { fetchIndiaGainers, INDIA_GAINERS_URL } from '@/lib/ai-gainers/screener-gainers';
 import {
   type GainerEvent, type Market, type EventSource,
   sourceTierOf, researchPriority, buildResearchQueue,
@@ -303,12 +304,33 @@ export async function GET(req: NextRequest) {
   const market = (searchParams.get('market') || 'US').toUpperCase() === 'IN' ? 'IN' : 'US';
   const limit = Math.max(1, Math.min(25, parseInt(searchParams.get('limit') || '10', 10) || 10));
 
-  const [gainersRes, gradedRes] = await Promise.all([
+  // ── INDIA NOW HAS A GAINERS LIST.                                (zzz722)
+  //
+  // The owner's own public screener.in screen, read LIVE at request time
+  // rather than synced overnight: the entire content of a daily-gainers screen
+  // is today's move, so a copy taken at 2am is a list of yesterday's gainers
+  // wearing today's date.
+  //
+  // It is read as a list of names and moves ONLY. The catalyst still has to be
+  // a filed result found by crossing against the graded bench — a stock being
+  // up 20% is the thing this pipeline refuses to treat as information.
+  const [gainersRes, indiaRes, gradedRes] = await Promise.all([
     market === 'US' ? readUsGainers()
       : Promise.resolve({ rows: [] as GainerRow[], file: '', syncedAt: null as string | null }),
+    market === 'IN' ? fetchIndiaGainers()
+      : Promise.resolve(null),
     readGraded(origin, market as Market),
   ]);
-  const gainers = gainersRes.rows;
+
+  const gainers: GainerRow[] = market === 'IN'
+    ? (indiaRes?.rows || []).map((g) => ({
+      ticker: g.ticker,
+      company: g.company,
+      movePct: g.movePct,
+      relVol: null,
+      gapPct: null,
+    }))
+    : gainersRes.rows;
   const graded = gradedRes.rows;
 
   const gradedBy = new Map<string, any>();
@@ -409,7 +431,17 @@ export async function GET(req: NextRequest) {
     notes.push('The TradingView gainers export could not be read, so only filed results were scanned. The list is a committed CSV refreshed by the sync workflow.');
   }
   if (market === 'IN') {
-    notes.push('No India gainers screen is committed to this repository, so the India pass ranks the day\'s filed results rather than a gainers list. Wiring the screener.in screen is Phase 1 work that is not yet done.');
+    if (indiaRes?.error) {
+      // LOUD, never empty. This pipeline has shipped a silently-empty answer
+      // three times; a screen that could not be read must never look like a
+      // screen with nothing in it.
+      notes.push(`THE GAINERS SCREEN COULD NOT BE READ: ${indiaRes.error}. `
+        + 'Nothing below was matched against a gainers list — treat this page as incomplete, not as an all-clear.');
+    } else if (indiaRes) {
+      notes.push(`Read ${indiaRes.rows.length} gainers live from your screener.in screen `
+        + `(${indiaRes.totalReported ?? indiaRes.rows.length} reported, ${indiaRes.pages} page${indiaRes.pages === 1 ? '' : 's'}) `
+        + 'at the moment you loaded this page — not from an overnight copy, because a daily-gainers list copied at 2am is yesterday\'s.');
+    }
   }
   {
     const fresh = graded.filter((r: any) => typeof r._ageDays === 'number' && r._ageDays <= FRESH_DAYS).length;
@@ -432,11 +464,25 @@ export async function GET(req: NextRequest) {
     // ── THE AUDIT TRAIL. Every row that was read, with its move, plus where
     //    the list came from and when it was last synced — so "34 gainers
     //    scanned" is a checkable claim rather than an assertion. (zzz721)
-    source_list: {
-      file: gainersRes.file || null,
-      synced_at: gainersRes.syncedAt,
-      window: market === 'US' ? '1-week performance (TradingView weekly gainers export)' : null,
+    source_list: market === 'IN' ? {
+      file: 'screener.in — Suresh daily gainers',
+      url: INDIA_GAINERS_URL,
+      synced_at: indiaRes?.fetchedAt ?? null,
+      window: '1-day return (read live from the screen, not a nightly copy)',
       rows: gainers.length,
+      total_reported: indiaRes?.totalReported ?? null,
+      pages_read: indiaRes?.pages ?? 0,
+      error: indiaRes?.error ?? null,
+      matched_to_a_filing: gainers.filter((g) => gradedBy.has(g.ticker)).length,
+    } : {
+      file: gainersRes.file || null,
+      url: null,
+      synced_at: gainersRes.syncedAt,
+      window: '1-week performance (TradingView weekly gainers export)',
+      rows: gainers.length,
+      total_reported: gainers.length,
+      pages_read: 1,
+      error: null,
       matched_to_a_filing: gainers.filter((g) => gradedBy.has(g.ticker)).length,
     },
     scanned: gainers
