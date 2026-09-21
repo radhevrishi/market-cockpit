@@ -97,6 +97,7 @@ export default {
           allowed_hosts: ALLOWED_HOSTS,
           open_hosts: OPEN_HOSTS,
           secret_configured: !!(env && env.PROXY_SECRET),
+          colo: (request.cf && request.cf.colo) || null,
         });
       }
 
@@ -149,10 +150,40 @@ export default {
       }
       // Client Cookie and Host are deliberately NOT forwarded.
 
-      const upstream = await fetch(new Request(target.toString(), {
-        method,
-        headers: outboundHeaders,
-      }), { cf: { cacheTtl: 60, cacheEverything: false } });
+      // THE WORKER OWNS ITS OWN DEADLINE.                        (zzz735)
+      //
+      // Measured from the portal on Railway: every request to this Worker
+      // ended as "timed out" at the caller's 20s abort, while the identical
+      // request from a laptop answered in 1.5s. The caller's timeout fires on
+      // the whole round trip and cannot say WHICH part was slow, so the only
+      // thing it could report was the least useful fact available.
+      //
+      // The subrequest now has a 10s deadline of its own, inside the caller's.
+      // When screener.in does not answer in time the Worker returns 504 with
+      // the elapsed milliseconds and the Cloudflare colo that served it —
+      // so the next failure names the hop, the duration and the location
+      // instead of "timed out". An opaque hang becomes evidence.
+      const t0 = Date.now();
+      let upstream;
+      try {
+        upstream = await fetch(new Request(target.toString(), {
+          method,
+          headers: outboundHeaders,
+        }), { cf: { cacheTtl: 60, cacheEverything: false }, signal: AbortSignal.timeout(10_000) });
+      } catch (e) {
+        const ms = Date.now() - t0;
+        const timedOut = String((e && e.name) || '') === 'TimeoutError';
+        return json({
+          error: timedOut ? 'upstream timeout' : 'upstream fetch failed',
+          detail: timedOut
+            ? `screener.in did not answer this Worker within 10s (${ms}ms elapsed)`
+            : String((e && e.message) || e),
+          host: target.hostname,
+          colo: request.cf && request.cf.colo ? request.cf.colo : null,
+          elapsed_ms: ms,
+        }, 504);
+      }
+      const upstreamMs = Date.now() - t0;
 
       // The upstream status is passed through rather than flattened to 200.
       // A 403 from screener.in must never reach the portal looking like a
@@ -178,6 +209,8 @@ export default {
           'Content-Type': ct,
           'Content-Length': String(isPdf ? body.byteLength : new TextEncoder().encode(body).length),
           'X-MC-Proxy-Upstream-Status': String(upstream.status),
+          'X-MC-Proxy-Upstream-Ms': String(upstreamMs),
+          'X-MC-Proxy-Colo': (request.cf && request.cf.colo) || 'unknown',
         },
       });
     } catch (e) {
