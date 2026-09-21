@@ -135,7 +135,13 @@ export function rankCandidates(candidates: DocCandidate[], near?: string | null)
 export function selectForReading(ranked: DocCandidate[], max = 3): DocCandidate[] {
   const out: DocCandidate[] = [];
   const kinds = new Set<DocKind>();
-  for (const c of ranked) {
+  // 'other' is a shareholders-meeting notice, a voting result, a newspaper
+  // clipping. It never carries capacity, utilisation or order-book language,
+  // so reading it is a model call that returns zero passages. It stays in the
+  // candidate list for the trail but is never selected. (JINDRILL read one
+  // and reported 0 passages — that was the cost.)
+  const readable = ranked.filter((c) => c.kind !== 'other');
+  for (const c of readable) {
     if (out.length >= max) break;
     if (kinds.has(c.kind)) continue;
     kinds.add(c.kind);
@@ -143,11 +149,16 @@ export function selectForReading(ranked: DocCandidate[], max = 3): DocCandidate[
   }
   // A second document of an already-taken kind is better than no second
   // document at all, so the remaining slots are filled after the sweep.
-  for (const c of ranked) {
+  for (const c of readable) {
     if (out.length >= max) break;
     if (!out.includes(c)) out.push(c);
   }
   return out;
+}
+
+/** Pure: candidates that carry structural evidence (everything but 'other'). */
+export function readableCandidates(candidates: DocCandidate[]): DocCandidate[] {
+  return candidates.filter((c) => c.kind !== 'other');
 }
 
 /** Pure: map a screener.in document entry into a candidate. */
@@ -233,12 +244,10 @@ export async function discoverEvidence(
 ): Promise<Discovery> {
   const attempts: DiscoveryAttempt[] = [];
   const candidates: DocCandidate[] = [];
-  let anyReached = false;
 
   // ── Source 1: the exchange feed (tier 1, but a rolling ~1-week window).
   const filings = opts.filings || [];
   if (filings.length) {
-    anyReached = true;
     const found = candidatesFromFilings(filings, ticker);
     candidates.push(...found);
     attempts.push({
@@ -264,8 +273,7 @@ export async function discoverEvidence(
     if (lib.error && !lib.docs.length) {
       attempts.push({ source: 'screener.in company page', outcome: 'error', detail: lib.error, found: 0 });
     } else {
-      anyReached = true;
-      const found = lib.docs.map(candidateFromScreenerDoc);
+        const found = lib.docs.map(candidateFromScreenerDoc);
       candidates.push(...found);
       attempts.push({
         source: 'screener.in company page',
@@ -278,22 +286,44 @@ export async function discoverEvidence(
     attempts.push({ source: 'screener.in company page', outcome: 'error', detail: String(e?.message || e), found: 0 });
   }
 
-  const ranked = rankCandidates(candidates, opts.filingDate);
+  return resolveDiscovery(ticker, candidates, attempts, opts.filingDate);
+}
 
-  // THE THREE STATES ARE NOT INTERCHANGEABLE. Anything found is
-  // EVIDENCE_FOUND. Nothing found with every source reached means the company
-  // genuinely published nothing readable. Nothing found with a source
-  // unreachable is a failure of ours, and saying "not disclosed" there would
-  // be reporting our own outage as the company's silence.
-  const state: DiscoveryState = ranked.length ? 'EVIDENCE_FOUND'
-    : anyReached ? 'SEARCH_EXHAUSTED' : 'RETRIEVAL_FAILED';
+/**
+ * Pure: turn what was found and what was tried into a state and a sentence.
+ * Split out so the state rule is testable without a network.
+ */
+export function resolveDiscovery(
+  ticker: string,
+  candidates: DocCandidate[],
+  attempts: DiscoveryAttempt[],
+  filingDate?: string | null,
+): Discovery {
+  const ranked = rankCandidates(candidates, filingDate);
+  const readable = readableCandidates(ranked);
+  const errored = attempts.filter((a) => a.outcome === 'error');
 
+  // THE THREE STATES ARE NOT INTERCHANGEABLE. Anything readable found is
+  // EVIDENCE_FOUND. Nothing found is SEARCH_EXHAUSTED only when EVERY source
+  // answered — one source erroring is enough to make it RETRIEVAL_FAILED,
+  // because the document may well sit behind the source that failed.
+  // The first version of this line used `anyReached`, so a screener.in 504
+  // with an empty exchange window reported "every source was reached". It
+  // had not. That is exactly the bug the spec's §2 describes, and saying
+  // "not disclosed" there reports our own outage as the company's silence.
+  const state: DiscoveryState = readable.length ? 'EVIDENCE_FOUND'
+    : errored.length ? 'RETRIEVAL_FAILED' : 'SEARCH_EXHAUSTED';
+
+  const onlyOther = !readable.length && ranked.length > 0;
   const summary = state === 'EVIDENCE_FOUND'
-    ? `${ranked.length} document(s) found across ${attempts.filter((a) => a.outcome === 'found').length} source(s).`
+    ? `${readable.length} readable document(s) found across ${attempts.filter((a) => a.outcome === 'found').length} source(s)`
+      + (errored.length ? ` (${errored.map((a) => a.source).join(', ')} unreachable — coverage may be partial).` : '.')
     : state === 'SEARCH_EXHAUSTED'
-      ? `Every source was reached and none holds a readable document for ${ticker}. `
+      ? (onlyOther
+        ? `Every source was reached; ${ranked.length} filing(s) exist for ${ticker} but none is a transcript, presentation, results or annual report. `
+        : `Every source was reached and none holds a readable document for ${ticker}. `)
         + 'This is an absence of disclosure, not a failed search.'
-      : `Evidence could not be retrieved for ${ticker}: ${attempts.filter((a) => a.outcome === 'error').map((a) => `${a.source} — ${a.detail}`).join('; ')}. `
+      : `Evidence could not be retrieved for ${ticker}: ${errored.map((a) => `${a.source} — ${a.detail}`).join('; ')}. `
         + 'No conclusion about the thesis follows from this.';
 
   return { state, candidates: ranked, attempts, summary };

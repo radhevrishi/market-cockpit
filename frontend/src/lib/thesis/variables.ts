@@ -138,11 +138,16 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       const verdict: VarVerdict = a.direction === 'up' ? 'improving'
         : a.direction === 'down' ? 'deteriorating'
           : a.direction === 'flat' ? 'flat' : 'unknown';
+      // A figure read off a chart axis is not a fact the card may confirm
+      // on: the numbers are on the slide but the text never says which is
+      // which. Shown as a claim, labelled, so the reader opens the slide.
+      const chart = a.evidence_quality === 'chart';
       out.push({
         key, label,
-        kind: a.value_type === 'ACTUAL' ? 'fact' : 'claim',
+        kind: a.value_type === 'ACTUAL' && !chart ? 'fact' : 'claim',
         before: a.before, after: a.after, delta, verdict,
-        evidence: `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
+        evidence: (chart ? 'Read from a chart, figures unlabelled — verify on the slide: ' : '')
+          + `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
           + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
           + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : ''),
         source: 'filing',

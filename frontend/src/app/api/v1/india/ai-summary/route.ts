@@ -37,6 +37,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import {
+  loadLedger, persistEvidenceRun, persistAttempt, persistSeen, docsFromRoute,
+} from '@/lib/thesis/evidence-store';
+import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary } from '@/lib/thesis/evidence-ledger';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
@@ -173,12 +177,39 @@ export async function GET(req: NextRequest) {
   const quarter = (searchParams.get('quarter') || '').trim();
   const filingDate = (searchParams.get('filing_date') || '').slice(0, 10) || null;
   const force = searchParams.get('force') === '1';
+  // ── MODES.                                                       (zzz740)
+  //   read        (default) read and persist; a stored period for the same
+  //               documents is returned without a model call
+  //   incremental read only if a source lists a document newer than the
+  //               latest persisted period — otherwise SKIPPED_NO_NEW_EVIDENCE
+  //   check       discovery only: is there anything newer than what is on
+  //               file? Never calls the model. Records what it saw.
+  //   force=1     re-read the current period regardless (debug / manual)
+  const mode = (searchParams.get('mode') || 'read').trim() as 'read' | 'incremental' | 'check';
   if (!ticker) {
     return NextResponse.json({ ok: false, error: 'ticker is required' }, { status: 400 });
   }
+  const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date().toISOString();
+  const ledgerBefore = await loadLedger(ticker);
 
   const key = `india-ai-summary:${PROMPT_VERSION}:${ticker}:${quarter || filingDate || 'latest'}`;
-  if (!force) {
+  if (!force && mode === 'read') {
+    // THE LEDGER IS THE SOURCE OF TRUTH, the response cache a convenience.
+    // A stored period answers a plain read without discovery or a model
+    // call — that is what "I should not have to click again after a
+    // reload" means at the API.
+    const stored = latestSummary(ledgerBefore);
+    if (stored) {
+      return NextResponse.json({
+        ok: true, cached: true, from_ledger: true, ticker,
+        source_url: stored.period.documents.find((d) => d.outcome === 'read')?.url || null,
+        structured: stored.summary, events: stored.period.events, documents_read: stored.period.documents.filter((d) => d.outcome === 'read'),
+        discovery_attempts: stored.period.discovery_attempts, discovery_state: stored.period.discovery_state,
+        document_outcomes: stored.period.documents.filter((d) => d.outcome !== 'not_selected'),
+        ledger: ledgerBefore, reporting_period: stored.period.reporting_period, persisted: true,
+      });
+    }
     try {
       const hit = await kvGet<any>(key);
       if (hit?.structured) return NextResponse.json({ ok: true, cached: true, ...hit });
@@ -217,35 +248,108 @@ export async function GET(req: NextRequest) {
   const discovery = await discoverEvidence(ticker, { filings, filingDate });
   const toRead = selectForReading(discovery.candidates, MAX_DOCS);
 
+  // ── NEWER THAN WHAT IS ON FILE?                                  (zzz740)
+  // The newest readable candidate's date against the latest persisted
+  // period's newest document. Same or older → nothing new to read.
+  const newestCandidateDate = toRead.map((c) => c.dateIso).filter((d): d is string => !!d).sort().pop() || null;
+  const newestCandidatePeriod = reportingPeriodFromDate(newestCandidateDate)?.period || null;
+  const latestOnFile = ledgerBefore?.latest_period || null;
+  const latestOnFileDate = ledgerBefore?.latest_document_date || null;
+  const hasNewer = !!newestCandidateDate && (
+    !latestOnFile
+    || (newestCandidatePeriod != null && periodOrdinal(newestCandidatePeriod) > periodOrdinal(latestOnFile))
+    || (!!latestOnFileDate && newestCandidateDate > latestOnFileDate)
+  );
+
+  if (mode === 'check') {
+    const ledger = discovery.state === 'RETRIEVAL_FAILED' && !toRead.length
+      ? (await persistAttempt(ticker, 'IN', runId, startedAt, 'SOURCE_UNAVAILABLE', discovery.summary)).ledger
+      : await persistSeen(ticker, 'IN', newestCandidateDate);
+    return NextResponse.json({
+      ok: true, mode: 'check', ticker,
+      new_evidence: hasNewer,
+      newest_document_date: newestCandidateDate, newest_period: newestCandidatePeriod,
+      latest_period_on_file: latestOnFile, latest_document_on_file: latestOnFileDate,
+      candidates: toRead.map((c) => ({ label: c.label, kind: c.kind, period: c.period, date: c.dateIso, source: c.source })),
+      discovery_state: discovery.state, discovery_attempts: discovery.attempts,
+      freshness: freshnessOf(ledger), ledger,
+    });
+  }
+
+  if (mode === 'incremental' && !force && latestOnFile && !hasNewer) {
+    const stored = latestSummary(ledgerBefore);
+    const { ledger } = await persistAttempt(ticker, 'IN', runId, startedAt, 'SKIPPED_NO_NEW_EVIDENCE', null, { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate });
+    return NextResponse.json({
+      ok: true, skipped: 'SKIPPED_NO_NEW_EVIDENCE', cached: true, from_ledger: true,
+      structured: stored?.summary || null, events: stored?.period.events || [],
+      documents_read: stored?.period.documents.filter((d) => d.outcome === 'read') || [],
+      discovery_attempts: discovery.attempts, discovery_state: discovery.state,
+      reporting_period: latestOnFile, ledger, persisted: true,
+      note: `No document newer than ${latestOnFileDate || latestOnFile} at any source. Evidence remains current.`,
+    });
+  }
+
   const read: Array<{ doc: DocCandidate; text: string }> = [];
+  // EVERY DOCUMENT GETS AN OUTCOME, not just the ones that were read. The
+  // owner's spec separates "download failed" from "scanned image" from
+  // "too short to be a filing" because each calls for a different next step
+  // (retry / OCR / ignore). A single "could not be read" collapsed all three.
+  type DocOutcome = 'read' | 'download_failed' | 'scanned' | 'too_short' | 'budget_exhausted';
+  const outcomes: Array<{ url: string; label: string; kind: string; outcome: DocOutcome; chars: number; pages: number; detail?: string }> = [];
   let budget = MAX_CHARS;
   for (const cand of toRead) {
-    if (budget <= 10_000) break;                  // no room left to be useful
+    if (budget <= 10_000) {                       // no room left to be useful
+      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'budget_exhausted', chars: 0, pages: 0 });
+      continue;
+    }
     const e = await extractFirstPdf([cand.url]);
     const body = String(e?.text || '');
-    // The same 1,200-character floor the single-document path used: below it
-    // a PDF is an intimation, a cover note, or a scan this reader cannot OCR.
-    if (body.length < 1200) continue;
+    const pages = Number(e?.pages || 0);
+    if (!e || e.source === 'FAILED') {
+      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'download_failed', chars: 0, pages, detail: e?.failure_reason || 'no response' });
+      continue;
+    }
+    // The same 1,200-character floor the single-document path used. Below
+    // it, a multi-page file is a scan (image-only pages yield ~0 chars each);
+    // a one- or two-page file is an intimation or a cover note.
+    if (body.length < 1200) {
+      const scanned = pages >= 3 && body.length / Math.max(pages, 1) < 100;
+      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: scanned ? 'scanned' : 'too_short', chars: body.length, pages });
+      continue;
+    }
     const slice = body.slice(0, budget);
     budget -= slice.length;
+    outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'read', chars: slice.length, pages });
     read.push({ doc: cand, text: slice });
   }
 
   if (!read.length) {
     // THE THREE STATES ARE REPORTED SEPARATELY, because the owner's next
     // action differs for each: retry, accept the absence, or look elsewhere.
+    const scanned = outcomes.filter((o) => o.outcome === 'scanned').length;
+    const failed = outcomes.filter((o) => o.outcome === 'download_failed').length;
+    const short = outcomes.filter((o) => o.outcome === 'too_short').length;
+    const readable = discovery.candidates.filter((c) => c.kind !== 'other').length;
+    // Documents exist but none could be read: that is a retrieval failure of
+    // ours (download / OCR), never an absence of disclosure.
+    const state = discovery.state === 'EVIDENCE_FOUND' && (scanned || failed) ? 'RETRIEVAL_FAILED' : discovery.state;
+    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt,
+      state === 'RETRIEVAL_FAILED' ? 'SOURCE_UNAVAILABLE' : 'NO_DISCLOSURE',
+      state === 'RETRIEVAL_FAILED' ? discovery.summary : null,
+      { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate });
     return NextResponse.json({
       ok: false,
-      state: discovery.state,
-      error: discovery.state === 'RETRIEVAL_FAILED'
+      state,
+      ledger: attempt.ledger, persisted: attempt.persisted,
+      error: discovery.state !== 'EVIDENCE_FOUND'
         ? discovery.summary
-        : discovery.candidates.length
-          ? `${discovery.candidates.length} document(s) were found for ${ticker} but none could be read — `
-            + 'they are scanned images this reader does not OCR, or the files did not download. '
-            + 'This is a limit of the reader, not an absence of disclosure.'
-          : discovery.summary,
+        : `${readable} document(s) were found for ${ticker} but none could be read — `
+          + [failed ? `${failed} did not download` : '', scanned ? `${scanned} are scanned images this reader does not OCR` : '', short ? `${short} are too short to be a filing` : '']
+            .filter(Boolean).join(', ')
+          + '. This is a limit of the reader, not an absence of disclosure.',
       discovery_attempts: discovery.attempts,
       documents_found: discovery.candidates.length,
+      document_outcomes: outcomes,
     });
   }
 
@@ -415,6 +519,7 @@ export async function GET(req: NextRequest) {
   // ══════════════════════════════════════════════════════════════════════
   let events: StructuralEvent[] = [];
   let pipeline: ExtractionPipeline | null = null;
+  let rawExtraction: any = null;
   try {
     const r = await extractStructuralEvents(
       read.map(({ doc, text: t }) => ({ label: doc.label, kind: doc.kind, text: t })),
@@ -423,6 +528,7 @@ export async function GET(req: NextRequest) {
     );
     events = r.events;
     pipeline = r.pipeline;
+    rawExtraction = (r as any).raw ?? null;
   } catch (e: any) {
     pipeline = {
       passages_by_family: {}, passages_sent: 0, events_returned: 0, events_kept: 0,
@@ -450,6 +556,7 @@ export async function GET(req: NextRequest) {
     })),
     discovery_attempts: discovery.attempts,
     discovery_state: discovery.state,
+    document_outcomes: outcomes,
     model: MODEL,
     ticker,
     quarter: quarter || null,
@@ -457,5 +564,23 @@ export async function GET(req: NextRequest) {
     dropped_figures: dropped.slice(0, 5),
   };
   try { await kvSet(key, payload, TTL_S); } catch { /* the reading is still good uncached */ }
-  return NextResponse.json({ ok: true, cached: false, ...payload });
+
+  // ── PERSIST TO THE LEDGER — ONE WRITE, ALL OF IT.               (zzz740)
+  // Documents, facts, events, summary, run (with the raw model output for
+  // audit) land together. If the write fails the response SAYS SO; the card
+  // must never print "Evidence updated" over a read that did not persist.
+  const persisted = await persistEvidenceRun({
+    ticker, market: 'IN', runId, startedAt,
+    documents: docsFromRoute(payload.documents_read, outcomes, discovery.candidates),
+    filingDate, events, summary: data,
+    discoveryState: discovery.state, discoveryAttempts: discovery.attempts,
+    promptVersion: PROMPT_VERSION, model: MODEL,
+    rawExtraction: { summary_call: (data as any).__raw_summary ?? null, events_call: rawExtraction, pipeline },
+    pipeline,
+  });
+  return NextResponse.json({
+    ok: true, cached: false, ...payload,
+    reporting_period: persisted.period, ledger: persisted.ledger,
+    persisted: persisted.persisted, persist_error: persisted.error,
+  });
 }

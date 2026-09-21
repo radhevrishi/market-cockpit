@@ -30,7 +30,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { kvGet } from '@/lib/kv';
+import { kvGet, kvSet } from '@/lib/kv';
 import { fetchIndiaGainers, INDIA_GAINERS_URL } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncement, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
@@ -342,6 +342,19 @@ export async function GET(req: NextRequest) {
   const { searchParams, origin } = new URL(req.url);
   const market = (searchParams.get('market') || 'US').toUpperCase() === 'IN' ? 'IN' : 'US';
   const limit = Math.max(1, Math.min(25, parseInt(searchParams.get('limit') || '10', 10) || 10));
+  // ── ONE SCAN SERVES EVERY VISIT FOR 20 MINUTES.                   (zzz740)
+  // The scan reads the live screen, matches the bench and spends up to six
+  // model calls on announcements. Opening the tab twice in a minute should
+  // not do that twice. `?fresh=1` (the Rescan button) bypasses; the answer
+  // says when it was generated so a cached scan is never mistaken for live.
+  const fresh = searchParams.get('fresh') === '1';
+  const scanKey = `ai-gainers:v2:${market}:${limit}`;
+  if (!fresh) {
+    try {
+      const hit: any = await kvGet(scanKey);
+      if (hit && hit.ok && hit.generated_at) return NextResponse.json({ ...hit, served_from_cache: true });
+    } catch { /* a cold cache is a scan */ }
+  }
 
   // ── INDIA NOW HAS A GAINERS LIST.                                (zzz722)
   //
@@ -418,10 +431,21 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 2. Graded results with no gainer match — still events worth ranking, and
-  //    for India this is the only path, because no gainers screen is committed
-  //    to this repo. The response says so rather than implying a scan.
+  // 2. Graded results with no gainer match — ONLY WHEN THERE IS NO GAINERS
+  //    LIST TO SCAN. This was written when no India screen was committed to
+  //    the repo and the graded bench was the only path. Once the screen was
+  //    read live (zzz729) the loop kept running, and the funnel printed
+  //    "122 gainers scanned · 320 filed results · 320 had a catalyst": every
+  //    graded row on the bench was counted as a gainer with a catalyst,
+  //    whether or not it moved today. A funnel whose second stage is wider
+  //    than its first is not a funnel. (zzz740)
+  //
+  //    So: with a gainers list in hand, the universe IS the gainers list.
+  //    Without one (the screen failed, or the US export is missing), the
+  //    bench is scanned instead and the note below says so.
+  const gainersListRead = gainers.length > 0;
   for (const [t, row] of gradedBy) {
+    if (gainersListRead) break;
     if (events.some((e) => e.ticker === t)) continue;
     const url = row.filing_url || row.release_url || '';
     events.push({
@@ -527,6 +551,34 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Every gainer that nothing explained is still a SCANNED row: it enters
+  // the funnel as `none_identified` so "N gainers scanned" is the count of
+  // gainers, not the count of explanations. (zzz740)
+  if (gainersListRead) {
+    for (const g of gainers) {
+      if (events.some((e) => e.ticker === g.ticker)) continue;
+      events.push({
+        eventId: `${market}:${g.ticker}:${now}:none`,
+        clusterId: '',
+        market: market as Market,
+        ticker: g.ticker,
+        company: g.company || null,
+        eventTime: now,
+        detectedAt: now,
+        catalyst: 'none_identified',
+        informationStatus: 'administrative',
+        attribution: 'unknown',
+        priceChangePct: g.movePct,
+        volumeRatio: g.relVol,
+        sectorRelativePct: null,
+        sources: [],
+        claims: [],
+        materiality: 'unknown',
+        structuralDuration: 'unknown',
+      });
+    }
+  }
+
   const { queue, funnel } = buildResearchQueue(
     events,
     (e) => researchPriority({ event: e, companySpecificShare: null }),
@@ -534,7 +586,10 @@ export async function GET(req: NextRequest) {
   );
 
   const notes: string[] = [];
-  notes.push(`Graded results were read from ${gradedRes.from} — ${gradedRes.rows.length} rows before de-duplication.`);
+  notes.push(`Graded results were read from ${gradedRes.from} — ${gradedRes.rows.length} rows before de-duplication; `
+    + (gainersListRead
+      ? `${gainers.filter((g) => gradedBy.has(g.ticker)).length} of today's ${gainers.length} gainers have a filed result behind them.`
+      : 'with no gainers list to scan, the graded bench itself was ranked.'));
   if (gradedRes.pending > 0) {
     notes.push(`${gradedRes.pending} of the days in the window are not graded yet — the engine was asked for them and has started, but nothing is computed on this page's clock. Rescan in a minute and they will be here.`);
   }
@@ -578,10 +633,11 @@ export async function GET(req: NextRequest) {
   }
   notes.push('Every catalyst from a filed result was found without a model, and every score component is stated. Announcement catalysts are model-read and each carries a verbatim quote from the document.');
 
-  return NextResponse.json({
+  const response = {
     ok: true,
     market,
     generated_at: now,
+    served_from_cache: false,
     funnel,
     gainers_scanned: gainers.length,
     announcements: {
@@ -624,7 +680,11 @@ export async function GET(req: NextRequest) {
         volume_ratio: g.relVol,
         matched: gradedBy.has(g.ticker),
       })),
-    graded_available: gradedBy.size,
+    // The number that belongs in the funnel: filed results BEHIND A GAINER.
+    // The bench size is reported separately so nobody reads 320 as the
+    // second stage of a 122-row funnel again.
+    graded_available: gainersListRead ? gainers.filter((g) => gradedBy.has(g.ticker)).length : gradedBy.size,
+    graded_bench_size: gradedBy.size,
     notes,
     queue: queue.map(({ event, priority }) => ({
       ticker: event.ticker,
@@ -643,5 +703,7 @@ export async function GET(req: NextRequest) {
       components: priority.components,
       penalties: priority.penalties,
     })),
-  });
+  };
+  try { await kvSet(scanKey, response, 20 * 60); } catch { /* uncached is still correct */ }
+  return NextResponse.json(response);
 }

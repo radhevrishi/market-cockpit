@@ -76,6 +76,36 @@ const BROWSER_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
+/**
+ * HOW LONG A PAGE MAY BE SERVED FROM CACHE, BY WHAT THE PAGE IS.    (zzz739)
+ *
+ * A gainers screen is today's moves and is stale in an hour. A company page
+ * changes when a quarter's documents are posted — every three months — so
+ * the same 6-hour window that is right for the screen is far too short for
+ * it: it guaranteed that every company page the portal asked for outside the
+ * warm window was a live fetch into the colo screener.in refuses (SJC), and
+ * that is why E2E, MOREPENLAB, SOTL and AARTIPHARM all came back 504 on the
+ * six-company test. Company pages: fresh for 6h, servable for 48h, warmed
+ * once a day by the scheduler below.
+ */
+function cacheWindows(target) {
+  const isCompany = /^\/company\//.test(target.pathname);
+  return isCompany
+    ? { FRESH_MS: 6 * 60 * 60 * 1000, STALE_MS: 72 * 60 * 60 * 1000 }
+    : { FRESH_MS: 15 * 60 * 1000, STALE_MS: 6 * 60 * 60 * 1000 };
+}
+
+/** Where the portal's book lives. Public, read-only, no feed. */
+const BOOK_STATE_URL = 'https://market-cockpit-production.up.railway.app/api/v1/book/state?feed=0';
+
+/** Company pages warmed per scheduled tick. 32 ticks a day × 12 covers a
+ *  360-name book once a day inside the free KV write budget (1,000/day),
+ *  with the gainers screens' 64 writes on top. */
+const COMPANY_WARM_PER_TICK = 12;
+/** A page younger than this is not re-fetched by the warm — the write is
+ *  the scarce resource, not the read. */
+const COMPANY_REWARM_AFTER_MS = 20 * 60 * 60 * 1000;
+
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -183,8 +213,7 @@ export default {
       // age in a header, because a gainers screen whose whole content is
       // today's move must never be served as fresh when it is an hour old.
       const cacheKey = `page:${target.toString()}`;
-      const FRESH_MS = 15 * 60 * 1000;
-      const STALE_MS = 6 * 60 * 60 * 1000;
+      const { FRESH_MS, STALE_MS } = cacheWindows(target);
       const kv = env && env.MC_KV;
 
       if (kv && !url.searchParams.has('nocache')) {
@@ -333,5 +362,76 @@ export default {
         });
       } catch { /* the next tick tries again; a failed warm is not an error */ }
     }
+    await warmCompanyPages(env);
   },
 };
+
+/**
+ * WARM THE BOOK'S COMPANY PAGES, A SLICE PER TICK.                 (zzz739)
+ *
+ * Why a slice and not the whole book: priming all 346 pages from one host
+ * in a burst got HTTP 403 on every single request — screener.in rate-limits
+ * a burst — while the same pages fetched one a second all answered 200.
+ * And KV's free tier allows 1,000 writes a day; 346 pages every two hours
+ * would be 4,000. So each tick takes the next twelve names past a cursor
+ * kept in KV, fetches them one at a time with a short pause, skips any page
+ * cached in the last 20 hours, and stops after 20s regardless. The cursor
+ * wraps, so the whole book is covered about once a day, which is the right
+ * cadence for pages that change once a quarter.
+ */
+async function warmCompanyPages(env) {
+  const kv = env.MC_KV;
+  const deadline = Date.now() + 20_000;
+  let tickers = [];
+  try {
+    const r = await fetch(BOOK_STATE_URL, { signal: AbortSignal.timeout(8_000) });
+    if (!r.ok) return;
+    const j = await r.json();
+    const rows = (j && j.book && Array.isArray(j.book.tickers)) ? j.book.tickers : [];
+    tickers = rows.map((x) => String(x && x.ticker || '').toUpperCase()).filter((t) => /^[A-Z0-9&-]{1,20}$/.test(t));
+  } catch { return; }
+  if (!tickers.length) return;
+  tickers = Array.from(new Set(tickers.map((t) => t.replace(/-(BE|BZ|SM|ST|BL|IL|GS|SZ|E1|N[0-9A-Z])$/, '')))).sort();
+
+  let cursor = 0;
+  try { cursor = parseInt(await kv.get('warm:company:cursor') || '0', 10) || 0; } catch { cursor = 0; }
+  if (cursor >= tickers.length) cursor = 0;
+
+  let done = 0, i = cursor;
+  while (done < COMPANY_WARM_PER_TICK && Date.now() < deadline) {
+    const t = tickers[i];
+    i = (i + 1) % tickers.length;
+    if (i === cursor) { done = COMPANY_WARM_PER_TICK; } // wrapped: stop after this one
+    // The evidence reader asks for the standalone page — same document list,
+    // and the key must match the URL the portal will request or the warm
+    // fills a cache nobody reads. Series suffixes (-BE, -SM) are dropped
+    // because screener.in keys on the bare symbol.
+    const target = `https://www.screener.in/company/${t.replace(/-(BE|BZ|SM|ST|BL|IL|GS|SZ|E1|N[0-9A-Z])$/, '')}/`;
+    const key = `page:${target}`;
+    try {
+      const hit = await kv.getWithMetadata(key, { type: 'text' });
+      const at = hit && hit.metadata && hit.metadata.at;
+      if (hit && hit.value && at && Date.now() - at < COMPANY_REWARM_AFTER_MS) { continue; }
+      const r = await fetch(target, {
+        headers: {
+          'User-Agent': BROWSER_HEADERS['User-Agent'],
+          'Accept': BROWSER_HEADERS.Accept,
+          'Accept-Language': BROWSER_HEADERS['Accept-Language'],
+          'Referer': 'https://www.screener.in/',
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      done++;
+      if (r.status === 403 || r.status === 429) break;      // rate-limited: stop the burst, next tick resumes
+      if (!r.ok) continue;
+      const html = await r.text();
+      if (html.length < 500) continue;
+      await kv.put(key, html, {
+        metadata: { at: Date.now(), status: 200, warmed: true },
+        expirationTtl: 72 * 60 * 60,
+      });
+      await new Promise((res) => setTimeout(res, 1000));
+    } catch { done++; }
+  }
+  try { await kv.put('warm:company:cursor', String(i)); } catch { /* next tick starts over; harmless */ }
+}

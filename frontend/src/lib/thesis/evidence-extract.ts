@@ -72,6 +72,10 @@ export interface StructuralEvent {
   /** Which read document this came from, as labelled in the prompt. */
   source: string;
   confidence: Confidence;
+  /** 'chart' when the evidence is a run of axis labels and figures from a
+   *  slide rather than a sentence — the figures are real but nothing in the
+   *  text says what they mean, so the pair is capped at LOW confidence. */
+  evidence_quality?: 'sentence' | 'chart';
 }
 
 export interface ExtractionPipeline {
@@ -219,7 +223,7 @@ export async function extractStructuralEvents(
   docs: ReadDoc[],
   ticker: string,
   opts: { apiKey: string; model: string; maxPassages?: number },
-): Promise<{ events: StructuralEvent[]; pipeline: ExtractionPipeline }> {
+): Promise<{ events: StructuralEvent[]; pipeline: ExtractionPipeline; raw?: any[] }> {
   const passages: Passage[] = [];
   for (const d of docs) passages.push(...findPassages(d.text, d.label));
 
@@ -278,7 +282,7 @@ export async function extractStructuralEvents(
   pipeline.events_kept = kept.length;
   pipeline.dropped = dropped;
   for (const ev of kept) pipeline.events_by_family[ev.variable] = (pipeline.events_by_family[ev.variable] || 0) + 1;
-  return { events: kept, pipeline };
+  return { events: kept, pipeline, raw };
 }
 
 // ── 3. VALIDATE ────────────────────────────────────────────────────────────
@@ -328,7 +332,20 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
     const dir = String(e?.direction || 'unknown');
     const direction: Direction = (['up', 'down', 'flat', 'unknown'] as const).includes(dir as any) ? dir as Direction : 'unknown';
     const conf = String(e?.confidence || 'LOW');
-    const confidence: Confidence = (['HIGH', 'MEDIUM', 'LOW'] as const).includes(conf as any) ? conf as Confidence : 'LOW';
+    let confidence: Confidence = (['HIGH', 'MEDIUM', 'LOW'] as const).includes(conf as any) ? conf as Confidence : 'LOW';
+
+    // CHART AXES ARE NOT SENTENCES. E2E's presentation yielded
+    // "61% 75% -10% 10% 30% 50% 70% 90% 0 200 400 …" as the evidence for a
+    // utilisation move from 61% to 75%. The figures are on the slide, so
+    // validation passed; but the text never says which figure is what, and a
+    // model reading a bar chart's axis picks tick marks as readily as bars.
+    // Such an event is kept — the numbers were not invented — but capped at
+    // LOW and labelled, so the ledger shows it as weak and a reader knows to
+    // open the slide.
+    const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
+    const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
+    const evidence_quality: 'sentence' | 'chart' = (words < 5 || figures > words) ? 'chart' : 'sentence';
+    if (evidence_quality === 'chart') confidence = 'LOW';
 
     const key = `${variable}|${value_type}|${before}|${after}|${q.slice(0, 40)}`;
     if (seen.has(key)) continue;            // same fact from two passages
@@ -342,6 +359,7 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
       evidence_text: ev.slice(0, 600),
       source: String(e?.source || passages[0]?.doc || ''),
       confidence,
+      evidence_quality,
     });
   }
   return { kept, dropped };

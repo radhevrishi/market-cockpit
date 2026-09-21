@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { parsePage } from '../ai-gainers/screener-gainers';
-import { parseCompanyDocs, pickDocument } from '../earnings/screener-documents';
+import { parseCompanyDocs, pickDocument, screenerSymbol } from '../earnings/screener-documents';
 import { quoteIsInDocument, normaliseForQuoteMatch } from '../ai-gainers/announcement-reader';
 import { extractVariables } from '../thesis/variables';
 import { assessThesis } from '../thesis/status';
@@ -39,9 +39,14 @@ import {
   symbolsFromStoredValue, mergeUniverse, originCounts, benchPassingPreset,
 } from '../thesis/universe';
 import {
-  candidatesFromFilings, classifyExchangeDoc, rankCandidates, selectForReading,
+  candidatesFromFilings, classifyExchangeDoc, rankCandidates, selectForReading, resolveDiscovery,
 } from '../thesis/evidence-discovery';
 import { findPassages, validateEvents } from '../thesis/evidence-extract';
+import {
+  reportingPeriodFromDate, periodOrdinal, reportingPeriodForDocuments, factsFromEvents, documentId,
+  emptyLedger, mergePeriod, recordAttempt, recordSeen, recordStatus, whatChanged, freshnessOf,
+  latestSummary, ledgerView, batchProgress, type CompanyLedger,
+} from '../thesis/evidence-ledger';
 import { varsFromEvents } from '../thesis/variables';
 
 const fx = (n: string) => readFileSync(join(__dirname, 'fixtures', n), 'utf8');
@@ -118,6 +123,15 @@ describe('company document resolver', () => {
     const pick = pickDocument(docs, '2026-08-14');
     assert.equal(pick?.kind, 'transcript');
     assert.equal(pick?.period, 'Sep 2026');
+  });
+
+  test('NSE series suffixes are dropped before asking screener.in', () => {
+    // MTARTECH-BE and IFBAGRO-BE in the book both 404'd: screener keys the
+    // page on the bare symbol.
+    assert.equal(screenerSymbol('MTARTECH-BE'), 'MTARTECH');
+    assert.equal(screenerSymbol('ifbagro-be'), 'IFBAGRO');
+    assert.equal(screenerSymbol('M&M'), 'M&M');
+    assert.equal(screenerSymbol('BAJAJ-AUTO'), 'BAJAJ-AUTO', 'a real hyphenated symbol is untouched');
   });
 
   test('an empty page reports why, and returns no documents', () => {
@@ -502,6 +516,61 @@ describe('evidence discovery', () => {
     assert.equal(selectForReading(cands, 1).length, 1);
   });
 
+  test("'other' documents are never selected for reading", () => {
+    // JINDRILL: the only candidate was a shareholders-meeting notice. It was
+    // read, cost a model call, and produced 0 passages.
+    const cands: any[] = [
+      { url: 'o', kind: 'other', tier: 1, source: 's', period: null, dateIso: '2026-08-01', label: 'AGM notice' },
+      { url: 't', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: '2026-05-01', label: 'Concall' },
+    ];
+    assert.deepEqual(selectForReading(cands, 3).map((c) => c.url), ['t']);
+    assert.deepEqual(selectForReading([cands[0]], 3), []);
+  });
+
+  test('one source erroring with nothing found is RETRIEVAL_FAILED, not SEARCH_EXHAUSTED', () => {
+    // The bug zzz738 shipped: the exchange window was read (empty) and
+    // screener.in 504'd; the state said "every source was reached".
+    const got = resolveDiscovery('E2E', [], [
+      { source: 'exchange filing feed', outcome: 'empty', detail: 'rolling window', found: 0 },
+      { source: 'screener.in company page', outcome: 'error', detail: 'HTTP 504', found: 0 },
+    ]);
+    assert.equal(got.state, 'RETRIEVAL_FAILED');
+    assert.match(got.summary, /could not be retrieved/);
+    assert.match(got.summary, /HTTP 504/);
+  });
+
+  test('every source answering with nothing found is SEARCH_EXHAUSTED', () => {
+    const got = resolveDiscovery('X', [], [
+      { source: 'exchange filing feed', outcome: 'empty', detail: '', found: 0 },
+      { source: 'screener.in company page', outcome: 'empty', detail: '', found: 0 },
+    ]);
+    assert.equal(got.state, 'SEARCH_EXHAUSTED');
+    assert.match(got.summary, /absence of disclosure/);
+  });
+
+  test("only 'other' documents found is SEARCH_EXHAUSTED and says so", () => {
+    const got = resolveDiscovery('JINDRILL', [
+      { url: 'o', kind: 'other', tier: 1, source: 's', period: null, dateIso: null, label: 'AGM notice' },
+    ], [
+      { source: 'exchange filing feed', outcome: 'found', detail: '', found: 1 },
+      { source: 'screener.in company page', outcome: 'empty', detail: '', found: 0 },
+    ]);
+    assert.equal(got.state, 'SEARCH_EXHAUSTED');
+    assert.match(got.summary, /none is a transcript/);
+    assert.equal(got.candidates.length, 1, 'the notice stays in the trail');
+  });
+
+  test('evidence found with one source down is still EVIDENCE_FOUND, flagged partial', () => {
+    const got = resolveDiscovery('EXICOM', [
+      { url: 't', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: null, label: 'Concall' },
+    ], [
+      { source: 'exchange filing feed', outcome: 'error', detail: 'feed down', found: 0 },
+      { source: 'screener.in company page', outcome: 'found', detail: '', found: 1 },
+    ]);
+    assert.equal(got.state, 'EVIDENCE_FOUND');
+    assert.match(got.summary, /coverage may be partial/);
+  });
+
   test('classification reads intent, not just the word "results"', () => {
     assert.equal(classifyExchangeDoc('Earnings call transcript Q1', 'x.pdf'), 'transcript');
     assert.equal(classifyExchangeDoc('Investor Presentation', 'x.pdf'), 'investor_presentation');
@@ -519,6 +588,22 @@ describe('evidence discovery', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 describe('structural evidence extraction', () => {
   const transcript = fx('exicom-concall-aug2026.txt');
+
+  test('a chart-axis run is kept but capped at LOW and labelled', () => {
+    // E2E's presentation: the utilisation figures were on the slide, but the
+    // "sentence" was a run of tick marks. Real numbers, no meaning attached.
+    const passages: any[] = [{ family: 'utilisation', text: '61% 75% -10% 10% 30% 50% 70% 90% 0 200 400 600 800 Q1 FY26 Q2 FY26 Q3 FY26', doc: 'ppt' }];
+    const { kept } = validateEvents([{
+      variable: 'utilisation', value_type: 'ACTUAL', before: '61%', after: '75%', unit: '%', period: 'Q1 FY27',
+      direction: 'up', evidence_text: '61% 75% -10% 10% 30% 50% 70% 90% 0 200 400 600 800 Q1 FY26', source: 'ppt', confidence: 'HIGH',
+    }], passages);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].confidence, 'LOW');
+    assert.equal(kept[0].evidence_quality, 'chart');
+    const vars = varsFromEvents(kept);
+    assert.equal(vars[0].kind, 'claim', 'a chart read must not be confirmable as a fact');
+    assert.match(vars[0].evidence, /Read from a chart/);
+  });
 
   test('passage search finds the utilisation and order-book sentences in the real transcript', () => {
     const p = findPassages(transcript, 'Concall Aug 2026');
@@ -670,5 +755,158 @@ describe('status: output is not mechanism', () => {
     const a = assess('KMEW');
     const sum = a.coverage.output.total + a.coverage.mechanism.total + a.coverage.forward.total;
     assert.equal(sum, a.coverage.criticalTotal);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe('evidence ledger — persistence, history, idempotency', () => {
+  const now = '2026-09-21T10:00:00.000Z';
+  const doc = (url: string, label: string, kind: string, date: string): any =>
+    ({ id: documentId(url), url, label, kind, source: 'screener.in company page', period: null, date_iso: date, outcome: 'read', chars: 40000, pages: 20 });
+  const ev = (variable: string, value_type: string, before: string | null, after: string, unit: string | null, source: string, direction = 'up', confidence = 'HIGH'): any =>
+    ({ variable, value_type, before, after, unit, period: null, direction, evidence_text: `${variable} moved from ${before ?? '-'} to ${after} in the quarter, management said.`, source, confidence });
+
+  // E2E-like Q1 FY27: the exact facts the owner listed as "must persist".
+  const q1Docs = [doc('https://x/e2e-q1-ppt.pdf', 'Investor presentation Jul 2026', 'investor_presentation', '2026-07-24'),
+    doc('https://x/e2e-q1-concall.pdf', 'Concall transcript Jul 2026', 'transcript', '2026-07-25')];
+  const q1Events = [
+    ev('utilisation', 'ACTUAL', '61%', '75%', '%', 'Investor presentation Jul 2026'),
+    ev('volume', 'MANAGEMENT_CLAIM', null, 'major growth driver', null, 'Concall transcript Jul 2026'),
+    ev('capacity_addition', 'ACTUAL', null, '1,024 B200 GPUs', 'GPUs', 'Concall transcript Jul 2026'),
+    ev('margin_driver', 'MANAGEMENT_CLAIM', null, 'increased utilisation of the existing fleet', null, 'Concall transcript Jul 2026'),
+    ev('one_offs', 'ACTUAL', null, '1 item', null, 'Concall transcript Jul 2026', 'flat'),
+    ev('guidance', 'GUIDANCE', null, '1024+ B200 planned', 'GPUs', 'Investor presentation Jul 2026'),
+  ];
+  const q1Summary = { events: q1Events, utilisation: { prior: '61%', current: '75%' }, headline: 'Q1 FY27' };
+
+  const buildPeriod = (ticker: string, docs: any[], events: any[], summary: any, runId: string) => {
+    const rp = reportingPeriodForDocuments(docs);
+    const { facts, events: evs } = factsFromEvents(ticker, rp.period, events, docs, now);
+    const period: any = {
+      reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
+      documents: docs, documents_found: docs.length, documents_read: docs.length, documents_failed: 0, documents_skipped: 0,
+      facts, events: evs, summary, status: null, status_because: null, tallies: null,
+      discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: runId, prompt_version: 'v8', model: 'm',
+      extracted_at: now, updated_at: now,
+    };
+    const run: any = { run_id: runId, reporting_period: rp.period, started_at: now, finished_at: now, outcome: 'COMPLETED', error: null,
+      documents_found: docs.length, documents_read: docs.length, facts_extracted: facts.length, events_extracted: evs.length, model: 'm', prompt_version: 'v8', raw_extraction_json: { events } };
+    return { period, run };
+  };
+
+  test('reporting period is the last quarter that ended before the document date', () => {
+    assert.equal(reportingPeriodFromDate('2026-07-24')?.period, 'Q1 FY27');
+    assert.equal(reportingPeriodFromDate('2026-07-24')?.period_end, '2026-06-30');
+    assert.equal(reportingPeriodFromDate('2026-05-20')?.period, 'Q4 FY26');
+    assert.equal(reportingPeriodFromDate('2026-11-02')?.period, 'Q2 FY27');
+    assert.equal(reportingPeriodFromDate('2027-02-10')?.period, 'Q3 FY27');
+    assert.equal(reportingPeriodFromDate(null), null);
+    assert.ok(periodOrdinal('Q1 FY27') > periodOrdinal('Q4 FY26'));
+  });
+
+  test('§32 — evidence survives destroy/recreate of application state', () => {
+    const { period, run } = buildPeriod('E2E', q1Docs, q1Events, q1Summary, 'run1');
+    let ledger = mergePeriod(emptyLedger('E2E', 'IN', now), period, run);
+    ledger = recordStatus(ledger, 'Q1 FY27', 'THESIS_WEAKENING', 'cash conversion -7.84×',
+      { mechanism: { confirmed: 1, pending: 1, contradicted: 0, total: 3 }, output: { confirmed: 2, pending: 0, contradicted: 1, total: 3 }, forward: { confirmed: 0, pending: 1, contradicted: 0, total: 1 } }, now);
+
+    // "Reload": everything React held is gone; only the serialised store remains.
+    const reloaded: CompanyLedger = JSON.parse(JSON.stringify(ledger));
+    const stored = latestSummary(reloaded);
+    assert.ok(stored, 'the latest period must be loadable');
+    assert.equal(stored!.period.reporting_period, 'Q1 FY27');
+    assert.equal(stored!.period.documents_read, 2);
+    const metrics = stored!.period.facts.map((f) => f.metric_name).sort();
+    assert.deepEqual(metrics, ['capacity_addition', 'guidance', 'margin_driver', 'one_offs', 'utilisation', 'volume']);
+    const ut = stored!.period.facts.find((f) => f.metric_name === 'utilisation')!;
+    assert.equal(ut.before_value, '61%'); assert.equal(ut.after_value, '75%'); assert.equal(ut.delta, '+14pp');
+    assert.equal(ut.evidence_type, 'mechanism');
+    assert.equal(ut.fact_or_management_statement, 'FACT');
+    assert.equal(ut.source_name, 'Investor presentation Jul 2026');
+    assert.equal(ut.source_date, '2026-07-24');
+    assert.equal(ut.source_type, 'investor_presentation');
+    assert.ok(ut.source_quote.length > 20, 'verbatim quote persisted');
+    assert.equal(stored!.period.status, 'THESIS_WEAKENING');
+    assert.equal(stored!.period.tallies!.mechanism.confirmed, 1);
+    assert.equal(stored!.period.tallies!.output.contradicted, 1);
+    assert.equal(reloaded.status_history.length, 1);
+    assert.equal(reloaded.runs[0].raw_extraction_json.events.length, 6, 'raw model output kept for audit');
+    // the summary the card renders is the same object that was read
+    assert.equal(stored!.summary.utilisation.current, '75%');
+    // and the view sent to the page drops the raw output
+    assert.equal(ledgerView(reloaded).runs[0].raw_extraction_json, undefined);
+    assert.equal(freshnessOf(reloaded).state, 'CURRENT');
+  });
+
+  test('§33 — Q2 is added, Q1 is untouched, what-changed is computed from facts', () => {
+    const q1 = buildPeriod('CAPX', [doc('https://x/q1.pdf', 'Concall Jul 2026', 'transcript', '2026-07-20')],
+      [ev('capacity', 'ACTUAL', null, '100', 'MW', 'Concall Jul 2026', 'flat'), ev('utilisation', 'ACTUAL', null, '70%', '%', 'Concall Jul 2026', 'flat')], {}, 'r1');
+    let ledger = mergePeriod(emptyLedger('CAPX', 'IN', now), q1.period, q1.run);
+    const q2 = buildPeriod('CAPX', [doc('https://x/q2.pdf', 'Concall Oct 2026', 'transcript', '2026-10-25')],
+      [ev('capacity', 'ACTUAL', null, '125', 'MW', 'Concall Oct 2026'), ev('utilisation', 'ACTUAL', null, '82%', '%', 'Concall Oct 2026')], {}, 'r2');
+    ledger = mergePeriod(ledger, q2.period, { ...q2.run, finished_at: '2026-10-26T00:00:00.000Z' });
+    assert.deepEqual(Object.keys(ledger.periods).sort(), ['Q1 FY27', 'Q2 FY27']);
+    assert.equal(ledger.latest_period, 'Q2 FY27');
+    assert.equal(ledger.periods['Q1 FY27'].facts.find((f) => f.metric_name === 'capacity')!.value, '100', 'Q1 unchanged');
+    assert.equal(ledger.periods['Q2 FY27'].facts.find((f) => f.metric_name === 'capacity')!.value, '125');
+    const ch = whatChanged(ledger);
+    assert.equal(ch.from, 'Q1 FY27'); assert.equal(ch.to, 'Q2 FY27');
+    const cap = ch.lines.find((l) => l.metric === 'capacity')!;
+    assert.match(cap.text, /100 → 125 \(\+25%\)/);
+    const ut = ch.lines.find((l) => l.metric === 'utilisation')!;
+    assert.match(ut.text, /70% → 82% \(\+12pp\)/);
+  });
+
+  test('§34 — the same period processed twice creates no duplicates', () => {
+    const a = buildPeriod('E2E', q1Docs, q1Events, q1Summary, 'run1');
+    let ledger = mergePeriod(emptyLedger('E2E', 'IN', now), a.period, a.run);
+    const b = buildPeriod('E2E', q1Docs, q1Events, q1Summary, 'run2');
+    const later = '2026-09-22T10:00:00.000Z';
+    ledger = mergePeriod(ledger, { ...b.period, extracted_at: later, updated_at: later }, { ...b.run, finished_at: later });
+    const p = ledger.periods['Q1 FY27'];
+    assert.equal(p.facts.length, 6, 'facts not doubled');
+    assert.equal(p.events.length, 6, 'events not doubled');
+    assert.equal(p.documents.length, 2);
+    assert.equal(p.extracted_at, now, 'first extraction time kept');
+    assert.equal(p.updated_at, later, 'update time moved');
+    assert.equal(ledger.runs.length, 2, 'both runs logged');
+    assert.equal(Object.keys(ledger.periods).length, 1);
+  });
+
+  test('a failed attempt is recorded without erasing evidence', () => {
+    const { period, run } = buildPeriod('E2E', q1Docs, q1Events, q1Summary, 'run1');
+    let ledger = mergePeriod(emptyLedger('E2E', 'IN', now), period, run);
+    ledger = recordAttempt(ledger, { run_id: 'run9', reporting_period: null, started_at: '2026-09-25T00:00:00.000Z', finished_at: '2026-09-25T00:00:01.000Z', outcome: 'SOURCE_UNAVAILABLE', error: 'screener.in HTTP 504', documents_found: 0, documents_read: 0, facts_extracted: 0, events_extracted: 0, model: null, prompt_version: null });
+    assert.equal(ledger.latest_period, 'Q1 FY27', 'evidence kept');
+    assert.equal(freshnessOf(ledger).state, 'SOURCE_UNAVAILABLE');
+    assert.match(freshnessOf(ledger).detail, /504/);
+    // and a never-read company whose source failed is SOURCE UNAVAILABLE, not NEVER READ
+    const bare = recordAttempt(emptyLedger('SOTL', 'IN', now), { run_id: 'r', reporting_period: null, started_at: now, finished_at: now, outcome: 'SOURCE_UNAVAILABLE', error: '32 documents found but none could be read', documents_found: 32, documents_read: 0, facts_extracted: 0, events_extracted: 0, model: null, prompt_version: null });
+    assert.equal(freshnessOf(bare).state, 'SOURCE_UNAVAILABLE');
+    assert.equal(freshnessOf(null).state, 'NEVER_READ');
+  });
+
+  test('a newer document seen at a source flips freshness to NEW EVIDENCE AVAILABLE', () => {
+    const { period, run } = buildPeriod('E2E', q1Docs, q1Events, q1Summary, 'run1');
+    let ledger = mergePeriod(emptyLedger('E2E', 'IN', now), period, run);
+    assert.equal(freshnessOf(ledger).state, 'CURRENT');
+    ledger = recordSeen(ledger, '2026-10-28', '2026-10-29T00:00:00.000Z');
+    assert.equal(ledger.newest_seen_period, 'Q2 FY27');
+    assert.equal(freshnessOf(ledger).state, 'NEW_EVIDENCE_AVAILABLE');
+  });
+
+  test('§36 — partial batch progress is derived from the ledgers after a reload', () => {
+    const started = '2026-09-21T09:00:00.000Z';
+    const mk = (t: string, outcome: any, at: string) => recordAttempt(emptyLedger(t, 'IN', now), { run_id: 'r' + t, reporting_period: null, started_at: at, finished_at: at, outcome, error: outcome === 'FAILED' ? 'model error' : null, documents_found: 0, documents_read: 0, facts_extracted: 0, events_extracted: 0, model: null, prompt_version: null });
+    const ledgers: Record<string, any> = {
+      A: mk('A', 'COMPLETED', '2026-09-21T09:01:00.000Z'),
+      B: mk('B', 'COMPLETED', '2026-09-21T09:02:00.000Z'),
+      C: mk('C', 'FAILED', '2026-09-21T09:03:00.000Z'),
+      D: mk('D', 'COMPLETED', '2026-09-21T09:04:00.000Z'),
+      E: mk('E', 'COMPLETED', '2026-09-20T09:04:00.000Z'),   // an OLD run, before this batch
+    };
+    const p = batchProgress({ started_at: started, tickers: ['A', 'B', 'C', 'D', 'E'] }, JSON.parse(JSON.stringify(ledgers)));
+    assert.equal(p.done, 3); assert.equal(p.failed, 1); assert.equal(p.remaining, 1);
+    assert.deepEqual(p.failed_tickers, ['C']); assert.deepEqual(p.remaining_tickers, ['E']);
   });
 });

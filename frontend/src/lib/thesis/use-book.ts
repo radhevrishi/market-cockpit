@@ -32,6 +32,10 @@ import { extractVariables } from './variables';
 import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
 import { recordPromises, checkPromises } from './guidance-ledger';
+import {
+  freshnessOf, whatChanged, latestSummary,
+  type CompanyLedger, type FreshnessState, type ChangeLine,
+} from './evidence-ledger';
 
 export interface BookRow {
   symbol: string;
@@ -63,6 +67,67 @@ export interface BookRow {
   /** EVIDENCE_FOUND | SEARCH_EXHAUSTED | RETRIEVAL_FAILED. A failed search
    *  and an absence of disclosure are different facts and are kept apart. */
   discoveryState?: string | null;
+  documentOutcomes?: Array<{ label: string; kind: string; outcome: string; chars: number; pages: number; detail?: string }>;
+  // ── THE PERSISTENT LEDGER.                                     (zzz740)
+  /** The company's evidence ledger as loaded from the server. Null when the
+   *  company has never been read. The card renders from THIS after a reload,
+   *  not from a model call. */
+  ledger?: CompanyLedger | null;
+  freshness?: { state: FreshnessState; detail: string } | null;
+  reportingPeriod?: string | null;
+  changed?: ChangeLine[];
+  changedFrom?: string | null;
+  /** True when the last read landed in the store; false with the reason
+   *  when it did not — the card must not say "updated" over a lost write. */
+  persisted?: boolean | null;
+  persistError?: string | null;
+  /** One line from the reader: "No newer document…" / "read 3 documents". */
+  readNote?: string | null;
+}
+
+/** Fold a server ledger into a row: the latest period's summary becomes the
+ *  card's evidence, exactly as a fresh read would. */
+function applyLedger(row: BookRow, ledger: CompanyLedger | null, freshness?: { state: FreshnessState; detail: string } | null): BookRow {
+  const fr = freshness || freshnessOf(ledger);
+  const stored = latestSummary(ledger);
+  if (!stored) {
+    return { ...row, ledger, freshness: fr, reportingPeriod: null, changed: [], changedFrom: null };
+  }
+  const p = stored.period;
+  const ch = whatChanged(ledger!);
+  const readDocs = p.documents.filter((d) => d.outcome === 'read');
+  return assess({
+    ...row,
+    summary: stored.summary,
+    state: 'done',
+    error: undefined,
+    sourceUrl: readDocs[0]?.url || row.sourceUrl,
+    documentsRead: readDocs.map((d) => ({ label: d.label, kind: d.kind, source: d.source, period: d.period, url: d.url })),
+    discoveryAttempts: p.discovery_attempts || undefined,
+    discoveryState: p.discovery_state || null,
+    documentOutcomes: p.documents.filter((d) => d.outcome !== 'not_selected').map((d) => ({ label: d.label, kind: d.kind, outcome: d.outcome, chars: d.chars || 0, pages: d.pages || 0, detail: d.detail })),
+    pattern: classifyWithFiling(row.graded, stored.summary) || row.pattern,
+    ledger, freshness: fr, reportingPeriod: p.reporting_period,
+    changed: ch.lines, changedFrom: ch.from,
+    persisted: true, persistError: null,
+  });
+}
+
+/** Record the status the engine assigned, so history accrues server-side.
+ *  Best-effort and deduplicated: the store appends only on change. */
+async function postStatus(row: BookRow): Promise<void> {
+  const a = row.assessment;
+  if (!a || !row.reportingPeriod) return;
+  try {
+    await fetch('/api/v1/portfolio/evidence', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'status', ticker: row.symbol, period: row.reportingPeriod,
+        status: a.status, because: a.because,
+        tallies: { mechanism: (a.coverage as any).mechanism, output: (a.coverage as any).output, forward: (a.coverage as any).forward },
+      }),
+    });
+  } catch { /* history is best-effort; the status itself is recomputed deterministically */ }
 }
 
 function assess(row: BookRow): BookRow {
@@ -117,7 +182,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
   const [origins, setOrigins] = useState<Record<string, BookOrigin>>({});
   const [rows, setRows] = useState<Record<string, BookRow>>({});
   const [loading, setLoading] = useState(true);
-  const [batch, setBatch] = useState({ running: false, done: 0, total: 0 });
+  const [batch, setBatch] = useState<{ running: boolean; done: number; total: number; resumable?: number; failed?: number }>({ running: false, done: 0, total: 0 });
   const [note, setNote] = useState<UniverseNote>({
     book: 0, bench: 0, both: 0, benchFiltered: 0, benchUnchecked: 0, serverError: null,
   });
@@ -289,6 +354,45 @@ export function useBook(opts?: { includeBench?: boolean }) {
         return out;
       });
 
+      // ── STAGE 4 — THE EVIDENCE LEDGER.                          (zzz740)
+      //
+      // This is the stage that was missing. Everything the reader ever
+      // persisted for these companies is loaded here and folded into the
+      // rows, so a reload shows what the last read found — no click, no
+      // model call. Chunked like the graded fetch; each ledger is a KV read.
+      try {
+        const all = Array.from(universe.keys());
+        const ledgers: Record<string, CompanyLedger> = {};
+        const fresh: Record<string, { state: FreshnessState; detail: string }> = {};
+        let batchInfo: any = null;
+        for (let i = 0; i < all.length; i += 100) {
+          const slice = all.slice(i, i + 100);
+          const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(slice.join(','))}`, { cache: 'no-store' });
+          if (!r.ok) continue;
+          const j = await r.json();
+          Object.assign(ledgers, j?.ledgers || {});
+          Object.assign(fresh, j?.freshness || {});
+          if (j?.batch) batchInfo = j.batch;
+          if (cancelled) return;
+        }
+        setRows((cur) => {
+          const out = { ...cur };
+          for (const sym of Object.keys(out)) {
+            const l = ledgers[sym.toUpperCase()] || null;
+            const f = fresh[sym.toUpperCase()] || null;
+            if (!l && !f) continue;
+            out[sym] = applyLedger(out[sym], l, f);
+          }
+          return out;
+        });
+        if (batchInfo && !batchInfo.finished_at) {
+          setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: batchInfo.remaining, failed: batchInfo.failed });
+        } else if (batchInfo) {
+          setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: 0, failed: batchInfo.failed });
+        }
+      } catch { /* the page still works from graded data; the cards say NEVER READ */ }
+      if (cancelled) return;
+
       // The radar is an enrichment and never blocks the paint.
       try {
         const r = await fetch('/api/v1/concall-intel/transformation-screener?days=90&limit=200', { cache: 'no-store' });
@@ -310,31 +414,72 @@ export function useBook(opts?: { includeBench?: boolean }) {
     return () => { cancelled = true; };
   }, []);
 
-  const readFiling = useCallback(async (sym: string) => {
+  /**
+   * Read a holding's evidence.
+   *   mode 'incremental' (default) — read only if a source lists a document
+   *     newer than the latest persisted period; else the store answers.
+   *   mode 'read' — read unless a period is already on file.
+   *   mode 'force' — re-read the current period (debug / manual refresh).
+   *   mode 'check' — discovery only, no model: is there anything new?
+   */
+  const readFiling = useCallback(async (sym: string, mode: 'incremental' | 'read' | 'force' | 'check' = 'incremental') => {
     const cur = rowsRef.current[sym];
     if (!cur) return;
     const isUs = cur.market === 'US';
-    setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'loading', error: undefined } }));
+    setRows((r) => ({ ...r, [sym]: { ...r[sym], state: mode === 'check' ? r[sym].state : 'loading', error: undefined, readNote: mode === 'check' ? 'checking sources…' : null } }));
     try {
       // The graded row knows WHEN this holding last reported. Without it the
       // India reader searches only the rolling recent feed, which off-season
       // contains none of the book's results. (zzz724)
       const fd = String(cur.graded?.filing_date || '').slice(0, 10);
       const dateQ = /^\d{4}-\d{2}-\d{2}$/.test(fd) ? `&filing_date=${fd}` : '';
+      const modeQ = mode === 'force' ? '&force=1' : mode === 'check' ? '&mode=check' : mode === 'incremental' ? '&mode=incremental' : '';
       const url = isUs
         ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
-        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}`;
+        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}${modeQ}`;
       const res = await fetch(url, { cache: 'no-store' });
       const j = await res.json();
+      if (mode === 'check') {
+        setRows((r) => {
+          const prev = r[sym];
+          const ledger: CompanyLedger | null = j?.ledger || prev.ledger || null;
+          const fr = j?.freshness || freshnessOf(ledger);
+          const note = j?.ok
+            ? (j.new_evidence
+              ? `New evidence found: ${(j.candidates || []).slice(0, 3).map((c: any) => c.label).join('; ')}${j.newest_period ? ` (${j.newest_period})` : ''}`
+              : (j.discovery_state === 'RETRIEVAL_FAILED' ? `Source unavailable — ${fr.detail}` : 'No newer relevant filing found. Evidence remains current.'))
+            : `Check failed: ${j?.error || res.status}`;
+          return { ...r, [sym]: { ...prev, ledger, freshness: fr, readNote: note, discoveryAttempts: j?.discovery_attempts || prev.discoveryAttempts, discoveryState: j?.discovery_state || prev.discoveryState } };
+        });
+        return;
+      }
+      if (j?.skipped === 'SKIPPED_NO_NEW_EVIDENCE') {
+        setRows((r) => {
+          const prev = r[sym];
+          const next = j.ledger ? applyLedger(prev, j.ledger) : prev;
+          return { ...r, [sym]: { ...next, state: next.summary ? 'done' : prev.state, readNote: j.note || 'No newer document at any source — evidence remains current.' } };
+        });
+        return;
+      }
       if (!j?.ok || !j.structured) {
         // The failure carries its trail: which sources were tried and what
         // each answered. Previously this collapsed to one sentence and the
         // card could not distinguish "we could not reach it" from "the
         // company disclosed nothing". (zzz737)
-        setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'error',
-          error: j?.error || 'No readable result on file for this holding.',
-          discoveryAttempts: j?.discovery_attempts || undefined,
-          discoveryState: j?.state || null } }));
+        setRows((r) => {
+          const prev = r[sym];
+          // A failed read never erases evidence already on file: the ledger
+          // carries the failure as `last_attempt` beside the periods.
+          const ledger: CompanyLedger | null = j?.ledger || prev.ledger || null;
+          const keepEvidence = !!prev.summary;
+          return { ...r, [sym]: { ...prev, state: keepEvidence ? 'done' : 'error',
+            error: j?.error || 'No readable result on file for this holding.',
+            ledger, freshness: freshnessOf(ledger),
+            persisted: j?.persisted ?? null,
+            discoveryAttempts: j?.discovery_attempts || undefined,
+            documentOutcomes: j?.document_outcomes || undefined,
+            discoveryState: j?.state || null } };
+        });
         return;
       }
       const src = j.source_url || j.filing_url || null;
@@ -342,20 +487,42 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // excludes anything recorded in the last minute — so this quarter's
       // statements are recorded for next quarter without being used as
       // evidence against themselves.
+      let assessed: BookRow | null = null;
       setRows((r) => {
         const prev = r[sym];
+        const ledger: CompanyLedger | null = j.ledger || null;
+        const ch = ledger ? whatChanged(ledger) : { lines: [], from: null };
         const base = {
           ...prev, summary: j.structured, sourceUrl: src || prev.sourceUrl, state: 'done' as const,
           documentsRead: j.documents_read || undefined,
           discoveryAttempts: j.discovery_attempts || undefined,
+          documentOutcomes: j.document_outcomes || undefined,
           discoveryState: j.discovery_state || null,
           // zzz724 — re-classify with the filing in hand. Order-book growth
           // exists only in the document, so B can only ever fire here.
           pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
+          ledger: ledger || prev.ledger || null,
+          freshness: freshnessOf(ledger || prev.ledger || null),
+          reportingPeriod: j.reporting_period || prev.reportingPeriod || null,
+          changed: ch.lines, changedFrom: ch.from,
+          // `persisted` is the route's word, not ours. A read that did not
+          // land is shown as such — never as "Evidence updated".
+          persisted: j.from_ledger ? true : (j.persisted ?? null),
+          persistError: j.persist_error || null,
+          readNote: j.from_ledger
+            ? 'Loaded from the evidence ledger — no new read.'
+            : j.persisted === false
+              ? `Read ${(j.documents_read || []).length} document(s) but the save FAILED: ${j.persist_error || 'unknown'} — this will not survive a reload.`
+              : `Evidence updated · ${(j.documents_read || []).length} document(s) read · ${(j.events || []).length} facts extracted`,
         };
-        return { ...r, [sym]: assess(base) };
+        assessed = assess(base);
+        return { ...r, [sym]: assessed };
       });
       try { recordPromises(sym, j.structured, src); } catch { /* ledger is best-effort */ }
+      // Status history is recorded only for a fresh read — a ledger load
+      // recomputes the same status from the same inputs and has nothing new
+      // to record.
+      if (assessed && !j.from_ledger && !j.cached) { void postStatus(assessed); }
     } catch (e: any) {
       setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'error', error: String(e?.message || e) } }));
     }
@@ -363,26 +530,45 @@ export function useBook(opts?: { includeBench?: boolean }) {
 
   /** Read many filings, a few at a time. The summary routes are rate-limited
    *  upstream, so a fan-out of fifty becomes fifty failures. */
-  const readAll = useCallback(async (syms: string[], concurrency = 3) => {
+  /**
+   * The batch is a PERSISTENCE JOB, not a UI loop. (zzz740)
+   *   · Only names that need a read are queued: never read, failed, or with
+   *     newer evidence available. A CURRENT name is skipped without a call
+   *     unless `opts.reprocess` asks for a re-read.
+   *   · The job header is recorded server-side before the first read, so a
+   *     reload derives "37 updated · 77 remaining" from the ledgers.
+   */
+  const readAll = useCallback(async (syms: string[], concurrency = 3, opts?: { reprocess?: boolean }) => {
     const todo = syms.filter((s) => {
-      const st = rowsRef.current[s]?.state;
-      return st === 'idle' || st === 'error';
+      const row = rowsRef.current[s];
+      if (!row) return false;
+      if (opts?.reprocess) return true;
+      const fr = row.freshness?.state;
+      if (row.state === 'loading') return false;
+      if (!row.summary) return true;                                  // never read, or failed
+      return fr === 'NEW_EVIDENCE_AVAILABLE' || fr === 'STALE';        // current names are skipped
     });
     if (!todo.length) return;
     stopRef.current = false;
     setBatch({ running: true, done: 0, total: todo.length });
+    try {
+      await fetch('/api/v1/portfolio/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'batch_start', tickers: todo }) });
+    } catch { /* progress then lives only in this tab; the ledgers still persist */ }
     let i = 0, done = 0;
     const worker = async () => {
       while (!stopRef.current) {
         const k = i++;
         if (k >= todo.length) return;
-        await readFiling(todo[k]);
+        await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental');
         done++;
         setBatch((b) => (b.running ? { ...b, done } : b));
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, worker));
     setBatch((b) => ({ ...b, running: false }));
+    try {
+      await fetch('/api/v1/portfolio/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'batch_finish' }) });
+    } catch { /* see above */ }
   }, [readFiling]);
 
   const stop = useCallback(() => { stopRef.current = true; }, []);

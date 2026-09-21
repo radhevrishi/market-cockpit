@@ -114,10 +114,10 @@ export default function AiGainersPage() {
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
-  const load = useCallback(async (m: Mkt) => {
+  const load = useCallback(async (m: Mkt, fresh = false) => {
     setLoading(true); setErr(null);
     try {
-      const r = await fetch(`/api/v1/ai-gainers?market=${m}&limit=15`, { cache: 'no-store' });
+      const r = await fetch(`/api/v1/ai-gainers?market=${m}&limit=15${fresh ? '&fresh=1' : ''}`, { cache: 'no-store' });
       const j = await r.json();
       if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setData(j);
@@ -162,7 +162,7 @@ export default function AiGainersPage() {
                 : l === 'signals' ? '2 · Signals' : '3 · Research queue'}
           </Chip>
         ))}
-        <button onClick={() => load(market)}
+        <button onClick={() => load(market, true)}
           style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
             border: `1px solid ${C.border}`, background: C.bg, color: C.dim, cursor: 'pointer' }}>
           ↻ Rescan

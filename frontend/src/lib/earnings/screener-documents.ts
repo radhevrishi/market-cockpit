@@ -77,8 +77,16 @@ const decode = (s: string) => s
  * document would produce a failure two layers downstream with a misleading
  * error. Better to not offer it.
  */
+/** NSE series suffixes (-BE, -SM, -BZ, -ST …) are how the exchange marks a
+ *  trade-for-trade or SME segment; screener.in keys the company page on the
+ *  bare symbol and answers 404 to the suffixed one. MTARTECH-BE and
+ *  IFBAGRO-BE in the book both 404'd for exactly this reason. (zzz739) */
+export function screenerSymbol(ticker: string): string {
+  return ticker.toUpperCase().trim().replace(/-(BE|BZ|SM|ST|BL|IL|GS|SZ|E1|N[0-9A-Z])$/, '');
+}
+
 export async function fetchCompanyDocs(ticker: string): Promise<CompanyDocs> {
-  const url = `https://www.screener.in/company/${encodeURIComponent(ticker.toUpperCase())}/`;
+  const url = `https://www.screener.in/company/${encodeURIComponent(screenerSymbol(ticker))}/`;
   // zzz729 — through the proxy chain, for the same reason the gainers screen
   // is: screener.in answers a laptop and refuses a datacenter IP.
   const got = await fetchScreenerHtml(url);

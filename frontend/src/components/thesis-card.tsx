@@ -28,6 +28,7 @@ import { CAPEX_META, type CapexChain } from '@/lib/thesis/capex-chain';
 import type { VarVerdict } from '@/lib/thesis/variables';
 import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
+import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
 
 // ── THE PALETTE.                                                   (zzz723)
 //
@@ -95,11 +96,25 @@ export interface ThesisCardProps {
    *  circle with no reason. (zzz737) */
   discoveryAttempts?: Array<{ source: string; outcome: string; detail: string; found: number }>;
   discoveryState?: string | null;
+  /** Per-document result of the read attempt: read / download_failed / scanned / too_short. */
+  documentOutcomes?: Array<{ label: string; kind: string; outcome: string; chars: number; pages: number; detail?: string }>;
   /** The AI summary has not been read for this holding yet. */
   needsRead?: boolean;
   reading?: boolean;
   onRead?: () => void;
+  /** Discovery only — is there a newer document than the one on file? */
+  onCheck?: () => void;
+  /** Re-read the current period regardless (debug / manual refresh). */
+  onReread?: () => void;
   error?: string | null;
+  // ── THE PERSISTENT LEDGER.                                     (zzz740)
+  ledger?: CompanyLedger | null;
+  freshness?: { state: FreshnessState; detail: string } | null;
+  reportingPeriod?: string | null;
+  changed?: ChangeLine[];
+  changedFrom?: string | null;
+  persisted?: boolean | null;
+  readNote?: string | null;
   /** Said plainly when the ledger has no earlier promise to check against. */
   promiseNote?: string | null;
   /** 'graded' | 'screener' | 'none' — where the grader-level numbers came
@@ -207,6 +222,73 @@ export function ThesisCard(p: ThesisCardProps) {
       </div>
 
       {p.error && <div style={{ marginTop: 7, fontSize: 11, color: C.amber }}>{p.error}</div>}
+
+      {/* ── EVIDENCE STATE — from the ledger, so it survives a reload. (zzz740)
+          Period, documents read, when, and whether anything newer exists. */}
+      {(p.ledger || p.freshness) && (() => {
+        const l = p.ledger;
+        const period = p.reportingPeriod || l?.latest_period || null;
+        const pr = period && l ? l.periods[period] : null;
+        const fr = p.freshness;
+        const frColor = fr?.state === 'CURRENT' ? C.up : fr?.state === 'NEW_EVIDENCE_AVAILABLE' ? C.amber
+          : fr?.state === 'SOURCE_UNAVAILABLE' ? C.alarm : fr?.state === 'STALE' ? C.amber : C.faint;
+        const frLabel = fr?.state === 'CURRENT' ? 'CURRENT' : fr?.state === 'NEW_EVIDENCE_AVAILABLE' ? 'NEW EVIDENCE AVAILABLE'
+          : fr?.state === 'SOURCE_UNAVAILABLE' ? 'SOURCE UNAVAILABLE' : fr?.state === 'STALE' ? 'STALE' : 'NEVER READ';
+        return (
+          <div style={{ marginTop: 7, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 10.5, color: C.dim }}>
+            <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>EVIDENCE</span>
+            {pr ? (
+              <span title={`Reporting period ${pr.reporting_period}${pr.period_end_date ? ` (quarter ended ${pr.period_end_date})` : ''} · newest document ${pr.latest_document_date || 'undated'} · read ${pr.extracted_at.slice(0, 10)}${pr.updated_at !== pr.extracted_at ? ` · updated ${pr.updated_at.slice(0, 10)}` : ''}`}>
+                <b style={{ color: C.text }}>{pr.reporting_period}</b> · {pr.documents_read} document{pr.documents_read === 1 ? '' : 's'} read
+                {pr.documents_failed > 0 && <> · {pr.documents_failed} unavailable</>}
+                {' '}· {pr.facts.length} facts · last updated {pr.updated_at.slice(0, 10)}
+              </span>
+            ) : <span>no persisted evidence</span>}
+            {fr && (
+              <span title={fr.detail} style={{ fontSize: 9, fontWeight: 800, padding: '1px 7px', borderRadius: 3, border: `1px solid ${frColor}`, color: frColor }}>{frLabel}</span>
+            )}
+            {p.persisted === false && (
+              <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 7px', borderRadius: 3, border: `1px solid ${C.alarm}`, color: C.alarm }} title="The read succeeded but the write to the evidence store failed. This will not survive a reload.">NOT SAVED</span>
+            )}
+            {!p.reading && (
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                {p.onCheck && pr && (
+                  <button onClick={p.onCheck} title="Search the sources for a document newer than the one on file. No model call." style={{
+                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
+                  }}>↻ Check for new evidence</button>
+                )}
+                {p.onRead && pr && fr?.state === 'NEW_EVIDENCE_AVAILABLE' && (
+                  <button onClick={p.onRead} title="Read the newer documents, add the new period to the ledger, keep the old one." style={{
+                    fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber, cursor: 'pointer',
+                  }}>✨ Read latest evidence</button>
+                )}
+                {p.onReread && pr && (
+                  <button onClick={p.onReread} title="Re-run extraction on the current period's documents and update the persisted record. Debug / manual refresh; the normal path is incremental." style={{
+                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.faint, cursor: 'pointer',
+                  }}>↻ Re-read current period</button>
+                )}
+              </span>
+            )}
+            {p.readNote && <span style={{ width: '100%', color: p.persisted === false ? C.alarm : C.faint }}>{p.readNote}</span>}
+          </div>
+        );
+      })()}
+
+      {/* ── WHAT CHANGED — generated from persisted facts, never from a
+          summary. Deteriorations first. (zzz740) */}
+      {p.changed && p.changed.length > 0 && (
+        <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg }}>
+          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 3 }}>
+            WHAT CHANGED{p.changedFrom ? ` · ${p.changedFrom} → ${p.reportingPeriod}` : p.reportingPeriod ? ` · ${p.reportingPeriod} (first read)` : ''}
+          </div>
+          {p.changed.map((c, i) => (
+            <div key={i} style={{ fontSize: 11, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
+              <span style={{ fontWeight: 900, color: c.sign === '+' ? C.up : c.sign === '-' ? C.down : C.faint }}>{c.sign}</span>{' '}
+              <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{c.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* The one-line verdict is always visible; the evidence expands. */}
       {a && (
@@ -498,9 +580,11 @@ export function ThesisCard(p: ThesisCardProps) {
           {p.discoveryAttempts && p.discoveryAttempts.length > 0 && (
             <details style={{ marginTop: 6 }}>
               <summary style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}>
-                Evidence search — {p.discoveryAttempts.filter((a) => a.outcome === 'found').length} of{' '}
+                Evidence search — {p.discoveryAttempts.filter((a) => a.outcome !== 'error').length} of{' '}
                 {p.discoveryAttempts.length} source(s) answered
-                {p.discoveryState === 'RETRIEVAL_FAILED' ? ' · a source could not be reached, so nothing here is an absence of disclosure' : ''}
+                {p.discoveryState === 'RETRIEVAL_FAILED' ? ' · RETRIEVAL FAILED — a source could not be reached, so nothing here is an absence of disclosure'
+                  : p.discoveryState === 'SEARCH_EXHAUSTED' ? ' · SEARCHED, NO EVIDENCE — every source answered'
+                    : ''}
               </summary>
               <div style={{ marginTop: 5, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
                 {p.discoveryAttempts.map((a, i) => (
@@ -511,6 +595,59 @@ export function ThesisCard(p: ThesisCardProps) {
                     <b style={{ color: C.text }}>{a.source}</b> — {a.detail}
                   </div>
                 ))}
+                {p.documentOutcomes && p.documentOutcomes.length > 0 && (
+                  <div style={{ marginTop: 4 }}>
+                    {p.documentOutcomes.map((d, i) => {
+                      const ok = d.outcome === 'read';
+                      const why = ok ? `read · ${d.chars.toLocaleString()} chars${d.pages ? ` · ${d.pages} pp` : ''}`
+                        : d.outcome === 'download_failed' ? `did not download${d.detail ? ` (${d.detail})` : ''}`
+                          : d.outcome === 'scanned' ? `scanned image · ${d.pages} pp, no text layer — not OCR'd`
+                            : d.outcome === 'too_short' ? `too short to be a filing (${d.chars} chars)`
+                              : d.outcome === 'budget_exhausted' ? 'not read — reading budget spent on earlier documents'
+                                : d.outcome;
+                      return (
+                        <div key={i}>
+                          <span style={{ color: ok ? C.up : d.outcome === 'download_failed' || d.outcome === 'scanned' ? C.alarm : C.faint }}>
+                            {ok ? '✓' : '✕'}
+                          </span>{' '}
+                          <span style={{ color: C.text }}>{d.label}</span> <span style={{ color: C.faint }}>({d.kind})</span> — {why}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+
+          {p.ledger && (Object.keys(p.ledger.periods).length > 0 || p.ledger.status_history.length > 0) && (
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}>
+                Evidence history — {Object.keys(p.ledger.periods).length} period{Object.keys(p.ledger.periods).length === 1 ? '' : 's'} on file
+                {p.ledger.status_history.length > 0 ? ` · ${p.ledger.status_history.length} status change${p.ledger.status_history.length === 1 ? '' : 's'}` : ''}
+              </summary>
+              <div style={{ marginTop: 5, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
+                {Object.values(p.ledger.periods).sort((x, y) => x.reporting_period.localeCompare(y.reporting_period)).map((pr) => (
+                  <div key={pr.reporting_period}>
+                    <b style={{ color: C.text }}>{pr.reporting_period}</b> · {pr.documents_read} read · {pr.facts.length} facts · {pr.events.length} events
+                    {pr.status ? <> · <span style={{ color: C.text }}>{pr.status.replace(/_/g, ' ')}</span></> : ''}
+                    {' '}· read {pr.extracted_at.slice(0, 10)}{pr.updated_at !== pr.extracted_at ? `, updated ${pr.updated_at.slice(0, 10)}` : ''}
+                    <div style={{ color: C.faint, paddingLeft: 10 }}>
+                      {pr.events.slice(0, 8).map((e, i) => (
+                        <div key={i} title={e.evidence_text}>{e.variable.replace(/_/g, ' ')} · {e.value_type.toLowerCase().replace('_', ' ')}{e.before ? ` ${e.before} →` : ''} {e.after || ''}{e.unit && !/%/.test(String(e.after || '')) ? ` ${e.unit}` : ''}{e.period ? ` (${e.period})` : ''} — {e.source}</div>
+                      ))}
+                      {pr.events.length > 8 && <div>… {pr.events.length - 8} more events</div>}
+                    </div>
+                  </div>
+                ))}
+                {p.ledger.status_history.map((h, i) => (
+                  <div key={`h${i}`}>{h.at.slice(0, 10)} · {h.reporting_period} · <span style={{ color: C.text }}>{h.status.replace(/_/g, ' ')}</span>{h.because ? ` — ${h.because.slice(0, 140)}` : ''}</div>
+                ))}
+                {p.ledger.last_attempt && p.ledger.last_attempt.outcome !== 'COMPLETED' && (
+                  <div style={{ color: p.ledger.last_attempt.outcome === 'SOURCE_UNAVAILABLE' ? C.alarm : C.faint }}>
+                    last attempt {p.ledger.last_attempt.at.slice(0, 16).replace('T', ' ')} · {p.ledger.last_attempt.outcome.replace(/_/g, ' ')}{p.ledger.last_attempt.error ? ` — ${p.ledger.last_attempt.error.slice(0, 160)}` : ''}
+                  </div>
+                )}
               </div>
             </details>
           )}

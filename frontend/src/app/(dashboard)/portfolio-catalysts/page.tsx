@@ -108,7 +108,16 @@ export default function PortfolioCatalystsPage() {
     });
   }, [sized, filter, onlyRead, source]);
 
-  const readCount = inSource.filter((r) => r.state === 'done').length;
+  // COUNTS COME FROM THE LEDGER, not from a transient counter. A name has
+  // evidence when its persisted ledger holds a period — that is what
+  // survives a reload. `documents read` sums the documents actually read
+  // for the latest period on file. (zzz740)
+  const withEvidence = inSource.filter((r) => !!r.summary);
+  const readCount = withEvidence.length;
+  const docsRead = inSource.reduce((n, r) => n + (r.ledger?.latest_source_count || (r.documentsRead?.length || 0)), 0);
+  const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE');
+  const newEvidence = inSource.filter((r) => r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE').length;
+  const sourceDown = inSource.filter((r) => r.freshness?.state === 'SOURCE_UNAVAILABLE').length;
 
   if (!symbols.length && !loading) {
     return (
@@ -198,7 +207,10 @@ export default function PortfolioCatalystsPage() {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: C.faint }}>
-          {list.length} of {inSource.length} shown · {note.book} held · {note.bench} bench · {readCount} documents read
+          {list.length} of {inSource.length} shown · {note.book} held · {note.bench} bench ·{' '}
+          <b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {inSource.length - readCount} remaining · {docsRead} documents read
+          {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
+          {sourceDown > 0 && <> · {sourceDown} source unavailable</>}
         </span>
         <button onClick={() => setOnlyRead((v) => !v)} style={{
           fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
@@ -208,11 +220,11 @@ export default function PortfolioCatalystsPage() {
 
         {!batch.running ? (
           <button onClick={() => readAll(list.map((r) => r.symbol))}
-            title="Reads the latest evidence document behind each holding — results filing, exchange announcement or concall material — three at a time. Already-read holdings are skipped."
+            title="Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
             style={{
               fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>&#10024; Read evidence for all {list.length}</button>
+            }}>&#10024; {needRead.length ? `Read evidence for ${needRead.filter((r) => list.includes(r)).length} that need it` : 'All evidence current'}</button>
         ) : (
           <>
             <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
@@ -237,6 +249,19 @@ export default function PortfolioCatalystsPage() {
 
       {loading && <div style={{ fontSize: 12, color: C.dim }}>Reading your book…</div>}
 
+      {/* A batch that stopped — tab closed, reload, error — is reported from
+          the ledgers, not from memory: what was persisted is what counts. */}
+      {!loading && !batch.running && (batch.resumable || 0) > 0 && (
+        <div style={{ fontSize: 11.5, color: C.dim, background: C.bg, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ color: C.text }}>Last batch: {batch.done} updated · {batch.resumable} remaining{batch.failed ? ` · ${batch.failed} failed` : ''}</b>
+          <span>— persisted; nothing here was lost on reload.</span>
+          <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
+            fontSize: 11, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+            border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
+          }}>Resume</button>
+        </div>
+      )}
+
       {/* ── THE COVERAGE BANNER. It is the primary action on this page
           whenever the book is under-read, because a thesis engine judging a
           book it has not read is the failure this page was rebuilt to fix.
@@ -245,7 +270,7 @@ export default function PortfolioCatalystsPage() {
         <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
           <b style={{ color: C.text }}>
-            {inSource.length - readCount} of {inSource.length} names have not had an evidence document read.
+            {inSource.length - readCount} of {inSource.length} names have no persisted evidence.
           </b>{' '}
           Revenue, earnings, margin and cash come from the graders and are already on the cards.{' '}
           <b style={{ color: C.text }}>Utilisation, capacity, capex, order book and guidance do not</b> — they live in
@@ -274,10 +299,20 @@ export default function PortfolioCatalystsPage() {
           documentsRead={r.documentsRead}
           discoveryAttempts={r.discoveryAttempts}
           discoveryState={r.discoveryState}
-          needsRead={r.state === 'idle' || r.state === 'error'}
+          documentOutcomes={r.documentOutcomes}
+          needsRead={!r.summary && r.state !== 'loading'}
           reading={r.state === 'loading'}
-          onRead={() => readFiling(r.symbol)}
+          onRead={() => readFiling(r.symbol, r.summary ? 'incremental' : 'read')}
+          onCheck={() => readFiling(r.symbol, 'check')}
+          onReread={() => readFiling(r.symbol, 'force')}
           error={r.error}
+          ledger={r.ledger}
+          freshness={r.freshness}
+          reportingPeriod={r.reportingPeriod}
+          changed={r.changed}
+          changedFrom={r.changedFrom}
+          persisted={r.persisted}
+          readNote={r.readNote}
           promiseNote={r.state === 'done' ? r.promiseNote : null}
           dataSource={r.dataSource}
           sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
