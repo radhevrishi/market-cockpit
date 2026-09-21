@@ -23,8 +23,10 @@
 
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText, Download } from 'lucide-react';
+import { scoreReleaseCommentary, type CommentaryScore } from '@/lib/earnings/commentary-score';
+import { useCardBadges } from './card-badges';
 import {
   fmtUsd, fmtPx, fmtPct, SWING_LABEL, SWING_GOOD,
   type UsGradedRow, type EarningsTier, type SwingKind,
@@ -303,6 +305,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
   topRight?: React.ReactNode;
 }) {
   const meta = TIER_META[r.tier];
+  // zzz696 — badge chips are opt-in; the tier, PRELIM and the numbers are not.
+  const [showBadges] = useCardBadges();
   const opmD = (r.opm_pct != null && r.opm_prev_pct != null) ? r.opm_pct - r.opm_prev_pct : null;
   // GAAP EPS growth only — never the grading axis, which may be the adjusted
   // basis (see `eps_gaap_yoy_pct` in us-earnings-core).
@@ -364,8 +368,14 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         {/* BESIDE the tier, never instead of it. On the Opportunities tab the
             tier is the section heading above the card; on the bench it is the
             first of `extraChips`. Either way this lands immediately after it. */}
-        <QuadrantBadge r={r} />
+        {/* zzz696 — PRELIM stays whatever the badge switch says. It is not a
+            label, it is a warning that these figures are provisional and the
+            cash flow has not arrived yet; hiding a caveat to reduce clutter is
+            how a reader ends up trusting a number the engine already doubted.
+            `extraChips` above carries the TIER on the bench, and stays too. */}
         {(r as any).prelim && <Chip text="PRELIM · GAAP pending" color="#8B5CF6" />}
+        {showBadges && <>
+        <QuadrantBadge r={r} />
         <Chip text={r.quarter} />
         {r.sector && <Chip text={r.sector} />}
         {r.market_cap_musd != null && <Chip text={fmtUsd(r.market_cap_musd)} />}
@@ -431,6 +441,7 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
             color={SETUP_VERDICT_COLOR[(r as any).setup.verdict] || undefined} />
         )}
         {(r.pead_score ?? 0) >= 70 && <Chip text={`🔥 PEAD ${r.pead_score}`} color="#EF4444" />}
+        </>}
       </div>
 
       <TileRow r={r} gaapEpsY={gaapEpsY} opmD={opmD}
@@ -509,7 +520,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
 
       <SignalRow signals={(r as any).signals} />
 
-      <AiSummary docs={(r as any).filing_docs} ticker={r.ticker} releaseUrl={(r as any).release_url ?? null} filingDate={r.filing_date} />
+      <AiSummary docs={(r as any).filing_docs} ticker={r.ticker} releaseUrl={(r as any).release_url ?? null} filingDate={r.filing_date}
+        company={(r as any).company ?? null} quarter={(r as any).quarter ?? null} tier={(r as any).tier ?? null} />
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
@@ -1104,8 +1116,9 @@ export function setAllAiSummaries(open: boolean) {
   window.dispatchEvent(new CustomEvent(AI_ALL_EVENT, { detail: { open } }));
 }
 
-function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
+function AiSummary({ docs, ticker, releaseUrl, filingDate, company, quarter, tier }: {
   docs: FilingDocs | null | undefined; ticker: string; releaseUrl: string | null; filingDate?: string | null;
+  company?: string | null; quarter?: string | null; tier?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -1117,6 +1130,36 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
   const [struct, setStruct] = useState<any>(null);
   const [err, setErr] = useState<string>('');
   const [files, setFiles] = useState<Array<{ name: string; url: string; type: string; description: string }>>([]);
+  // zzz693 — provenance, so the PDF can be audited back to EDGAR.
+  const [prov, setProv] = useState<{ source_url: string | null; model: string | null }>({ source_url: null, model: null });
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfErr, setPdfErr] = useState<string>('');
+
+  // zzz693 — the commentary score. Computed from the VERIFIED structured
+  // object, so it inherits the route's figure check: a field dropped for
+  // carrying an unsupported number cannot contribute points. Deterministic,
+  // no model call, no network — the same summary always scores the same.
+  const commentary: CommentaryScore | null = useMemo(
+    () => (struct ? scoreReleaseCommentary(struct) : null),
+    [struct],
+  );
+
+  const downloadPdf = useCallback(async () => {
+    if (!struct) return;
+    setPdfBusy(true); setPdfErr('');
+    try {
+      const { exportUsSummaryPdf } = await import('@/lib/earnings/us-summary-pdf');
+      await exportUsSummaryPdf({
+        ticker, company, quarter, tier, filingDate,
+        sourceUrl: prov.source_url, model: prov.model,
+        d: struct, commentary,
+      });
+    } catch (e: any) {
+      setPdfErr(`The PDF could not be written (${String(e?.message || e)}).`);
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [struct, ticker, company, quarter, tier, filingDate, prov, commentary]);
 
   const load = useCallback(async () => {
     // ── ASK BEFORE REFUSING  (zzz612) ─────────────────────────────────────
@@ -1142,7 +1185,9 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
       const j = await res.json();
       if (j?.ok && (j.structured || j.summary)) {
         setText(j.summary || ''); setStruct(j.structured || null);
-        setFiles(j.documents || []); setState('done');
+        setFiles(j.documents || []);
+        setProv({ source_url: j.source_url || null, model: j.model || null });
+        setState('done');
       } else {
         setErr(j?.error || 'No summary is available for this filing.'); setState('error');
       }
@@ -1210,7 +1255,22 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
             <FileText className="w-3 h-3" /> Transcript
           </a>
         )}
+        {/* zzz693 — the summary as a page you can keep. Only offered once
+            there is a verified structured reading to write: a PDF of a prose
+            fallback would be a page without the sections that make it worth
+            keeping, and a disabled button explains itself better than a
+            download that produces something thin. */}
+        {state === 'done' && struct && (
+          <button onClick={downloadPdf} disabled={pdfBusy}
+            title="Download this summary as a one-page A4 PDF on white, with the guidance, the commentary score, and the source accession in the footer."
+            style={{ ...docChip(), cursor: pdfBusy ? 'progress' : 'pointer', opacity: pdfBusy ? 0.6 : 1 }}>
+            <Download className="w-3 h-3" /> {pdfBusy ? 'Writing PDF…' : 'Download PDF'}
+          </button>
+        )}
       </div>
+      {pdfErr && (
+        <div style={{ marginTop: 5, fontSize: 10.5, color: 'var(--mc-caution, #F59E0B)' }}>{pdfErr}</div>
+      )}
 
       {open && (
         <div style={{
@@ -1225,6 +1285,9 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate }: {
           )}
           {state === 'error' && (
             <div style={{ fontSize: 11, color: 'var(--mc-caution, #F59E0B)' }}>{err}</div>
+          )}
+          {state === 'done' && commentary && (
+            <CommentaryScoreBlock c={commentary} hasTranscript={!!transcript} />
           )}
           {state === 'done' && (struct ? <SummaryView d={struct} /> : <SummaryText text={text} />)}
           {state === 'done' && files.length > 0 && (
@@ -1319,6 +1382,125 @@ function SectionLabel({ children, color }: { children: React.ReactNode; color?: 
       fontSize: 9, fontWeight: 800, letterSpacing: 0.4, marginBottom: 5,
       color: color || 'var(--mc-text-3)',
     }}>{children}</div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE COMMENTARY SCORE, RENDERED.                                    (zzz693)
+//
+// The India tab has had a Concall Score for a year. The US tab was asked for
+// one, and the honest answer had to come first: MOST US ISSUERS FILE NO
+// TRANSCRIPT WITH THE SEC, so for the great majority of these names there is
+// no call to score. This card already says that in its own words at the foot
+// of the documents list.
+//
+// So the number is not labelled as a call score, and it is not presented as
+// one. It is the management commentary in the release — which does exist for
+// every 8-K Item 2.02 — scored on four axes, and the sub-label names the
+// source in the same breath as the figure. Where a transcript IS filed (a
+// small minority do), the sub-label says so instead, because then the reading
+// really does include the call.
+//
+// The bars are the point. A bare 61/100 is a number the reader has to trust;
+// four bars with the reason next to each is a number the reader can check and
+// disagree with. Every component carries its own plain-English `because`,
+// so "Guidance 18/30" reads as "guidance maintained - a commitment, but not a
+// new one" rather than as an unexplained deduction.
+//
+// AND IT IS NOT A VERDICT ON THE QUARTER. A superb print described in two
+// sentences scores badly here; a mediocre print explained in full with
+// guidance attached scores well. The header says so, because a reader who
+// mistakes this for a result grade will read every high-tier, low-score name
+// exactly backwards. That combination is in fact the useful signal: a good
+// result the company declined to stand behind with any forward statement.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore; hasTranscript: boolean }) {
+  const [open, setOpen] = useState(false);
+  // Colour the headline by band. Deliberately the same bands as the grade
+  // ladder, so the colour and the letter can never disagree.
+  const col = c.score >= 75 ? 'var(--mc-bullish)'
+    : c.score >= 53 ? 'var(--mc-cyan)'
+    : c.score >= 38 ? '#F59E0B'
+    : 'var(--mc-bearish)';
+
+  return (
+    <div style={{
+      marginBottom: 10, paddingBottom: 9, borderBottom: '1px solid var(--mc-bg-4)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <SectionLabel>COMMENTARY SCORE</SectionLabel>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 22, fontWeight: 800, color: col, lineHeight: 1 }}>{c.score}</span>
+        <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>/ 100</span>
+        <span style={{
+          fontSize: 11, fontWeight: 800, color: col, padding: '2px 7px', borderRadius: 999,
+          border: `1px solid color-mix(in srgb, ${col} 45%, transparent)`,
+          backgroundColor: `color-mix(in srgb, ${col} 12%, transparent)`,
+        }}>{c.grade}</span>
+        {/* Tone sits BESIDE the score, never inside it. The count is useful,
+            but positives-minus-negatives is result quality, and the tier
+            already grades that — folding it in was the defect this axis had
+            on its first pass. */}
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{c.toneNote}</span>
+        <button onClick={() => setOpen((o) => !o)}
+          style={{
+            marginLeft: 'auto', cursor: 'pointer', fontSize: 10, fontWeight: 700,
+            padding: '3px 9px', borderRadius: 999, border: '1px solid var(--mc-bg-4)',
+            backgroundColor: 'var(--mc-bg-1)', color: 'var(--mc-text-2)',
+          }}>
+          {open ? 'Hide working' : 'Show working'}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 5, fontSize: 10, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+        How much management <b style={{ color: 'var(--mc-text-3)' }}>disclosed</b> — not how good the quarter was.
+        {' '}
+        {hasTranscript
+          ? 'Read from the release and the transcript filed with it.'
+          : 'Read from the management commentary in this earnings release; no call transcript was filed with the SEC.'}
+        {' '}
+        A high tier with a low score here is a good print the company did not stand behind with any forward statement.
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {c.components.map((comp) => {
+            const neg = comp.points < 0;
+            // `gaps` carries a negative max (its floor), so the bar is drawn
+            // from the magnitude either way.
+            const pct = Math.min(100, Math.abs(comp.max) > 0
+              ? (Math.abs(comp.points) / Math.abs(comp.max)) * 100 : 0);
+            const bar = neg ? 'var(--mc-bearish)'
+              : pct >= 70 ? 'var(--mc-bullish)'
+              : pct >= 40 ? 'var(--mc-cyan)'
+              : '#F59E0B';
+            return (
+              <div key={comp.key} style={{ display: 'grid', gridTemplateColumns: '74px 54px 1fr', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-1)' }}>{comp.label}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: neg ? 'var(--mc-bearish)' : 'var(--mc-text-2)', fontVariantNumeric: 'tabular-nums' }}>
+                  {comp.points} / {comp.max}
+                </span>
+                <div>
+                  <div style={{ height: 4, borderRadius: 999, backgroundColor: 'var(--mc-bg-3)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${pct}%`, backgroundColor: bar, borderRadius: 999 }} />
+                  </div>
+                  <div style={{ marginTop: 2, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.45 }}>
+                    {comp.because}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ marginTop: 3, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+            Computed from the verified summary above, so a line dropped for carrying a figure the release does not
+            print cannot earn points here. The same release always scores the same — nothing is asked of a model.
+            The grade ladder is the one the India Concall Score uses, so a B&minus; means the same standard on both tabs.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

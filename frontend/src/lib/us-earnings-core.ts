@@ -70,6 +70,7 @@
 import {
   CAVEAT_PENALTY,
   CAVEAT_PENALTY_DEFAULT,
+  countingCaveats,
   marginQualityDelta,
   decideTier,
   marketReactionDelta,
@@ -3799,7 +3800,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     marginSevereContraction: opmExp != null && opmExp <= -1.5,
     // The measurement refusal is not a caveat about the BUSINESS, so it is not
     // counted towards the caveat budget the BLOCKBUSTER gates are scored on.
-    caveatCount: caveat_tags.filter((t) => t !== PER_SHARE_BLOCKED_TAG).length, mCount, stage,
+    caveatCount: countingCaveats(caveat_tags), mCount, stage,   // zzz694 — shared informational-tag rule
     // `epsYMag` not `epsY` — the QUALITY-STRONG path (PATCH 1022) tests
     // `epsY >= 15`, and for a company with no year-ago per-share comparable
     // that test can only ever fail. Same substitution, same three guards, same
@@ -4202,17 +4203,24 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     : qlCal;
   const co = input.company || input.ticker;
   const fmtP = (lbl: string, v: number | null) => v == null ? '' : (v >= 500 ? `${lbl} >500% YoY (low base)` : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`);
-  const head = tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${ql.label}`
-    : tier === 'STRONG' ? `${co} delivers strong ${ql.label}`
-    : tier === 'MIXED' ? `${co} ${ql.label} is a mixed print`
-    : `${co} ${ql.label} fails the bar`;
+  const head = usNarrativeHead(tier, co, ql.label);
   const metrics = [fmtP('revenue', salesY), fmtP('net income', patY), fmtP('EPS', epsY)].filter(Boolean).join(', ');
   const uniqCav = Array.from(new Set(caveat_tags));
   const uniqMeth = Array.from(new Set(methodology_tags));
-  // The stem is kept so the narrative can be RECOMPOSED after the route adds
-  // the caveats only it can know about — see `composeUsNarrative`.
-  const narrative_stem = `${head} (${metrics || 'figures pending'})`;
-  const narrative = composeUsNarrative(narrative_stem, uniqCav, uniqMeth);
+  // ── THE STEM NO LONGER CARRIES THE VERDICT.                    (zzz697)
+  //
+  // Optical Cable's card said MIXED in the badge and "delivers strong" in the
+  // sentence underneath it, and both came from this engine. The stem was built
+  // here with the head already baked in, and the ROUTE then demoted the tier —
+  // `applySetupGates` sends a "beat already priced" quarter to MIXED — and
+  // recomposed the narrative from that same stem. The caveats updated; the
+  // first three words did not. R F Industries showed the identical split.
+  //
+  // So the stem now holds only the figures, and the head is rebuilt from
+  // whatever the tier finally is at the moment the sentence is composed. A
+  // card cannot contradict itself if only one place decides the verdict.
+  const narrative_stem = `(${metrics || 'figures pending'})`;
+  const narrative = composeUsNarrative(narrative_stem, uniqCav, uniqMeth, tier, co, ql.label);
 
   // Share count cross-check. The cover-page count can be stale (see
   // sharesOutstandingFromFacts); the count implied by net income ÷ EPS is
@@ -4403,7 +4411,29 @@ const SETUP_WEIGHTS: Record<SetupFactorId, number> = {
  * three that matter most, not the three that happened to be pushed first.
  */
 export const NARRATIVE_CAVEAT_LIMIT = 3;
-export function composeUsNarrative(stem: string, caveats: string[], methods: string[]): string {
+/** The verdict words, derived from the tier and nowhere else.      (zzz697) */
+export function usNarrativeHead(tier: EarningsTier, co: string, quarter: string): string {
+  return tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${quarter}`
+    : tier === 'STRONG' ? `${co} delivers strong ${quarter}`
+    : tier === 'MIXED' ? `${co} ${quarter} is a mixed print`
+    : `${co} ${quarter} fails the bar`;
+}
+
+/**
+ * zzz697 — `tier`, `co` and `quarter` are optional so that an OLD cached row,
+ * whose stem still has the head baked into it, keeps rendering exactly as it
+ * did instead of losing its first three words. New rows pass all three and get
+ * a head that always matches the badge.
+ */
+export function composeUsNarrative(
+  stem: string, caveats: string[], methods: string[],
+  tier?: EarningsTier, co?: string, quarter?: string,
+): string {
+  const full = (tier && co && quarter) ? `${usNarrativeHead(tier, co, quarter)} ${stem}` : stem;
+  return composeFromStem(full, caveats, methods);
+}
+
+function composeFromStem(stem: string, caveats: string[], methods: string[]): string {
   const cav = Array.from(new Set((caveats || []).filter(Boolean)));
   const meth = Array.from(new Set((methods || []).filter(Boolean)));
   if (!cav.length) {

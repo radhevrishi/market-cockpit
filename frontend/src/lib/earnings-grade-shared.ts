@@ -50,10 +50,61 @@ export const CAVEAT_PENALTY: Record<string, number> = {
   // share counts. The quarter itself may be excellent; we simply cannot say
   // what EPS did. Penalising it would turn "we don't know" into "this is bad".
   'per-share comparison unavailable': 0,
+  // ALSO NOT A QUALITY PROBLEM — and the reason it costs nothing is the whole
+  // point of the flag.                                              (zzz694)
+  //
+  // `optical eps` catches earnings that outran operations: a company looking
+  // BETTER than it is. Nothing caught the inverse — operations outrunning
+  // earnings, a company looking WORSE than it is — and Bliss GVS is what that
+  // blindness costs. Sales +38% with OPM 20% -> 27% means operating profit went
+  // Rs 41.4 -> 77.2 cr, up 87%. Reported PAT went up 16%. Prior-year PAT of
+  // Rs 44 cr EXCEEDED prior-year operating profit of Rs 41.4 cr, so the base
+  // was flattered by something below the operating line, and the modest +16%
+  // is an artefact of that base rather than a weak quarter.
+  //
+  // The engine read "PAT +16%" as ordinary magnitude and graded it MIXED with
+  // no caveats at all: quality 100, cash conversion 20/20, CFO/PAT 2.73, and
+  // not one word to tell the owner the operating engine had nearly doubled.
+  // That is the failure this tag fixes - it is an EXPLANATION, not an
+  // accusation, and it must never subtract a point. A leak below the operating
+  // line cuts both ways: a one-off high base or a tax normalisation re-rates
+  // next quarter, while interest on rising debt is a real warning. Penalising
+  // it would turn "look here" into "this is bad", which is exactly the mistake
+  // the composite floor made when it demoted FPS.
+  'profit leaked below the operating line': 0,
 };
 
 /** Fallback penalty for a caveat tag not present in CAVEAT_PENALTY. */
 export const CAVEAT_PENALTY_DEFAULT = 8;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAGS THAT EXPLAIN RATHER THAN ACCUSE, AND MUST NOT BE COUNTED.    (zzz694)
+//
+// A zero penalty is NOT enough to make a tag informational, and assuming it
+// was nearly shipped a silent demotion. `caveatCount` is passed to decideTier
+// and gates every BLOCKBUSTER path in this file - path A at <= 1, path B at
+// <= 2, paths C and D at <= 3. So a tag costing zero quality points can still
+// knock a company off a BLOCKBUSTER path purely by existing, which is the
+// same technicality that demoted FPS through the composite floor.
+//
+// The US engine already worked around this for its own measurement tag, by
+// filtering that one string out of the count at the call site. This makes the
+// rule shared and explicit, so the next informational tag is handled by
+// adding it here rather than by remembering to filter it in two places.
+//
+// A tag belongs in this set when it tells the reader WHERE TO LOOK and does
+// not assert that anything is wrong. Everything else is a real caveat and
+// must count.
+export const INFORMATIONAL_CAVEATS: ReadonlySet<string> = new Set([
+  'per-share comparison unavailable',
+  'profit leaked below the operating line',
+]);
+
+/** caveat_tags.length, less the tags that only explain. Use this for every
+ *  gate and score; use the raw length only for display. */
+export function countingCaveats(tags: readonly string[]): number {
+  return tags.filter((t) => !INFORMATIONAL_CAVEATS.has(t)).length;
+}
 
 /**
  * OPM-expansion "margin ladder" (PATCH 1000 + zzz387 ordering fix).

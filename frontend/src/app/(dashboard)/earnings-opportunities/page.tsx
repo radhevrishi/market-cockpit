@@ -28,6 +28,7 @@ import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow, QUADRANT_META, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
+import { useCardBadges, CardBadgesToggle } from '@/components/card-badges';
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
@@ -309,6 +310,16 @@ interface ParsedEarning {
   } | null;
   /** Screener's ROCE % — the strongest quality input, shown on the card. */
   roce?: number | null;
+  // zzz694 — the operating margin and the cash ratio were both being read off
+  // the row with `as any` because neither was declared here, which is how the
+  // cash figure ended up decided the tier while appearing nowhere on the card.
+  // The payload has always carried them; only the type was silent.
+  opm_pct?: number | null;
+  opm_prev_pct?: number | null;
+  /** Operating cash flow over reported profit, annual. Below 0.6 raises 'ocf
+   *  divergence'; below zero caps the tier at MIXED unconditionally. */
+  ocf_to_pat_ratio?: number | null;
+  cfo_to_pat_ratio?: number | null;
 }
 
 interface OpportunitiesPayload {
@@ -2991,6 +3002,10 @@ Source label: ${coverageStats.source}`}
             return (
               <>
                 <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
+                {/* zzz696 — the badge switch sits with the filters because it is
+                    the same kind of decision: what the card shows you. */}
+                <CardBadgesToggle compact />
+                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
@@ -3634,6 +3649,8 @@ function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
 
 function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh?: boolean; radar?: { transformation_score: number } | null }) {
   const tierColor = TIER_META[stock.tier].color;
+  // zzz696 — badge chips are opt-in, shared with the US tab through one key.
+  const [showBadges] = useCardBadges();
   // zzz505 — newly-listed companies have no year-ago quarter, so the YoY tiles
   // render "—". But we now carry their short sequential history, so switch the
   // Sales/EPS tiles to QUARTER-ON-QUARTER (QoQ) — the correct comparison for an
@@ -3689,6 +3706,10 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
+        {/* zzz696 — everything from the quadrant badge to the sector chip is
+            opt-in. The PRICE below is not: it shares this row but it is a
+            number, not a label, and the card should never lose it. */}
+        {showBadges && <>
         {/* QUALITY × INFLECTION badge. Sits BESIDE the tier, never replacing it:
             a ⚡ TURNAROUND ACCELERATOR is still whatever tier the grader gave it.
             Rendered only when the grader actually scored the row — a preview
@@ -3747,6 +3768,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         {timing && (
           <span style={{ fontSize: 12 }}>{timing}</span>
         )}
+        </>}
         {stock.price != null && (
           <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)' }}>
             {fmtPx(stock.price)}
@@ -3785,8 +3807,8 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         </div>
       )}
 
-      {/* PATCH 1006 — Institutional badges row */}
-      {((stock as any).is_elite || typeof (stock as any).pead_score === 'number' || (stock as any).multibagger_setup) && (
+      {/* PATCH 1006 — Institutional badges row.  zzz696 — opt-in. */}
+      {showBadges && ((stock as any).is_elite || typeof (stock as any).pead_score === 'number' || (stock as any).multibagger_setup) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
           {(stock as any).is_elite && (
             <span title="ELITE — an independent institutional gate, not a tier. Every criterion required; a missing figure fails it." style={{
@@ -3830,8 +3852,13 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(stock.sales_prev_cr)} />
         <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT'} pct={_usePatQoQ ? _patQoQ : stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(stock.pat_prev_cr)} />
         <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />
-        <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
-        <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>
+        <OpmTile opm={stock.opm_pct} opmPrev={stock.opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
+        {/* zzz694 — cash sits beside the score, so the figure that decides the
+            tier is on the card rather than only in the caveat pills. The score
+            gives up its full-width row for it; a 94 that is capped by cash is
+            better read next to the cash than alone. */}
+        <CashTile ratio={stock.ocf_to_pat_ratio ?? stock.cfo_to_pat_ratio ?? null} />
+        <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
         </div>
@@ -4101,6 +4128,54 @@ function OpmTile({ opm, opmPrev, newlyListed }: { opm: number | null | undefined
       </div>
       <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : (hasOpm ? 'prior n/a' : (newlyListed ? 'newly listed' : 'screener gap'))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE CASH TILE. THE CARD ACCUSED AND NEVER SHOWED THE EVIDENCE.    (zzz694)
+//
+// KRN Heat Exchanger prints revenue +119%, PAT +175%, EPS +152%, OPM +4pp and
+// a composite of 94 - and comes back MIXED. The reason is entirely cash:
+// annual operating cash flow is NEGATIVE and 3.45x annual PAT in magnitude,
+// which trips the hard ceiling. The narrative said "ocf divergence + profit
+// without operating cash" and two warning pills appeared underneath.
+//
+// THE NUMBER ITSELF WAS NOWHERE ON THE CARD. Four tiles for sales, profit,
+// EPS and margin - the things that looked good - and not one for the single
+// figure that decided the tier. The owner could read that a cash problem
+// existed but not how big it was, which is the difference between "explain
+// this before you size it" and "avoid". -3.45 and 0.85 are both "ocf
+// divergence" and they are not remotely the same quarter.
+//
+// So cash gets a tile next to the score, coloured on the same thresholds the
+// grader uses: >= 1.0 the earnings are cash-backed, >= 0.6 a working-capital
+// quarter, below that the divergence caveat fires, and below zero operations
+// consumed cash and the MIXED ceiling is unconditional.
+function CashTile({ ratio }: { ratio: number | null | undefined }) {
+  const has = typeof ratio === 'number' && Number.isFinite(ratio);
+  const r = has ? (ratio as number) : null;
+  const color = r == null ? '#6B7A8D'
+              : r < 0 ? '#EF4444'
+              : r < 0.6 ? '#EF4444'
+              : r < 1 ? '#F59E0B'
+              : '#10B981';
+  const note = r == null ? 'not reported'
+             : r < 0 ? 'operations burned cash'
+             : r < 0.6 ? 'below the divergence line'
+             : r < 1 ? 'partly cash-backed'
+             : 'earnings are cash-backed';
+  return (
+    <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>CASH  CFO/PAT</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>
+          {r == null ? '—' : `${r.toFixed(2)}x`}
+        </div>
+      </div>
+      <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {note}
       </div>
     </div>
   );

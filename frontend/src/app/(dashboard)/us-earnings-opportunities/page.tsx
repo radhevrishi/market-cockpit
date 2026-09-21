@@ -32,6 +32,7 @@ import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@
 // The card itself — shared with /us-conviction-beats so the two tabs can never
 // drift apart again. See src/components/us-earnings-card.tsx.
 import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllAiSummaries, useAiSummaryQueue } from '@/components/us-earnings-card';
+import { CardBadgesToggle } from '@/components/card-badges';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
@@ -844,6 +845,8 @@ export default function UsEarningsOpportunitiesPage() {
         ))}
 
         <span style={{ flex: 1 }} />
+        {/* zzz696 — badge chips are opt-in on both markets, one shared key. */}
+        <CardBadgesToggle />
         {viewMode === 'GRADED' && shownTotal > 0 && (
           <button onClick={toggleAllCards} style={btn(allCardsOpen)} aria-expanded={allCardsOpen}
             title="Open the full write-up on every card that passes the filters">

@@ -1760,7 +1760,8 @@ export async function GET(req: Request) {
       // carried "market rejected print" and its sentence did not; Electromed's
       // carried "sold off — fundamentals intact". One recomposition here, off
       // the same arrays the chips render, and there is only one list again.
-      row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags);
+      row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags,
+        row.tier, row.company || row.ticker, row.quarter);   // zzz697 — head follows the FINAL tier
       graded.push(row);
     }
 
@@ -2146,7 +2147,8 @@ export async function GET(req: Request) {
         // caveats ("prelim · 10-Q pending", "missed consensus") since the
         // sentence was composed, and the sentence has to carry the final list
         // before the PRELIM tail is appended to it.
-        row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags);
+        row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags,
+        row.tier, row.company || row.ticker, row.quarter);   // zzz697 — head follows the FINAL tier
         row.narrative = (pr && pr.matched.length)
           // We have the release's own GAAP statement — keep the normal
           // narrative and add the street line plus what is still missing.

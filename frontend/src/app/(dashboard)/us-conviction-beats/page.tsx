@@ -41,6 +41,7 @@ import {
   setAllAiSummaries, useAiSummaryQueue,
   type Rule40Like,
 } from '@/components/us-earnings-card';
+import { CardBadgesToggle } from '@/components/card-badges';
 import { buildTvExport } from '@/lib/us-tradingview';
 import { knownExchanges, resolveExchanges } from '@/lib/us-exchange-client';
 import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-process';
@@ -1472,6 +1473,8 @@ export default function UsConvictionBeatsPage() {
         ))}
         <span style={{ flex: 1 }} />
         <button onClick={() => setView((v) => (v === 'cards' ? 'table' : 'cards'))} style={chip(false)}>{view === 'cards' ? '▦ Table' : '▤ Cards'}</button>
+        {/* zzz696 — same switch, same stored preference as the other tabs. */}
+        <CardBadgesToggle />
         {view === 'cards' && filtered.length > 0 && (
           <button onClick={toggleAll} style={chip(allOpen)} aria-expanded={allOpen}
             title="Open the full write-up — guidance, results, margins, balance sheet — on every card that passes the filters">

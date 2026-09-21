@@ -25,7 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier,
+  CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, countingCaveats, marginQualityDelta, decideTier,
   marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow,
   fundamentalComposite, setupGrade,
   type EarningsTier,
@@ -409,6 +409,69 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
     if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
   }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE PROFIT DID NOT REACH THE BOTTOM LINE.                     (zzz694)
+  //
+  // `optical eps` above catches earnings that outran operations. This catches
+  // the mirror image, which nothing tested: OPERATIONS THAT OUTRAN EARNINGS.
+  //
+  // Bliss GVS, Q1 FY27, is the case. Sales +38% and OPM 20% -> 27% imply
+  // operating profit of Rs 41.4 -> 77.2 cr, up 87%. Reported PAT rose 16%. The
+  // engine scored that +16% as ordinary magnitude and returned MIXED with an
+  // EMPTY caveat list - quality 100, cash conversion 20/20, CFO/PAT 2.73 - so
+  // the card gave its owner no reason to look at a business whose operating
+  // profit had nearly doubled. The tell was sitting in the prior year: PAT of
+  // Rs 44 cr EXCEEDED operating profit of Rs 41.4 cr, meaning the base was
+  // lifted by something below the operating line, so the +16% is measured
+  // against an inflated comparator.
+  //
+  // WHY IT COSTS NOTHING (penalty 0 in CAVEAT_PENALTY, and absent from both
+  // `_criticals` lists, so it can neither demote a tier nor dock a point): the
+  // flag is not a verdict. A leak below the operating line resolves either
+  // way, and both readings are worth having. A high prior-year base or a tax
+  // normalisation means next quarter re-rates against a clean comparator;
+  // interest on rising debt means the growth is being bought. An informational
+  // tag that quietly subtracted 8 points would repeat the composite-floor
+  // mistake that demoted FPS on a technicality.
+  //
+  // TWO GUARDS, both added because the first version was measured across the
+  // season before it shipped and got 206 hits, most of them worthless:
+  //
+  //  1. PAT MUST HAVE GROWN. The ratio test `opGrowth >= patY * 1.6` inverts
+  //     when patY is negative - a more negative number is a LOWER bar, so
+  //     Raymond (PAT -99%, implied OP +50%) and Bosch (PAT -37%) sailed
+  //     through. For a company whose profit collapsed, "leaked below the
+  //     operating line" is arithmetically true and analytically useless: that
+  //     profit is not understated, it is damaged, and the tier already says
+  //     so. The flag exists for the UNDERSTATED case, so PAT has to be up.
+  //
+  //  2. THE PRIOR MARGIN MUST BE BIG ENOUGH TO DIVIDE BY. opm_prev_pct
+  //     arrives as a whole number. At a reported 20% the true value is
+  //     19.5-20.4 and implied operating profit is accurate to about 2.5%; at
+  //     a reported 2% it is 1.5-2.4 and the error is 25%, which is why GNFC
+  //     showed implied operating growth of +1,224% against PAT +276%. That
+  //     figure is rounding, not performance. A 5% floor keeps the implied
+  //     growth error inside roughly 10%.
+  //
+  // After both guards the flag fires on names whose operating profit really
+  // did outrun a genuinely positive earnings number - which is the only
+  // population it was built to describe.
+  const _sPrev = typeof row?.sales_prev_cr === 'number' ? row.sales_prev_cr : null;
+  const _sCur = typeof row?.sales_curr_cr === 'number' ? row.sales_curr_cr : null;
+  const _opmNow = typeof row?.opm_pct === 'number' ? row.opm_pct : null;
+  const _opmPre = typeof row?.opm_prev_pct === 'number' ? row.opm_prev_pct : null;
+  if (_sPrev != null && _sCur != null && _opmNow != null && _opmPre != null
+      && patY != null && patY > 0 && _sPrev > 0 && _opmPre >= 5) {
+    const _opPrev = _sPrev * (_opmPre / 100);
+    const _opCur = _sCur * (_opmNow / 100);
+    if (_opPrev > 0 && _opCur > _opPrev) {
+      const _opGrowth = (_opCur / _opPrev - 1) * 100;
+      if (_opGrowth - patY >= 35 && _opGrowth >= patY * 1.6) {
+        caveat_tags.push('profit leaked below the operating line');
+      }
+    }
+  }
   // zzz668 — A PENALTY WITH NO EMITTER IS NOT A RULE.
   //
   // `exceptional item` has carried a 10-point penalty in the shared table since
@@ -591,7 +654,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     turnaroundBase,
     marginContracting: opmExp != null && opmExp <= -0.5,        // PATCH 1000
     marginSevereContraction: opmExp != null && opmExp <= -1.5,  // PATCH 1020
-    caveatCount: caveat_tags.length,
+    caveatCount: countingCaveats(caveat_tags),   // zzz694 — informational tags must not gate a tier
     mCount,
     stage,
     salesY, patY, epsY, opmExp,
@@ -724,8 +787,44 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     //    its operations consumed cash. The US caps this at MIXED and calls it
     //    "profit without operating cash"; there is no reading of it that
     //    belongs in a top tier.
+    // MEASURED, AND THE HAMMER WAS DOING TWO OPPOSITE JOBS.         (zzz695)
+    //
+    // This was an unconditional cap to MIXED, and on 2,604 graded India
+    // results across the season it split cleanly in two by composite - in
+    // BOTH months independently, which is why the change is here and not
+    // filed as a hunch:
+    //
+    //                              Jul 2026            Aug 2026
+    //   negative OCF, comp >= 78   +11.0% (n=6)        +8.8%  (n=36)
+    //   negative OCF, comp  < 78    -2.1% (n=82)       -5.3%  (n=235)
+    //   BLOCKBUSTER, actual         +9.1%              +8.1%
+    //   STRONG, actual              +1.3%              +0.8%
+    //   MIXED, actual               -1.1%              -3.2%
+    //
+    // Below 78 the cap is right and then some: those names underperform the
+    // MIXED bucket they are dropped into. At or above 78 it was taking names
+    // that behave like BLOCKBUSTER and burying them in a bucket whose whole
+    // population is negative - KRN at composite 94, PTC Industries at 88 with
+    // a perfect 100/100 inflection, Marine Electricals at 87, all three
+    // reading "mixed print" while running +12%, +18% and +1%.
+    //
+    // WHY STRONG AND NOT BLOCKBUSTER, even though the returns match
+    // BLOCKBUSTER. The study horizon is four to eight weeks of post-print
+    // drift, and that CANNOT test the risk this rule exists for: a company
+    // funding hypergrowth from outside the business fails when the funding
+    // tightens, not in the month after the result. The win rate is also lower
+    // than BLOCKBUSTER's (58% vs 68%) - same returns, more variance. So the
+    // cash burn still costs the top tier, and STRONG is where the evidence
+    // actually reaches.
+    //
+    // Honest confound: composite carries 25% technical, so `>= 78` partly
+    // selects for names already moving, and some of that +8.8% is momentum
+    // rather than the quarter. The gate is left on composite anyway, because
+    // composite is what was measured - swapping in fund_composite here would
+    // be implementing something the study never tested, which is the mistake
+    // the FPS demotion was made of.
     if (_ocfAnnual != null && _ocfAnnual < 0 && _patAnnual != null && _patAnnual > 0) {
-      capTier('MIXED', 'profit without operating cash');
+      capTier(composite >= 78 ? 'STRONG' : 'MIXED', 'profit without operating cash');
     }
 
     // 2. EARNINGS OUTRAN BOTH THE REVENUE AND THE CASH. This is the rule that

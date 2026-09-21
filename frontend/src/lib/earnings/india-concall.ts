@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { IndiaSectorTemplate } from './india-sectors';
+import { commentaryGradeFor } from './commentary-score';
 
 export interface ConcallSectorKpiHit {
   label: string;
@@ -941,18 +942,11 @@ export function extractIndiaConcallInsights(
   const densityScore = Math.min(25, topQuoteAvg / 1.5);
   const concallScore = Math.round(sentimentScore + topicScore + kpiScore + densityScore);
 
-  let concallGrade: ConcallInsights['concallGrade'] = 'F';
-  if (concallScore >= 90) concallGrade = 'A+';
-  else if (concallScore >= 82) concallGrade = 'A';
-  else if (concallScore >= 75) concallGrade = 'A-';
-  else if (concallScore >= 68) concallGrade = 'B+';
-  else if (concallScore >= 60) concallGrade = 'B';
-  else if (concallScore >= 53) concallGrade = 'B-';
-  else if (concallScore >= 46) concallGrade = 'C+';
-  else if (concallScore >= 38) concallGrade = 'C';
-  else if (concallScore >= 30) concallGrade = 'C-';
-  else if (concallScore >= 20) concallGrade = 'D';
-  else concallGrade = 'F';
+  // zzz693 — the ladder moved to commentary-score.ts and is imported, because
+  // the US card now carries the same letters computed from release commentary.
+  // Two copies of these thresholds would eventually mean two different
+  // standards for the letter B on two tabs of the same portal.
+  const concallGrade: ConcallInsights['concallGrade'] = commentaryGradeFor(concallScore);
 
   // ── Risk profile extraction ───────────────────────────────────────
   // Run regex extractors over the cleaned text. Each looks for a
