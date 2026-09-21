@@ -63,7 +63,10 @@ export interface ScreenerGainersResult {
 export const INDIA_GAINERS_URL = 'https://www.screener.in/screens/3725746/suresh-daily-gainers/';
 
 const MAX_PAGES = 6;             // 25 rows a page; his screen runs ~122 names
-const PAGE_TIMEOUT_MS = 12_000;
+// zzz734 — 12s was too tight once the chain grew to three hops: the first
+// (misconfigured) hop burns time before the working one is even tried, and a
+// Worker cold start costs a second or two of that budget.
+const PAGE_TIMEOUT_MS = 20_000;
 
 const stripTags = (s: string) => s.replace(/<[^>]+>/g, '');
 

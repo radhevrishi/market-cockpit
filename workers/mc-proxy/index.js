@@ -160,10 +160,23 @@ export default {
       // whole chain exists to prevent.
       const ct = upstream.headers.get('content-type')
         || (target.pathname.endsWith('.pdf') ? 'application/pdf' : 'text/html; charset=utf-8');
-      return new Response(upstream.body, {
+
+      // BUFFERED, NOT STREAMED.                                   (zzz734)
+      //
+      // The first deploy returned `upstream.body` as a stream. curl read it
+      // in 0.3s; the portal on Railway timed out at 12s every time. A
+      // streamed passthrough keeps the Worker's subrequest open while the
+      // client reads, and that pairing stalls often enough to be useless —
+      // and a stall is indistinguishable, from the portal's side, from
+      // screener.in being down. These pages are 40-170KB. Buffering costs
+      // nothing and the response either arrives whole or fails loudly.
+      const isPdf = /pdf/i.test(ct);
+      const body = isPdf ? await upstream.arrayBuffer() : await upstream.text();
+      return new Response(body, {
         status: upstream.status,
         headers: {
           'Content-Type': ct,
+          'Content-Length': String(isPdf ? body.byteLength : new TextEncoder().encode(body).length),
           'X-MC-Proxy-Upstream-Status': String(upstream.status),
         },
       });

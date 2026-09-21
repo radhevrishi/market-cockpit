@@ -96,7 +96,7 @@ Promise<{ html: string | null; outcome: string }> {
  * without this guard a caller could aim it at anything reachable from the
  * worker — an SSRF hole opened for the convenience of one feature.
  */
-export async function fetchScreenerHtml(url: string, timeoutMs = 14_000): Promise<HtmlFetch> {
+export async function fetchScreenerHtml(url: string, timeoutMs = 20_000): Promise<HtmlFetch> {
   let host = '';
   try { host = new URL(url).hostname; } catch { host = ''; }
   if (!/(^|\.)screener\.in$/i.test(host)) {
