@@ -27,6 +27,7 @@
 // before the filing date is treated as "XBRL pending", never graded.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { guidesNextQuarterBelowThisOne } from '@/lib/us-guidance-figures';
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { gzipSync, gunzipSync } from 'zlib';
@@ -2213,6 +2214,43 @@ export async function GET(req: Request) {
     const _gates = applySetupGates(graded as any[]);
     if (_gates.demoted || _gates.capped) {
       notes.push(`setup gates: ${_gates.demoted} demoted to MIXED (already priced in), ${_gates.capped} capped at STRONG (setup does not confirm)`);
+    }
+
+    // ── THE COMPANY'S OWN NEXT-QUARTER GUIDE.                      (zzz698)
+    //
+    // Braze beat by 22%, raised the year, and fell 26%. ServiceTitan beat by
+    // 14%, raised the year, and fell 35%. Both cards graded the beat and the
+    // raise and could say nothing about the quarter, because the estimate feed
+    // carries no next-quarter consensus for either filer — so the chip read
+    // "FY only" and the grader read nothing at all.
+    //
+    // The quarter guide needs no consensus to be read. Braze guided adjusted
+    // EPS of $0.13-0.14 against the $0.19 it had just delivered; ServiceTitan
+    // guided revenue of $285-287M against $292.8M. Against the company's OWN
+    // just-reported quarter, both are a step down, and that is what the tape
+    // reacted to.
+    //
+    // This runs here rather than in the core because `guidance_figures` are
+    // attached by this route, and it runs AFTER the setup gates so the caveat
+    // lands on the final tier — which the narrative now follows (zzz697).
+    // It only ever moves a row DOWN.
+    let _guideDown = 0;
+    for (const row of graded as any[]) {
+      const hits = guidesNextQuarterBelowThisOne(row.guidance_figures, {
+        epsAdj: row.eps_adj_curr, epsGaap: row.eps_curr, revenueMusd: row.revenue_curr_musd,
+      });
+      if (!hits.length) continue;
+      const worst = hits.slice().sort((a, b) => b.shortfallPct - a.shortfallPct)[0];
+      const tag = `guides ${worst.period_label || 'next quarter'} ${worst.label} below this quarter`;
+      row.caveat_tags = Array.from(new Set([...(row.caveat_tags || []), tag]));
+      row.next_quarter_guide_down = hits;
+      // A beat-and-raise that guides the coming quarter down is not the clean
+      // beat-and-raise the top tiers are for. STRONG is as far as it goes.
+      if (row.tier === 'BLOCKBUSTER') { row.tier = 'STRONG'; }
+      _guideDown++;
+    }
+    if (_guideDown) {
+      notes.push(`${_guideDown} row${_guideDown > 1 ? 's' : ''} guide the coming quarter below the quarter just reported (measured against the company's own figures, not consensus)`);
     }
 
     const by_tier: Record<EarningsTier, UsGradedRow[]> = {

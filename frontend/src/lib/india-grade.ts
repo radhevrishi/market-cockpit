@@ -25,7 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, countingCaveats, marginQualityDelta, decideTier,
+  CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, caveatPenaltyFor, countingCaveats, marginQualityDelta, decideTier,
   marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow,
   fundamentalComposite, setupGrade,
   type EarningsTier,
@@ -530,7 +530,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   // @/lib/earnings-grade-shared, imported by both this route and the client
   // gradeRow so the two copies can't drift (they repeatedly did: zzz384/386/387).
   let quality = 100;
-  for (const tag of caveat_tags) quality -= (CAVEAT_PENALTY[tag] ?? CAVEAT_PENALTY_DEFAULT);
+  for (const tag of caveat_tags) quality -= caveatPenaltyFor(tag);   // zzz698
   quality += marginQualityDelta(opmExp);   // PATCH 1000 + zzz387 ordering
   quality = Math.max(0, Math.min(100, quality));
 

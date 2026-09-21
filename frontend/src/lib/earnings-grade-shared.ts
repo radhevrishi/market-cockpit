@@ -50,6 +50,10 @@ export const CAVEAT_PENALTY: Record<string, number> = {
   // share counts. The quarter itself may be excellent; we simply cannot say
   // what EPS did. Penalising it would turn "we don't know" into "this is bad".
   'per-share comparison unavailable': 0,
+  // zzz698 — a real negative, and priced as one. The tag text carries the
+  // period ("guides Q3 FY27 adj. EPS below this quarter"), so the lookup below
+  // cannot match it by key; `caveatPenaltyFor` handles it by prefix.
+  'guides next quarter below this quarter': 15,
   // ALSO NOT A QUALITY PROBLEM — and the reason it costs nothing is the whole
   // point of the flag.                                              (zzz694)
   //
@@ -73,6 +77,14 @@ export const CAVEAT_PENALTY: Record<string, number> = {
   // the composite floor made when it demoted FPS.
   'profit leaked below the operating line': 0,
 };
+
+/** zzz698 — the guide-down tag embeds the period label, so it is matched by
+ *  shape rather than by exact key. Everything else falls through unchanged. */
+export function caveatPenaltyFor(tag: string): number {
+  if (tag in CAVEAT_PENALTY) return CAVEAT_PENALTY[tag];
+  if (/^guides .* below this quarter$/.test(tag)) return 15;
+  return CAVEAT_PENALTY_DEFAULT;
+}
 
 /** Fallback penalty for a caveat tag not present in CAVEAT_PENALTY. */
 export const CAVEAT_PENALTY_DEFAULT = 8;

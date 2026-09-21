@@ -70,6 +70,7 @@
 import {
   CAVEAT_PENALTY,
   CAVEAT_PENALTY_DEFAULT,
+  caveatPenaltyFor,
   countingCaveats,
   marginQualityDelta,
   decideTier,
@@ -3678,7 +3679,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const magnitude = magW > 0 ? magS / magW : (prelimS != null ? scoreSurprise(prelimS) : 30);
 
   let quality = 100;
-  for (const tag of caveat_tags) quality -= (CAVEAT_PENALTY[tag] ?? CAVEAT_PENALTY_DEFAULT);
+  for (const tag of caveat_tags) quality -= caveatPenaltyFor(tag);   // zzz698
   quality += marginQualityDelta(opmExp);
   quality = Math.max(0, Math.min(100, quality));
 

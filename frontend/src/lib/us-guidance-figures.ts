@@ -1100,3 +1100,91 @@ export const GUIDE_METRIC_LABEL: Record<GuideMetric, string> = {
   comparable_sales: 'Comparable sales', gross_margin: 'Gross margin',
   free_cash_flow: 'Free cash flow', ebitda: 'EBITDA',
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GUIDING THE NEXT QUARTER BELOW THE ONE JUST REPORTED.             (zzz698)
+//
+// Braze beat consensus by 22%, raised its full-year outlook, and fell. The
+// card could not explain that, and said so honestly: the estimate feed has no
+// next-quarter number for the filer, so the chip read "FY only — no consensus
+// for the quarter". True, and useless at the moment it mattered, because the
+// quarter guide WAS the story: adjusted EPS of $0.13–0.14 against the $0.19
+// just delivered. ServiceTitan did the same on revenue — $285–287M guided
+// against $292.8M reported — and fell 35%.
+//
+// NO CONSENSUS IS NEEDED TO SEE THIS. The comparison is against the company's
+// own just-reported quarter, which is on the card already. A company guiding
+// the coming quarter below the one it has just printed is making a statement
+// about its own trajectory, and it is a statement the grader was not reading.
+//
+// The test uses the TOP of the guided range. If even the generous end sits
+// below what was just delivered, there is no reading of the range that is not
+// a step down — which is the only version of this test worth acting on, and
+// it is why a 2% floor is applied as well: guidance is rounded, and a company
+// guiding $286M against $292.8M of revenue is signalling something, while one
+// guiding $291M against $292.8M is signalling nothing.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface NextQuarterGuideDown {
+  metric: GuideMetric;
+  label: string;
+  period_label: string;
+  guidedHigh: number;
+  reported: number;
+  /** How far the TOP of the guide sits below the reported quarter, in %. */
+  shortfallPct: number;
+}
+
+// Minimum gap that counts, to keep rounded guidance out of the signal. The
+// floor is metric-aware because the rounding is: EPS guidance is quoted in
+// whole cents, so on a $0.19 base one cent IS 5% and a 2% floor is the least
+// that can be trusted. Revenue guidance is quoted in millions on a base of
+// hundreds of millions, where 1% is three significant figures, not rounding.
+// ServiceTitan is exactly why this matters: guiding $287M against $292.8M
+// delivered is a 1.98% step down — real, precise, and invisible under a flat
+// 2% floor by two hundredths of a point.
+const FLOOR_PCT: Record<string, number> = { eps: 2, revenue: 1 };
+const FLOOR_DEFAULT_PCT = 2;
+
+export function guidesNextQuarterBelowThisOne(
+  figs: GuidanceFigure[] | null | undefined,
+  reported: { epsAdj?: number | null; epsGaap?: number | null; revenueMusd?: number | null },
+): NextQuarterGuideDown[] {
+  const out: NextQuarterGuideDown[] = [];
+  const num = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+  for (const f of (Array.isArray(figs) ? figs : [])) {
+    if (!f || f.period !== 'quarter') continue;
+    const hi = num(f.high);
+    if (hi == null) continue;
+
+    let reportedVal: number | null = null;
+    let guided = hi;
+    let label = '';
+
+    if (f.metric === 'eps' && f.unit === 'usd_share') {
+      reportedVal = f.basis === 'adjusted' ? num(reported.epsAdj) : num(reported.epsGaap);
+      label = f.basis === 'adjusted' ? 'adj. EPS' : 'EPS';
+    } else if (f.metric === 'revenue' && f.unit === 'usd') {
+      reportedVal = num(reported.revenueMusd);
+      guided = hi / 1e6;                       // guidance is raw dollars
+      label = 'revenue';
+    } else {
+      continue;
+    }
+
+    // A guide-down measured off a loss or a zero base is not the same fact and
+    // is not claimed here.
+    if (reportedVal == null || reportedVal <= 0 || guided >= reportedVal) continue;
+    const shortfallPct = ((reportedVal - guided) / reportedVal) * 100;
+    if (shortfallPct < (FLOOR_PCT[f.metric] ?? FLOOR_DEFAULT_PCT)) continue;
+
+    out.push({
+      metric: f.metric, label, period_label: f.period_label,
+      guidedHigh: guided, reported: reportedVal,
+      shortfallPct: Math.round(shortfallPct * 10) / 10,
+    });
+  }
+  return out;
+}
