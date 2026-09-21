@@ -34,7 +34,7 @@
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readPortfolioSymbols, normSymbol } from '@/lib/portfolio-symbols';
 import { classifyGradedRow, ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import { readConvictionBeats } from '@/lib/conviction-beats';
@@ -69,6 +69,17 @@ export default function PortfolioCatalystsPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [onlyChanged, setOnlyChanged] = useState(false);
+  // zzz713 — a live mirror of `rows` for callbacks that must not read a stale
+  // closure, and the state of the batch reader.
+  const rowsRef = useRef<Record<string, HoldingRow>>({});
+  const [batch, setBatch] = useState<{ running: boolean; done: number; total: number }>(
+    { running: false, done: 0, total: 0 });
+  const stopRef = useRef(false);
+
+  // The ref mirrors state on every commit, so any callback can read the
+  // CURRENT rows without being re-created (and without re-creating every
+  // button handler on the page each time one summary lands).
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
 
   // ── 1. The book. ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -89,18 +100,20 @@ export default function PortfolioCatalystsPage() {
       try { bench = readConvictionBeats(); } catch { bench = {}; }
       const benchByNorm = new Map(Object.entries(bench).map(([k, v]) => [normSymbol(k), v]));
 
-      // Radar scores, one request for the whole feed.
-      let radar = new Map<string, number>();
-      try {
-        const r = await fetch('/api/v1/concall-intel/transformation-screener?days=90&limit=200', { cache: 'no-store' });
-        if (r.ok) {
-          const j = await r.json();
-          for (const e of (j?.entries || [])) {
-            radar.set(normSymbol(e.symbol), e.transformation_score);
-          }
-        }
-      } catch { /* the radar is an enrichment, not a dependency */ }
-
+      // ── PAINT FIRST, ENRICH SECOND.                               (zzz713)
+      //
+      // The first version awaited the transformation-screener before drawing
+      // anything, so a 52-name book sat on "Reading your book…" for the best
+      // part of twenty seconds with no rows and no counter — long enough for
+      // the owner to conclude the page did not work. It did; it was waiting on
+      // an ENRICHMENT for something it already had.
+      //
+      // The grade and the pattern come from the conviction bench, which is a
+      // local store and answers instantly. So they are drawn immediately, and
+      // the radar score folds in afterwards. Nothing about a row changes when
+      // it arrives except one badge appearing — no re-order that moves a card
+      // out from under the cursor, because the sort is computed from rows that
+      // are already on screen.
       for (const sym of symbols) {
         const g = benchByNorm.get(sym) || null;
         next[sym] = {
@@ -108,12 +121,30 @@ export default function PortfolioCatalystsPage() {
           market: g?.market === 'US' || /^[A-Z]{1,5}$/.test(sym) && !!g?.eps_adj_curr ? 'US' : 'IN',
           graded: g,
           pattern: g ? classifyGradedRow(g) : null,
-          radarScore: radar.get(sym) ?? null,
+          radarScore: null,
           summary: null,
           summaryState: 'idle',
         };
       }
-      if (!cancelled) { setRows(next); setLoading(false); }
+      if (cancelled) return;
+      setRows(next); setLoading(false);
+
+      try {
+        const r = await fetch('/api/v1/concall-intel/transformation-screener?days=90&limit=200', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        const radar = new Map<string, number>();
+        for (const e of (j?.entries || [])) radar.set(normSymbol(e.symbol), e.transformation_score);
+        if (cancelled || !radar.size) return;
+        setRows((cur) => {
+          const out = { ...cur };
+          for (const sym of Object.keys(out)) {
+            const s = radar.get(sym);
+            if (s != null) out[sym] = { ...out[sym], radarScore: s };
+          }
+          return out;
+        });
+      } catch { /* the radar is an enrichment, not a dependency */ }
     })().catch((e) => {
       if (!cancelled) { setErr(String(e?.message || e)); setLoading(false); }
     });
@@ -123,10 +154,14 @@ export default function PortfolioCatalystsPage() {
   // ── 3. The catalysts, read on demand per holding. Each is a model call
   //      against a filing, so they are never fired for the whole book at once.
   const loadSummary = useCallback(async (sym: string) => {
+    // The market is read from a REF, not from the `rows` closure: during a
+    // batch run this callback fires dozens of times against a `rows` value
+    // that is already stale, and reading the closure there is how a US holding
+    // gets sent to the India route. A functional setState would not fix it —
+    // React runs that updater at render time, which is after this line. (zzz713)
+    const isUs = rowsRef.current[sym]?.market === 'US';
     setRows((r) => ({ ...r, [sym]: { ...r[sym], summaryState: 'loading' } }));
-    const row = rows[sym];
     try {
-      const isUs = row?.market === 'US';
       const url = isUs
         ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
         : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}`;
@@ -141,7 +176,45 @@ export default function PortfolioCatalystsPage() {
     } catch (e: any) {
       setRows((r) => ({ ...r, [sym]: { ...r[sym], summaryState: 'error', summaryError: String(e?.message || e) } }));
     }
-  }, [rows]);
+  }, []);
+
+  // ── 3b. READ THE WHOLE BOOK, a few at a time.                    (zzz713)
+  //
+  // Fifty-two holdings behind fifty-two buttons is a feature that exists and
+  // is never used: the owner reported exactly that — functionality shipped and
+  // invisible, because reaching it cost more clicks than it was worth.
+  //
+  // So there is one button, and it is honest about its cost. Each read is a
+  // model call against a filing, so THREE run at a time rather than fifty: the
+  // AI-summary routes are rate-limited upstream and a fan-out of fifty turns
+  // into fifty failures, which is worse than a slow success. The counter is
+  // live and the run can be stopped, because a job you cannot see the end of
+  // and cannot cancel is one you learn not to start.
+  //
+  // Holdings already read are skipped, so stopping and restarting resumes
+  // rather than paying for the same filings twice.
+  const CONCURRENCY = 3;
+  const readAll = useCallback(async (syms: string[]) => {
+    const todo = syms.filter((s) => {
+      const st = rowsRef.current[s]?.summaryState;
+      return st === 'idle' || st === 'error';
+    });
+    if (!todo.length) return;
+    stopRef.current = false;
+    setBatch({ running: true, done: 0, total: todo.length });
+    let i = 0, done = 0;
+    const worker = async () => {
+      while (!stopRef.current) {
+        const k = i++;
+        if (k >= todo.length) return;
+        await loadSummary(todo[k]);
+        done++;
+        setBatch((b) => (b.running ? { ...b, done } : b));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, worker));
+    setBatch((b) => ({ ...b, running: false }));
+  }, [loadSummary]);
 
   const list = useMemo(() => {
     const all = Object.values(rows);
@@ -193,10 +266,42 @@ export default function PortfolioCatalystsPage() {
         <span style={{ fontSize: 11, color: C.faint }}>
           {list.length} of {symbols.length} holdings
         </span>
+
+        {/* zzz713 — one button for the whole book, three reads at a time. */}
+        {!batch.running ? (
+          <button onClick={() => readAll(list.map((x) => x.r.symbol))}
+            title="Reads the filing behind each holding on screen, three at a time. Holdings already read are skipped."
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
+            }}>
+            &#10024; Read catalysts for all {list.length}
+          </button>
+        ) : (
+          <>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>
+              Reading {batch.done} of {batch.total}…
+            </span>
+            <button onClick={() => { stopRef.current = true; }}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
+              }}>Stop</button>
+          </>
+        )}
       </div>
 
       {err && <div style={{ fontSize: 12, color: C.amber }}>{err}</div>}
       {loading && <div style={{ fontSize: 12, color: C.dim }}>Reading your book…</div>}
+      {batch.running && (
+        <div style={{ height: 3, background: C.border, borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', background: C.cyan, borderRadius: 2,
+            width: `${batch.total ? Math.round((batch.done / batch.total) * 100) : 0}%`,
+            transition: 'width .3s ease',
+          }} />
+        </div>
+      )}
 
       {list.map(({ r, changed }) => (
         <div key={r.symbol} style={{
