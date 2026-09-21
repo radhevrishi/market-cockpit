@@ -3659,6 +3659,36 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   else if (opmExp != null && opmExp <= -0.5) caveat_tags.push('segment mix shift');
   // Earnings not backed by cash.
   if (cfoPat != null && cfoPat < 0.6) caveat_tags.push('ocf divergence');
+  // ── THE PROFIT DID NOT REACH THE BOTTOM LINE — US SIDE.          (zzz711)
+  //
+  // zzz694 shipped this for India only, and the reason to finish it is that
+  // the failure it describes is not an Indian one. `optical eps` catches
+  // earnings that outran operations; nothing caught the inverse — operations
+  // outrunning earnings, a company looking WORSE than it is.
+  //
+  // Measured on the 197-row US bench before shipping: 6 fires, 3.0% of rows,
+  // against 2.1% on the India season — the same order, which is what a
+  // market-agnostic test should produce. CRGY shows implied operating growth
+  // of 629% against PAT +222%; DOCU +80% against +23% with NO other caveat on
+  // the card at all, which is precisely the silent case this exists for.
+  //
+  // Both India guards apply unchanged and for the same reasons: PAT must have
+  // GROWN, because on a collapsed profit the ratio test inverts and the
+  // statement is meaningless; and the prior margin must be at least 5%, below
+  // which the whole-number margin figures make implied operating growth an
+  // artefact of rounding rather than a fact.
+  //
+  // It is informational — zero penalty, excluded from `countingCaveats` — so
+  // it can neither dock a point nor gate a BLOCKBUSTER path.
+  if (opmExp != null && opm != null && opmPrev != null && opmPrev >= 5
+      && patY != null && patY > 0 && salesY != null) {
+    const _opGrowth = ((1 + salesY / 100) * (opm / opmPrev) - 1) * 100;
+    if (Number.isFinite(_opGrowth) && _opGrowth > 0
+        && _opGrowth - patY >= 35 && _opGrowth >= patY * 1.6) {
+      caveat_tags.push('profit leaked below the operating line');
+    }
+  }
+
   if (f.cfo != null && f.cfo < 0 && niC != null && niC > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
   // These two are TREND problems, not accounting ones. Filing them under
   // "low quality" put an identical chip on a company with a downtrend and on

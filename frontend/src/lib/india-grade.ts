@@ -405,7 +405,9 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   if (opmExp != null && opmExp <= -0.5 && !caveat_tags.includes('segment mix shift')) {
     caveat_tags.push('segment mix shift');
   }
-  if (row?.ocf_to_pat_ratio != null) {
+  const _LENDER_RE = /\b(bank|banking|finance|financial|fincorp|finserv|capital|housing\s+finance|microfin\w*|nbfc|leasing|credit|investments?|securities|broking|insurance|asset\s+manage\w*|mutual\s+fund|chit\s+fund)\b/i;
+  const _isLender = _LENDER_RE.test(String(row?.company || ''));
+  if (row?.ocf_to_pat_ratio != null && !_isLender) {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
     if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
   }
@@ -779,6 +781,32 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
       }
     };
 
+    // ── A LENDER'S NEGATIVE OPERATING CASH FLOW IS ITS BUSINESS. (zzz710)
+    //
+    // For a bank or an NBFC, growing the loan book IS an operating outflow:
+    // disbursements sit in operating activities, so a lender that is growing
+    // reports negative OCF by construction. Judging one on cash conversion is
+    // like judging a manufacturer on deposit growth.
+    //
+    // Measured on the season: 76 of the 499 India rows carrying a cash caveat
+    // are lenders by name — Indostar at -89.9x, Poonawalla at -70.7x,
+    // Manappuram at -34.6x, all of them structural rather than alarming. The
+    // US engine has always exempted them (`!e.is_financial` in the conviction
+    // scorer); India could not, because NO SECTOR DATA REACHES THIS GRADER —
+    // the `sector` field is empty or "Other" on all 2,604 rows.
+    //
+    // So the test is the company NAME, which is the only signal available.
+    // That is a weaker instrument than a sector field and it is used in the
+    // one direction where being wrong is cheap: it SUPPRESSES a penalty. A
+    // missed lender keeps today's behaviour; a misfire spares one industrial
+    // a cash caveat it may have deserved. The reverse — inventing a penalty
+    // from a name — is never done here.
+    //
+    // `\bfin\b` and friends are word-bounded deliberately: "Infinite
+    // Computer Solutions" and "Fincorp" must not both match on a substring.
+    const _LENDER_NAME = /\b(bank|banking|finance|financial|fincorp|finserv|capital|housing\s+finance|microfin\w*|nbfc|leasing|credit|investments?|securities|broking|insurance|asset\s+manage\w*|mutual\s+fund|chit\s+fund)\b/i;
+    const _looksLikeLender = _LENDER_NAME.test(String(row?.company || '')) ;
+
     const _ocfAnnual = typeof row?.ocf_annual_cr === 'number' ? row.ocf_annual_cr : null;
     const _patAnnual = typeof row?.pat_annual_cr === 'number' ? row.pat_annual_cr : null;
     const _cfoPat = typeof row?.ocf_to_pat_ratio === 'number' ? row.ocf_to_pat_ratio : null;
@@ -824,7 +852,15 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     // be implementing something the study never tested, which is the mistake
     // the FPS demotion was made of.
     if (_ocfAnnual != null && _ocfAnnual < 0 && _patAnnual != null && _patAnnual > 0) {
-      capTier(composite >= 78 ? 'STRONG' : 'MIXED', 'profit without operating cash');
+      if (_looksLikeLender) {
+        // Named, not silently skipped: the reader should see WHY the usual
+        // cash ceiling did not apply, and should be able to disagree.
+        if (!caveat_tags.includes('lender — operating cash flow is loan growth')) {
+          caveat_tags.push('lender — operating cash flow is loan growth');
+        }
+      } else {
+        capTier(composite >= 78 ? 'STRONG' : 'MIXED', 'profit without operating cash');
+      }
     }
 
     // 2. EARNINGS OUTRAN BOTH THE REVENUE AND THE CASH. This is the rule that

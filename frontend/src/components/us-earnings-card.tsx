@@ -437,7 +437,30 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           );
         })()}
         {(() => {
+          // ── THE CHIP AND THE CAVEAT NOW AGREE.                    (zzz709)
+          //
+          // These were computed independently and could contradict each other
+          // on the same card: a grey "Guide in line w/ street (FY only)"
+          // sitting beside a caveat reading "guides Q3 FY27 adj. EPS below
+          // this quarter". Both statements were true — the first about the
+          // YEAR against consensus, the second about the QUARTER against the
+          // company's own last print — and together they were incoherent.
+          //
+          // The guide-down is the more actionable of the two and it wins the
+          // chip, because a reader who takes "in line" at face value and
+          // scrolls past is exactly who Braze and ServiceTitan caught out.
+          // The FY comparison is not thrown away; it moves into the tooltip.
           const sc = streetChip((r as any).guidance_figures);
+          const gd = ((r as any).caveat_tags || [])
+            .find((t: string) => /^guides .* below this quarter$/.test(t));
+          if (gd) {
+            const detail = String(gd).replace(/^guides /, '').replace(/ below this quarter$/, '');
+            return (
+              <Chip text={`🎯 Guides ${detail} BELOW this quarter`} color="var(--mc-bearish)"
+                title={`Measured against the company's OWN just-reported quarter, not consensus — no quarterly consensus exists for this filer.${
+                  sc ? `\n\nAgainst the street, separately: ${sc.text.replace(/^🎯 /, '')}` : ''}`} />
+            );
+          }
           return sc ? <Chip text={sc.text} color={sc.color} title={sc.title} /> : null;
         })()}
         {r.is_elite && <Chip text="⭐ ELITE" color="#F59E0B" />}
