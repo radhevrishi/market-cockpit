@@ -375,16 +375,24 @@ export function useBook(opts?: { includeBench?: boolean }) {
           if (j?.batch) batchInfo = j.batch;
           if (cancelled) return;
         }
-        setRows((cur) => {
-          const out = { ...cur };
-          for (const sym of Object.keys(out)) {
-            const l = ledgers[sym.toUpperCase()] || null;
-            const f = fresh[sym.toUpperCase()] || null;
-            if (!l && !f) continue;
-            out[sym] = applyLedger(out[sym], l, f);
-          }
-          return out;
-        });
+        // Folded outside the updater (updaters run lazily; see readFiling).
+        // rowsRef is current here: stage 3's paint rendered while the
+        // ledger fetch above was in flight.
+        const cur = rowsRef.current;
+        const updates: Record<string, BookRow> = {};
+        const toPost: BookRow[] = [];
+        for (const sym of Object.keys(cur)) {
+          const l = ledgers[sym.toUpperCase()] || null;
+          const f = fresh[sym.toUpperCase()] || null;
+          if (!l && !f) continue;
+          updates[sym] = applyLedger(cur[sym], l, f);
+          const pr = l && l.latest_period ? l.periods[l.latest_period] : null;
+          if (pr && !pr.status && updates[sym].assessment) toPost.push(updates[sym]);
+        }
+        setRows((r) => ({ ...r, ...updates }));
+        // Back-fill: a period persisted before statuses were recorded gets
+        // its status on first load. Sequential and best-effort.
+        for (const r of toPost.slice(0, 60)) { if (cancelled) break; await postStatus(r); }
         if (batchInfo && !batchInfo.finished_at) {
           setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: batchInfo.remaining, failed: batchInfo.failed });
         } else if (batchInfo) {
@@ -487,42 +495,44 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // excludes anything recorded in the last minute — so this quarter's
       // statements are recorded for next quarter without being used as
       // evidence against themselves.
-      let assessed: BookRow | null = null;
-      setRows((r) => {
-        const prev = r[sym];
-        const ledger: CompanyLedger | null = j.ledger || null;
-        const ch = ledger ? whatChanged(ledger) : { lines: [], from: null };
-        const base = {
-          ...prev, summary: j.structured, sourceUrl: src || prev.sourceUrl, state: 'done' as const,
-          documentsRead: j.documents_read || undefined,
-          discoveryAttempts: j.discovery_attempts || undefined,
-          documentOutcomes: j.document_outcomes || undefined,
-          discoveryState: j.discovery_state || null,
-          // zzz724 — re-classify with the filing in hand. Order-book growth
-          // exists only in the document, so B can only ever fire here.
-          pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
-          ledger: ledger || prev.ledger || null,
-          freshness: freshnessOf(ledger || prev.ledger || null),
-          reportingPeriod: j.reporting_period || prev.reportingPeriod || null,
-          changed: ch.lines, changedFrom: ch.from,
-          // `persisted` is the route's word, not ours. A read that did not
-          // land is shown as such — never as "Evidence updated".
-          persisted: j.from_ledger ? true : (j.persisted ?? null),
-          persistError: j.persist_error || null,
-          readNote: j.from_ledger
-            ? 'Loaded from the evidence ledger — no new read.'
-            : j.persisted === false
-              ? `Read ${(j.documents_read || []).length} document(s) but the save FAILED: ${j.persist_error || 'unknown'} — this will not survive a reload.`
-              : `Evidence updated · ${(j.documents_read || []).length} document(s) read · ${(j.events || []).length} facts extracted`,
-        };
-        assessed = assess(base);
-        return { ...r, [sym]: assessed };
+      // Assessed OUTSIDE the state updater: React runs updater functions
+      // lazily (during the next render), so anything captured inside one is
+      // still null on the line after setRows. The first version posted the
+      // status from inside the updater's closure and never posted anything —
+      // every ledger had `status: null` and an empty history. (zzz742)
+      const prev = rowsRef.current[sym];
+      const ledger: CompanyLedger | null = j.ledger || null;
+      const ch = ledger ? whatChanged(ledger) : { lines: [], from: null };
+      const assessed = assess({
+        ...prev, summary: j.structured, sourceUrl: src || prev.sourceUrl, state: 'done' as const,
+        documentsRead: j.documents_read || undefined,
+        discoveryAttempts: j.discovery_attempts || undefined,
+        documentOutcomes: j.document_outcomes || undefined,
+        discoveryState: j.discovery_state || null,
+        // zzz724 — re-classify with the filing in hand. Order-book growth
+        // exists only in the document, so B can only ever fire here.
+        pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
+        ledger: ledger || prev.ledger || null,
+        freshness: freshnessOf(ledger || prev.ledger || null),
+        reportingPeriod: j.reporting_period || prev.reportingPeriod || null,
+        changed: ch.lines, changedFrom: ch.from,
+        // `persisted` is the route's word, not ours. A read that did not
+        // land is shown as such — never as "Evidence updated".
+        persisted: j.from_ledger ? true : (j.persisted ?? null),
+        persistError: j.persist_error || null,
+        readNote: j.from_ledger
+          ? 'Loaded from the evidence ledger — no new read.'
+          : j.persisted === false
+            ? `Read ${(j.documents_read || []).length} document(s) but the save FAILED: ${j.persist_error || 'unknown'} — this will not survive a reload.`
+            : `Evidence updated · ${(j.documents_read || []).length} document(s) read · ${(j.events || []).length} facts extracted`,
       });
+      setRows((r) => ({ ...r, [sym]: assessed }));
       try { recordPromises(sym, j.structured, src); } catch { /* ledger is best-effort */ }
-      // Status history is recorded only for a fresh read — a ledger load
-      // recomputes the same status from the same inputs and has nothing new
-      // to record.
-      if (assessed && !j.from_ledger && !j.cached) { void postStatus(assessed); }
+      // Status history is recorded for a fresh read AND for a ledger load
+      // whose period has no status yet (the first version never recorded
+      // one, so existing ledgers are back-filled on their next load).
+      const periodRec = assessed.ledger && assessed.reportingPeriod ? assessed.ledger.periods[assessed.reportingPeriod] : null;
+      if ((!j.from_ledger && !j.cached) || (periodRec && !periodRec.status)) { void postStatus(assessed); }
     } catch (e: any) {
       setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'error', error: String(e?.message || e) } }));
     }
