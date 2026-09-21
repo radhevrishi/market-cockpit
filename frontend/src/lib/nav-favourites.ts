@@ -31,15 +31,50 @@ const SEED: readonly string[] = [
   '/us-earnings-opportunities',
   '/us-conviction-beats',
   '/concall-intel',
+  '/portfolio-catalysts',
+  '/ai-gainers',
 ];
+
+// ── INTRODUCING A NEW TAB TO A RAIL THAT HAS ALREADY BEEN STARRED. (zzz713)
+//
+// SEED only answers for a browser that has never starred anything. The owner
+// has, so a new page added to SEED would never reach him — the exact failure
+// he reported: pages built, shipped, and invisible because the shortcut list
+// was frozen the first time it was written.
+//
+// So new destinations are offered ONCE each, through a ledger of what has
+// already been offered. If he unstars one, it is not offered again: the
+// ledger records the OFFER, not the state, so an unstar is permanent and a
+// later release cannot quietly put it back. Nothing is ever removed from his
+// list by this, only added, and only on its first ever appearance.
+const OFFERED_KEY = 'mc.navFavourites.offered.v1';
+const OFFER: readonly string[] = ['/portfolio-catalysts', '/ai-gainers'];
+
+function applyOffers(cur: string[]): string[] {
+  let offered: string[] = [];
+  try { offered = JSON.parse(window.localStorage.getItem(OFFERED_KEY) || '[]'); } catch { offered = []; }
+  if (!Array.isArray(offered)) offered = [];
+  const fresh = OFFER.filter((h) => !offered.includes(h));
+  if (!fresh.length) return cur;
+  try {
+    window.localStorage.setItem(OFFERED_KEY, JSON.stringify([...offered, ...fresh]));
+  } catch { return cur; }
+  const next = [...cur, ...fresh.filter((h) => !cur.includes(h))];
+  try { window.localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* shortcut only */ }
+  return next;
+}
 
 function read(): string[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(KEY);
-    if (raw === null) return [...SEED];
+    if (raw === null) {
+      try { window.localStorage.setItem(OFFERED_KEY, JSON.stringify([...OFFER])); } catch { /* shortcut only */ }
+      return [...SEED];
+    }
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.filter((h) => typeof h === 'string') : [];
+    const cur = Array.isArray(arr) ? arr.filter((h) => typeof h === 'string') : [];
+    return applyOffers(cur);
   } catch {
     // A blocked or unreadable store is a normal state, not an error. An empty
     // favourites list simply means the group does not render.

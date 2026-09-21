@@ -69,6 +69,10 @@ const NAV_GROUPS: NavGroup[] = [
       // US market engine — same grading, fed by SEC EDGAR instead of NSE/Screener.
       { href: '/us-earnings-opportunities', label: 'US Earnings Opportunities', icon: <Globe className="w-4 h-4" /> },
       { href: '/us-conviction-beats',       label: 'US Conviction Beats',       icon: <Globe className="w-4 h-4" /> },
+      // zzz713 — the gainers funnel. It sits in Earnings rather than Markets
+      // because in Phase 1 every catalyst it shows IS a filed result; the day
+      // it reads announcements without a filing behind them, it moves.
+      { href: '/ai-gainers',                label: 'AI Daily Gainers',          icon: <Zap className="w-4 h-4" /> },
       // The interpretation layer that sits ON TOP of the graded engine: it
       // never screens, it only reads what the filings already qualified.
       { href: '/ai-desk',                   label: 'AI Research Desk',          icon: <Microscope className="w-4 h-4" /> },
