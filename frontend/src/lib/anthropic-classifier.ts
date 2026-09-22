@@ -20,6 +20,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet, isRedisAvailable } from './kv';
+import { anthropicMessages } from './anthropic-meter';
 import { createHash } from 'crypto';
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
@@ -201,22 +202,12 @@ If a field doesn't apply, OMIT it (don't use null). Keep entities object minimal
     ? `Ticker: ${ticker}\nHeadline: ${headline}`
     : `Headline: ${headline}`;
 
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: HAIKU_MODEL,
-      max_tokens: 200,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
-    // 8s timeout — Haiku usually responds in <2s. If slower, fall back.
-    signal: AbortSignal.timeout(8_000),
-  });
+  const resp = await anthropicMessages('headline-classifier', {
+    model: HAIKU_MODEL,
+    max_tokens: 200,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+  }, { apiKey, signal: AbortSignal.timeout(8_000) });   // 8s: Haiku usually answers in <2s
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');

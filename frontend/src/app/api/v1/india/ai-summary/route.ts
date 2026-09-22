@@ -44,6 +44,7 @@ import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary } fr
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
+import { anthropicMessages } from '@/lib/anthropic-meter';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -388,23 +389,14 @@ export async function GET(req: NextRequest) {
   // ── The model call. Forced tool use, so the shape is guaranteed. ────────
   let data: any = null;
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 4096,
-        system: SYSTEM,
-        tools: [SUMMARY_TOOL],
-        tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
-        messages: [{ role: 'user', content: `${ticker}${quarter ? ` — ${quarter}` : ''}\n\n${text}` }],
-      }),
-      signal: AbortSignal.timeout(110_000),
-    });
+    const resp = await anthropicMessages('catalysts-summary', {
+      model: MODEL,
+      max_tokens: 4096,
+      system: SYSTEM,
+      tools: [SUMMARY_TOOL],
+      tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
+      messages: [{ role: 'user', content: `${ticker}${quarter ? ` — ${quarter}` : ''}\n\n${text}` }],
+    }, { signal: AbortSignal.timeout(110_000) });
     if (!resp.ok) {
       // THE API'S OWN MESSAGE, not just the status. "HTTP 400" hid, for a
       // whole evening, whatever the API was actually saying — a credit

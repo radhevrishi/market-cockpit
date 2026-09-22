@@ -21,7 +21,7 @@ import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch } from '@/lib/ai-gainers/screener-company';
 import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
 import { buildFinding, coverage, classifyAnnouncement, chooseCandidate, ageDaysOf, type Finding, type AnnouncementLite } from '@/lib/ai-gainers/catalyst-research';
-import { readAnnouncement, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
+import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { istToday } from '@/lib/market-hours';
 import { readBookState } from '@/lib/book-store';
@@ -45,13 +45,17 @@ interface ResearchState {
 }
 
 const KEY = (m: string, d: string) => `ai-gainers:research:v1:${m}:${d}`;
-const READ_KEY = (url: string) => `ai-gainers:annread:v1:${hash(url)}`;
 
-function hash(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
-  return (h >>> 0).toString(36);
-}
+// ── THE DAILY READ CEILING  (zzz747) ────────────────────────────────────────
+// A sweep reads the best catalyst filing of every name that has one, most-
+// moved first. On a busy day that is 60–70 model reads. The names that
+// matter for a gainers brief are the top of the board; a read for the 90th
+// biggest mover changes nothing anyone acts on. Past the ceiling a name is
+// still researched from the filing list, the summary and the price history
+// — only the verbatim-quote read is skipped (the response counts them in
+// reads_skipped_for_ceiling). The
+// ceiling counts PAID reads: a cached read is free and does not consume it.
+const MAX_MODEL_READS_PER_DAY: Record<'IN' | 'US', number> = { IN: 40, US: 20 };
 
 function todayFor(market: 'IN' | 'US'): string {
   if (market === 'IN') { try { return istToday(); } catch { /* fall through */ } }
@@ -73,15 +77,9 @@ async function loadHoldings(_origin: string): Promise<Set<string>> {
   } catch { return new Set(); }
 }
 
-/** A model read of one filing, cached by URL for 30 days: the same PDF is
- *  never paid for twice, across days or markets. */
-async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLite): Promise<ReadAnnouncement | null> {
-  const k = READ_KEY(a.url);
-  try {
-    const hit = await kvGet<{ read: ReadAnnouncement | null }>(k);
-    if (hit && 'read' in hit) return hit.read;
-  } catch { /* cold */ }
-  const read = await readAnnouncement(
+/** A model read of one filing, cached by URL for 30 days (shared with the scan route). */
+async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLite): Promise<{ read: ReadAnnouncement | null; cached: boolean }> {
+  return readAnnouncementCached(
     { symbol: ticker, subject: a.subject, attachment_url: a.url, filing_date: a.dateIso?.slice(0, 10) || null },
     async (url) => {
       if (market === 'US') return fetchEdgarText(url);
@@ -89,8 +87,6 @@ async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLi
       return ext?.text || '';
     },
   );
-  try { await kvSet(k, { read, at: new Date().toISOString() }, 30 * 24 * 3600); } catch { /* best effort */ }
-  return read;
 }
 
 export async function GET(req: NextRequest) {
@@ -100,7 +96,7 @@ export async function GET(req: NextRequest) {
   const st = await loadState(market, date);
   if (!st) return NextResponse.json({ ok: true, market, date, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, universe: [] });
   const cov = coverage(st.findings, st.universe.map((u) => u.ticker));
-  return NextResponse.json({ ok: true, market, date, coverage: cov, findings: st.findings, remaining: cov.total - cov.researched, universe: st.universe, updated_at: st.updated_at, model_reads: st.model_reads, errors: st.errors.slice(-5) });
+  return NextResponse.json({ ok: true, market, date, coverage: cov, findings: st.findings, remaining: cov.total - cov.researched, universe: st.universe, updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], errors: st.errors.slice(-5) });
 }
 
 export async function POST(req: NextRequest) {
@@ -132,7 +128,7 @@ export async function POST(req: NextRequest) {
     .filter((u) => !st.findings[u.ticker] || st.findings[u.ticker].status === 'unresearched' || (st.findings[u.ticker].status === 'source_failed' && body?.retry_failed))
     .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity));
 
-  let done = 0, modelReads = 0;
+  let done = 0, modelReads = 0, readsSkippedForCeiling = 0;
   for (const u of todo) {
     if (Date.now() - t0 > budget) break;
     try {
@@ -168,9 +164,11 @@ export async function POST(req: NextRequest) {
       // and dropped: 22 model reads, zero verified rows.
       const cand = chooseCandidate(announcements, market, { marketCap, returns, windowDays: WINDOW_DAYS, now })
         || (market === 'US' ? inWindow.map((a) => classifyAnnouncement(a, market)).find((c) => c.kind === 'unclassified' && /item (1\.01|2\.01|7\.01|8\.01)/i.test(c.subject)) : undefined);
-      if (cand && modelReads < MODEL_READS_PER_CALL && Date.now() - t0 < budget - 12_000) {
-        const r = await cachedRead(market, u.ticker, cand);
-        modelReads++;
+      const underDailyCeiling = st.model_reads + modelReads < MAX_MODEL_READS_PER_DAY[market];
+      if (cand && !underDailyCeiling) readsSkippedForCeiling++;
+      if (cand && underDailyCeiling && modelReads < MODEL_READS_PER_CALL && Date.now() - t0 < budget - 12_000) {
+        const { read: r, cached } = await cachedRead(market, u.ticker, cand);
+        if (!cached) modelReads++;
         if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst };
       }
 
@@ -193,6 +191,7 @@ export async function POST(req: NextRequest) {
   const cov = coverage(st.findings, st.universe.map((u) => u.ticker));
   return NextResponse.json({
     ok: true, market, date, researched_now: done, elapsed_ms: Date.now() - t0,
-    coverage: cov, remaining: cov.total - cov.researched, findings: st.findings, updated_at: st.updated_at, model_reads: st.model_reads, errors: st.errors.slice(-5),
+    coverage: cov, remaining: cov.total - cov.researched, findings: st.findings, updated_at: st.updated_at, model_reads: st.model_reads,
+    model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], reads_skipped_for_ceiling: readsSkippedForCeiling, errors: st.errors.slice(-5),
   });
 }

@@ -97,10 +97,21 @@ export async function GET(request: Request) {
       };
     }
   } catch {}
+  // zzz747 — what the model calls cost this month, per feature, from the
+  // API's own usage counts (lib/anthropic-meter). And the cap that stops them.
+  let anthropicSpend: any = undefined;
+  try {
+    const { readSpend, monthlyCapUsd } = await import('@/lib/anthropic-meter');
+    const led = await readSpend();
+    anthropicSpend = { ...led, cap_usd: monthlyCapUsd() };
+  } catch (e: any) {
+    anthropicSpend = { error: String(e?.message || e) };
+  }
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     summary,
     signalsVersions,
+    anthropicSpend,
     probes: results,
   }, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' } });
 }

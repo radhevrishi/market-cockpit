@@ -38,8 +38,11 @@ import {
   OPERATING_CATALYSTS, CORPORATE_CATALYSTS, NEGATIVE_CATALYSTS,
   type CatalystType, type Materiality, type StructuralDuration,
 } from './events';
+import { anthropicMessages } from '@/lib/anthropic-meter';
+import { kvGet, kvSet } from '@/lib/kv';
 
 const MODEL = 'claude-haiku-4-5-20251001';
+export const READ_CHARS = 24_000;
 
 const CATALYST_ENUM: string[] = [
   ...OPERATING_CATALYSTS, ...CORPORATE_CATALYSTS, ...NEGATIVE_CATALYSTS,
@@ -193,26 +196,23 @@ export async function readAnnouncement(
   if (!text || text.length < 400) return null;
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      signal: AbortSignal.timeout(40_000),
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        system: SYSTEM,
-        tools: [TOOL],
-        tool_choice: { type: 'tool', name: TOOL.name },
-        messages: [{
-          role: 'user',
-          content: `${a.symbol}${a.subject ? ` — ${a.subject}` : ''}\n\n${text.slice(0, 60_000)}`,
-        }],
-      }),
-    });
+    // 24 000 chars, not 60 000 (zzz747). A Reg 30 order/contract intimation
+    // is one to three pages; the figure, the customer and the timeline are in
+    // the first paragraph. In a results presentation the headline slide is
+    // early too. Reading the whole deck cost ~15k input tokens a filing for
+    // a quote that sits in the first 6k. If the quote is not in the first
+    // 24 000 chars, the quote gate below rejects the read the same as before.
+    const resp = await anthropicMessages('gainers-read', {
+      model: MODEL,
+      max_tokens: 1024,
+      system: SYSTEM,
+      tools: [TOOL],
+      tool_choice: { type: 'tool', name: TOOL.name },
+      messages: [{
+        role: 'user',
+        content: `${a.symbol}${a.subject ? ` — ${a.subject}` : ''}\n\n${text.slice(0, READ_CHARS)}`,
+      }],
+    }, { signal: AbortSignal.timeout(40_000) });
     if (!resp.ok) return null;
     const j = await resp.json();
     const use = (j?.content || []).find((c: any) => c?.type === 'tool_use');
@@ -246,4 +246,42 @@ export async function readAnnouncement(
   } catch {
     return null;
   }
+}
+
+// ── ONE READ PER FILING, EVER  (zzz747) ─────────────────────────────────────
+//
+// The research sweep cached its reads by PDF URL for 30 days; the scan route
+// did not. A scan is rebuilt every 20 minutes while the tab is open, and each
+// rebuild re-read up to six filings the model had already read — the same
+// order intimation, paid for again three times an hour. Both routes now go
+// through this one cache. A read that returned null (administrative, no
+// quote, scanned image) is cached too: an unreadable filing does not become
+// readable by paying again.
+
+const READ_CACHE_TTL_S = 30 * 24 * 3600;
+
+function urlHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+}
+
+export const readCacheKey = (url: string) => `ai-gainers:annread:v1:${urlHash(url)}`;
+
+export interface CachedRead { read: ReadAnnouncement | null; cached: boolean }
+
+export async function readAnnouncementCached(
+  a: AnnouncementItem,
+  fetchText: (url: string) => Promise<string>,
+): Promise<CachedRead> {
+  const url = String(a.attachment_url || '');
+  if (!url) return { read: null, cached: false };
+  const k = readCacheKey(url);
+  try {
+    const hit = await kvGet<{ read: ReadAnnouncement | null }>(k);
+    if (hit && 'read' in hit) return { read: hit.read, cached: true };
+  } catch { /* a cold cache is a normal cache */ }
+  const read = await readAnnouncement(a, fetchText);
+  try { await kvSet(k, { read, at: new Date().toISOString() }, READ_CACHE_TTL_S); } catch { /* the read still counts; only the next one pays again */ }
+  return { read, cached: false };
 }

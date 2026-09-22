@@ -37,6 +37,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet } from './kv';
+import { anthropicMessages } from '@/lib/anthropic-meter';
 
 export const AI_ANALYST_VERSION = 'ai-analyst-v1';
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -232,19 +233,18 @@ export async function assessCompany(inp: AnalystInput, opts: { force?: boolean }
 
   let text = '';
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1600,
-        temperature: 0,          // a ranking must not move because the dice moved
-        system: SYSTEM,
-        messages: [{ role: 'user', content: buildUserMessage(inp) }],
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!resp.ok) return { assessment: null, error: `The analyst service returned HTTP ${resp.status}.` };
+    const resp = await anthropicMessages('ai-desk', {
+      model: MODEL,
+      max_tokens: 1600,
+      temperature: 0,          // a ranking must not move because the dice moved
+      system: SYSTEM,
+      messages: [{ role: 'user', content: buildUserMessage(inp) }],
+    }, { apiKey, signal: AbortSignal.timeout(60_000) });
+    if (!resp.ok) {
+      let detail = '';
+      try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
+      return { assessment: null, error: `The analyst service returned HTTP ${resp.status}${detail ? `: ${detail}` : '.'}` };
+    }
     const j: any = await resp.json();
     text = (j?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('').trim();
   } catch (e: any) {

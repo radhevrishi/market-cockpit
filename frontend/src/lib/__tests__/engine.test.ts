@@ -1053,3 +1053,36 @@ describe('zzz746 — extraction unit sanity and inferred values', () => {
     assert.equal(c.category, 'order_win'); assert.equal(c.valueStated, 5.12);
   });
 });
+
+// ── zzz747: the Anthropic meter ──────────────────────────────────────────
+import { costOf, pricingFor, applyCall, mergeLedgers, emptyLedger as emptySpend } from '../anthropic-meter';
+
+describe('anthropic meter (zzz747)', () => {
+  test('prices Haiku 4.5 from the usage block, including cache tokens', () => {
+    assert.ok(pricingFor('claude-haiku-4-5-20251001'));
+    assert.equal(pricingFor('gpt-x'), null);
+    const usd = costOf('claude-haiku-4-5-20251001', { input_tokens: 10_000, output_tokens: 1_000 });
+    assert.equal(Number(usd.toFixed(6)), 0.015);               // 10k×$1 + 1k×$5 per M
+    const cached = costOf('claude-haiku-4-5-20251001', { input_tokens: 0, cache_read_input_tokens: 10_000, output_tokens: 0 });
+    assert.equal(Number(cached.toFixed(6)), 0.001);
+    assert.equal(costOf('unknown-model', { input_tokens: 5 }), 0);
+    assert.equal(costOf('claude-haiku-4-5-20251001', null), 0);
+  });
+  test('a ledger folds calls per feature and a blocked call costs nothing', () => {
+    let l = emptySpend('2026-09');
+    l = applyCall(l, 'gainers-read', 0.01, { input_tokens: 6000, output_tokens: 800 }, '2026-09-21T00:00:00Z');
+    l = applyCall(l, 'gainers-read', 0.02, { input_tokens: 12000, output_tokens: 800 }, '2026-09-21T00:01:00Z');
+    l = applyCall(l, 'ai-desk', 0, null, '2026-09-21T00:02:00Z', true);
+    assert.equal(l.calls, 2); assert.equal(l.blocked, 1);
+    assert.equal(Number(l.total_usd.toFixed(6)), 0.03);
+    assert.equal(l.by_feature['gainers-read'].input_tokens, 18000);
+    assert.equal(l.by_feature['ai-desk'].calls, 0); assert.equal(l.by_feature['ai-desk'].blocked, 1);
+  });
+  test('shards merge into one month total', () => {
+    const a = applyCall(emptySpend('2026-09'), 'x', 1, { input_tokens: 1 }, '2026-09-01T00:00:00Z');
+    const b = applyCall(emptySpend('2026-09'), 'x', 2, { input_tokens: 1 }, '2026-09-02T00:00:00Z');
+    const m = mergeLedgers('2026-09', [a, null, b]);
+    assert.equal(m.total_usd, 3); assert.equal(m.calls, 2); assert.equal(m.by_feature.x.usd, 3);
+    assert.equal(m.updated_at, '2026-09-02T00:00:00Z');
+  });
+});

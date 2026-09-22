@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server';
 import { classifyCatalyst, getHaikuBudget } from '@/lib/anthropic-classifier';
+import { anthropicMessages, readSpend, monthlyCapUsd } from '@/lib/anthropic-meter';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -99,20 +100,11 @@ export async function GET(req: Request) {
       const start = Date.now();
       const apiKey = process.env.ANTHROPIC_API_KEY!;
       try {
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 100,
-            messages: [{ role: 'user', content: `Classify this corporate announcement into one of: M&A, EARNINGS, ORDER_WIN, CAPEX, MANAGEMENT, OTHER. Just the label.\n\n"${sample}"` }],
-          }),
-          signal: AbortSignal.timeout(15_000),
-        });
+        const resp = await anthropicMessages('health-probe', {
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 100,
+          messages: [{ role: 'user', content: `Classify this corporate announcement into one of: M&A, EARNINGS, ORDER_WIN, CAPEX, MANAGEMENT, OTHER. Just the label.\n\n"${sample}"` }],
+        }, { apiKey, signal: AbortSignal.timeout(15_000) });
         const elapsed_ms = Date.now() - start;
         const responseText = await resp.text();
         out.probe = {

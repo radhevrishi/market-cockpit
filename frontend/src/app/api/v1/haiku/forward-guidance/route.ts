@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
+import { anthropicMessages } from '@/lib/anthropic-meter';
 
 export const runtime = 'nodejs';
 export const maxDuration = 55;
@@ -704,21 +705,12 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
   for (let attempt = 0; attempt < 2; attempt++) {
     let resp: Response | null = null;
     try {
-      resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: HAIKU_MODEL,
-          max_tokens: 1400,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-        signal: AbortSignal.timeout(25_000),
-      });
+      resp = await anthropicMessages('forward-guidance', {
+        model: HAIKU_MODEL,
+        max_tokens: 1400,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }, { apiKey, signal: AbortSignal.timeout(25_000) });
     } catch (e) {
       // Network / abort error — transient, retry once.
       if (attempt === 0) {
@@ -730,7 +722,7 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
       console.warn(`[FG-DIAG] haiku fetch error for ${ticker} on attempt 2 (giving up):`, (e as Error).message);
       break;
     }
-    if (resp.status === 429) {
+    if (resp.status === 429 || resp.status === 402) {   // 402 = this app's own monthly cap (zzz747)
       last429 = true;
       console.warn(`[FG-DIAG] anthropic 429 (budget/rate limit) for ${ticker} — NOT retrying`);
       break;

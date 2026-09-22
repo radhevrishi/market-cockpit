@@ -24,6 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet } from './kv';
+import { anthropicMessages } from './anthropic-meter';
 
 interface LlmInput {
   ticker: string;
@@ -86,21 +87,12 @@ export async function enrichWithLLM(input: LlmInput): Promise<LlmAttribution | u
   const prompt = buildPrompt(input);
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 400,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
+    const resp = await anthropicMessages('movers-attribution', {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }],
+    }, { apiKey: key, signal: AbortSignal.timeout(20_000) });
     if (!resp.ok) {
       console.warn(`[llm-attrib] HTTP ${resp.status} for ${input.ticker}`);
       return undefined;

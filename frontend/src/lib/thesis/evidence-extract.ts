@@ -43,6 +43,7 @@
 
 import type { VarKey } from './taxonomy';
 import { normaliseForQuoteMatch } from '@/lib/ai-gainers/announcement-reader';
+import { anthropicMessages } from '@/lib/anthropic-meter';
 
 export type ValueType = 'ACTUAL' | 'GUIDANCE' | 'TARGET' | 'MANAGEMENT_CLAIM';
 export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -248,23 +249,14 @@ export async function extractStructuralEvents(
 
   let raw: any[] = [];
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': opts.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: opts.model,
-        max_tokens: 6000,
-        system: SYSTEM,
-        tools: [EVENT_TOOL],
-        tool_choice: { type: 'tool', name: EVENT_TOOL.name },
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(100_000),
-    });
+    const resp = await anthropicMessages('catalysts-extract', {
+      model: opts.model,
+      max_tokens: 6000,
+      system: SYSTEM,
+      tools: [EVENT_TOOL],
+      tool_choice: { type: 'tool', name: EVENT_TOOL.name },
+      messages: [{ role: 'user', content: prompt }],
+    }, { apiKey: opts.apiKey, signal: AbortSignal.timeout(100_000) });
     if (!resp.ok) {
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }

@@ -32,7 +32,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchIndiaGainers, INDIA_GAINERS_URL } from '@/lib/ai-gainers/screener-gainers';
-import { readAnnouncement, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
+import { readAnnouncementCached, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import {
   type GainerEvent, type Market, type EventSource,
@@ -524,7 +524,7 @@ export async function GET(req: NextRequest) {
       // the route has a 60-second ceiling. Six in sequence fits; six at once
       // against the exchange's CDN does not deserve to.
       for (const { g, a } of candidates) {
-        const read = await readAnnouncement(a, async (url) => {
+        const { read } = await readAnnouncementCached(a, async (url) => {
           const ext = await extractPdfText(url, { signal: AbortSignal.timeout(20_000) });
           return ext?.text || '';
         });

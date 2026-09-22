@@ -24,7 +24,7 @@ const COLOR: Record<string, string> = {
 };
 
 export default function SystemStatusPage() {
-  const [data, setData] = useState<{ summary: any; probes: ProbeResult[]; generated_at: string; signalsVersions?: any } | null>(null);
+  const [data, setData] = useState<{ summary: any; probes: ProbeResult[]; generated_at: string; signalsVersions?: any; anthropicSpend?: any } | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number>(0);
 
@@ -84,6 +84,61 @@ export default function SystemStatusPage() {
           );
         })}
       </div>
+
+      {/* zzz747 — Anthropic spend this month, per feature, from the API's own usage counts */}
+      {data.anthropicSpend && !data.anthropicSpend.error && (() => {
+        const sp = data.anthropicSpend;
+        const cap = Number(sp.cap_usd || 0);
+        const pct = cap > 0 ? Math.min(100, (Number(sp.total_usd || 0) / cap) * 100) : 0;
+        const rows = Object.entries(sp.by_feature || {}) as Array<[string, any]>;
+        rows.sort((a, b) => Number(b[1].usd) - Number(a[1].usd));
+        const barColor = pct >= 90 ? 'var(--mc-bearish)' : pct >= 60 ? 'var(--mc-warn)' : 'var(--mc-bullish)';
+        return (
+          <div style={{ marginBottom: 22, padding: '10px 14px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
+              Anthropic spend · {sp.month}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: '#E2E8F0', fontFamily: 'ui-monospace, monospace', alignItems: 'center' }}>
+              <span><span style={{ color: 'var(--mc-text-3)' }}>month to date:</span> <b style={{ color: barColor }}>${Number(sp.total_usd || 0).toFixed(2)}</b> <span style={{ color: 'var(--mc-text-3)' }}>of ${cap} cap</span></span>
+              <span><span style={{ color: 'var(--mc-text-3)' }}>calls:</span> <b>{sp.calls}</b></span>
+              {sp.blocked > 0 && <span><span style={{ color: 'var(--mc-text-3)' }}>blocked by cap:</span> <b style={{ color: 'var(--mc-bearish)' }}>{sp.blocked}</b></span>}
+              {sp.unrecorded > 0 && <span><span style={{ color: 'var(--mc-text-3)' }}>unrecorded (KV miss):</span> <b>{sp.unrecorded}</b></span>}
+              <span style={{ flexBasis: '100%', height: 4, background: 'var(--mc-bg-4)', borderRadius: 2, overflow: 'hidden' }}>
+                <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: barColor }} />
+              </span>
+            </div>
+            {rows.length > 0 && (
+              <table style={{ marginTop: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: 'var(--mc-text-3)', textAlign: 'left' }}>
+                    <th style={{ paddingRight: 16, fontWeight: 600 }}>feature</th>
+                    <th style={{ paddingRight: 16, fontWeight: 600, textAlign: 'right' }}>calls</th>
+                    <th style={{ paddingRight: 16, fontWeight: 600, textAlign: 'right' }}>in tok</th>
+                    <th style={{ paddingRight: 16, fontWeight: 600, textAlign: 'right' }}>out tok</th>
+                    <th style={{ paddingRight: 16, fontWeight: 600, textAlign: 'right' }}>$ / call</th>
+                    <th style={{ fontWeight: 600, textAlign: 'right' }}>$ month</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(([name, f]) => (
+                    <tr key={name} style={{ color: '#E2E8F0' }}>
+                      <td style={{ paddingRight: 16 }}>{name}</td>
+                      <td style={{ paddingRight: 16, textAlign: 'right' }}>{f.calls}</td>
+                      <td style={{ paddingRight: 16, textAlign: 'right' }}>{Number(f.input_tokens).toLocaleString()}</td>
+                      <td style={{ paddingRight: 16, textAlign: 'right' }}>{Number(f.output_tokens).toLocaleString()}</td>
+                      <td style={{ paddingRight: 16, textAlign: 'right' }}>{f.calls ? (Number(f.usd) / Number(f.calls)).toFixed(4) : '—'}</td>
+                      <td style={{ textAlign: 'right' }}><b>{Number(f.usd).toFixed(2)}</b></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
+              Priced from each response's usage block (Haiku 4.5: $1 in / $5 out per M tokens). Cap = ANTHROPIC_MONTHLY_CAP_USD (default 60); at the cap every model call is refused with a labelled error, nothing runs unmetered.
+            </div>
+          </div>
+        );
+      })()}
 
       {/* PATCH 0853 — Signals compute/filter/universe version stamps */}
       {data.signalsVersions && (

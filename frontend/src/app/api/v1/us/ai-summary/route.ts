@@ -29,6 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { releaseDocument, filingExhibits, htmlToText } from '@/lib/us-guidance';
 import { submissions, tickerToCik } from '@/lib/us-edgar';
+import { anthropicMessages } from '@/lib/anthropic-meter';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -298,24 +299,21 @@ export async function GET(req: NextRequest) {
   // API validates the object against the schema before it reaches this code.
   let data: any = null;
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 2600,
-        system: SYSTEM,
-        tools: [SUMMARY_TOOL],
-        tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
-        messages: [{
-          role: 'user',
-          content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — read it and call file_earnings_summary.\n\n<release>\n${clipped}\n</release>`,
-        }],
-      }),
-      signal: AbortSignal.timeout(50_000),
-    });
+    const resp = await anthropicMessages('us-summary', {
+      model: MODEL,
+      max_tokens: 2600,
+      system: SYSTEM,
+      tools: [SUMMARY_TOOL],
+      tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
+      messages: [{
+        role: 'user',
+        content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — read it and call file_earnings_summary.\n\n<release>\n${clipped}\n</release>`,
+      }],
+    }, { apiKey, signal: AbortSignal.timeout(50_000) });
     if (!resp.ok) {
-      return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}.` });
+      let detail = '';
+      try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
+      return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}${detail ? `: ${detail}` : '.'}` });
     }
     const j: any = await resp.json();
     const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === SUMMARY_TOOL.name);
