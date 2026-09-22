@@ -2,9 +2,9 @@
 // CRON: REFRESH EARNINGS CALENDAR (PATCH 0181)
 //
 // Runs daily via Vercel Cron (configured in vercel.json — `0 1 * * *` = 06:30 IST).
-// Walks the Nifty500 + Nifty Smallcap 250 + NiftyNext50 universe (~750 tickers)
-// and fetches each ticker's upcoming board meetings from NSE. Bucket them by
-// scheduled meeting date and write to KV: `earnings-cal:auto:YYYY-MM-DD`
+// One NSE board-meetings range call (zzz748; was ~750 per-symbol calls that
+// answered nothing). Buckets results-purpose meetings by scheduled date and
+// writes to KV: `earnings-cal:auto:YYYY-MM-DD`
 // → string[] of tickers scheduled for that date.
 //
 // /api/market/earnings reads this on every request and merges into universe.
@@ -17,13 +17,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvSet, isRedisAvailable } from '@/lib/kv';
-import {
-  fetchNifty50,
-  fetchNiftyNext50,
-  fetchNifty500,
-  fetchNiftySmallcap250,
-  nseApiFetch,
-} from '@/lib/nse';
+import { fetchUpcomingBoardMeetings } from '@/lib/earnings/upcoming-meetings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -69,76 +63,37 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'KV not configured — nothing to refresh' }, { status: 503 });
   }
 
-  // ── Step 1: Build the universe of tickers to check ─────────────────────
-  const [n50, nn50, n500, smc250] = await Promise.all([
-    fetchNifty50().catch(() => null),
-    fetchNiftyNext50().catch(() => null),
-    fetchNifty500().catch(() => null),
-    fetchNiftySmallcap250().catch(() => null),
-  ]);
-  const universe = new Set<string>();
-  for (const idx of [n50, nn50, n500, smc250]) {
-    if (!idx?.data) continue;
-    for (const item of idx.data as any[]) {
-      const sym = item?.symbol;
-      if (sym && typeof sym === 'string' && /^[A-Z0-9&\-]+$/.test(sym)) universe.add(sym);
-    }
-  }
-  const tickers = [...universe];
-
-  // ── Step 2: For each ticker, fetch upcoming board meetings ──────────────
-  // NSE per-symbol board-meeting endpoint: /api/equity-meetings?index=equities&symbol=X
-  // Returns recent + upcoming meetings. We bucket by meeting date.
+  // ── Steps 1+2: NSE + BSE upcoming meetings, one call each  (zzz748) ─────
+  //
+  // The per-symbol `/api/equity-meetings?symbol=X` walk (~750 NSE calls a
+  // morning) answered nothing for weeks — HTTP 200, meetings_found 0, no
+  // keys written, and nobody told. Now the shared fetch in
+  // lib/earnings/upcoming-meetings (NSE range call + BSE forthcoming
+  // results) over [today-14d, today+60d], every listed company, not just
+  // the Nifty universe the small and mid caps here were never in.
   const calendar: Record<string, Set<string>> = {};   // date → tickers
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = new Date(today);
-  horizon.setDate(horizon.getDate() + 60);  // look 60 days forward
+  horizon.setDate(horizon.getDate() + 60);
+  const back = new Date(today);
+  back.setDate(back.getDate() - 14);
 
-  // Concurrency limit: 5 parallel requests, throttle to avoid NSE rate limits
-  const CONCURRENCY = 5;
-  let cursor = 0;
   let scanned = 0;
   let withMeeting = 0;
-  async function worker() {
-    while (cursor < tickers.length) {
-      const i = cursor++;
-      const sym = tickers[i];
-      scanned++;
-      try {
-        const data = await nseApiFetch(
-          `/api/equity-meetings?index=equities&symbol=${encodeURIComponent(sym)}`,
-          300000,
-        );
-        if (!data) continue;
-        const arr = Array.isArray(data) ? data : (data?.data || []);
-        for (const meeting of arr as any[]) {
-          const purpose = String(meeting?.bm_purpose || meeting?.purpose || '').toLowerCase();
-          if (!purpose.includes('financial result') && !purpose.includes('quarterly result')) continue;
-          const desc = String(meeting?.bm_desc || meeting?.desc || '').toLowerCase();
-          // Exclude AGM/EGM/Dividend-only meetings
-          if (purpose.includes('agm') || purpose.includes('egm')) continue;
-          if (purpose.includes('dividend') && !purpose.includes('financial result')) continue;
-          const meetDateStr = meeting?.bm_date || meeting?.bm_meetingDate || meeting?.date;
-          const meetDate = parseNseDate(meetDateStr);
-          if (!meetDate) continue;
-          // Only future + recent past (last 14 days)
-          const md = new Date(meetDate);
-          if (md > horizon) continue;
-          const ageDays = (today.getTime() - md.getTime()) / (24 * 3600_000);
-          if (ageDays > 14) continue;
-          if (!calendar[meetDate]) calendar[meetDate] = new Set();
-          calendar[meetDate].add(sym);
-          withMeeting++;
-          // also try to capture additional desc text for evidence
-          void desc;
-        }
-      } catch {
-        // ignore per-symbol failures
-      }
-    }
+  const up = await fetchUpcomingBoardMeetings(back, horizon);
+  const fetchError = [up.nse.error ? `NSE: ${up.nse.error}` : null, up.bse.error ? `BSE: ${up.bse.error}` : null].filter(Boolean).join(' · ') || null;
+  for (const m of up.meetings) {
+    scanned++;
+    const meetDate = parseNseDate(m.bm_date);
+    if (!meetDate) continue;
+    const md = new Date(meetDate);
+    if (md > horizon || md < back) continue;
+    if (!calendar[meetDate]) calendar[meetDate] = new Set();
+    calendar[meetDate].add(m.bm_symbol);
+    withMeeting++;
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  const tickers = { length: scanned };   // kept for the response shape below
 
   // ── Step 3: Write to KV ────────────────────────────────────────────────
   let writes = 0;
@@ -159,21 +114,29 @@ export async function GET(req: Request) {
         meetings_found: withMeeting,
         dates_written: writes,
         date_range: Object.keys(calendar).sort(),
+        fetch_error: fetchError,
+        sources: { nse: up.nse, bse: up.bse },
       },
       30 * 24 * 3600,
     );
   } catch {}
 
+  // zzz748 — a run that found nothing is reported as such, with the reason.
+  // The GitHub bridge treats non-2xx as a failed run, which is what an empty
+  // calendar in results season should be.
+  const nothing = withMeeting === 0;
   return NextResponse.json({
-    status: 'ok',
-    scanned_tickers: scanned,
+    status: nothing ? 'empty' : 'ok',
+    fetch_error: fetchError,
+    sources: { nse: up.nse, bse: up.bse },
+    scanned_meetings: scanned,
     universe_size: tickers.length,
     meetings_found: withMeeting,
     dates_written: writes,
     dates: Object.keys(calendar).sort(),
     sample: Object.entries(calendar).slice(0, 5).map(([d, s]) => ({ date: d, count: s.size, sample: [...s].slice(0, 10) })),
     completed_at: new Date().toISOString(),
-  });
+  }, { status: nothing ? 503 : 200 });
 }
 
 // PATCH 1031 — accept POST too (the GitHub cron bridge POSTs). Delegates to GET.

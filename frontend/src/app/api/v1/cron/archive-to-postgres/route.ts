@@ -18,10 +18,16 @@ export const maxDuration = 60;
 const ONESHOT = 'mc-archive-1043';
 const MONTH_SNAP_KEY = (market: string, month: string) => `earnings-cal-month:v2:${market}:${month}`;
 
-function monthsBack(n: number): string[] {
+function monthsBack(n: number, ahead = 0): string[] {
+  // zzz748 — `ahead` months FIRST. The calendar UI reads only Postgres, and
+  // "next 30 days" crosses into next month for a third of every month; with
+  // ahead=0 next month's board meetings (ingested into KV by hub-ingest) never
+  // reached Postgres, so the upcoming list went blank from the 1st to the 1st.
   const out: string[] = [];
   const d = new Date();
-  for (let i = 0; i < n; i++) {
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + ahead);
+  for (let i = 0; i < n + ahead; i++) {
     const y = d.getUTCFullYear();
     const m = String(d.getUTCMonth() + 1).padStart(2, '0');
     out.push(`${y}-${m}`);
@@ -81,7 +87,8 @@ export async function GET(req: Request) {
 
   const market = searchParams.get('market') || 'india';
   const nMonths = Math.max(1, Math.min(24, parseInt(searchParams.get('months') || '2', 10)));
-  const months = monthsBack(nMonths);
+  const ahead = Math.max(0, Math.min(3, parseInt(searchParams.get('ahead') || '1', 10)));
+  const months = monthsBack(nMonths, ahead);
   const report: any[] = [];
 
   try {

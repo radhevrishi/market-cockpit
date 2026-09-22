@@ -23,6 +23,7 @@ import { getPool, dbAvailable } from '@/lib/db';
 // PATCH 1030 — eviction-proof static seed for completed past months (Upstash
 // free tier evicts KV under memory pressure; this lives in the deploy bundle).
 import { CALENDAR_SEEDS } from '@/data/calendar-seeds';
+import { fetchUpcomingBoardMeetings } from '@/lib/earnings/upcoming-meetings';
 
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30; // PATCH 0818
@@ -763,10 +764,24 @@ export async function GET(request: Request) {
     // ═══════════════════════════════════════════
     const bmArray1 = toArray(boardMeetings);
     const bmArray2 = toArray(boardMeetingsRange);
+    // zzz748 — NSE's board-meetings endpoint answers this host with nothing
+    // (bmTotal 0 in debug for weeks) while BSE's forthcoming-results list is
+    // complete and reachable. Both are asked; rows are normalised to the NSE
+    // shape so everything below is unchanged. `upcomingSources` is reported
+    // in debug so an empty calendar is never silent again.
+    let bmExtra: any[] = [];
+    let upcomingSources: any = null;
+    try {
+      const up = await fetchUpcomingBoardMeetings(bmFetchFrom, toDate);
+      upcomingSources = { nse: up.nse, bse: up.bse, merged: up.meetings.length, nse_direct_rows: bmArray1.length + bmArray2.length };
+      bmExtra = up.meetings;
+    } catch (e: any) {
+      upcomingSources = { error: String(e?.message || e) };
+    }
     const bmSeen = new Set<string>();
     const bmCombined: any[] = [];
 
-    for (const bm of [...bmArray1, ...bmArray2]) {
+    for (const bm of [...bmArray1, ...bmArray2, ...bmExtra]) {
       const ticker = bm.bm_symbol || bm.symbol || '';
       const key = `${ticker}:${bm.bm_date || bm.date}`;
       if (!ticker || bmSeen.has(key)) continue;
@@ -1404,9 +1419,23 @@ export async function GET(request: Request) {
         if (Array.isArray(prevSnap) && prevSnap.length > 0) {
           const seen = new Set<string>();
           const union: any[] = [];
+          // zzz748 — a board meeting that was RESCHEDULED must not survive as a
+          // second, stale "Upcoming" row. If the live feed carries the ticker on
+          // a different date, the snapshot's Upcoming row for it is dropped;
+          // graded (filed) rows are never dropped.
+          const liveDates = new Map<string, Set<string>>();
+          for (const x of results) {
+            const t = String((x as any)?.ticker || (x as any)?.symbol || '').toUpperCase();
+            if (!liveDates.has(t)) liveDates.set(t, new Set());
+            liveDates.get(t)!.add(String((x as any)?.resultDate || '').slice(0, 10));
+          }
           for (const x of [...results, ...prevSnap]) {
-            const k = `${String((x as any)?.ticker || (x as any)?.symbol || '').toUpperCase()}|${(x as any)?.resultDate || ''}`;
+            const t = String((x as any)?.ticker || (x as any)?.symbol || '').toUpperCase();
+            const d = String((x as any)?.resultDate || '').slice(0, 10);
+            const k = `${t}|${d}`;
             if (seen.has(k)) continue;
+            const fromSnapshot = !results.includes(x);
+            if (fromSnapshot && (x as any)?.quality === 'Upcoming' && liveDates.has(t) && !liveDates.get(t)!.has(d)) continue;
             seen.add(k);
             union.push(x);
           }
@@ -1433,6 +1462,7 @@ export async function GET(request: Request) {
 
     const processing = {
       bmTotal: bmCombined.length,
+      upcomingSources,
       announcementsTotal: annArray.length,
       resultsFilingsRaw: resultsFilingsArr.length,
       resultsFilingsMatched: resultsFilingsMatchCount,

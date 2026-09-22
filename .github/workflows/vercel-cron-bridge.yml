@@ -47,6 +47,7 @@ on:
     # Ingestion: refresh the current-month KV snapshot from NSE/BSE (live = ingestion
     # only). Runs BEFORE the archive cron so archive-to-postgres then persists KV->PG.
     - cron: '0 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
+    - cron: '15 18 * * *'      # 18:15 UTC daily   -> hub ingest (NEXT month: upcoming board meetings, zzz748)
   workflow_dispatch:
     inputs:
       endpoint:
@@ -65,6 +66,8 @@ on:
           - refresh-us-bench
           - refresh-guidance
           - archive-to-postgres
+          - hub-ingest
+          - hub-ingest-next
 
 concurrency:
   group: vercel-cron-bridge-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -127,12 +130,18 @@ jobs:
               echo "label=refresh-us-bench" >> "$GITHUB_OUTPUT"
               ;;
             "30 19 * * *")
-              echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"
+              echo "path=/api/v1/cron/archive-to-postgres?months=2&ahead=1" >> "$GITHUB_OUTPUT"
               echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
               ;;
             "0 18 * * *")
               echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
               echo "label=hub-ingest" >> "$GITHUB_OUTPUT"
+              ;;
+            "15 18 * * *")
+              # zzz748 — next month's board-meeting intimations. Without this the
+              # "next 30 days" list was empty whenever it crossed a month boundary.
+              echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"
+              echo "label=hub-ingest-next" >> "$GITHUB_OUTPUT"
               ;;
             *)
               # Manual dispatch path
@@ -147,7 +156,9 @@ jobs:
                 prewarm-us-earnings)         echo "path=/api/v1/cron/prewarm-us-earnings?sessions=30" >> "$GITHUB_OUTPUT"; echo "label=prewarm-us-manual" >> "$GITHUB_OUTPUT" ;;
                 refresh-us-bench)            echo "path=/api/v1/cron/refresh-us-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-us-bench-manual" >> "$GITHUB_OUTPUT" ;;
                 refresh-guidance)            echo "path=/api/v1/cron/refresh-guidance" >> "$GITHUB_OUTPUT"; echo "label=refresh-guidance-manual" >> "$GITHUB_OUTPUT" ;;
-                archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"; echo "label=archive-manual" >> "$GITHUB_OUTPUT" ;;
+                archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2&ahead=1" >> "$GITHUB_OUTPUT"; echo "label=archive-manual" >> "$GITHUB_OUTPUT" ;;
+                hub-ingest)                  echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-manual" >> "$GITHUB_OUTPUT" ;;
+                hub-ingest-next)             echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-next-manual" >> "$GITHUB_OUTPUT" ;;
                 *)
                   echo "::error title=No route::Unknown schedule and no manual input"
                   exit 1

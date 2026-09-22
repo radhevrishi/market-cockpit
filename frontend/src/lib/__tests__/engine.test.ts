@@ -1086,3 +1086,39 @@ describe('anthropic meter (zzz747)', () => {
     assert.equal(m.updated_at, '2026-09-02T00:00:00Z');
   });
 });
+
+// ── zzz748: upcoming board meetings from two exchanges ───────────────────
+import { toNseDate, bseShortToSymbol, normaliseNse, normaliseBse, mergeMeetings } from '../earnings/upcoming-meetings';
+
+describe('upcoming board meetings (zzz748)', () => {
+  test('every date shape both exchanges emit normalises to DD-MMM-YYYY', () => {
+    assert.equal(toNseDate('12 Oct 2026'), '12-Oct-2026');
+    assert.equal(toNseDate('23-Oct-2026'), '23-Oct-2026');
+    assert.equal(toNseDate('2026-10-05'), '05-Oct-2026');
+    assert.equal(toNseDate('5/10/2026'), '05-Oct-2026');
+    assert.equal(toNseDate('September 30, 2026'), null);   // not a shape either exchange uses for meeting_date
+    assert.equal(toNseDate(''), null);
+  });
+  test('BSE short names lose their group suffix, real hyphenated symbols do not', () => {
+    assert.equal(bseShortToSymbol('RAMAPPR-B'), 'RAMAPPR');
+    assert.equal(bseShortToSymbol('HCLTECH'), 'HCLTECH');
+    assert.equal(bseShortToSymbol('BAJAJ-AUTO'), 'BAJAJ-AUTO');
+  });
+  test('NSE files the same meeting as intimation + results row; both count, AGMs do not', () => {
+    const rows = normaliseNse([
+      { bm_symbol: 'COFORGE', bm_date: '23-Oct-2026', bm_purpose: 'Board Meeting Intimation', bm_desc: 'to consider and approve the Unaudited Financial results for the Half Yearly ended September 2026', sm_name: 'Coforge Limited' },
+      { bm_symbol: 'COFORGE', bm_date: '23-Oct-2026', bm_purpose: 'Financial Results', bm_desc: 'To consider and approve the financial results', sm_name: 'Coforge Limited' },
+      { bm_symbol: 'XYZ', bm_date: '30-Sep-2026', bm_purpose: 'AGM', bm_desc: 'Annual General Meeting to adopt financial results', sm_name: 'XYZ' },
+      { bm_symbol: 'ABC', bm_date: '30-Sep-2026', bm_purpose: 'Dividend', bm_desc: 'interim dividend', sm_name: 'ABC' },
+    ]);
+    assert.deepEqual(rows.map((r) => r.bm_symbol), ['COFORGE', 'COFORGE']);
+    assert.equal(rows[0].bm_purpose, 'Financial Results');
+  });
+  test('BSE forthcoming rows become results meetings with the scrip kept, and NSE wins the merge', () => {
+    const bse = normaliseBse([{ scrip_Code: '532281', short_name: 'HCLTECH', Long_Name: 'HCL Technologies Ltd', meeting_date: '12 Oct 2026' }, { scrip_Code: '500357', short_name: 'RAMAPPR-B', Long_Name: 'Rama Paper Mills Ltd', meeting_date: '22 Sep 2026' }]);
+    assert.equal(bse.length, 2); assert.equal(bse[0].bm_date, '12-Oct-2026'); assert.equal(bse[0].bse_scrip, '532281'); assert.equal(bse[1].bm_symbol, 'RAMAPPR');
+    const nse = normaliseNse([{ bm_symbol: 'HCLTECH', bm_date: '12-Oct-2026', bm_purpose: 'Financial Results', bm_desc: '', sm_name: 'HCL Technologies Limited' }]);
+    const merged = mergeMeetings(nse, bse);
+    assert.equal(merged.length, 2); assert.equal(merged[0].source, 'NSE'); assert.equal(merged[1].bm_symbol, 'RAMAPPR');
+  });
+});
