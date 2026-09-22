@@ -424,6 +424,15 @@ export function judgeEventQuality(e: { variable: string; before: string | null; 
       if (/%/.test(valueText) && !CAPACITY_UNIT_RE.test(valueText)) return false;
       return true;
     }
+    // ── AN AMOUNT SPELLED OUT IN WORDS IS A LEGAL CLAUSE.          (zzz758)
+    //
+    // UNIVCABLES carried "Working capital ₹1,20,000/- (Rupees One Lakh Twenty
+    // Thousand only)". That is a director's sitting fee out of a board
+    // resolution, not a working-capital position — the "/-" and the amount in
+    // words are the signature of a contractual instrument, and no listed
+    // company's working capital is one lakh twenty thousand rupees.
+    if (/\(\s*(rupees|rs\.?|inr|us dollars?|dollars?)\b[^)]*\bonly\s*\)/i.test(valueText + ' ' + ev)
+      || /\d\s*\/-/.test(valueText)) return false;
     if (v === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
     if (v === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
     if (v === 'capacity_bottleneck' || v === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);

@@ -247,15 +247,55 @@ function evidenceTypeOf(k: VarKey, valueType: string): EvidenceFact['evidence_ty
   return 'mechanism';
 }
 
-function numOf(s: string | null): number | null {
+// ── A MAGNITUDE WORD IS PART OF THE NUMBER.                        (zzz758)
+//
+// GPPL's card read "a little less than 1,000,000 metric tonnes → 1.6 million
+// metric tonnes (−100%)". Both figures are right and the arrow is nonsense:
+// the parser read 1,000,000 on one side and 1.6 on the other, because "million"
+// was treated as a unit word rather than a multiplier. A throughput that grew
+// 60% was printed as a total collapse.
+//
+// So the multiplier is folded into the value before any subtraction happens.
+// Where one side carries a magnitude word and the other does not, the two are
+// still scaled — "1,000,000 tonnes" and "1.6 million tonnes" ARE the same
+// measure — and `sameUnit` remains the separate guard against comparing
+// tonnes with kilolitres.
+const MAGNITUDE: Array<[RegExp, number]> = [
+  [/\btrillions?\b/i, 1e12],
+  [/\b(billions?|bn)\b/i, 1e9],
+  [/\b(crores?|cr)\b/i, 1e7],
+  [/\b(millions?|mn)\b/i, 1e6],
+  [/\blakhs?\b/i, 1e5],
+  [/\bthousands?\b/i, 1e3],
+];
+
+/** The magnitude multiplier a value string carries, or 1. */
+export function magnitudeOf(s: string | null | undefined): number {
+  const t = String(s ?? '');
+  for (const [re, mult] of MAGNITUDE) if (re.test(t)) return mult;
+  return 1;
+}
+
+/** The leading number WITH its magnitude word applied. */
+export function scaledNumber(s: string | null | undefined): number | null {
   if (!s) return null;
-  const m = /-?\d[\d,]*\.?\d*/.exec(s);
+  const m = /-?\d[\d,]*\.?\d*/.exec(String(s));
   if (!m) return null;
   const n = parseFloat(m[0].replace(/,/g, ''));
-  return Number.isFinite(n) ? n : null;
+  if (!Number.isFinite(n)) return null;
+  return n * magnitudeOf(s);
+}
+
+function numOf(s: string | null): number | null {
+  return scaledNumber(s);
 }
 
 export function deltaOf(before: string | null, after: string | null, unit: string | null): string | null {
+  // Identical strings are not a change. CUPID printed "480 million units →
+  // 480 million units (+0%)" and BHAGCHEM "Capacity utilisation +0%": a
+  // restated figure rendered as a movement of zero, which reads as a finding
+  // when it is the absence of one. (zzz758)
+  if (before && after && before.trim().toLowerCase() === after.trim().toLowerCase()) return null;
   const b = numOf(before), a = numOf(after);
   if (b == null || a == null) return null;
   const pctUnit = /%/.test(String(unit || '')) || (/%/.test(before || '') && /%/.test(after || ''));
@@ -273,6 +313,10 @@ export function sameUnit(a: string, b: string, ua: string | null, ub: string | n
   const norm = (s: string) => Array.from(new Set(
     s.toLowerCase().replace(/[\d,.\s₹$`\-–]+/g, ' ').replace(/%+/g, ' % ')
       .replace(/\b(per|of|and|to|the|a|an|approx|approximately|about|around|nearly|over|~|odd|from)\b/g, ' ')
+      // Magnitude words are part of the VALUE now (scaledNumber folds them in),
+      // so they must not make "1,000,000 tonnes" and "1.6 million tonnes" look
+      // like two different measures. (zzz758)
+      .replace(/\b(trillions?|billions?|bn|crores?|cr|millions?|mn|lakhs?|thousands?)\b/g, ' ')
       .split(/\s+/).filter(Boolean).map((w) => w.replace(/s$/, '')),
   )).sort().join(' ');
   const wa = norm(a), wb = norm(b);
@@ -508,7 +552,10 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
       lines.push({ sign, text: comparable ? `${label} ${p.value} → ${f.value}${d ? ` (${d})` : ''}` : `${label} ${f.value} (earlier period stated ${p.value} — different unit, not compared)`, metric: k, period: to, source: f.source_name });
     } else if (!p) {
       const sign: ChangeLine['sign'] = dir === 'down' ? '-' : dir === 'up' ? '+' : '·';
-      const text = f.before_value && f.after_value
+      // A figure restated identically is a LEVEL, not a move. (zzz758)
+      const restated = !!f.before_value && !!f.after_value
+        && f.before_value.trim().toLowerCase() === f.after_value.trim().toLowerCase();
+      const text = f.before_value && f.after_value && !restated
         ? `${label} ${f.before_value} → ${f.after_value}${f.delta ? ` (${f.delta})` : ''}`
         : `${label} ${f.value}`;
       lines.push({ sign, text, metric: k, period: to, source: f.source_name });

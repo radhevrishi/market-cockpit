@@ -42,6 +42,7 @@ import {
   candidatesFromFilings, classifyExchangeDoc, rankCandidates, selectForReading, resolveDiscovery,
 } from '../thesis/evidence-discovery';
 import { findPassages, validateEvents, judgeEventQuality } from '../thesis/evidence-extract';
+import { scaledNumber, deltaOf as ledgerDeltaOf, sameUnit as ledgerSameUnit } from '../thesis/evidence-ledger';
 import {
   reportingPeriodFromDate, periodOrdinal, reportingPeriodForDocuments, factsFromEvents, documentId,
   emptyLedger, mergePeriod, recordAttempt, recordSeen, recordStatus, whatChanged, freshnessOf,
@@ -1412,5 +1413,267 @@ describe('openai translation (zzz750)', () => {
   test('gpt-5-mini is priced as gpt-5-mini, not gpt-5', () => {
     assert.equal(pricingFor('gpt-5-mini')?.input, 0.25); assert.equal(pricingFor('gpt-5')?.input, 1.25); assert.equal(pricingFor('gpt-5-nano')?.output, 0.40);
     assert.equal(Number(costOf('gpt-5-mini', { input_tokens: 1000, cache_read_input_tokens: 200, output_tokens: 80 }).toFixed(6)), 0.000415);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  buildComparisons, extractCause, changeBetween, quantity, historyDepth,
+} from '../thesis/comparison';
+import { applyComparisons } from '../thesis/variables';
+
+describe('longitudinal comparison — current → previous → change → cause (zzz758)', () => {
+  const now = '2026-09-22T10:00:00.000Z';
+  const doc = (url: string, label: string, kind: string, date: string): any =>
+    ({ id: documentId(url), url, label, kind, source: 'screener.in company page', period: null, date_iso: date, outcome: 'read', chars: 40000, pages: 20 });
+  const ev = (variable: string, value_type: string, before: string | null, after: string, unit: string | null, source: string, text?: string, direction = 'up'): any =>
+    ({ variable, value_type, before, after, unit, period: null, direction,
+      evidence_text: text || `Capacity utilisation stood at ${after} during the quarter, management said on the call.`,
+      source, confidence: 'HIGH' });
+
+  const period = (ticker: string, docs: any[], events: any[], runId: string) => {
+    const rp = reportingPeriodForDocuments(docs);
+    const { facts, events: evs } = factsFromEvents(ticker, rp.period, events, docs, now);
+    return {
+      period: {
+        reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
+        documents: docs, documents_found: docs.length, documents_read: docs.length, documents_failed: 0, documents_skipped: 0,
+        facts, events: evs, summary: { events }, status: null, status_because: null, tallies: null,
+        discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: runId, prompt_version: 'v8', model: 'm',
+        extracted_at: now, updated_at: now,
+      } as any,
+      run: { run_id: runId, reporting_period: rp.period, started_at: now, finished_at: now, outcome: 'COMPLETED', error: null,
+        documents_found: docs.length, documents_read: docs.length, facts_extracted: facts.length, events_extracted: evs.length,
+        model: 'm', prompt_version: 'v8' } as any,
+    };
+  };
+
+  // AZAD-shaped: utilisation disclosed in Q4 FY26 and again in Q1 FY27.
+  const q4Docs = [doc('https://x/azad-q4.pdf', 'Concall transcript May 2026', 'transcript', '2026-05-20')];
+  const q1Docs = [doc('https://x/azad-q1.pdf', 'Concall transcript Jul 2026', 'transcript', '2026-07-24')];
+  const twoPeriod = () => {
+    const a = period('AZAD', q4Docs, [
+      ev('utilisation', 'ACTUAL', null, '72%', '%', 'Concall transcript May 2026',
+        'Capacity utilisation for the quarter was 72% across the Hyderabad plants.'),
+      ev('order_book', 'ACTUAL', null, 'INR 500 crores', 'crores', 'Concall transcript May 2026',
+        'The closing order book stood at INR 500 crores as at the end of the quarter.'),
+      ev('capacity', 'ACTUAL', null, '1,200 tonnes', 'tonnes', 'Concall transcript May 2026',
+        'Installed capacity at the end of the period was 1,200 tonnes per annum.'),
+    ], 'r1');
+    const b = period('AZAD', q1Docs, [
+      ev('utilisation', 'ACTUAL', null, '80%', '%', 'Concall transcript Jul 2026',
+        'Capacity utilisation improved to 80% during the quarter due to the commissioning of the new machining line.'),
+      ev('order_book', 'ACTUAL', null, 'INR 820 crores', 'crores', 'Concall transcript Jul 2026',
+        'The closing order book stood at INR 820 crores, driven by a long-term contract from a European customer.'),
+      ev('guidance', 'GUIDANCE', null, '30% revenue growth', '%', 'Concall transcript Jul 2026',
+        'We are guiding to 30% revenue growth for the full year.'),
+    ], 'r2');
+    let l = mergePeriod(emptyLedger('AZAD', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, b.period, b.run);
+    return l;
+  };
+
+  test('a level becomes a direction once a second period exists — 72% → 80% is +8pp, not +11.1%', () => {
+    const c = buildComparisons(twoPeriod());
+    const u = c.utilisation!;
+    assert.equal(u.current!.raw, '80%');
+    assert.equal(u.previous!.raw, '72%');
+    assert.equal(u.previous_period, 'Q4 FY26');
+    assert.equal(u.current_period, 'Q1 FY27');
+    assert.equal(u.change, '+8pp', 'percentages move in points, never in percent');
+    assert.equal(u.change_relative, '+11.1% relative');
+    assert.equal(u.change_type, 'INCREASED');
+    assert.equal(u.basis, 'QOQ');
+    assert.equal(u.direction, 'up');
+  });
+
+  test('§75 — a previous value is never invented when no earlier period holds one', () => {
+    const one = (() => { const a = period('AZAD', q1Docs, [
+      ev('utilisation', 'ACTUAL', null, '80%', '%', 'Concall transcript Jul 2026',
+        'Capacity utilisation across the plants was 80% during the quarter.')], 'r1');
+      return mergePeriod(emptyLedger('AZAD', 'IN', now), a.period, a.run); })();
+    const u = buildComparisons(one).utilisation!;
+    assert.equal(u.previous, null);
+    assert.equal(u.previous_period, null);
+    assert.equal(u.change, null);
+    assert.equal(u.change_type, 'NEW');
+    assert.equal(u.basis, 'NONE');
+    assert.match(u.line, /NOT DISCLOSED/);
+    assert.equal(historyDepth(one).depth, 1);
+  });
+
+  test('a figure disclosed earlier and absent now is NOT_DISCLOSED, with the last known value kept', () => {
+    const cap = buildComparisons(twoPeriod()).capacity!;
+    assert.equal(cap.change_type, 'NOT_DISCLOSED');
+    assert.equal(cap.current, null);
+    assert.equal(cap.previous!.raw, '1,200 tonnes');
+    assert.equal(cap.previous_period, 'Q4 FY26');
+    assert.match(cap.line, /stops disclosing/);
+  });
+
+  test('different units are never subtracted — two levels, no arrow', () => {
+    const a = period('MOREPEN', q4Docs, [ev('capacity', 'ACTUAL', null, '314 kiloliters', 'kiloliters', 'Concall transcript May 2026',
+      'Installed capacity was 314 kiloliters at the site.')], 'r1');
+    const b = period('MOREPEN', q1Docs, [ev('capacity', 'ACTUAL', null, '200 KLD', 'KLD', 'Concall transcript Jul 2026',
+      'Installed capacity now stands at 200 KLD.')], 'r2');
+    let l = mergePeriod(emptyLedger('MOREPEN', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, b.period, b.run);
+    const cap = buildComparisons(l).capacity!;
+    assert.equal(cap.change_type, 'NOT_COMPARABLE');
+    assert.equal(cap.change, null);
+    assert.equal(cap.direction, 'unknown');
+    assert.match(cap.line, /different unit/);
+  });
+
+  test('§76 — a cause exists only where the document wrote a causal connective', () => {
+    const c = buildComparisons(twoPeriod());
+    assert.equal(c.utilisation!.cause!.connective, 'due to');
+    assert.match(c.utilisation!.cause!.text, /commissioning/);
+    assert.equal(c.utilisation!.cause!.persistence, 'STRUCTURAL');
+    assert.equal(c.order_book!.cause!.persistence, 'STRUCTURAL');
+    // No connective anywhere in the sentence → no cause, and it says so.
+    assert.equal(extractCause('Capacity utilisation was 80% during the quarter.', 'x'), null);
+  });
+
+  test('a temporary cause is separated from a structural one', () => {
+    const t = extractCause('Margin expanded 300 bps due to a favourable forex movement in the quarter.', 'concall');
+    assert.equal(t!.persistence, 'TEMPORARY');
+    const s = extractCause('Revenue grew 40% driven by the new plant commissioned in April.', 'concall');
+    assert.equal(s!.persistence, 'STRUCTURAL');
+    const u = extractCause('Volumes rose owing to broad based demand across the book.', 'concall');
+    assert.equal(u!.persistence, 'UNCLASSIFIED');
+  });
+
+  test('guidance restated unchanged is REITERATED, not a new disclosure', () => {
+    const a = period('X', q4Docs, [ev('guidance', 'GUIDANCE', null, '30% revenue growth', '%', 'Concall transcript May 2026',
+      'We are guiding to 30% revenue growth.')], 'r1');
+    const b = period('X', q1Docs, [ev('guidance', 'GUIDANCE', null, '30% revenue growth', '%', 'Concall transcript Jul 2026',
+      'We are guiding to 30% revenue growth.')], 'r2');
+    let l = mergePeriod(emptyLedger('X', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, b.period, b.run);
+    const g = buildComparisons(l).guidance!;
+    assert.equal(g.change_type, 'REITERATED');
+    assert.equal(g.promised!.period, 'Q4 FY26');
+  });
+
+  test('the comparison upgrades the variable row from stated to a judged direction', () => {
+    const cmp = buildComparisons(twoPeriod());
+    const before: any[] = [{ key: 'utilisation', label: 'Capacity utilisation', kind: 'fact',
+      before: null, after: '80%', delta: null, verdict: 'stated', evidence: 'Level only.', source: 'filing' }];
+    const [row] = applyComparisons(before as any, cmp);
+    assert.equal(row.verdict, 'improving');
+    assert.equal(row.before, '72%');
+    assert.equal(row.delta, '+8pp');
+    assert.match(row.evidence, /Q4 FY26.*Q1 FY27/);
+    assert.match(row.evidence, /STRUCTURAL/);
+  });
+
+  test('a variable that moves with no stated reason says so rather than guessing one', () => {
+    const a = period('Y', q4Docs, [ev('utilisation', 'ACTUAL', null, '60%', '%', 'Concall transcript May 2026',
+      'Capacity utilisation was 60% in the quarter.')], 'r1');
+    const b = period('Y', q1Docs, [ev('utilisation', 'ACTUAL', null, '68%', '%', 'Concall transcript Jul 2026',
+      'Capacity utilisation was 68% in the quarter.')], 'r2');
+    let l = mergePeriod(emptyLedger('Y', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, b.period, b.run);
+    const cmp = buildComparisons(l);
+    assert.equal(cmp.utilisation!.cause, null);
+    const [row] = applyComparisons([{ key: 'utilisation', label: 'Capacity utilisation', kind: 'fact',
+      before: null, after: '68%', delta: null, verdict: 'stated', evidence: '', source: 'filing' }] as any, cmp);
+    assert.match(row.evidence, /CAUSE: not disclosed/);
+  });
+
+  test('a move inside the noise band is flat, not an improvement', () => {
+    const a = period('Z', q4Docs, [ev('utilisation', 'ACTUAL', null, '80%', '%', 'Concall transcript May 2026',
+      'Capacity utilisation across the plants was 80% for the quarter.')], 'r1');
+    const b = period('Z', q1Docs, [ev('utilisation', 'ACTUAL', null, '80.4%', '%', 'Concall transcript Jul 2026',
+      'Capacity utilisation across the plants was 80.4% for the quarter.')], 'r2');
+    let l = mergePeriod(emptyLedger('Z', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, b.period, b.run);
+    const cmp = buildComparisons(l);
+    const [row] = applyComparisons([{ key: 'utilisation', label: 'Capacity utilisation', kind: 'fact',
+      before: null, after: '80.4%', delta: null, verdict: 'stated', evidence: '', source: 'filing' }] as any, cmp);
+    assert.equal(row.verdict, 'flat');
+  });
+
+  test('a negative variable inverts: a growing delay is a deterioration', () => {
+    const a = period('W', q4Docs, [ev('execution_delay', 'ACTUAL', null, '2 months', 'months', 'Concall transcript May 2026',
+      'The project is running 2 months behind schedule.')], 'r1');
+    const b = period('W', q1Docs, [ev('execution_delay', 'ACTUAL', null, '6 months', 'months', 'Concall transcript Jul 2026',
+      'The project is running 6 months behind schedule.')], 'r2');
+    let l = mergePeriod(emptyLedger('W', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, b.period, b.run);
+    const cmp = buildComparisons(l);
+    const [row] = applyComparisons([{ key: 'execution_delay', label: 'Execution delay', kind: 'fact',
+      before: null, after: '6 months', delta: null, verdict: 'stated', evidence: '', source: 'filing' }] as any, cmp);
+    assert.equal(row.verdict, 'deteriorating');
+  });
+
+  test('a four-quarter gap is YoY and a two-quarter gap is SINCE_LAST_DISCLOSURE', () => {
+    const d = (url: string, date: string) => [doc(url, `Concall ${date}`, 'transcript', date)];
+    const mk = (docs: any[], val: string, run: string) => period('P', docs, [
+      ev('utilisation', 'ACTUAL', null, val, '%', `Concall ${docs[0].date_iso}`,
+        `Capacity utilisation across the plants was ${val} for the quarter.`)], run);
+    const a = mk(d('https://x/1', '2025-07-24'), '50%', 'r1');   // Q1 FY26
+    const b = mk(d('https://x/2', '2026-01-20'), '60%', 'r2');   // Q3 FY26
+    const c = mk(d('https://x/3', '2026-07-24'), '70%', 'r3');   // Q1 FY27
+    let l = mergePeriod(emptyLedger('P', 'IN', now), a.period, a.run);
+    l = mergePeriod(l, c.period, c.run);
+    assert.equal(buildComparisons(l).utilisation!.basis, 'YOY');
+    l = mergePeriod(l, b.period, b.run);
+    assert.equal(buildComparisons(l).utilisation!.basis, 'SINCE_LAST_DISCLOSURE');
+    assert.equal(buildComparisons(l).utilisation!.previous_period, 'Q3 FY26');
+  });
+
+  test('the arithmetic helpers are honest about what they cannot do', () => {
+    assert.equal(changeBetween(quantity('72%')!, quantity('80%')!).change, '+8pp');
+    assert.equal(changeBetween(quantity('₹500 Cr')!, quantity('₹820 Cr')!).change, '+64%');
+    assert.equal(changeBetween(quantity('0')!, quantity('5')!).change, null, 'no percentage off a zero base');
+    assert.equal(changeBetween(quantity('strong')!, quantity('stronger')!).direction, 'unknown');
+    assert.equal(quantity('80%')!.isPercent, true);
+    assert.equal(quantity('₹820 Cr')!.isPercent, false);
+    assert.equal(quantity('')?.raw, undefined);
+  });
+
+  test('an empty ledger produces no comparisons rather than throwing', () => {
+    assert.deepEqual(buildComparisons(null), {});
+    assert.deepEqual(buildComparisons(emptyLedger('Q', 'IN', now)), {});
+    assert.equal(historyDepth(null).depth, 0);
+  });
+});
+
+describe('zzz758 — magnitude words, restated figures, amounts in words', () => {
+  test('GPPL — 1,000,000 tonnes → 1.6 million tonnes is +60%, not −100%', () => {
+    assert.equal(scaledNumber('a little less than 1,000,000 metric tonnes'), 1_000_000);
+    assert.equal(scaledNumber('1.6 million metric tonnes'), 1_600_000);
+    assert.equal(ledgerDeltaOf('1,000,000 metric tonnes', '1.6 million metric tonnes', null), '+60%');
+    assert.ok(ledgerSameUnit('1,000,000 metric tonnes', '1.6 million metric tonnes', null, null),
+      'a magnitude word is part of the value, not a different unit');
+  });
+
+  test('magnitudes are read on every scale the filings use', () => {
+    assert.equal(scaledNumber('₹500 Cr'), 5e9);
+    assert.equal(scaledNumber('₹1,20,000/-'), 120000);
+    assert.equal(scaledNumber('12 lakh units'), 1.2e6);
+    assert.equal(scaledNumber('2 bn'), 2e9);
+    assert.equal(scaledNumber('no figure'), null);
+  });
+
+  test('CUPID / BHAGCHEM — a figure restated identically is a level, not a +0% move', () => {
+    assert.equal(ledgerDeltaOf('480 million units', '480 million units', null), null);
+    assert.equal(ledgerDeltaOf('74%', '74%', '%'), null);
+    assert.equal(ledgerDeltaOf('74%', '80%', '%'), '+6pp');
+  });
+
+  test('UNIVCABLES — an amount spelled out in words is a legal clause, not a balance-sheet figure', () => {
+    assert.equal(judgeEventQuality({
+      variable: 'working_capital', before: null,
+      after: '₹1,20,000/- (Rupees One Lakh Twenty Thousand only)', unit: null,
+      evidence_text: 'The board approved working capital of ₹1,20,000/- (Rupees One Lakh Twenty Thousand only) payable to each director for attending meetings.',
+    }), 'unit_mismatch');
+    // A real working-capital sentence is untouched.
+    assert.equal(judgeEventQuality({
+      variable: 'working_capital', before: '112 days', after: '96 days', unit: 'days',
+      evidence_text: 'Working capital days improved from 112 days to 96 days over the course of the year, management said.',
+    }), 'sentence');
   });
 });

@@ -29,6 +29,8 @@ import {
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { classifyGradedRow, classifyWithFiling, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
+import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
+import type { VarKey } from './taxonomy';
 import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
 import { recordPromises, checkPromises } from './guidance-ledger';
@@ -56,6 +58,8 @@ export interface BookRow {
    *  evidence and must never look the same. */
   dataSource?: string | null;
   assessment: ThesisAssessment | null;
+  /** Cross-period comparisons derived from the ledger. (zzz758) */
+  comparisons?: Partial<Record<VarKey, MetricComparison>>;
   capex: CapexChain | null;
   promiseNote: string | null;
   /** The documents actually read, for the card's SOURCES block. (zzz737) */
@@ -131,13 +135,38 @@ async function postStatus(row: BookRow): Promise<void> {
 }
 
 function assess(row: BookRow): BookRow {
-  const vars = extractVariables(row.graded, row.summary);
+  // ── THE LONGITUDINAL JOIN HAPPENS HERE.                          (zzz758)
+  //
+  // Every period this holding has ever had read is in `row.ledger`, and until
+  // now nothing carried that history into the variable rows — `extractVariables`
+  // saw one summary and could only ever produce levels. The comparisons are
+  // built first and threaded through both the extractor and the status engine,
+  // so a figure with an earlier figure behind it becomes a direction, and a
+  // figure without one says PREVIOUS: NOT DISCLOSED and stops there.
+  const comparisons = buildComparisons(row.ledger || null);
+  const hist = historyDepth(row.ledger || null);
+  const vars = extractVariables(row.graded, row.summary, comparisons);
   const check = row.summary ? checkPromises(row.symbol, row.summary) : null;
+  // The status carried by the newest period that is NOT the one being
+  // assessed — so a status change can name what it moved from.
+  const prevStatus = (() => {
+    const l = row.ledger;
+    if (!l || hist.periods.length < 2) return null;
+    for (let i = hist.periods.length - 2; i >= 0; i--) {
+      const p = l.periods[hist.periods[i]];
+      if (p?.status) return { status: p.status, period: hist.periods[i] };
+    }
+    return null;
+  })();
   return {
     ...row,
+    comparisons,
     assessment: assessThesis({
       pattern: row.pattern?.pattern ?? null,
       variables: vars,
+      comparisons,
+      historyDepth: hist.depth,
+      previousStatus: prevStatus,
       promiseGap: check ? {
         gap: check.gap, detail: check.detail, direction: check.direction || 'behind',
         plan: check.plan ?? null, actual: check.actual ?? null, variance: check.variance ?? null,

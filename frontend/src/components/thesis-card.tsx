@@ -29,6 +29,7 @@ import type { VarVerdict } from '@/lib/thesis/variables';
 import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
+import { BASIS_LABEL } from '@/lib/thesis/comparison';
 
 // ── THE PALETTE.                                                   (zzz723)
 //
@@ -450,12 +451,123 @@ export function ThesisCard(p: ThesisCardProps) {
                     {c.before && <span style={{ color: C.faint }}>{c.before} → </span>}
                     <b>{c.after || c.delta || '—'}</b>
                     {c.before && c.delta && <span style={{ color: v.color }}> ({c.delta})</span>}
+                    {/* ── THE COMPARISON BASIS TRAVELS WITH THE NUMBER. (zzz758)
+                        "+8pp" means something different sequentially than it
+                        does year on year, and a reader who cannot see which
+                        one it is has been handed a figure, not a fact. */}
+                    {c.comparison && c.comparison.basis !== 'NONE' && c.comparison.previous && (
+                      <span style={{ display: 'block', fontSize: 9, color: C.faint }}>
+                        {c.comparison.previous_period
+                          ? `${c.comparison.previous_period} → ${c.comparison.current_period} · ${BASIS_LABEL[c.comparison.basis]}`
+                          : BASIS_LABEL[c.comparison.basis]}
+                      </span>
+                    )}
+                    {c.comparison && !c.comparison.previous && c.comparison.current && (
+                      <span style={{ display: 'block', fontSize: 9, color: C.faint }}>previous: NOT DISCLOSED</span>
+                    )}
                   </span>
-                  <span style={{ fontSize: 10.5, color: C.dim, flex: 1 }}>{c.evidence}</span>
+                  <span style={{ fontSize: 10.5, color: C.dim, flex: 1 }}>
+                    {/* CAUSE AND WHETHER IT REPEATS — the two questions a
+                        number cannot answer about itself. Extracted from the
+                        sentence, never inferred: "not disclosed" is printed
+                        wherever the document gave no reason. */}
+                    {c.comparison?.cause && (
+                      <span style={{
+                        display: 'inline-block', marginRight: 6, padding: '0 4px', borderRadius: 3,
+                        fontSize: 8.5, fontWeight: 800, letterSpacing: 0.3,
+                        color: c.comparison.cause.persistence === 'STRUCTURAL' ? C.up
+                          : c.comparison.cause.persistence === 'TEMPORARY' ? C.warn : C.faint,
+                        border: `1px solid ${C.border}`,
+                      }} title={c.comparison.cause.persistence_because}>
+                        {c.comparison.cause.persistence}
+                      </span>
+                    )}
+                    {c.comparison && (c.comparison.change_type === 'INCREASED' || c.comparison.change_type === 'DECREASED') && !c.comparison.cause && (
+                      <span style={{ color: C.warn }}>CAUSE NOT DISCLOSED · </span>
+                    )}
+                    {c.evidence}
+                  </span>
                   <span style={{ fontSize: 8.5, fontWeight: 800, color: C.faint }}>W{c.weight}</span>
                 </div>
               );
             })}
+          </Section>
+
+          {/* ══ CHANGE DETECTION — the longitudinal block. ══════ (zzz758)
+              Everything above reads ONE filing. This reads the ledger: what
+              each figure was the last time it was disclosed, what it is now,
+              on what basis the two are being compared, the reason the company
+              gave, and whether that reason repeats. Where the ledger holds
+              only one period, it says so rather than implying the company
+              withheld a comparison it was never asked for. */}
+          <Section label={`CHANGE vs PREVIOUS DISCLOSURE · ${a.historyDepth} reporting period${a.historyDepth === 1 ? '' : 's'} on file`}>
+            {a.historyDepth <= 1 && (
+              <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.55 }}>
+                This is the first period read for this holding, so every figure below is a first observation and
+                <b style={{ color: C.text }}> no previous value exists to compare against</b>. Nothing is inferred to fill
+                that gap. The next read turns these levels into directions.
+              </div>
+            )}
+            {a.historyDepth > 1 && a.changes.length === 0 && (
+              <div style={{ fontSize: 11, color: C.dim }}>
+                Earlier periods are on file and nothing comparable moved between them.
+              </div>
+            )}
+            {a.changes.map((m) => {
+              const tone = m.change_type === 'DECREASED' || m.change_type === 'NOT_DISCLOSED' ? C.down
+                : m.change_type === 'INCREASED' ? C.up : C.flat;
+              return (
+                <div key={m.key} style={{ padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 8.5, fontWeight: 800, color: tone, letterSpacing: 0.3, minWidth: 96 }}>
+                      {m.change_type.replace(/_/g, ' ')}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: C.text, minWidth: 132 }}>{m.label}</span>
+                    <span style={{ fontSize: 11, color: C.dim, flex: 1 }}>
+                      <span style={{ color: C.faint }}>{m.previous ? `${m.previous.raw}${m.previous_period ? ` (${m.previous_period})` : ''} → ` : 'previous: NOT DISCLOSED · '}</span>
+                      <b style={{ color: C.text }}>{m.current ? m.current.raw : 'not disclosed'}</b>
+                      {m.change && <span style={{ color: tone, fontWeight: 800 }}> {m.change}</span>}
+                      {m.change_relative && <span style={{ color: C.faint }}> ({m.change_relative})</span>}
+                      <span style={{ color: C.faint }}> · {BASIS_LABEL[m.basis]}</span>
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.dim, paddingLeft: 104, lineHeight: 1.5 }}>
+                    {m.cause
+                      ? <>
+                        <b style={{ color: m.cause.persistence === 'STRUCTURAL' ? C.up : m.cause.persistence === 'TEMPORARY' ? C.warn : C.faint }}>
+                          {m.cause.persistence}
+                        </b>
+                        {' — stated cause: '}{m.cause.text}
+                        <span style={{ color: C.faint }}> ({m.cause.persistence_because} Read from “{m.cause.connective}” in {m.source}.)</span>
+                      </>
+                      : (m.change_type === 'INCREASED' || m.change_type === 'DECREASED')
+                        ? <span style={{ color: C.warn }}>CAUSE NOT DISCLOSED — the document states the change and gives no reason for it, so whether it repeats is unknown.</span>
+                        : <span style={{ color: C.faint }}>{m.line}</span>}
+                    {m.promised && (
+                      <div style={{ color: C.faint }}>
+                        Management said in {m.promised.period}: {m.promised.kind.toLowerCase()} {m.promised.value} — this is the actual it will be graded against.
+                      </div>
+                    )}
+                    {m.forward && (
+                      <div style={{ color: C.faint }}>
+                        Forward: {m.forward.kind.toLowerCase()} {m.forward.value} — a claim about the future, not a reported figure.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {a.changes.length > 0 && (
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 5 }}>
+                Causes: {a.causeSummary.structural} structural · {a.causeSummary.temporary} temporary ·{' '}
+                {a.causeSummary.unclassified} stated but unclassified · {a.causeSummary.none} moves with no reason given.
+              </div>
+            )}
+            {a.statusChangeReason && (
+              <div style={{ fontSize: 10.5, color: C.text, marginTop: 5, fontWeight: 700 }}>
+                STATUS CHANGED — {a.statusChangeReason}
+              </div>
+            )}
           </Section>
 
           {/* ── STRUCTURAL SIGNAL — the mechanism, as a chain. ─────────── */}

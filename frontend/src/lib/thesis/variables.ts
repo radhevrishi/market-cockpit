@@ -32,6 +32,7 @@ import {
 } from './taxonomy';
 
 import { bestEventPerVariable, judgeEventQuality, verifiedDirection, type StructuralEvent } from './evidence-extract';
+import { BASIS_LABEL, type MetricComparison } from './comparison';
 
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
 export type { VarKey, VarGroup, EvidenceKind };
@@ -69,6 +70,13 @@ export interface StructuralVar {
    *  conclusion — the fact itself. */
   evidence: string;
   source: VarSource;
+  /** ── THE LONGITUDINAL JOIN.                                     (zzz758)
+   *
+   *  Non-null when the evidence ledger holds an earlier period carrying this
+   *  same variable, so the row can print CURRENT → PREVIOUS → CHANGE with the
+   *  comparison basis attached. Null where no earlier figure exists — and the
+   *  card then says PREVIOUS: NOT DISCLOSED rather than inventing one. */
+  comparison?: MetricComparison | null;
 }
 
 
@@ -215,7 +223,80 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
   return out;
 }
 
-export function extractVariables(graded: any | null, summary: any | null): StructuralVar[] {
+// ═══════════════════════════════════════════════════════════════════════════
+// THE LONGITUDINAL UPGRADE.                                         (zzz758)
+//
+// A variable extracted from ONE document can only ever be a level: the filing
+// says utilisation is 80% and the row says 80%, verdict `stated`, "no
+// comparison basis". That was honest and it was also the ceiling — the board
+// could never say 72% → 80% because nothing handed it last quarter's figure.
+//
+// `buildComparisons(ledger)` walks every period that has ever been read and
+// finds the most recent EARLIER figure for the same variable. Where it finds
+// one, the basis exists, and a level becomes a direction. Where it does not,
+// the row is left exactly as it was — a level, marked as a level. That
+// asymmetry is the whole guard against §75: a previous value appears on a
+// card only when an earlier period record actually holds it.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Magnitude below which a move is noise rather than a direction. */
+function movedEnough(c: MetricComparison): boolean {
+  const s = c.change || '';
+  const m = s.match(/-?\d+(?:\.\d+)?/);
+  if (!m) return false;
+  const v = Math.abs(Number(m[0]));
+  return /pp$/i.test(s) ? v >= 1 : v >= 2;
+}
+
+export function applyComparisons(
+  vars: StructuralVar[],
+  comparisons: Partial<Record<VarKey, MetricComparison>> | null | undefined,
+): StructuralVar[] {
+  if (!comparisons) return vars;
+  return vars.map((v) => {
+    const c = comparisons[v.key];
+    if (!c) return v;
+    // A claim is never turned into a measured direction by a comparison: a
+    // target restated is management repeating itself, not a business moving.
+    const isFact = v.kind !== 'claim' && v.source === 'filing';
+    const hasBasis = c.basis !== 'NONE'
+      && (c.change_type === 'INCREASED' || c.change_type === 'DECREASED' || c.change_type === 'UNCHANGED');
+    if (!isFact || !hasBasis || !c.previous) {
+      return { ...v, comparison: c };
+    }
+    const inverted = NEGATIVE_VARS.has(v.key);
+    const moved = movedEnough(c);
+    const verdict: VarVerdict = !moved || c.direction === 'flat'
+      ? 'flat'
+      : c.direction === 'up' ? (inverted ? 'deteriorating' : 'improving')
+        : c.direction === 'down' ? (inverted ? 'improving' : 'deteriorating')
+          : v.verdict;
+    return {
+      ...v,
+      comparison: c,
+      // The BEFORE now comes from a period record, so it is printed — and the
+      // period it came from is printed with it, because "previous" without a
+      // date is the kind of number that quietly becomes a guess.
+      before: v.before ?? c.previous.raw,
+      delta: c.change ?? v.delta,
+      verdict,
+      kind: 'fact',
+      evidence: `${c.previous.raw} (${c.previous_period}) → ${c.current?.raw ?? v.after ?? ''} (${c.current_period})`
+        + `${c.change ? ` · ${c.change}` : ''}${c.change_relative ? ` (${c.change_relative})` : ''}`
+        + ` · ${BASIS_LABEL[c.basis]}. `
+        + (c.cause
+          ? `Stated cause: ${c.cause.text} — ${c.cause.persistence === 'STRUCTURAL' ? 'STRUCTURAL' : c.cause.persistence === 'TEMPORARY' ? 'TEMPORARY' : 'PERSISTENCE UNCLASSIFIED'}. ${c.cause.persistence_because} `
+          : 'CAUSE: not disclosed — the document states the change and gives no reason for it. ')
+        + v.evidence,
+    };
+  });
+}
+
+export function extractVariables(
+  graded: any | null,
+  summary: any | null,
+  comparisons?: Partial<Record<VarKey, MetricComparison>> | null,
+): StructuralVar[] {
   const out: StructuralVar[] = [];
   // Typed events first. Any key they cover is not re-pushed from the
   // summary's loose fields below — one variable, one row, and the row with
@@ -689,7 +770,7 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
     });
   }
 
-  return out;
+  return applyComparisons(out, comparisons);
 }
 
 /** Index by key, last write wins — the filing beats the grader where both

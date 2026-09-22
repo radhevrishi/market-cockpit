@@ -63,6 +63,7 @@
 import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
+import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason } from './taxonomy';
 
 /** A variable the grader can fill without a document is OUTPUT. (zzz738) */
@@ -105,6 +106,12 @@ export interface CheckedVariable {
    *  read and was silent, it cannot apply, or it was mentioned unclearly.
    *  Null when the variable DOES have a value. (zzz723) */
   absence: AbsenceReason | null;
+  /** The cross-period join for this variable, when the ledger holds one. It is
+   *  attached even where the variable has NO current value — a figure that was
+   *  disclosed for four quarters and is absent from the fifth is the change
+   *  the card most needs to show, and no amount of reading THIS filing finds
+   *  it. (zzz758) */
+  comparison?: MetricComparison | null;
 }
 
 export interface ThesisAssessment {
@@ -119,6 +126,18 @@ export interface ThesisAssessment {
   invalidationConditions: Array<{ condition: string; weight: number; status: 'ok' | 'watch' | 'fired' | 'unknown' }>;
   /** What to look at next quarter to settle the open questions. */
   nextConfirmation: string[];
+  /** ── THE LONGITUDINAL BLOCK.                                    (zzz758) */
+  /** Every cross-period comparison that carries a change, worst first. */
+  changes: MetricComparison[];
+  /** How many of those changes have a STATED cause, and of what kind. A
+   *  quarter where four things moved and none has a disclosed reason is a
+   *  different quarter from one where three moves are traced to a new plant. */
+  causeSummary: { structural: number; temporary: number; unclassified: number; none: number };
+  /** Non-null only when the status actually differs from the previous read. */
+  statusChangeReason: string | null;
+  /** Reporting periods on file. Depth 1 means every figure is a first
+   *  observation and no comparison was possible for an honest reason. */
+  historyDepth: number;
   /** One line stating why the status is what it is. */
   because: string;
   /** Deteriorations in variables that are NOT part of this thesis's own
@@ -257,11 +276,21 @@ export interface AssessInput {
    *  filled by reading a filing, and the card must say so instead of asking
    *  for another read. (zzz757) */
   hasGraderRow?: boolean;
+  /** Cross-period comparisons built from the evidence ledger. (zzz758) */
+  comparisons?: Partial<Record<VarKey, MetricComparison>> | null;
+  /** How many reporting periods the ledger holds. One means every variable is
+   *  a first observation and the card must say so rather than implying that
+   *  levels without directions are the company's fault. (zzz758) */
+  historyDepth?: number;
+  /** The status this holding carried at the previous read, so a change of
+   *  status can be explained rather than silently replaced. (zzz758) */
+  previousStatus?: { status: string; period: string } | null;
 }
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
   const thesis = thesisFor(input.pattern);
   const found = byKey(input.variables);
+  const cmp = input.comparisons || {};
 
   const graderMissing = input.hasGraderRow === false;
   const checked: CheckedVariable[] = thesis.variables.map((tv: ThesisVariable) => {
@@ -271,7 +300,15 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // Three documents read and no one-off found is the forensic test
     // passing, not a gap in the evidence. Recorded as flat: checked, and
     // nothing found. Never improving — absence is not a positive finding.
-    const silencePasses = !v && !!input.evidenceReviewed && SILENCE_IS_A_PASS.has(tv.key);
+    const comparison = cmp[tv.key] || null;
+    // ── A VARIABLE THAT STOPPED BEING DISCLOSED IS NOT SILENCE.    (zzz758)
+    //
+    // The pass-on-silence rule was written for risks nobody mentioned. It must
+    // not absolve a company that disclosed a figure for four quarters and has
+    // now gone quiet on it — that is a disclosure DECISION, and the card says
+    // so with the last known value beside it.
+    const stoppedDisclosing = !v && comparison?.change_type === 'NOT_DISCLOSED';
+    const silencePasses = !v && !stoppedDisclosing && !!input.evidenceReviewed && SILENCE_IS_A_PASS.has(tv.key);
     // A variable the company did not disclose is UNKNOWN, never deteriorating.
     const verdict: VarVerdict = v ? v.verdict : silencePasses ? 'flat' : 'unknown';
     const fired = !!tv.invalidatedWhen && verdict === 'deteriorating';
@@ -283,7 +320,12 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       key: tv.key, label: v?.label || VAR_LABEL[tv.key] || tv.key, weight: tv.weight, why: tv.why,
       verdict,
       before: v?.before ?? null, after: v?.after ?? null, delta: v?.delta ?? null,
-      evidence: v?.evidence || (silencePasses
+      comparison,
+      evidence: v?.evidence || (stoppedDisclosing
+        ? `${comparison!.previous?.raw} in ${comparison!.previous_period}, and not disclosed in ${comparison!.current_period}. `
+          + 'The figure was on file and has stopped being published. That is a decision, not an oversight, '
+          + 'and it is recorded here rather than counted as a pass.'
+        : silencePasses
         ? `The documents read disclose no ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()}. For this variable that is the check passing: the condition "${tv.invalidatedWhen || 'it would have been disclosed'}" did not fire on anything that was read.`
         : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed
           ? 'This figure is computed from the filed statements by the grading engine, and this company has no graded or screener row on file. Reading more filings cannot produce it.'
@@ -560,14 +602,69 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     })
     .sort((a, b) => b.weight - a.weight);
 
+  // ── WHAT TO LOOK FOR, NAMED AND NUMBERED.                        (zzz758)
+  //
+  // "Utilisation — not disclosed this time" told the owner nothing he could
+  // act on. Where the ledger holds a previous figure, the next confirmation
+  // states the number to beat and the basis it will be read on, so next
+  // quarter's read is a test with a pass mark rather than another look.
   const nextConfirmation = checked
     .filter((c) => c.weight >= 3 && (c.verdict === 'unknown' || c.verdict === 'flat' || c.verdict === 'stated'))
-    .slice(0, 3)
-    .map((c) => c.verdict === 'unknown'
-      ? `${c.label} — not disclosed this time. Whether it is disclosed next quarter is itself information.`
-      : c.verdict === 'stated'
-        ? `${c.label} — disclosed as a level (${c.after || c.before}) with nothing to compare against. Next quarter's figure turns it into a direction.`
-        : `${c.label} — flat. It has to turn before the thesis can be called intact.`);
+    .slice(0, 4)
+    .map((c) => {
+      const k = c.comparison;
+      const known = k?.current?.raw || c.after || c.before;
+      if (k?.change_type === 'NOT_DISCLOSED' && k.previous) {
+        return `${c.label} — last disclosed at ${k.previous.raw} in ${k.previous_period} and absent since. `
+          + 'Whether the next filing restores it is the test; continued silence on a figure that used to be published is itself the answer.';
+      }
+      if (c.verdict === 'stated' && known) {
+        return `${c.label} — ${known} recorded with no earlier figure on file. `
+          + `Next period's read turns it into a direction: above ${known} confirms, below it contradicts.`;
+      }
+      if (c.verdict === 'flat' && known) {
+        return `${c.label} — flat at ${known}${k?.basis && k.basis !== 'NONE' ? ` ${BASIS_LABEL[k.basis]}` : ''}. `
+          + 'It has to turn before the thesis can be called intact.';
+      }
+      if (c.verdict === 'unknown') {
+        return `${c.label} — not disclosed this time and no earlier figure on file. Whether it is disclosed next quarter is itself information.`;
+      }
+      return `${c.label} — ${c.verdict}. Next period's figure settles it.`;
+    });
+
+  // ── WHY THE STATUS MOVED.                                        (zzz758)
+  //
+  // A status that changes without a reason is a number that changed its mind.
+  // The reason is assembled from the comparisons that actually carry a
+  // direction, so it names evidence rather than restating the verdict.
+  const movers = checked
+    .filter((c) => c.comparison && (c.comparison.change_type === 'INCREASED' || c.comparison.change_type === 'DECREASED' || c.comparison.change_type === 'NOT_DISCLOSED'))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 3);
+  const statusChangeReason = input.previousStatus && input.previousStatus.status !== status
+    ? `${input.previousStatus.status} → ${status} since ${input.previousStatus.period}`
+      + (movers.length
+        ? ` — ${movers.map((m) => (m.comparison!.change_type === 'NOT_DISCLOSED'
+          ? `${m.label.toLowerCase()} stopped being disclosed (was ${m.comparison!.previous?.raw})`
+          : `${m.label.toLowerCase()} ${m.comparison!.previous?.raw} → ${m.comparison!.current?.raw}${m.comparison!.change ? ` (${m.comparison!.change})` : ''}`)).join('; ')}.`
+        : ' — no single variable moved; the change comes from what was and was not read.')
+    : null;
+
+  // ── THE CHANGE LOG THE CARD RENDERS. ────────────────────────────────────
+  const changes = checked
+    .filter((c) => c.comparison && c.comparison.change_type !== 'NEW')
+    .map((c) => c.comparison as MetricComparison)
+    .sort((a, b) => {
+      const rank = (x: MetricComparison) => (x.change_type === 'DECREASED' || x.change_type === 'NOT_DISCLOSED' ? 0 : x.change_type === 'INCREASED' ? 1 : 2);
+      return rank(a) - rank(b);
+    });
+
+  const causeSummary = {
+    structural: changes.filter((c) => c.cause?.persistence === 'STRUCTURAL').length,
+    temporary: changes.filter((c) => c.cause?.persistence === 'TEMPORARY').length,
+    unclassified: changes.filter((c) => c.cause?.persistence === 'UNCLASSIFIED').length,
+    none: changes.filter((c) => (c.change_type === 'INCREASED' || c.change_type === 'DECREASED') && !c.cause).length,
+  };
 
   // ── THE STRUCTURAL CHANGE DETECTOR.                            (zzz717)
   //
@@ -601,6 +698,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   return {
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
     mechanismCheck, mechanismVerdict, dimensions,
+    changes, causeSummary, statusChangeReason,
+    historyDepth: input.historyDepth ?? 0,
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
       corePossible: core.length, coreDisclosed: coreDisclosed.length,
