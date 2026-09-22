@@ -118,6 +118,44 @@ export const SUMMARY_TOOL = {
       // repeats. One built on a raw-material tailwind, freight normalisation
       // or forex does not, and reads identically on the face of the P&L.
       // ═══════════════════════════════════════════════════════════════════
+      // ═══════════════════════════════════════════════════════════════════
+      // THE HEADLINE FIGURES THE FILING PRINTS ON ITS FIRST PAGE. (zzz762)
+      //
+      // This block did not exist, and its absence was the single largest gap
+      // in the engine. Revenue growth, earnings growth and cash conversion
+      // were treated as GRADER-ONLY variables — computed by the earnings
+      // engine from filed statements and never read out of the document. That
+      // holds right up until a holding has no graded row and no screener row,
+      // and then those three variables can NEVER be filled however many
+      // documents are read. Eighteen of the owner's fifty-three holdings sat
+      // in exactly that state: three documents read, thirteen facts
+      // extracted, and "revenue growth ⊘ · cash conversion ⊘ · EVIDENCE
+      // INCOMPLETE" on the card. The figures were on page one of every one of
+      // those filings; nothing ever asked for them.
+      //
+      // These are COPIED, never computed. If the document prints the growth
+      // rate, copy it. If it prints only the two absolute figures, copy both
+      // and leave the growth empty — the engine can divide, and a number the
+      // model arrived at by dividing is not a number the company stated.
+      headline: {
+        type: 'object',
+        description: 'The top-line figures as the statement of results prints them. Empty strings wherever the document does not state the item — never computed, never estimated, never carried over from another period.',
+        properties: {
+          period: { type: 'string', description: 'The period these figures are for, as the document labels it ("Q1 FY27", "quarter ended 30 June 2026"). Empty if unclear.' },
+          basis: { type: 'string', enum: ['consolidated', 'standalone', 'not_stated'], description: 'Which set of accounts these came from.' },
+          comparison: { type: 'string', enum: ['yoy', 'qoq', 'not_stated'], description: 'What the growth figures below are measured against. Indian filings usually show both; say which one you copied.' },
+          revenue: { type: 'string', description: 'Revenue / total income for the period, with its unit exactly as printed ("Rs 1,053 crore").' },
+          revenue_prior: { type: 'string', description: 'The same line for the comparison period, as printed. Empty if the document shows only one period.' },
+          revenue_growth: { type: 'string', description: 'The growth rate ONLY if the document prints it ("+27.1%", "up 27%"). Empty string if the document shows the two figures but not the rate — do not divide.' },
+          profit: { type: 'string', description: 'Profit after tax for the period, with its unit exactly as printed.' },
+          profit_prior: { type: 'string', description: 'PAT for the comparison period, as printed. Empty if absent.' },
+          profit_growth: { type: 'string', description: 'The PAT growth rate ONLY if the document prints it. Empty otherwise — do not divide.' },
+          ebitda: { type: 'string', description: 'EBITDA / operating profit as printed. Empty if absent.' },
+          cash_from_operations: { type: 'string', description: 'Cash generated from operating activities, as printed in the cash-flow statement. Indian quarterly filings often omit it — empty string then, and that is the correct answer.' },
+          cash_flow_period: { type: 'string', description: 'The period the cash-flow figure covers, which is frequently the FULL YEAR or the half-year even in a quarterly filing. Copy the label. Empty if no cash-flow figure.' },
+        },
+        required: ['period', 'basis', 'comparison', 'revenue', 'revenue_prior', 'revenue_growth', 'profit', 'profit_prior', 'profit_growth', 'ebitda', 'cash_from_operations', 'cash_flow_period'],
+      },
       catalysts: {
         type: 'array',
         description: 'Every distinct forward-looking catalyst the release names — an order, a customer win, a qualification, a capacity addition, a product launch, an approval, a pricing action, an entry into a new geography. Empty array if the release names none. Do not list ordinary results commentary here.',
@@ -347,7 +385,7 @@ export const SUMMARY_TOOL = {
       },
     },
     required: ['verdict_line', 'guidance', 'segments', 'mix_shift', 'capital', 'management', 'new_business', 'positives', 'negatives', 'watch_next', 'not_disclosed',
-      'catalysts', 'margin_bridge', 'utilisation', 'capex_projects', 'order_book', 'one_offs', 'operating_leverage_evidence',
+      'headline', 'catalysts', 'margin_bridge', 'utilisation', 'capex_projects', 'order_book', 'one_offs', 'operating_leverage_evidence',
       'capacity', 'demand', 'customers', 'volume_price_mix', 'balance', 'risks', 'management_targets', 'capex_earning'],
   },
 };
@@ -386,6 +424,7 @@ Three rules govern every one of them:
 3. SEPARATE FACT FROM CLAIM. "management_targets" holds forward promises — a utilisation target, a commissioning date, a margin goal — and they are claims about the future, never results. Only record one with both a metric and a stated figure or date; "we remain optimistic" is not a target and must not become one.
 "capex_earning" is the one field that asks you to connect two things, and it is still bounded by the text: fill it only when the document itself links spend to an outcome (utilisation of the new asset, revenue from it, a statement that it is ramping or behind plan). Never infer it from the P&L.
 - "one_offs" is only for items the release ITSELF identifies as non-recurring, exceptional, one-time, or a settlement, insurance, tax or forex gain or charge. Do not classify an ordinary operating item as a one-off.
+- "headline" is a COPY of the top-line table: revenue, profit after tax, EBITDA and operating cash flow, each with its unit exactly as printed, and the comparison-period figures where the table shows them. Copy a growth rate only if the document prints one; if it prints the two absolute figures and no rate, leave the rate empty — do not divide. Say whether the figures are consolidated or standalone and whether the growth is year-on-year or sequential. Indian quarterly filings frequently print operating cash flow only for the half-year or full year: copy the label into cash_flow_period rather than pretending it is the quarter's. For a transcript or a deck that repeats the results table, copy from it; for a document that prints no results table, every headline field is empty.
 - Every figure in these fields obeys the same rule as everywhere else: it must appear in the release text.`;
 
 

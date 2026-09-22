@@ -31,7 +31,8 @@ import {
   type VarKey, type VarGroup, type EvidenceKind,
 } from './taxonomy';
 
-import { bestEventPerVariable, judgeEventQuality, verifiedDirection, type StructuralEvent } from './evidence-extract';
+import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
+import { scaledNumber, sameUnit } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
 
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
@@ -416,6 +417,19 @@ export function extractVariables(
       if (levelOnly && hasBridge) out[i] = { ...v, comparison: cur!.comparison ?? null };
       return;
     }
+    // ── THE SAME UNIT RULES THE EVENTS PATH ANSWERS TO.            (zzz762)
+    //
+    // A summary row is a model's reading of the same document, and it can be
+    // mis-filed in exactly the same ways: a growth rate under utilisation
+    // (REDINGTON "−14%", DEEPAKNTR ">175%"), a stock day-count under it (SFL
+    // "30 days inventory"), a bare percentage as an answer to "is the capex
+    // earning yet" (RATEGAIN "78.8%"). The row's own evidence line names the
+    // variable, so the sentence tests pass; only a value that cannot BE that
+    // variable is dropped, and the card then shows the hollow circle, which is
+    // the truth: nothing usable was read for it.
+    if (v.source === 'filing' && !valueFitsVariable({
+      variable: v.key, before: v.before, after: v.after, unit: null, evidence_text: v.evidence,
+    })) return;
     // A value with no comparison basis is DISCLOSED. It is not absent.
     const hasValue = !!(String(v.after || '').trim() || String(v.before || '').trim() || String(v.delta || '').trim());
     if (v.verdict === 'unknown' && hasValue) v = { ...v, verdict: 'stated' };
@@ -595,6 +609,107 @@ export function extractVariables(
     });
   }
 
+  // ── THE HEADLINE THE FILING PRINTS ON PAGE ONE.                  (zzz762)
+  //
+  // Revenue growth, earnings growth and cash conversion came from the grader
+  // row and nowhere else. A holding with no grader row — eighteen of the
+  // owner's fifty-three — could have three documents read and thirteen facts
+  // extracted and still show "revenue growth ⊘ · cash conversion ⊘ ·
+  // EVIDENCE INCOMPLETE", because nothing ever asked the filing for the
+  // figures on its first page. The summary schema now carries a `headline`
+  // block, copied verbatim from the statement of results, and it fills each
+  // of these ONLY where the grader had nothing.
+  //
+  // What is computed and what is not: a growth rate the document prints is
+  // copied. Where it prints both periods' figures and no rate, the rate is
+  // arithmetic on two stated numbers of the same unit — the same licence
+  // `operating_leverage` already has — and the evidence line says so. No
+  // figure is ever carried in from another period or another company.
+  const hl = summary?.headline || {};
+  const hlBasis = said(hl.comparison) && hl.comparison !== 'not_stated' ? String(hl.comparison).toUpperCase() : null;
+  const hlPeriod = said(hl.period) ? ` (${String(hl.period).trim()})` : '';
+  const hlGrowth = (cur: unknown, prior: unknown, printed: unknown): { rate: number; how: 'printed' | 'computed'; text: string } | null => {
+    const p = pctIn(printed);
+    if (p != null && /%|per ?cent/i.test(String(printed))) return { rate: p, how: 'printed', text: String(printed).trim() };
+    const c = said(cur) ? String(cur).trim() : null;
+    const b = said(prior) ? String(prior).trim() : null;
+    if (!c || !b) return null;
+    // Money against money, in the same magnitude words — or in none.
+    if (!sameUnit(c, b, null, null)) return null;
+    const cn = scaledNumber(c), bn = scaledNumber(b);
+    if (cn == null || bn == null || bn === 0) return null;
+    // A growth off a loss is not a growth; that case stays unread.
+    if (bn < 0) return null;
+    const r = ((cn - bn) / Math.abs(bn)) * 100;
+    if (!Number.isFinite(r)) return null;
+    return { rate: r, how: 'computed', text: `${b} → ${c}` };
+  };
+  if (salesY == null) {
+    const rg = hlGrowth(hl.revenue, hl.revenue_prior, hl.revenue_growth);
+    if (rg) {
+      push({
+        key: 'revenue_growth', label: VAR_LABEL.revenue_growth,
+        before: said(hl.revenue_prior) ? String(hl.revenue_prior).trim() : null,
+        after: said(hl.revenue) ? String(hl.revenue).trim() : pct(rg.rate),
+        delta: pct(rg.rate),
+        verdict: rg.rate >= 15 ? 'improving' : rg.rate >= 0 ? 'flat' : 'deteriorating',
+        evidence: rg.how === 'printed'
+          ? `Revenue ${rg.text}${hlBasis ? ` ${hlBasis}` : ''}${hlPeriod}, as printed in the results filing.`
+          : `Revenue ${rg.text}${hlBasis ? ` ${hlBasis}` : ''}${hlPeriod} — both figures printed in the results filing; the ${pct(rg.rate)} is arithmetic on the two.`,
+        source: 'filing',
+      });
+    }
+  }
+  if (epsY == null) {
+    const eg = hlGrowth(hl.profit, hl.profit_prior, hl.profit_growth);
+    if (eg) {
+      push({
+        key: 'earnings_growth', label: VAR_LABEL.earnings_growth,
+        before: said(hl.profit_prior) ? String(hl.profit_prior).trim() : null,
+        after: said(hl.profit) ? String(hl.profit).trim() : pct(eg.rate),
+        delta: pct(eg.rate),
+        verdict: eg.rate >= 20 ? 'improving' : eg.rate >= 0 ? 'flat' : 'deteriorating',
+        evidence: eg.how === 'printed'
+          ? `Profit after tax ${eg.text}${hlBasis ? ` ${hlBasis}` : ''}${hlPeriod}, as printed in the results filing.`
+          : `Profit after tax ${eg.text}${hlBasis ? ` ${hlBasis}` : ''}${hlPeriod} — both figures printed in the results filing; the ${pct(eg.rate)} is arithmetic on the two.`,
+        source: 'filing',
+      });
+    }
+  }
+  if (cfoToPat == null && said(hl.cash_from_operations)) {
+    // Cash conversion needs the cash figure AND a profit for the SAME period.
+    // Indian quarterly filings print operating cash flow for the half-year or
+    // the full year; against a quarter's PAT that ratio would be meaningless,
+    // so where the periods differ the cash figure is shown as a level and the
+    // ratio is not computed.
+    const cfoText = String(hl.cash_from_operations).trim();
+    const cfoPeriod = said(hl.cash_flow_period) ? String(hl.cash_flow_period).trim() : null;
+    const samePeriod = !cfoPeriod || (said(hl.period) && cfoPeriod.toLowerCase() === String(hl.period).trim().toLowerCase());
+    const cfo = scaledNumber(cfoText);
+    const pat = said(hl.profit) && sameUnit(cfoText, String(hl.profit), null, null) ? scaledNumber(String(hl.profit)) : null;
+    if (samePeriod && cfo != null && pat != null && pat > 0) {
+      const ratio = cfo / pat;
+      push({
+        key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
+        before: null, after: `${ratio.toFixed(2)}×`, delta: null,
+        verdict: cfo < 0 ? 'deteriorating' : ratio >= 1 ? 'improving' : ratio >= 0.6 ? 'flat' : 'deteriorating',
+        evidence: `Operating cash flow ${cfoText} against profit ${String(hl.profit).trim()}${hlPeriod} — ${ratio.toFixed(2)}× (both printed in the results filing; the ratio is arithmetic on the two).`,
+        source: 'filing',
+      });
+    } else {
+      push({
+        key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
+        before: null, after: `${cfoText}${cfoPeriod ? ` (${cfoPeriod})` : ''}`, delta: null,
+        verdict: 'unknown',
+        evidence: `Operating cash flow ${cfoText}${cfoPeriod ? ` for ${cfoPeriod}` : ''}, as printed. `
+          + (pat == null || pat <= 0
+            ? 'No same-unit positive profit figure to set it against, so no ratio.'
+            : 'The cash-flow period differs from the results period, so no ratio is drawn against a quarter\'s profit.'),
+        source: 'filing',
+      });
+    }
+  }
+
   // ── FILING FACTS ────────────────────────────────────────────────────────
   const ut = summary?.utilisation || {};
   const utPrior = pctIn(ut.prior), utNow = pctIn(ut.current), utExp = pctIn(ut.expected);
@@ -609,7 +724,7 @@ export function extractVariables(
       evidence: [
         said(ut.prior) && said(ut.current) ? `Utilisation ${ut.prior} → ${ut.current}.`
           : said(ut.current) ? `Utilisation ${ut.current}, no prior figure disclosed.` : '',
-        said(ut.expected) ? `Management expects ${ut.expected}${said(ut.expected_by) ? ` by ${ut.expected_by}` : ''}.` : '',
+        said(ut.expected) ? `Management expects utilisation of ${ut.expected}${said(ut.expected_by) ? ` by ${ut.expected_by}` : ''}.` : '',
       ].filter(Boolean).join(' '),
       source: 'filing',
     });
@@ -652,16 +767,27 @@ export function extractVariables(
 
   const ob = summary?.order_book || {};
   if (said(ob.closing_value) || said(ob.growth)) {
-    const g = pctIn(ob.growth);
+    // ── A LEVEL IN THE GROWTH SLOT IS A LEVEL.                      (zzz762)
+    //
+    // EXICOM's summary put "+1400 Cr" under `growth`, and the row printed
+    // "◐ Order book +1400 Cr" as though a fourteen-hundred-crore CHANGE had
+    // been stated. A growth is a rate: it carries % or pp. Anything else in
+    // that slot is a stated level, and it becomes the level only when no
+    // closing value was given — never a delta, and never a verdict.
+    const growthRaw = said(ob.growth) ? String(ob.growth).trim() : null;
+    const growthIsRate = !!growthRaw && /%|\bpp\b|per ?cent|\bbps\b/i.test(growthRaw);
+    const level = said(ob.closing_value) ? String(ob.closing_value)
+      : (growthRaw && !growthIsRate ? growthRaw.replace(/^\+/, '') : null);
+    const g = growthIsRate ? pctIn(growthRaw) : null;
     push({
       key: 'order_book', label: VAR_LABEL.order_book,
       before: null,
-      after: said(ob.closing_value) ? String(ob.closing_value) : null,
-      delta: said(ob.growth) ? String(ob.growth) : null,
+      after: level,
+      delta: growthIsRate ? growthRaw : null,
       verdict: g == null ? 'unknown' : g >= 15 ? 'improving' : g >= 0 ? 'flat' : 'deteriorating',
       evidence: [
-        said(ob.closing_value) ? `Order book ${ob.closing_value}.` : '',
-        said(ob.growth) ? `Growth ${ob.growth}.` : '',
+        level ? `Order book ${level}.` : '',
+        growthIsRate ? `Growth ${growthRaw}.` : '',
       ].filter(Boolean).join(' '),
       source: 'filing',
     });

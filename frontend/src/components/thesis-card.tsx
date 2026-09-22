@@ -385,7 +385,17 @@ export function ThesisCard(p: ThesisCardProps) {
                                   {c.delta ? <span style={{ opacity: 0.9 }}> · {c.delta}</span> : null}
                                 </>
                               ) : (
-                                <b>{c.after || c.delta}</b>
+                                <>
+                                  {/* The LEVEL is the number; the delta is the
+                                      qualifier. status.ts prints `after ||
+                                      before` in its sentence, and the chip
+                                      now prints the same field in the same
+                                      order — one variable, one figure, on
+                                      every line of the card. (zzz762) */}
+                                  <b>{c.after || c.before || c.delta}</b>
+                                  {(c.after || c.before) && c.delta && c.delta !== c.after
+                                    ? <span style={{ opacity: 0.9 }}> · {c.delta}</span> : null}
+                                </>
                               )}
                             </>
                           ) : ''}

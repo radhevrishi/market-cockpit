@@ -39,7 +39,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'us-ai-summary-v7';  // zzz720 — structural block. A version bump invalidates every cached summary, which is correct: a v6 reading has none of the new fields and would read as "not disclosed" forever.
+const PROMPT_VERSION = 'us-ai-summary-v8';  // zzz762 — headline block  // zzz720 — structural block. A version bump invalidates every cached summary, which is correct: a v6 reading has none of the new fields and would read as "not disclosed" forever.
 const TTL_S = 365 * 24 * 3600;          // a filed quarter is immutable
 // The release in full wherever it fits. A long retail release puts its income
 // statement and its reconciliation tables well past 60k characters, and a model
@@ -387,6 +387,23 @@ export async function GET(req: NextRequest) {
   }
   for (const k of ['current', 'prior', 'expected', 'expected_by', 'basis']) {
     if (data.utilisation && !clean(data.utilisation[k])) data.utilisation[k] = '';
+  }
+  // The headline block goes through the same per-field gate. (zzz762)
+  {
+    const h = (data as any).headline;
+    if (h && typeof h === 'object') {
+      for (const k of ['period', 'revenue', 'revenue_prior', 'revenue_growth', 'profit', 'profit_prior', 'profit_growth', 'ebitda', 'cash_from_operations', 'cash_flow_period']) {
+        if (typeof h[k] !== 'string' || !clean(h[k])) h[k] = '';
+      }
+      for (const k of ['revenue_growth', 'profit_growth']) {
+        if (h[k] && !/%|per ?cent/i.test(h[k])) h[k] = '';
+      }
+      if (!['consolidated', 'standalone', 'not_stated'].includes(h.basis)) h.basis = 'not_stated';
+      if (!['yoy', 'qoq', 'not_stated'].includes(h.comparison)) h.comparison = 'not_stated';
+      if (!h.cash_from_operations) h.cash_flow_period = '';
+    } else {
+      (data as any).headline = null;
+    }
   }
   for (const k of ['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration']) {
     if (data.order_book && !clean(data.order_book[k])) data.order_book[k] = '';

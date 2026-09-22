@@ -332,7 +332,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         : silencePasses
         ? `The documents read disclose no ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()}. For this variable that is the check passing: the condition "${tv.invalidatedWhen || 'it would have been disclosed'}" did not fire on anything that was read.`
         : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed
-          ? 'This figure is computed from the filed statements by the grading engine, and this company has no graded or screener row on file. Reading more filings cannot produce it.'
+          ? 'This company has no graded or screener row on file, and none of the documents read prints the figure on its results page. A results filing that states it — or a graded row — will fill this; a transcript alone will not.'
           : input.evidenceReviewed
             ? 'A document was read and is silent on this. Absence is evidence — a company that stops disclosing a figure has told you something — but it is never counted against the thesis.'
             : 'No evidence document has been read for this holding yet.'),
@@ -475,13 +475,16 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + 'so the numbers stand and the reason behind them remains unestablished.';
   } else if (coreDisclosed.length < core.length
       && core.some((c) => c.absence === 'no_grader_row')) {
-    // The one absence no amount of reading can fix.
+    // No graded row AND no results filing with the figure on its first page.
+    // Since zzz762 the filing's headline block fills these; the remaining
+    // cases are holdings whose documents read were transcripts and decks
+    // only, or were read before the headline was asked for.
     const gm = core.filter((c) => c.absence === 'no_grader_row').map((c) => c.label.toLowerCase());
     status = 'EVIDENCE_INCOMPLETE';
-    because = `${gm.join(' and ')} ${gm.length === 1 ? 'is' : 'are'} computed from the filed statements by the grading engine, `
-      + 'and this company has no graded or screener row on file. Reading more filings cannot fill '
-      + `${gm.length === 1 ? 'it' : 'them'} — the name has to enter the graded universe first. `
-      + 'Everything that COULD be read has been.';
+    because = `${gm.join(' and ')} ${gm.length === 1 ? 'is' : 'are'} not on file: this company has no graded or screener row, `
+      + 'and none of the documents read prints the figure on its results page. '
+      + `A results filing that states ${gm.length === 1 ? 'it' : 'them'} — re-read once the quarterly results are on file — fills this; `
+      + 'a transcript or a deck alone does not.';
   } else if (!core.length || disclosed.length < 2) {
     // ── TWO WAYS TO REACH A VERDICT YOU HAVE NOT EARNED.          (zzz719)
     //

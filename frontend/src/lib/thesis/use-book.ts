@@ -533,8 +533,17 @@ export function useBook(opts?: { includeBench?: boolean }) {
           // carries the failure as `last_attempt` beside the periods.
           const ledger: CompanyLedger | null = j?.ledger || prev.ledger || null;
           const keepEvidence = !!prev.summary;
+          // ── A FAILED RE-READ IS A NOTE, NOT AN ERROR BANNER.       (zzz762)
+          //
+          // MINDSPACE and MOREPENLAB rendered "No readable result on file for
+          // this holding." in amber ABOVE a fully populated card, because a
+          // later read that found nothing new wrote `error` over evidence
+          // that was still on file and still current. When evidence is kept
+          // the failure is filed where the read outcome belongs.
+          const failure = j?.error || 'No readable result on file for this holding.';
           return { ...r, [sym]: { ...prev, state: keepEvidence ? 'done' : 'error',
-            error: j?.error || 'No readable result on file for this holding.',
+            error: keepEvidence ? undefined : failure,
+            readNote: keepEvidence ? `Latest read found nothing usable (${failure}) — evidence on file stands.` : prev.readNote,
             ledger, freshness: freshnessOf(ledger),
             persisted: j?.persisted ?? null,
             discoveryAttempts: j?.discovery_attempts || undefined,

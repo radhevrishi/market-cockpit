@@ -55,7 +55,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const PROMPT_VERSION = 'india-ai-summary-v8';  // zzz738 — structural events stage  // zzz720 — structural block: capacity, demand, customers, volume/price/mix, balance, risks, targets
+const PROMPT_VERSION = 'india-ai-summary-v9';  // zzz762 — headline block: revenue / PAT / CFO copied from the results page  // zzz738 — structural events stage  // zzz720 — structural block: capacity, demand, customers, volume/price/mix, balance, risks, targets
 const TTL_S = 365 * 24 * 3600;
 const MAX_CHARS = 140_000;
 /** How many documents one company may cost. Each is a model-budget PDF
@@ -465,6 +465,30 @@ export async function GET(req: NextRequest) {
   }
   for (const k of ['current', 'prior', 'expected', 'expected_by', 'basis']) {
     if (data.utilisation && !clean(data.utilisation[k])) data.utilisation[k] = '';
+  }
+  // ── THE HEADLINE GOES THROUGH THE SAME GATE.                    (zzz762)
+  //
+  // These are the figures most worth checking, because downstream they fill
+  // revenue growth, earnings growth and cash conversion for every holding
+  // with no grader row. A figure the filing does not contain is blanked per
+  // field; the enums are coerced to their honest default; and a growth rate
+  // that is not a rate is dropped so the engine never mistakes a level for a
+  // change.
+  {
+    const h = (data as any).headline;
+    if (h && typeof h === 'object') {
+      for (const k of ['period', 'revenue', 'revenue_prior', 'revenue_growth', 'profit', 'profit_prior', 'profit_growth', 'ebitda', 'cash_from_operations', 'cash_flow_period']) {
+        if (typeof h[k] !== 'string' || !clean(h[k])) h[k] = '';
+      }
+      for (const k of ['revenue_growth', 'profit_growth']) {
+        if (h[k] && !/%|per ?cent/i.test(h[k])) h[k] = '';
+      }
+      if (!['consolidated', 'standalone', 'not_stated'].includes(h.basis)) h.basis = 'not_stated';
+      if (!['yoy', 'qoq', 'not_stated'].includes(h.comparison)) h.comparison = 'not_stated';
+      if (!h.cash_from_operations) h.cash_flow_period = '';
+    } else {
+      (data as any).headline = null;
+    }
   }
   for (const k of ['closing_value', 'growth', 'order_inflow', 'book_to_bill', 'execution_period', 'concentration']) {
     if (data.order_book && !clean(data.order_book[k])) data.order_book[k] = '';

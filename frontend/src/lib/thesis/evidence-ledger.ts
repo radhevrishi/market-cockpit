@@ -36,7 +36,7 @@
 
 import type { VarKey } from './taxonomy';
 import { VAR_LABEL, VAR_DIMENSION } from './taxonomy';
-import { judgeEventQuality, verifiedDirection, type StructuralEvent } from './evidence-extract';
+import { judgeEventQuality, verifiedDirection, betterReading, type RankableReading, type StructuralEvent } from './evidence-extract';
 
 export const LEDGER_VERSION = 1;
 
@@ -521,9 +521,16 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
   const cur = ledger.periods[to];
   const prev = from ? ledger.periods[from] : null;
   const lines: ChangeLine[] = [];
+  // The same comparator the board uses — value type, then a before, then the
+  // written document over the spoken one, then confidence. Ranking on
+  // confidence alone here let WHAT CHANGED print a different figure from the
+  // board for the same variable in the same quarter. (zzz762)
+  const rankable = (f: EvidenceFact): RankableReading => ({
+    value_type: f.fact_or_management_statement === 'FACT' ? 'ACTUAL' : f.fact_or_management_statement,
+    before: f.before_value, source: f.source_name || f.source_type, confidence: f.confidence,
+  });
   const bestPer = (facts: EvidenceFact[]) => {
     const m = new Map<VarKey, EvidenceFact>();
-    const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
     for (const f of facts) {
       if (f.fact_or_management_statement !== 'FACT') continue;
       // Re-judged here, not trusted from the record: a fact stored before a
@@ -532,7 +539,7 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
       const q = judgeEventQuality({ variable: f.metric_name, before: f.before_value, after: f.after_value, unit: f.unit, evidence_text: f.source_quote });
       if (q !== 'sentence') continue;
       const o = m.get(f.metric_name);
-      if (!o || rank[f.confidence] < rank[o.confidence]) m.set(f.metric_name, f);
+      if (!o || betterReading(rankable(f), rankable(o)) < 0) m.set(f.metric_name, f);
     }
     return m;
   };

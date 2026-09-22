@@ -41,7 +41,7 @@ import {
 import {
   candidatesFromFilings, classifyExchangeDoc, rankCandidates, selectForReading, resolveDiscovery,
 } from '../thesis/evidence-discovery';
-import { findPassages, validateEvents, judgeEventQuality } from '../thesis/evidence-extract';
+import { findPassages, validateEvents, judgeEventQuality, valueFitsVariable, betterReading } from '../thesis/evidence-extract';
 import { scaledNumber, deltaOf as ledgerDeltaOf, sameUnit as ledgerSameUnit } from '../thesis/evidence-ledger';
 import {
   reportingPeriodFromDate, periodOrdinal, reportingPeriodForDocuments, factsFromEvents, documentId,
@@ -869,7 +869,7 @@ describe('structural evidence extraction', () => {
     assert.equal(rev.absence, 'no_grader_row');
     assert.equal(a.status, 'EVIDENCE_INCOMPLETE');
     assert.match(a.because, /no graded or screener row/);
-    assert.match(a.because, /Reading more filings cannot fill/);
+    assert.match(a.because, /results filing that states them/);
     assert.doesNotMatch(a.because, /not yet been reviewed/);
   });
 
@@ -1816,5 +1816,131 @@ describe('zzz761 — before → now on the board, and targets obey the unit rule
     const v = extractVars(null, summary).find((x) => x.key === 'utilisation')!;
     assert.equal(v.before, null, 'nothing is invented to fill the gap');
     assert.equal(v.verdict, 'stated');
+  });
+});
+
+
+describe('zzz762 — the summary rows obey the unit rules; the filing fills what the grader cannot', () => {
+  const ev = (variable: string, value_type: string, before: string | null, after: string, text: string, source = 'Concall transcript Jul 2026', confidence = 'HIGH'): any =>
+    ({ variable, value_type, before, after, unit: null, period: null, direction: 'up',
+      evidence_text: text, source, confidence });
+
+  test('REDINGTON / DEEPAKNTR / SFL — a growth rate or a day-count under utilisation is dropped from the summary path too', () => {
+    for (const bad of ['-14%', '>175%', '30 days inventory']) {
+      const vars = extractVariables(null, { utilisation: { current: bad } });
+      assert.equal(vars.filter((v) => v.key === 'utilisation').length, 0, `summary utilisation "${bad}" must not reach the board`);
+    }
+    const ok = extractVariables(null, { utilisation: { prior: '72%', current: '80%' } });
+    const u = ok.find((v) => v.key === 'utilisation')!;
+    assert.equal(u.before, '72%'); assert.equal(u.after, '80%'); assert.equal(u.verdict, 'improving');
+  });
+
+  test('an event rejected as unit_mismatch does not let the summary re-push the same value', () => {
+    const summary = {
+      events: [ev('utilisation', 'ACTUAL', null, '-14%', 'Revenue from the segment declined 14% during the quarter under review, management said.')],
+      utilisation: { current: '-14%' },
+    };
+    assert.equal(extractVariables(null, summary).filter((v) => v.key === 'utilisation').length, 0);
+  });
+
+  test('RATEGAIN — a bare percentage is not an answer to "is the capex earning yet"', () => {
+    assert.equal(valueFitsVariable({ variable: 'capex_earning', before: null, after: '78.8%', unit: null, evidence_text: 'Capex earning: 78.8%.' }), false);
+    assert.equal(valueFitsVariable({ variable: 'capex_earning', before: null, after: 'new line ramping, 60% utilised', unit: null, evidence_text: 'Capex earning: new line ramping.' }), true);
+    assert.equal(extractVariables(null, { capex_earning: '78.8%' }).filter((v) => v.key === 'capex_earning').length, 0);
+    const good = extractVariables(null, { capex_earning: 'the new plant is ramping and contributed revenue this quarter' });
+    assert.equal(good.find((v) => v.key === 'capex_earning')!.verdict, 'improving');
+  });
+
+  test('EXICOM — "+1400 Cr" in the growth slot is a level, never a delta', () => {
+    const vars = extractVariables(null, { order_book: { growth: '+1400 Cr' } });
+    const ob = vars.find((v) => v.key === 'order_book')!;
+    assert.equal(ob.after, '1400 Cr');
+    assert.equal(ob.delta, null);
+    assert.equal(ob.verdict, 'stated');
+    const rate = extractVariables(null, { order_book: { closing_value: 'Rs 1,000 crore', growth: '+22%' } })
+      .find((v) => v.key === 'order_book')!;
+    assert.equal(rate.after, 'Rs 1,000 crore'); assert.equal(rate.delta, '+22%'); assert.equal(rate.verdict, 'improving');
+    // A bare rate filed as the book itself is refused on the events path.
+    assert.equal(valueFitsVariable({ variable: 'order_book', before: null, after: '+22%', unit: null, evidence_text: 'Order book grew 22% year on year to a record level, management said.' }), false);
+  });
+
+  test('UNIMECH / SONACOMS — the board and WHAT CHANGED rank readings identically', () => {
+    // Written document beats transcript for the same shape; a before beats a tier.
+    const deck = { value_type: 'ACTUAL' as const, before: null, source: 'Investor presentation Jul 2026', confidence: 'MEDIUM' as const };
+    const call = { value_type: 'ACTUAL' as const, before: null, source: 'Concall transcript Jul 2026', confidence: 'HIGH' as const };
+    assert.ok(betterReading(deck, call) < 0, 'deck wins over transcript even at lower confidence');
+    const callWithBefore = { ...call, before: '52%' };
+    assert.ok(betterReading(callWithBefore, deck) < 0, 'a before → after move beats a bare level from a better source');
+    // Through the ledger: two ACTUAL utilisation readings of one quarter.
+    const docs = [
+      { id: documentId('https://x/u-ppt.pdf'), url: 'https://x/u-ppt.pdf', label: 'Investor presentation Jul 2026', kind: 'investor_presentation', source: 's', period: null, date_iso: '2026-07-24', outcome: 'read', chars: 40000, pages: 20 },
+      { id: documentId('https://x/u-call.pdf'), url: 'https://x/u-call.pdf', label: 'Concall transcript Jul 2026', kind: 'transcript', source: 's', period: null, date_iso: '2026-07-25', outcome: 'read', chars: 40000, pages: 20 },
+    ] as any[];
+    const events = [
+      ev('utilisation', 'ACTUAL', null, '58%', 'Capacity utilisation for the quarter stood at about 58 percent, management said on the call.', 'Concall transcript Jul 2026', 'HIGH'),
+      ev('utilisation', 'ACTUAL', null, '52%', 'Capacity utilisation across the plants was 52% for the quarter under review.', 'Investor presentation Jul 2026', 'MEDIUM'),
+    ];
+    const rp = reportingPeriodForDocuments(docs);
+    const now = '2026-07-26T00:00:00.000Z';
+    const { facts, events: evs } = factsFromEvents('UNIMECH', rp.period, events, docs, now);
+    const period: any = { reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
+      documents: docs, documents_found: 2, documents_read: 2, documents_failed: 0, documents_skipped: 0,
+      facts, events: evs, summary: { events }, status: null, status_because: null, tallies: null,
+      discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: 'r', prompt_version: 'v9', model: 'm', extracted_at: now, updated_at: now };
+    const run: any = { run_id: 'r', reporting_period: rp.period, started_at: now, finished_at: now, outcome: 'COMPLETED', error: null,
+      documents_found: 2, documents_read: 2, facts_extracted: facts.length, events_extracted: evs.length, model: 'm', prompt_version: 'v9', raw_extraction_json: { events } };
+    const ledger = mergePeriod(emptyLedger('UNIMECH', 'IN', now), period, run);
+    const board = extractVariables(null, { events }).find((v) => v.key === 'utilisation')!;
+    const changed = whatChanged(ledger).lines.find((l) => l.metric === 'utilisation')!;
+    assert.equal(board.after, '52%');
+    assert.match(changed.text, /52%/);
+    assert.doesNotMatch(changed.text, /58%/);
+  });
+
+  test('the filing headline fills revenue growth, earnings growth and cash conversion when there is no grader row', () => {
+    const summary = { headline: {
+      period: 'Q1 FY27', basis: 'consolidated', comparison: 'yoy',
+      revenue: 'Rs 1,053 crore', revenue_prior: 'Rs 828 crore', revenue_growth: '+27.1%',
+      profit: 'Rs 96 crore', profit_prior: 'Rs 80 crore', profit_growth: '',
+      ebitda: 'Rs 180 crore', cash_from_operations: '', cash_flow_period: '',
+    } };
+    const vars = extractVariables(null, summary);
+    const rev = vars.find((v) => v.key === 'revenue_growth')!;
+    assert.equal(rev.source, 'filing');
+    assert.equal(rev.delta, '+27.1%');
+    assert.equal(rev.before, 'Rs 828 crore');
+    assert.equal(rev.verdict, 'improving');
+    assert.match(rev.evidence, /as printed/);
+    const eps = vars.find((v) => v.key === 'earnings_growth')!;
+    assert.equal(eps.delta, '+20%', 'two printed figures, no printed rate — arithmetic on the two');
+    assert.match(eps.evidence, /arithmetic on the two/);
+    assert.equal(eps.verdict, 'improving');
+    // Cash flow absent in the filing → no cash conversion row, no invention.
+    assert.equal(vars.filter((v) => v.key === 'cash_conversion').length, 0);
+    // The status no longer blames the grader for a figure the filing supplied.
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: false, variables: vars as any });
+    assert.notEqual(a.checked.find((c) => c.key === 'revenue_growth')!.absence, 'no_grader_row');
+  });
+
+  test('the grader row still wins over the headline; a half-year cash figure is a level, not a quarter ratio', () => {
+    const graded = { sales_yoy_pct: 31, eps_yoy_pct: 12 };
+    const summary = { headline: { period: 'Q1 FY27', basis: 'consolidated', comparison: 'yoy',
+      revenue: 'Rs 1,053 crore', revenue_prior: 'Rs 828 crore', revenue_growth: '+27.1%',
+      profit: 'Rs 96 crore', profit_prior: '', profit_growth: '',
+      ebitda: '', cash_from_operations: 'Rs 140 crore', cash_flow_period: 'H1 FY27' } };
+    const vars = extractVariables(graded, summary);
+    const rev = vars.find((v) => v.key === 'revenue_growth')!;
+    assert.equal(rev.source, 'grader'); assert.equal(rev.delta, '+31%');
+    const cc = vars.find((v) => v.key === 'cash_conversion')!;
+    assert.equal(cc.verdict, 'stated');
+    assert.match(cc.after!, /H1 FY27/);
+    assert.match(cc.evidence, /differs from the results period/);
+  });
+
+  test('a headline growth off a loss, or across different units, is not computed', () => {
+    const loss = extractVariables(null, { headline: { profit: 'Rs 20 crore', profit_prior: 'Rs -15 crore' } });
+    assert.equal(loss.filter((v) => v.key === 'earnings_growth').length, 0);
+    const units = extractVariables(null, { headline: { revenue: 'USD 12 million', revenue_prior: 'Rs 80 crore' } });
+    assert.equal(units.filter((v) => v.key === 'revenue_growth').length, 0);
   });
 });

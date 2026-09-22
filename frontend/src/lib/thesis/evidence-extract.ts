@@ -385,8 +385,6 @@ export const CAPACITY_UNIT_RE =/\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|
 /** Pure: whether the value fits the variable and the evidence is a sentence. */
 export function judgeEventQuality(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): 'sentence' | 'chart' | 'unit_mismatch' {
   const ev = e.evidence_text || '';
-  const valueText = `${e.before || ''} ${e.after || ''}`;
-  const v = e.variable;
   // A run of axis labels is a CHART read first and foremost. It is judged
   // ahead of the unit rules because the figures did come off that
   // variable's slide — they are weak, not mis-filed, and the two states
@@ -394,6 +392,23 @@ export function judgeEventQuality(e: { variable: string; before: string | null; 
   const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
   const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
   if (words < 5 || figures > words) return 'chart';
+  return valueFitsVariable(e) ? 'sentence' : 'unit_mismatch';
+}
+
+// ── THE UNIT RULES APPLY TO EVERY ROW, NOT ONLY THE TYPED ONES.     (zzz762)
+//
+// `judgeEventQuality` guarded the events path and nothing else. The summary's
+// loose blocks — `utilisation`, `order_book`, `capex_earning` — were pushed
+// onto the board unchecked, and when an event WAS rejected here its key never
+// entered `covered`, so the summary re-pushed the same value one step later.
+// The live page carried REDINGTON "utilisation −14%", DEEPAKNTR ">175%", SFL
+// "30 days inventory" and RATEGAIN "capex earning 78.8%" through exactly that
+// gap. The value test is now its own function so both paths ask it.
+/** Pure: whether the VALUE fits the variable it is filed under. */
+export function valueFitsVariable(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): boolean {
+  const ev = e.evidence_text || '';
+  const valueText = `${e.before || ''} ${e.after || ''}`;
+  const v = e.variable;
   const unitOk = (() => {
     // ── UTILISATION IS THE MOST-ABUSED VARIABLE ON THE PAGE.       (zzz755)
     //
@@ -449,9 +464,21 @@ export function judgeEventQuality(e: { variable: string; before: string | null; 
     if (v === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
     if (v === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
     if (v === 'capacity_bottleneck' || v === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);
+    // "Is the capex earning yet?" is answered in words — utilisation of the
+    // new asset, revenue from it, "ramping", "below plan". RATEGAIN carried a
+    // bare "78.8%" here: a figure with no noun is not an answer to that
+    // question, whatever it was a percentage of. (zzz762)
+    if (v === 'capex_earning') return /[A-Za-z]{3,}/.test(valueText);
+    // An order book is a stock of money or units. A bare growth rate filed
+    // as the book itself ("+22%") is the change wearing the level's label.
+    if (v === 'order_book') {
+      const after = String(e.after || '').trim();
+      if (after && /^[+-]?\d+(?:\.\d+)?\s*(%|pp|bps)$/i.test(after)) return false;
+      return true;
+    }
     return true;
   })();
-  return unitOk ? 'sentence' : 'unit_mismatch';
+  return unitOk;
 }
 
 const UP_RE = /\bincreas|\bimprov|\bgrew\b|\bgrow(n|th)?\b|\bhigher\b|\bup\b|\bexpan|\brose\b|\bris(e|ing)\b|\bramp|\badded\b|\baddition|\bdoubl|\btripl|\b\d+\s*x\b|\bfrom\b.*\bto\b|\bscal(e|ed|ing) up|\bcommission|\bnew\b|\bwon\b|\bwin\b|\bbagged|\breceived\b|\bmaximum|\bpeak\b|\bfull\b/i;
@@ -532,18 +559,38 @@ const sameValue = (a: StructuralEvent, b: StructuralEvent) =>
   String(a.after ?? a.before ?? '').trim().toLowerCase()
   === String(b.after ?? b.before ?? '').trim().toLowerCase();
 
-export function bestEventPerVariable(events: StructuralEvent[]): Map<VarKey, VariableSlot> {
-  const rank: Record<ValueType, number> = { ACTUAL: 0, GUIDANCE: 1, TARGET: 2, MANAGEMENT_CLAIM: 3 };
-  const conf: Record<Confidence, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-  // Source tier sits AFTER the before-presence test on purpose: an event that
-  // carries both sides of a move gives a comparison, and a comparison is worth
-  // more than a tier. Tier decides between readings of the same shape, which
-  // is exactly the SPECTRUM case — two bare levels.
-  const better = (a: StructuralEvent, b: StructuralEvent) =>
-    (rank[a.value_type] - rank[b.value_type])
+const VALUE_RANK: Record<ValueType, number> = { ACTUAL: 0, GUIDANCE: 1, TARGET: 2, MANAGEMENT_CLAIM: 3 };
+const CONF_RANK: Record<Confidence, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+
+/** The shape both selectors rank on. An EvidenceFact in the ledger maps onto
+ *  it too, so the board and WHAT CHANGED can never pick different winners. */
+export interface RankableReading {
+  value_type: ValueType;
+  before: string | null;
+  source: string | null | undefined;
+  confidence: Confidence;
+}
+
+// ── ONE RANKING, USED EVERYWHERE A WINNER IS PICKED.               (zzz762)
+//
+// The board picked its figure with this ordering; WHAT CHANGED picked its own
+// with confidence alone and first-wins. Same quarter, same variable, two
+// answers: UNIMECH showed 52% on the board and 58% in the change list,
+// SONACOMS 237bn against 8bn. Exported so the ledger uses the same comparator.
+//
+// Source tier sits AFTER the before-presence test on purpose: an event that
+// carries both sides of a move gives a comparison, and a comparison is worth
+// more than a tier. Tier decides between readings of the same shape, which
+// is exactly the SPECTRUM case — two bare levels.
+export function betterReading(a: RankableReading, b: RankableReading): number {
+  return (VALUE_RANK[a.value_type] - VALUE_RANK[b.value_type])
     || ((a.before ? 0 : 1) - (b.before ? 0 : 1))
     || (sourceTier(a.source) - sourceTier(b.source))
-    || (conf[a.confidence] - conf[b.confidence]);
+    || (CONF_RANK[a.confidence] - CONF_RANK[b.confidence]);
+}
+
+export function bestEventPerVariable(events: StructuralEvent[]): Map<VarKey, VariableSlot> {
+  const better = betterReading;
   const out = new Map<VarKey, VariableSlot>();
   const actualsSeen = new Map<VarKey, StructuralEvent[]>();
   for (const e of events) {
