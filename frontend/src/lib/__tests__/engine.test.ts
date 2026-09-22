@@ -1152,3 +1152,39 @@ describe('data watch (zzz749)', () => {
     assert.equal(m.failed, 2); assert.equal(m.last_error?.at, '2026-09-22T01:00:00Z');
   });
 });
+
+// ── zzz750: OpenAI behind the Anthropic shape ────────────────────────────
+import { toOpenAIRequest, fromOpenAIResponse } from '../anthropic-meter';
+
+describe('openai translation (zzz750)', () => {
+  test('a forced-tool Anthropic request becomes a forced-function Chat Completions request', () => {
+    const r = toOpenAIRequest({
+      model: 'claude-haiku-4-5-20251001', max_tokens: 1024, system: 'You are careful.', temperature: 0,
+      tools: [{ name: 'file_it', description: 'file', input_schema: { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] } }],
+      tool_choice: { type: 'tool', name: 'file_it' },
+      messages: [{ role: 'user', content: 'KMEW — Order win\n\nbody text' }],
+    }, 'gpt-5-mini', 'low');
+    assert.equal(r.model, 'gpt-5-mini'); assert.equal(r.max_completion_tokens, 1024); assert.equal(r.reasoning_effort, 'low');
+    assert.equal(r.temperature, undefined);                       // gpt-5 refuses a non-default temperature
+    assert.deepEqual(r.messages[0], { role: 'system', content: 'You are careful.' });
+    assert.equal(r.messages[1].content, 'KMEW — Order win\n\nbody text');
+    assert.equal(r.tools[0].function.name, 'file_it'); assert.equal(r.tools[0].function.parameters.required[0], 'a');
+    assert.deepEqual(r.tool_choice, { type: 'function', function: { name: 'file_it' } });
+    const r2 = toOpenAIRequest({ model: 'x', max_tokens: 10, temperature: 0, messages: [{ role: 'user', content: 'hi' }] }, 'gpt-4.1-mini');
+    assert.equal(r2.temperature, 0); assert.equal(r2.reasoning_effort, undefined);
+  });
+  test('a tool call comes back as a tool_use block; usage and stop_reason are Anthropic-shaped', () => {
+    const a = fromOpenAIResponse({ id: 'c1', model: 'gpt-5-mini', choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: { name: 'file_it', arguments: '{"a":"₹279 Cr"}' } }] } }], usage: { prompt_tokens: 1200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 200 } } });
+    assert.equal(a.content[0].type, 'tool_use'); assert.equal(a.content[0].name, 'file_it'); assert.equal(a.content[0].input.a, '₹279 Cr');
+    assert.equal(a.stop_reason, 'tool_use');
+    assert.deepEqual(a.usage, { input_tokens: 1000, cache_read_input_tokens: 200, output_tokens: 80 });
+    const t = fromOpenAIResponse({ choices: [{ finish_reason: 'length', message: { content: '{"label":"Pos' } }], usage: { prompt_tokens: 5, completion_tokens: 5 } });
+    assert.equal(t.content[0].type, 'text'); assert.equal(t.stop_reason, 'max_tokens');
+    const bad = fromOpenAIResponse({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'x', type: 'function', function: { name: 'f', arguments: '{not json' } }] } }] });
+    assert.equal(bad.content.length, 0);                          // unparseable arguments → no tool_use → caller reports "answered without filing"
+  });
+  test('gpt-5-mini is priced as gpt-5-mini, not gpt-5', () => {
+    assert.equal(pricingFor('gpt-5-mini')?.input, 0.25); assert.equal(pricingFor('gpt-5')?.input, 1.25); assert.equal(pricingFor('gpt-5-nano')?.output, 0.40);
+    assert.equal(Number(costOf('gpt-5-mini', { input_tokens: 1000, cache_read_input_tokens: 200, output_tokens: 80 }).toFixed(6)), 0.000415);
+  });
+});

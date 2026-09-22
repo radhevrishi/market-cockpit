@@ -101,9 +101,10 @@ export async function GET(request: Request) {
   // API's own usage counts (lib/anthropic-meter). And the cap that stops them.
   let anthropicSpend: any = undefined;
   try {
-    const { readSpend, monthlyCapUsd } = await import('@/lib/anthropic-meter');
+    const { readSpend, monthlyCapUsd, provider, openaiModel } = await import('@/lib/anthropic-meter');
     const led = await readSpend();
-    anthropicSpend = { ...led, cap_usd: monthlyCapUsd() };
+    const prov = provider();
+    anthropicSpend = { ...led, cap_usd: monthlyCapUsd(), provider: prov, model: prov === 'openai' ? openaiModel() : 'claude-haiku-4-5' };
   } catch (e: any) {
     anthropicSpend = { error: String(e?.message || e) };
   }

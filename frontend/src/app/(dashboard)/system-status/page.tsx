@@ -130,7 +130,7 @@ export default function SystemStatusPage() {
         return (
           <div style={{ marginBottom: 22, padding: '10px 14px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
             <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
-              Anthropic spend · {sp.month}
+              AI model spend · {sp.month}{sp.provider ? ` · ${sp.provider}${sp.model ? ` (${sp.model})` : ''}` : ''}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: '#E2E8F0', fontFamily: 'ui-monospace, monospace', alignItems: 'center' }}>
               <span><span style={{ color: 'var(--mc-text-3)' }}>month to date:</span> <b style={{ color: barColor }}>${Number(sp.total_usd || 0).toFixed(2)}</b> <span style={{ color: 'var(--mc-text-3)' }}>of ${cap} cap</span></span>
@@ -168,7 +168,7 @@ export default function SystemStatusPage() {
               </table>
             )}
             <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
-              Priced from each response's usage block (Haiku 4.5: $1 in / $5 out per M tokens). Cap = ANTHROPIC_MONTHLY_CAP_USD (default 60); at the cap every model call is refused with a labelled error, nothing runs unmetered.
+              Priced from each response's usage block at the provider's list rates. Provider = AI_PROVIDER (openai when OPENAI_API_KEY is set), model = OPENAI_MODEL. Cap = AI_MONTHLY_CAP_USD (default 60); at the cap every model call is refused with a labelled error, nothing runs unmetered.
             </div>
           </div>
         );

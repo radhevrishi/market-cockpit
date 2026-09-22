@@ -29,7 +29,7 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { internalBase } from '@/lib/internal-base';
 import { istToday, istNow, isNseHoliday } from '@/lib/market-hours';
-import { readSpend, monthlyCapUsd } from '@/lib/anthropic-meter';
+import { readSpend, monthlyCapUsd, provider, openaiModel } from '@/lib/anthropic-meter';
 import { readBookState } from '@/lib/book-store';
 import { indiaResultsSeason, upcomingFloor, failureSignature, type WatchLevel, type WatchCheck, type WatchResult } from '@/lib/data-watch';
 
@@ -159,9 +159,9 @@ export async function GET(req: Request) {
     const nearCap = led ? led.total_usd >= 0.9 * cap : false;
     const level: Level = failingNow ? 'fail' : nearCap ? 'warn' : 'ok';
     checks.push({
-      id: 'anthropic', name: 'Anthropic API', level,
+      id: 'anthropic', name: `AI model API (${provider() === 'openai' ? `OpenAI ${openaiModel()}` : 'Anthropic Haiku 4.5'})`, level,
       detail: led ? `month $${led.total_usd.toFixed(2)} of $${cap} · ${led.calls} ok · ${led.failed || 0} failed · ${led.blocked} capped${err ? ` · last error ${err.at.slice(0, 16)} HTTP ${err.status}: ${String(err.message).slice(0, 120)}` : ''}` : 'no ledger (KV unavailable)',
-      action: failingNow ? `Every model call since ${err.at.slice(0, 16)} was refused (HTTP ${err.status}: ${String(err.message).slice(0, 160)}). Fix at console.anthropic.com (billing/key); no redeploy needed.` : nearCap ? `Spend is at ${Math.round((led.total_usd / cap) * 100)}% of the $${cap} cap — raise ANTHROPIC_MONTHLY_CAP_USD on Railway if this month should keep going.` : undefined,
+      action: failingNow ? `Every model call since ${err.at.slice(0, 16)} was refused (HTTP ${err.status}: ${String(err.message).slice(0, 160)}). Fix at ${provider() === 'openai' ? 'platform.openai.com' : 'console.anthropic.com'} (billing/key); no redeploy needed.` : nearCap ? `Spend is at ${Math.round((led.total_usd / cap) * 100)}% of the $${cap} cap — raise AI_MONTHLY_CAP_USD on Railway if this month should keep going.` : undefined,
       ms: t() - t0,
     });
   }

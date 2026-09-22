@@ -1,8 +1,22 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// THE ANTHROPIC METER.                                                (zzz747)
+// THE MODEL METER — one wrapper, two providers.                (zzz747, zzz750)
 //
-// Every model call in this codebase goes through `anthropicMessages()`. It
-// does three things the raw fetch did not:
+// Every model call in this codebase goes through `anthropicMessages()`. The
+// name is historical: the callers speak Anthropic's Messages shape (system,
+// messages, tools with input_schema, forced tool_choice) and read Anthropic's
+// response shape (content blocks, usage, stop_reason). zzz750 adds OpenAI as
+// a provider BEHIND that shape: the request is translated to Chat Completions
+// on the way out and the answer translated back on the way in, so the eight
+// callers, their prompts, tool schemas, quote gates and tests are untouched.
+//
+//   AI_PROVIDER=openai | anthropic   (default: openai when OPENAI_API_KEY is
+//                                     set, else anthropic)
+//   OPENAI_MODEL                     (default gpt-5-mini; every caller's
+//                                     Claude model id maps to this one)
+//   OPENAI_REASONING_EFFORT          (default low — these are extraction
+//                                     calls, not essays)
+//
+// It does three things the raw fetch did not:
 //
 //   1. RECORDS what each call actually cost, from the API's own `usage`
 //      block (input/output/cache tokens) priced with the table below — not an
@@ -38,9 +52,18 @@ export const METER_VERSION = 'v1';
 
 /** USD per million tokens. */
 export const PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  'claude-haiku-4-5':  { input: 1,  output: 5,  cacheRead: 0.10, cacheWrite: 1.25 },
-  'claude-sonnet-4-5': { input: 3,  output: 15, cacheRead: 0.30, cacheWrite: 3.75 },
-  'claude-opus-4-1':   { input: 15, output: 75, cacheRead: 1.50, cacheWrite: 18.75 },
+  'claude-haiku-4-5':  { input: 1,    output: 5,    cacheRead: 0.10,  cacheWrite: 1.25 },
+  'claude-sonnet-4-5': { input: 3,    output: 15,   cacheRead: 0.30,  cacheWrite: 3.75 },
+  'claude-opus-4-1':   { input: 15,   output: 75,   cacheRead: 1.50,  cacheWrite: 18.75 },
+  // OpenAI (per M tokens; cached input is billed at the cacheRead rate,
+  // there is no cache-write premium). Verify against the pricing page.
+  'gpt-5-nano':        { input: 0.05, output: 0.40, cacheRead: 0.005, cacheWrite: 0.05 },
+  'gpt-5-mini':        { input: 0.25, output: 2.00, cacheRead: 0.025, cacheWrite: 0.25 },
+  'gpt-5':             { input: 1.25, output: 10,   cacheRead: 0.125, cacheWrite: 1.25 },
+  'gpt-4.1-nano':      { input: 0.10, output: 0.40, cacheRead: 0.025, cacheWrite: 0.10 },
+  'gpt-4.1-mini':      { input: 0.40, output: 1.60, cacheRead: 0.10,  cacheWrite: 0.40 },
+  'gpt-4.1':           { input: 2,    output: 8,    cacheRead: 0.50,  cacheWrite: 2 },
+  'gpt-4o-mini':       { input: 0.15, output: 0.60, cacheRead: 0.075, cacheWrite: 0.15 },
 };
 
 export interface Usage {
@@ -53,7 +76,7 @@ export interface Usage {
 /** Price table row for a model id like `claude-haiku-4-5-20251001`. */
 export function pricingFor(model: string) {
   const m = String(model || '').toLowerCase();
-  const key = Object.keys(PRICING).find((k) => m.startsWith(k));
+  const key = Object.keys(PRICING).filter((k) => m.startsWith(k)).sort((a, b) => b.length - a.length)[0];
   return key ? PRICING[key] : null;
 }
 
@@ -147,9 +170,17 @@ export function mergeLedgers(month: string, parts: Array<SpendLedger | null>): S
 }
 
 export function monthlyCapUsd(): number {
-  const v = Number(process.env.ANTHROPIC_MONTHLY_CAP_USD);
+  const v = Number(process.env.AI_MONTHLY_CAP_USD || process.env.ANTHROPIC_MONTHLY_CAP_USD);
   return Number.isFinite(v) && v > 0 ? v : 60;
 }
+
+export type Provider = 'anthropic' | 'openai';
+export function provider(): Provider {
+  const p = String(process.env.AI_PROVIDER || '').toLowerCase();
+  if (p === 'openai' || p === 'anthropic') return p;
+  return process.env.OPENAI_API_KEY ? 'openai' : 'anthropic';
+}
+export const openaiModel = () => process.env.OPENAI_MODEL || 'gpt-5-mini';
 
 const SHARD_TTL_S = 400 * 24 * 3600;   // 13 months: last year's months stay comparable
 
@@ -184,7 +215,7 @@ export async function spendGate(): Promise<GateResult> {
   let spent = 0;
   try { spent = (await readSpend()).total_usd; } catch { spent = 0; }
   if (spent >= cap) {
-    return { allowed: false, spent, cap, message: `Monthly Anthropic cap reached ($${spent.toFixed(2)} of $${cap}) — raise ANTHROPIC_MONTHLY_CAP_USD in Railway to continue` };
+    return { allowed: false, spent, cap, message: `Monthly AI cap reached ($${spent.toFixed(2)} of $${cap}) — raise AI_MONTHLY_CAP_USD in Railway to continue` };
   }
   return { allowed: true, spent, cap };
 }
@@ -199,12 +230,77 @@ export interface MessagesBody {
   temperature?: number;
 }
 
+// ── OpenAI translation (pure, tested) ───────────────────────────────────────
+
+function systemText(sys: MessagesBody['system']): string {
+  if (!sys) return '';
+  if (typeof sys === 'string') return sys;
+  return sys.map((b: any) => (typeof b === 'string' ? b : String(b?.text || ''))).join('\n');
+}
+
+function contentText(c: any): string {
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.map((b: any) => (typeof b === 'string' ? b : b?.type === 'text' ? String(b.text || '') : '')).join('\n');
+  return String(c ?? '');
+}
+
+/** Anthropic Messages request → OpenAI Chat Completions request. */
+export function toOpenAIRequest(body: MessagesBody, model: string, reasoningEffort = 'low'): Record<string, any> {
+  const messages: any[] = [];
+  const sys = systemText(body.system);
+  if (sys) messages.push({ role: 'system', content: sys });
+  for (const m of body.messages) messages.push({ role: m.role, content: contentText(m.content) });
+  const out: Record<string, any> = { model, messages, max_completion_tokens: body.max_tokens };
+  // gpt-5 models take reasoning_effort and refuse a non-default temperature;
+  // older models take temperature and ignore reasoning.
+  if (/^gpt-5/.test(model) || /^o\d/.test(model)) out.reasoning_effort = reasoningEffort;
+  else if (typeof body.temperature === 'number') out.temperature = body.temperature;
+  if (body.tools?.length) {
+    out.tools = body.tools.map((t: any) => ({ type: 'function', function: { name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } } }));
+    const tc = body.tool_choice;
+    if (tc?.type === 'tool' && tc.name) out.tool_choice = { type: 'function', function: { name: tc.name } };
+    else if (tc?.type === 'any') out.tool_choice = 'required';
+    else if (tc?.type === 'none') out.tool_choice = 'none';
+  }
+  return out;
+}
+
+/** OpenAI Chat Completions response → Anthropic Messages response shape. */
+export function fromOpenAIResponse(j: any): Record<string, any> {
+  const choice = j?.choices?.[0] || {};
+  const msg = choice.message || {};
+  const content: any[] = [];
+  const text = typeof msg.content === 'string' ? msg.content : Array.isArray(msg.content) ? msg.content.map((p: any) => p?.text || '').join('') : '';
+  if (text) content.push({ type: 'text', text });
+  for (const tc of msg.tool_calls || []) {
+    if (tc?.type !== 'function') continue;
+    let input: any = null;
+    try { input = JSON.parse(tc.function?.arguments || ''); } catch { input = null; }
+    // Unparseable arguments are dropped: callers treat "no tool_use block" as
+    // "the model answered without filing a result", which is the truth.
+    if (input && typeof input === 'object') content.push({ type: 'tool_use', id: tc.id, name: tc.function?.name, input });
+  }
+  const fr = String(choice.finish_reason || '');
+  const stop_reason = fr === 'length' ? 'max_tokens' : fr === 'tool_calls' ? 'tool_use' : 'end_turn';
+  const u = j?.usage || {};
+  const cached = Number(u?.prompt_tokens_details?.cached_tokens || 0);
+  const usage: Usage = {
+    input_tokens: Math.max(0, Number(u.prompt_tokens || 0) - cached),
+    cache_read_input_tokens: cached,
+    output_tokens: Number(u.completion_tokens || 0),
+  };
+  return { id: j?.id, type: 'message', role: 'assistant', model: j?.model, content, stop_reason, usage };
+}
+
 /**
- * POST /v1/messages, metered and capped. Returns the raw `Response` so every
- * caller keeps its own status / body handling. A capped call returns a
- * synthetic 402 with `{ error: { type: 'spend_cap', message } }`.
+ * The model call, metered and capped. Callers send and receive Anthropic's
+ * Messages shape whatever the provider. Returns a `Response` so every caller
+ * keeps its own status / body handling. A capped call returns a synthetic
+ * 402 with `{ error: { type: 'spend_cap', message } }`.
  */
 export async function anthropicMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal; apiKey?: string } = {}): Promise<Response> {
+  const prov = provider();
+  if (prov === 'openai') return openaiMessages(feature, body, opts);
   const apiKey = opts.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return new Response(JSON.stringify({ error: { type: 'no_key', message: 'No ANTHROPIC_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });
@@ -239,4 +335,47 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
     await record(feature, 0, null, false, { status: resp.status, message });
   }
   return resp;
+}
+
+/** OpenAI behind the Anthropic shape. Same gate, same ledger, same failure accounting. */
+async function openaiMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal } = {}): Promise<Response> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: { type: 'no_key', message: 'AI_PROVIDER is openai but no OPENAI_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });
+  }
+  const gate = await spendGate();
+  if (!gate.allowed) {
+    await record(feature, 0, null, true);
+    return new Response(JSON.stringify({ error: { type: 'spend_cap', message: gate.message } }), { status: 402, headers: { 'content-type': 'application/json' } });
+  }
+  const model = openaiModel();
+  const req = toOpenAIRequest(body, model, process.env.OPENAI_REASONING_EFFORT || 'low');
+  let resp: Response;
+  try {
+    resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: opts.signal,
+    });
+  } catch (e: any) {
+    await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    throw e;
+  }
+  if (!resp.ok) {
+    // OpenAI's error body is `{ error: { message, type, code } }` — the same
+    // shape callers already parse, so it is passed through untouched.
+    let message = '';
+    try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
+    await record(feature, 0, null, false, { status: resp.status, message });
+    return resp;
+  }
+  let translated: Record<string, any>;
+  try { translated = fromOpenAIResponse(await resp.json()); }
+  catch (e: any) {
+    await record(feature, 0, null, false, { status: 502, message: `unreadable OpenAI answer: ${String(e?.message || e)}` });
+    return new Response(JSON.stringify({ error: { type: 'bad_answer', message: 'OpenAI answered with something that was not JSON' } }), { status: 502, headers: { 'content-type': 'application/json' } });
+  }
+  await record(feature, costOf(model, translated.usage), translated.usage, false);
+  return new Response(JSON.stringify(translated), { status: 200, headers: { 'content-type': 'application/json' } });
 }
