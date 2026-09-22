@@ -107,11 +107,18 @@ export async function GET(request: Request) {
   } catch (e: any) {
     anthropicSpend = { error: String(e?.message || e) };
   }
+  // zzz749 — the last data-watch run: did each pipeline PRODUCE data.
+  let dataWatch: any = undefined;
+  try {
+    const { kvGet } = await import('@/lib/kv');
+    dataWatch = (await kvGet<any>('data-watch:last')) || null;
+  } catch (e: any) { dataWatch = { error: String(e?.message || e) }; }
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     summary,
     signalsVersions,
     anthropicSpend,
+    dataWatch,
     probes: results,
   }, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' } });
 }

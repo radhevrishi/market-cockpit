@@ -73,10 +73,13 @@ export function costOf(model: string, u: Usage | null | undefined): number {
 export interface FeatureSpend {
   calls: number;
   blocked: number;
+  /** Calls the API refused (4xx/5xx) or that did not answer. Not billed. */
+  failed: number;
   input_tokens: number;
   output_tokens: number;
   usd: number;
   last_at: string | null;
+  last_error: { at: string; status: number; message: string } | null;
 }
 
 export interface SpendLedger {
@@ -84,9 +87,12 @@ export interface SpendLedger {
   total_usd: number;
   calls: number;
   blocked: number;
+  failed: number;
   unrecorded: number;
   by_feature: Record<string, FeatureSpend>;
   updated_at: string | null;
+  /** The most recent refusal from the API, whatever the feature. */
+  last_error: { at: string; status: number; message: string; feature: string } | null;
 }
 
 export const SHARDS = 8;
@@ -94,14 +100,22 @@ export const monthOf = (d = new Date()) => d.toISOString().slice(0, 7);
 export const shardKey = (month: string, shard: number) => `anthropic:spend:${METER_VERSION}:${month}:${shard}`;
 
 export function emptyLedger(month: string): SpendLedger {
-  return { month, total_usd: 0, calls: 0, blocked: 0, unrecorded: 0, by_feature: {}, updated_at: null };
+  return { month, total_usd: 0, calls: 0, blocked: 0, failed: 0, unrecorded: 0, by_feature: {}, updated_at: null, last_error: null };
 }
 
-/** Pure: fold one call into a ledger. */
-export function applyCall(l: SpendLedger, feature: string, usd: number, u: Usage | null, at: string, blocked = false): SpendLedger {
-  const f = l.by_feature[feature] || { calls: 0, blocked: 0, input_tokens: 0, output_tokens: 0, usd: 0, last_at: null };
+const emptyFeature = (): FeatureSpend => ({ calls: 0, blocked: 0, failed: 0, input_tokens: 0, output_tokens: 0, usd: 0, last_at: null, last_error: null });
+
+/** Pure: fold one call into a ledger. `failure` = the API refused or did not answer. */
+export function applyCall(l: SpendLedger, feature: string, usd: number, u: Usage | null, at: string, blocked = false, failure?: { status: number; message: string }): SpendLedger {
+  const f = l.by_feature[feature] || emptyFeature();
+  if (f.failed == null) { f.failed = 0; f.last_error = null; }   // ledgers written before failures were tracked
+  if (l.failed == null) { l.failed = 0; l.last_error = null; }
   if (blocked) { f.blocked += 1; l.blocked += 1; }
-  else {
+  else if (failure) {
+    f.failed += 1; l.failed += 1;
+    f.last_error = { at, status: failure.status, message: failure.message.slice(0, 300) };
+    l.last_error = { ...f.last_error, feature };
+  } else {
     f.calls += 1; l.calls += 1;
     f.input_tokens += Number(u?.input_tokens || 0) + Number(u?.cache_read_input_tokens || 0) + Number(u?.cache_creation_input_tokens || 0);
     f.output_tokens += Number(u?.output_tokens || 0);
@@ -118,12 +132,14 @@ export function mergeLedgers(month: string, parts: Array<SpendLedger | null>): S
   const out = emptyLedger(month);
   for (const p of parts) {
     if (!p) continue;
-    out.total_usd += p.total_usd; out.calls += p.calls; out.blocked += p.blocked; out.unrecorded += p.unrecorded;
+    out.total_usd += p.total_usd; out.calls += p.calls; out.blocked += p.blocked; out.failed += p.failed || 0; out.unrecorded += p.unrecorded;
     if (p.updated_at && (!out.updated_at || p.updated_at > out.updated_at)) out.updated_at = p.updated_at;
+    if (p.last_error && (!out.last_error || p.last_error.at > out.last_error.at)) out.last_error = p.last_error;
     for (const [k, f] of Object.entries(p.by_feature)) {
-      const o = out.by_feature[k] || { calls: 0, blocked: 0, input_tokens: 0, output_tokens: 0, usd: 0, last_at: null };
-      o.calls += f.calls; o.blocked += f.blocked; o.input_tokens += f.input_tokens; o.output_tokens += f.output_tokens; o.usd += f.usd;
+      const o = out.by_feature[k] || emptyFeature();
+      o.calls += f.calls; o.blocked += f.blocked; o.failed += f.failed || 0; o.input_tokens += f.input_tokens; o.output_tokens += f.output_tokens; o.usd += f.usd;
       if (f.last_at && (!o.last_at || f.last_at > o.last_at)) o.last_at = f.last_at;
+      if (f.last_error && (!o.last_error || f.last_error.at > o.last_error.at)) o.last_error = f.last_error;
       out.by_feature[k] = o;
     }
   }
@@ -143,14 +159,14 @@ export async function readSpend(month = monthOf()): Promise<SpendLedger> {
   return mergeLedgers(month, parts);
 }
 
-async function record(feature: string, usd: number, u: Usage | null, blocked: boolean): Promise<void> {
+async function record(feature: string, usd: number, u: Usage | null, blocked: boolean, failure?: { status: number; message: string }): Promise<void> {
   if (!isRedisAvailable()) return;
   const month = monthOf();
   const shard = Math.floor(Math.random() * SHARDS);
   const key = shardKey(month, shard);
   try {
     const cur = (await kvGet<SpendLedger>(key)) || emptyLedger(month);
-    await kvSet(key, applyCall(cur, feature, usd, u, new Date().toISOString(), blocked), SHARD_TTL_S);
+    await kvSet(key, applyCall(cur, feature, usd, u, new Date().toISOString(), blocked, failure), SHARD_TTL_S);
   } catch {
     // Counted, not hidden: the next successful write carries the miss.
     try {
@@ -198,17 +214,29 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
     await record(feature, 0, null, true);
     return new Response(JSON.stringify({ error: { type: 'spend_cap', message: gate.message } }), { status: 402, headers: { 'content-type': 'application/json' } });
   }
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  let resp: Response;
+  try {
+    resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+  } catch (e: any) {
+    // No answer at all (timeout, DNS, reset). Recorded as a failure so the
+    // data watch can tell "nobody asked" from "everybody asked and was refused".
+    await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    throw e;
+  }
   if (resp.ok) {
     // The clone is read for accounting; the caller reads the original.
     let usage: Usage | null = null;
     try { const j: any = await resp.clone().json(); usage = j?.usage || null; } catch { usage = null; }
     await record(feature, costOf(body.model, usage), usage, false);
+  } else {
+    let message = '';
+    try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
+    await record(feature, 0, null, false, { status: resp.status, message });
   }
   return resp;
 }

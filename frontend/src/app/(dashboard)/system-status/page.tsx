@@ -24,7 +24,7 @@ const COLOR: Record<string, string> = {
 };
 
 export default function SystemStatusPage() {
-  const [data, setData] = useState<{ summary: any; probes: ProbeResult[]; generated_at: string; signalsVersions?: any; anthropicSpend?: any } | null>(null);
+  const [data, setData] = useState<{ summary: any; probes: ProbeResult[]; generated_at: string; signalsVersions?: any; anthropicSpend?: any; dataWatch?: any } | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number>(0);
 
@@ -84,6 +84,40 @@ export default function SystemStatusPage() {
           );
         })}
       </div>
+
+      {/* zzz749 — Data watch: did each pipeline PRODUCE data (not just run) */}
+      {data.dataWatch !== undefined && (() => {
+        const w = data.dataWatch;
+        if (!w || w.error || !Array.isArray(w.checks)) {
+          return (
+            <div style={{ marginBottom: 22, padding: '10px 14px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, fontSize: 12, color: 'var(--mc-text-3)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>Data watch</div>
+              {w?.error ? `unavailable: ${w.error}` : 'no run recorded yet — the data-watch workflow runs at 11:00 IST, 16:00 IST and 10:30 ET'}
+            </div>
+          );
+        }
+        const ageMin = Math.round((Date.now() - Date.parse(w.ran_at)) / 60000);
+        const color = (lvl: string) => lvl === 'fail' ? 'var(--mc-bearish)' : lvl === 'warn' ? 'var(--mc-warn)' : 'var(--mc-bullish)';
+        return (
+          <div style={{ marginBottom: 22, padding: '10px 14px', background: 'var(--mc-bg-1)', border: `1px solid ${w.fails ? 'var(--mc-bearish)' : 'var(--mc-bg-4)'}`, borderRadius: 6 }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
+              Data watch · {w.ist_date} · ran {ageMin}m ago · <span style={{ color: color(w.fails ? 'fail' : w.warns ? 'warn' : 'ok') }}>{w.fails} failing · {w.warns} warning · {w.healed} self-healed</span>{w.alerted ? ' · Telegram sent' : ''}
+            </div>
+            <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+              {w.checks.map((c: any) => (
+                <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '10px 1fr', gap: 8, alignItems: 'start' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 5, background: color(c.level) }} />
+                  <div>
+                    <b style={{ color: '#E2E8F0' }}>{c.name}</b> <span style={{ color: 'var(--mc-text-3)' }}>— {c.detail}</span>
+                    {c.healed && <div style={{ color: 'var(--mc-bullish)', fontSize: 11 }}>↻ {c.healed}</div>}
+                    {c.action && <div style={{ color: 'var(--mc-warn)', fontSize: 11 }}>→ {c.action}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* zzz747 — Anthropic spend this month, per feature, from the API's own usage counts */}
       {data.anthropicSpend && !data.anthropicSpend.error && (() => {

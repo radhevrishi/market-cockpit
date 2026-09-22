@@ -1122,3 +1122,33 @@ describe('upcoming board meetings (zzz748)', () => {
     assert.equal(merged.length, 2); assert.equal(merged[0].source, 'NSE'); assert.equal(merged[1].bm_symbol, 'RAMAPPR');
   });
 });
+
+// ── zzz749: data watch helpers + meter failure accounting ────────────────
+import { indiaResultsSeason, upcomingFloor, failureSignature } from '../data-watch';
+
+describe('data watch (zzz749)', () => {
+  test('results seasons cover the fortnight before and the month of each quarter print', () => {
+    assert.equal(indiaResultsSeason('2026-09-22'), false);
+    assert.equal(indiaResultsSeason('2026-09-26'), true);
+    assert.equal(indiaResultsSeason('2026-10-20'), true);
+    assert.equal(indiaResultsSeason('2026-11-20'), false);
+    assert.equal(indiaResultsSeason('2027-01-10'), true);
+    assert.equal(indiaResultsSeason('2026-12-28'), true);
+    assert.equal(indiaResultsSeason('2026-05-15'), true);
+    assert.equal(indiaResultsSeason('2026-08-20'), false);
+    assert.equal(upcomingFloor('2026-10-20'), 25); assert.equal(upcomingFloor('2026-09-22'), 3);
+  });
+  test('the alert signature ignores passing checks and ordering', () => {
+    const a = failureSignature([{ id: 'x', name: '', level: 'fail', detail: '', ms: 0 }, { id: 'y', name: '', level: 'ok', detail: '', ms: 0 }, { id: 'z', name: '', level: 'warn', detail: '', ms: 0 }]);
+    const b = failureSignature([{ id: 'z', name: '', level: 'warn', detail: '', ms: 0 }, { id: 'x', name: '', level: 'fail', detail: '', ms: 0 }]);
+    assert.equal(a, b); assert.equal(a, 'x:fail|z:warn');
+  });
+  test('the meter records refusals separately from billed calls, keeping the latest error', () => {
+    let l = emptySpend('2026-09');
+    l = applyCall(l, 'ai-desk', 0, null, '2026-09-21T20:07:00Z', false, { status: 400, message: 'credit balance is too low' });
+    l = applyCall(l, 'gainers-read', 0.01, { input_tokens: 100, output_tokens: 10 }, '2026-09-21T21:00:00Z');
+    assert.equal(l.failed, 1); assert.equal(l.calls, 1); assert.equal(l.last_error?.feature, 'ai-desk'); assert.equal(l.last_error?.status, 400);
+    const m = mergeLedgers('2026-09', [l, applyCall(emptySpend('2026-09'), 'x', 0, null, '2026-09-22T01:00:00Z', false, { status: 0, message: 'timeout' })]);
+    assert.equal(m.failed, 2); assert.equal(m.last_error?.at, '2026-09-22T01:00:00Z');
+  });
+});

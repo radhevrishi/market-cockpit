@@ -1,0 +1,58 @@
+name: Data watch (did each pipeline produce data?)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# zzz749 — Heartbeats say a job RAN. This says whether it PRODUCED anything,
+# heals what it can (re-ingest the calendar, run the day's gainers sweep,
+# re-run the calendar cron) and Telegrams only what a human must do.
+# The route returns 503 when a check is failing, so the run shows red here
+# too. See frontend/src/app/api/v1/cron/data-watch/route.ts.
+# ════════════════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    - cron: '30 5 * * *'     # 11:00 IST — morning: calendar + India gainers sweep
+    - cron: '30 10 * * 1-5'  # 16:00 IST — post-close: gainers final sweep
+    - cron: '30 14 * * 1-5'  # 10:30 ET  — US pre-market filers graded by now
+  workflow_dispatch:
+    inputs:
+      no_heal:
+        description: 'Only report, do not heal'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: data-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Run the data watch
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          Q="secret=${CRON_SECRET}"
+          if [ "${{ github.event.inputs.no_heal }}" = "true" ]; then Q="$Q&no_heal=1"; fi
+          # Railway has no function time limit; a heal (two month ingests +
+          # archive + a gainers sweep) can take several minutes.
+          CODE=$(curl -s -m 780 -o /tmp/watch.json -w "%{http_code}" "$BASE/api/v1/cron/data-watch?$Q") || CODE=000
+          echo "HTTP $CODE"
+          python3 - <<'PY' || true
+          import json
+          d=json.load(open('/tmp/watch.json'))
+          print(f"{d.get('ist_date')} · fails {d.get('fails')} · warns {d.get('warns')} · healed {d.get('healed')} · alerted {d.get('alerted')} {d.get('alert_note') or ''}")
+          for c in d.get('checks', []):
+              mark = {'ok':'✅','warn':'🟠','fail':'🔴'}.get(c['level'],'?')
+              print(f"{mark} {c['name']} — {c['detail']} ({c['ms']} ms)")
+              if c.get('healed'): print(f"   ↻ {c['healed']}")
+              if c.get('action'): print(f"   → {c['action']}")
+          PY
+          # Red run only when the watch itself could not run: a failing CHECK is
+          # already on Telegram and /system-status, and the watch's own
+          # heartbeat carries it — a red workflow on top would be a third alarm.
+          if [ "$CODE" = "000" ] || [ "$CODE" = "401" ] || [ "$CODE" = "404" ]; then exit 1; fi
