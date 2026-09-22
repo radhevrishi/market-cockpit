@@ -2032,17 +2032,22 @@ describe('zzz763 — mis-filed charts, loss bases, immaterial one-offs, recent r
 
   test('the margin bridge prints its unit: a bare "-1.43" in opm_change_pp is pp', () => {
     const m = extractVariables(null, { margin_bridge: { opm_change_pp: '-1.43', drivers: [] } }).find((v) => v.key === 'margin')!;
-    assert.equal(m.delta, '-1.43pp');
+    assert.equal(m.delta, '-1.4pp');
   });
 
   test('recent reporters — a results filing counts, an intimation does not; read-since-filing is current, read-before is due', () => {
     assert.equal(isResultsFiling('Outcome of Board Meeting - Financial Results for Q2 FY27'), true);
     assert.equal(isResultsFiling('Prior intimation of Board Meeting to consider financial results'), false);
     assert.equal(isResultsFiling('Investor Presentation Q2 FY27'), true);
+    // Results off-season: an AGM outcome and a bare deck are not results.
+    assert.equal(isResultsFiling('Outcome of Board Meeting'), false);
+    assert.equal(isResultsFiling('Outcome of Board Meeting held on 20 September 2026 - Fund raising'), false);
+    assert.equal(isResultsFiling('Investor Presentation'), false);
+    assert.equal(isResultsFiling('Outcome of Board Meeting - Unaudited results for quarter ended 30 September 2026'), true);
     const items = [
       { symbol: 'AAA', subject: 'Financial Results for the quarter ended 30 September 2026', filing_date: '2026-10-20T15:00:00' },
       { symbol: 'AAA', subject: 'Intimation of board meeting', filing_date: '2026-10-12' },
-      { symbol: 'BBB', subject: 'Investor Presentation', filing_date: '2026-10-18' },
+      { symbol: 'BBB', subject: 'Investor Presentation Q2 FY27', filing_date: '2026-10-18' },
       { symbol: 'CCC', subject: 'Financial Results', filing_date: '2026-09-30' },   // outside the window
       { symbol: 'DDD', subject: 'Financial Results', filing_date: '2026-10-19' },
     ];
@@ -2058,5 +2063,578 @@ describe('zzz763 — mis-filed charts, loss bases, immaterial one-offs, recent r
     assert.deepEqual(plan.current.map((d) => d.ticker), ['AAA']);
     assert.equal(plan.not_reported, 2);
     assert.match(plan.due.find((d) => d.ticker === 'BBB')!.because, /before the 2026-10-18 filing/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz764 — live screener.in rows, unit rules, results-only reporters.
+import { parseSection, financialsFromHtml, isCurrentPeriod } from '../thesis/screener-financials';
+
+describe('zzz764 screener.in live financials', () => {
+  const tbl = (id: string, head: string[], rows: Array<[string, string[]]>) =>
+    `<section id="${id}"><table><tr><th></th>${head.map((h) => `<th>${h}</th>`).join('')}</tr>` +
+    rows.map(([l, v]) => `<tr><td>${l} +</td>${v.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('') + `</table></section>`;
+  const html =
+    tbl('quarters', ['Jun 2025', 'Sep 2025', 'Dec 2025', 'Mar 2026', 'Jun 2026'], [
+      ['Sales', ['100', '110', '120', '130', '150']],
+      ['OPM %', ['10%', '11%', '12%', '13%', '14%']],
+      ['Net Profit', ['-5', '8', '9', '10', '12']],
+      ['EPS in Rs', ['2.00', '2.5', '2.6', '2.8', '3.00']],
+    ]) +
+    tbl('profit-loss', ['Mar 2025', 'Mar 2026'], [['Net Profit', ['20', '40']]]) +
+    tbl('cash-flow', ['Mar 2025', 'Mar 2026'], [['Cash from Operating Activity', ['10', '30']]]);
+
+  test('parses section rows with the trailing "+" stripped', () => {
+    const t = parseSection(html, 'quarters')!;
+    assert.deepEqual(t.headers.slice(-1), ['Jun 2026']);
+    assert.deepEqual(t.rows['Sales'], [100, 110, 120, 130, 150]);
+  });
+  test('year-on-year against the quarter four columns back; loss base → null growth', () => {
+    const r = financialsFromHtml('abc', html, 'consolidated', 'u')!;
+    assert.equal(r.period, 'Jun 2026');
+    assert.equal(r.comparison_period, 'Jun 2025');
+    assert.equal(r.sales_yoy_pct, 50);
+    assert.equal(r.opm_pct, 14);
+    assert.equal(r.opm_prev_pct, 10);
+    assert.equal(r.pat_prev_cr, -5);
+    assert.equal(r.net_profit_yoy_pct, null);         // never a growth rate off a loss
+    assert.equal(r.eps_yoy_pct, 50);
+    assert.equal(r.cfo_to_pat_ratio, 0.75);           // same year: 30/40
+    assert.equal(r.cfo_year, 'Mar 2026');
+  });
+  test('no quarterly table → null', () => {
+    assert.equal(financialsFromHtml('abc', '<html></html>', 'standalone', 'u'), null);
+  });
+  test('stale pages are never "this quarter"', () => {
+    const now = new Date('2026-09-22T00:00:00Z');
+    assert.equal(isCurrentPeriod('Jun 2026', now), true);
+    assert.equal(isCurrentPeriod('Dec 2020', now), false);
+    assert.equal(isCurrentPeriod(null, now), false);
+  });
+});
+
+describe('zzz764 results-only recent reporters', () => {
+  test('bare AGM / fund-raise board outcomes do not count; results do', () => {
+    assert.equal(isResultsFiling('Outcome of Board Meeting'), false);
+    assert.equal(isResultsFiling('Outcome of Board Meeting - Fund raising by QIP'), false);
+    assert.equal(isResultsFiling('Investor Presentation'), false);
+    assert.equal(isResultsFiling('Outcome of Board Meeting - Unaudited results for quarter ended June 30, 2026'), true);
+    assert.equal(isResultsFiling('Financial Results'), true);
+    assert.equal(isResultsFiling('Intimation of board meeting to consider financial results'), false);
+  });
+});
+
+describe('zzz764 unit arithmetic', () => {
+  test('identical before/after is not a move', () => {
+    assert.equal(ledgerDeltaOf('45%', '45%', '%'), null);
+  });
+  test('scaledNumber does not read digits glued to letters', () => {
+    assert.equal(scaledNumber('FY26'), null);
+    assert.equal(scaledNumber('₹85 Cr'), 85e7);            // crore applied
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz765 — PRIOR-QUARTER BACKFILL. The previous quarter's documents were
+// already listed in the one period on file, unread. Reading them as their own
+// period is what gives buildComparisons a "before".
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  previousPeriod, selectPriorPeriodDocuments, priorBackfillPlan, priorBackfillTickers, isOlderPeriod, ledgerDocuments,
+} from '../thesis/prior-period';
+
+describe('zzz765 prior-quarter backfill', () => {
+  const now = '2026-09-22T10:00:00.000Z';
+  const later = '2026-09-22T11:00:00.000Z';
+  const doc = (url: string, label: string, kind: string, date: string, outcome = 'read'): any =>
+    ({ id: documentId(url), url, label, kind, source: 'screener.in company page', period: null, date_iso: date, outcome, chars: 40000, pages: 20 });
+  const ev = (variable: string, after: string, unit: string | null, source: string, text: string): any =>
+    ({ variable, value_type: 'ACTUAL', before: null, after, unit, period: null, direction: 'up', evidence_text: text, source, confidence: 'HIGH' });
+  const periodOf = (ticker: string, docs: any[], events: any[], runId: string, at = now) => {
+    const rp = reportingPeriodForDocuments(docs);
+    const { facts, events: evs } = factsFromEvents(ticker, rp.period, events, docs, at);
+    const read = docs.filter((d) => d.outcome === 'read').length;
+    return {
+      period: {
+        reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
+        documents: docs, documents_found: docs.length, documents_read: read, documents_failed: 0, documents_skipped: docs.length - read,
+        facts, events: evs, summary: { events }, status: null, status_because: null, tallies: null,
+        discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: runId, prompt_version: 'india-ai-summary-v9', model: 'm',
+        extracted_at: at, updated_at: at,
+      } as any,
+      run: { run_id: runId, reporting_period: rp.period, started_at: at, finished_at: at, outcome: 'COMPLETED', error: null,
+        documents_found: docs.length, documents_read: read, facts_extracted: facts.length, events_extracted: evs.length,
+        model: 'm', prompt_version: 'india-ai-summary-v9' } as any,
+    };
+  };
+
+  // E2E-shaped: Q1 FY27 read from the Jul 2026 transcript + presentation; the
+  // Apr 2026 (Q4 FY26) transcript and presentation are listed, not_selected.
+  const q1Docs = [
+    doc('https://x/e2e-tr-jul26.pdf', 'Concall transcript Jul 2026', 'transcript', '2026-07-01'),
+    doc('https://x/e2e-ip-jul26.pdf', 'Investor presentation Jul 2026', 'investor_presentation', '2026-07-01'),
+    doc('https://x/e2e-tr-apr26.pdf', 'Concall transcript Apr 2026', 'transcript', '2026-04-01', 'not_selected'),
+    doc('https://x/e2e-ip-apr26.pdf', 'Investor presentation Apr 2026', 'investor_presentation', '2026-04-01', 'not_selected'),
+    doc('https://x/e2e-tr-jan26.pdf', 'Concall transcript Jan 2026', 'transcript', '2026-01-01', 'not_selected'),
+    doc('https://x/e2e-ar-26.pdf', 'Annual Report 2026', 'annual_report', '2026-05-01', 'not_selected'),
+  ];
+  const q1Only = () => {
+    const a = periodOf('E2E', q1Docs, [
+      ev('utilisation', '80%', '%', 'Concall transcript Jul 2026', 'Capacity utilisation improved to 80% during the quarter on the new data-centre load.'),
+    ], 'r1');
+    return mergePeriod(emptyLedger('E2E', 'IN', now), a.period, a.run);
+  };
+  const q4Backfill = (runId: string, at = later) => {
+    const q4Docs = selectPriorPeriodDocuments(ledgerDocuments(q1Only()), 'Q4 FY26').map((d) => ({ ...d, outcome: 'read' }));
+    return periodOf('E2E', q4Docs, [
+      ev('utilisation', '72%', '%', 'Concall transcript Apr 2026', 'Capacity utilisation for the quarter was 72% across the facilities.'),
+      ev('order_book', 'INR 500 crores', 'crores', 'Investor presentation Apr 2026', 'The closing order book stood at INR 500 crores as at the end of the quarter.'),
+    ], runId, at);
+  };
+
+  test('the period before: Q1 FY27 → Q4 FY26, Q3 FY27 → Q2 FY27', () => {
+    assert.equal(previousPeriod('Q1 FY27'), 'Q4 FY26');
+    assert.equal(previousPeriod('Q3 FY27'), 'Q2 FY27');
+    assert.equal(previousPeriod('UNDATED'), null);
+    assert.equal(isOlderPeriod('Q4 FY26', 'Q1 FY27'), true);
+    assert.equal(isOlderPeriod('Q1 FY27', 'Q1 FY27'), false, 'a period read may never target the current period');
+  });
+
+  test('pure selection: only documents that resolve to the prior quarter, transcript → presentation → results', () => {
+    const pick = selectPriorPeriodDocuments([
+      ...q1Docs,
+      { ...doc('https://x/e2e-res-may26.pdf', 'Financial results', 'results', '2026-05-14', 'not_selected') },
+      { ...doc('https://x/e2e-tr-apr26.pdf', 'dup', 'transcript', '2026-04-01', 'not_selected') },
+    ], 'Q4 FY26');
+    assert.deepEqual(pick.map((d) => d.kind), ['transcript', 'investor_presentation', 'results']);
+    assert.ok(pick.every((d) => reportingPeriodFromDate(d.date_iso)?.period === 'Q4 FY26'));
+    assert.ok(!pick.some((d) => d.kind === 'annual_report'), 'annual reports are not read for a prior quarter');
+    // Works on discovery candidates (dateIso) too — the route's pool.
+    const cand = selectPriorPeriodDocuments([{ url: 'u1', kind: 'transcript', dateIso: '2026-05-20' }, { url: 'u2', kind: 'transcript', dateIso: '2026-08-02' }], 'Q4 FY26');
+    assert.deepEqual(cand.map((c) => c.url), ['u1']);
+  });
+
+  test('plan: a one-period ledger with a listed prior-quarter document is counted', () => {
+    const plan = priorBackfillPlan(q1Only());
+    assert.ok(plan);
+    assert.equal(plan!.target, 'Q4 FY26');
+    assert.equal(plan!.latest, 'Q1 FY27');
+    assert.equal(plan!.candidates[0].label, 'Concall transcript Apr 2026');
+  });
+
+  test('Q1 FY27 plus a backfilled Q4 FY26: both periods kept, latest stays Q1 FY27, and a previous value appears', () => {
+    const base = q1Only();
+    const before = buildComparisons(base).utilisation!;
+    assert.equal(before.previous, null, 'one period: no previous');
+    const b = q4Backfill('r2');
+    assert.equal(b.period.reporting_period, 'Q4 FY26', 'the backfilled documents resolve to the prior quarter by the store rule');
+    const l = mergePeriod(base, b.period, b.run);
+    assert.deepEqual(Object.keys(l.periods).sort(), ['Q1 FY27', 'Q4 FY26']);
+    assert.equal(l.latest_period, 'Q1 FY27');
+    assert.equal(l.latest_document_date, '2026-07-01');
+    assert.deepEqual(l.periods['Q1 FY27'], base.periods['Q1 FY27'], 'the current period is untouched');
+    assert.equal(l.last_evidence_read_at, base.last_evidence_read_at, 'a backfill is not a read of the current evidence');
+    const u = buildComparisons(l).utilisation!;
+    assert.equal(u.current!.raw, '80%');
+    assert.equal(u.previous!.raw, '72%');
+    assert.equal(u.previous_period, 'Q4 FY26');
+    assert.equal(u.change, '+8pp');
+    assert.equal(priorBackfillPlan(l), null, 'once backfilled it is no longer counted');
+  });
+
+  test('running the backfill twice adds no duplicate facts or events', () => {
+    const b1 = q4Backfill('r2');
+    const once = mergePeriod(q1Only(), b1.period, b1.run);
+    const b2 = q4Backfill('r3', '2026-09-22T12:00:00.000Z');
+    const twice = mergePeriod(once, b2.period, b2.run);
+    const p1 = once.periods['Q4 FY26'], p2 = twice.periods['Q4 FY26'];
+    assert.equal(p2.facts.length, p1.facts.length);
+    assert.equal(p2.events.length, p1.events.length);
+    assert.equal(new Set(p2.facts.map((f) => f.id)).size, p2.facts.length);
+    assert.equal(new Set(p2.events.map((e) => e.id)).size, p2.events.length);
+    assert.equal(new Set(p2.documents.map((d) => d.id)).size, p2.documents.length);
+    assert.equal(twice.periods['Q1 FY27'].facts.length, once.periods['Q1 FY27'].facts.length);
+    assert.equal(twice.latest_period, 'Q1 FY27');
+  });
+
+  test('no prior-quarter document on file → not counted in N; NO_DISCLOSURE is final, SOURCE_UNAVAILABLE retried and not shown as the current period down', () => {
+    const noPrior = (() => {
+      const a = periodOf('GPPL', [
+        doc('https://x/g-tr-aug26.pdf', 'Concall transcript Aug 2026', 'transcript', '2026-08-01'),
+        doc('https://x/g-tr-feb26.pdf', 'Concall transcript Feb 2026', 'transcript', '2026-02-01', 'not_selected'),
+      ], [ev('utilisation', '80%', '%', 'Concall transcript Aug 2026', 'Capacity utilisation was 80% for the quarter.')], 'g1');
+      return mergePeriod(emptyLedger('GPPL', 'IN', now), a.period, a.run);
+    })();
+    assert.equal(priorBackfillPlan(noPrior), null);
+    assert.deepEqual(priorBackfillTickers({ E2E: q1Only(), GPPL: noPrior, NEW: null }), ['E2E']);
+
+    const failedRun = (outcome: any, id: string): any => ({ run_id: id, reporting_period: 'Q4 FY26', started_at: later, finished_at: later, outcome,
+      error: outcome === 'SOURCE_UNAVAILABLE' ? 'screener.in company page could not be reached' : null,
+      documents_found: 0, documents_read: 0, facts_extracted: 0, events_extracted: 0, model: null, prompt_version: null });
+    const nd = recordAttempt(q1Only(), failedRun('NO_DISCLOSURE', 'x1'));
+    assert.equal(priorBackfillPlan(nd), null, 'a quarter already found empty is not queued again');
+    const su = recordAttempt(q1Only(), failedRun('SOURCE_UNAVAILABLE', 'x2'));
+    assert.ok(priorBackfillPlan(su), 'our outage stays eligible for a later click');
+    assert.notEqual(freshnessOf(su).state, 'SOURCE_UNAVAILABLE', 'a failed prior-quarter read does not mark the current period unavailable');
+    assert.equal(su.latest_period, 'Q1 FY27');
+    assert.deepEqual(Object.keys(su.periods), ['Q1 FY27']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz765 — REPORTING-PERIOD INTELLIGENCE, RETRIEVAL ≠ DISCLOSURE, OCR.
+//
+// CUPID sat at Q4 FY26 on 22 September with Q1 FY27 results filed on 7 Aug;
+// IFBAGRO-BE never matched its own exchange filings; AETHER's failed
+// presentation was not replaced; MOREPENLAB/SOTL scans were dead ends.
+// ═══════════════════════════════════════════════════════════════════════════
+import { latestExpectedPeriod, freshnessLine, type PeriodRecord, type EvidenceRun } from '../thesis/evidence-ledger';
+import { attemptOutcome, nextBestCandidate, candidatesFromBse } from '../thesis/evidence-discovery';
+import { pdfTextQuality, ocrRequestBody, OCR_MAX_TOKENS } from '../thesis/pdf-ocr';
+import { feedDateIso, bareSymbol } from '../thesis/filing-dates';
+import { parseBseCode } from '../earnings/screener-documents';
+
+describe('zzz765 reporting-period freshness, retrieval failure, OCR', () => {
+  const at = '2026-09-22T12:00:00.000Z';
+  const period = (p: string, pe: string, docDate: string): PeriodRecord => ({
+    reporting_period: p, period_end_date: pe, latest_document_date: docDate,
+    documents: [{ id: documentId('https://x/' + p), url: 'https://x/' + p, label: 'Investor presentation', kind: 'investor_presentation', source: 's', period: null, date_iso: docDate, outcome: 'read' }],
+    documents_found: 1, documents_read: 1, documents_failed: 0, documents_skipped: 0, facts: [], events: [], summary: { verdict_line: 'x' },
+    status: null, status_because: null, tallies: null, discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [],
+    run_id: 'r-' + p, prompt_version: 'v', model: null, extracted_at: at, updated_at: at,
+  });
+  const run = (id: string, finished = at): EvidenceRun => ({
+    run_id: id, reporting_period: null, started_at: finished, finished_at: finished, outcome: 'COMPLETED', error: null,
+    documents_found: 1, documents_read: 1, facts_extracted: 0, events_extracted: 0, model: null, prompt_version: null,
+  });
+  const cupid = () => mergePeriod(emptyLedger('CUPID', 'IN', at), period('Q4 FY26', '2026-03-31', '2026-05-01'), run('r1'));
+
+  test('latestExpectedPeriod: 45 days after Q1–Q3, 60 after Q4', () => {
+    const cases: Array<[string, string]> = [
+      ['2026-09-22', 'Q1 FY27'],   // Jun 30 + 45 = Aug 14 has passed
+      ['2026-08-13', 'Q4 FY26'],   // one day short of Q1 being due
+      ['2026-08-14', 'Q1 FY27'],
+      ['2026-05-29', 'Q3 FY26'],   // Mar 31 + 60 = May 30 not yet
+      ['2026-05-30', 'Q4 FY26'],
+      ['2026-11-14', 'Q2 FY27'],
+      ['2027-01-05', 'Q2 FY27'],   // Q3 not due until Feb 14
+      ['2027-02-14', 'Q3 FY27'],
+    ];
+    for (const [d, want] of cases) assert.equal(latestExpectedPeriod(`${d}T06:00:00Z`).period, want, d);
+    assert.equal(latestExpectedPeriod('2026-09-22T00:00:00Z').due_date, '2026-08-14');
+  });
+
+  test('Q4 FY26 evidence when Q1 FY27 is expected and nothing newer is seen → STALE_NO_NEWER_FILING', () => {
+    const f = freshnessOf(cupid(), '2026-09-22T12:00:00Z');
+    assert.equal(f.staleness, 'STALE_NO_NEWER_FILING');
+    assert.equal(f.state, 'STALE');
+    assert.equal(f.latest_known_period, 'Q4 FY26');
+    assert.equal(f.latest_expected_period, 'Q1 FY27');
+    assert.equal(f.latest_source_date, '2026-05-01');
+    assert.equal(f.new_evidence_available, false);
+    const line = freshnessLine(f)!;
+    assert.equal(line.label, 'STALE');
+    assert.equal(line.text, 'Last evidence: Q4 FY26 · Latest expected: Q1 FY27 · No newer filing found');
+  });
+
+  test('a newer document seen at a source → UPDATE_AVAILABLE, not stale', () => {
+    const l = recordSeen(cupid(), '2026-08-07', at);
+    const f = freshnessOf(l, '2026-09-22T12:00:00Z');
+    assert.equal(f.staleness, 'UPDATE_AVAILABLE');
+    assert.equal(f.state, 'NEW_EVIDENCE_AVAILABLE');
+    assert.equal(f.new_evidence_available, true);
+    assert.equal(freshnessLine(f)!.label, '↻ Update available');
+  });
+
+  test('the expected period on file → CURRENT; a stale ledger never searched says so', () => {
+    const q1 = mergePeriod(emptyLedger('AETHER', 'IN', at), period('Q1 FY27', '2026-06-30', '2026-08-01'), run('r1'));
+    assert.equal(freshnessOf(q1, '2026-09-22T12:00:00Z').staleness, 'CURRENT');
+    const old = mergePeriod(emptyLedger('X', 'IN', '2026-06-01T00:00:00Z'), period('Q4 FY26', '2026-03-31', '2026-05-01'), run('r0', '2026-06-01T00:00:00.000Z'));
+    const f = freshnessOf(old, '2026-09-22T12:00:00Z');
+    assert.equal(f.staleness, 'STALE_NO_NEWER_FILING');
+    assert.equal(f.checked_since_due, false);
+    assert.match(freshnessLine(f)!.text, /not searched since it fell due/);
+  });
+
+  test('HTTP 504 from screener.in with nothing else found → SOURCE_UNAVAILABLE, never NO_DISCLOSURE', () => {
+    const attempts = [
+      { source: 'exchange filing feed', outcome: 'empty' as const, detail: 'rolling window', found: 0 },
+      { source: 'screener.in company page', outcome: 'error' as const, detail: 'HTTP 504 — upstream timed out', found: 0 },
+      { source: 'BSE corporate announcements', outcome: 'empty' as const, detail: 'none', found: 0 },
+    ];
+    assert.equal(resolveDiscovery('CUPID', [], attempts).state, 'RETRIEVAL_FAILED');
+    assert.equal(attemptOutcome(attempts, []), 'SOURCE_UNAVAILABLE');
+    // every source answered, nothing there: that alone is a disclosure fact
+    assert.equal(attemptOutcome(attempts.map((a) => ({ ...a, outcome: 'empty' as const })), []), 'NO_DISCLOSURE');
+    // a document we could not download or OCR is our failure too
+    assert.equal(attemptOutcome([{ outcome: 'found' }], [{ outcome: 'download_failed' }]), 'SOURCE_UNAVAILABLE');
+    assert.equal(attemptOutcome([{ outcome: 'found' }], [{ outcome: 'scanned' }]), 'SOURCE_UNAVAILABLE');
+    assert.equal(attemptOutcome([{ outcome: 'found' }], [{ outcome: 'too_short' }]), 'NO_DISCLOSURE');
+    // and the card reads SOURCE UNAVAILABLE over the evidence it keeps
+    const l = recordAttempt(cupid(), { ...run('r9', '2026-09-22T13:00:00.000Z'), outcome: 'SOURCE_UNAVAILABLE', error: 'screener.in HTTP 504', documents_read: 0 });
+    const f = freshnessOf(l, '2026-09-22T14:00:00Z');
+    assert.equal(f.staleness, 'SOURCE_UNAVAILABLE');
+    assert.match(freshnessLine(f)!.text, /not a disclosure gap/);
+  });
+
+  test('scanned-PDF detection', () => {
+    assert.equal(pdfTextQuality(310, 32), 'scanned', 'MOREPENLAB: 32 pages, ~10 chars a page');
+    assert.equal(pdfTextQuality(150, 2), 'scanned');
+    assert.equal(pdfTextQuality(700, 1), 'too_short', 'a one-page intimation is not a scan');
+    assert.equal(pdfTextQuality(42_000, 24), 'ok');
+    assert.equal(pdfTextQuality(80_000, 900), 'ok', 'a truncated long annual report is not a scan');
+    const noise = Array.from({ length: 800 }, (_, i) => `x${i}#Q~z@${i % 7}&`).join(' ');
+    assert.equal(pdfTextQuality(noise.length, 0, noise), 'scanned', 'raw-byte fallback text is not language');
+    const prose = 'Revenue from operations for the quarter ended June 30, 2026 was Rs 61 crore, up 18% on the corresponding quarter. '.repeat(20);
+    assert.equal(pdfTextQuality(prose.length, 1, prose), 'ok');
+  });
+
+  test('the OCR request is a native base64 PDF document block with capped output', () => {
+    const b = ocrRequestBody('claude-haiku-4-5-20251001', 'JVBERi0x', 'Financial results');
+    assert.equal(b.max_tokens, OCR_MAX_TOKENS);
+    const doc = (b.messages[0].content as any[])[0];
+    assert.deepEqual(doc, { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0x' } });
+  });
+
+  test('exchange feed dates and series-suffixed symbols are read', () => {
+    assert.equal(feedDateIso('22-Sep-2026 18:47:27'), '2026-09-22');
+    assert.equal(feedDateIso('2026-08-07T18:32:07.767'), '2026-08-07');
+    assert.equal(feedDateIso('07/08/2026'), '2026-08-07');
+    assert.equal(feedDateIso('', 'https://nsearchives.nseindia.com/corporate/CUPID_22092026184721_SE_PR.pdf'), '2026-09-22');
+    assert.equal(feedDateIso('garbage'), null);
+    assert.equal(bareSymbol('ifbagro-be'), 'IFBAGRO');
+    const got = candidatesFromFilings([{ symbol: 'IFBAGRO', subject: 'Financial Results', attachment_url: 'https://x/ifb.pdf', filing_date: '27-Jul-2026 18:07:03' }], 'IFBAGRO-BE');
+    assert.equal(got.length, 1);
+    assert.equal(got[0].dateIso, '2026-07-27');
+    const rep = reportedInWindow([{ symbol: 'IFBAGRO', subject: 'Financial Results', filing_date: '27-Jul-2026 18:07:03' }], ['IFBAGRO-BE'], '2026-07-20');
+    assert.deepEqual(rep.map((r) => [r.ticker, r.reported_at]), [['IFBAGRO-BE', '2026-07-27']]);
+  });
+
+  test('BSE announcements: the Q1 FY27 results PDF is found, SAST and intimations are not', () => {
+    const rows = [
+      { NEWSSUB: 'Un-Audited Financial Results (Standalone And Consolidated) For The Quarter Ended June 30, 2026', NEWS_DT: '2026-08-07T18:32:07.767', CATEGORYNAME: 'Result', SUBCATNAME: 'Financial Results', ATTACHMENTNAME: 'e1f389be.pdf', PDFFLAG: 1 },
+      { NEWSSUB: 'Board Meeting Intimation for Un-Audited Financial Results', NEWS_DT: '2026-08-04T16:39:34', CATEGORYNAME: 'Board Meeting', ATTACHMENTNAME: 'intim.pdf', PDFFLAG: 1 },
+      { NEWSSUB: 'Disclosures under Reg. 29(2) of SEBI (SAST) Regulations, 2011', NEWS_DT: '2026-09-22T10:45:36', CATEGORYNAME: 'Insider Trading / SAST', ATTACHMENTNAME: 'sast.pdf', PDFFLAG: 0 },
+      { NEWSSUB: 'Announcement under Regulation 30 (LODR)-Press Release / Media Release', NEWS_DT: '2026-09-22T18:45:54', CATEGORYNAME: 'Company Update', ATTACHMENTNAME: 'pr.pdf', PDFFLAG: 0 },
+    ];
+    const c = candidatesFromBse(rows);
+    assert.deepEqual(c.map((x) => x.url), [
+      'https://www.bseindia.com/xml-data/corpfiling/AttachHis/e1f389be.pdf',
+      'https://www.bseindia.com/xml-data/corpfiling/AttachLive/pr.pdf',
+    ]);
+    assert.equal(c[0].kind, 'results');
+    assert.equal(c[0].dateIso, '2026-08-07');
+    // the statement of results outranks the later press release
+    const ranked = rankCandidates(c, '2026-09-22');
+    assert.match(ranked[0].label, /Financial Results/);
+    // and with no filing-date hint, a 2024 transcript is not "latest evidence"
+    const withOld = resolveDiscovery('CUPID', [...c, { url: 't24', kind: 'transcript', tier: 2, source: 's', period: null, dateIso: '2024-01-01', label: 'Concall Jan 2024' }],
+      [{ source: 'BSE corporate announcements', outcome: 'found', detail: '', found: 2 }]);
+    assert.notEqual(withOld.candidates[0].url, 't24');
+    assert.equal(parseBseCode('<a href="https://www.bseindia.com/stock-share-price/cupid-ltd/CUPID/530843/">BSE: 530843</a>'), '530843');
+  });
+
+  test('a failed download is replaced by the next-best document of the same period', () => {
+    const c = (url: string, kind: any, dateIso: string) => ({ url, kind, tier: 1 as const, source: 's', period: null, dateIso, label: url });
+    const ranked = [
+      c('t-aug', 'transcript', '2026-08-01'), c('p-aug', 'investor_presentation', '2026-08-01'),
+      c('ar-26', 'annual_report', '2026-04-01'), c('p-jul', 'investor_presentation', '2026-07-01'),
+      c('p-may', 'investor_presentation', '2026-05-01'),
+    ];
+    const tried = new Set(['t-aug', 'p-aug', 'ar-26']);
+    assert.equal(nextBestCandidate(ranked, ranked[1], tried)!.url, 'p-jul', 'same kind, same quarter (Q1 FY27)');
+    tried.add('p-jul');
+    assert.equal(nextBestCandidate(ranked, ranked[1], tried), null, 'never a different quarter');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz765 — THE QUARTERLY LEDGER: typed facts, before → after, plan beside
+// actual, historical context, capex lifecycle across quarters.
+// ═══════════════════════════════════════════════════════════════════════════
+import { normalizeEvent, guidanceMove, gapToTarget, historicalAsOf, periodEnd, periodStart } from '../thesis/fact-normalize';
+import { capexLifecycle, buildCapexChain } from '../thesis/capex-chain';
+
+describe('zzz765 quarterly thesis ledger', () => {
+  const T0 = '2026-09-22T00:00:00Z';
+  const D = (url: string, label: string, kind: string, date: string): any =>
+    ({ id: documentId(url), url, label, kind, source: 'screener', period: null, date_iso: date, outcome: 'read' });
+  const E = (variable: string, value_type: string, before: string | null, after: string, source: string, text: string): any =>
+    ({ variable, value_type, before, after, unit: null, period: null, direction: 'unknown', evidence_text: text, source, confidence: 'HIGH' });
+  const P = (ticker: string, docs: any[], events: any[], runId: string) => {
+    const rp = reportingPeriodForDocuments(docs);
+    const { facts, events: evs } = factsFromEvents(ticker, rp.period, events, docs, T0);
+    return {
+      period: {
+        reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
+        documents: docs, documents_found: docs.length, documents_read: docs.length, documents_failed: 0, documents_skipped: 0,
+        facts, events: evs, summary: { events }, status: null, status_because: null, tallies: null,
+        discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: runId, prompt_version: 'v9', model: 'm',
+        extracted_at: T0, updated_at: T0,
+      } as any,
+      run: { run_id: runId, reporting_period: rp.period, started_at: T0, finished_at: T0, outcome: 'COMPLETED', error: null,
+        documents_found: docs.length, documents_read: docs.length, facts_extracted: facts.length, events_extracted: evs.length,
+        model: 'm', prompt_version: 'v9' } as any,
+    };
+  };
+  const q4 = [D('https://x/q4.pdf', 'Concall transcript May 2026', 'transcript', '2026-05-20')];
+  const q1 = [D('https://x/q1.pdf', 'Concall transcript Aug 2026', 'transcript', '2026-08-10')];
+  const q2 = [D('https://x/q2.pdf', 'Concall transcript Nov 2026', 'transcript', '2026-11-10')];
+  const ledgerOf = (...ps: Array<ReturnType<typeof P>>) => ps.reduce((l, p) => mergePeriod(l, p.period, p.run), emptyLedger('ABC', 'IN', T0));
+
+  test('utilisation 72 → 80 across periods is +8pp; 80 → 80 is UNCHANGED (flat), not a new level', () => {
+    const up = buildComparisons(ledgerOf(
+      P('ABC', q4, [E('utilisation', 'ACTUAL', null, '72%', 'Concall transcript May 2026', 'Capacity utilisation for the quarter was 72%.')], 'a'),
+      P('ABC', q1, [E('utilisation', 'ACTUAL', null, '80%', 'Concall transcript Aug 2026', 'Capacity utilisation for the quarter was 80%.')], 'b'),
+    )).utilisation!;
+    assert.equal(up.change, '+8pp'); assert.equal(up.change_type, 'INCREASED');
+    const flat = buildComparisons(ledgerOf(
+      P('ABC', q4, [E('utilisation', 'ACTUAL', null, '80%', 'Concall transcript May 2026', 'Capacity utilisation for the quarter was 80%.')], 'a'),
+      P('ABC', q1, [E('utilisation', 'ACTUAL', null, '80%', 'Concall transcript Aug 2026', 'Capacity utilisation for the quarter was 80%.')], 'b'),
+    )).utilisation!;
+    assert.equal(flat.change_type, 'UNCHANGED');
+    assert.equal(flat.previous!.raw, '80%');
+  });
+
+  test('capacity 100,000 → 125,000 TPA is +25%; order book ₹1,200 → ₹1,560 Cr is +30%', () => {
+    const c = buildComparisons(ledgerOf(
+      P('ABC', q4, [
+        E('capacity', 'ACTUAL', null, '100,000 TPA', 'Concall transcript May 2026', 'At the end of the quarter our installed capacity stood at 100,000 TPA across both plants, management said on the call.'),
+        E('order_book', 'ACTUAL', null, '₹1,200 Cr', 'Concall transcript May 2026', 'At the end of the quarter the closing order book stood at ₹1,200 Cr, executable over the next eighteen months, management said.'),
+      ], 'a'),
+      P('ABC', q1, [
+        E('capacity', 'ACTUAL', null, '125,000 TPA', 'Concall transcript Aug 2026', 'At the end of the quarter our installed capacity stood at 125,000 TPA across both plants, management said on the call.'),
+        E('order_book', 'ACTUAL', null, '₹1,560 Cr', 'Concall transcript Aug 2026', 'At the end of the quarter the closing order book stood at ₹1,560 Cr, executable over the next eighteen months, management said.'),
+      ], 'b'),
+    ));
+    assert.match(String(c.capacity!.change), /\+25(\.0)?%/);
+    assert.match(String(c.order_book!.change), /\+30(\.0)?%/);
+  });
+
+  test('a single period never invents a previous value', () => {
+    const c = buildComparisons(ledgerOf(P('ABC', q1, [E('utilisation', 'ACTUAL', null, '80%', 'Concall transcript Aug 2026', 'Capacity utilisation for the quarter was 80%.')], 'b'))).utilisation!;
+    assert.equal(c.previous, null); assert.equal(c.change, null); assert.equal(c.change_type, 'NEW');
+  });
+
+  test('guidance ledger: 20–25% → 25–30% RAISED; same range MAINTAINED; across periods', () => {
+    assert.equal(guidanceMove('20–25%', '25–30%'), 'RAISED');
+    assert.equal(guidanceMove('20-25%', '20% to 25%'), 'MAINTAINED');
+    assert.equal(guidanceMove('25%', '20%'), 'LOWERED');
+    assert.equal(guidanceMove('20%', '₹500 Cr'), 'NOT_COMPARABLE');
+    const g = buildComparisons(ledgerOf(
+      P('ABC', q4, [E('guidance', 'GUIDANCE', null, '20–25%', 'Concall transcript May 2026', 'We guide to revenue growth of 20–25% for the year.')], 'a'),
+      P('ABC', q1, [E('guidance', 'GUIDANCE', null, '25–30%', 'Concall transcript Aug 2026', 'We now guide to revenue growth of 25–30% for the year.')], 'b'),
+    )).guidance!;
+    assert.equal(g.guidance_move, 'RAISED');
+    assert.match(g.line, /raised: 20–25% \(Q4 FY26\) → 25–30% \(Q1 FY27\)/);
+  });
+
+  test('a target is a TARGET, not an actual; plan rides beside the actual with a pp gap', () => {
+    const v = varsFromEvents([
+      E('utilisation', 'ACTUAL', null, '74%', 'Concall transcript Aug 2026', 'Capacity utilisation in the quarter was 74%.'),
+      E('utilisation', 'TARGET', null, '80%', 'Concall transcript Aug 2026', 'We target 80% utilisation by FY28.'),
+    ], 'Q1 FY27').find((x) => x.key === 'utilisation')!;
+    assert.equal(v.statement, 'ACTUAL');
+    assert.equal(v.after, '74%');
+    assert.equal(v.plan!.type, 'TARGET');
+    assert.equal(v.plan!.value, '80%');
+    assert.equal(v.plan!.gap, '-6pp');
+    const only = varsFromEvents([E('utilisation', 'TARGET', null, '80% plus', 'Concall transcript Aug 2026', 'We target utilisation of 80% plus.')], 'Q1 FY27')[0];
+    assert.equal(only.statement, 'TARGET');
+    assert.equal(only.kind, 'claim');
+    assert.equal(gapToTarget('85%', '80%'), '+5pp');
+  });
+
+  test('forward wording in the sentence retypes a model "ACTUAL" — and a present marker nearby keeps it', () => {
+    const e2e = normalizeEvent(E('capacity_addition', 'ACTUAL', null, '1024', 'Concall transcript Jul 2026',
+      "That's the number of GPUs which are live today. So that does not include another 1,024 B200 we are expecting soon."), 'Q1 FY27');
+    assert.equal(e2e.value_type, 'GUIDANCE');
+    const inn = normalizeEvent(E('utilisation', 'ACTUAL', null, '65% to 70%', 'Concall transcript Aug 2026',
+      'INR1,400 crores. that is an optimum revenue that we anticipate at a utilization of 65% to 70%.'), 'Q1 FY27');
+    assert.equal(inn.value_type, 'GUIDANCE');
+    const exi = normalizeEvent(E('order_book', 'ACTUAL', null, 'INR20 crores', 'Concall transcript Aug 2026',
+      'Today, we have about 15 megawatt hours of orders in hand, which are worth roughly INR20 crores and another INR45 crores or 34 megawatt hours in advanced pipeline.'), 'Q1 FY27');
+    assert.equal(exi.value_type, 'ACTUAL');
+  });
+
+  test('historical context: FY24→FY25 figures on a Q1 FY27 card are context, not this quarter', () => {
+    assert.equal(periodEnd('Q1 FY27')!.toISOString().slice(0, 10), '2026-06-30');
+    assert.equal(periodStart('Q1 FY27')!.toISOString().slice(0, 10), '2026-04-01');
+    const text = 'Because of the above reasons, the inventory moved from INR 440 crores on 31st March 2024 to INR593 crores as on 31st March 2025.';
+    assert.equal(historicalAsOf({ before: 'INR 440 crores on 31st March 2024', after: 'INR593 crores as on 31st March 2025', evidence_text: text }, 'Q1 FY27'), 'Mar 2025');
+    const vars = varsFromEvents([E('working_capital', 'ACTUAL', 'INR 440 crores on 31st March 2024', 'INR593 crores as on 31st March 2025', 'Annual Report 2026', text)], 'Q1 FY27');
+    assert.equal(vars[0].statement, 'HISTORICAL');
+    assert.equal(vars[0].verdict, 'stated');
+    assert.ok(vars[0].unjudged);
+    // The date that belongs to the BEFORE side does not date the current figure.
+    assert.equal(historicalAsOf({ before: null, after: '103 boutiques',
+      evidence_text: 'Our boutique network grew from 94 boutiques across 30 cities at the end of FY26 to 103 boutiques across 34 cities as on date.' }, 'Q1 FY27'), null);
+  });
+
+  test('"unchanged at" is a stated FLAT, not a bare level', () => {
+    const v = varsFromEvents([E('order_book', 'ACTUAL', null, '₹1,200 Cr', 'Concall transcript Aug 2026', 'The order book remained unchanged at ₹1,200 Cr.')], 'Q1 FY27')[0];
+    assert.equal(v.verdict, 'flat');
+    assert.equal(v.delta, 'FLAT');
+    assert.equal(v.before, v.after);
+  });
+
+  test('an "order book" of revenue potential is labelled and never judged as backlog', () => {
+    const v = varsFromEvents([E('order_book', 'ACTUAL', null, 'Rs.950 crores', 'Concall transcript Aug 2026',
+      'We expect this diversification to gain momentum, supported by a strong order book representing around Rs.950 crores of peak incremental annual revenue potential over the next two years to three years.')], 'Q1 FY27')[0];
+    assert.ok(v.unjudged);
+    assert.notEqual(v.statement, 'ACTUAL');
+  });
+
+  test('incremental: Q2 adds a layer, Q1 stays, and Q2 compares against Q1', () => {
+    const l = ledgerOf(
+      P('ABC', q1, [E('utilisation', 'ACTUAL', null, '72%', 'Concall transcript Aug 2026', 'Capacity utilisation for the quarter was 72%.')], 'a'),
+      P('ABC', q2, [E('utilisation', 'ACTUAL', null, '80%', 'Concall transcript Nov 2026', 'Capacity utilisation for the quarter was 80%.')], 'b'),
+    );
+    assert.deepEqual(Object.keys(l.periods).sort(), ['Q1 FY27', 'Q2 FY27']);
+    const u = buildComparisons(l).utilisation!;
+    assert.equal(u.previous_period, 'Q1 FY27'); assert.equal(u.current_period, 'Q2 FY27'); assert.equal(u.change, '+8pp');
+    // Persistence: the stored ledger survives a JSON round trip unchanged.
+    const again = JSON.parse(JSON.stringify(l));
+    assert.deepEqual(buildComparisons(again).utilisation, u);
+  });
+
+  test('capex lifecycle persists across quarters: announced → commissioned → revenue', () => {
+    const l = ledgerOf(
+      P('ABC', q4, [E('capex', 'GUIDANCE', null, '₹500 Cr', 'Concall transcript May 2026', 'The board approved capex of ₹500 Cr for Plant 2, to be commissioned by December.')], 'a'),
+      P('ABC', q1, [E('commissioning', 'ACTUAL', null, 'Plant 2 commissioned', 'Concall transcript Aug 2026', 'Plant 2 was commissioned in July.')], 'b'),
+      P('ABC', q2, [E('capex_earning', 'ACTUAL', null, '₹75 Cr', 'Concall transcript Nov 2026', 'Plant 2 contributed revenue of ₹75 Cr in the quarter.')], 'c'),
+    );
+    const lc = capexLifecycle(l);
+    assert.deepEqual(lc.map((e) => [e.period, e.stage]), [['Q4 FY26', 'ANNOUNCED'], ['Q1 FY27', 'COMMISSIONED'], ['Q2 FY27', 'REVENUE_CONTRIBUTION']]);
+    const chain = buildCapexChain({}, [], l);
+    assert.equal(chain.stage, 'REVENUE_CONTRIBUTION');
+    assert.equal(chain.lifecycle!.length, 3, 'earlier quarters are kept, not replaced');
+  });
+});
+
+describe('zzz765 parsing regressions found on live ledgers', () => {
+  test('a currency glued to its amount is still a number (GOLDIAM INR140 → INR225 crores = +60.7%)', () => {
+    assert.equal(scaledNumber('INR140 crores'), 140e7);
+    assert.equal(scaledNumber('FY26'), null);
+    const c = buildComparisons((() => {
+      const T0 = '2026-09-22T00:00:00Z';
+      const docs: any[] = [{ id: documentId('https://x/g.pdf'), url: 'https://x/g.pdf', label: 'Concall transcript Aug 2026', kind: 'transcript', source: 'screener', period: null, date_iso: '2026-08-10', outcome: 'read' }];
+      const ev: any[] = [{ variable: 'order_book', value_type: 'ACTUAL', before: 'INR140 crores', after: 'INR225 crores', unit: null, period: null, direction: 'up', confidence: 'HIGH', source: 'Concall transcript Aug 2026',
+        evidence_text: 'As of June end, our order book was INR225 crores. And last year, at the end of June quarter, it was INR140 crores.' }];
+      const rp = reportingPeriodForDocuments(docs);
+      const { facts, events } = factsFromEvents('GOLDIAM', rp.period, ev, docs, T0);
+      return mergePeriod(emptyLedger('GOLDIAM', 'IN', T0), { reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date, documents: docs, documents_found: 1, documents_read: 1, documents_failed: 0, documents_skipped: 0, facts, events, summary: { events: ev }, status: null, status_because: null, tallies: null, discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: 'r', prompt_version: 'v9', model: 'm', extracted_at: T0, updated_at: T0 } as any,
+        { run_id: 'r', reporting_period: rp.period, started_at: T0, finished_at: T0, outcome: 'COMPLETED', error: null, documents_found: 1, documents_read: 1, facts_extracted: 1, events_extracted: 1, model: 'm', prompt_version: 'v9' } as any);
+    })()).order_book!;
+    assert.equal(c.change, '+60.7%');
+    assert.equal(c.change_type, 'INCREASED');
+  });
+  test('"remains strong at" is a level, "remained unchanged at" is a flat', () => {
+    const lvl = normalizeEvent({ variable: 'order_book', value_type: 'ACTUAL', before: null, after: 'INR 787 crore', unit: null, period: null, direction: 'unknown', confidence: 'HIGH', source: 's',
+      evidence_text: 'The order book remains strong at INR 787 crore for this division, providing solid future visibility.' } as any, 'Q1 FY27');
+    assert.ok(!lvl.flat_stated);
+    const flat = normalizeEvent({ variable: 'order_book', value_type: 'ACTUAL', before: null, after: 'INR 787 crore', unit: null, period: null, direction: 'unknown', confidence: 'HIGH', source: 's',
+      evidence_text: 'The order book remained unchanged at INR 787 crore through the quarter.' } as any, 'Q1 FY27');
+    assert.ok(flat.flat_stated);
   });
 });

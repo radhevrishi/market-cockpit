@@ -42,8 +42,10 @@ import {
 } from '@/lib/thesis/evidence-store';
 import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary } from '@/lib/thesis/evidence-ledger';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
-import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
+import { discoverEvidence, selectForReading, nextBestCandidate, attemptOutcome, type DocCandidate } from '@/lib/thesis/evidence-discovery';
+import { ocrPdf, pdfTextQuality, OCR_MAX_PER_READ } from '@/lib/thesis/pdf-ocr';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
+import { previousPeriod, isReportingPeriod, isOlderPeriod, selectPriorPeriodDocuments, ledgerDocuments } from '@/lib/thesis/prior-period';
 import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
@@ -187,6 +189,10 @@ export async function GET(req: NextRequest) {
   //               file? Never calls the model. Records what it saw.
   //   force=1     re-read the current period regardless (debug / manual)
   const mode = (searchParams.get('mode') || 'read').trim() as 'read' | 'incremental' | 'check';
+  // OCR of a scanned filing is a model call per document, so it runs only
+  // when the page's click handler asks for it (`ocr=1`) — never from the
+  // data-watch cron, which reads in incremental mode without it. (zzz765)
+  const allowOcr = searchParams.get('ocr') === '1' && mode !== 'check';
   if (!ticker) {
     return NextResponse.json({ ok: false, error: 'ticker is required' }, { status: 400 });
   }
@@ -194,8 +200,56 @@ export async function GET(req: NextRequest) {
   const startedAt = new Date().toISOString();
   const ledgerBefore = await loadLedger(ticker);
 
-  const key = `india-ai-summary:${PROMPT_VERSION}:${ticker}:${quarter || filingDate || 'latest'}`;
-  if (!force && mode === 'read') {
+  // ── PRIOR-QUARTER BACKFILL.                                      (zzz765)
+  //   period=Q4 FY26   read THAT reporting period's documents
+  //   target=prior     the period immediately before the latest on file
+  // Only documents whose date resolves (reportingPeriodFromDate) to the target
+  // are read — transcript, then presentation, then results — and they are
+  // persisted as the target's own PeriodRecord. The current period is never
+  // touched: a target that is not OLDER than the latest on file is refused,
+  // and the store refuses a write whose documents resolve anywhere else.
+  // Same prompt, same schema; the only change to the model's input is the
+  // period label on the first line, which a quarter param already supplies.
+  const periodParam = (searchParams.get('period') || '').trim().replace(/\s+/g, ' ');
+  const targetParam = (searchParams.get('target') || '').trim().toLowerCase();
+  const priorTarget: string | null = targetParam === 'prior'
+    ? previousPeriod(ledgerBefore?.latest_period)
+    : (isReportingPeriod(periodParam) ? periodParam : null);
+  if ((targetParam === 'prior' || periodParam) && !priorTarget) {
+    return NextResponse.json({ ok: false, error: targetParam === 'prior'
+      ? `No period is on file for ${ticker}, so there is no prior quarter to read.`
+      : `period must look like "Q4 FY26" (got "${periodParam}").` }, { status: 400 });
+  }
+  if (priorTarget && !isOlderPeriod(priorTarget, ledgerBefore?.latest_period)) {
+    return NextResponse.json({ ok: false, error: `${priorTarget} is not older than the latest period on file (${ledgerBefore?.latest_period}); a period read never replaces the current one.` }, { status: 400 });
+  }
+  const attemptExtra = (x: { documents_found?: number; newestSeenDate?: string | null }) =>
+    (priorTarget ? { ...x, newestSeenDate: null, reportingPeriod: priorTarget } : x);
+
+  // The prior-period read has its OWN cache key: the plain key (…:latest or
+  // …:<filing date>) holds the CURRENT period's reading and must never answer
+  // a prior-period request.
+  const key = priorTarget
+    ? `india-ai-summary:${PROMPT_VERSION}:${ticker}:period:${priorTarget.replace(/\s+/g, '_')}`
+    : `india-ai-summary:${PROMPT_VERSION}:${ticker}:${quarter || filingDate || 'latest'}`;
+  if (priorTarget && !force) {
+    // Already backfilled: the ledger answers, no discovery, no model call.
+    // Running the backfill twice is therefore free and adds nothing.
+    const have = ledgerBefore?.periods?.[priorTarget];
+    if (have && have.summary) {
+      return NextResponse.json({
+        ok: true, cached: true, from_ledger: true, ticker, target_period: priorTarget,
+        structured: have.summary, events: have.events,
+        documents_read: have.documents.filter((d) => d.outcome === 'read'),
+        document_outcomes: have.documents.filter((d) => d.outcome !== 'not_selected'),
+        ledger: ledgerBefore, reporting_period: priorTarget, persisted: true,
+      });
+    }
+    // The KV response cache is NOT consulted for a backfill: the ledger is the
+    // record of what was persisted, and a cached payload whose ledger write
+    // failed would otherwise be reported as done.
+  }
+  if (!priorTarget && !force && mode === 'read') {
     // THE LEDGER IS THE SOURCE OF TRUTH, the response cache a convenience.
     // A stored period answers a plain read without discovery or a model
     // call — that is what "I should not have to click again after a
@@ -247,7 +301,38 @@ export async function GET(req: NextRequest) {
   // ══════════════════════════════════════════════════════════════════════
   const filings = await loadFilings(filingDate);
   const discovery = await discoverEvidence(ticker, { filings, filingDate });
-  const toRead = selectForReading(discovery.candidates, MAX_DOCS);
+  // For a backfill the pool is what discovery found now PLUS what the ledger
+  // already lists (the not_selected documents are exactly the previous
+  // quarter's), narrowed to the target period by the same date rule the
+  // store uses. The ranking is unchanged: transcript, presentation, results.
+  const pool: DocCandidate[] = priorTarget
+    ? selectPriorPeriodDocuments<DocCandidate>([
+      ...discovery.candidates,
+      ...ledgerDocuments(ledgerBefore).map((d): DocCandidate => ({
+        url: d.url, kind: d.kind as DocCandidate['kind'], tier: (d.tier === 2 ? 2 : d.tier === 3 ? 3 : 1),
+        source: d.source, period: d.period, dateIso: d.date_iso, label: d.label,
+      })),
+    ], priorTarget)
+    : discovery.candidates;
+  const toRead = selectForReading(pool, MAX_DOCS);
+
+  if (priorTarget && !toRead.length) {
+    // NOTHING FOR THAT QUARTER. Two different facts, kept apart: a source we
+    // could not reach (our outage — SOURCE_UNAVAILABLE, retried on a later
+    // click) and every source answering with nothing for that quarter
+    // (NO_DISCLOSURE). Either way only a run is recorded; no period changes.
+    const unreachable = discovery.attempts.some((a) => a.outcome === 'error');
+    const why = unreachable
+      ? `No ${priorTarget} document on file and ${discovery.attempts.filter((a) => a.outcome === 'error').map((a) => a.source).join(', ')} could not be reached.`
+      : `Every source was reached; none lists a ${priorTarget} transcript, presentation or results document for ${ticker}.`;
+    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, unreachable ? 'SOURCE_UNAVAILABLE' : 'NO_DISCLOSURE',
+      unreachable ? why : null, attemptExtra({ documents_found: discovery.candidates.length }));
+    return NextResponse.json({
+      ok: false, state: unreachable ? 'RETRIEVAL_FAILED' : 'SEARCH_EXHAUSTED', target_period: priorTarget,
+      error: why, ledger: attempt.ledger, persisted: attempt.persisted,
+      discovery_attempts: discovery.attempts, documents_found: discovery.candidates.length,
+    });
+  }
 
   // ── NEWER THAN WHAT IS ON FILE?                                  (zzz740)
   // The newest readable candidate's date against the latest persisted
@@ -262,7 +347,7 @@ export async function GET(req: NextRequest) {
     || (!!latestOnFileDate && newestCandidateDate > latestOnFileDate)
   );
 
-  if (mode === 'check') {
+  if (mode === 'check' && !priorTarget) {
     const ledger = discovery.state === 'RETRIEVAL_FAILED' && !toRead.length
       ? (await persistAttempt(ticker, 'IN', runId, startedAt, 'SOURCE_UNAVAILABLE', discovery.summary)).ledger
       : await persistSeen(ticker, 'IN', newestCandidateDate);
@@ -277,7 +362,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mode === 'incremental' && !force && latestOnFile && !hasNewer) {
+  if (mode === 'incremental' && !priorTarget && !force && latestOnFile && !hasNewer) {
     const stored = latestSummary(ledgerBefore);
     const { ledger } = await persistAttempt(ticker, 'IN', runId, startedAt, 'SKIPPED_NO_NEW_EVIDENCE', null, { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate });
     return NextResponse.json({
@@ -298,34 +383,69 @@ export async function GET(req: NextRequest) {
   type DocOutcome = 'read' | 'download_failed' | 'scanned' | 'too_short' | 'budget_exhausted';
   const outcomes: Array<{ url: string; label: string; kind: string; outcome: DocOutcome; chars: number; pages: number; detail?: string }> = [];
   let budget = MAX_CHARS;
-  for (const cand of toRead) {
+  // ── A FAILED DOCUMENT IS REPLACED, NOT JUST RECORDED.            (zzz765)
+  // AETHER's August presentation did not download and the read went ahead
+  // with one document fewer, although the July presentation of the same
+  // quarter sat next in the list. Each failure now pulls the next-best
+  // candidate of the same reporting period (same kind first), within a
+  // bounded number of downloads and a wall-clock guard.
+  const queue: DocCandidate[] = [...toRead];
+  const tried = new Set(queue.map((c) => c.url));
+  const MAX_DOWNLOADS = MAX_DOCS + 4;
+  const loopStart = Date.now();
+  let downloads = 0;
+  let ocrUsed = 0;
+  const replace = (failed: DocCandidate) => {
+    if (downloads >= MAX_DOWNLOADS || Date.now() - loopStart > 45_000) return;
+    const next = nextBestCandidate(discovery.candidates, failed, tried);
+    if (next) { tried.add(next.url); queue.push(next); }
+  };
+  while (queue.length) {
+    const cand = queue.shift()!;
     if (budget <= 10_000) {                       // no room left to be useful
       outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'budget_exhausted', chars: 0, pages: 0 });
       continue;
     }
+    downloads++;
     // Evidence documents are read with evidence-sized limits: SOTL's
     // presentation is 7.8 MB and its annual report 8 MB, both over the 5 MB
     // results-PDF cap, and both came back as "no response" because the
     // convenience wrapper dropped the reason. The real reason is now kept
     // and shown on the card. (zzz744)
     const e = await extractPdfText(cand.url, { maxBytes: 25 * 1024 * 1024, timeoutMs: 30_000 });
-    const body = String(e?.text || '');
+    let body = String(e?.text || '');
     const pages = Number(e?.pages || 0);
     if (!e || e.source === 'FAILED') {
       outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'download_failed', chars: 0, pages, detail: e?.failure_reason || 'no response' });
+      replace(cand);
       continue;
     }
-    // The same 1,200-character floor the single-document path used. Below
-    // it, a multi-page file is a scan (image-only pages yield ~0 chars each);
-    // a one- or two-page file is an intimation or a cover note.
-    if (body.length < 1200) {
-      const scanned = pages >= 3 && body.length / Math.max(pages, 1) < 100;
-      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: scanned ? 'scanned' : 'too_short', chars: body.length, pages });
+    // Below 1,200 characters a one- or two-page file is an intimation or a
+    // cover note; a multi-page file with almost no text per page is a scan.
+    const quality = pdfTextQuality(body.length, pages, body);
+    let viaOcr = false;
+    if (quality === 'scanned') {
+      // OCR only inside this clicked read, and at most OCR_MAX_PER_READ times.
+      const ocr = !allowOcr
+        ? { ok: false as const, detail: 'OCR unavailable — only a clicked read may OCR' }
+        : ocrUsed < OCR_MAX_PER_READ && Date.now() - loopStart < 60_000
+          ? (ocrUsed++, await ocrPdf(cand.url, cand.label, MODEL))
+          : { ok: false as const, detail: 'OCR unavailable — per-read OCR limit reached' };
+      if (!ocr.ok) {
+        outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'scanned', chars: body.length, pages, detail: ocr.detail });
+        replace(cand);
+        continue;
+      }
+      body = ocr.text;
+      viaOcr = true;
+    } else if (quality === 'too_short') {
+      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'too_short', chars: body.length, pages });
+      replace(cand);
       continue;
     }
     const slice = body.slice(0, budget);
     budget -= slice.length;
-    outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'read', chars: slice.length, pages });
+    outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'read', chars: slice.length, pages, ...(viaOcr ? { detail: 'ocr' } : {}) });
     read.push({ doc: cand, text: slice });
   }
 
@@ -338,20 +458,26 @@ export async function GET(req: NextRequest) {
     const readable = discovery.candidates.filter((c) => c.kind !== 'other').length;
     // Documents exist but none could be read: that is a retrieval failure of
     // ours (download / OCR), never an absence of disclosure.
-    const state = discovery.state === 'EVIDENCE_FOUND' && (scanned || failed) ? 'RETRIEVAL_FAILED' : discovery.state;
+    // A backfill may read documents the ledger listed even when discovery
+    // found nothing now, so its failure to download is ours whatever
+    // discovery's own state says. (zzz765)
+    const state = (priorTarget || discovery.state === 'EVIDENCE_FOUND') && (scanned || failed) ? 'RETRIEVAL_FAILED' : discovery.state;
     const docReasons = outcomes.filter((o) => o.outcome !== 'read').map((o) => `${o.label}: ${o.outcome.replace('_', ' ')}${o.detail ? ` (${o.detail})` : ''}`).join('; ');
+    // A source that errored, or a document we could not download or OCR,
+    // is SOURCE_UNAVAILABLE — never NO_DISCLOSURE. (zzz765)
+    const outcome = attemptOutcome(discovery.attempts, outcomes);
     const attempt = await persistAttempt(ticker, 'IN', runId, startedAt,
-      state === 'RETRIEVAL_FAILED' ? 'SOURCE_UNAVAILABLE' : 'NO_DISCLOSURE',
-      state === 'RETRIEVAL_FAILED' ? (docReasons || discovery.summary) : null,
-      { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate });
+      outcome,
+      outcome === 'SOURCE_UNAVAILABLE' ? (docReasons || discovery.summary) : null,
+      attemptExtra({ documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate }));
     return NextResponse.json({
       ok: false,
-      state,
+      state, target_period: priorTarget,
       ledger: attempt.ledger, persisted: attempt.persisted,
       error: discovery.state !== 'EVIDENCE_FOUND'
         ? discovery.summary
         : `${readable} document(s) were found for ${ticker} but none could be read — `
-          + [failed ? `${failed} did not download` : '', scanned ? `${scanned} are scanned images this reader does not OCR` : '', short ? `${short} are too short to be a filing` : '']
+          + [failed ? `${failed} did not download` : '', scanned ? `${scanned} are scanned images that could not be OCR'd` : '', short ? `${short} are too short to be a filing` : '']
             .filter(Boolean).join(', ')
           + '. This is a limit of the reader, not an absence of disclosure.',
       discovery_attempts: discovery.attempts,
@@ -395,7 +521,7 @@ export async function GET(req: NextRequest) {
       system: SYSTEM,
       tools: [SUMMARY_TOOL],
       tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
-      messages: [{ role: 'user', content: `${ticker}${quarter ? ` — ${quarter}` : ''}\n\n${text}` }],
+      messages: [{ role: 'user', content: `${ticker}${(quarter || priorTarget) ? ` — ${quarter || priorTarget}` : ''}\n\n${text}` }],
     }, { signal: AbortSignal.timeout(110_000) });
     if (!resp.ok) {
       // THE API'S OWN MESSAGE, not just the status. "HTTP 400" hid, for a
@@ -404,14 +530,14 @@ export async function GET(req: NextRequest) {
       // as a number. The message is safe to show: it never carries the key.
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
-      const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API HTTP ${resp.status}${detail ? `: ${detail}` : ''}`, { documents_found: discovery.candidates.length });
+      const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API HTTP ${resp.status}${detail ? `: ${detail}` : ''}`, attemptExtra({ documents_found: discovery.candidates.length }));
       return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}${detail ? `: ${detail}` : '.'}`, state: 'RETRIEVAL_FAILED', discovery_attempts: discovery.attempts, document_outcomes: outcomes, ledger: attempt.ledger, persisted: attempt.persisted });
     }
     const j = await resp.json();
     const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === SUMMARY_TOOL.name);
     data = call?.input || null;
   } catch (e: any) {
-    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API: ${String(e?.message || e)}`.slice(0, 300), { documents_found: discovery.candidates.length });
+    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API: ${String(e?.message || e)}`.slice(0, 300), attemptExtra({ documents_found: discovery.candidates.length }));
     return NextResponse.json({ ok: false, error: `The summary service did not answer (${String(e?.message || e)}).`, state: 'RETRIEVAL_FAILED', discovery_attempts: discovery.attempts, document_outcomes: outcomes, ledger: attempt.ledger, persisted: attempt.persisted });
   }
   if (!data) {
@@ -575,7 +701,7 @@ export async function GET(req: NextRequest) {
     evidence_pipeline: pipeline,
     source_url: usedDoc.url,
     document_kind: usedDoc.kind,
-    document_period: usedDoc.period || quarter || null,
+    document_period: usedDoc.period || quarter || priorTarget || null,
     document_note: docNote,
     // The audit trail the owner asked for: what was read, and what was tried
     // and failed. A card can now cite its sources and say what it could not
@@ -601,15 +727,16 @@ export async function GET(req: NextRequest) {
   // must never print "Evidence updated" over a read that did not persist.
   const persisted = await persistEvidenceRun({
     ticker, market: 'IN', runId, startedAt,
-    documents: docsFromRoute(payload.documents_read, outcomes, discovery.candidates),
+    documents: docsFromRoute(payload.documents_read, outcomes, pool),
     filingDate, events, summary: data,
     discoveryState: discovery.state, discoveryAttempts: discovery.attempts,
     promptVersion: PROMPT_VERSION, model: activeModel(MODEL),
     rawExtraction: { summary_call: (data as any).__raw_summary ?? null, events_call: rawExtraction, pipeline },
     pipeline,
+    expectPeriod: priorTarget,
   });
   return NextResponse.json({
-    ok: true, cached: false, ...payload,
+    ok: true, cached: false, ...payload, target_period: priorTarget,
     reporting_period: persisted.period, ledger: persisted.ledger,
     persisted: persisted.persisted, persist_error: persisted.error,
   });

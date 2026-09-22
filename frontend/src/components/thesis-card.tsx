@@ -24,11 +24,12 @@
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
-import { CAPEX_META, type CapexChain } from '@/lib/thesis/capex-chain';
+import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, type CapexChain } from '@/lib/thesis/capex-chain';
 import type { VarVerdict } from '@/lib/thesis/variables';
 import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
+import { freshnessLine } from '@/lib/thesis/evidence-ledger';
 import { BASIS_LABEL } from '@/lib/thesis/comparison';
 
 // ── THE PALETTE.                                                   (zzz723)
@@ -58,7 +59,11 @@ import { BASIS_LABEL } from '@/lib/thesis/comparison';
 // carries no meaning either. (zzz761)
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
-  text: 'var(--mc-text-1)', dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)',
+  // ── READABLE ON BOTH GROUNDS.                                  (zzz765)
+  // The owner: "so light, can't read easily". Secondary text sat on the two
+  // dimmest greys of the palette (text-3/text-4) at 8–11px. The card now has
+  // its own three text levels, each ≥ 7:1 on its ground (globals.css).
+  text: 'var(--tc-text, #F1F5F9)', dim: 'var(--tc-dim, #D5DEE9)', faint: 'var(--tc-faint, #AEBBCB)',
 
   // Verdict scale — one step of lightness apart, readable on dark and light.
   // ── THE HUE IS FIXED; THE LIGHTNESS IS NOT.                  (zzz761)
@@ -76,11 +81,16 @@ const C = {
   // Reserved for severity and for the one call to action.
   alarm: 'var(--mc-verdict-alarm, #F43F5E)',
   warn: 'var(--mc-verdict-warn, #FBBF24)',
-  cyan: 'var(--mc-cyan)',
+  cyan: 'var(--tc-accent, #22D3EE)',
   amber: 'var(--mc-verdict-warn, #FBBF24)',
   green: 'var(--mc-verdict-up, #34D399)',
   red: 'var(--mc-verdict-down, #FB7185)',
 };
+
+/** Readable INK from a meaning colour: the hue kept, pulled 35% toward the
+ *  card's text colour, so amber and pale violet stay legible on white and
+ *  still read as themselves on dark. Backgrounds keep the raw colour. */
+const ink = (c: string | null | undefined) => (c ? `color-mix(in srgb, ${c} 65%, var(--tc-text, #F1F5F9))` : C.text);
 
 const VERDICT: Record<VarVerdict, { mark: string; color: string; word: string }> = {
   improving: { mark: '▲', color: C.up, word: 'improving' },
@@ -92,6 +102,61 @@ const VERDICT: Record<VarVerdict, { mark: string; color: string; word: string }>
   stated: { mark: '◐', color: C.flat, word: 'disclosed — a level only, no comparison basis' },
   unknown: { mark: '○', color: C.absent, word: 'no value' },
 };
+
+// ── WHAT A ROW IS, AND WHAT IT IS MEASURED AGAINST.                (zzz765)
+//
+// Every figure on the board now says three things: what KIND of statement it
+// is (actual / management statement / guidance / target / historical), the
+// PERIOD it describes, and what it is compared against — the previous period,
+// the same sentence, a plan, or nothing (and why nothing). A bare "80%" says
+// none of that, and "target 80% plus" printed as "80% plus" said the wrong one.
+const STATEMENT_TAG: Record<string, { word: string; color: string }> = {
+  ACTUAL: { word: 'ACTUAL', color: C.dim },
+  MANAGEMENT_STATEMENT: { word: 'MGMT STATEMENT', color: C.warn },
+  GUIDANCE: { word: 'GUIDANCE', color: C.cyan },
+  TARGET: { word: 'TARGET', color: C.cyan },
+  HISTORICAL: { word: 'HISTORICAL CONTEXT', color: C.faint },
+};
+const stripTag = (s: string | null | undefined) => String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '').trim();
+
+type RowLike = {
+  verdict: VarVerdict; before: string | null; after: string | null; delta: string | null;
+  statement?: string | null; plan?: { value: string; type: string; gap: string | null } | null;
+  asOf?: string | null; comparison?: any; unjudged?: string | null;
+};
+
+/** The compact value a chip shows — one figure, typed. */
+function chipValue(c: RowLike): string {
+  const after = stripTag(c.after);
+  const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${c.plan.value}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
+  if (c.statement === 'GUIDANCE' || c.statement === 'TARGET') {
+    // "maintained" / "raised" are the finding; print them as such.
+    if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${c.statement.toLowerCase()} MAINTAINED`;
+    return `${c.statement.toLowerCase()} ${after}`;
+  }
+  if (c.statement === 'MANAGEMENT_STATEMENT') return `“${after}”${planTxt}`;
+  if (c.statement === 'HISTORICAL') return `${[c.before, after].filter(Boolean).join(' → ')} (${c.asOf})`;
+  const cmp = c.comparison;
+  if (cmp && cmp.previous && cmp.basis !== 'NONE' && cmp.basis !== 'WITHIN_DOCUMENT') {
+    const ch = cmp.change_type === 'UNCHANGED' ? 'FLAT' : (cmp.change || c.delta || '');
+    return `${cmp.previous.raw} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
+  }
+  if (c.before && after) return `${c.before} → ${after}${c.delta ? ` · ${c.delta}` : ''}${planTxt}`;
+  return `${after || c.delta || ''}${c.delta && c.delta !== after && after ? ` · ${c.delta}` : ''}${planTxt}`;
+}
+
+/** Why a figure has no "before": said precisely, never as a blank. */
+function priorNote(c: RowLike, depth: number): string | null {
+  if (c.statement !== 'ACTUAL' && c.statement != null) return null;
+  if (c.before) return null;
+  // Only a FIGURE has a previous value; a sentence of commentary does not.
+  if (!/(?<![A-Za-z])\d/.test(String(c.after ?? ''))) return null;
+  const cmp = c.comparison;
+  if (cmp?.previous && cmp.change_type === 'NOT_COMPARABLE') return `prior ${cmp.previous.raw} (${cmp.previous_period}) — not directly comparable`;
+  if (cmp?.previous) return null;
+  if (cmp?.change_type === 'NEWLY_DISCLOSED') return 'not disclosed in the earlier periods on file';
+  return depth <= 1 ? 'prior period not read yet — no previous value on file' : 'prior value unavailable';
+}
 
 export interface ThesisCardProps {
   symbol: string;
@@ -135,6 +200,8 @@ export interface ThesisCardProps {
    *  from. A screener figure and a filing-read figure are not the same
    *  evidence and the card must never let them look the same. */
   dataSource?: string | null;
+  /** Latest quarter the figures cover, e.g. "Jun 2026". (zzz764) */
+  dataPeriod?: string | null;
   /** Whether this name is held, a preset-passing bench candidate, or both.
    *  A bench card must never be mistaken for a holding, so this is rendered
    *  next to the ticker rather than buried in a tooltip. (zzz731) */
@@ -146,7 +213,7 @@ function Section({ label, color, children }: { label: string; color?: string; ch
   return (
     <div style={{ marginTop: 10 }}>
       <div style={{
-        fontSize: 8.5, fontWeight: 800, letterSpacing: 0.5, color: color || C.faint,
+        fontSize: 12, fontWeight: 800, letterSpacing: 0.5, color: color ? ink(color) : C.dim,
         marginBottom: 4, borderBottom: `1px solid ${C.border}`, paddingBottom: 3,
       }}>{label}</div>
       {children}
@@ -164,7 +231,16 @@ export function ThesisCard(p: ThesisCardProps) {
   // The undisclosed ones are not hidden — they are listed under the thesis as
   // unchecked, which is a different and more useful statement than a row of
   // dashes.
-  const changed = (a?.checked || []).filter((c) => c.verdict !== 'unknown');
+  // Moves first, then checked-flat, then levels, then forward statements,
+  // then historical context — the order a reader asks the questions in.
+  const orderOf = (c: any) => c.statement === 'HISTORICAL' ? 5
+    : c.statement === 'GUIDANCE' || c.statement === 'TARGET' ? 4
+      : c.verdict === 'improving' || c.verdict === 'deteriorating' ? 0
+        : c.verdict === 'flat' ? 1 : c.statement === 'MANAGEMENT_STATEMENT' ? 3 : 2;
+  const changed = (a?.checked || []).filter((c) => c.verdict !== 'unknown')
+    .map((c, i) => ({ c, i }))
+    .sort((x, y) => orderOf(x.c) - orderOf(y.c) || y.c.weight - x.c.weight || x.i - y.i)
+    .map((x) => x.c);
   const unchecked = (a?.checked || []).filter((c) => c.verdict === 'unknown');
 
   return (
@@ -174,8 +250,8 @@ export function ThesisCard(p: ThesisCardProps) {
     }}>
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{p.symbol}</span>
-        <span style={{ fontSize: 9.5, fontWeight: 800, color: C.faint }}>{p.market}</span>
+        <span style={{ fontSize: 17, fontWeight: 900, color: C.text }}>{p.symbol}</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: C.faint }}>{p.market}</span>
         {p.origin && (
           <span title={p.origin === 'bench'
             ? 'On the conviction bench and passing the quality preset. NOT a holding — this is a candidate, and nothing here implies you own it.'
@@ -183,59 +259,64 @@ export function ThesisCard(p: ThesisCardProps) {
               ? 'Held, and also on the conviction bench.'
               : 'In your book.'}
             style={{
-              fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
               border: `1px solid ${ORIGIN_META[p.origin].color}`,
-              color: ORIGIN_META[p.origin].color,
+              color: ink(ORIGIN_META[p.origin].color),
             }}>{ORIGIN_META[p.origin].icon} {ORIGIN_META[p.origin].short}</span>
         )}
         {p.tier && (
-          <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
+          <span style={{ fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
             border: `1px solid ${C.border}`, color: C.dim }}>{p.tier}</span>
         )}
         {pm && p.pattern && (
           <span title={p.pattern.because} style={{
-            fontSize: 9.5, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
-            border: `1px solid ${pm.color}`, background: `${pm.color}18`, color: pm.color,
+            fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
+            border: `1px solid ${pm.color}`, background: `${pm.color}18`, color: ink(pm.color),
           }}>{pm.icon} {p.pattern.pattern} · {pm.name}</span>
         )}
         {p.radarScore != null && (
-          <span style={{ fontSize: 9.5, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
         )}
         {p.dataSource === 'screener' && (
           <span title="These figures are screener.in's, not read from the filing by this portal's own engine. Wider coverage, one step further from the document."
-            style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+            style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
               border: `1px solid ${C.faint}`, color: C.faint }}>screener.in data</span>
+        )}
+        {p.dataSource === 'screener-live' && (
+          <span title="Figures parsed from screener.in's company page (quarterly results table, year-on-year; cash conversion is the latest full year). Not read from the filing by this portal's engine."
+            style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              border: `1px solid ${C.faint}`, color: C.faint }}>screener.in table{p.dataPeriod ? ` · ${p.dataPeriod}` : ''}</span>
         )}
         {p.dataSource === 'none' && (
           <span title="This holding is in neither the graded bench nor the screener exports. Read the filing to populate it — nothing about it is being reported as clean."
-            style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+            style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
               border: `1px solid ${C.amber}`, color: C.amber }}>no stored figures</span>
         )}
 
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {sm && (
             <span title={sm.meaning} style={{
-              fontSize: 10, fontWeight: 900, padding: '2px 9px', borderRadius: 3,
-              border: `1px solid ${sm.color}`, background: `${sm.color}18`, color: sm.color,
+              fontSize: 12.5, fontWeight: 900, padding: '2px 9px', borderRadius: 3,
+              border: `1px solid ${sm.color}`, background: `${sm.color}18`, color: ink(sm.color),
             }}>{sm.dot} {sm.label}</span>
           )}
           {p.needsRead && !p.reading && (
             <button onClick={p.onRead} style={{
-              fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+              fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
               border: `1px solid ${C.border}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
             }}>✨ Read evidence</button>
           )}
-          {p.reading && <span style={{ fontSize: 10.5, color: C.dim }}>Reading the latest document…</span>}
+          {p.reading && <span style={{ fontSize: 13, color: C.dim }}>Reading the latest document…</span>}
           {a && (
             <button onClick={() => setOpen((v) => !v)} style={{
-              fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999,
+              fontSize: 12.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999,
               border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
             }}>{open ? 'Less' : 'Evidence'}</button>
           )}
         </span>
       </div>
 
-      {p.error && <div style={{ marginTop: 7, fontSize: 11, color: C.amber }}>{p.error}</div>}
+      {p.error && <div style={{ marginTop: 7, fontSize: 13.5, color: C.amber }}>{p.error}</div>}
 
       {/* ── EVIDENCE STATE — from the ledger, so it survives a reload. (zzz740)
           Period, documents read, when, and whether anything newer exists. */}
@@ -244,13 +325,13 @@ export function ThesisCard(p: ThesisCardProps) {
         const period = p.reportingPeriod || l?.latest_period || null;
         const pr = period && l ? l.periods[period] : null;
         const fr = p.freshness;
-        const frColor = fr?.state === 'CURRENT' ? C.up : fr?.state === 'NEW_EVIDENCE_AVAILABLE' ? C.amber
-          : fr?.state === 'SOURCE_UNAVAILABLE' ? C.alarm : fr?.state === 'STALE' ? C.amber : C.faint;
-        const frLabel = fr?.state === 'CURRENT' ? 'CURRENT' : fr?.state === 'NEW_EVIDENCE_AVAILABLE' ? 'NEW EVIDENCE AVAILABLE'
-          : fr?.state === 'SOURCE_UNAVAILABLE' ? 'SOURCE UNAVAILABLE' : fr?.state === 'STALE' ? 'STALE' : 'NEVER READ';
+        // Reporting-period freshness: which quarter is on file against the one
+        // that should be by now. (zzz765)
+        const fl = freshnessLine(fr);
+        const frColor = fl?.tone === 'ok' ? C.up : fl?.tone === 'warn' ? C.amber : fl?.tone === 'alarm' ? C.alarm : C.dim;
         return (
-          <div style={{ marginTop: 7, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 10.5, color: C.dim }}>
-            <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>EVIDENCE</span>
+          <div style={{ marginTop: 7, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: C.dim }}>
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>EVIDENCE</span>
             {pr ? (
               <span title={`Reporting period ${pr.reporting_period}${pr.period_end_date ? ` (quarter ended ${pr.period_end_date})` : ''} · newest document ${pr.latest_document_date || 'undated'} · read ${pr.extracted_at.slice(0, 10)}${pr.updated_at !== pr.extracted_at ? ` · updated ${pr.updated_at.slice(0, 10)}` : ''}`}>
                 <b style={{ color: C.text }}>{pr.reporting_period}</b> · {pr.documents_read} document{pr.documents_read === 1 ? '' : 's'} read
@@ -258,27 +339,30 @@ export function ThesisCard(p: ThesisCardProps) {
                 {' '}· {pr.facts.length} facts · last updated {pr.updated_at.slice(0, 10)}
               </span>
             ) : <span>no persisted evidence</span>}
-            {fr && (
-              <span title={fr.detail} style={{ fontSize: 9, fontWeight: 800, padding: '1px 7px', borderRadius: 3, border: `1px solid ${frColor}`, color: frColor }}>{frLabel}</span>
+            {fr && fl && (
+              <span title={fr.detail} style={{ width: '100%', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 15, lineHeight: 1.4, color: C.text }}>
+                <span style={{ fontSize: 15, fontWeight: 800, padding: '2px 8px', borderRadius: 4, border: `1.5px solid ${frColor}`, color: frColor }}>{fl.label}</span>
+                {fl.text && <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{fl.text}</span>}
+              </span>
             )}
             {p.persisted === false && (
-              <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 7px', borderRadius: 3, border: `1px solid ${C.alarm}`, color: C.alarm }} title="The read succeeded but the write to the evidence store failed. This will not survive a reload.">NOT SAVED</span>
+              <span style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 7px', borderRadius: 3, border: `1px solid ${C.alarm}`, color: C.alarm }} title="The read succeeded but the write to the evidence store failed. This will not survive a reload.">NOT SAVED</span>
             )}
             {!p.reading && (
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 {p.onCheck && pr && (
                   <button onClick={p.onCheck} title="Search the sources for a document newer than the one on file. No model call." style={{
-                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
+                    fontSize: 12.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
                   }}>↻ Check for new evidence</button>
                 )}
                 {p.onRead && pr && fr?.state === 'NEW_EVIDENCE_AVAILABLE' && (
                   <button onClick={p.onRead} title="Read the newer documents, add the new period to the ledger, keep the old one." style={{
-                    fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber, cursor: 'pointer',
+                    fontSize: 12.5, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber, cursor: 'pointer',
                   }}>✨ Read latest evidence</button>
                 )}
                 {p.onReread && pr && (
                   <button onClick={p.onReread} title="Re-run extraction on the current period's documents and update the persisted record. Debug / manual refresh; the normal path is incremental." style={{
-                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.faint, cursor: 'pointer',
+                    fontSize: 12.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.faint, cursor: 'pointer',
                   }}>↻ Re-read current period</button>
                 )}
               </span>
@@ -292,11 +376,11 @@ export function ThesisCard(p: ThesisCardProps) {
           summary. Deteriorations first. (zzz740) */}
       {p.changed && p.changed.length > 0 && (
         <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg }}>
-          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 3 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 3 }}>
             WHAT CHANGED{p.changedFrom ? ` · ${p.changedFrom} → ${p.reportingPeriod}` : p.reportingPeriod ? ` · ${p.reportingPeriod} (first read)` : ''}
           </div>
           {p.changed.map((c, i) => (
-            <div key={i} style={{ fontSize: 11, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
+            <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
               <span style={{ fontWeight: 900, color: c.sign === '+' ? C.up : c.sign === '-' ? C.down : C.faint }}>{c.sign}</span>{' '}
               <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{c.text}</span>
             </div>
@@ -306,8 +390,8 @@ export function ThesisCard(p: ThesisCardProps) {
 
       {/* The one-line verdict is always visible; the evidence expands. */}
       {a && (
-        <div style={{ marginTop: 7, fontSize: 11.5, color: C.dim, lineHeight: 1.55 }}>
-          <b style={{ color: sm?.color }}>{a.action}</b> — {a.because}
+        <div style={{ marginTop: 7, fontSize: 14, color: C.dim, lineHeight: 1.55 }}>
+          <b style={{ color: ink(sm?.color) }}>{a.action}</b> — {a.because}
         </div>
       )}
 
@@ -332,7 +416,7 @@ export function ThesisCard(p: ThesisCardProps) {
               return (
                 <div key={g} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
                   <span style={{
-                    fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: read ? C.dim : C.faint,
+                    fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: read ? C.dim : C.faint,
                     minWidth: 128, textAlign: 'right', paddingTop: 2,
                   }}>{GROUP_LABEL[g].split(' — ')[0]}</span>
                   <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1 }}>
@@ -351,7 +435,7 @@ export function ThesisCard(p: ThesisCardProps) {
                             ? `${c.label} — ${ab!.label}. ${ab!.hint}${isCore ? '\n\nCORE to this thesis.' : ''}`
                             : `${c.label} — ${v.word}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
                           style={{
-                            fontSize: 9.5, fontWeight: isCore ? 800 : 600,
+                            fontSize: 12, fontWeight: isCore ? 800 : 600,
                             padding: '1px 6px', borderRadius: 4,
                             border: un
                               ? `1px ${isCore ? 'dashed' : 'solid'} ${isCore ? C.absent : 'transparent'}`
@@ -359,7 +443,7 @@ export function ThesisCard(p: ThesisCardProps) {
                             color: un ? C.absent : v.color,
                             background: un ? 'transparent' : `color-mix(in srgb, ${v.color} 12%, transparent)`,
                           }}>
-                          <span style={{ opacity: un ? 0.85 : 1 }}>{un ? ab!.mark : v.mark}</span>
+                          <span style={{ opacity: 1 }}>{un ? ab!.mark : v.mark}</span>
                           {' '}{c.label}
                           {/* ── BEFORE → NOW, NOT JUST THE DELTA.        (zzz761)
                               This row printed `delta || after`, so every
@@ -376,28 +460,7 @@ export function ThesisCard(p: ThesisCardProps) {
                               card stated two different numbers for one
                               variable. One field order, everywhere. */}
                           {!un && (c.before || c.after || c.delta) ? (
-                            <>
-                              {' '}
-                              {c.before && c.after ? (
-                                <>
-                                  <span style={{ opacity: 0.75 }}>{c.before} → </span>
-                                  <b>{c.after}</b>
-                                  {c.delta ? <span style={{ opacity: 0.9 }}> · {c.delta}</span> : null}
-                                </>
-                              ) : (
-                                <>
-                                  {/* The LEVEL is the number; the delta is the
-                                      qualifier. status.ts prints `after ||
-                                      before` in its sentence, and the chip
-                                      now prints the same field in the same
-                                      order — one variable, one figure, on
-                                      every line of the card. (zzz762) */}
-                                  <b>{c.after || c.before || c.delta}</b>
-                                  {(c.after || c.before) && c.delta && c.delta !== c.after
-                                    ? <span style={{ opacity: 0.9 }}> · {c.delta}</span> : null}
-                                </>
-                              )}
-                            </>
+                            <> <b>{chipValue(c as any)}</b></>
                           ) : ''}
                         </span>
                       );
@@ -421,9 +484,9 @@ export function ThesisCard(p: ThesisCardProps) {
           It does not, on its own, decide the status of a thesis whose
           mechanism nobody has examined. */}
       {a && a.financialWarning.length > 0 && (
-        <div style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.55, padding: '6px 9px', borderRadius: 6,
+        <div style={{ marginTop: 7, fontSize: 13, lineHeight: 1.55, padding: '6px 9px', borderRadius: 6,
           border: `1px solid ${C.down}`, background: `color-mix(in srgb, ${C.down} 10%, transparent)` }}>
-          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.down }}>FINANCIAL WARNING </span>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.down }}>FINANCIAL WARNING </span>
           {a.financialWarning.map((w, i) => (
             <span key={i} style={{ color: C.text }}>{i > 0 ? ' · ' : ''}{w.label} <b style={{ color: C.down }}>{w.value}</b></span>
           ))}
@@ -438,7 +501,7 @@ export function ThesisCard(p: ThesisCardProps) {
           confirms WHY. Forward confirms what comes next. They are never
           added together again. */}
       {a && (
-        <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.7 }}>
+        <div style={{ marginTop: 7, fontSize: 13, color: C.dim, lineHeight: 1.7 }}>
           {([
             ['MECHANISM', a.coverage.mechanism, 'the WHY — capacity, utilisation, orders, capex, customers, one-offs, cash'],
             ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
@@ -447,7 +510,7 @@ export function ThesisCard(p: ThesisCardProps) {
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
               <div key={name} title={hint}>
-                <span style={{ display: 'inline-block', minWidth: 78, fontSize: 8, fontWeight: 800, letterSpacing: 0.4,
+                <span style={{ display: 'inline-block', minWidth: 78, fontSize: 11, fontWeight: 800, letterSpacing: 0.4,
                   color: name === 'MECHANISM' ? C.text : C.faint }}>{name}</span>
                 <b style={{ color: t.confirmed ? C.up : C.flat }}>{t.confirmed} confirmed</b>
                 {' · '}
@@ -486,9 +549,9 @@ export function ThesisCard(p: ThesisCardProps) {
       {a && open && (
         <>
           {/* ── WHAT CHANGED — facts only. ─────────────────────────────── */}
-          <Section label={`WHAT CHANGED · ${changed.length} variable${changed.length === 1 ? '' : 's'} read from the evidence`}>
+          <Section label={`WHAT CHANGED${p.reportingPeriod ? ` · ${p.reportingPeriod}` : ''} · ${changed.length} variable${changed.length === 1 ? '' : 's'} read from the evidence`}>
             {changed.length === 0 && (
-              <div style={{ fontSize: 11, color: C.dim }}>
+              <div style={{ fontSize: 13.5, color: C.dim }}>
                 Nothing structural was disclosed. That is silence, not bad news.
               </div>
             )}
@@ -496,37 +559,61 @@ export function ThesisCard(p: ThesisCardProps) {
               const v = VERDICT[c.verdict];
               return (
                 <div key={c.key} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
-                  <span style={{ color: v.color, fontSize: 11, fontWeight: 900, width: 12 }}>{v.mark}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: C.text, minWidth: 132 }}>{c.label}</span>
-                  <span style={{ fontSize: 11, color: C.text, minWidth: 150 }}>
-                    {c.before && <span style={{ color: C.faint }}>{c.before} → </span>}
-                    <b>{c.after || c.delta || '—'}</b>
-                    {c.before && c.delta && <span style={{ color: v.color }}> ({c.delta})</span>}
-                    {/* ── THE COMPARISON BASIS TRAVELS WITH THE NUMBER. (zzz758)
-                        "+8pp" means something different sequentially than it
-                        does year on year, and a reader who cannot see which
-                        one it is has been handed a figure, not a fact. */}
-                    {c.comparison && c.comparison.basis !== 'NONE' && c.comparison.previous && (
-                      <span style={{ display: 'block', fontSize: 9, color: C.faint }}>
-                        {c.comparison.previous_period
-                          ? `${c.comparison.previous_period} → ${c.comparison.current_period} · ${BASIS_LABEL[c.comparison.basis]}`
-                          : BASIS_LABEL[c.comparison.basis]}
-                      </span>
-                    )}
-                    {c.comparison && !c.comparison.previous && c.comparison.current && (
-                      <span style={{ display: 'block', fontSize: 9, color: C.faint }}>previous: NOT DISCLOSED</span>
-                    )}
+                  <span style={{ color: v.color, fontSize: 13.5, fontWeight: 900, width: 12 }}>{v.mark}</span>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text, minWidth: 132 }}>{c.label}</span>
+                  <span style={{ fontSize: 13.5, color: C.text, minWidth: 190 }}>
+                    {(() => {
+                      const cc = c as any;
+                      const tag = STATEMENT_TAG[cc.statement || (cc.source === 'grader' ? 'ACTUAL' : '')];
+                      const note = priorNote(cc, a.historyDepth);
+                      const doc = (p.documentsRead || []).find((d) => d.label === cc.sourceLabel);
+                      return (
+                        <>
+                          <b>{chipValue(cc)}</b>
+                          {cc.comparison?.change_type === 'UNCHANGED' && cc.comparison?.basis === 'WITHIN_DOCUMENT' && <b style={{ color: C.flat }}> · FLAT</b>}
+                          <span style={{ display: 'block', fontSize: 12, color: C.dim, marginTop: 1 }}>
+                            {tag && <b style={{ color: tag.color, letterSpacing: 0.3 }}>{tag.word}</b>}
+                            {cc.asOf && <span>{tag ? ' · ' : ''}{cc.statement === 'HISTORICAL' ? 'dated ' : ''}{cc.asOf}</span>}
+                            {cc.comparison?.previous && cc.comparison.basis !== 'NONE' && (
+                              <span> · {cc.comparison.previous_period
+                                ? `${cc.comparison.previous_period} → ${cc.comparison.current_period}, ${BASIS_LABEL[cc.comparison.basis as keyof typeof BASIS_LABEL]}`
+                                : BASIS_LABEL[cc.comparison.basis as keyof typeof BASIS_LABEL]}</span>
+                            )}
+                            {note && <span> · {note}</span>}
+                            {cc.sourceLabel && (
+                              <> · {doc?.url
+                                ? <a href={doc.url} target="_blank" rel="noopener noreferrer" title={cc.quote || ''} style={{ color: C.cyan, textDecoration: 'underline' }}>{cc.sourceLabel} ↗</a>
+                                : <span title={cc.quote || ''}>{cc.sourceLabel}</span>}</>
+                            )}
+                          </span>
+                          {cc.plan && (
+                            <span style={{ display: 'block', fontSize: 12.5, color: C.cyan }}>
+                              {cc.plan.type === 'TARGET' ? 'Target' : 'Guidance / plan'}: <b>{cc.plan.value}</b>
+                              {cc.plan.gap && <span style={{ color: C.text }}> · actual vs target {cc.plan.gap}</span>}
+                            </span>
+                          )}
+                          {cc.retyped && (
+                            <span style={{ display: 'block', fontSize: 12, color: C.faint }}>read as {String(cc.statement || '').toLowerCase().replace('_', ' ')}: {cc.retyped}</span>
+                          )}
+                          {Array.isArray(cc.context) && cc.context.length > 0 && (
+                            <span style={{ display: 'block', fontSize: 12, color: C.faint }}>
+                              Historical context: {cc.context.map((x: any) => `${x.value} (${x.asOf})`).join(' · ')}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                     {/* ── TWO DOCUMENTS, TWO NUMBERS. (zzz759) The written
                         source supplies the value; the disagreement is shown
                         rather than resolved out of sight. */}
                     {c.conflict && c.conflict.length > 0 && (
-                      <span style={{ display: 'block', fontSize: 9, fontWeight: 800, color: C.warn }}
+                      <span style={{ display: 'block', fontSize: 11.5, fontWeight: 800, color: C.warn }}
                         title={c.conflict.map((x) => `${x.value} — ${x.source}`).join('\n')}>
                         ⚠ sources disagree: {c.conflict.map((x) => x.value).join(' / ')}
                       </span>
                     )}
                   </span>
-                  <span style={{ fontSize: 10.5, color: C.dim, flex: 1 }}>
+                  <span style={{ fontSize: 13, color: C.dim, flex: 1 }}>
                     {/* CAUSE AND WHETHER IT REPEATS — the two questions a
                         number cannot answer about itself. Extracted from the
                         sentence, never inferred: "not disclosed" is printed
@@ -534,7 +621,7 @@ export function ThesisCard(p: ThesisCardProps) {
                     {c.comparison?.cause && (
                       <span style={{
                         display: 'inline-block', marginRight: 6, padding: '0 4px', borderRadius: 3,
-                        fontSize: 8.5, fontWeight: 800, letterSpacing: 0.3,
+                        fontSize: 11, fontWeight: 800, letterSpacing: 0.3,
                         color: c.comparison.cause.persistence === 'STRUCTURAL' ? C.up
                           : c.comparison.cause.persistence === 'TEMPORARY' ? C.warn : C.faint,
                         border: `1px solid ${C.border}`,
@@ -547,7 +634,7 @@ export function ThesisCard(p: ThesisCardProps) {
                     )}
                     {c.evidence}
                   </span>
-                  <span style={{ fontSize: 8.5, fontWeight: 800, color: C.faint }}>W{c.weight}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.faint }}>W{c.weight}</span>
                 </div>
               );
             })}
@@ -562,14 +649,14 @@ export function ThesisCard(p: ThesisCardProps) {
               withheld a comparison it was never asked for. */}
           <Section label={`CHANGE vs PREVIOUS DISCLOSURE · ${a.historyDepth} reporting period${a.historyDepth === 1 ? '' : 's'} on file`}>
             {a.historyDepth <= 1 && (
-              <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.55 }}>
+              <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.55 }}>
                 This is the first period read for this holding, so every figure below is a first observation and
                 <b style={{ color: C.text }}> no previous value exists to compare against</b>. Nothing is inferred to fill
                 that gap. The next read turns these levels into directions.
               </div>
             )}
             {a.historyDepth > 1 && a.changes.length === 0 && (
-              <div style={{ fontSize: 11, color: C.dim }}>
+              <div style={{ fontSize: 13.5, color: C.dim }}>
                 Earlier periods are on file and nothing comparable moved between them.
               </div>
             )}
@@ -579,11 +666,11 @@ export function ThesisCard(p: ThesisCardProps) {
               return (
                 <div key={m.key} style={{ padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 8.5, fontWeight: 800, color: tone, letterSpacing: 0.3, minWidth: 96 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: tone, letterSpacing: 0.3, minWidth: 96 }}>
                       {m.change_type.replace(/_/g, ' ')}
                     </span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.text, minWidth: 132 }}>{m.label}</span>
-                    <span style={{ fontSize: 11, color: C.dim, flex: 1 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text, minWidth: 132 }}>{m.label}</span>
+                    <span style={{ fontSize: 13.5, color: C.dim, flex: 1 }}>
                       <span style={{ color: C.faint }}>{m.previous ? `${m.previous.raw}${m.previous_period ? ` (${m.previous_period})` : ''} → ` : 'previous: NOT DISCLOSED · '}</span>
                       <b style={{ color: C.text }}>{m.current ? m.current.raw : 'not disclosed'}</b>
                       {m.change && <span style={{ color: tone, fontWeight: 800 }}> {m.change}</span>}
@@ -591,7 +678,7 @@ export function ThesisCard(p: ThesisCardProps) {
                       <span style={{ color: C.faint }}> · {BASIS_LABEL[m.basis]}</span>
                     </span>
                   </div>
-                  <div style={{ fontSize: 10.5, color: C.dim, paddingLeft: 104, lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 13, color: C.dim, paddingLeft: 104, lineHeight: 1.5 }}>
                     {m.cause
                       ? <>
                         <b style={{ color: m.cause.persistence === 'STRUCTURAL' ? C.up : m.cause.persistence === 'TEMPORARY' ? C.warn : C.faint }}>
@@ -618,13 +705,13 @@ export function ThesisCard(p: ThesisCardProps) {
               );
             })}
             {a.changes.length > 0 && (
-              <div style={{ fontSize: 10, color: C.faint, marginTop: 5 }}>
+              <div style={{ fontSize: 12.5, color: C.faint, marginTop: 5 }}>
                 Causes: {a.causeSummary.structural} structural · {a.causeSummary.temporary} temporary ·{' '}
                 {a.causeSummary.unclassified} stated but unclassified · {a.causeSummary.none} moves with no reason given.
               </div>
             )}
             {a.statusChangeReason && (
-              <div style={{ fontSize: 10.5, color: C.text, marginTop: 5, fontWeight: 700 }}>
+              <div style={{ fontSize: 13, color: C.text, marginTop: 5, fontWeight: 700 }}>
                 STATUS CHANGED — {a.statusChangeReason}
               </div>
             )}
@@ -632,7 +719,7 @@ export function ThesisCard(p: ThesisCardProps) {
 
           {/* ── STRUCTURAL SIGNAL — the mechanism, as a chain. ─────────── */}
           <Section label="STRUCTURAL SIGNAL — the mechanism this thesis depends on">
-            <div style={{ fontSize: 11.5, color: C.text, display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            <div style={{ fontSize: 14, color: C.text, display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
               {a.thesis.mechanism.map((m, i) => (
                 <span key={i}>
                   <span style={{ color: C.text }}>{m}</span>
@@ -644,13 +731,13 @@ export function ThesisCard(p: ThesisCardProps) {
               const col = m.state === 'confirmed' ? C.green : m.state === 'contradicted' ? C.red : C.faint;
               const mark = m.state === 'confirmed' ? '✓' : m.state === 'contradicted' ? '✕' : '○';
               return (
-                <div key={m.link} style={{ fontSize: 11, color: C.dim, padding: '1px 0' }}>
+                <div key={m.link} style={{ fontSize: 13.5, color: C.dim, padding: '1px 0' }}>
                   <span style={{ color: col, fontWeight: 900, marginRight: 6 }}>{mark}</span>{m.link}
-                  <span style={{ color: C.faint, fontSize: 10 }}> · {m.state}</span>
+                  <span style={{ color: C.faint, fontSize: 12.5 }}> · {m.state}</span>
                 </div>
               );
             })}
-            <div style={{ marginTop: 5, fontSize: 11, fontWeight: 800,
+            <div style={{ marginTop: 5, fontSize: 13.5, fontWeight: 800,
               color: a.mechanismVerdict.includes('CONTRADICTED') ? C.red
                 : a.mechanismVerdict.includes('NOT YET') ? C.amber : C.green }}>
               → {a.mechanismVerdict}
@@ -662,13 +749,13 @@ export function ThesisCard(p: ThesisCardProps) {
             const m = CAPEX_META[p.capex!.state];
             return (
               <Section label="CAPEX — DID THE MONEY EARN?" color={m.color}>
-                <div style={{ fontSize: 10.5, fontWeight: 900, color: m.color, marginBottom: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 900, color: ink(m.color), marginBottom: 4 }}>
                   {m.dot} {m.label}
                 </div>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
                   {p.capex!.links.map((l, i) => (
                     <span key={i} style={{
-                      fontSize: 9.5, padding: '1px 6px', borderRadius: 3,
+                      fontSize: 12, padding: '1px 6px', borderRadius: 3,
                       border: `1px solid ${l.known ? C.border : 'transparent'}`,
                       background: l.known ? C.bg2 : 'transparent',
                       color: l.known ? C.text : C.faint,
@@ -676,9 +763,48 @@ export function ThesisCard(p: ThesisCardProps) {
                     }}>{l.name}{l.value ? ` ${l.value}` : ''}</span>
                   ))}
                 </div>
-                <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>{p.capex!.because}</div>
+                {/* ── THE LIFECYCLE, ACROSS EVERY QUARTER ON FILE. (zzz765)
+                    Announced → spent → built → commissioned → producing →
+                    earning. A later quarter adds a layer; none is erased. */}
+                {p.capex!.stage && (
+                  <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center', marginBottom: 5, fontSize: 12.5 }}>
+                    {CAPEX_STAGES.map((st, i) => {
+                      const reached = CAPEX_STAGES.indexOf(p.capex!.stage!) >= i;
+                      return (
+                        <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <span style={{
+                            padding: '1px 6px', borderRadius: 3, fontWeight: reached ? 800 : 500,
+                            color: reached ? C.text : C.faint,
+                            border: `1px solid ${reached ? C.up : C.border}`,
+                            background: reached ? `color-mix(in srgb, ${C.up} 12%, transparent)` : 'transparent',
+                          }}>{reached ? '✓ ' : ''}{STAGE_LABEL[st]}</span>
+                          {i < CAPEX_STAGES.length - 1 && <span style={{ color: C.faint }}>→</span>}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {p.capex!.earning && (
+                  <div style={{ fontSize: 13.5, marginBottom: 4, color: C.text }}>
+                    <b style={{ color: p.capex!.earning.state === 'revenue' ? C.up : p.capex!.earning.state === 'not_yet' ? C.warn : C.flat }}>
+                      CAPEX EARNING · {p.capex!.earning.state === 'revenue' ? '▲' : p.capex!.earning.state === 'not_yet' ? '○' : '◐'}
+                    </b>{' '}{p.capex!.earning.line}
+                    {p.capex!.earning.source && <span style={{ color: C.faint }}> — {p.capex!.earning.source}</span>}
+                  </div>
+                )}
+                {(p.capex!.lifecycle || []).length > 0 && (
+                  <div style={{ fontSize: 12.5, color: C.dim, marginBottom: 4 }}>
+                    {(p.capex!.lifecycle || []).map((e) => (
+                      <div key={e.period}>
+                        <b style={{ color: C.text }}>{e.period}</b>{' · '}
+                        {e.steps.map((x) => `${STAGE_LABEL[x.stage]}: ${x.text.slice(0, 70)}`).join(' · ')}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.5 }}>{p.capex!.because}</div>
                 {p.capex!.nextCheck && (
-                  <div style={{ fontSize: 10.5, color: C.amber, marginTop: 3 }}>→ {p.capex!.nextCheck}</div>
+                  <div style={{ fontSize: 13, color: C.amber, marginTop: 3 }}>→ {p.capex!.nextCheck}</div>
                 )}
               </Section>
             );
@@ -686,24 +812,24 @@ export function ThesisCard(p: ThesisCardProps) {
 
           {/* ── FROM HERE DOWN IS INFERENCE, AND SAYS SO. ─────────────── */}
           <Section label="THESIS — interpretation, not fact" color={sm?.color}>
-            <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.55 }}>
+            <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.55 }}>
               Bought as <b style={{ color: C.text }}>{a.thesis.name}</b>. {sm?.meaning}
             </div>
-            <div style={{ fontSize: 10, color: C.faint, marginTop: 3 }}>
+            <div style={{ fontSize: 12.5, color: C.faint, marginTop: 3 }}>
               {a.coverage.coreDisclosed} of {a.coverage.corePossible} core variables were disclosed
               · {a.coverage.disclosed} of {a.coverage.checked} in total.
               {a.coverage.coreDisclosed < a.coverage.corePossible
                 && ' An undisclosed variable is never counted against the thesis.'}
             </div>
             {p.promiseNote && (
-              <div style={{ fontSize: 10.5, color: C.dim, marginTop: 4 }}>📓 {p.promiseNote}</div>
+              <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>📓 {p.promiseNote}</div>
             )}
           </Section>
 
           {a.nextConfirmation.length > 0 && (
             <Section label="NEXT THING TO WATCH">
               {a.nextConfirmation.map((t, i) => (
-                <div key={i} style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>· {t}</div>
+                <div key={i} style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.5 }}>· {t}</div>
               ))}
             </Section>
           )}
@@ -719,22 +845,22 @@ export function ThesisCard(p: ThesisCardProps) {
                   : ic.status === 'unknown' ? '· not checked' : '✓ ok';
               return (
                 <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
-                  <span style={{ fontSize: 9, fontWeight: 800, color: col, minWidth: 74 }}>{mark}</span>
-                  <span style={{ fontSize: 8.5, fontWeight: 800, color: C.faint, minWidth: 18 }}>W{ic.weight}</span>
-                  <span style={{ fontSize: 11, color: ic.status === 'fired' ? C.text : C.dim, lineHeight: 1.5 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: col, minWidth: 74 }}>{mark}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.faint, minWidth: 18 }}>W{ic.weight}</span>
+                  <span style={{ fontSize: 13.5, color: ic.status === 'fired' ? C.text : C.dim, lineHeight: 1.5 }}>
                     {ic.condition}
                   </span>
                 </div>
               );
             })}
-            <div style={{ fontSize: 10, color: C.faint, marginTop: 5, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12.5, color: C.faint, marginTop: 5, lineHeight: 1.5 }}>
               No price is on this list, and none ever will be. A drawdown, a weak market and one flat quarter are
               not on it either.
             </div>
           </Section>
 
           {unchecked.length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 10, color: C.faint, lineHeight: 1.5 }}>
+            <div style={{ marginTop: 8, fontSize: 12.5, color: C.faint, lineHeight: 1.5 }}>
               Not disclosed this quarter, so not counted either way: {unchecked.map((c) => c.label.toLowerCase()).join(', ')}.
             </div>
           )}
@@ -744,7 +870,7 @@ export function ThesisCard(p: ThesisCardProps) {
               "searched and not disclosed" and "could not be reached" look
               identical on a card until the trail is shown. */}
           {p.documentsRead && p.documentsRead.length > 0 && (
-            <div style={{ marginTop: 9, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
+            <div style={{ marginTop: 9, fontSize: 12.5, color: C.dim, lineHeight: 1.6 }}>
               <span style={{ fontWeight: 800, color: C.faint, letterSpacing: .4 }}>
                 READ {p.documentsRead.length} DOCUMENT{p.documentsRead.length > 1 ? 'S' : ''}
               </span>{' '}
@@ -762,14 +888,14 @@ export function ThesisCard(p: ThesisCardProps) {
 
           {p.discoveryAttempts && p.discoveryAttempts.length > 0 && (
             <details style={{ marginTop: 6 }}>
-              <summary style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}>
+              <summary style={{ fontSize: 12.5, color: C.faint, cursor: 'pointer' }}>
                 Evidence search — {p.discoveryAttempts.filter((a) => a.outcome !== 'error').length} of{' '}
                 {p.discoveryAttempts.length} source(s) answered
                 {p.discoveryState === 'RETRIEVAL_FAILED' ? ' · RETRIEVAL FAILED — a source could not be reached, so nothing here is an absence of disclosure'
                   : p.discoveryState === 'SEARCH_EXHAUSTED' ? ' · SEARCHED, NO EVIDENCE — every source answered'
                     : ''}
               </summary>
-              <div style={{ marginTop: 5, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
+              <div style={{ marginTop: 5, fontSize: 12.5, color: C.dim, lineHeight: 1.6 }}>
                 {p.discoveryAttempts.map((a, i) => (
                   <div key={i}>
                     <span style={{ color: a.outcome === 'found' ? C.up : a.outcome === 'error' ? C.alarm : C.faint }}>
@@ -820,11 +946,11 @@ export function ThesisCard(p: ThesisCardProps) {
 
           {p.ledger && (Object.keys(p.ledger.periods).length > 0 || p.ledger.status_history.length > 0) && (
             <details style={{ marginTop: 6 }}>
-              <summary style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}>
+              <summary style={{ fontSize: 12.5, color: C.faint, cursor: 'pointer' }}>
                 Evidence history — {Object.keys(p.ledger.periods).length} period{Object.keys(p.ledger.periods).length === 1 ? '' : 's'} on file
                 {p.ledger.status_history.length > 0 ? ` · ${p.ledger.status_history.length} status change${p.ledger.status_history.length === 1 ? '' : 's'}` : ''}
               </summary>
-              <div style={{ marginTop: 5, fontSize: 10, color: C.dim, lineHeight: 1.6 }}>
+              <div style={{ marginTop: 5, fontSize: 12.5, color: C.dim, lineHeight: 1.6 }}>
                 {Object.values(p.ledger.periods).sort((x, y) => x.reporting_period.localeCompare(y.reporting_period)).map((pr) => (
                   <div key={pr.reporting_period}>
                     <b style={{ color: C.text }}>{pr.reporting_period}</b> · {pr.documents_read} read · {pr.facts.length} facts · {pr.events.length} events
@@ -854,7 +980,7 @@ export function ThesisCard(p: ThesisCardProps) {
             <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {p.sources.map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noreferrer"
-                  style={{ fontSize: 10.5, color: C.cyan, textDecoration: 'none' }}>↗ {s.label}</a>
+                  style={{ fontSize: 13, color: C.cyan, textDecoration: 'none' }}>↗ {s.label}</a>
               ))}
             </div>
           )}

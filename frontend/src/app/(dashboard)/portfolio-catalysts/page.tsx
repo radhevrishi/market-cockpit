@@ -35,10 +35,12 @@ import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
+import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 
 const C = {
-  bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--mc-text-1)',
-  dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)', amber: '#F59E0B', cyan: 'var(--mc-cyan)',
+  bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
+  // High-contrast text levels shared with the thesis card (zzz765).
+  dim: 'var(--tc-dim, #D5DEE9)', faint: 'var(--tc-faint, #AEBBCB)', amber: 'var(--mc-verdict-warn, #FBBF24)', cyan: 'var(--tc-accent, #22D3EE)',
 };
 
 // EVIDENCE_INCOMPLETE ranks ABOVE strengthening and neutral: an unchecked
@@ -50,7 +52,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters } = useBook();
+  const { symbols, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
@@ -128,13 +130,18 @@ export default function PortfolioCatalystsPage() {
     const m = /v(\d+)$/.exec(pv);
     return !m || Number(m[1]) < 9;
   });
+  // PRIOR QUARTER (zzz765): names in view whose ledger lacks the period just
+  // before its latest AND already lists a document for that quarter. Derived
+  // from the ledgers, so a name drops out the moment its backfill lands.
+  const needPrior = list.filter((r) => r.market !== 'US' && !!priorBackfillPlan(r.ledger || null));
+  const anyRunning = batch.running || priorBatch.running;
   const newEvidence = inSource.filter((r) => r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE').length;
   const sourceDown = inSource.filter((r) => r.freshness?.state === 'SOURCE_UNAVAILABLE').length;
 
   if (!symbols.length && !loading) {
     return (
-      <div style={{ padding: 24, color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
-        <h1 style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 8 }}>Portfolio Catalysts</h1>
+      <div style={{ padding: 24, color: C.dim, fontSize: 15, lineHeight: 1.6 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 8 }}>Portfolio Catalysts</h1>
         {note.serverError
           ? <>Your book could not be read — the server answered: <i>{note.serverError}</i>. This is not the same as an
             empty book, and nothing has been assessed. Reload once the connection is back.</>
@@ -148,8 +155,8 @@ export default function PortfolioCatalystsPage() {
   return (
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
-        <h1 style={{ fontSize: 18, fontWeight: 800, color: C.text, margin: 0 }}>Portfolio Catalysts</h1>
-        <div style={{ fontSize: 12, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 820 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Portfolio Catalysts</h1>
+        <div style={{ fontSize: 14, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 820 }}>
           Every holding carries a <b style={{ color: C.text }}>thesis ledger</b> — the named variables you own it for —
           and each quarter&apos;s evidence is checked against them. Capex is tracked as a chain to whether it actually
           earned, not as an announcement. <b style={{ color: C.text }}>A price move is never an exit reason</b>, and no
@@ -169,7 +176,7 @@ export default function PortfolioCatalystsPage() {
           const on = source === k;
           return (
             <button key={k} title={hint} onClick={() => setSource(k)} style={{
-              fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+              fontSize: 13.5, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${on ? C.cyan : C.border}`, color: on ? C.cyan : C.dim,
               background: on ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
             }}>{label}</button>
@@ -178,7 +185,7 @@ export default function PortfolioCatalystsPage() {
         <button onClick={() => setSmallMidOnly((v) => !v)}
           title={`Bench candidates above \u20B9${SMALL_MID_CAP_MAX_CR.toLocaleString('en-IN')} Cr are hidden. Holdings are never hidden by this.`}
           style={{
-            fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+            fontSize: 13.5, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
             border: `1px solid ${smallMidOnly ? C.cyan : C.border}`, color: smallMidOnly ? C.cyan : C.dim,
             background: smallMidOnly ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
           }}>
@@ -189,7 +196,7 @@ export default function PortfolioCatalystsPage() {
         </button>
 
         {(note.benchFiltered > 0 || note.benchUnchecked > 0) && (
-          <span style={{ fontSize: 10.5, color: C.faint }}
+          <span style={{ fontSize: 13, color: C.faint }}
             title="The preset is the same one the alerts use (lib/quality-preset), applied to the same graded row the thesis engine reads.">
             {note.benchFiltered > 0 && <>{note.benchFiltered} bench names failed the preset</>}
             {note.benchFiltered > 0 && note.benchUnchecked > 0 && ' · '}
@@ -210,22 +217,22 @@ export default function PortfolioCatalystsPage() {
                 cursor: 'pointer', border: `1px solid ${on ? m.color : C.border}`,
                 background: on ? `${m.color}18` : C.bg,
               }}>
-              <span style={{ fontSize: 17, fontWeight: 900, color: m.color }}>{counts[s] || 0}</span>
-              <span style={{ fontSize: 10, fontWeight: 800, color: on ? m.color : C.dim }}>{m.dot} {m.label}</span>
+              <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{counts[s] || 0}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: on ? `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` : C.dim }}>{m.dot} {m.label}</span>
             </button>
           );
         })}
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, color: C.faint }}>
+        <span style={{ fontSize: 13.5, color: C.faint }}>
           {list.length} of {inSource.length} shown · {note.book} held · {note.bench} bench ·{' '}
           <b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {inSource.length - readCount} remaining · {docsRead} documents read
           {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
           {sourceDown > 0 && <> · {sourceDown} source unavailable</>}
         </span>
         <button onClick={() => setOnlyRead((v) => !v)} style={{
-          fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+          fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
           border: `1px solid ${onlyRead ? C.cyan : C.border}`, color: onlyRead ? C.cyan : C.dim,
           background: onlyRead ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
         }}>{onlyRead ? 'Only names with evidence read' : 'Show all'}</button>
@@ -234,14 +241,14 @@ export default function PortfolioCatalystsPage() {
           <button onClick={() => readAll(list.map((r) => r.symbol))}
             title="Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
             style={{
-              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
             }}>&#10024; {needRead.length ? `Read evidence for ${needRead.filter((r) => list.includes(r)).length} that need it` : 'All evidence current'}</button>
         ) : (
           <>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
             <button onClick={stop} style={{
-              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
             }}>Stop</button>
           </>
@@ -254,7 +261,7 @@ export default function PortfolioCatalystsPage() {
           <button onClick={() => readRecentReporters(10)}
             title="Asks the exchange feed which holdings filed results in the last 10 days, then re-reads ONLY those not yet read since their filing. A name whose evidence already post-dates its results is skipped without a model call. US names are not covered by the NSE feed and are skipped."
             style={{
-              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
             }}>&#8635; Update recent reporters (10d)</button>
         )}
@@ -267,21 +274,58 @@ export default function PortfolioCatalystsPage() {
           <button onClick={() => readAll(blockedOnHeadline.map((r) => r.symbol), 3, { reprocess: true, exact: true })}
             title="These names have no graded row and were read before the reader asked the filing for its headline figures. Re-reads each one once (force) so revenue growth, earnings growth and cash conversion can be filled from the results page. One model call per name."
             style={{
-              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
             }}>&#8635; Re-read {blockedOnHeadline.length} blocked on missing headline</button>
         )}
         {recent.state === 'checking' && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: C.amber }}>Checking who reported in the last 10 days…</span>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: C.amber }}>Checking who reported in the last 10 days…</span>
+        )}
+        {/* ── PRIOR QUARTER. Click only. (zzz765)
+            Each ledger holds one quarter; the one before is already listed
+            among its documents, unread. Reading it gives every variable a
+            before, so the card can say "72% → 80% · +8pp". */}
+        {!anyRunning && needPrior.length > 0 && (
+          <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+            <button onClick={() => readPriorPeriods(needPrior.map((r) => r.symbol))}
+              title="For each name whose ledger has only its latest quarter, reads the quarter before it (concall transcript first, then investor presentation, then results) and stores it as its own period. The latest quarter is never changed. Three at a time; you can stop and resume."
+              style={{
+                fontSize: 15, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${C.cyan}`, background: 'transparent', color: C.text,
+              }}>&#8635; Read prior quarter for {needPrior.length} (enables before &rarr; after)</button>
+            <span style={{ fontSize: 15, color: C.text, fontWeight: 600 }}>
+              Calls the model once per company ({needPrior.length} calls), only when you click.
+            </span>
+          </span>
+        )}
+        {priorBatch.running && (
+          <>
+            <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Reading prior quarter {priorBatch.done} of {priorBatch.total}…</span>
+            <button onClick={stop} style={{
+              fontSize: 15, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
+            }}>Stop</button>
+          </>
         )}
         <a href="/exit-radar" style={{
-          marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
+          marginLeft: 'auto', fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
           border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none',
         }}>Exit Radar →</a>
       </div>
 
       {recent.state !== 'idle' && recent.state !== 'checking' && (
         <RecentReportersStrip recent={recent} />
+      )}
+
+      {!loading && !anyRunning && (priorBatch.resumable || 0) > 0 && needPrior.length > 0 && (
+        <div style={{ fontSize: 15, color: C.text, background: C.bg, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b>Last prior-quarter read: {priorBatch.done} processed · {priorBatch.resumable} remaining{priorBatch.failed ? ` · ${priorBatch.failed} failed` : ''}</b>
+          <span>— what was read is persisted. Resume reads only the {needPrior.length} still without a prior quarter (one model call each).</span>
+          <button onClick={() => readPriorPeriods(needPrior.map((r) => r.symbol))} style={{
+            fontSize: 15, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+            border: `1px solid ${C.cyan}`, background: 'transparent', color: C.text,
+          }}>Resume</button>
+        </div>
       )}
 
       {batch.running && (
@@ -291,16 +335,16 @@ export default function PortfolioCatalystsPage() {
         </div>
       )}
 
-      {loading && <div style={{ fontSize: 12, color: C.dim }}>Reading your book…</div>}
+      {loading && <div style={{ fontSize: 14, color: C.dim }}>Reading your book…</div>}
 
       {/* A batch that stopped — tab closed, reload, error — is reported from
           the ledgers, not from memory: what was persisted is what counts. */}
       {!loading && !batch.running && (batch.resumable || 0) > 0 && (
-        <div style={{ fontSize: 11.5, color: C.dim, background: C.bg, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 14, color: C.dim, background: C.bg, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <b style={{ color: C.text }}>Last batch: {batch.done} updated · {batch.resumable} remaining{batch.failed ? ` · ${batch.failed} failed` : ''}</b>
           <span>— persisted; nothing here was lost on reload.</span>
           <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
-            fontSize: 11, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+            fontSize: 13.5, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
             border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
           }}>Resume</button>
         </div>
@@ -311,7 +355,7 @@ export default function PortfolioCatalystsPage() {
           book it has not read is the failure this page was rebuilt to fix.
           (zzz717) */}
       {!loading && readCount < inSource.length && (
-        <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.6, background: C.bg,
+        <div style={{ fontSize: 14, color: C.dim, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
           <b style={{ color: C.text }}>
             {inSource.length - readCount} of {inSource.length} names have no persisted evidence.
@@ -324,10 +368,10 @@ export default function PortfolioCatalystsPage() {
           {!batch.running && (
             <div style={{ marginTop: 7 }}>
               <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
-                fontSize: 11.5, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
+                fontSize: 14, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
                 border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
               }}>&#10024; Read the {inSource.length - readCount} remaining</button>
-              <span style={{ fontSize: 10.5, color: C.faint, marginLeft: 9 }}>
+              <span style={{ fontSize: 13, color: C.faint, marginLeft: 9 }}>
                 Three at a time. Each is one model call against one filing, and you can stop it at any point.
               </span>
             </div>
@@ -359,6 +403,7 @@ export default function PortfolioCatalystsPage() {
           readNote={r.readNote}
           promiseNote={r.state === 'done' ? r.promiseNote : null}
           dataSource={r.dataSource}
+          dataPeriod={r.graded?.period || null}
           sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
         />
       ))}
@@ -373,13 +418,13 @@ export default function PortfolioCatalystsPage() {
 function RecentReportersStrip({ recent }: { recent: ReturnType<typeof useBook>['recent'] }) {
   const p = recent.plan;
   const chip = (t: string, color: string, title?: string) => (
-    <span key={t} title={title} style={{ fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+    <span key={t} title={title} style={{ fontSize: 13, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
       border: `1px solid ${color}`, color, marginRight: 4, marginBottom: 3, display: 'inline-block' }}>{t}</span>
   );
   const border = recent.state === 'error' ? '#EF4444' : recent.state === 'reading' ? C.cyan : C.amber;
   return (
-    <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.7, background: C.bg, border: `1px solid ${border}`, borderRadius: 8, padding: '9px 13px' }}>
-      {recent.state === 'error' && <b style={{ color: '#EF4444' }}>{recent.error}</b>}
+    <div style={{ fontSize: 14, color: C.dim, lineHeight: 1.7, background: C.bg, border: `1px solid ${border}`, borderRadius: 8, padding: '9px 13px' }}>
+      {recent.state === 'error' && <b style={{ color: 'var(--mc-verdict-down, #EF4444)' }}>{recent.error}</b>}
       {recent.state !== 'error' && p && (
         <>
           <b style={{ color: C.text }}>
@@ -402,7 +447,7 @@ function RecentReportersStrip({ recent }: { recent: ReturnType<typeof useBook>['
               {p.current.map((d) => chip(`${d.ticker} · filed ${d.reported_at}`, C.faint, `${d.subject} — ${d.because}`))}</div>
           )}
           {recent.at && recent.state === 'done' && (
-            <div style={{ color: C.faint, fontSize: 10.5 }}>Finished {recent.at.slice(11, 16)} UTC · nothing runs again until you click.</div>
+            <div style={{ color: C.faint, fontSize: 13 }}>Finished {recent.at.slice(11, 16)} UTC · nothing runs again until you click.</div>
           )}
         </>
       )}

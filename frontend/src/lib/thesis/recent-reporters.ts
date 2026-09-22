@@ -27,6 +27,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { CompanyLedger } from './evidence-ledger';
+import { feedDateIso, bareSymbol } from './filing-dates';
 
 export interface FeedFiling {
   symbol: string;
@@ -48,10 +49,18 @@ const RESULTS_SUBJECT = [
  *  the results and would otherwise mark the company as having reported. */
 const NOT_RESULTS = /(intimation|newspaper|trading window|compliance certificate|voting result|scrutini[sz]er|annual report|postal ballot|\bagm\b|\begm\b|analyst meet|investor meet|schedule of|certificate under regulation|share transfer|loss of share|duplicate share|credit rating|record date|dividend distribution|related party|corporate governance report|shareholding pattern|reconciliation of share capital|prior intimation|advance intimation)/i;
 
+/** Words that tie a filing to a set of RESULTS. (zzz764)
+ *  "Outcome of Board Meeting" in September is an AGM, a fund-raise or a
+ *  dividend far more often than results; the first version counted it
+ *  bare and queued 53 holdings for a re-read in results off-season. A
+ *  generic subject now counts only when it also names results or a
+ *  quarter. "Financial Results" counts on its own. */
+const RESULTS_WORDS = /financial results?|\bresults?\b|quarter(ly)? ended|half[- ]year ended|year ended|\bq[1-4]\b|\bh[12]\b|unaudited|audited|earnings/i;
 export function isResultsFiling(subject: string | null | undefined): boolean {
   const s = String(subject || '');
   if (!s || NOT_RESULTS.test(s)) return false;
-  return RESULTS_SUBJECT.some((re) => re.test(s));
+  if (/financial\s+results/i.test(s)) return true;
+  return RESULTS_SUBJECT.some((re) => re.test(s)) && RESULTS_WORDS.test(s);
 }
 
 export interface ReportedFact {
@@ -73,12 +82,15 @@ export function windowStart(days: number, now: Date = new Date()): string {
 
 /** Pure: the newest results filing per ticker inside [from, now]. */
 export function reportedInWindow(items: FeedFiling[], tickers: string[], from: string): ReportedFact[] {
-  const want = new Set(tickers.map((t) => t.toUpperCase().trim()));
+  // Book ticker by bare symbol: the book holds IFBAGRO-BE, the feed IFBAGRO.
+  const want = new Map(tickers.map((t) => [bareSymbol(t), t.toUpperCase().trim()] as const));
   const best = new Map<string, ReportedFact>();
   for (const f of items) {
-    const sym = String(f?.symbol || '').toUpperCase().trim();
-    if (!want.has(sym)) continue;
-    const d = day(f?.filing_date);
+    const sym = want.get(bareSymbol(f?.symbol));
+    if (!sym) continue;
+    // The feed writes "22-Sep-2026 18:47:27"; an ISO-only parse dropped every
+    // row, so no holding was ever "reported in the last 10 days". (zzz765)
+    const d = feedDateIso(f?.filing_date, f?.attachment_url);
     if (!d || d < from) continue;
     if (!isResultsFiling(f?.subject)) continue;
     const cur = best.get(sym);

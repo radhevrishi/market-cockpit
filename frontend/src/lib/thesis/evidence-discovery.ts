@@ -32,6 +32,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { fetchCompanyDocs, pickDocument, type CompanyDoc } from '@/lib/earnings/screener-documents';
+import { resolveTicker } from '@/lib/bse-nse-mapping';
+import { exchangeProxyFor } from '@/lib/pdf-text-extractor';
+import { feedDateIso, bareSymbol } from './filing-dates';
+import { reportingPeriodFromDate } from './evidence-ledger';
 
 /** Where a document came from, in the owner's source hierarchy (§28). */
 export type SourceTier = 1 | 2 | 3;
@@ -118,9 +122,23 @@ export function rankCandidates(candidates: DocCandidate[], near?: string | null)
     if (aa !== ba) return aa - ba;
     const ak = KIND_RANK[a.kind], bk = KIND_RANK[b.kind];
     if (ak !== bk) return ak - bk;
+    // Among 'results' filings the statement of results itself beats a press
+    // release or a board-meeting outcome letter filed the same week: CUPID's
+    // newest "results" candidate was a 22-Sep press release about a share
+    // disclosure, dated after the August financial results. (zzz765)
+    if (a.kind === 'results') {
+      // A correction or clarification of the results names them too, and
+      // CUPID filed one four days after its August results. (zzz765)
+      const rs = (c: DocCandidate) => (RESULTS_CORRECTION.test(c.label) ? 2 : RESULTS_STATEMENT.test(c.label) ? 0 : 1);
+      const as = rs(a), bs = rs(b);
+      if (as !== bs) return as - bs;
+    }
     return String(b.dateIso || '').localeCompare(String(a.dateIso || ''));
   });
 }
+
+const RESULTS_CORRECTION = /correction|typographical|clarification|inadvertent|erratum/i;
+const RESULTS_STATEMENT = /financial\s+results|results?\s+for\s+the\s+(quarter|half|year)|quarter\s+ended|regulation\s+33/i;
 
 /**
  * Pure: pick the documents worth reading, capped, and never two of the same
@@ -166,13 +184,18 @@ export function candidateFromScreenerDoc(d: CompanyDoc): DocCandidate {
   const kind: DocKind = d.kind === 'transcript' ? 'transcript'
     : d.kind === 'ppt' ? 'investor_presentation'
       : d.kind === 'annual_report' ? 'annual_report' : 'other';
+  // An annual report labelled "2026" reports the year that ENDED 31 March
+  // 2026. Dated 1 March it fell in Q3 FY26 (IFBAGRO's ledger said so); dated
+  // the day after the year end it lands in Q4 FY26, the period it reports.
+  const dateIso = kind === 'annual_report' && d.periodIso && /-03-01$/.test(d.periodIso)
+    ? d.periodIso.replace(/-03-01$/, '-04-01') : d.periodIso;
   return {
     url: d.url,
     kind,
     tier: kind === 'transcript' ? 2 : 1,
     source: 'screener.in company page',
     period: d.period,
-    dateIso: d.periodIso,
+    dateIso,
     label: d.label,
   };
 }
@@ -202,11 +225,12 @@ export interface ExchangeFiling {
  *  an order win or a commissioning notice is exactly the structural evidence
  *  the thesis ledger asks for, and the old filter threw them away. */
 export function candidatesFromFilings(all: ExchangeFiling[], ticker: string): DocCandidate[] {
-  const sym = ticker.toUpperCase();
+  // Bare symbols on both sides: the book holds IFBAGRO-BE, the feed IFBAGRO.
+  const sym = bareSymbol(ticker);
   const out: DocCandidate[] = [];
   const seen = new Set<string>();
   for (const f of all) {
-    if (String(f?.symbol || '').toUpperCase() !== sym) continue;
+    if (bareSymbol(f?.symbol) !== sym) continue;
     const url = String(f?.attachment_url || '');
     if (!url || seen.has(url)) continue;
     const subject = String(f?.subject || '');
@@ -215,7 +239,9 @@ export function candidatesFromFilings(all: ExchangeFiling[], ticker: string): Do
     if (/newspaper|trading window|voting result|scrutini[sz]er|postal ballot|duplicate share|loss of share|share transfer|reconciliation of share capital|compliance certificate/i.test(hay)) continue;
     seen.add(url);
     const kind = classifyExchangeDoc(subject, url);
-    const date = /^\d{4}-\d{2}-\d{2}/.test(String(f?.filing_date || '')) ? String(f!.filing_date).slice(0, 10) : null;
+    // The feed writes "22-Sep-2026 18:47:27"; an ISO-only test left every
+    // exchange candidate undated. (zzz765)
+    const date = feedDateIso(f?.filing_date, url);
     out.push({
       url,
       kind,
@@ -227,6 +253,169 @@ export function candidatesFromFilings(all: ExchangeFiling[], ticker: string): Do
     });
   }
   return out;
+}
+
+// ── BSE: the company's own announcement list.                     (zzz765)
+//
+// WHY THIS SOURCE EXISTS. CUPID and IFBAGRO showed nothing newer than Q4 FY26
+// on 22 September although both filed Q1 FY27 results in August (CUPID on
+// 7 Aug, "Un-Audited Financial Results … Quarter Ended June 30, 2026"). The
+// two sources discovery had could not hold that PDF:
+//   · the CF worker feed is a rolling ~1-week window, and its `/day/<date>`
+//     endpoint answers `count: 0` for August;
+//   · screener.in lists only concall transcripts, presentations and annual
+//     reports — CUPID filed no August presentation or concall, and IFB Agro
+//     has never held a concall at all.
+// BSE's per-scrip announcement API returns every filing with its PDF, dated,
+// for as far back as asked. It is the same API `fetchBSEAnnouncements` already
+// reads for the whole market, asked for one scrip.
+
+/** One row of BSE's AnnSubCategoryGetData table (the fields used). */
+export interface BseAnnouncement {
+  NEWSSUB?: string;
+  HEADLINE?: string;
+  NEWS_DT?: string;
+  DT_TM?: string;
+  CATEGORYNAME?: string | null;
+  SUBCATNAME?: string | null;
+  ATTACHMENTNAME?: string | null;
+  PDFFLAG?: number | string | null;
+}
+
+/** Pure: BSE announcement rows → candidates. Insider/SAST disclosures, AGM
+ *  paperwork and board-meeting INTIMATIONS are dropped (the intimation names
+ *  "Financial Results" and would otherwise pose as the result). */
+export function candidatesFromBse(rows: BseAnnouncement[]): DocCandidate[] {
+  const out: DocCandidate[] = [];
+  const seen = new Set<string>();
+  for (const r of rows || []) {
+    const file = String(r?.ATTACHMENTNAME || '').trim();
+    if (!file || !/\.pdf$/i.test(file)) continue;
+    const subject = String(r?.NEWSSUB || r?.HEADLINE || '').trim();
+    const cat = `${r?.CATEGORYNAME || ''} ${r?.SUBCATNAME || ''}`.trim();
+    const hay = `${cat} ${subject}`;
+    if (/insider trading|sast|regulation 29|reg\. ?29|agm\/egm|postal ballot|newspaper|trading window|iepf|voting result|scrutini[sz]er|compliance certificate|certificate under reg|reg\. ?74|loss of share|duplicate share|share transfer|reconciliation of share capital|brsr|business responsibility/i.test(hay)) continue;
+    if (/board meeting intimation|intimation of board meeting|prior intimation|advance intimation/i.test(hay)) continue;
+    // BSE serves a live attachment from AttachLive and an archived one from
+    // AttachHis; PDFFLAG says which (0 live, otherwise historical) — verified
+    // against CUPID's filings: flag 1 answered 404 on AttachLive.
+    const live = String(r?.PDFFLAG ?? '0') === '0';
+    const url = `https://www.bseindia.com/xml-data/corpfiling/${live ? 'AttachLive' : 'AttachHis'}/${file}`;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const date = feedDateIso(r?.NEWS_DT || r?.DT_TM || null);
+    out.push({
+      url, kind: classifyExchangeDoc(hay, url), tier: 1, source: 'BSE corporate announcements',
+      period: date, dateIso: date, label: subject || cat || 'BSE filing',
+    });
+  }
+  return out;
+}
+
+const BSE_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const bseHeaders = { 'User-Agent': BSE_UA, Accept: 'application/json, text/plain, */*', Referer: 'https://www.bseindia.com/', Origin: 'https://www.bseindia.com' };
+
+/** GET a bseindia.com URL directly, then through the exchange proxy the PDF
+ *  reader already uses (BSE refuses some datacenter IPs). */
+async function bseGet(url: string, timeoutMs: number): Promise<{ body: string | null; outcome: string }> {
+  const hops = [url, exchangeProxyFor(url)].filter((u): u is string => !!u);
+  const why: string[] = [];
+  for (const u of hops) {
+    try {
+      const r = await fetch(u, { headers: bseHeaders, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) { why.push(`HTTP ${r.status}`); continue; }
+      return { body: await r.text(), outcome: 'ok' };
+    } catch (e: any) {
+      why.push(e?.name === 'TimeoutError' ? 'timed out' : String(e?.message || e));
+    }
+  }
+  return { body: null, outcome: why.join('; ') || 'no response' };
+}
+
+/** The scrip code for a symbol: the screener page's link, the curated map,
+ *  then BSE's own quote search (exact symbol match only). */
+async function bseScripCode(ticker: string, fromScreener: string | null | undefined): Promise<{ code: string | null; error: string | null }> {
+  if (fromScreener && /^\d{6}$/.test(fromScreener)) return { code: fromScreener, error: null };
+  const sym = bareSymbol(ticker);
+  const mapped = resolveTicker(sym).bseCode;
+  if (mapped && /^\d{6}$/.test(mapped)) return { code: mapped, error: null };
+  const got = await bseGet(`https://api.bseindia.com/Msource/1D/getQouteSearch.aspx?Type=EQ&text=${encodeURIComponent(sym)}&flag=site`, 10_000);
+  // The search not answering is an outage; answering without the symbol means
+  // the company is not listed on BSE — an answer, not an error.
+  if (!got.body) return { code: null, error: `BSE symbol search: ${got.outcome}` };
+  for (const m of got.body.matchAll(/stock-share-price\/[^/'"]+\/([^/'"]+)\/(\d{6})\//gi)) {
+    if (m[1].toUpperCase() === sym) return { code: m[2], error: null };
+  }
+  return { code: null, error: null };
+}
+
+/** The company's BSE announcements over the last `days`, as candidates. */
+export async function fetchBseCandidates(ticker: string, scripHint: string | null | undefined, days = 200): Promise<{ candidates: DocCandidate[]; attempt: DiscoveryAttempt }> {
+  const source = 'BSE corporate announcements';
+  const sc = await bseScripCode(ticker, scripHint);
+  const code = sc.code;
+  if (!code) {
+    return { candidates: [], attempt: sc.error
+      ? { source, outcome: 'error', detail: sc.error, found: 0 }
+      : { source, outcome: 'empty', detail: `${bareSymbol(ticker)} is not listed on BSE`, found: 0 } };
+  }
+  const ymd = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const to = new Date(), from = new Date(Date.now() - days * 86_400_000);
+  const rows: BseAnnouncement[] = [];
+  for (let page = 1; page <= 3; page++) {
+    const got = await bseGet(`https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w?pageno=${page}&strCat=-1&strPrevDate=${ymd(from)}&strScrip=${code}&strSearch=P&strToDate=${ymd(to)}&strType=C&subcategory=-1`, 15_000);
+    if (!got.body) {
+      if (page === 1) return { candidates: [], attempt: { source, outcome: 'error', detail: `scrip ${code}: ${got.outcome}`, found: 0 } };
+      break;
+    }
+    let j: any = null;
+    try { j = JSON.parse(got.body); } catch { j = null; }
+    const table: BseAnnouncement[] = Array.isArray(j?.Table) ? j.Table : [];
+    // BSE answers the string "No Record Found!" (valid JSON) for an empty range.
+    if (!table.length) break;
+    rows.push(...table);
+    const total = Number(j?.Table1?.[0]?.ROWCNT || 0);
+    if (!total || rows.length >= total) break;
+  }
+  const candidates = candidatesFromBse(rows);
+  return {
+    candidates,
+    attempt: {
+      source, outcome: candidates.length ? 'found' : 'empty',
+      detail: candidates.length ? `${candidates.length} filing(s) with PDFs for scrip ${code} in the last ${days} days` : `scrip ${code} has no readable filing in the last ${days} days`,
+      found: candidates.length,
+    },
+  };
+}
+
+/**
+ * Pure: the next document to try when one could not be read. Same kind AND
+ * same reporting period first (AETHER's August presentation failed to
+ * download — its July presentation is the same quarter's slides), then any
+ * readable kind of the same period. Never a different period: a substitute
+ * from another quarter would be read as though it were this one.
+ */
+export function nextBestCandidate(ranked: DocCandidate[], failed: DocCandidate, tried: Set<string>): DocCandidate | null {
+  const periodOf = (c: DocCandidate) => reportingPeriodFromDate(c.dateIso)?.period || null;
+  const want = periodOf(failed);
+  if (!want) return null;
+  const pool = ranked.filter((c) => c.kind !== 'other' && !tried.has(c.url) && periodOf(c) === want);
+  return pool.find((c) => c.kind === failed.kind) || pool[0] || null;
+}
+
+/**
+ * Pure: what a read that produced nothing records. A source that errored
+ * (HTTP 5xx, timeout, refused) or a document we could not download or OCR
+ * makes it SOURCE_UNAVAILABLE — our failure, never the company's silence.
+ * NO_DISCLOSURE only when every source answered and nothing readable exists.
+ */
+export function attemptOutcome(
+  attempts: Array<Pick<DiscoveryAttempt, 'outcome'>>,
+  documentOutcomes: Array<{ outcome: string }>,
+): 'SOURCE_UNAVAILABLE' | 'NO_DISCLOSURE' {
+  if (attempts.some((a) => a.outcome === 'error')) return 'SOURCE_UNAVAILABLE';
+  if (documentOutcomes.some((o) => o.outcome === 'download_failed' || o.outcome === 'scanned' || o.outcome === 'budget_exhausted')) return 'SOURCE_UNAVAILABLE';
+  return 'NO_DISCLOSURE';
 }
 
 /**
@@ -268,9 +457,13 @@ export async function discoverEvidence(
   }
 
   // ── Source 2: the screener.in company page (full concall history).
+  let scripHint: string | null = null;
   try {
     const lib = await fetchCompanyDocs(ticker);
-    if (lib.error && !lib.docs.length) {
+    scripHint = lib.bseCode || null;
+    // A page that loaded and lists nothing is an answer ("empty"), not an
+    // outage; only a page that could not be fetched is an error. (zzz765)
+    if (lib.error && !lib.docs.length && !/no readable documents listed/i.test(lib.error)) {
       attempts.push({ source: 'screener.in company page', outcome: 'error', detail: lib.error, found: 0 });
     } else {
         const found = lib.docs.map(candidateFromScreenerDoc);
@@ -286,6 +479,19 @@ export async function discoverEvidence(
     attempts.push({ source: 'screener.in company page', outcome: 'error', detail: String(e?.message || e), found: 0 });
   }
 
+  // ── Source 3: BSE's announcement list for the scrip — results PDFs,
+  // presentations and transcripts of any age, whatever screener.in or the
+  // one-week feed can reach. Runs even when screener.in answered: screener
+  // does not list results filings at all. (zzz765)
+  try {
+    const bse = await fetchBseCandidates(ticker, scripHint);
+    const known = new Set(candidates.map((c) => c.url));
+    candidates.push(...bse.candidates.filter((c) => !known.has(c.url)));
+    attempts.push(bse.attempt);
+  } catch (e: any) {
+    attempts.push({ source: 'BSE corporate announcements', outcome: 'error', detail: String(e?.message || e), found: 0 });
+  }
+
   return resolveDiscovery(ticker, candidates, attempts, opts.filingDate);
 }
 
@@ -299,7 +505,13 @@ export function resolveDiscovery(
   attempts: DiscoveryAttempt[],
   filingDate?: string | null,
 ): Discovery {
-  const ranked = rankCandidates(candidates, filingDate);
+  // Ranked around the NEWEST readable document when that is later than the
+  // hint (or there is no hint). With no reference date every dated candidate
+  // was "near", so kind alone decided and CUPID read a January 2024 concall
+  // transcript as its latest evidence. (zzz765)
+  const newest = candidates.filter((c) => c.kind !== 'other' && c.dateIso).map((c) => c.dateIso as string).sort().pop() || null;
+  const near = filingDate && (!newest || filingDate >= newest) ? filingDate : (newest || filingDate || null);
+  const ranked = rankCandidates(candidates, near);
   const readable = readableCandidates(ranked);
   const errored = attempts.filter((a) => a.outcome === 'error');
 

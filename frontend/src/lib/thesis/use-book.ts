@@ -35,6 +35,7 @@ import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
 import { recordPromises, checkPromises } from './guidance-ledger';
 import { planRecentReads, type RecentPlan, type ReportedFact } from './recent-reporters';
+import { priorBackfillPlan } from './prior-period';
 import {
   freshnessOf, whatChanged, latestSummary,
   type CompanyLedger, type FreshnessState, type ChangeLine,
@@ -104,9 +105,19 @@ function applyLedger(row: BookRow, ledger: CompanyLedger | null, freshness?: { s
   const p = stored.period;
   const ch = whatChanged(ledger!);
   const readDocs = p.documents.filter((d) => d.outcome === 'read');
+  // ── THE CARD IS A PROJECTION OF THE WHOLE PERIOD.                 (zzz765)
+  //
+  // `stored.summary.events` holds only the events of the LAST read of this
+  // period; the period record holds every event ever read for it, deduped by
+  // id (mergePeriod). AARTIPHARM's card was built from 9 of its 18 stored
+  // events, so the presentation's "capacity expanded from 5,000 to 9,600+
+  // MTPA" never reached the board. The board reads the period's events.
+  const summary = Array.isArray(p.events) && p.events.length
+    ? { ...stored.summary, events: p.events }
+    : stored.summary;
   return assess({
     ...row,
-    summary: stored.summary,
+    summary,
     state: 'done',
     error: undefined,
     sourceUrl: readDocs[0]?.url || row.sourceUrl,
@@ -114,7 +125,7 @@ function applyLedger(row: BookRow, ledger: CompanyLedger | null, freshness?: { s
     discoveryAttempts: p.discovery_attempts || undefined,
     discoveryState: p.discovery_state || null,
     documentOutcomes: p.documents.filter((d) => d.outcome !== 'not_selected').map((d) => ({ label: d.label, kind: d.kind, outcome: d.outcome, chars: d.chars || 0, pages: d.pages || 0, detail: d.detail, url: d.url })),
-    pattern: classifyWithFiling(row.graded, stored.summary) || row.pattern,
+    pattern: classifyWithFiling(row.graded, summary) || row.pattern,
     ledger, freshness: fr, reportingPeriod: p.reporting_period,
     changed: ch.lines, changedFrom: ch.from,
     persisted: true, persistError: null,
@@ -149,7 +160,7 @@ function assess(row: BookRow): BookRow {
   // figure without one says PREVIOUS: NOT DISCLOSED and stops there.
   const comparisons = buildComparisons(row.ledger || null);
   const hist = historyDepth(row.ledger || null);
-  const vars = extractVariables(row.graded, row.summary, comparisons);
+  const vars = extractVariables(row.graded, row.summary, comparisons, { period: row.reportingPeriod || row.ledger?.latest_period || null });
   const check = row.summary ? checkPromises(row.symbol, row.summary) : null;
   // The status carried by the newest period that is NOT the one being
   // assessed — so a status change can name what it moved from.
@@ -177,11 +188,12 @@ function assess(row: BookRow): BookRow {
       } : null,
       // An evidence document has been read only when a summary came back.
       evidenceReviewed: !!row.summary,
+      sourceUnavailable: row.ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE',
       // Without a graded or screener row the grader-computed variables can
       // never be filled, whatever is read. (zzz757)
       hasGraderRow: !!row.graded,
     }),
-    capex: buildCapexChain(row.summary, vars),
+    capex: buildCapexChain(row.summary, vars, row.ledger || null),
     promiseNote: check ? check.detail : null,
   };
 }
@@ -219,6 +231,9 @@ export function useBook(opts?: { includeBench?: boolean }) {
   const [rows, setRows] = useState<Record<string, BookRow>>({});
   const [loading, setLoading] = useState(true);
   const [batch, setBatch] = useState<{ running: boolean; done: number; total: number; resumable?: number; failed?: number }>({ running: false, done: 0, total: 0 });
+  // The prior-quarter backfill's own progress (zzz765). Same shape as `batch`,
+  // its own server header, and — like every read here — started by a click.
+  const [priorBatch, setPriorBatch] = useState<{ running: boolean; done: number; total: number; resumable?: number; failed?: number }>({ running: false, done: 0, total: 0 });
   // ── RECENT REPORTERS. On click only. (zzz763)
   //   idle → checking (feed) → planned (who is due) → reading → done/error.
   //   The plan is kept after the batch so the strip can say what was skipped
@@ -417,6 +432,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         const ledgers: Record<string, CompanyLedger> = {};
         const fresh: Record<string, { state: FreshnessState; detail: string }> = {};
         let batchInfo: any = null;
+        let priorInfo: any = null;
         for (let i = 0; i < all.length; i += 100) {
           const slice = all.slice(i, i + 100);
           const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(slice.join(','))}`, { cache: 'no-store' });
@@ -425,6 +441,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
           Object.assign(ledgers, j?.ledgers || {});
           Object.assign(fresh, j?.freshness || {});
           if (j?.batch) batchInfo = j.batch;
+          if (j?.prior_batch) priorInfo = j.prior_batch;
           if (cancelled) return;
         }
         // Folded outside the updater (updaters run lazily; see readFiling).
@@ -447,16 +464,90 @@ export function useBook(opts?: { includeBench?: boolean }) {
         for (const r of toPost.slice(0, 60)) { if (cancelled) break; await postStatus(r); }
         if (batchInfo && !batchInfo.finished_at) {
           setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: batchInfo.remaining, failed: batchInfo.failed });
-          // An interrupted batch (tab closed, reload mid-run) resumes by
-          // itself: the owner asked for it once and it was not finished. A
-          // batch that FINISHED — including one stopped by hand — does not.
-          if (batchInfo.remaining > 0 && Array.isArray(batchInfo.remaining_tickers) && batchInfo.remaining_tickers.length) {
-            resumeRef.current = batchInfo.remaining_tickers as string[];
-          }
+          // ── NOTHING SPENDS WITHOUT A CLICK.                        (zzz764)
+          // An interrupted batch used to resume by itself on reload. Every
+          // read is a model call, and the owner's rule is that reads run only
+          // when he asks. The banner below offers Resume; it does not press it.
         } else if (batchInfo) {
           setBatch({ running: false, done: batchInfo.done + batchInfo.skipped + batchInfo.failed, total: batchInfo.tickers.length, resumable: 0, failed: batchInfo.failed });
         }
+        // An interrupted prior-quarter backfill is offered for Resume, never
+        // resumed on its own. (zzz765)
+        if (priorInfo) {
+          setPriorBatch({ running: false, done: priorInfo.done + priorInfo.skipped + priorInfo.failed, total: priorInfo.tickers.length, resumable: priorInfo.finished_at ? 0 : priorInfo.remaining, failed: priorInfo.failed });
+        }
       } catch { /* the page still works from graded data; the cards say NEVER READ */ }
+      if (cancelled) return;
+
+      // ── STAGE 5 — THE NAMES NOBODY HAD A ROW FOR.                (zzz764)
+      //
+      // 18 holdings showed EVIDENCE INCOMPLETE and 68 bench names were
+      // excluded from the preset because neither the graded bench nor the
+      // static screener CSV carried them. screener.in's company page prints
+      // the quarterly table for every listed company, so those rows are now
+      // parsed from it — and names that had only the thin CSV row (a
+      // sequential margin, no profit figures) get the year-on-year table
+      // too. Background, batched, cached server-side for a day; no model.
+      try {
+        const wantLive = Array.from(new Set([
+          ...Array.from(universe.keys()).filter((s) => {
+            const g = got[s.toUpperCase()] || rowsRef.current[s]?.graded;
+            return (rowsRef.current[s]?.market !== 'US') && (!g || g.source === 'none' || g.source === 'screener');
+          }),
+          ...benchPassingPreset(candidates, got).unchecked,
+        ]));
+        const live: Record<string, any> = {};
+        for (let i = 0; i < wantLive.length && !cancelled; i += 12) {
+          try {
+            const r = await fetch(`/api/v1/portfolio/screener-live?tickers=${encodeURIComponent(wantLive.slice(i, i + 12).join(','))}`, { cache: 'no-store' });
+            if (!r.ok) continue;
+            const j = await r.json();
+            for (const [k, v] of Object.entries(j?.rows || {})) if (v) live[k.toUpperCase()] = v;
+          } catch { /* one batch failing leaves those names as they were */ }
+        }
+        if (cancelled || !Object.keys(live).length) throw new Error('no live rows');
+        for (const [k, v] of Object.entries(live)) {
+          const cur = got[k];
+          if (!cur || cur.source === 'none' || cur.source === 'screener' || richness(v) > richness(cur)) got[k] = v;
+        }
+        const gate2 = benchPassingPreset(candidates, got);
+        const before = new Set(universe.keys());
+        universe = mergeUniverse(held, gate2.passed);
+        paint(universe);
+        setNote((n) => ({
+          ...n, ...originCounts(universe.values()),
+          benchFiltered: gate2.failed, benchUnchecked: gate2.unchecked.length,
+        }));
+        // Ledgers for bench names admitted by this pass.
+        const added = Array.from(universe.keys()).filter((s) => !before.has(s));
+        const addedLedgers: Record<string, CompanyLedger> = {};
+        for (let i = 0; i < added.length && !cancelled; i += 100) {
+          try {
+            const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(added.slice(i, i + 100).join(','))}`, { cache: 'no-store' });
+            if (r.ok) Object.assign(addedLedgers, (await r.json())?.ledgers || {});
+          } catch { /* the card says NEVER READ */ }
+        }
+        setRows((cur) => {
+          const out = { ...cur };
+          for (const sym of Array.from(universe.keys())) {
+            const hit = live[sym.toUpperCase()];
+            const prev = out[sym];
+            if (!prev) continue;
+            let next = prev;
+            if (hit && (got[sym.toUpperCase()] === hit)) {
+              next = {
+                ...next, graded: hit, dataSource: 'screener-live',
+                pattern: classifyGradedRow(hit) || next.pattern,
+                sourceUrl: next.sourceUrl || hit.source_url || null,
+              };
+            }
+            const l = addedLedgers[sym.toUpperCase()];
+            if (l) next = applyLedger(next, l);
+            if (next !== prev) out[sym] = assess(next);
+          }
+          return out;
+        });
+      } catch { /* enrichment only — every card still renders from what it had */ }
       if (cancelled) return;
 
       // The radar is an enrichment and never blocks the paint.
@@ -515,7 +606,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       const modeQ = mode === 'force' ? '&force=1' : mode === 'check' ? '&mode=check' : mode === 'incremental' ? '&mode=incremental' : '';
       const url = isUs
         ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
-        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}${modeQ}`;
+        : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}${modeQ}${mode === 'check' ? '' : '&ocr=1'}`;  // ocr=1: a clicked read may OCR a scanned filing (zzz765)
       const res = await fetch(url, { cache: 'no-store' });
       const j = await res.json();
       if (mode === 'check') {
@@ -675,6 +766,95 @@ export function useBook(opts?: { includeBench?: boolean }) {
   const stop = useCallback(() => { stopRef.current = true; }, []);
 
   /**
+   * READ THE PRIOR QUARTER — so a level gets a before. On click only. (zzz765)
+   *
+   * Queues only the India names whose ledger has a latest period, has NOT got
+   * the period immediately before it, and already lists at least one
+   * document for that quarter (priorBackfillPlan). One model call per name,
+   * three at a time, with a server-side batch header of its own so an
+   * interrupted run can be resumed — by a click, never on reload.
+   *
+   * After each name its ledger is re-loaded and folded back in through the
+   * same applyLedger → assess path a page load uses, so the comparisons are
+   * rebuilt from both periods and the card can print "72% → 80% · +8pp".
+   */
+  const readPriorPeriods = useCallback(async (syms: string[], concurrency = 3) => {
+    const todo = syms.filter((s) => {
+      const row = rowsRef.current[s];
+      if (!row || row.market === 'US' || row.state === 'loading') return false;
+      return !!priorBackfillPlan(row.ledger || null);
+    });
+    if (!todo.length) return;
+    stopRef.current = false;
+    setPriorBatch({ running: true, done: 0, total: todo.length });
+    try {
+      await fetch('/api/v1/portfolio/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'batch_start', kind: 'prior', tickers: todo }) });
+    } catch { /* progress then lives only in this tab; the ledgers still persist */ }
+
+    const one = async (sym: string) => {
+      const row = rowsRef.current[sym];
+      const plan = row ? priorBackfillPlan(row.ledger || null) : null;
+      if (!row || !plan) return;
+      setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], readNote: `Reading ${plan.target} (prior quarter)…` } } : r));
+      // The exchange day feed is only worth asking when the best document came
+      // from it; screener.in dates are month labels, not filing days.
+      const best = plan.candidates[0];
+      const fd = best && best.source === 'exchange filing feed' && /^\d{4}-\d{2}-\d{2}/.test(String(best.date_iso || ''))
+        ? `&filing_date=${String(best.date_iso).slice(0, 10)}` : '';
+      let j: any = null;
+      try {
+        const res = await fetch(`/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}&period=${encodeURIComponent(plan.target)}${fd}`, { cache: 'no-store' });
+        j = await res.json();
+      } catch (e: any) {
+        j = { ok: false, error: String(e?.message || e) };
+      }
+      // Reload the ledger from the store — what was PERSISTED is what the card
+      // compares, not what this response claims.
+      let ledger: CompanyLedger | null = j?.ledger || null;
+      try {
+        const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(sym)}`, { cache: 'no-store' });
+        if (r.ok) ledger = (await r.json())?.ledgers?.[sym.toUpperCase()] || ledger;
+      } catch { /* the response's own ledger stands in */ }
+      const prev = rowsRef.current[sym];
+      if (!prev) return;
+      const next = ledger ? applyLedger(prev, ledger) : prev;
+      const landed = !!ledger?.periods?.[plan.target];
+      const note = landed
+        ? `Prior quarter ${plan.target} read · ${(j?.documents_read || []).length} document(s) · ${(j?.events || []).length} facts — before → after now available`
+        : `Prior quarter ${plan.target} not read: ${j?.error || (j?.persisted === false ? `save failed (${j?.persist_error || 'unknown'})` : 'no result')}`;
+      rowsRef.current = { ...rowsRef.current, [sym]: { ...next, readNote: note } };
+      setRows((r) => ({ ...r, [sym]: { ...next, readNote: note } }));
+      // The current period's status can move once it has a before; recorded
+      // with history as any other status change. Best-effort, no model.
+      const cp = next.ledger && next.reportingPeriod ? next.ledger.periods[next.reportingPeriod] : null;
+      if (landed && next.assessment && cp && cp.status !== next.assessment.status) void postStatus(next);
+    };
+
+    let i = 0, done = 0;
+    const worker = async () => {
+      while (!stopRef.current) {
+        const k = i++;
+        if (k >= todo.length) return;
+        try { await one(todo[k]); }
+        catch (e: any) {
+          const sym = todo[k];
+          setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], readNote: `Prior quarter read failed: ${String(e?.message || e)}` } } : r));
+        }
+        done++;
+        setPriorBatch((b) => (b.running ? { ...b, done } : b));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, worker));
+    const stopped = stopRef.current;
+    setPriorBatch((b) => ({ ...b, running: false, resumable: stopped ? Math.max(0, b.total - b.done) : 0 }));
+    if (!stopped) {
+      try {
+        await fetch('/api/v1/portfolio/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'batch_finish', kind: 'prior' }) });
+      } catch { /* see above */ }
+    }
+  }, []);
+
+  /**
    * Re-read ONLY the holdings that filed results in the last `days` days and
    * have not been read since that filing. Never runs on its own. (zzz763)
    *
@@ -726,5 +906,5 @@ export function useBook(opts?: { includeBench?: boolean }) {
     }
   }, [readAll]);
 
-  return { symbols, origins, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters };
+  return { symbols, origins, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods };
 }

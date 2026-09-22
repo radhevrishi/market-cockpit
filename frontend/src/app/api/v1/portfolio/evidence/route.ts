@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const raw = (searchParams.get('tickers') || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => TICKER_RE.test(s));
   const tickers = Array.from(new Set(raw)).slice(0, 400);
-  const [ledgers, batch] = await Promise.all([tickers.length ? loadLedgers(tickers) : Promise.resolve({} as Record<string, CompanyLedger>), loadBatch()]);
+  const [ledgers, batch, priorBatch] = await Promise.all([tickers.length ? loadLedgers(tickers) : Promise.resolve({} as Record<string, CompanyLedger>), loadBatch(), loadBatch('prior')]);
 
   let withEvidence = 0, sourceUnavailable = 0, noDisclosure = 0, newEvidence = 0;
   const freshness: Record<string, { state: string; detail: string }> = {};
@@ -45,11 +45,14 @@ export async function GET(req: NextRequest) {
   // whose last attempt is at/after the batch start has been processed,
   // whatever the outcome. Nothing here can drift from the truth.
   const batchView = batch ? { ...batch, ...batchProgress(batch, ledgers) } : null;
+  // The prior-quarter backfill (zzz765): same header, same derivation.
+  const priorBatchView = priorBatch ? { ...priorBatch, ...batchProgress(priorBatch, ledgers) } : null;
 
   return NextResponse.json({
     ok: true, tickers: tickers.length, ledgers, freshness,
     counts: { requested: tickers.length, with_evidence: withEvidence, remaining: tickers.length - withEvidence, source_unavailable: sourceUnavailable, no_disclosure: noDisclosure, new_evidence_available: newEvidence },
     batch: batchView,
+    prior_batch: priorBatchView,
   });
 }
 
@@ -67,19 +70,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: r.ok, error: r.error });
   }
 
+  // `kind: 'prior'` files the header under the prior-quarter backfill's own
+  // key; anything else is the evidence batch, as before. (zzz765)
+  const kind: 'evidence' | 'prior' = body?.kind === 'prior' ? 'prior' : 'evidence';
+
   if (action === 'batch_start') {
     const tickers = Array.from(new Set((Array.isArray(body?.tickers) ? body.tickers : []).map((s: any) => String(s).toUpperCase()).filter((s: string) => TICKER_RE.test(s)))).slice(0, 400) as string[];
     if (!tickers.length) return NextResponse.json({ ok: false, error: 'tickers[] required' }, { status: 400 });
-    const header: BatchHeader = { batch_id: `batch_${Date.now().toString(36)}`, started_at: new Date().toISOString(), finished_at: null, tickers, requested_by: 'portfolio-catalysts' };
-    await saveBatch(header);
+    const header: BatchHeader = { batch_id: `batch_${Date.now().toString(36)}`, started_at: new Date().toISOString(), finished_at: null, tickers, requested_by: kind === 'prior' ? 'portfolio-catalysts:prior-quarter' : 'portfolio-catalysts' };
+    await saveBatch(header, kind);
     return NextResponse.json({ ok: true, batch: header });
   }
 
   if (action === 'batch_finish') {
-    const b = await loadBatch();
+    const b = await loadBatch(kind);
     if (!b) return NextResponse.json({ ok: false, error: 'no batch on file' });
     const done = { ...b, finished_at: new Date().toISOString() };
-    await saveBatch(done);
+    await saveBatch(done, kind);
     return NextResponse.json({ ok: true, batch: done });
   }
 

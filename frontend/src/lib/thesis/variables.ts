@@ -32,8 +32,10 @@ import {
 } from './taxonomy';
 
 import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
-import { scaledNumber, sameUnit } from './evidence-ledger';
+import { scaledNumber, sameUnit, deltaOf as ledgerDeltaOf } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
+import { normalizeEvent, gapToTarget } from './fact-normalize';
+import { parseOneOff, oneOffLine } from './one-offs';
 
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
 export type { VarKey, VarGroup, EvidenceKind };
@@ -91,6 +93,25 @@ export interface StructuralVar {
    *  from "level with no comparison", which is the default reading of a
    *  stated value. Status prints this reason instead. (zzz763) */
   unjudged?: string | null;
+  /** ── WHAT KIND OF STATEMENT THE ROW IS.                         (zzz765)
+   *  ACTUAL — a reported figure; MANAGEMENT_STATEMENT — management's own
+   *  description ("pretty much at maximum"); GUIDANCE / TARGET — forward;
+   *  HISTORICAL — dated before this reporting period, shown as context. */
+  statement?: 'ACTUAL' | 'MANAGEMENT_STATEMENT' | 'GUIDANCE' | 'TARGET' | 'HISTORICAL';
+  /** The forward statement for the same variable, kept BESIDE the actual
+   *  rather than merged into it: "Actual 74% · Target 80%+ · gap −6pp". */
+  plan?: { value: string; type: 'GUIDANCE' | 'TARGET'; quote: string; source: string; gap: string | null } | null;
+  /** The period the figure describes: the reporting period, or the date a
+   *  historical figure is pinned to. */
+  asOf?: string | null;
+  /** Which read document the row came from (its label, as the card lists it). */
+  sourceLabel?: string | null;
+  /** Verbatim sentence behind the row. */
+  quote?: string | null;
+  /** Figures for the same variable dated BEFORE this period — context only. */
+  context?: { value: string; asOf: string; quote: string; source: string }[] | null;
+  /** Why the reading's type was corrected from the model's label. */
+  retyped?: string | null;
 }
 
 
@@ -164,15 +185,21 @@ const numIn = (s: string | null): number | null => {
 };
 
 /** A stated change between two like-for-like figures, or null. Never
- *  derived across units, and never derived when either side is missing. */
+ *  derived across units, and never derived when either side is missing.
+ *  One implementation for the board and WHAT CHANGED: this used to parse
+ *  the first digit it met, so "Q4 FY26 → nearly doubling compared with Q4
+ *  FY26" printed "+0%" (both sides read as 4), and "59 days → 59 days by Q4
+ *  FY26" printed a move of zero. (zzz764) */
 function deltaOf(before: string | null, after: string | null): string | null {
-  const b = numIn(before), a = numIn(after);
-  if (b == null || a == null) return null;
-  const pctBoth = /%/.test(before || '') && /%/.test(after || '');
-  if (pctBoth) return `${a - b >= 0 ? '+' : ''}${(a - b).toFixed(0)}pp`;
-  if (b === 0) return null;
-  const g = ((a - b) / Math.abs(b)) * 100;
-  return `${g >= 0 ? '+' : ''}${g.toFixed(0)}%`;
+  if (!before || !after) return null;
+  if (!sameUnit(before, after, null, null)) return null;
+  return ledgerDeltaOf(before, after, null);
+}
+/** Same number in two phrasings = one figure stated twice, not a move. */
+function restatedPair(before: string | null, after: string | null): boolean {
+  if (!before || !after) return false;
+  const b = scaledNumber(before), a = scaledNumber(after);
+  return b != null && a != null && b === a;
 }
 
 /** "+1400 Cr" on a slide means "more than 1,400 crore" — a level. Printed with
@@ -190,11 +217,26 @@ export function inverseByUnit(key: VarKey, text: string): boolean {
   return key === 'working_capital' && /\bdays?\b|cycle/i.test(text);
 }
 
-export function varsFromEvents(events: StructuralEvent[] | null | undefined): StructuralVar[] {
+export function varsFromEvents(events: StructuralEvent[] | null | undefined, period?: string | null): StructuralVar[] {
   if (!Array.isArray(events) || !events.length) return [];
   const out: StructuralVar[] = [];
-  for (const [key, slot] of bestEventPerVariable(events)) {
-    const a = slot.actual, f = slot.forward;
+  // ── TYPE FIRST, THEN RANK.                                       (zzz765)
+  //
+  // The model's label is corrected from the sentence before anything is
+  // ranked (fact-normalize.ts): "another 1,024 B200 we are expecting soon"
+  // stops being this quarter's capacity; "INR593 crores as on 31 March 2025"
+  // stops being Q1 FY27 working capital. And a reading whose value does not
+  // fit its variable is set aside BEFORE the ranking — otherwise E2E's MRR
+  // figure (Rs million, filed under utilisation) outranked, and then took
+  // down with it, management's own "pretty much at maximum level".
+  const norm = events.map((e) => normalizeEvent(e, period));
+  const historical = norm.filter((e) => e.historical_as_of && e.value_type === 'ACTUAL');
+  const live = norm.filter((e) => !(e.historical_as_of && e.value_type === 'ACTUAL'))
+    .filter((e) => judgeEventQuality(e) !== 'unit_mismatch');
+  const slots = bestEventPerVariable(live);
+  for (const [key, slot] of slots) {
+    const a = slot.actual as (StructuralEvent & { flat_stated?: boolean; retyped_because?: string | null }) | null;
+    const f = slot.forward;
     const label = VAR_LABEL[key] || key;
     // Only disagreements between values that would BOTH have been shown count.
     // A wrong-unit reading losing to a good one is the filter working, not two
@@ -235,8 +277,13 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
     // The event itself stays in the ledger for audit.
     const aOk = a && judgeEventQuality(a) !== 'unit_mismatch' ? a : null;
     if (aOk) {
-      const a = aOk;
-      const delta = deltaOf(a.before, a.after);
+      const a0 = aOk;
+      // A pair that states one number twice is a LEVEL. (zzz764)
+      // "Unchanged at ₹1,200 Cr" is a comparison the company made: the two
+      // sides are the same figure and the row says FLAT, not a bare level.
+      const flatStated = !!a0.flat_stated && a0.value_type === 'ACTUAL';
+      const a = flatStated ? { ...a0, before: a0.after } : restatedPair(a0.before, a0.after) ? { ...a0, before: null } : a0;
+      const delta = flatStated ? 'FLAT' : deltaOf(a.before, a.after);
       // Re-judged on load, so ledgers written before a rule existed obey it.
       const quality = judgeEventQuality(a);
       const dir = verifiedDirection(a);
@@ -245,15 +292,37 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       // confirm or contradict. A management claim ("3x capacity", "at
       // maximum level") is shown as what it is; a chart axis and a
       // wrong-unit value are shown as claims; a bare level is 'stated'.
-      const mayJudge = a.value_type === 'ACTUAL' && !chart;
+      // ── WORDS ARE NOT A COMPARISON FOR EVERY VARIABLE.           (zzz764)
+      //
+      // "Running at 120%" (VAML) and "approaching 50%" (MARKSANS) printed ▲
+      // because the sentence contained an up-word; neither states an earlier
+      // figure. A fill rate, a one-off and a working-capital AMOUNT are
+      // judged only on two stated figures. Working capital in DAYS keeps
+      // the inverse reading below.
+      const needsTwoFigures = key === 'utilisation' || key === 'one_offs'
+        || (key === 'working_capital' && !inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`));
+      // A stated move verb ("improved to 80%", "fell to 60%") is still a
+      // comparison the company made; a state word ("running at", "at full",
+      // "approaching") is not.
+      const namesMove = /\b(improv|increas|rose|risen|grew|grown|up from|went up|declin|decreas|fell|fallen|dropped|down from|went down|reduc)/i.test(a.evidence_text);
+      // ── AN ORDER BOOK IS WORK IN HAND, NOT REVENUE POTENTIAL.      (zzz765)
+      // HAPPYFORGE's "order book representing around Rs.950 crores of peak
+      // incremental annual revenue potential" is a pipeline estimate. It is
+      // shown, labelled as what it is, and never judged as a backlog.
+      const potential = (key === 'order_book' || key === 'order_intake')
+        && /revenue potential|peak (?:incremental )?(?:annual )?revenue|incremental (?:annual )?(?:revenue|business)|potential revenue/i.test(a.evidence_text);
+      const isFact = a.value_type === 'ACTUAL' && !chart && !potential;
+      const mayJudge = isFact && key !== 'one_offs'
+        && (flatStated || !needsTwoFigures || (!!a.before && !!delta) || (key === 'utilisation' && namesMove));
       const inverted = NEGATIVE_VARS.has(key) || inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`);
       const verdict: VarVerdict = !mayJudge ? 'stated'
+        : flatStated ? 'flat'
         : dir === 'up' ? (inverted ? 'deteriorating' : 'improving')
           : dir === 'down' ? (inverted ? 'improving' : 'deteriorating')
             : dir === 'flat' ? 'flat' : 'stated';
       out.push({
         key, label,
-        kind: mayJudge ? 'fact' : 'claim',
+        kind: isFact ? 'fact' : 'claim',
         before: levelText(a.before), after: levelText(a.after), delta, verdict,
         evidence: (quality === 'unit_mismatch' ? 'Value does not fit this variable (wrong unit or no such statement) — shown as a claim only: '
           : chart ? 'Read from a chart, figures unlabelled — verify on the slide: '
@@ -265,6 +334,22 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
           + overNameplate + conflictNote,
         conflict: conflicts.length ? conflicts : null,
         source: 'filing',
+        statement: isFact ? 'ACTUAL' : potential ? 'MANAGEMENT_STATEMENT' : a.value_type === 'MANAGEMENT_CLAIM' ? 'MANAGEMENT_STATEMENT' : a.value_type === 'GUIDANCE' ? 'GUIDANCE' : a.value_type === 'TARGET' ? 'TARGET' : 'MANAGEMENT_STATEMENT',
+        // The plan rides beside the actual only when it measures the same
+        // thing: AARTIPHARM's "~450 KL" installed and "9,500 metric tons"
+        // planned are two products, and a ₹210 Cr project against a ₹149 Cr
+        // block is two projects. The gap is printed only for rates (pp).
+        plan: f && judgeEventQuality(f) !== 'unit_mismatch' && String(f.after ?? '').trim()
+          && (!/\d/.test(String(a.after ?? '')) || !/\d/.test(String(f.after)) || sameUnit(String(a.after ?? ''), String(f.after), a.unit, f.unit)) ? {
+          value: String(f.after), type: f.value_type === 'GUIDANCE' ? 'GUIDANCE' : 'TARGET',
+          quote: f.evidence_text.slice(0, 240), source: f.source,
+          gap: isFact && /%/.test(String(a.after ?? '')) && /%/.test(String(f.after)) ? gapToTarget(a.after, f.after) : null,
+        } : null,
+        asOf: period || a.period || null,
+        sourceLabel: a.source || null,
+        quote: a.evidence_text.slice(0, 300),
+        retyped: a.retyped_because || null,
+        unjudged: potential ? 'described as revenue potential over the next years, not an executable order book' : null,
       });
     } else if (f && judgeEventQuality(f) !== 'unit_mismatch') {
       // ── A TARGET IS STILL SUBJECT TO THE UNIT RULES.             (zzz761)
@@ -281,14 +366,44 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       // printed "◐ Capacity utilisation 80% plus" from a TARGET, which reads
       // as this quarter's fill rate. The type travels with the value. (zzz755)
       const tag = f.value_type === 'GUIDANCE' ? 'guidance' : 'target';
+      const fPotential = (key === 'order_book' || key === 'order_intake')
+        && /revenue potential|peak (?:incremental )?(?:annual )?revenue|incremental (?:annual )?(?:revenue|business)|potential revenue/i.test(f.evidence_text);
       out.push({
         key, label, kind: 'claim',
         before: null, after: `${f.after} (${tag})`, delta: null, verdict: 'stated',
         evidence: `${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Management target'}: ${f.after}${f.period ? ` by ${f.period}` : ''}. `
           + `"${f.evidence_text.slice(0, 200)}${f.evidence_text.length > 200 ? '…' : ''}" — ${f.source}`,
         source: 'filing',
+        statement: f.value_type === 'GUIDANCE' ? 'GUIDANCE' : 'TARGET',
+        unjudged: fPotential ? 'described as revenue potential over the next years, not an executable order book' : null,
+        asOf: period || f.period || null,
+        sourceLabel: f.source || null,
+        quote: f.evidence_text.slice(0, 300),
+        retyped: (f as any).retyped_because || null,
       });
     }
+  }
+  // ── HISTORICAL CONTEXT.                                          (zzz765)
+  //
+  // ETHOSLTD's Q1 FY27 card printed "Working capital INR440 Cr (31 Mar 2024)
+  // → INR593 Cr (31 Mar 2025)" as if it were this quarter's move. A figure
+  // dated before the reporting period is kept — it is real — but it is
+  // context: attached to the variable's row when there is one, or shown on a
+  // row of its own that is never judged.
+  for (const h of historical) {
+    if (judgeEventQuality(h) === 'unit_mismatch') continue;
+    const ctx = { value: [h.before, h.after].filter(Boolean).join(' → '), asOf: String(h.historical_as_of), quote: h.evidence_text.slice(0, 240), source: h.source };
+    const row = out.find((v) => v.key === h.variable);
+    if (row) { row.context = [...(row.context || []), ctx]; continue; }
+    out.push({
+      key: h.variable, label: VAR_LABEL[h.variable] || h.variable, kind: 'fact',
+      before: levelText(h.before), after: levelText(h.after), delta: null, verdict: 'stated',
+      evidence: `Historical context (${h.historical_as_of}), not ${period || 'this period'}'s evidence: ${h.evidence_text.slice(0, 220)} — ${h.source}`,
+      source: 'filing', statement: 'HISTORICAL', asOf: String(h.historical_as_of),
+      sourceLabel: h.source, quote: h.evidence_text.slice(0, 300),
+      unjudged: `historical context — dated ${h.historical_as_of}, before ${period || 'this reporting period'}`,
+      context: null,
+    });
   }
   return out;
 }
@@ -342,8 +457,19 @@ export function applyComparisons(
 ): StructuralVar[] {
   if (!comparisons) return vars;
   return vars.map((v) => {
-    const c = comparisons[v.key];
-    if (!c) return v;
+    const c0 = comparisons[v.key];
+    if (!c0) return v;
+    // ── ONE ROW, ONE FIGURE.                                          (zzz765)
+    //
+    // AARTIPHARM's row printed "6,000 → 9,500 metric tons" while its
+    // comparison carried "440 kL". A comparison whose CURRENT figure is not
+    // the row's figure describes a different reading; its history is kept
+    // only as a history note (no previous figure is borrowed from it).
+    const digits = (x: string | null | undefined) => String(x ?? '').replace(/[^\d.]/g, '');
+    const same = !c0.current || !v.after || digits(c0.current.raw) === digits(v.after)
+      || String(v.after).toLowerCase().includes(String(c0.current.raw).toLowerCase());
+    const c: MetricComparison = same ? c0 : { ...c0, previous: null, previous_period: null, change: null, change_relative: null, change_type: 'NEW', basis: 'NONE' };
+    if (v.statement === 'HISTORICAL') return v;
     // A claim is never turned into a measured direction by a comparison: a
     // target restated is management repeating itself, not a business moving.
     const isFact = v.kind !== 'claim' && v.source === 'filing';
@@ -384,12 +510,13 @@ export function extractVariables(
   graded: any | null,
   summary: any | null,
   comparisons?: Partial<Record<VarKey, MetricComparison>> | null,
+  opts?: { period?: string | null },
 ): StructuralVar[] {
   const out: StructuralVar[] = [];
   // Typed events first. Any key they cover is not re-pushed from the
   // summary's loose fields below — one variable, one row, and the row with
   // the verbatim evidence wins.
-  const fromEvents = varsFromEvents(summary?.events);
+  const fromEvents = varsFromEvents(summary?.events, opts?.period ?? null);
   const covered = new Set<VarKey>(fromEvents.map((v) => v.key));
   out.push(...fromEvents);
 
@@ -406,7 +533,7 @@ export function extractVariables(
   const utBlock = summary?.utilisation || {};
   if (said(utBlock.prior)) {
     const row = out.find((v) => v.key === 'utilisation');
-    if (row && !row.before && row.after && row.kind !== 'claim') {
+    if (row && !row.before && row.after && row.kind !== 'claim' && !restatedPair(String(utBlock.prior), row.after)) {
       const b = String(utBlock.prior).trim();
       const d = deltaOf(b, row.after);
       const bn = numIn(b), an = numIn(row.after);
@@ -590,8 +717,11 @@ export function extractVariables(
     // One source decides BOTH. The grader's own year-on-year bridge wins
     // because it is arithmetic on filed statements; the model's bridge is
     // second; the sequential figure is last and is labelled as such.
-    const dv = opmChangeYoy != null ? opmChangeYoy : (pctIn(mbDelta) ?? opmChangeQoq);
-    const dvFromBridge = opmChangeYoy == null && pctIn(mbDelta) != null;
+    // "+1450 bps" is 14.5pp. E2E's margin row read 1,450 pp. (zzz764)
+    const bridgePp = mbDelta == null ? null
+      : /bps?\b/i.test(mbDelta) ? (pctIn(mbDelta) ?? 0) / 100 : pctIn(mbDelta);
+    const dv = opmChangeYoy != null ? opmChangeYoy : (bridgePp ?? opmChangeQoq);
+    const dvFromBridge = opmChangeYoy == null && bridgePp != null;
     const structural = drivers.filter((d) => d?.nature === 'structural').length;
     const cyclical = drivers.filter((d) => d?.nature === 'cyclical').length;
     const why = drivers.length
@@ -608,7 +738,7 @@ export function extractVariables(
       before: opmPrev != null ? `${opmPrev.toFixed(1)}%` : null,
       after: opm != null ? `${opm.toFixed(1)}%` : null,
       delta: dvFromBridge
-        ? mbDelta
+        ? `${bridgePp! >= 0 ? '+' : ''}${bridgePp!.toFixed(1)}pp`
         : (dv != null ? `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' QoQ' : ''}` : null),
       // A sequential move carries seasonality that a year-on-year move
       // cancels; it is shown with its label and NOT counted for or against
@@ -653,7 +783,7 @@ export function extractVariables(
     // full year's profit — an annual figure sitting on a card about this
     // quarter, and its sign is being checked against the latest QUARTER's
     // profit. Both are said on the row so a −21× is read for what it is.
-    const annual = String(graded?.source || '') === 'screener';
+    const annual = ['screener', 'screener-live'].includes(String(graded?.source || ''));
     const basis = annual ? ' (last full year, screener figure — not this quarter\'s)' : '';
     push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
@@ -784,17 +914,21 @@ export function extractVariables(
 
   // ── FILING FACTS ────────────────────────────────────────────────────────
   const ut = summary?.utilisation || {};
-  const utPrior = pctIn(ut.prior), utNow = pctIn(ut.current), utExp = pctIn(ut.expected);
+  const utPrior0 = pctIn(ut.prior), utNow = pctIn(ut.current), utExp = pctIn(ut.expected);
+  // The same figure as prior and current is one figure (BHAGCHEM "~35% →
+  // 35% · +0pp", GANDHAR "93% → 93%"). (zzz764)
+  const utRestated = utPrior0 != null && utNow != null && utPrior0 === utNow;
+  const utPrior = utRestated ? null : utPrior0;
   if (said(ut.current) || said(ut.prior) || said(ut.expected)) {
     const d = utPrior != null && utNow != null ? utNow - utPrior : null;
     push({
       key: 'utilisation', label: VAR_LABEL.utilisation,
-      before: said(ut.prior) ? String(ut.prior) : null,
+      before: said(ut.prior) && !utRestated ? String(ut.prior) : null,
       after: said(ut.current) ? String(ut.current) : null,
       delta: d != null ? `${d >= 0 ? '+' : ''}${d.toFixed(0)}pp` : null,
       verdict: d == null ? 'unknown' : d >= 2 ? 'improving' : d > -2 ? 'flat' : 'deteriorating',
       evidence: [
-        said(ut.prior) && said(ut.current) ? `Utilisation ${ut.prior} → ${ut.current}.`
+        said(ut.prior) && said(ut.current) && !utRestated ? `Utilisation ${ut.prior} → ${ut.current}.`
           : said(ut.current) ? `Utilisation ${ut.current}, no prior figure disclosed.` : '',
         said(ut.expected) ? `Management expects utilisation of ${ut.expected}${said(ut.expected_by) ? ` by ${ut.expected_by}` : ''}.` : '',
       ].filter(Boolean).join(' '),
@@ -916,25 +1050,48 @@ export function extractVariables(
     const sized = sizedGains.length > 0;
     const gainRaw = sizedGains.reduce((t, x) => t + Math.abs(x), 0);
     const share = profitRaw != null && profitRaw > 0 && sized ? gainRaw / profitRaw : null;
-    const material = share == null ? null : share >= 0.1;
+    // ── THE QUESTION IS WHETHER THE JUMP SURVIVES WITHOUT THEM.      (zzz764)
+    //
+    // Sizing a gain against profit alone flagged GIPCL (tax refund, 11% of
+    // PAT) while its profit went 57 → 158 Cr — +147% even with the refund
+    // removed. The F thesis asks "is the jump traced to one-offs?", so the
+    // test is the growth EX one-offs: if it collapses below 20%, the jump was
+    // the one-off. Where a gain exceeds the whole profit, the two figures are
+    // on different bases (a pre-exceptional PAT, a prior-period item, another
+    // currency) and nothing is concluded from them.
+    const prevRaw = patPrev != null ? patPrev * 1e7 : null;
+    const exGrowth = share != null && share <= 1 && profitRaw != null && prevRaw != null && prevRaw > 0
+      ? ((profitRaw - gainRaw) - prevRaw) / prevRaw : null;
+    const material = share == null || share > 1 ? null
+      : exGrowth != null ? exGrowth < 0.2
+        : share >= 0.25;
     const verdict: VarVerdict = !gains.length ? 'flat'
       : material === true ? 'deteriorating'
         : material === false ? 'flat'
           : 'stated';
     push({
       key: 'one_offs', label: VAR_LABEL.one_offs,
-      before: null, after: `${oneOffs.length} item${oneOffs.length > 1 ? 's' : ''}`, delta: null,
+      // The item itself, not a count: "₹56 Cr · earn-out expense · below
+      // EBITDA · non-recurring" where the filing says so. (zzz765c parser)
+      before: null, after: oneOffs.length === 1
+        ? oneOffLine(parseOneOff(String(oneOffs[0]?.item || ''), said(oneOffs[0]?.amount) ? String(oneOffs[0].amount) : null)) || `1 item`
+        : `${oneOffs.length} items`, delta: null,
       // A MATERIAL one-off GAIN flatters this quarter and will not repeat, so
       // it counts against the durability of the result even while it lifts
       // the number.
       verdict,
-      unjudged: gains.length && material == null ? 'the one-off amount is not stated, so it cannot be sized against the result' : null,
-      evidence: oneOffs.map((o) =>
-        `${o?.direction === 'gain' ? '+' : '−'} ${o?.item}${said(o?.amount) ? ` (${o.amount})` : ''}`).join('; ')
+      unjudged: !gains.length || material != null ? null
+        : share != null && share > 1 ? 'the stated one-off exceeds the reported profit, so the two are on different bases (pre-exceptional profit, a prior period or another currency) — verify in the filing'
+          : 'the one-off amount is not stated, so it cannot be sized against the result',
+      evidence: oneOffs.map((o) => {
+        const d = oneOffLine(parseOneOff(String(o?.item || ''), said(o?.amount) ? String(o.amount) : null));
+        return `${o?.direction === 'gain' ? '+' : '−'} ${d || o?.item}${d && o?.item ? ` — “${String(o.item).slice(0, 120)}”` : ''}`;
+      }).join('; ')
         + (!gains.length ? ''
-          : material === true ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit; they will not repeat, so the base for next year is lower than it looks.`
-            : material === false ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${profitCr != null ? ` (${profitCr} Cr)` : ''}: immaterial to the result, shown for the record.`
-              : ' — amount not stated, so it cannot be sized against the result; shown, not counted.'),
+          : material === true ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit growth is ${Math.round(exGrowth * 100)}%` : ''} — the jump rests on items that will not repeat.`
+            : material === false ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit still grew ${Math.round(exGrowth * 100)}%` : ''}: the jump does not rest on them. Shown for the record.`
+              : share != null && share > 1 ? ` — stated one-offs exceed the reported profit${profitCr != null ? ` (${profitCr} Cr)` : ''}; different bases, not judged.`
+                : ' — amount not stated, so it cannot be sized against the result; shown, not counted.'),
       source: 'filing',
     });
   }
@@ -1026,10 +1183,16 @@ export function extractVariables(
   }
   if (str(summary?.capex_earning)) {
     const s_ = String(summary.capex_earning);
+    // ── READ THE CLAIM, NOT THE KEYWORD.                            (zzz764)
+    // GIPCL "600 MW is generating revenue … CWIP relates to 500 MW not yet
+    // revenue earning" printed ▼; ICIL "does not state revenue contribution"
+    // printed ▲ because it contains "earning". A positive statement of money
+    // coming in and a negative one about the same spend make it MIXED.
+    const earns = /generat\w* (revenue|ebitda)|contribut\w* (revenue|to (revenue|ebitda|ebit))|commenced (commercial )?(operations|production)|already contributing|is contributing|running at \d|revenue from the (new|plant)|linked? .* to (improved|higher) (ebit|margin)/i.test(s_);
+    const notYet = /not yet|below plan|behind (plan|schedule)|disappoint|delay|does not (state|tie|link)|did not state|no explicit link|no (quantified|explicit)|until commissioning|under construction|yet to/i.test(s_);
     push_('capex_earning', s_,
-      /not yet|below|under|disappoint|behind/i.test(s_) ? 'deteriorating'
-        : /ramp|earning|contribut|full/i.test(s_) ? 'improving' : 'unknown',
-      `Capex earning: ${s_}.`);
+      earns && notYet ? 'stated' : earns ? 'improving' : notYet ? 'deteriorating' : 'unknown',
+      `Capex earning: ${s_}.${earns && notYet ? ' Part of the spend is earning and part is not yet — shown, not judged either way.' : ''}`);
   }
 
   const cst = summary?.customers || {};
@@ -1112,6 +1275,13 @@ export function extractVariables(
     });
   }
 
+  // Every row says what kind of statement it is and which period it covers,
+  // including the ones built from the summary's loose fields. (zzz765)
+  for (const v of out) {
+    if (!v.statement) v.statement = v.key === 'guidance' ? 'GUIDANCE' : v.key === 'management_target' ? 'TARGET'
+      : v.source === 'grader' ? 'ACTUAL' : v.kind === 'claim' ? 'MANAGEMENT_STATEMENT' : 'ACTUAL';
+    if (v.asOf === undefined) v.asOf = opts?.period ?? null;
+  }
   return applyComparisons(dropRestatedCapacityAddition(out), comparisons);
 }
 

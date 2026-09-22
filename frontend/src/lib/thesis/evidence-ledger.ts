@@ -283,7 +283,9 @@ export function scaledNumber(s: string | null | undefined): number | null {
   // period, "H1" a half, "B200" a product. BHAGCHEM printed "utilisation Q4
   // FY26 → nearly doubling compared with Q4 FY26 (+0%)" because both sides
   // parsed to 4. (zzz763)
-  const m = /(?<![A-Za-z\d])-?\d[\d,]*\.?\d*(?![A-Za-z])/.exec(String(s));
+  // …except a CURRENCY glued to its amount: "INR140 crores" is ₹140 Cr, and
+  // GOLDIAM's order book INR140 → INR225 crores read as no number at all. (zzz765)
+  const m = /(?:(?<=(?:INR|USD|EUR|GBP|JPY|Rs|RS|US\$|₹|\$))|(?<![A-Za-z\d]))-?\d[\d,]*\.?\d*(?![A-Za-z])/.exec(String(s));
   if (!m) return null;
   const n = parseFloat(m[0].replace(/,/g, ''));
   if (!Number.isFinite(n)) return null;
@@ -329,6 +331,10 @@ export function sameUnit(a: string, b: string, ua: string | null, ub: string | n
   )).sort().join(' ');
   const wa = norm(a), wb = norm(b);
   if (wa && wb) return wa === wb;
+  // One side a bare number, the other with its unit ("6,000 → 15,000 sq ft"):
+  // the bare side inherits the unit of the sentence it came from. Only when
+  // the labelled side names a real unit, never a percent. (zzz764)
+  if ((wa && !wb) || (!wa && wb)) return !/%/.test(wa || wb);
   if (!wa && !wb) return String(ua || '').toLowerCase().trim() === String(ub || '').toLowerCase().trim();
   return false;
 }
@@ -440,7 +446,10 @@ export function mergePeriod(ledger: CompanyLedger, incoming: PeriodRecord, run: 
     ...ledger, periods, latest_period: latest,
     latest_document_date: latest ? periods[latest].latest_document_date : null,
     latest_source_count: latest ? periods[latest].documents_read : 0,
-    last_evidence_read_at: now,
+    // A backfilled OLDER period is not a read of the current evidence: the
+    // recent-reporters planner treats last_evidence_read_at as "read since the
+    // filing", so a prior-quarter read must not move it. (zzz765)
+    last_evidence_read_at: latest === incoming.reporting_period ? now : (ledger.last_evidence_read_at || now),
     last_attempt: { at: now, outcome: run.outcome, error: run.error, run_id: run.run_id },
     newest_seen_document_date: maxDate(ledger.newest_seen_document_date, latest ? periods[latest].latest_document_date : null),
     newest_seen_period: latest && periodOrdinal(latest) >= periodOrdinal(ledger.newest_seen_period || '') ? latest : ledger.newest_seen_period,
@@ -488,30 +497,132 @@ function maxDate(a: string | null, b: string | null): string | null {
 
 // ── freshness ──────────────────────────────────────────────────────────────
 
-export function freshnessOf(ledger: CompanyLedger | null): { state: FreshnessState; detail: string } {
-  if (!ledger || !ledger.latest_period) {
-    if (ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE') return { state: 'SOURCE_UNAVAILABLE', detail: ledger.last_attempt.error || 'the source could not be reached' };
-    if (ledger?.last_attempt?.outcome === 'NO_DISCLOSURE') return { state: 'NEVER_READ', detail: 'searched — the company has no readable document at any source' };
-    return { state: 'NEVER_READ', detail: 'no evidence has been read for this company' };
+// ── REPORTING-PERIOD INTELLIGENCE.                                (zzz765)
+//
+// "Stale" used to mean "the quarter ended more than 135 days ago". On 22
+// September that let CUPID sit at Q4 FY26 looking merely old, while every
+// Indian listed company had been obliged to publish Q1 FY27 since 14 August.
+// The question a card must answer is sharper: WHICH quarter should be on file
+// by now, and is it? SEBI LODR Reg 33: quarterly results within 45 days of
+// quarter end; the Q4 / full-year audited results within 60.
+
+/** Pure: the latest quarter whose results every listed Indian company must
+ *  have published by `now` (45 days after Q1–Q3 end, 60 after Q4 end). */
+export function latestExpectedPeriod(now: Date | string = new Date()): { period: string; period_end: string; due_date: string } {
+  const t = typeof now === 'string' ? new Date(now) : now;
+  const ms = t.getTime();
+  // Walk quarter ends backwards from the one at or before today.
+  let y = t.getUTCFullYear();
+  let qm = [3, 6, 9, 12].filter((m) => Date.UTC(y, m, 0) <= ms).pop();
+  if (qm == null) { y -= 1; qm = 12; }
+  for (let i = 0; i < 8; i++) {
+    const endMs = Date.UTC(y, qm, 0);
+    const lag = qm === 3 ? 60 : 45;
+    const due = endMs + lag * 86_400_000;
+    if (ms >= due) {
+      const q = qm === 6 ? 1 : qm === 9 ? 2 : qm === 12 ? 3 : 4;
+      const fy = qm === 3 ? y : y + 1;
+      return {
+        period: `Q${q} FY${String(fy).slice(2)}`,
+        period_end: new Date(endMs).toISOString().slice(0, 10),
+        due_date: new Date(due).toISOString().slice(0, 10),
+      };
+    }
+    qm -= 3;
+    if (qm <= 0) { qm = 12; y -= 1; }
   }
-  if (ledger.newest_seen_period && periodOrdinal(ledger.newest_seen_period) > periodOrdinal(ledger.latest_period)) {
-    return { state: 'NEW_EVIDENCE_AVAILABLE', detail: `${ledger.newest_seen_period} documents exist; latest read is ${ledger.latest_period}` };
+  // Unreachable: some quarter within two years is always past its due date.
+  return { period: 'UNDATED', period_end: '', due_date: '' };
+}
+
+export type Staleness = 'CURRENT' | 'UPDATE_AVAILABLE' | 'STALE_NO_NEWER_FILING' | 'NEVER_READ' | 'SOURCE_UNAVAILABLE';
+
+export interface FreshnessView {
+  state: FreshnessState;
+  detail: string;
+  staleness: Staleness;
+  latest_known_period: string | null;
+  latest_expected_period: string;
+  /** Newest document date behind the latest known period. */
+  latest_source_date: string | null;
+  /** A newer document than the one read has been SEEN at a source. */
+  new_evidence_available: boolean;
+  /** When the sources were last searched (any attempt or read), and whether
+   *  that was after the expected period became due. */
+  last_checked_at: string | null;
+  checked_since_due: boolean;
+}
+
+const STATE_OF: Record<Staleness, FreshnessState> = {
+  CURRENT: 'CURRENT', UPDATE_AVAILABLE: 'NEW_EVIDENCE_AVAILABLE', STALE_NO_NEWER_FILING: 'STALE',
+  NEVER_READ: 'NEVER_READ', SOURCE_UNAVAILABLE: 'SOURCE_UNAVAILABLE',
+};
+
+/**
+ * Pure: the freshness of a company's evidence against the reporting calendar.
+ * `state` keeps the old five values for existing callers; `staleness` is the
+ * sharper classification:
+ *   UPDATE_AVAILABLE        a newer document has been seen but not read
+ *   SOURCE_UNAVAILABLE      the last search failed after the last read
+ *   STALE_NO_NEWER_FILING   a newer period is due and no newer document has
+ *                           been found at any source
+ *   CURRENT                 the latest known period is the expected one
+ */
+export function freshnessOf(ledger: CompanyLedger | null, now: Date | string = new Date()): FreshnessView {
+  const exp = latestExpectedPeriod(now);
+  const known = ledger?.latest_period || null;
+  const lastChecked = [ledger?.last_attempt?.at || null, ledger?.last_evidence_read_at || null].filter((x): x is string => !!x).sort().pop() || null;
+  const base = {
+    latest_known_period: known,
+    latest_expected_period: exp.period,
+    latest_source_date: ledger?.latest_document_date || null,
+    last_checked_at: lastChecked,
+    checked_since_due: !!lastChecked && lastChecked.slice(0, 10) >= exp.due_date,
+  };
+  const out = (staleness: Staleness, detail: string, fresh = false): FreshnessView => ({ state: STATE_OF[staleness], detail, staleness, new_evidence_available: fresh, ...base });
+
+  if (!ledger || !known) {
+    if (ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE') return out('SOURCE_UNAVAILABLE', ledger.last_attempt.error || 'the source could not be reached');
+    if (ledger?.last_attempt?.outcome === 'NO_DISCLOSURE') return out('NEVER_READ', 'searched — the company has no readable document at any source');
+    return out('NEVER_READ', 'no evidence has been read for this company');
+  }
+  if (ledger.newest_seen_period && periodOrdinal(ledger.newest_seen_period) > periodOrdinal(known)) {
+    return out('UPDATE_AVAILABLE', `${ledger.newest_seen_period} documents exist; latest read is ${known}`, true);
   }
   if (ledger.newest_seen_document_date && ledger.latest_document_date && ledger.newest_seen_document_date > ledger.latest_document_date) {
-    return { state: 'NEW_EVIDENCE_AVAILABLE', detail: `a newer document (${ledger.newest_seen_document_date}) exists than the one last read (${ledger.latest_document_date})` };
+    return out('UPDATE_AVAILABLE', `a newer document (${ledger.newest_seen_document_date}) exists than the one last read (${ledger.latest_document_date})`, true);
   }
-  if (ledger.last_attempt?.outcome === 'SOURCE_UNAVAILABLE' && ledger.last_attempt.at > (ledger.last_evidence_read_at || '')) {
-    return { state: 'SOURCE_UNAVAILABLE', detail: `last check failed: ${ledger.last_attempt.error || 'source unreachable'} — showing ${ledger.latest_period}` };
+  // A failed PRIOR-quarter backfill says nothing about the current period's
+  // sources being down; it is recorded in the run log, not on the card. (zzz765)
+  const attemptRun = ledger.last_attempt ? ledger.runs.find((r) => r.run_id === ledger.last_attempt!.run_id) : null;
+  const attemptOnOlder = !!attemptRun?.reporting_period && attemptRun.reporting_period !== ledger.latest_period;
+  if (!attemptOnOlder && ledger.last_attempt?.outcome === 'SOURCE_UNAVAILABLE' && ledger.last_attempt.at > (ledger.last_evidence_read_at || '')) {
+    return out('SOURCE_UNAVAILABLE', `last check failed: ${ledger.last_attempt.error || 'source unreachable'} — showing ${known}`);
   }
-  // STALE is judged from reporting dates, not from a made-up window: a period
-  // whose quarter ended more than ~135 days ago has had its successor
-  // reported by every listed company (45-day filing rule + slack).
-  const pe = ledger.periods[ledger.latest_period]?.period_end_date;
-  if (pe) {
-    const age = (Date.now() - Date.parse(pe)) / 86_400_000;
-    if (age > 135) return { state: 'STALE', detail: `${ledger.latest_period} ended ${Math.round(age)} days ago — the next quarter has been reported; check for new evidence` };
+  if (periodOrdinal(known) >= 0 && periodOrdinal(known) < periodOrdinal(exp.period)) {
+    return out('STALE_NO_NEWER_FILING', base.checked_since_due
+      ? `${exp.period} results were due by ${exp.due_date}; no filing newer than ${known} was found at any source (checked ${String(lastChecked).slice(0, 10)})`
+      : `${exp.period} results were due by ${exp.due_date}; the sources have not been searched since — check for new evidence`);
   }
-  return { state: 'CURRENT', detail: `${ledger.latest_period} · read ${(ledger.last_evidence_read_at || '').slice(0, 10)}` };
+  return out('CURRENT', `${known} · read ${(ledger.last_evidence_read_at || '').slice(0, 10)}`);
+}
+
+/** Pure: the one-line freshness text a card shows. (zzz765)
+ *    "STALE · Last evidence: Q4 FY26 · Latest expected: Q1 FY27 · No newer filing found"
+ *    "↻ Update available · Last evidence: Q4 FY26 · newer document seen" */
+export function freshnessLine(f: Partial<FreshnessView> & { state: FreshnessState; detail: string } | null | undefined): { label: string; text: string; tone: 'ok' | 'warn' | 'alarm' | 'muted' } | null {
+  if (!f) return null;
+  const staleness: Staleness = f.staleness || (f.state === 'NEW_EVIDENCE_AVAILABLE' ? 'UPDATE_AVAILABLE' : f.state === 'STALE' ? 'STALE_NO_NEWER_FILING' : f.state as Staleness);
+  const last = f.latest_known_period ? `Last evidence: ${f.latest_known_period}` : null;
+  const exp = f.latest_expected_period ? `Latest expected: ${f.latest_expected_period}` : null;
+  const join = (...xs: Array<string | null | false | undefined>) => xs.filter(Boolean).join(' · ');
+  switch (staleness) {
+    case 'CURRENT': return { label: 'CURRENT', text: join(last, f.latest_source_date && `source dated ${f.latest_source_date}`), tone: 'ok' };
+    case 'UPDATE_AVAILABLE': return { label: '↻ Update available', text: join(last, 'newer document seen, not yet read'), tone: 'warn' };
+    case 'STALE_NO_NEWER_FILING': return { label: 'STALE', text: join(last, exp, f.checked_since_due === false ? 'not searched since it fell due' : 'No newer filing found'), tone: 'warn' };
+    case 'SOURCE_UNAVAILABLE': return { label: 'SOURCE UNAVAILABLE', text: join(last, exp, 'the sources could not be reached — not a disclosure gap'), tone: 'alarm' };
+    default: return { label: 'NEVER READ', text: join(exp), tone: 'muted' };
+  }
 }
 
 // ── what changed ───────────────────────────────────────────────────────────
@@ -535,7 +646,7 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
   // board for the same variable in the same quarter. (zzz762)
   const rankable = (f: EvidenceFact): RankableReading => ({
     value_type: f.fact_or_management_statement === 'FACT' ? 'ACTUAL' : f.fact_or_management_statement,
-    before: f.before_value, source: f.source_name || f.source_type, confidence: f.confidence,
+    before: f.before_value, after: f.after_value, source: f.source_name || f.source_type, confidence: f.confidence,
     quality: judgeEventQuality({ variable: f.metric_name, before: f.before_value, after: f.after_value, unit: f.unit, evidence_text: f.source_quote }),
   });
   const bestPer = (facts: EvidenceFact[]) => {
@@ -569,7 +680,11 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
     } else if (!p) {
       const bn0 = scaledNumber(f.before_value), an0 = scaledNumber(f.after_value);
       const arith: ChangeLine['sign'] | null = bn0 != null && an0 != null && bn0 !== an0 ? (an0 > bn0 ? '+' : '-') : null;
-      const sign: ChangeLine['sign'] = arith ?? (dir === 'down' ? '-' : dir === 'up' ? '+' : '·');
+      // Days of working capital falling is the good direction; the sign on
+      // WHAT CHANGED reads as good/bad, so it follows the meaning. (zzz764)
+      const daysInverse = k === 'working_capital' && /days?|cycle/i.test(`${f.before_value || ''} ${f.after_value || ''} ${f.unit || ''}`);
+      const raw: ChangeLine['sign'] = arith ?? (dir === 'down' ? '-' : dir === 'up' ? '+' : '·');
+      const sign: ChangeLine['sign'] = daysInverse && raw !== '·' ? (raw === '+' ? '-' : '+') : raw;
       // A figure restated identically is a LEVEL, not a move. (zzz758)
       // The same number in two phrasings is restated too. (zzz763)
       const bn = scaledNumber(f.before_value), an = scaledNumber(f.after_value);

@@ -253,6 +253,8 @@ export const DIMENSION_LABEL: Record<VarDimension, string> = {
 export type AbsenceReason =
   /** No evidence document has been read for this holding yet. */
   | 'not_read'
+  /** The sources could not be reached — not the same as silence. (zzz765) */
+  | 'source_unavailable'
   /** A document WAS read and is silent on this. Absence is itself evidence. */
   | 'not_disclosed'
   /** The variable cannot apply to this business (utilisation of a lender). */
@@ -273,6 +275,8 @@ export type AbsenceReason =
 export const ABSENCE_MARK: Record<AbsenceReason, { mark: string; label: string; hint: string }> = {
   not_read: { mark: '○', label: 'not read',
     hint: 'No evidence document has been read for this holding yet. This is the only absence a button can fix.' },
+  source_unavailable: { mark: '⚠', label: 'source unavailable',
+    hint: 'The documents could not be fetched on the last attempt (timeout or server error). This says nothing about what the company disclosed; retry the read.' },
   not_disclosed: { mark: '—', label: 'not disclosed',
     hint: 'A document was read and says nothing about this. Absence is evidence: a company that stops disclosing utilisation has told you something.' },
   not_applicable: { mark: 'n/a', label: 'not applicable',

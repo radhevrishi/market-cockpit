@@ -43,7 +43,7 @@ export interface ExtractOpts {
 /** bseindia.com refuses datacenter IPs the way screener.in does; the mc-proxy
  *  Worker relays public exchange PDFs on its open path. Derived from the same
  *  SCREENER_PROXY_URL contract (`…/page?url=`), so no new configuration. */
-function exchangeProxyFor(url: string): string | null {
+export function exchangeProxyFor(url: string): string | null {
   const base = process.env.SCREENER_PROXY_URL || '';
   if (!base || !/\/page\?url=$/.test(base)) return null;
   let host = '';

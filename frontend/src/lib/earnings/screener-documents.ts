@@ -30,6 +30,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { fetchScreenerHtml } from './screener-fetch';
+import { bareSymbol } from '@/lib/thesis/filing-dates';
 
 export type DocKind = 'transcript' | 'ppt' | 'annual_report' | 'other';
 
@@ -47,6 +48,8 @@ export interface CompanyDocs {
   docs: CompanyDoc[];
   url: string;
   error: string | null;
+  /** BSE scrip code from the page, when printed. (zzz765) */
+  bseCode?: string | null;
 }
 
 const MONTHS: Record<string, number> = {
@@ -82,7 +85,17 @@ const decode = (s: string) => s
  *  bare symbol and answers 404 to the suffixed one. MTARTECH-BE and
  *  IFBAGRO-BE in the book both 404'd for exactly this reason. (zzz739) */
 export function screenerSymbol(ticker: string): string {
-  return ticker.toUpperCase().trim().replace(/-(BE|BZ|SM|ST|BL|IL|GS|SZ|E1|N[0-9A-Z])$/, '');
+  return bareSymbol(ticker);
+}
+
+/** Pure: the BSE scrip code screener.in prints on the company page (its
+ *  "BSE: 530843" link). Evidence discovery needs it to ask BSE for the
+ *  company's own announcements — the only public source that still holds a
+ *  results PDF older than the exchange feed's one-week window. (zzz765) */
+export function parseBseCode(html: string): string | null {
+  const m = /bseindia\.com\/stock-share-price\/[^"'\s]*?\/(\d{6})\//i.exec(html || '')
+    || /\/AnnualReport\/(\d{6})\//i.exec(html || '');
+  return m ? m[1] : null;
 }
 
 export async function fetchCompanyDocs(ticker: string): Promise<CompanyDocs> {
@@ -93,7 +106,7 @@ export async function fetchCompanyDocs(ticker: string): Promise<CompanyDocs> {
   if (!got.html) return { docs: [], url, error: got.error };
   const html = got.html;
 
-  return { ...parseCompanyDocs(html), url };
+  return { ...parseCompanyDocs(html), url, bseCode: parseBseCode(html) };
 }
 
 /** Pure: company-page HTML in, ranked documents out. Exported so the parse

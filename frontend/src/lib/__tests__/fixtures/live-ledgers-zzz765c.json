@@ -1,0 +1,2787 @@
+{
+ "_source": "GET /api/v1/portfolio/evidence?tickers=E2E,EXICOM,TI,GIPCL,SJS,UFLEX,KIRIINDUS,MINDACORP,ETHOSLTD and /api/v1/portfolio/thesis-data, captured 2026-09-22",
+ "ledgers": {
+  "TI": {
+   "period": "Q1 FY27",
+   "graded": {
+    "ticker": "TI",
+    "company": "Tilaknagar Inds.",
+    "market": "IN",
+    "sales_yoy_pct": 155.67,
+    "net_profit_yoy_pct": -30.28,
+    "eps_yoy_pct": null,
+    "opm_pct": 16.15,
+    "opm_change_pp_qoq": -0.1,
+    "cfo_to_pat_ratio": -21.3,
+    "profit_after_tax_latest_quarter": 61.71,
+    "roce_pct": 11.78,
+    "pe": 62.37,
+    "market_cap_cr": 14097.95,
+    "source": "screener",
+    "source_file": "turnarounds.csv",
+    "requested": "TI"
+   },
+   "summary": {
+    "verdict_line": "IB integration 90% complete; volume surging on Imperial Blue strength while margins compressed by packaging inflation offsetting ENA softness.",
+    "guidance": {
+     "action": "maintained",
+     "detail": "FY27: high single-digit to low double-digit volume growth for combined business. Beyond FY27: mid-teens annual volume growth over next couple of years; revenues to grow ~300 basis points higher than volume growth. EBITDA margins to reach 16%-18% for combined business by FY29 with upward bias. Net debt-to-EBITDA below 1.0x by March 2029.",
+     "period": "FY27 and beyond"
+    },
+    "segments": [
+     {
+      "name": "Imperial Blue (IB)",
+      "detail": "Volumes increased 18% QoQ to 5.4 million cases; on a YoY basis, IB saw highest growth as acquisition was partial-year in prior year.",
+      "direction": "up"
+     },
+     {
+      "name": "Made in India Brands (MHB, ex-IB)",
+      "detail": "YoY growth of 7%.",
+      "direction": "up"
+     },
+     {
+      "name": "Spaceman Spirits (SSL)",
+      "detail": "Sales more than doubled in Q1 FY27 versus Q1 FY26.",
+      "direction": "up"
+     }
+    ],
+    "mix_shift": "Product mix shifted towards IB (Deluxe Whisky) which is higher-margin; geographic expansion into North (Delhi IB relaunch) and West reducing South-only concentration. Luxury segment expansion (Monarch Legacy, Seven Islands, Samsara) and Spaceman Spirits doubling. No stated margin impact from mix disclosed.",
+    "capital": {
+     "capex": "Not stated in this call transcript.",
+     "buyback": "",
+     "dividend": "",
+     "debt": "Gross debt Rs. 2,241 crore; net debt Rs. 2,100 crore as of 30 June 2026. Target to reduce net debt to approximately Rs. 1,700 crore by March 31, FY27. Term debt of ~Rs. 2,000 crore structured with 80% of payments in years 5 and 6; 2-year moratorium in place."
+    },
+    "management": "Amit Dahanukar (Chairman and Managing Director); Ameya Deshpande (Chief Strategy Officer); Rajesh Choudhary (Chief Financial Officer); Sanaya Dahanukar (General Manager - Growth and Innovation).",
+    "new_business": [
+     "Imperial Blue reintroduced in Delhi in July 2026",
+     "Expanded Luxury brand presence (Monarch Legacy Edition Brandy, Seven Islands Pure Malt Whisky) in West Bengal",
+     "Samsara Gin new launches with Indian flavors: Jamun & Pink Salt, Raw Mango & Jalapeno",
+     "House:Pour Picante (ready-to-pour agave/tequila drink) launched towards end of Q1",
+     "Increased stake in Bartisans from 36.2% to 41.5% for quick commerce expansion and collaborative launches"
+    ],
+    "positives": [
+     {
+      "label": "Volume surge",
+      "detail": "Overall volumes increased 172% YoY and 9% QoQ; highest ever monthly volume of 3.4 million cases achieved in June 2026."
+     },
+     {
+      "label": "Imperial Blue market leadership",
+      "detail": "IB emerged as largest selling Deluxe Whisky in June; achieving double-digit volume growth for full FY27 expected; peak historical volume of 0.5 million cases in Delhi to be recovered within 12-18 months."
+     },
+     {
+      "label": "Integration progress",
+      "detail": "90% of IB business transitioned to Tilaknagar-operated units; only 1 state remains under TSMA with expectation to transition by March 2027; sales integration completed by February, manufacturing integration 90% by April."
+     },
+     {
+      "label": "Market share gains",
+      "detail": "TI maintains largest P&A position among domestic companies and third overall; 40% market share in South India ex-Tamil Nadu; largest IMFL player in Telangana in June; improved market shares across all regions post-acquisition."
+     },
+     {
+      "label": "EBITDA growth",
+      "detail": "EBITDA grew 79% YoY to Rs. 169 crore with 16.1% margin; adjusted for subsidy, grew 166% to Rs. 148 crore at 14.5% margin."
+     }
+    ],
+    "negatives": [
+     {
+      "label": "Margin compression",
+      "detail": "Gross margin fell to 42.1% (adjusted for subsidy) from 45.2% in Q4 FY26 due to inflationary pressures on packaging inputs, particularly glass; excluding inflation impact, margin would have been ~44.5%."
+     },
+     {
+      "label": "Exceptional charges",
+      "detail": "Rs. 30 crore exceptional expense in Q1 FY27 predominantly on TSMA fees and integration-related costs."
+     },
+     {
+      "label": "Increased working capital",
+      "detail": "Increase in net debt primarily on account of complete working capital cycle investment, rising from prior quarter levels."
+     },
+     {
+      "label": "Competitive intensity",
+      "detail": "IB price segment seeing increased activity from competitors including ICONiQ White (50% growth) and McDowell's strengthening Scotch offerings; requires elevated A&SP reinvestment."
+     }
+    ],
+    "watch_next": [
+     "Margin recovery trajectory in Q2-Q4 FY27, with Q3-Q4 expected to show significant uptick due to seasonality and offset of packaging inflation",
+     "Telangana price increase discussions; expected to add 150-200 basis points incrementally to margins on annualized basis",
+     "Completion of remaining 1 state's TSMA transition and pace of market share stabilization post-acquisition in each region",
+     "New product launches planned from FY28 onwards and their contribution to mid-teens volume growth guidance"
+    ],
+    "not_disclosed": [
+     "Segment-wise NSR or detailed pricing realization breakdown between IB and legacy brands",
+     "Detailed capex plan and investment amounts for FY27-FY29",
+     "Prag Distillery's current installed capacity and full bottling transition timeline",
+     "Cash flow statement and detailed working capital movements"
+    ],
+    "catalysts": [
+     {
+      "title": "Imperial Blue Delhi market recovery",
+      "category": "international",
+      "status": "commercial_production",
+      "size_vs_company": "Peak historical volume ~0.5 million cases; IB now at 5.4 million cases quarterly, representing ~9% incremental opportunity",
+      "expected_impact_period": "12 to 18 months from July 2026 launch",
+      "evidence_quote": "Delhi, I think at the peak, the volume of Imperial Blue would have been 0.5 million cases, and we expect that within the next 12 to 18 months, we should be seeing those levels."
+     },
+     {
+      "title": "Telangana IMFL price increase",
+      "category": "pricing_or_margin",
+      "status": "announced",
+      "size_vs_company": "Expected 150-200 basis points margin uplift on annualized basis",
+      "expected_impact_period": "Expected soon; company in active discussions",
+      "evidence_quote": "We are expecting because now it has been 3 years since the earlier price increase was given. We are in active discussions. The industry is engaged with the government, and we do expect price increase to happen soon."
+     },
+     {
+      "title": "New product portfolio launches (FY28 onwards)",
+      "category": "product",
+      "status": "announced",
+      "size_vs_company": "Expected to drive mid-teens volume CAGR through FY29; revenues to grow 300 bps higher than volumes",
+      "expected_impact_period": "FY28 onwards",
+      "evidence_quote": "Going forward, of course, there are a few vacant spaces in our portfolio, and we would be looking at new launches in the next 12 to 36 months to complete our portfolio. And with the new launches in place, we expect the volume growth to be in mid-double digit."
+     },
+     {
+      "title": "Supply chain optimization and Prag bottling integration",
+      "category": "capacity",
+      "status": "under_construction",
+      "size_vs_company": "Prag Distillery expected to deliver 60%-70% of planned Rs. 100 million annual savings already in Q1; supply chain to expand acquired business margins 250-400 bps",
+      "expected_impact_period": "Ongoing; full bottling benefit not yet realized",
+      "evidence_quote": "So, you have not seen the entire benefit of the bottling coming into Prag Distilleries, but what is already baked into the numbers would be to the tune of around 60%-70%."
+     },
+     {
+      "title": "Spaceman Spirits and luxury portfolio expansion",
+      "category": "product",
+      "status": "ramping",
+      "size_vs_company": "Spaceman Spirits sales more than doubled Q1 FY27 vs Q1 FY26; leveraging new pan-India IB distribution to expand Monarch Legacy, Seven Islands, Samsara",
+      "expected_impact_period": "Ongoing through FY27 and beyond",
+      "evidence_quote": "SSL has more than doubled their sales in Q1 FY27 v/s Q1 FY26, demonstrating strong market for craft spirits in India."
+     }
+    ],
+    "margin_bridge": {
+     "opm_change_pp": "+8 pp (EBITDA margin 16.1% in Q1 FY27 vs 15.5% in Q4 FY26 adjusted baseline)",
+     "drivers": [
+      {
+       "driver": "pricing_power",
+       "nature": "structural",
+       "detail": "NSR increased 1.5% QoQ to Rs. 1,183 per case from Rs. 1,166 in Q4 FY26 and 5.3% YoY from Rs. 1,123 in Q1 FY26."
+      },
+      {
+       "driver": "raw_material_tailwind",
+       "nature": "cyclical",
+       "detail": "ENA prices softened during the quarter, offsetting some packaging cost pressures; management notes packaging inputs remain inflationary but ENA softness provides mitigation."
+      },
+      {
+       "driver": "volume_only",
+       "nature": "structural",
+       "detail": "Combined volumes grew 172% YoY, including full quarter contribution of IB (5.4 million cases up 18% QoQ) versus 21.5 million annual rate at acquisition."
+      }
+     ],
+     "verdict": "mixed",
+     "where_in_pnl": "gross_profit"
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "60%-70% of planned Prag bottling savings baked into Q1 results",
+     "expected": "Full Prag Distillery bottling benefit to be realized over coming periods",
+     "expected_by": "not stated",
+     "basis": "Prag Distillery bottling transition for manufacturing efficiency"
+    },
+    "capex_projects": [
+     {
+      "name": "Prag Distillery bottling consolidation",
+      "type": "debottlenecking",
+      "amount": "not stated",
+      "capacity_added": "not stated",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "Ongoing; 60%-70% of benefit (from planned Rs. 100 million annual savings) already realized in Q1"
+     }
+    ],
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "one_offs": [
+     {
+      "item": "TSMA fees and integration-related expenses",
+      "amount": "Rs. 30 crore",
+      "direction": "charge",
+      "recurring": "will_not_recur"
+     }
+    ],
+    "operating_leverage_evidence": "\"\"Management has called out operating leverage from spreading fixed costs over higher volumes and expects EBITDA margins to improve from 15.5% baseline in Q4 FY26 towards 16%-18% by FY29 through supply chain optimization and manufacturing integration, along with new product launches expected to drive mid-teens volume CAGR. However, no explicit quantified statement of operating leverage from this quarter is provided.",
+    "capacity": {
+     "installed": "not stated",
+     "prior_installed": "not stated",
+     "added": "not stated",
+     "added_by": "not stated",
+     "new_plant": "Prag Distillery bottling capacity integration",
+     "new_plant_location": "not stated",
+     "commissioning": "Bottling consolidation into Prag Distillery ongoing; 60%-70% of benefits realized; full benefit not yet materialized",
+     "bottleneck": "not stated"
+    },
+    "demand": {
+     "order_intake": "not stated",
+     "order_intake_growth": "not stated",
+     "cancellations": "Disruptions mentioned in April 2026 but described as temporary; TSMA-related challenges in Odisha, Punjab, Uttarakhand and Karnataka noted but characterized as supply/operational issues rather than demand cancellations.",
+     "revenue_visibility": "not stated"
+    },
+    "customers": {
+     "new_customer": "Imperial Blue reintroduction in Delhi (July 2026) expected to reaccess historical customer base and new outlets; expansion of Spaceman Spirits portfolio (Samsara Gin, House:Pour Picante) into West Bengal.",
+     "loss": "No explicit customer losses stated; TSMA transitions in certain states resolved or resolving.",
+     "concentration": "not stated",
+     "qualification": "not stated",
+     "approval": "not stated",
+     "new_product": "Samsara Gin variants: Jamun & Pink Salt, Raw Mango & Jalapeno; House:Pour Picante (ready-to-pour agave/tequila); new launches planned FY28 onwards to fill portfolio gaps."
+    },
+    "volume_price_mix": {
+     "volume": "Combined volumes up 172% YoY; IB up 18% QoQ to 5.4 million cases; MHB up 7% YoY; highest monthly volume of 3.4 million cases in June 2026.",
+     "price": "NSR increased 1.5% QoQ to Rs. 1,183 per case (Q4 FY26: Rs. 1,166) and 5.3% YoY (Q1 FY26: Rs. 1,123 per case).",
+     "mix": "Mix shift towards IB (Deluxe Whisky) and higher-margin super-premium/luxury brands; geographic expansion reducing South-only concentration.",
+     "exports": "not stated"
+    },
+    "events": [
+     {
+      "variable": "utilisation",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "60%-70%",
+      "unit": null,
+      "period": "Q1 FY27",
+      "direction": "up",
+      "evidence_text": "So, you have not seen the entire benefit of the bottling coming into Prag Distilleries, but what is already baked into the numbers would be to the tune of around 60%-70%.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "3.4 million cases",
+      "unit": "million cases",
+      "period": "June 2026",
+      "direction": "up",
+      "evidence_text": "Firstly, we achieved the highest ever monthly volume of 3.4 million cases in June'26 with Imperial Blue emerging as the largest selling Deluxe Whisky.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "172%",
+      "unit": "YoY",
+      "period": "Q1 FY27",
+      "direction": "up",
+      "evidence_text": "In Q1, our overall volumes increased by 172% on a YoY basis and 9% on a QoQ basis.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "9%",
+      "unit": "QoQ",
+      "period": "Q1 FY27",
+      "direction": "up",
+      "evidence_text": "In Q1, our overall volumes increased by 172% on a YoY basis and 9% on a QoQ basis.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "5.4 million cases",
+      "unit": "million cases",
+      "period": "Q1 FY27",
+      "direction": "up",
+      "evidence_text": "The quarterly growth was led primarily by IB, which increased by 18% to reach 5.4 million cases.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "guidance",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "high single-digit to low double-digit",
+      "unit": "volume growth",
+      "period": "FY27",
+      "direction": "up",
+      "evidence_text": "We maintain our guidance for FY27 of achieving a high single-digit to low double-digit volume growth for the combined business.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "management_target",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "0.5 million cases",
+      "unit": "million cases",
+      "period": "within the next 12 to 18 months",
+      "direction": "up",
+      "evidence_text": "Delhi, I think at the peak, the volume of Imperial Blue would have been 0.5 million cases, and we expect that within the next 12 to 18 months, we should be seeing those levels.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "mid-double digit",
+      "unit": "volume growth",
+      "period": "going forward",
+      "direction": "up",
+      "evidence_text": "Going forward, of course, there are a few vacant spaces in our portfolio, and we would be looking at new launches in the next 12 to 36 months to complete our portfolio. And with the new launches in place, we expect the volume growth to be in mid-double digit.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "mid-teens",
+      "unit": "CAGR",
+      "period": "till FY29",
+      "direction": "up",
+      "evidence_text": "We will have a CAGR of mid-teens till FY29.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "ACTUAL",
+      "before": "21.5 million cases",
+      "after": null,
+      "unit": "million cases",
+      "period": "at acquisition",
+      "direction": "unknown",
+      "evidence_text": "I think when we acquired the business, it was around 21.5 million cases.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "volume",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "double-digit volume growth",
+      "unit": null,
+      "period": "end of FY27",
+      "direction": "up",
+      "evidence_text": "So clearly, we expect that we would end the year with a double-digit volume growth for Imperial Blue.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "margin_driver",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "16%-18%",
+      "unit": "EBITDA margin",
+      "period": "next 2 years",
+      "direction": "up",
+      "evidence_text": "Optimize packaging, processes and supply chain and reap benefits of operating leverage and economies of scale, helping us achieve an EBITDA margin of 16%-18% on combined business in the next 2 years",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "working_capital",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "below 1.0x",
+      "unit": "net debt-to-EBITDA",
+      "period": "FY29",
+      "direction": "down",
+      "evidence_text": "Focus on efficient capital deployment, disciplined debt management and working capital investments, facilitating the reduction of net debt-to-EBITDA below 1.0x by FY29",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "execution_delay",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "90%",
+      "unit": "completion",
+      "period": "by April 2026",
+      "direction": "up",
+      "evidence_text": "and 90% of the manufacturing integration has been completed by April.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     }
+    ]
+   },
+   "events": [
+    {
+     "variable": "utilisation",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "60%-70%",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "So, you have not seen the entire benefit of the bottling coming into Prag Distilleries, but what is already baked into the numbers would be to the tune of around 60%-70%.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_kr58tg1bokayo",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "3.4 million cases",
+     "unit": "million cases",
+     "period": "June 2026",
+     "direction": "up",
+     "evidence_text": "Firstly, we achieved the highest ever monthly volume of 3.4 million cases in June'26 with Imperial Blue emerging as the largest selling Deluxe Whisky.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1fptv1h3nxc91",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "172%",
+     "unit": "YoY",
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "In Q1, our overall volumes increased by 172% on a YoY basis and 9% on a QoQ basis.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1obgr7o1uy1n02",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "9%",
+     "unit": "QoQ",
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "In Q1, our overall volumes increased by 172% on a YoY basis and 9% on a QoQ basis.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1n0hv2lkt5afr",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "5.4 million cases",
+     "unit": "million cases",
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "The quarterly growth was led primarily by IB, which increased by 18% to reach 5.4 million cases.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_xglwy31vg377",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "guidance",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "high single-digit to low double-digit",
+     "unit": "volume growth",
+     "period": "FY27",
+     "direction": "up",
+     "evidence_text": "We maintain our guidance for FY27 of achieving a high single-digit to low double-digit volume growth for the combined business.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1989jn7ufithb",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "management_target",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "0.5 million cases",
+     "unit": "million cases",
+     "period": "within the next 12 to 18 months",
+     "direction": "up",
+     "evidence_text": "Delhi, I think at the peak, the volume of Imperial Blue would have been 0.5 million cases, and we expect that within the next 12 to 18 months, we should be seeing those levels.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_1scho3p1c0154d",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "mid-double digit",
+     "unit": "volume growth",
+     "period": "going forward",
+     "direction": "up",
+     "evidence_text": "Going forward, of course, there are a few vacant spaces in our portfolio, and we would be looking at new launches in the next 12 to 36 months to complete our portfolio. And with the new launches in place, we expect the volume growth to be in mid-double digit.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_a5jych7jvph7",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "mid-teens",
+     "unit": "CAGR",
+     "period": "till FY29",
+     "direction": "up",
+     "evidence_text": "We will have a CAGR of mid-teens till FY29.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_1f8tqae6peo3k",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "ACTUAL",
+     "before": "21.5 million cases",
+     "after": null,
+     "unit": "million cases",
+     "period": "at acquisition",
+     "direction": "unknown",
+     "evidence_text": "I think when we acquired the business, it was around 21.5 million cases.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_r3oxh218zt4m8",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "double-digit volume growth",
+     "unit": null,
+     "period": "end of FY27",
+     "direction": "up",
+     "evidence_text": "So clearly, we expect that we would end the year with a double-digit volume growth for Imperial Blue.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_uv7pyuuob95q",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "margin_driver",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "16%-18%",
+     "unit": "EBITDA margin",
+     "period": "next 2 years",
+     "direction": "up",
+     "evidence_text": "Optimize packaging, processes and supply chain and reap benefits of operating leverage and economies of scale, helping us achieve an EBITDA margin of 16%-18% on combined business in the next 2 years",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_exmjnnlzrntv",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "working_capital",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "below 1.0x",
+     "unit": "net debt-to-EBITDA",
+     "period": "FY29",
+     "direction": "down",
+     "evidence_text": "Focus on efficient capital deployment, disciplined debt management and working capital investments, facilitating the reduction of net debt-to-EBITDA below 1.0x by FY29",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_1qszrr41p0eag0",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    },
+    {
+     "variable": "execution_delay",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "90%",
+     "unit": "completion",
+     "period": "by April 2026",
+     "direction": "up",
+     "evidence_text": "and 90% of the manufacturing integration has been completed by April.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_i2tnyzl0g9dn",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1m5qrgg18wv7u6",
+     "extracted_at": "2026-09-21T19:34:23.405Z",
+     "updated_at": "2026-09-21T19:34:23.405Z"
+    }
+   ]
+  },
+  "E2E": {
+   "period": "Q1 FY27",
+   "graded": {
+    "ticker": "E2E",
+    "company": "E2E Networks",
+    "market": "IN",
+    "sales_yoy_pct": 334.12,
+    "net_profit_yoy_pct": 1645.07,
+    "eps_yoy_pct": null,
+    "opm_pct": 75.21,
+    "opm_change_pp_qoq": 14.5,
+    "cfo_to_pat_ratio": -7.84,
+    "profit_after_tax_latest_quarter": 43.88,
+    "roce_pct": -0.51,
+    "pe": 400.87,
+    "market_cap_cr": 12491.15,
+    "source": "screener",
+    "source_file": "watchlist-10432429.csv",
+    "requested": "E2E"
+   },
+   "summary": {
+    "verdict_line": "Capacity-led ramp (Blackwell/B200 live) drove strong operating leverage; management positions E2E as a Sovereign AI 'factory'.",
+    "guidance": {
+     "action": "none",
+     "detail": "",
+     "period": ""
+    },
+    "segments": [
+     {
+      "name": "Public Platforms (TIR & Jarvislabs.ai)",
+      "detail": "Training, fine-tuning & inference for LLM builders and AI-native teams at cluster scale; highlighted as monetization focus.",
+      "direction": "up"
+     },
+     {
+      "name": "Sovereign / Private Platform (SovCloud)",
+      "detail": "SovCloud incorporated as WOS to hold/contract large-scale CPU clusters and sovereign deployments.",
+      "direction": "up"
+     }
+    ],
+    "mix_shift": "Management says revenue growth driven mainly by utilization increases and capacity additions, with only moderate pricing impact.",
+    "capital": {
+     "capex": "FY26 capex and CWIP include INR 5,334 Mn for GPUs; Q1 FY27 capex totals shown across years (e.g., Q1FY27 177 Mn).",
+     "buyback": "",
+     "dividend": "No dividend recommended for FY25-26; Dividend policy adopted but no payout.",
+     "debt": "Loan outstanding broadly INR 450 crores as of the call; loan taken to fund first lot of B200; credit rating [ICRA] A- (Stable) for bank facilities aggregating Rs. 1,000 crores."
+    },
+    "management": "Alok Ohrie joined as Strategic Advisor; senior leadership hires made; Delaware entity incorporated for international sales; SovCloud WOS incorporated.",
+    "new_business": [
+     "1024 B200 Blackwell GPUs went live and put on revenue.",
+     "SovCloud Technologies Limited incorporated as wholly owned subsidiary.",
+     "Delaware entity set up for international market and alliances.",
+     "Jarvislabs.ai integrated (acquisition referenced) and TIR platform enhancements."
+    ],
+    "positives": [
+     {
+      "label": "Capacity deployed",
+      "detail": "5,100+ GPUs live (including 1,024 B200) as disclosed."
+     },
+     {
+      "label": "Operating leverage",
+      "detail": "EBITDA margin expanded to 75.2% in Q1 FY27 driven by utilization and Blackwell cluster going live."
+     },
+     {
+      "label": "Platform stack",
+      "detail": "TIR and Jarvislabs.ai platforms highlighted for training, fine-tuning and inference monetization."
+     },
+     {
+      "label": "Funding raised",
+      "detail": "Preferential equity fundraising and QIP noted; funds utilization table provided (total funds raised 15,919.34 Mn, utilized 13,604.64 Mn by FY26)."
+     }
+    ],
+    "negatives": [
+     {
+      "label": "Depreciation hit",
+      "detail": "Depreciation rose to Rs.169.23 Cr in FY26 (181.69% increase), causing a PAT loss for FY26."
+     },
+     {
+      "label": "Interest / debt",
+      "detail": "Finance cost increased in Q1 FY27 due to loan for B200; loan outstanding ~INR 450 crores and expected to rise with new lot."
+     }
+    ],
+    "watch_next": [
+     "Customer conversion of B200 capacity (management expects maximal utilisation).",
+     "Progress on funding arrangements for SovCloud to scale GPU deployment.",
+     "Timing and quantity of next-generation B300 / Vera Rubin capacity.",
+     "How much capacity is contracted longer-term versus on-demand (management notes increasing longer-term contracts)."
+    ],
+    "not_disclosed": [
+     "Quantified guidance on MRR or full-year capacity targets (management declines to provide MRR guidance).",
+     "Detailed split of revenue between training vs inference (management says not quantified).",
+     "Utilisation percentages by GPU type (H100, H200, B200) in numbers.",
+     "Exact peak debt projection for the year and total capex plan quantified (management refused to quantify peak debt)."
+    ],
+    "catalysts": [
+     {
+      "title": "Blackwell/B200 GPU clusters went live",
+      "category": "capacity",
+      "status": "commercial_production",
+      "size_vs_company": "1,024 B200 units within overall 5,100+ GPUs live",
+      "expected_impact_period": "Q1 FY27 (already put on revenue)",
+      "evidence_quote": "we went live with our Blackwell. So, 1,024 Blackwell that we received during last few months went online, and they were put on revenue."
+     },
+     {
+      "title": "SovCloud incorporation",
+      "category": "capacity",
+      "status": "announced",
+      "size_vs_company": "not quantified",
+      "expected_impact_period": "not stated",
+      "evidence_quote": "SovCloud is essentially an infrastructure subsidiary, very focused on build-out of the infrastructure."
+     },
+     {
+      "title": "Delaware entity incorporation",
+      "category": "international",
+      "status": "announced",
+      "size_vs_company": "not quantified",
+      "expected_impact_period": "not stated",
+      "evidence_quote": "the Delaware entity... is focused on selling in the international market and being able to establish presence outside India"
+     }
+    ],
+    "margin_bridge": {
+     "opm_change_pp": "+1450 bps",
+     "drivers": [
+      {
+       "driver": "operating_leverage",
+       "nature": "structural",
+       "detail": "Performance for the quarter is driven by operating leverage and the B200 cluster going live."
+      },
+      {
+       "driver": "mix_shift",
+       "nature": "structural",
+       "detail": "Revenue driven by utilization increases and capacity additions rather than pricing; pricing impact described as moderate."
+      }
+     ],
+     "verdict": "predominantly_structural",
+     "where_in_pnl": "operating_income"
+    },
+    "utilisation": {
+     "current": "management says maximal utilization for B200",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": "company commentary (qualitative)"
+    },
+    "capex_projects": [
+     {
+      "name": "B200 GPU deployment",
+      "type": "not_stated",
+      "amount": "",
+      "capacity_added": "1,024 B200 units",
+      "status": "commissioned",
+      "completion_period": "Q1 FY27",
+      "revenue_from": "Q1 FY27 (put on revenue)"
+     }
+    ],
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "one_offs": [],
+    "operating_leverage_evidence": "Performance for the quarter is driven by operating leverage and the B200 cluster going live.",
+    "capacity": {
+     "installed": "5,100+ GPUs live (including 1,024 B200)",
+     "prior_installed": "3,900 prior (FY26)",
+     "added": "1,024 B200",
+     "added_by": "Q1 FY27",
+     "new_plant": "",
+     "new_plant_location": "Delhi NCR & Chennai data centres referenced",
+     "commissioning": "B200 went online and put on revenue in the quarter",
+     "bottleneck": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management reports customers committing to longer-term contracts and preference for contracted capacity to preserve price."
+    },
+    "customers": {
+     "new_customer": "",
+     "loss": "",
+     "concentration": "India AI Mission contributed ~38,000+ GPUs mention earlier; prior quarter India AI revenue ~20-21% and international ~37% per management comment.",
+     "qualification": "",
+     "approval": ""
+    },
+    "volume_price_mix": {
+     "volume": "",
+     "price": "Management reported a price hike in July and said pricing impact in the quarter was moderate; CPU price increases due to input cost rises described.",
+     "mix": "",
+     "exports": ""
+    },
+    "balance": {
+     "working_capital": "",
+     "fcf": "",
+     "debt": "Borrowings stood at 1,032 Mn as of Mar-26 in FY26 balance sheet; loan outstanding ~INR 450 crores referenced for Q1 FY27."
+    },
+    "risks": {
+     "supply_bottleneck": "",
+     "delay": "B200 deliveries upcoming for next lot expected in 'next couple of months' per management.",
+     "shutdown": "",
+     "market_share": "",
+     "pricing_power": "Management claims ability to renegotiate prices and some customers opting for longer contracts to lock pricing.",
+     "technology": "Company claims platform is architecture-agnostic and can integrate non-NVIDIA hardware.",
+     "raw_materials": "Management cited higher CPU hardware input costs, particularly memory, increasing CPU pricing."
+    },
+    "management_targets": [
+     {
+      "metric": "GPU fleet",
+      "target": "planning further scale (B300 / Vera Rubin next-gen planning underway)",
+      "by": "not stated"
+     }
+    ],
+    "capex_earning": "",
+    "events": [
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "~5100 GPUs live, (including 1024 B200)",
+      "unit": null,
+      "period": "Data as of July 2026",
+      "direction": "unknown",
+      "evidence_text": "Hopper & Blackwell GPUs ~5100 GPUs live, (including 1024 B200) IN DEPLOYMENT",
+      "source": "Investor presentation Jul 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity_addition",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "1024+ B200s planned",
+      "unit": null,
+      "period": "ON THE ROADMAP",
+      "direction": "up",
+      "evidence_text": "Blackwell scale-up 1024+ B200s planned ON THE ROADMAP",
+      "source": "Investor presentation Jul 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "another 1,024 B200 we are expecting soon",
+      "unit": null,
+      "period": "Q1 FY27",
+      "direction": "up",
+      "evidence_text": "That's the number of GPUs which are live today. So that does not include another 1,024 B200 we are expecting soon.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "commissioning",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "in the next couple of months",
+      "unit": null,
+      "period": null,
+      "direction": "up",
+      "evidence_text": "So, we expect them to be here in the next couple of months.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "we deployed NVIDIA's newest generation of B200 clusters",
+      "unit": null,
+      "period": "FY26",
+      "direction": "up",
+      "evidence_text": "We deployed NVIDIA's newest generation of B200 clusters, alongside continued H200 and H100.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "utilisation",
+      "value_type": "MANAGEMENT_CLAIM",
+      "before": null,
+      "after": "pretty much at maximum level compared to any previous quarter",
+      "unit": null,
+      "period": "current quarter (Q1 FY27)",
+      "direction": "up",
+      "evidence_text": "See, we are majorly focused on increasing the utilization of the existing fleet, which is pretty much at maximum level compared to any previous quarter.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity_bottleneck",
+      "value_type": "MANAGEMENT_CLAIM",
+      "before": null,
+      "after": "customers commit to longer-term capacity contracts of 1, 2 to 3 years",
+      "unit": null,
+      "period": null,
+      "direction": "up",
+      "evidence_text": "And there, again, we have seen increased demand from the customer side where they would like to see longer term contracts of 1, 2 to 3 years coming their way.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "LOW",
+      "evidence_quality": "unit_mismatch"
+     },
+     {
+      "variable": "capex",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "INR881.1 crores capex",
+      "unit": "INR",
+      "period": null,
+      "direction": "unknown",
+      "evidence_text": "So, I wanted to understand, are you planning further equity raise also because, point is, whatever the capex which you have basically shown earlier, wanted to understand where has that INR881.1 crores capex gone?",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     }
+    ]
+   },
+   "events": [
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": "1900",
+     "after": "5100",
+     "unit": "GPUs",
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "1,900 3,900 5,100 FY25FY26FY27Q1 GPU Trajectory",
+     "source": "Investor presentation Jul 2026",
+     "confidence": "LOW",
+     "evidence_quality": "chart",
+     "id": "evt_1vcppvd1l9etll",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_ybcoip3p4w3b",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "capacity_addition",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "1024",
+     "unit": "B200 GPUs",
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "That's the number of GPUs which are live today. So that does not include another 1,024 B200 we are expecting soon.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_12o0lol1f9nywp",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "utilisation",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "maximum level",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "See, we are majorly focused on increasing the utilization of the existing fleet, which is pretty much at maximum level compared to any previous quarter.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1c5dm4c1wg50bo",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "commissioning",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "mid-May",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "And sir, the new B200 that we've deployed mid-May, have they been committed fully in terms of capacity, as in, in terms of utilization?",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1eyemhen566s8",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "capacity_addition",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "next couple of months",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "So, we expect them to be here in the next couple of months.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1ozu3d5sscylz",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "revenue_visibility",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "longer-term contracts of 1, 2 to 3 years",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "And there, again, we have seen increased demand from the customer side where they would like to see longer term contracts of 1, 2 to 3 years coming their way.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_9v8ce31tfajnj",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "price",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "increased",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "So, to accommodate that, we had to, in fact, increase the price of both the GPUs and CPUs.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1xsmmgc1sc1q3w",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "volume",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "major volumes continue to be on training",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "unknown",
+     "evidence_text": "See, we are pretty small in terms of size and volume. So major volumes, of course, continue to be on training.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_qd08yj1r52z29",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "utilisation",
+     "value_type": "ACTUAL",
+     "before": "160",
+     "after": "374",
+     "unit": "Rs. million",
+     "period": "FY26",
+     "direction": "up",
+     "evidence_text": "The Company recorded strong operational momentum during the year, with Monthly Revenue Run-rate (MRR) increasing from Rs.160 million in March 2025 to Rs. 374 million in March 2026, reflecting increased customer adoption and utilisation of its AI cloud infrastructure.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1vxmvqz1iqxj5t",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_3u4v7xmj8crb",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "881.1",
+     "unit": "INR crores",
+     "period": "Q1 FY27",
+     "direction": "unknown",
+     "evidence_text": "whatever the capex which you have basically shown earlier, wanted to understand where has that INR881.1 crores capex gone?",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_17ojh1s1lyp0kg",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-21T19:34:21.514Z",
+     "updated_at": "2026-09-21T19:34:21.514Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "~5100 GPUs live, (including 1024 B200)",
+     "unit": null,
+     "period": "Data as of July 2026",
+     "direction": "unknown",
+     "evidence_text": "Hopper & Blackwell GPUs ~5100 GPUs live, (including 1024 B200) IN DEPLOYMENT",
+     "source": "Investor presentation Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_14gc9e529mkpz",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_ybcoip3p4w3b",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "capacity_addition",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "1024+ B200s planned",
+     "unit": null,
+     "period": "ON THE ROADMAP",
+     "direction": "up",
+     "evidence_text": "Blackwell scale-up 1024+ B200s planned ON THE ROADMAP",
+     "source": "Investor presentation Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_ppsud4672i3q",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_ybcoip3p4w3b",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "another 1,024 B200 we are expecting soon",
+     "unit": null,
+     "period": "Q1 FY27",
+     "direction": "up",
+     "evidence_text": "That's the number of GPUs which are live today. So that does not include another 1,024 B200 we are expecting soon.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1so3ve937saq7",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "commissioning",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "in the next couple of months",
+     "unit": null,
+     "period": null,
+     "direction": "up",
+     "evidence_text": "So, we expect them to be here in the next couple of months.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_1gry3dn1wjhjlr",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "we deployed NVIDIA's newest generation of B200 clusters",
+     "unit": null,
+     "period": "FY26",
+     "direction": "up",
+     "evidence_text": "We deployed NVIDIA's newest generation of B200 clusters, alongside continued H200 and H100.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_asrcie1j0hfs",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_3u4v7xmj8crb",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "utilisation",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "pretty much at maximum level compared to any previous quarter",
+     "unit": null,
+     "period": "current quarter (Q1 FY27)",
+     "direction": "up",
+     "evidence_text": "See, we are majorly focused on increasing the utilization of the existing fleet, which is pretty much at maximum level compared to any previous quarter.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_5oli4z1jtcm5z",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "capacity_bottleneck",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "customers commit to longer-term capacity contracts of 1, 2 to 3 years",
+     "unit": null,
+     "period": null,
+     "direction": "up",
+     "evidence_text": "And there, again, we have seen increased demand from the customer side where they would like to see longer term contracts of 1, 2 to 3 years coming their way.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "LOW",
+     "evidence_quality": "unit_mismatch",
+     "id": "evt_ngn5jl183iqdd",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "INR881.1 crores capex",
+     "unit": "INR",
+     "period": null,
+     "direction": "unknown",
+     "evidence_text": "So, I wanted to understand, are you planning further equity raise also because, point is, whatever the capex which you have basically shown earlier, wanted to understand where has that INR881.1 crores capex gone?",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1qvpc2qyokb8",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1adgwvoxtso3i",
+     "extracted_at": "2026-09-22T15:48:12.145Z",
+     "updated_at": "2026-09-22T15:48:12.145Z"
+    }
+   ]
+  },
+  "SJS": {
+   "period": "Q1 FY27",
+   "graded": {
+    "ticker": "SJS",
+    "company": "S J S Enterprises Ltd",
+    "sector": "",
+    "filing_date": "2026-08-06",
+    "quarter": "Q1 FY27",
+    "market_cap_bucket": null,
+    "market_cap_cr": 7408,
+    "adtv_cr": 86.31499279999998,
+    "pe": 38.9,
+    "price": 2297.2,
+    "sales_yoy_pct": 24.285714285714285,
+    "net_profit_yoy_pct": 111.42857142857143,
+    "eps_yoy_pct": 110.1541251133273,
+    "sales_curr_cr": 261,
+    "sales_prev_cr": 210,
+    "pat_curr_cr": 74,
+    "pat_prev_cr": 35,
+    "eps_curr": 23.18,
+    "eps_prev": 11.03,
+    "gap_pct": 0.3864079990439317,
+    "d1_pct": -2.892084611401042,
+    "move_pct": -8.489025216109642,
+    "rs_rating": 92,
+    "stage": 2,
+    "pct_from_52w_high": -10.3,
+    "composite_score": 89,
+    "tier": "BLOCKBUSTER",
+    "fund_composite": 85,
+    "setup_grade": "A",
+    "methodology_tags": [
+     "sepa",
+     "canslim",
+     "bonde ep"
+    ],
+    "caveat_tags": [
+     "optical eps"
+    ],
+    "narrative": "S J S Enterprises Ltd prints a blockbuster Q1 FY27 (revenue +24% YoY, PAT +111% YoY, EPS +110% YoY) with caveat: optical eps.",
+    "filing_url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=SJS",
+    "source": "graded",
+    "is_elite": false,
+    "pead_score": 59,
+    "multibagger_setup": true,
+    "opm_pct": 29,
+    "opm_prev_pct": 27,
+    "ocf_to_pat_ratio": 3.03,
+    "cfo_to_pat_ratio": 3.03,
+    "quality_score": 100,
+    "inflection_score": 62,
+    "quadrant": "COMPOUNDER",
+    "quadrant_parts": {
+     "quality": [
+      {
+       "label": "cash conversion",
+       "points": 20,
+       "of": 20
+      },
+      {
+       "label": "operating margin",
+       "points": 15,
+       "of": 15
+      },
+      {
+       "label": "profitable",
+       "points": 10,
+       "of": 10
+      }
+     ],
+     "inflection": [
+      {
+       "label": "revenue growth",
+       "points": 18.2,
+       "of": 30
+      },
+      {
+       "label": "margin expansion",
+       "points": 10,
+       "of": 25
+      },
+      {
+       "label": "earnings direction",
+       "points": 15,
+       "of": 15
+      }
+     ]
+    },
+    "roce": null,
+    "seen_date": "2026-08-06",
+    "market": "IN",
+    "requested": "SJS"
+   },
+   "summary": {
+    "verdict_line": "Quarter confirms expanding premium mix, rapid export traction and capacity additions powering higher-margin growth.",
+    "guidance": {
+     "action": "maintained",
+     "detail": "expects to outperform the underlying automotive industry by 1.5x to 2x in FY27; target export contribution of 14%-15% of consolidated revenue by FY28.",
+     "period": "FY27 / by FY28"
+    },
+    "segments": [
+     {
+      "name": "Passenger vehicle",
+      "detail": "registered 45.4% year-on-year growth and contributed 44.6% of consolidated revenue.",
+      "direction": "up"
+     },
+     {
+      "name": "Two-wheeler",
+      "detail": "grew 19.5% year-on-year and contributed 36.6% of consolidated revenue.",
+      "direction": "up"
+     },
+     {
+      "name": "Consumer & others",
+      "detail": "contributed 18.8% of consolidated revenue.",
+      "direction": "flat"
+     }
+    ],
+    "mix_shift": "New generation products contributed ~24% of consolidated revenue; higher export contribution (9.8%) and richer product mix cited as margin drivers.",
+    "capital": {
+     "capex": "planned overall near-term investment of nearly ` 2,600 - ` 2,700 Mn across projects over three years; FY26 capex of ` 822.4 Mn; Hosur cover glass facility Phase I ~` 650 Mn; Bengaluru capex ` 400 - ` 450 Mn; SJS Decoplast new Pune facility capex ~` 1000 Mn.",
+     "buyback": "",
+     "dividend": "Board recommended final dividend of 35% on face value for FY26.",
+     "debt": "Net cash position of Rs. 3,287.7 Mn as of June 30, 2026; cash & equivalents Rs. 3,380.8 Mn; total debt disclosed as 1,587,793 (unit in presentation ambiguous)."
+    },
+    "management": "",
+    "new_business": [
+     "New orders from Mahindra & Mahindra, Tata Motors, TVS, Autoliv, Royal Enfield, Skoda, John Deere, Hero MotoCorp, Whirlpool and others",
+     "SDPL won new businesses with Tata Motors",
+     "Walter Pack won new businesses with Mahindra",
+     "Commenced commercial operations of new SJS Decoplast facility in Pune",
+     "Board approved wholly-owned subsidiary for cover glass & display business"
+    ],
+    "positives": [
+     {
+      "label": "Profit quality",
+      "detail": "Adjusted PAT (ex ` 241.7 Mn one-time gain from sale of Bangalore old facility) was Rs. 502.5 Mn with adjusted PAT margin 19.3%."
+     },
+     {
+      "label": "Margin expansion",
+      "detail": "EBITDA margin expanded to 30.0%, up 239 bps YoY to Rs. 799.6 Mn."
+     },
+     {
+      "label": "Exports",
+      "detail": "Exports grew 83.2% YoY to Rs. 255.8 Mn, now 9.8% of consolidated revenue."
+     },
+     {
+      "label": "Cash",
+      "detail": "Cash & cash equivalents Rs. 3,380.8 Mn; net cash Rs. 3,287.7 Mn; free cash flow Rs. 838 Mn in Q1."
+     }
+    ],
+    "negatives": [
+     {
+      "label": "One-time gain",
+      "detail": "Reported PAT includes a one-time gain of Rs. 241.7 Mn from sale of Bangalore old facility."
+     },
+     {
+      "label": "Gross margin commentary absence",
+      "detail": "No quantified bridge explaining reported gross margin drivers beyond management claims of mix, exports and efficiencies."
+     }
+    ],
+    "watch_next": [
+     "Execution and revenue contribution from Hosur cover glass & display facility (management: supplies to start Q2 FY28).",
+     "Ramp-up and utilisation at new Pune Decoplast facility and achievement of Rs. 200-250 Cr incremental revenue over ~3 years.",
+     "Progress on export pipeline to reach 14%-15% of revenue by FY28.",
+     "Outcome of integration and full ownership of Walter Pack India and related cross-selling wins."
+    ],
+    "not_disclosed": [
+     "Detailed per-customer order book or quantified backlog",
+     "Plant-level utilisation rates for core facilities this quarter (except Walter Pack ~75% comment)",
+     "Breakdown of the ` 2,600-2,700 Mn capex by year",
+     "Exact amount for SJS Decoplast capex timeline and the unit for 'Total Debt' line in presentation"
+    ],
+    "catalysts": [
+     {
+      "title": "Commenced commercial operations of new SJS Decoplast manufacturing facility in Pune",
+      "category": "capacity",
+      "status": "commercial_production",
+      "size_vs_company": "adds close to about 200 crs to 250 crs of additional revenue (management statement)",
+      "expected_impact_period": "over next 3 years",
+      "evidence_quote": "In August 2026, we also commenced commercial operations of the new SJS Decoplast manufacturing facility in Pune, further expanding our manufacturing capacity"
+     },
+     {
+      "title": "Board approved wholly-owned subsidiary for cover glass & displays; BOE Varitronix technology tie-up",
+      "category": "product",
+      "status": "under_construction",
+      "size_vs_company": "cover glass/display market estimate up to Rs. 5,000 - 7,000 Cr by 2030; target 10% market share by 2030 (company aspiration)",
+      "expected_impact_period": "supplies expected Q2 FY28",
+      "evidence_quote": "Board has approved setting up a wholly owned subsidiary for the cover glass and display business."
+     },
+     {
+      "title": "Exports expansion and targeted customers",
+      "category": "international",
+      "status": "announced",
+      "size_vs_company": "exports at Rs. 255.8 Mn (9.8% of revenue) with target 14%-15% by FY28",
+      "expected_impact_period": "by FY28",
+      "evidence_quote": "We aim to increase the share of exports to 14%-15% of total revenue by FY28."
+     }
+    ],
+    "margin_bridge": {
+     "opm_change_pp": "+2.39pp",
+     "drivers": [
+      {
+       "driver": "mix_shift",
+       "nature": "structural",
+       "detail": "Management cites favourable product mix and higher export contribution as drivers of margin expansion."
+      },
+      {
+       "driver": "cost_reduction",
+       "nature": "structural",
+       "detail": "Management cites sustained operational efficiencies and portfolio premiumisation aiding margins."
+      },
+      {
+       "driver": "one_time_gain",
+       "nature": "one_off",
+       "detail": "PAT included a one-time gain of Rs. 241.7 Mn from sale of Bangalore old facility."
+      }
+     ],
+     "verdict": "mixed",
+     "where_in_pnl": "other_income"
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "SJS Decoplast new plant expects 85%-90% utilisation in ~3 years",
+     "expected_by": "3 years",
+     "basis": "Pune Decoplast facility"
+    },
+    "capex_projects": [
+     {
+      "name": "Cover glass & display facility (Hosur)",
+      "type": "greenfield",
+      "amount": "` 650 Mn",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "equipment on order; revenue from Q2 FY28",
+      "revenue_from": "Q2 FY28"
+     },
+     {
+      "name": "SJS Decoplast new Pune facility",
+      "type": "greenfield",
+      "amount": "` 1000 Mn (approx)",
+      "capacity_added": "adds close to about 200 crs to 250 crs of additional revenue (management statement)",
+      "status": "commercial_production",
+      "completion_period": "commenced operations Aug 2026",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Bengaluru capacity expansion",
+      "type": "brownfield",
+      "amount": "` 400 - ` 450 Mn",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     }
+    ],
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "new orders from multiple OEMs listed; 'current order book to be executed in FY27 is over 88% of FY27 forecasted revenue' (management)",
+     "book_to_bill": "",
+     "execution_period": "current order book to be executed in FY27 is over 88% of FY27 forecasted revenue",
+     "concentration": ""
+    },
+    "one_offs": [
+     {
+      "item": "Sale of Bangalore old facility",
+      "amount": "Rs. 241.7 Mn",
+      "direction": "gain",
+      "recurring": "will_not_recur"
+     }
+    ],
+    "operating_leverage_evidence": "EBITDA increased 36.2% YoY while revenue rose 24.5% YoY; management cites operational efficiencies and richer mix as drivers.",
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "New SJS Decoplast facility in Pune; cover glass facility in Hosur (phase I equipment ordered)",
+     "new_plant_location": "Pune (Decoplast); Hosur (cover glass)",
+     "commissioning": "Pune plant commenced commercial operations Aug 2026; Hosur expected Q2 FY28",
+     "bottleneck": ""
+    },
+    "demand": {
+     "order_intake": "Multiple new orders from large OEMs including Mahindra, Tata, TVS, Hero, Autoliv, Whirlpool, etc.",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "management: current order book to be executed in FY27 is over 88% of FY27 forecasted revenue"
+    },
+    "customers": {
+     "new_customer": "Hero MotoCorp (onboarded and supplies started)",
+     "loss": "",
+     "concentration": "",
+     "qualification": "SJS in-house R&D centre received DSIR recognition",
+     "approval": "",
+     "new_product": "Cover glass & display systems (in development with BOE); illuminated logos, IME/IMD products"
+    },
+    "volume_price_mix": {
+     "volume": "",
+     "price": "",
+     "mix": "New generation products contributed ~24% of revenue; management cites richer product mix boosted margins",
+     "exports": "Exports Rs. 255.8 Mn, 9.8% of consolidated revenue, grew 83.2% YoY"
+    },
+    "balance": {
+     "working_capital": "",
+     "fcf": "Free cash flow of Rs. 838 Mn for the quarter.",
+     "debt": "Net cash position Rs. 3,287.7 Mn; cash & cash equivalents Rs. 3,380.8 Mn as on June 30, 2026."
+    },
+    "risks": {
+     "supply_bottleneck": "",
+     "delay": "No delays stated; cover glass plant equipment on order and expected supplies Q2 FY28.",
+     "shutdown": "",
+     "market_share": "",
+     "pricing_power": "Management states ability to pass through input cost increases with some lag; quoted recovery lag of one quarter or two.",
+     "technology": "BOE partnership for display assembly; in-house R&D recognised by DSIR."
+    },
+    "management_targets": [
+     {
+      "metric": "export contribution",
+      "target": "14%-15% of consolidated revenue",
+      "by": "FY28"
+     },
+     {
+      "metric": "outperformance vs industry",
+      "target": "1.5x to 2x industry growth",
+      "by": "FY27"
+     }
+    ],
+    "capex_earning": "New SJS Decoplast Pune facility has commenced commercial operations and is expected to contribute incremental revenue; Hosur display facility expected supplies from Q2 FY28.",
+    "events": [
+     {
+      "variable": "new_plant",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "new SJS Decoplast manufacturing facility in Pune commenced commercial operations",
+      "unit": null,
+      "period": "August 2026",
+      "direction": "up",
+      "evidence_text": "In August 2026, we also commenced commercial operations of the new SJS Decoplast manufacturing facility in Pune, further expanding our manufacturing capacity and creating additional capacity to support future customer programs and business growth.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity_addition",
+      "value_type": "MANAGEMENT_CLAIM",
+      "before": null,
+      "after": "almost 200-250 crs of capacity",
+      "unit": "crs",
+      "period": null,
+      "direction": "up",
+      "evidence_text": "As I said, we've added almost 200-250 crs of capacity. Now that 200 crs -250 crs of capacity has to be utilized with high-margin products.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity_addition",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "increased our capacity by approximately 1.75x",
+      "unit": null,
+      "period": null,
+      "direction": "up",
+      "evidence_text": "Darshan Shah: I had three questions on the recent capex in SJS Decoplast. So, we have increased our capacity by approximately 1.75x and our existing capacity is at full utilization.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "chrome plating and painting facility in Pune is currently operating at near full capacity",
+      "unit": null,
+      "period": null,
+      "direction": "up",
+      "evidence_text": "The chrome plating and painting facility in Pune is currently operating at near full capacity.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capex",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "` 822.4 Mn",
+      "unit": "`",
+      "period": "FY26",
+      "direction": "up",
+      "evidence_text": "During FY26, SJS incurred an overall capex of ` 822.4 Mn towards various expansion projects across Pune, Bangalore and Hosur.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capex",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "~` 1000 Mn",
+      "unit": "`",
+      "period": null,
+      "direction": "up",
+      "evidence_text": "Capacity expansion at SJS Decoplast (Pune) with an overall capex of ~` 1000 Mn; the plant has been set up and is currently in its final stage of commissioning",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capex",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "~` 650 Mn",
+      "unit": "`",
+      "period": "FY 2027-28",
+      "direction": "unknown",
+      "evidence_text": "Establishing a greenfield cover glass and automotive display facility at Hosur, with a Phase I capital outlay of ~` 650 Mn (including display system assembly); equipment has been ordered and revenue contribution expected from FY 2027-28",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capex",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "` 400 - ` 450 Mn",
+      "unit": "`",
+      "period": null,
+      "direction": "up",
+      "evidence_text": "Capex of ` 400 - ` 450 Mn at SJS (Bengaluru) to expand capacity and cater to a significant new business opportunity expansion is progressing well",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "utilisation",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "85%-90%",
+      "unit": null,
+      "period": "in a period of three years",
+      "direction": "unknown",
+      "evidence_text": "Regarding utilization ratio, we already have explained in the current call that in a period of three years, one can expect to reach at a level of 85%-90%.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "management_target",
+      "value_type": "TARGET",
+      "before": null,
+      "after": "14%-15% of consolidated revenue",
+      "unit": null,
+      "period": "FY28",
+      "direction": "unknown",
+      "evidence_text": "Strengthening our global presence remains a key strategic priority for us. We continue to focus on scaling our export business and remain committed to achieving export contribution of 14%-15% of consolidated revenue by FY28.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity_bottleneck",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "existing capacity is at full utilization",
+      "unit": null,
+      "period": null,
+      "direction": "up",
+      "evidence_text": "Darshan Shah: I had three questions on the recent capex in SJS Decoplast. So, we have increased our capacity by approximately 1.75x and our existing capacity is at full utilization.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "LOW",
+      "evidence_quality": "unit_mismatch"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "sales out of this new plant will come in Q2 of next year",
+      "unit": null,
+      "period": "Q2 of next year",
+      "direction": "up",
+      "evidence_text": "So, we had already mentioned last time that look, this new facility that we are setting up for Cover glass and Display, equipment is on order. And sales out of this new plant will come in Q2 of next year.",
+      "source": "Concall transcript Aug 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     }
+    ]
+   },
+   "events": [
+    {
+     "variable": "new_plant",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "new SJS Decoplast manufacturing facility in Pune commenced commercial operations",
+     "unit": null,
+     "period": "August 2026",
+     "direction": "up",
+     "evidence_text": "In August 2026, we also commenced commercial operations of the new SJS Decoplast manufacturing facility in Pune, further expanding our manufacturing capacity and creating additional capacity to support future customer programs and business growth.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1g9jop7erpaxt",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capacity_addition",
+     "value_type": "MANAGEMENT_CLAIM",
+     "before": null,
+     "after": "almost 200-250 crs of capacity",
+     "unit": "crs",
+     "period": null,
+     "direction": "up",
+     "evidence_text": "As I said, we've added almost 200-250 crs of capacity. Now that 200 crs -250 crs of capacity has to be utilized with high-margin products.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_a5m8751y3p453",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capacity_addition",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "increased our capacity by approximately 1.75x",
+     "unit": null,
+     "period": null,
+     "direction": "up",
+     "evidence_text": "Darshan Shah: I had three questions on the recent capex in SJS Decoplast. So, we have increased our capacity by approximately 1.75x and our existing capacity is at full utilization.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1o9ivu3tuyit7",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "chrome plating and painting facility in Pune is currently operating at near full capacity",
+     "unit": null,
+     "period": null,
+     "direction": "up",
+     "evidence_text": "The chrome plating and painting facility in Pune is currently operating at near full capacity.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_10honbm1qxb0iw",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1xlgxkx71fukj",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "` 822.4 Mn",
+     "unit": "`",
+     "period": "FY26",
+     "direction": "up",
+     "evidence_text": "During FY26, SJS incurred an overall capex of ` 822.4 Mn towards various expansion projects across Pune, Bangalore and Hosur.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_12t2glduxtn0t",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1xlgxkx71fukj",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "~` 1000 Mn",
+     "unit": "`",
+     "period": null,
+     "direction": "up",
+     "evidence_text": "Capacity expansion at SJS Decoplast (Pune) with an overall capex of ~` 1000 Mn; the plant has been set up and is currently in its final stage of commissioning",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_vjussixxkc4c",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1xlgxkx71fukj",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "~` 650 Mn",
+     "unit": "`",
+     "period": "FY 2027-28",
+     "direction": "unknown",
+     "evidence_text": "Establishing a greenfield cover glass and automotive display facility at Hosur, with a Phase I capital outlay of ~` 650 Mn (including display system assembly); equipment has been ordered and revenue contribution expected from FY 2027-28",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_p1nxto1bww6uu",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1xlgxkx71fukj",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "` 400 - ` 450 Mn",
+     "unit": "`",
+     "period": null,
+     "direction": "up",
+     "evidence_text": "Capex of ` 400 - ` 450 Mn at SJS (Bengaluru) to expand capacity and cater to a significant new business opportunity expansion is progressing well",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_12wfdc91u8wht7",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1xlgxkx71fukj",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "utilisation",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "85%-90%",
+     "unit": null,
+     "period": "in a period of three years",
+     "direction": "unknown",
+     "evidence_text": "Regarding utilization ratio, we already have explained in the current call that in a period of three years, one can expect to reach at a level of 85%-90%.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1113vjj13q9a4t",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "management_target",
+     "value_type": "TARGET",
+     "before": null,
+     "after": "14%-15% of consolidated revenue",
+     "unit": null,
+     "period": "FY28",
+     "direction": "unknown",
+     "evidence_text": "Strengthening our global presence remains a key strategic priority for us. We continue to focus on scaling our export business and remain committed to achieving export contribution of 14%-15% of consolidated revenue by FY28.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1a0i8l51xesw39",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capacity_bottleneck",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "existing capacity is at full utilization",
+     "unit": null,
+     "period": null,
+     "direction": "up",
+     "evidence_text": "Darshan Shah: I had three questions on the recent capex in SJS Decoplast. So, we have increased our capacity by approximately 1.75x and our existing capacity is at full utilization.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "LOW",
+     "evidence_quality": "unit_mismatch",
+     "id": "evt_m30zyq1pa1j26",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "sales out of this new plant will come in Q2 of next year",
+     "unit": null,
+     "period": "Q2 of next year",
+     "direction": "up",
+     "evidence_text": "So, we had already mentioned last time that look, this new facility that we are setting up for Cover glass and Display, equipment is on order. And sales out of this new plant will come in Q2 of next year.",
+     "source": "Concall transcript Aug 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_12446osrybuj2",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1qyayuprxm7f7",
+     "extracted_at": "2026-09-22T16:28:12.324Z",
+     "updated_at": "2026-09-22T16:28:12.324Z"
+    }
+   ]
+  },
+  "GIPCL": {
+   "period": "Q1 FY27",
+   "graded": {
+    "ticker": "GIPCL",
+    "company": "Gujarat Industries Power Co Ltd",
+    "sector": "",
+    "filing_date": "2026-08-11",
+    "quarter": "Q1 FY27",
+    "market_cap_bucket": "SMALL",
+    "market_cap_cr": 3123,
+    "adtv_cr": 8.47125706,
+    "pe": 6.21,
+    "price": 201,
+    "sales_yoy_pct": 34.1,
+    "net_profit_yoy_pct": 177.2,
+    "eps_yoy_pct": 174.9,
+    "sales_curr_cr": 499,
+    "sales_prev_cr": 372,
+    "pat_curr_cr": 158,
+    "pat_prev_cr": 57,
+    "eps_curr": 10.17,
+    "eps_prev": 3.7,
+    "gap_pct": 0.4674315546652159,
+    "d1_pct": -0.05463485703879282,
+    "move_pct": 22.07855278334244,
+    "rs_rating": 74,
+    "stage": 2,
+    "pct_from_52w_high": -11,
+    "composite_score": 91,
+    "tier": "BLOCKBUSTER",
+    "fund_composite": 88,
+    "setup_grade": "A",
+    "methodology_tags": [
+     "canslim",
+     "bonde ep"
+    ],
+    "caveat_tags": [],
+    "narrative": "Gujarat Industries Power Co Ltd prints a blockbuster Q1 FY27 (revenue +34% YoY, PAT +177% YoY, EPS +175% YoY) and canslim/bonde ep all passing.",
+    "filing_url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=GIPCL",
+    "source": "graded",
+    "is_elite": false,
+    "pead_score": 71,
+    "multibagger_setup": true,
+    "opm_pct": 48,
+    "opm_prev_pct": 30,
+    "ocf_to_pat_ratio": 1.29,
+    "cfo_to_pat_ratio": 1.29,
+    "quality_score": 100,
+    "inflection_score": 94,
+    "quadrant": "COMPOUNDER",
+    "quadrant_parts": {
+     "quality": [
+      {
+       "label": "cash conversion",
+       "points": 20,
+       "of": 20
+      },
+      {
+       "label": "operating margin",
+       "points": 15,
+       "of": 15
+      },
+      {
+       "label": "profitable",
+       "points": 10,
+       "of": 10
+      }
+     ],
+     "inflection": [
+      {
+       "label": "revenue growth",
+       "points": 25.6,
+       "of": 30
+      },
+      {
+       "label": "margin expansion",
+       "points": 25,
+       "of": 25
+      },
+      {
+       "label": "earnings direction",
+       "points": 15,
+       "of": 15
+      }
+     ]
+    },
+    "roce": null,
+    "seen_date": "2026-08-11",
+    "market": "IN",
+    "requested": "GIPCL"
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes commissioning progress at Khavda and visible near-term earnings from RE despite pending evacuation and staged commissioning of remaining capacity.",
+    "guidance": {
+     "action": "none",
+     "detail": "",
+     "period": ""
+    },
+    "segments": [
+     {
+      "name": "Surat Lignite Power Plant (SLPP)",
+      "detail": "Phase I generated 1546.682 MUs (70.62% PLF) and Phase II generated 1638.914 MUs (74.84% PLF).",
+      "direction": "flat"
+     },
+     {
+      "name": "Khavda 600 MW solar",
+      "detail": "CUF reported at 33.24% and management estimates ~Rs. 420 crore revenue and ~Rs. 350-360 crore EBITDA for full year.",
+      "direction": "up"
+     },
+     {
+      "name": "500 MW Khavda solar (remaining)",
+      "detail": "Commissioning staged post-monsoon; expected first 200 MW then 200 MW and 100 MW; full commissioning expected by November 2026/ end 2026 as per management.",
+      "direction": "up"
+     }
+    ],
+    "mix_shift": "Company reports higher share of solar coming online (600 MW capitalised, 500 MW pending) but provides no blended revenue mix percentage.",
+    "capital": {
+     "capex": "Capital work-in-progress Rs 2,065 crore pertains to 500 MW project; thermal 750 MW project capex estimated around `6,000 crores.",
+     "buyback": "",
+     "dividend": "Recommendation of dividend `4.10 per share for FY25-26.",
+     "debt": "Management projects peak debt roughly around `4,500 crore; project-level disbursements pending so debt to increase from ~`3,250 crore to ~`4,500 crore after commissioning."
+    },
+    "management": "No board-level appointments in this release; MD is Smt. Vatsala Vasudeva, IAS; CFO is K K Bhatt (no change announced here).",
+    "new_business": [
+     "600 MW Khavda solar: commercialized in phases Jun–Dec 2025.",
+     "75 MW group captive solar at Vastan commissioned.",
+     "500 MW solar at Khavda PPA executed with GUVNL; awaiting CTUIL evacuation for phased commissioning.",
+     "750 MW lignite thermal project entrusted by Government of Gujarat; EPC tender floated 17/06/2026.",
+     "Pilot 20MW/120MWh VRFB BESS at Vadodara (repurposing 165 MW gas station) approved by GUVNL; tender underway."
+    ],
+    "positives": [
+     {
+      "label": "Khavda CUF",
+      "detail": "Khavda CUF reported at 33.24%."
+     },
+     {
+      "label": "Khavda economics",
+      "detail": "Management estimates ~Rs. 420 crore revenue and ~Rs. 350-360 crore EBITDA from 600 MW Khavda."
+     },
+     {
+      "label": "Park allotment",
+      "detail": "Company allotted 2,375 MW Khavda RE Park and to develop 1,100 MW itself; park infrastructure PSS-1 energized."
+     },
+     {
+      "label": "SLPP performance",
+      "detail": "SLPP combined generation 3,185.596 MUs; Phase I and II availability and forced outage metrics improved."
+     }
+    ],
+    "negatives": [
+     {
+      "label": "Evacuation constraint",
+      "detail": "Remaining 500 MW at Khavda delayed pending CTUIL evacuation (PSS-2/KPS-2 readiness) causing phased commissioning."
+     },
+     {
+      "label": "Capex disbursement timing",
+      "detail": "Capitalisation and debt increase pending as PV modules and contractor payments were post-March; full debt not yet drawn."
+     },
+     {
+      "label": "Gas stations idle",
+      "detail": "145 MW and 165 MW gas stations inoperative since 2020-21 due to high gas prices; no off-take."
+     }
+    ],
+    "watch_next": [
+     "Commissioning status and pro-rata revenue contribution from the remaining 500 MW Khavda post-monsoon/ by Nov 2026.",
+     "CTUIL / PSS-2 to KPS-2 transmission readiness and any restrictions on Khavda evacuation.",
+     "Disbursement schedule and projected peak debt around `4,500 crore as 500 MW and other projects capitalise.",
+     "Tender outcomes for 750 MW lignite EPC and BESS pilot at Vadodara (20MW/120MWh VRFB)."
+    ],
+    "not_disclosed": [
+     "Quarterly consolidated revenue/EPS split by segment in this transcript (numerical P&L tables are in Annual Report but transcript lacks Q figures).",
+     "Utilisation rates for thermal units in exact percentages beyond PLF statements for SLPP aggregated.",
+     "Detailed capex schedule/timeline and exact debt amortisation schedule (management said it will share).",
+     "Standalone vs consolidated breakout used for reported figures in the call (management preferred consolidated but not explicit)."
+    ],
+    "catalysts": [
+     {
+      "title": "PSS-1 energised and 400 kV line charged on 30 April, 2025",
+      "category": "capacity",
+      "status": "commissioned",
+      "size_vs_company": "enables evacuation for 1,200 MW of Khavda park (part of 2,375 MW park); not quantified further",
+      "expected_impact_period": "not stated",
+      "evidence_quote": "The dedicated 400 kV Transmission Line from Pooling Substation-1 (PSS - 1) up to KPS-II Substation has been successfully completed and charged on 30 th April, 2025. Further, PSS-1 has been successfully energized and is fully available for evacuation of the entire designated power capacity of 1200MW."
+     },
+     {
+      "title": "600 MW Khavda commercialised (Jun–Dec 2025)",
+      "category": "product",
+      "status": "commercial_production",
+      "size_vs_company": "600 MW",
+      "expected_impact_period": "FY26 onwards",
+      "evidence_quote": "The Company added 600 MW Solar Plant Capacity at Khavda RE Park in phased manner in the period June, 2025 to December, 2025."
+     },
+     {
+      "title": "500 MW Khavda PPA with GUVNL",
+      "category": "order_or_contract",
+      "status": "announced",
+      "size_vs_company": "500 MW",
+      "expected_impact_period": "full commissioning expected by November, 2026",
+      "evidence_quote": "The Company has executed a Power Purchase Agreement (PPA) with Gujarat Urja Vikas Nigam Limited (GUVNL) in October, 2023 for development of the 500 MW Solar PV Project at the Khavda RE Park.... Full commissioning is expected by November, 2026."
+     },
+     {
+      "title": "750 MW lignite thermal project entrusted by GoG",
+      "category": "capacity",
+      "status": "announced",
+      "size_vs_company": "750 MW; project capex estimated around `6,000 crores",
+      "expected_impact_period": "project gestation ~3-4 years; phased commissioning thereafter",
+      "evidence_quote": "GIPCL has been entrusted by the Government of Gujarat to set up a 750 MW Lignite based Thermal Power Project in July, 2025 ... EPC tender for the 750 MW has been floated on 17/06/2026."
+     },
+     {
+      "title": "Pilot 20MW/120MWh VRFB BESS at Vadodara",
+      "category": "product",
+      "status": "announced",
+      "size_vs_company": "20MW/120MWh pilot",
+      "expected_impact_period": "not stated",
+      "evidence_quote": "The 165 MW Station-II is being re-purposed as a Long Duration Battery Energy Storage System (BESS)... GUVNL has given in-principle approval for the establishment of Pilot 20MW / 120MWH VRFB facility under Section-62 of the Electricity Act, 2003."
+     }
+    ],
+    "margin_bridge": {
+     "opm_change_pp": "",
+     "drivers": [],
+     "verdict": "not_explained",
+     "where_in_pnl": "other_income"
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "500 MW Khavda solar (remaining)",
+      "type": "greenfield",
+      "amount": "Capital work-in-progress Rs 2,065 crore (as at Mar-2026) pertains to 500 MW project",
+      "capacity_added": "500 MW",
+      "status": "under_construction",
+      "completion_period": "Full commissioning expected by November, 2026",
+      "revenue_from": "post commissioning"
+     },
+     {
+      "name": "750 MW lignite thermal",
+      "type": "greenfield",
+      "amount": "Project cost estimated around `6,000 crores",
+      "capacity_added": "750 MW",
+      "status": "announced",
+      "completion_period": "project gestation minimum 3-4 years; phased commissioning thereafter",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Vadodara BESS pilot",
+      "type": "brownfield",
+      "amount": "Capex estimated around `250-300 crores",
+      "capacity_added": "20 MW / 120 MWh pilot",
+      "status": "announced",
+      "completion_period": "about 1 year",
+      "revenue_from": "not stated"
+     }
+    ],
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "one_offs": [
+     {
+      "item": "Income tax refund",
+      "amount": "Rs 17 crore",
+      "direction": "gain",
+      "recurring": "not_stated"
+     },
+     {
+      "item": "Insurance claim settlements",
+      "amount": "",
+      "direction": "gain",
+      "recurring": "not_stated"
+     }
+    ],
+    "operating_leverage_evidence": "",
+    "capacity": {
+     "installed": "Total RE park allotted 2,375 MW; Company developing 1,100 MW itself; company installed 600 MW Khavda plus existing 262 MW solar and 112.4 MW wind and SLPP 500 MW thermal (2x125 +2x125).",
+     "prior_installed": "",
+     "added": "600 MW added at Khavda during Jun–Dec 2025",
+     "added_by": "Dec, 2025",
+     "new_plant": "600 MW Khavda solar",
+     "new_plant_location": "Khavda, Great Rann of Kutch, Gujarat",
+     "commissioning": "600 MW commissioned Jun–Dec 2025; remaining 500 MW phased post-monsoon Nov 2026",
+     "bottleneck": "Evacuation readiness of CTUIL / KPS-2 causing phased commissioning; PSS-2/KPS-2 not fully ready."
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "customers": {
+     "new_customer": "",
+     "loss": "",
+     "concentration": "Primary off-taker for new solar capacity is GUVNL under 25-year PPAs.",
+     "qualification": "",
+     "approval": "PPA for 500 MW with GUVNL approved by GERC 25/09/2024.",
+     "new_product": "BESS pilot using VRFB technology at Vadodara"
+    },
+    "volume_price_mix": {
+     "volume": "",
+     "price": "Tariff mentioned for Khavda ~Rs. 2.73 per unit as cited by management for revenue math.",
+     "mix": "",
+     "exports": ""
+    },
+    "balance": {
+     "working_capital": "",
+     "fcf": "",
+     "debt": "Long-term borrowings were Rs 3,250 crore as at 31 Mar 2026; management expects around Rs 4,500 crore post commissioning; peak debt could reach ~`6,000-6,500 crore during thermal build-out per management."
+    },
+    "risks": {
+     "supply_bottleneck": "",
+     "delay": "Evacuation readiness delay at Khavda (CTUIL/PSS-2/KPS-2) and commissioning staged; EPC tender for 750 MW pending order placement.",
+     "shutdown": "",
+     "market_share": "",
+     "pricing_power": "GUVNL is off-taker; tariffs fixed under PPA (e.g., Rs. 2.73/unit for Khavda mentioned).",
+     "technology": "Pilot VRFB BESS planned; tender underway.",
+     "raw_materials": "Lignite supply for 750 MW expected to be met by GMDC Valia Mine; limestone lease secured for 500 MW plant needs."
+    },
+    "management_targets": [
+     {
+      "metric": "Khavda CUF",
+      "target": "30+%",
+      "by": "yearly average (company expectation)"
+     },
+     {
+      "metric": "Full commissioning of 500 MW Khavda",
+      "target": "Full commissioning by November, 2026",
+      "by": "November, 2026"
+     },
+     {
+      "metric": "Development of RE Park",
+      "target": "Entire RE Park capacity fully developed and operational",
+      "by": "December, 2026"
+     }
+    ],
+    "capex_earning": "Company states 600 MW Khavda is generating revenue and EBITDA (Rs. ~420 crore revenue, ~Rs. 350-360 crore EBITDA); capital work-in-progress Rs 2,065 crore relates to 500 MW not yet revenue earning.",
+    "events": [
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "600 MW",
+      "unit": null,
+      "period": "FY26/FY27 context",
+      "direction": "unknown",
+      "evidence_text": "So sir, at least at a rough sense, could you give us a sense of how much this will be for the full financial year? No, I'm saying the revenue, sir, for the 600-megawatt plant. 420 crores - for 600 MW Khavda only Yes, I'm talking ofKhavda only. The next que stion comes from the line of Saket Kapoor with Kapoor & Company.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "20/120 megawatt BESS",
+      "unit": null,
+      "period": null,
+      "direction": "unknown",
+      "evidence_text": "See, the gas-based stations looking at the current geopolitical situation, I think it is not going to be revived now. So we are trying to put the BESS capacity in the existing gas-based station location and we are using the existing facility of sw itchyard and other facility of evacuation towards the BESS. And we have already got the approval from GUVNL to put 20/120 megawatt BESS and the tender is already in place.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "600 MW Solar Plant, Khavda",
+      "unit": null,
+      "period": "FY25-26 noted",
+      "direction": "up",
+      "evidence_text": "NEWLY COMMISSIONED SOLAR PROJECTS DURING THE YEAR The Company added 600 MW Solar Plant Capacity at Khavda RE Park in phased manner in the period June, 2025 to December, 2025.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "75 MW Solar Plant, Vastan",
+      "unit": null,
+      "period": "FY25-26",
+      "direction": "unknown",
+      "evidence_text": "The Company also commissioned a 75 MW group captive Solar Plant at Vastan, South Gujarat.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "500 MW Solar Power Plant, partly ready",
+      "unit": null,
+      "period": "Full commissioning by November, 2026",
+      "direction": "unknown",
+      "evidence_text": "This 500MW Solar Power Plant is partly ready for commissioning and awaiting readiness of CTUIL for charging and power evacuation. Full commissioning is expected by November, 2026.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capacity",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "112.4 MW",
+      "unit": null,
+      "period": "FY25-26",
+      "direction": "unknown",
+      "evidence_text": "The Company has total installed and commissioned capacity of 112.4 MW of Wind Power Projects at different sites / locations across State of Gujarat.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "utilisation",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "19.89% CUF",
+      "unit": null,
+      "period": "Financial year",
+      "direction": "unknown",
+      "evidence_text": "The 600 MW Project generated 468.81 MUS during Financial year with CUF of 19.89%",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "utilisation",
+      "value_type": "ACTUAL",
+      "before": null,
+      "after": "21.40% CUF",
+      "unit": null,
+      "period": "FY 2025-26",
+      "direction": "unknown",
+      "evidence_text": "262 MW Solar Power Projects generated 491.25 MUs at a CUF of 21.40% against the budgeted generation of 540.49 MUs at a CUF of 23.55%.",
+      "source": "Annual Report 2026",
+      "confidence": "HIGH",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capex",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "INR6,000 crores",
+      "unit": null,
+      "period": null,
+      "direction": "up",
+      "evidence_text": "Around INR6,500 crores to INR7,000 crores would be required for thermal capex capacity of 750, it would be around -- yes, we are expecting INR6,000 crores capex towards the thermal of 750.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     },
+     {
+      "variable": "capex",
+      "value_type": "GUIDANCE",
+      "before": null,
+      "after": "INR250 crores to INR300 crores",
+      "unit": null,
+      "period": null,
+      "direction": "unknown",
+      "evidence_text": "And then off peak hours it will be transmitted to the grid as may be required by GUVNL. Capex would be around INR250 crores to INR300 crores.",
+      "source": "Concall transcript Jul 2026",
+      "confidence": "MEDIUM",
+      "evidence_quality": "sentence"
+     }
+    ]
+   },
+   "events": [
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "600 MW",
+     "unit": null,
+     "period": "FY26/FY27 context",
+     "direction": "unknown",
+     "evidence_text": "So sir, at least at a rough sense, could you give us a sense of how much this will be for the full financial year? No, I'm saying the revenue, sir, for the 600-megawatt plant. 420 crores - for 600 MW Khavda only Yes, I'm talking ofKhavda only. The next que stion comes from the line of Saket Kapoor with Kapoor & Company.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_wqi2v68pvt1i",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_rnhwhm1n7r1ec",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "20/120 megawatt BESS",
+     "unit": null,
+     "period": null,
+     "direction": "unknown",
+     "evidence_text": "See, the gas-based stations looking at the current geopolitical situation, I think it is not going to be revived now. So we are trying to put the BESS capacity in the existing gas-based station location and we are using the existing facility of sw itchyard and other facility of evacuation towards the BESS. And we have already got the approval from GUVNL to put 20/120 megawatt BESS and the tender is already in place.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_gf6g552mgiaf",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_rnhwhm1n7r1ec",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "600 MW Solar Plant, Khavda",
+     "unit": null,
+     "period": "FY25-26 noted",
+     "direction": "up",
+     "evidence_text": "NEWLY COMMISSIONED SOLAR PROJECTS DURING THE YEAR The Company added 600 MW Solar Plant Capacity at Khavda RE Park in phased manner in the period June, 2025 to December, 2025.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_18vbevcqw47sg",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1cj27o91to85hp",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "75 MW Solar Plant, Vastan",
+     "unit": null,
+     "period": "FY25-26",
+     "direction": "unknown",
+     "evidence_text": "The Company also commissioned a 75 MW group captive Solar Plant at Vastan, South Gujarat.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1jne6fkuzqqke",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1cj27o91to85hp",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "500 MW Solar Power Plant, partly ready",
+     "unit": null,
+     "period": "Full commissioning by November, 2026",
+     "direction": "unknown",
+     "evidence_text": "This 500MW Solar Power Plant is partly ready for commissioning and awaiting readiness of CTUIL for charging and power evacuation. Full commissioning is expected by November, 2026.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_1g2lexk1b6aa5o",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1cj27o91to85hp",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capacity",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "112.4 MW",
+     "unit": null,
+     "period": "FY25-26",
+     "direction": "unknown",
+     "evidence_text": "The Company has total installed and commissioned capacity of 112.4 MW of Wind Power Projects at different sites / locations across State of Gujarat.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_4pkgqd10ttw0r",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1cj27o91to85hp",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "utilisation",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "19.89% CUF",
+     "unit": null,
+     "period": "Financial year",
+     "direction": "unknown",
+     "evidence_text": "The 600 MW Project generated 468.81 MUS during Financial year with CUF of 19.89%",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_hn3mlyf35d0s",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1cj27o91to85hp",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "utilisation",
+     "value_type": "ACTUAL",
+     "before": null,
+     "after": "21.40% CUF",
+     "unit": null,
+     "period": "FY 2025-26",
+     "direction": "unknown",
+     "evidence_text": "262 MW Solar Power Projects generated 491.25 MUs at a CUF of 21.40% against the budgeted generation of 540.49 MUs at a CUF of 23.55%.",
+     "source": "Annual Report 2026",
+     "confidence": "HIGH",
+     "evidence_quality": "sentence",
+     "id": "evt_6yyp3ws1vc02",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_1cj27o91to85hp",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "INR6,000 crores",
+     "unit": null,
+     "period": null,
+     "direction": "up",
+     "evidence_text": "Around INR6,500 crores to INR7,000 crores would be required for thermal capex capacity of 750, it would be around -- yes, we are expecting INR6,000 crores capex towards the thermal of 750.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_pbc0e4qn80c4",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_rnhwhm1n7r1ec",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    },
+    {
+     "variable": "capex",
+     "value_type": "GUIDANCE",
+     "before": null,
+     "after": "INR250 crores to INR300 crores",
+     "unit": null,
+     "period": null,
+     "direction": "unknown",
+     "evidence_text": "And then off peak hours it will be transmitted to the grid as may be required by GUVNL. Capex would be around INR250 crores to INR300 crores.",
+     "source": "Concall transcript Jul 2026",
+     "confidence": "MEDIUM",
+     "evidence_quality": "sentence",
+     "id": "evt_1oe8k5w4ifdf6",
+     "reporting_period": "Q1 FY27",
+     "source_document_id": "doc_rnhwhm1n7r1ec",
+     "extracted_at": "2026-09-22T16:19:34.927Z",
+     "updated_at": "2026-09-22T16:19:34.927Z"
+    }
+   ]
+  }
+ },
+ "one_offs": [
+  {
+   "ticker": "TI",
+   "from": "summary.one_offs",
+   "quote": "TSMA fees and integration-related expenses",
+   "value": "Rs. 30 crore",
+   "model_recurring": "will_not_recur",
+   "model_direction": "charge"
+  },
+  {
+   "ticker": "GIPCL",
+   "from": "summary.one_offs",
+   "quote": "Income tax refund",
+   "value": "Rs 17 crore",
+   "model_recurring": "not_stated",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "GIPCL",
+   "from": "summary.one_offs",
+   "quote": "Insurance claim settlements",
+   "value": "",
+   "model_recurring": "not_stated",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "SJS",
+   "from": "summary.one_offs",
+   "quote": "Sale of Bangalore old facility",
+   "value": "Rs. 241.7 Mn",
+   "model_recurring": "will_not_recur",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "UFLEX",
+   "from": "summary.one_offs",
+   "quote": "Forex derivative adjustment",
+   "value": "Rs. 825 million",
+   "model_recurring": "not_stated",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "KIRIINDUS",
+   "from": "summary.one_offs",
+   "quote": "Other income (treasury gains and interest)",
+   "value": "INR 284 crore standalone / INR 286-2,859 Mn as reported",
+   "model_recurring": "not_stated",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "KIRIINDUS",
+   "from": "summary.one_offs",
+   "quote": "Exceptional income from DyStar realization (prior periods referenced in annual report)",
+   "value": "USD 689 million proceeds cited and INR 5,881.23 crore exceptional in FY26",
+   "model_recurring": "will_not_recur",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "MINDACORP",
+   "from": "summary.one_offs",
+   "quote": "Exceptional gain from consolidation of Minda Vast",
+   "value": "Rs. 106 crore",
+   "model_recurring": "will_not_recur",
+   "model_direction": "gain"
+  },
+  {
+   "ticker": "ETHOSLTD",
+   "from": "summary.one_offs",
+   "quote": "Participation in Watches & Wonders 2026 expense",
+   "value": "Rs. -1.6 Cr included in Q1FY27",
+   "model_recurring": "not_stated",
+   "model_direction": "charge"
+  },
+  {
+   "ticker": "ETHOSLTD",
+   "from": "facts[metric_name=one_offs]",
+   "quote": "-Participation in Watches & Wonder 2026 included in Q1FY27 -1.6",
+   "value": "-1.6 Cr"
+  },
+  {
+   "ticker": "ETHOSLTD",
+   "from": "events[variable=one_offs]",
+   "quote": "-Participation in Watches & Wonder 2026 included in Q1FY27 -1.6",
+   "value": "-1.6 Cr"
+  }
+ ]
+}

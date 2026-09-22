@@ -443,6 +443,10 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
       // unit field and the value text are both checked, because the model
       // fills one or the other. (zzz763)
       if (/\b(days?|months?|weeks?|years?|hours?)\b/i.test(`${e.unit || ''} ${valueText}`)) return false;
+      // A number described as savings, margin, growth or a share of sales is
+      // not a fill rate: TI's "60%-70% of planned Prag bottling savings".
+      // Checked before the percentage test, which would otherwise pass it.
+      if (/saving|margin|revenue|growth|share|contribution|ebitda|of planned|benefit/i.test(valueText) && !/utilis|utiliz/i.test(valueText)) return false;
       const pctMatch = valueText.match(/-?\d+(?:\.\d+)?(?:-odd)?\s*(%|per ?cent)/i);
       if (pctMatch) {
         const n = parseFloat(pctMatch[0]);
@@ -497,6 +501,34 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // bare "78.8%" here: a figure with no noun is not an answer to that
     // question, whatever it was a percentage of. (zzz762)
     if (v === 'capex_earning') return /[A-Za-z]{3,}/.test(valueText);
+    // ── VALUES THAT CANNOT BE THIS VARIABLE.                          (zzz764)
+    // Counts of dealers or stores are not a volume sold (SFL "10,000
+    // dealers"); a share of sales is not a volume (UNIPARTS "about 56%" was
+    // the warehouse-sales proportion); a percentage is not a customer
+    // (REDINGTON "New customer 52%"); a book or an intake has a number in it
+    // ("far more" is not an order book); a one-off is money or an item
+    // (ANTELOPUS "c.6,500 bopd").
+    if (v === 'volume') {
+      if (/dealers?|stores?|outlets?|boutiques?|customers?|users?|artistes?|employees?/i.test(valueText)) return false;
+      // A bare percentage is a volume only when it is a GROWTH: "volumes
+      // increased by 172%". "Warehousing sales was roughly at about 56%" is a
+      // share of sales.
+      const bareAfter = String(e.after || '').replace(/\b(roughly|about|approximately|around|at|nearly|~)\b/gi, '').trim();
+      if (/^[+-]?[\d.]+\s*%$/.test(bareAfter)
+        && (!/increas|grew|growth|grow|rose|up\b|declin|fell|down\b|yoy|year[- ]on[- ]year|y-o-y|qoq/i.test(ev)
+          || /share|proportion|of (total )?(revenue|sales)|contribut/i.test(ev))) return false;
+    }
+    if (v === 'new_customer' && /^\s*[+-]?[\d.]+\s*%\s*$/.test(String(e.after || ''))) return false;
+    // Working capital is days, money, a ratio or a cycle. Operating cash
+    // flow is not working capital (IKS), and barrels are not either
+    // (ANTELOPUS "c.6,500 boepd").
+    if (v === 'working_capital') {
+      if (/cash flow|\bOCF\b|\bFCF\b/i.test(valueText)) return false;
+      if (/\d/.test(valueText) && !/days?|cycle|₹|\bINR|\bRs\.?|`|crores?|\bcr\b|lakhs?|million|\bmn\b|billion|\bbn\b|%|\d\s*x\b|\bx\b|times|turn/i.test(valueText)) return false;
+    }
+    if ((v === 'order_book' || v === 'order_intake') && !/\d/.test(valueText)) return false;
+    if (v === 'one_offs' && /\d/.test(valueText)
+      && !/₹|\bINR|\bRs\.?|\bUSD|\$|crores?|\bcr\b|lakhs?|million|mn\b|billion|bn\b|items?|`/i.test(valueText)) return false;
     // "15 megawatt hours of orders in hand" is an ORDER, not a volume sold.
     // EXICOM printed it as "Volume 15 MWh". (zzz763)
     if (v === 'volume' && /orders? (in hand|book|backlog|intake)|pipeline|backlog|order book/i.test(ev)
@@ -601,6 +633,10 @@ export interface RankableReading {
   before: string | null;
   source: string | null | undefined;
   confidence: Confidence;
+  /** The later value. A `before` counts as a comparison only with an `after`
+   *  beside it — TI's "it was around 21.5 million cases when we acquired the
+   *  business" is a past level, and it beat "volumes increased by 172%". */
+  after?: string | null;
   /** 'sentence' | 'chart' — a sentence beats a chart whatever the source tier.
    *  UNIMECH's annual-report chart ("52%") outranked the transcript's
    *  "approximately 58%" on tier alone while WHAT CHANGED, which skips
@@ -623,7 +659,10 @@ const QUALITY_RANK = { sentence: 0, chart: 1, unit_mismatch: 2 } as const;
 export function betterReading(a: RankableReading, b: RankableReading): number {
   return (VALUE_RANK[a.value_type] - VALUE_RANK[b.value_type])
     || (QUALITY_RANK[a.quality || 'sentence'] - QUALITY_RANK[b.quality || 'sentence'])
-    || ((a.before ? 0 : 1) - (b.before ? 0 : 1))
+    || ((a.before && a.after !== null ? 0 : 1) - (b.before && b.after !== null ? 0 : 1))
+    // A reading with a figure beats one without: E2E's "~5,100 GPUs live"
+    // lost to "we deployed NVIDIA's newest generation of B200 clusters". (zzz765)
+    || ((/(?<![A-Za-z\d])\d/.test(String(a.after ?? '')) ? 0 : 1) - (/(?<![A-Za-z\d])\d/.test(String(b.after ?? '')) ? 0 : 1))
     || (sourceTier(a.source) - sourceTier(b.source))
     || (CONF_RANK[a.confidence] - CONF_RANK[b.confidence]);
 }

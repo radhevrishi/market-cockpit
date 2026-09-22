@@ -40,7 +40,8 @@ import {
   periodOrdinal, sameUnit, scaledNumber,
   type CompanyLedger, type EvidenceFact, type PeriodRecord,
 } from './evidence-ledger';
-import { judgeEventQuality, verifiedDirection } from './evidence-extract';
+import { judgeEventQuality, verifiedDirection, betterReading, type StructuralEvent } from './evidence-extract';
+import { normalizeEvent, guidanceMove, type GuidanceMove } from './fact-normalize';
 
 // ── the vocabulary ─────────────────────────────────────────────────────────
 
@@ -137,6 +138,9 @@ export interface MetricComparison {
   direction: 'up' | 'down' | 'flat' | 'unknown';
   /** Null when the document stated no reason. NEVER inferred. */
   cause: Cause | null;
+  /** For a forward statement compared with the previous one: RAISED /
+   *  LOWERED / MAINTAINED / NARROWED / WIDENED. (zzz765) */
+  guidance_move?: GuidanceMove | null;
   /** A forward statement for this same variable in the CURRENT period. */
   forward: { value: string; kind: 'GUIDANCE' | 'TARGET'; by: string | null; source: string } | null;
   /** A forward statement made in an EARLIER period about this variable, so a
@@ -320,36 +324,63 @@ export function changeBetween(prev: Quantity, cur: Quantity): { change: string |
 
 const CONF_RANK: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
+/** A ledger fact read back as the event it came from, with its TYPE
+ *  corrected from its own sentence (fact-normalize.ts) — so the join and the
+ *  board classify every reading the same way. (zzz765) */
+function asEvent(f: EvidenceFact, period: string): StructuralEvent & { historical_as_of?: string | null } {
+  const vt = f.fact_or_management_statement === 'FACT' ? 'ACTUAL' : f.fact_or_management_statement;
+  return normalizeEvent({
+    variable: f.metric_name, value_type: vt as any,
+    before: f.before_value, after: f.after_value ?? f.value, unit: f.unit, period: null,
+    direction: f.direction, evidence_text: f.source_quote, source: f.source_name,
+    confidence: f.confidence,
+  }, period);
+}
+
 /** A fact is usable as a COMPARABLE figure only when it is a reported fact
- *  from a real sentence that fits its variable. Charts and wrong-unit values
- *  stay in the ledger for audit and are refused here. */
-function usableActual(f: EvidenceFact): boolean {
+ *  from a real sentence that fits its variable, and describes THIS period.
+ *  Charts, wrong-unit values, forward statements the model filed as facts
+ *  and figures dated before the period stay in the ledger for audit. */
+function usableActual(f: EvidenceFact, period: string): boolean {
   if (f.fact_or_management_statement !== 'FACT') return false;
   if (!String(f.value || '').trim()) return false;
+  const e = asEvent(f, period);
+  if (e.value_type !== 'ACTUAL' || e.historical_as_of) return false;
   return judgeEventQuality({
     variable: f.metric_name, before: f.before_value, after: f.after_value,
     unit: f.unit, evidence_text: f.source_quote,
   }) === 'sentence';
 }
 
-/** The best reported fact per variable within one period. */
+const rankOf = (f: EvidenceFact) => ({
+  value_type: 'ACTUAL' as const, before: f.before_value, after: f.after_value ?? f.value,
+  source: f.source_name, confidence: f.confidence, quality: f.evidence_quality,
+});
+
+/** The best reported fact per variable within one period — picked with the
+ *  SAME comparator the board uses, so the row and its comparison can never
+ *  show two different figures for one quarter. */
 function actualsIn(p: PeriodRecord): Map<VarKey, EvidenceFact> {
   const m = new Map<VarKey, EvidenceFact>();
   for (const f of p.facts || []) {
-    if (!usableActual(f)) continue;
+    if (!usableActual(f, p.reporting_period)) continue;
     const o = m.get(f.metric_name);
-    if (!o || CONF_RANK[f.confidence] < CONF_RANK[o.confidence]) m.set(f.metric_name, f);
+    if (!o || betterReading(rankOf(f), rankOf(o)) < 0) m.set(f.metric_name, f);
   }
   return m;
 }
 
-/** The best forward statement per variable within one period. */
+/** The best forward statement per variable within one period — including a
+ *  "fact" whose own sentence speaks of the future. */
 function forwardsIn(p: PeriodRecord): Map<VarKey, EvidenceFact> {
   const m = new Map<VarKey, EvidenceFact>();
   for (const f of p.facts || []) {
-    if (f.fact_or_management_statement !== 'GUIDANCE' && f.fact_or_management_statement !== 'TARGET') continue;
     if (!String(f.value || '').trim()) continue;
-    if (!m.has(f.metric_name)) m.set(f.metric_name, f);
+    const vt = f.fact_or_management_statement === 'GUIDANCE' || f.fact_or_management_statement === 'TARGET'
+      ? f.fact_or_management_statement
+      : f.fact_or_management_statement === 'FACT' && asEvent(f, p.reporting_period).value_type === 'GUIDANCE' ? 'GUIDANCE' : null;
+    if (!vt) continue;
+    if (!m.has(f.metric_name)) m.set(f.metric_name, vt === f.fact_or_management_statement ? f : { ...f, fact_or_management_statement: vt });
   }
   return m;
 }
@@ -368,10 +399,13 @@ function describe(c: MetricComparison): string {
     case 'NEWLY_DISCLOSED':
       return `${L} ${cur}. Disclosed for the first time; earlier periods on file are silent — previous: NOT DISCLOSED.`;
     case 'REITERATED':
-      return `${L} ${cur} — repeated unchanged from ${c.previous_period}.`;
+      return `${L} ${cur} — MAINTAINED, repeated unchanged from ${c.previous_period}.`;
     case 'UNCHANGED':
       return `${L} ${c.previous?.raw} → ${cur} · unchanged ${BASIS_LABEL[c.basis]}.`;
     default:
+      if (c.guidance_move && c.guidance_move !== 'NOT_COMPARABLE') {
+        return `${L} ${c.guidance_move.toLowerCase()}: ${c.previous?.raw} (${c.previous_period}) → ${cur} (${c.current_period}).`;
+      }
       return `${L} ${c.previous?.raw} → ${cur}`
         + `${c.change ? ` · ${c.change}` : ''}`
         + `${c.change_relative ? ` (${c.change_relative})` : ''}`
@@ -481,7 +515,7 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
           ...base,
           previous: prevQ, previous_period: prior.period,
           change: ch.change, change_relative: ch.relative,
-          change_type: same || ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : 'DECREASED',
+          change_type: same || ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : ch.direction === 'down' ? 'DECREASED' : 'NOT_COMPARABLE',
           basis: basisFor(prior.period, to),
           direction: ch.direction === 'unknown' ? base.direction : ch.direction,
         });
@@ -501,7 +535,7 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
           ...base, previous: innerPrev, previous_period: null,
           change: ch.change, change_relative: ch.relative,
           basis: 'WITHIN_DOCUMENT',
-          change_type: ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : 'DECREASED',
+          change_type: ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : ch.direction === 'down' ? 'DECREASED' : 'NOT_COMPARABLE',
           direction: ch.direction === 'unknown' ? base.direction : ch.direction,
         });
         continue;
@@ -515,7 +549,7 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
       put({
         ...base, previous: innerPrev, previous_period: null,
         change: ch.change, change_relative: ch.relative, basis: 'WITHIN_DOCUMENT',
-        change_type: ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : 'DECREASED',
+        change_type: ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : ch.direction === 'down' ? 'DECREASED' : 'NOT_COMPARABLE',
         direction: ch.direction === 'unknown' ? base.direction : ch.direction,
       });
       continue;
@@ -598,14 +632,27 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
     // say so. Correct it with the arithmetic where both sides parse.
     const c = out[k]!;
     if (prevQ && !repeated) {
-      const ch = changeBetween(prevQ, curQ);
-      out[k] = {
-        ...c,
-        change: ch.change, change_relative: ch.relative,
-        change_type: ch.direction === 'flat' ? 'REITERATED' : ch.direction === 'up' ? 'INCREASED' : ch.direction === 'down' ? 'DECREASED' : 'NEW',
-        direction: ch.direction,
-      };
+      // A guidance RANGE is compared as a range: "20–25% → 25–30%" is RAISED
+      // by its midpoint, not "+25%" off the first number. (zzz765)
+      const gm = guidanceMove(prevQ.raw, curQ.raw);
+      if (gm !== 'NOT_COMPARABLE') {
+        out[k] = {
+          ...c, guidance_move: gm,
+          change_type: gm === 'MAINTAINED' ? 'REITERATED' : gm === 'RAISED' ? 'INCREASED' : gm === 'LOWERED' ? 'DECREASED' : 'NOT_COMPARABLE',
+          direction: gm === 'RAISED' ? 'up' : gm === 'LOWERED' ? 'down' : gm === 'MAINTAINED' ? 'flat' : 'unknown',
+        };
+      } else {
+        const ch = changeBetween(prevQ, curQ);
+        out[k] = {
+          ...c,
+          change: ch.change, change_relative: ch.relative,
+          change_type: ch.direction === 'flat' ? 'REITERATED' : ch.direction === 'up' ? 'INCREASED' : ch.direction === 'down' ? 'DECREASED' : 'NEW',
+          direction: ch.direction,
+        };
+      }
       out[k]!.line = describe(out[k]!);
+    } else if (repeated) {
+      out[k] = { ...c, guidance_move: 'MAINTAINED' };
     }
   }
 

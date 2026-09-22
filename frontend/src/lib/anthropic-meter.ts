@@ -311,9 +311,12 @@ export function fromOpenAIResponse(j: any): Record<string, any> {
  * keeps its own status / body handling. A capped call returns a synthetic
  * 402 with `{ error: { type: 'spend_cap', message } }`.
  */
-export async function anthropicMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal; apiKey?: string } = {}): Promise<Response> {
+export async function anthropicMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal; apiKey?: string; anthropicOnly?: boolean } = {}): Promise<Response> {
   const prov = provider();
-  if (prov === 'openai') return openaiMessages(feature, body, opts);
+  // anthropicOnly: a request that only the Messages API can carry (a native
+  // PDF `document` block for OCR) is never translated to Chat Completions,
+  // which would silently drop the document. (zzz765)
+  if (prov === 'openai' && !opts.anthropicOnly) return openaiMessages(feature, body, opts);
   const apiKey = opts.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return new Response(JSON.stringify({ error: { type: 'no_key', message: 'No ANTHROPIC_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });

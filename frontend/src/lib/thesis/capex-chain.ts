@@ -35,6 +35,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { said, type StructuralVar, type VarKey } from './variables';
+import type { CompanyLedger } from './evidence-ledger';
+import { periodOrdinal } from './evidence-ledger';
+import { normalizeEvent } from './fact-normalize';
 
 export type CapexState =
   | 'none'
@@ -47,21 +50,21 @@ export type CapexState =
   | 'unverifiable';
 
 export const CAPEX_META: Record<CapexState, { label: string; color: string; dot: string; meaning: string }> = {
-  none: { label: 'No capex on file', color: '#64748B', dot: '○',
+  none: { label: 'No capex on file', color: 'var(--mc-verdict-absent, #64748B)', dot: '○',
     meaning: 'The latest filing discloses no capital programme.' },
-  announced: { label: 'CAPEX ANNOUNCED', color: '#94A3B8', dot: '📋',
+  announced: { label: 'CAPEX ANNOUNCED', color: 'var(--mc-verdict-flat, #94A3B8)', dot: '📋',
     meaning: 'Money committed against a promise. Nothing has been proven yet — this is the state with the most excitement and the least information.' },
-  under_construction: { label: 'UNDER CONSTRUCTION', color: '#60A5FA', dot: '🏗',
+  under_construction: { label: 'UNDER CONSTRUCTION', color: 'var(--tc-accent, #60A5FA)', dot: '🏗',
     meaning: 'Being built. The date to hold management to is the commissioning date.' },
-  commissioned_not_earning: { label: 'COMMISSIONED — NOT YET EARNING', color: '#F59E0B', dot: '🟡',
+  commissioned_not_earning: { label: 'COMMISSIONED — NOT YET EARNING', color: 'var(--mc-verdict-warn, #F59E0B)', dot: '🟡',
     meaning: 'The plant exists and utilisation is still low. This is normal early, and it is also what a disappointment looks like at the start. The next two quarters separate them.' },
-  starting_to_earn: { label: 'STARTING TO EARN', color: '#34D399', dot: '🟢',
+  starting_to_earn: { label: 'STARTING TO EARN', color: 'var(--mc-verdict-up, #34D399)', dot: '🟢',
     meaning: 'Utilisation is rising and revenue is following. The capex is converting.' },
-  earning: { label: 'EARNING', color: '#10B981', dot: '✅',
+  earning: { label: 'EARNING', color: 'var(--mc-verdict-up, #10B981)', dot: '✅',
     meaning: 'Utilisation high, revenue and margin both moved. The money produced the earnings.' },
-  disappointment: { label: 'CAPEX DISAPPOINTMENT', color: '#EF4444', dot: '🔴',
+  disappointment: { label: 'CAPEX DISAPPOINTMENT', color: 'var(--mc-verdict-down, #EF4444)', dot: '🔴',
     meaning: 'Commissioned, and utilisation has not moved while revenue is weak. The money is in the ground and the earnings did not come.' },
-  unverifiable: { label: 'CAPEX — CANNOT BE CHECKED', color: '#64748B', dot: '◌',
+  unverifiable: { label: 'CAPEX — CANNOT BE CHECKED', color: 'var(--mc-verdict-absent, #64748B)', dot: '◌',
     meaning: 'A capital programme is disclosed but the filing gives no utilisation or capacity figures, so whether it is earning cannot be established from this document.' },
 };
 
@@ -73,6 +76,93 @@ export interface CapexChain {
   because: string;
   /** What would settle the open question. Empty when the chain is complete. */
   nextCheck: string | null;
+  /** ── THE LIFECYCLE ACROSS QUARTERS.                          (zzz765)
+   *  One entry per reporting period on file, oldest first. A later quarter
+   *  adds a layer; it never erases the earlier one. */
+  lifecycle?: LifecycleEntry[];
+  /** Furthest stage the evidence has reached, across every period. */
+  stage?: CapexStage | null;
+  /** "Capex earning yet?" as a state with its evidence, never a dash. */
+  earning?: { state: 'not_yet' | 'commissioned_no_disclosure' | 'revenue' | 'unknown'; line: string; source: string | null } | null;
+}
+
+export type CapexStage = 'ANNOUNCED' | 'SPENDING' | 'UNDER_CONSTRUCTION' | 'COMMISSIONED' | 'COMMERCIAL_PRODUCTION' | 'REVENUE_CONTRIBUTION';
+export const CAPEX_STAGES: CapexStage[] = ['ANNOUNCED', 'SPENDING', 'UNDER_CONSTRUCTION', 'COMMISSIONED', 'COMMERCIAL_PRODUCTION', 'REVENUE_CONTRIBUTION'];
+export const STAGE_LABEL: Record<CapexStage, string> = {
+  ANNOUNCED: 'Announced', SPENDING: 'Spent', UNDER_CONSTRUCTION: 'Under construction',
+  COMMISSIONED: 'Commissioned', COMMERCIAL_PRODUCTION: 'Commercial production', REVENUE_CONTRIBUTION: 'Revenue contribution',
+};
+export interface LifecycleEntry {
+  period: string;
+  stage: CapexStage;
+  /** Each stage evidenced in that period, with the sentence that shows it. */
+  steps: Array<{ stage: CapexStage; text: string; source: string }>;
+}
+
+const CAPEX_VARS = new Set(['capex', 'capex_status', 'commissioning', 'capex_earning', 'new_plant', 'capacity_addition']);
+const ord = (x: CapexStage) => CAPEX_STAGES.indexOf(x);
+
+/** The stage ONE reading evidences, or null. Forward statements only ever
+ *  evidence ANNOUNCED: "to be commissioned in December" is a plan. */
+export function stageOf(e: { variable: string; value_type: string; after: string | null; evidence_text: string }): CapexStage | null {
+  const t = `${e.after ?? ''} ${e.evidence_text}`;
+  const forward = e.value_type === 'GUIDANCE' || e.value_type === 'TARGET';
+  if (forward) return e.variable === 'capex' || e.variable === 'capex_status' || e.variable === 'new_plant' ? 'ANNOUNCED' : null;
+  if (e.variable === 'capex_earning' || /revenue contribution|contribut\w* (?:revenue|to revenue|\S+ crores?)|already contributing/i.test(t)) {
+    if (/not yet|will (?:start )?contribut|from FY\d{2}|expected to contribute/i.test(t)) return /commission|operational|online/i.test(t) ? 'COMMISSIONED' : null;
+    return 'REVENUE_CONTRIBUTION';
+  }
+  if (/commercial[_ ]production|commerciali[sz]ed|commercial operations/i.test(t)) return 'COMMERCIAL_PRODUCTION';
+  if (/\bcommissioned\b|\bcommissioning\b(?! of| date)|\boperational\b|\bonline\b|went live|\bdeployed\b|capacity ?expanded/i.test(t) && !/to be commissioned|will be commissioned|expected/i.test(t)) return 'COMMISSIONED';
+  if (/under[_ ]construction|construction|installation|civil work|erection|trial/i.test(t)) return 'UNDER_CONSTRUCTION';
+  // A capex FIGURE stated as an actual (not planned, not proposed) is money
+  // spent; the forward case returned ANNOUNCED above.
+  if (e.variable === 'capex' && /\d/.test(String(e.after ?? ''))) return /propos|approv|announc|estimated investment|outlay/i.test(t) ? 'ANNOUNCED' : 'SPENDING';
+  if (/announc|approved|board approv/i.test(t)) return 'ANNOUNCED';
+  return null;
+}
+
+/** Every period's capex readings, oldest first. Pure. */
+export function capexLifecycle(ledger: CompanyLedger | null | undefined): LifecycleEntry[] {
+  if (!ledger?.periods) return [];
+  const out: LifecycleEntry[] = [];
+  for (const period of Object.keys(ledger.periods).sort((a, b) => periodOrdinal(a) - periodOrdinal(b))) {
+    const p = ledger.periods[period];
+    const steps: LifecycleEntry['steps'] = [];
+    for (const raw of p?.events || []) {
+      if (!CAPEX_VARS.has(raw.variable)) continue;
+      const e = normalizeEvent(raw, period);
+      if (e.historical_as_of) continue;
+      const st = stageOf(e);
+      if (!st) continue;
+      if (steps.some((x) => x.stage === st)) continue;
+      steps.push({ stage: st, text: String(e.after ?? e.evidence_text).slice(0, 160), source: e.source });
+    }
+    if (!steps.length) continue;
+    steps.sort((a, b) => ord(a.stage) - ord(b.stage));
+    out.push({ period, stage: steps[steps.length - 1].stage, steps });
+  }
+  return out;
+}
+
+/** "Capex earning yet?" from the evidence, in words the card can print. */
+export function capexEarning(vars: StructuralVar[], stage: CapexStage | null): CapexChain['earning'] {
+  const row = vars.find((v) => v.key === ('capex_earning' as VarKey));
+  const txt = String(row?.after || row?.evidence || '');
+  const src = (row as any)?.sourceLabel || null;
+  if (row && /not yet|will (?:start )?contribut|from FY\d{2}|expected to contribute|yet to/i.test(txt)) {
+    const when = (/from (FY\d{2}|Q[1-4]\s?FY\d{2})/i.exec(txt) || [])[1];
+    return { state: 'not_yet', line: `Not yet earning${when ? ` — revenue expected from ${when}` : ''}. ${txt.slice(0, 180)}`, source: src };
+  }
+  if (row && /contribut|revenue of|INR\s?[\d,.]+\s?crores? in Q/i.test(txt)) {
+    const amt = (/(?:INR|Rs\.?|₹)\s?[\d,.]+\s?(?:crores?|cr|mn|million)(?: in Q[1-4])?/i.exec(txt) || [])[0];
+    return { state: 'revenue', line: `Revenue contribution${amt ? ` ${amt}` : ' disclosed'}. ${txt.slice(0, 180)}`, source: src };
+  }
+  if (stage && ord(stage) >= ord('COMMISSIONED')) {
+    return { state: 'commissioned_no_disclosure', line: `${STAGE_LABEL[stage]} — financial contribution not yet disclosed.`, source: src };
+  }
+  if (stage) return { state: 'not_yet', line: `Not yet earning — ${STAGE_LABEL[stage].toLowerCase()}, commissioning pending.`, source: src };
+  return null;
 }
 
 const pctIn = (s: unknown): number | null => {
@@ -82,7 +172,17 @@ const pctIn = (s: unknown): number | null => {
   return Number.isFinite(v) ? v : null;
 };
 
-export function buildCapexChain(summary: any | null, vars: StructuralVar[]): CapexChain {
+export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledger?: CompanyLedger | null): CapexChain {
+  const lifecycle = capexLifecycle(ledger);
+  const reached = lifecycle.reduce<CapexStage | null>((m, e) => (!m || ord(e.stage) > ord(m) ? e.stage : m), null);
+  const earning = capexEarning(vars, reached);
+  // A disclosed revenue contribution is itself proof the capacity was built.
+  const stage: CapexStage | null = earning?.state === 'revenue' ? 'REVENUE_CONTRIBUTION' : reached;
+  const base = buildCapexChainCore(summary, vars, stage);
+  return { ...base, lifecycle, stage, earning };
+}
+
+function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: CapexStage | null): CapexChain {
   const projects: any[] = Array.isArray(summary?.capex_projects) ? summary.capex_projects : [];
   const get = (k: VarKey) => vars.find((v) => v.key === k) || null;
 
@@ -114,7 +214,7 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[]): Cap
     { name: 'ROCE', value: null, known: false },   // never invented; the filings rarely state it
   ];
 
-  if (!mapped.length) {
+  if (!mapped.length && !stage) {
     return { state: 'none', links, projects: mapped,
       because: 'No capital programme disclosed in the latest filing.', nextCheck: null };
   }
@@ -123,7 +223,8 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[]): Cap
   // reliably parseable across two markets' filing styles, so the honest proxy
   // is whether utilisation is being disclosed at all: companies report
   // utilisation when there is a plant running to report on.
-  const commissioned = utNow != null;
+  // The typed events now say it outright where the documents do. (zzz765)
+  const commissioned = utNow != null || (!!stage && ord(stage) >= ord('COMMISSIONED'));
 
   if (!commissioned) {
     const anyDate = mapped.some((p) => p.completes);
@@ -131,7 +232,7 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[]): Cap
       state: anyDate ? 'under_construction' : 'announced',
       links, projects: mapped,
       because: anyDate
-        ? `Capital programme disclosed with a commissioning date${mapped[0].completes ? ` (${mapped[0].completes})` : ''}, and no utilisation figure yet — it is being built.`
+        ? `Capital programme disclosed with a commissioning date${mapped[0]?.completes ? ` (${mapped[0].completes})` : ''}, and no utilisation figure yet — it is being built.`
         : 'Capital programme announced with no commissioning date and no utilisation figure. This is a commitment, not yet a result.',
       nextCheck: 'Hold management to the commissioning date, then to the utilisation figure that follows it.',
     };
@@ -140,8 +241,10 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[]): Cap
   // Built. Now the only question that matters: is it earning?
   if (utDelta == null) {
     return {
-      state: 'unverifiable', links, projects: mapped,
-      because: `Utilisation is ${utNow}% but no prior figure was disclosed, so whether the new capacity is filling cannot be established from this filing alone.`,
+      state: utNow == null ? 'commissioned_not_earning' : 'unverifiable', links, projects: mapped,
+      because: utNow == null
+        ? `The documents state the capacity is ${stage ? STAGE_LABEL[stage].toLowerCase() : 'commissioned'}; no utilisation figure is disclosed, so how far it has filled cannot be read.`
+        : `Utilisation is ${utNow}% but no prior figure was disclosed, so whether the new capacity is filling cannot be established from this filing alone.`,
       nextCheck: 'The next filing gives a second utilisation point, and the direction becomes readable.',
     };
   }

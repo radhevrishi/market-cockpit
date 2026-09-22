@@ -17,14 +17,28 @@ import {
   type CompanyLedger, type PeriodRecord, type EvidenceRun, type LedgerDocument,
 } from './evidence-ledger';
 import type { StructuralEvent } from './evidence-extract';
+import { bareSymbol } from './filing-dates';
 
-const KEY = (t: string) => `evidence:ledger:v1:${t.toUpperCase()}`;
+// Keyed by the BARE symbol: IFBAGRO and IFBAGRO-BE are one company and must
+// share one ledger. A ledger written under a suffixed key before zzz765 is
+// still read (LEGACY_KEY) and migrates on its next save.
+const KEY = (t: string) => `evidence:ledger:v1:${bareSymbol(t)}`;
+const LEGACY_KEY = (t: string) => `evidence:ledger:v1:${t.toUpperCase().trim()}`;
 export const BATCH_KEY = 'evidence:batch:v1:latest';
+/** The prior-quarter backfill keeps its own header, so its Resume never
+ *  collides with the evidence batch's. Same shape, same derivation. (zzz765) */
+export const PRIOR_BATCH_KEY = 'evidence:batch:v1:prior';
 
 export async function loadLedger(ticker: string): Promise<CompanyLedger | null> {
   try {
+    const ok = (l: CompanyLedger | null | undefined) => !!l && typeof l === 'object' && !!l.periods;
     const l = await kvGet<CompanyLedger>(KEY(ticker));
-    return l && typeof l === 'object' && l.periods ? l : null;
+    if (ok(l)) return l!;
+    if (LEGACY_KEY(ticker) !== KEY(ticker)) {
+      const legacy = await kvGet<CompanyLedger>(LEGACY_KEY(ticker));
+      if (ok(legacy)) return legacy!;
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -69,12 +83,20 @@ export interface PersistInput {
   model: string | null;
   rawExtraction: any;
   pipeline: any;
+  /** Prior-quarter backfill: the period the documents must resolve to. When
+   *  they resolve to anything else nothing is written, so a backfill can never
+   *  merge into the current period. (zzz765) */
+  expectPeriod?: string | null;
 }
 
 /** A successful read: build the period record, merge, save. */
 export async function persistEvidenceRun(inp: PersistInput): Promise<{ ledger: CompanyLedger; period: string; persisted: boolean; error: string | null }> {
   const now = new Date().toISOString();
   const rp = reportingPeriodForDocuments(inp.documents, inp.filingDate);
+  if (inp.expectPeriod && rp.period !== inp.expectPeriod) {
+    const existing = (await loadLedger(inp.ticker)) || emptyLedger(inp.ticker, inp.market, now);
+    return { ledger: ledgerView(existing), period: rp.period, persisted: false, error: `documents resolve to ${rp.period}, not ${inp.expectPeriod} — nothing written` };
+  }
   const { facts, events } = factsFromEvents(inp.ticker, rp.period, inp.events, inp.documents, now);
   const period: PeriodRecord = {
     reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
@@ -104,10 +126,10 @@ export async function persistEvidenceRun(inp: PersistInput): Promise<{ ledger: C
 }
 
 /** A read that produced nothing: record it without touching evidence. */
-export async function persistAttempt(ticker: string, market: 'IN' | 'US', runId: string, startedAt: string, outcome: EvidenceRun['outcome'], error: string | null, extra?: { documents_found?: number; newestSeenDate?: string | null }): Promise<{ ledger: CompanyLedger; persisted: boolean }> {
+export async function persistAttempt(ticker: string, market: 'IN' | 'US', runId: string, startedAt: string, outcome: EvidenceRun['outcome'], error: string | null, extra?: { documents_found?: number; newestSeenDate?: string | null; reportingPeriod?: string | null }): Promise<{ ledger: CompanyLedger; persisted: boolean }> {
   const now = new Date().toISOString();
   const run: EvidenceRun = {
-    run_id: runId, reporting_period: null, started_at: startedAt, finished_at: now, outcome, error,
+    run_id: runId, reporting_period: extra?.reportingPeriod || null, started_at: startedAt, finished_at: now, outcome, error,
     documents_found: extra?.documents_found || 0, documents_read: 0, facts_extracted: 0, events_extracted: 0,
     model: null, prompt_version: null,
   };
@@ -151,7 +173,7 @@ export function docsFromRoute(read: Array<{ label: string; kind: string; source:
 
 export interface BatchHeader { batch_id: string; started_at: string; finished_at: string | null; tickers: string[]; requested_by: string }
 
-export async function loadBatch(): Promise<BatchHeader | null> {
-  try { return (await kvGet<BatchHeader>(BATCH_KEY)) || null; } catch { return null; }
+export async function loadBatch(kind: 'evidence' | 'prior' = 'evidence'): Promise<BatchHeader | null> {
+  try { return (await kvGet<BatchHeader>(kind === 'prior' ? PRIOR_BATCH_KEY : BATCH_KEY)) || null; } catch { return null; }
 }
-export async function saveBatch(b: BatchHeader): Promise<void> { await kvSet(BATCH_KEY, b); }
+export async function saveBatch(b: BatchHeader, kind: 'evidence' | 'prior' = 'evidence'): Promise<void> { await kvSet(kind === 'prior' ? PRIOR_BATCH_KEY : BATCH_KEY, b); }

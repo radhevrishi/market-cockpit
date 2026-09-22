@@ -1233,3 +1233,24 @@ html[data-theme="light"] {
   --mc-verdict-warn: #B45309;   /* amber 700 — amber-400 is unreadable on white */
   --mc-verdict-tint: 14;
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   THESIS CARD TEXT — readable on both grounds.                    (zzz765)
+   Portfolio Catalysts put secondary text on --mc-text-3/4 at 8–11px and
+   the owner could not read it. Three levels of its own, each ≥ 7:1
+   against its background. Names deliberately outside --mc-text-* so the
+   light-theme [style*=...] remaps above never touch them.
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  --tc-text: #F1F5F9;   /* slate 100 */
+  --tc-dim: #D5DEE9;
+  --tc-faint: #AEBBCB;
+  --tc-accent: #22D3EE;
+}
+html[data-theme="light"] {
+  --tc-text: #0B1220;
+  --tc-dim: #1E293B;   /* slate 800 */
+  --tc-faint: #334155; /* slate 700 */
+  --tc-accent: #0E7490; /* cyan 700 */
+}
