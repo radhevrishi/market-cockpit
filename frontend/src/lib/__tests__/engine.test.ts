@@ -48,7 +48,8 @@ import {
   emptyLedger, mergePeriod, recordAttempt, recordSeen, recordStatus, whatChanged, freshnessOf,
   latestSummary, ledgerView, batchProgress, sameUnit, type CompanyLedger,
 } from '../thesis/evidence-ledger';
-import { varsFromEvents, isDenial } from '../thesis/variables';
+import { varsFromEvents, isDenial, levelText, said } from '../thesis/variables';
+import { reportedInWindow, planRecentReads, isResultsFiling } from '../thesis/recent-reporters';
 import { parseCompanyId, parseTopRatios, parseAnnouncements, parseChart } from '../ai-gainers/screener-company';
 import {
   classifyAnnouncement, buildFinding, returnsFromSeries, bandPrint, pricedInOf, scoreCatalyst, parseStatedValue, coverage,
@@ -1942,5 +1943,120 @@ describe('zzz762 — the summary rows obey the unit rules; the filing fills what
     assert.equal(loss.filter((v) => v.key === 'earnings_growth').length, 0);
     const units = extractVariables(null, { headline: { revenue: 'USD 12 million', revenue_prior: 'Rs 80 crore' } });
     assert.equal(units.filter((v) => v.key === 'revenue_growth').length, 0);
+  });
+});
+
+
+describe('zzz763 — mis-filed charts, loss bases, immaterial one-offs, recent reporters', () => {
+  const ev = (variable: string, value_type: string, before: string | null, after: string, text: string, source = 'Concall transcript Aug 2026', unit: string | null = null): any =>
+    ({ variable, value_type, before, after, unit, period: null, direction: 'up', evidence_text: text, source, confidence: 'HIGH' });
+
+  test('REDINGTON — a working-capital-days chart filed under utilisation is a unit mismatch, not a chart', () => {
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: '37', after: '32', unit: 'days', evidence_text: 'Q1FY27 Working Capital Days 37 30 32 Q1FY26Q4FY26Q1FY27' }), 'unit_mismatch');
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: '37', after: '32', unit: 'days', evidence_text: 'Working capital days improved to 32 days in Q1 27 from 37 in Q1 26.' }), 'unit_mismatch');
+    // E2E's genuine utilisation slide is still a chart.
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: '61%', after: '75%', unit: '%', evidence_text: '61% 75% -10% 10% 30% 50% 70% 90% 0 200 400 600 800 Q1 FY26' }), 'chart');
+  });
+
+  test('DEEPAKNTR — ">175% Phenol" axis label is dropped; "170-odd percent utilization" in a sentence survives', () => {
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: null, after: '>175% Phenol and Acetone Production', unit: null, evidence_text: '>175% Phenol and Acetone Production' }), 'unit_mismatch');
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: null, after: '170-odd percent utilization', unit: null, evidence_text: 'Given the disclosures from the annual report, we are already operating at about 170-odd percent utilization of the nameplate.' }), 'sentence');
+  });
+
+  test('LUMAXTECH — "operating at 18% margins" is a margin, not a fill rate', () => {
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: null, after: '18%', unit: null, evidence_text: 'We are already operating at 18% margins, which is very good for an auto comp product.' }), 'unit_mismatch');
+  });
+
+  test('EXICOM — "15 MWh of orders in hand" is not a volume; "+1400 Cr" is a level printed as "over"', () => {
+    assert.equal(judgeEventQuality({ variable: 'volume', before: null, after: '15 MWh', unit: 'MWh', evidence_text: 'Today, we have about 15 megawatt hours of orders in hand, which are worth roughly INR20 crores, management said.' }), 'unit_mismatch');
+    assert.equal(levelText('+1400 Cr'), 'over 1400 Cr');
+    assert.equal(levelText('+22%'), '+22%');
+  });
+
+  test('UNIMECH — a sentence beats a chart whatever the source tier, on the board and in WHAT CHANGED', () => {
+    const events = [
+      ev('utilisation', 'ACTUAL', null, '52%', '52% 60% 70% FY24 FY25 FY26', 'Annual Report 2026'),
+      ev('utilisation', 'ACTUAL', null, 'approximately 58%', 'Capacity utilisation for the quarter was approximately 58 percent across the plants, management said.', 'Concall transcript Aug 2026'),
+    ];
+    assert.equal(varsFromEvents(events).find((v) => v.key === 'utilisation')!.after, 'approximately 58%');
+  });
+
+  test('a placeholder with a suffix is still a placeholder; a period label is not a number; equal numbers are not a move', () => {
+    assert.equal(said('Not stated in release'), false);
+    assert.equal(said('not disclosed for the quarter'), false);
+    assert.equal(said('74%'), true);
+    assert.equal(scaledNumber('Q4 FY26'), null);
+    assert.equal(scaledNumber('nearly doubling compared with Q4 FY26'), null);
+    assert.equal(ledgerDeltaOf('Q4 FY26: 59 days', '59 days by Q4 FY26', null), null);
+    assert.equal(ledgerDeltaOf('Test kits 58% (March trailing)', '58%', '%'), null);
+    assert.equal(ledgerDeltaOf('a little less than 1,000,000 metric tonnes', '1.6 million metric tonnes', null), '+60%');
+  });
+
+  test('working capital in DAYS improves when it falls', () => {
+    const down = varsFromEvents([ev('working_capital', 'ACTUAL', '137 days', '84 days', 'Net working capital days came down to 84 days from 137 days a year ago, management said.', 'Concall transcript Aug 2026', 'days')]);
+    assert.equal(down[0].verdict, 'improving');
+    const up = varsFromEvents([ev('working_capital', 'ACTUAL', '145 days in Q4 FY26', '161 days in Q1 FY27', 'Working capital days rose to 161 days in Q1 FY27 from 145 days in Q4 FY26, management said.', 'Concall transcript Aug 2026', 'days')]);
+    assert.equal(up[0].verdict, 'deteriorating');
+  });
+
+  test('EXICOM — a growth rate off a loss base and a double-negative cash ratio are shown, not judged; a QoQ margin move is not counted', () => {
+    const graded = { source: 'screener', sales_yoy_pct: 61.25, net_profit_yoy_pct: -3.43, opm_pct: -6.61, opm_change_pp_qoq: -6.7, cfo_to_pat_ratio: 0.32 };
+    const vars = extractVariables(graded, null);
+    const eg = vars.find((v) => v.key === 'earnings_growth')!;
+    assert.equal(eg.verdict, 'stated', 'disclosed, shown, not judged'); assert.match(eg.unjudged!, /loss base/);
+    const cc = vars.find((v) => v.key === 'cash_conversion')!;
+    assert.equal(cc.verdict, 'stated'); assert.ok(cc.unjudged);
+    const m = vars.find((v) => v.key === 'margin')!;
+    assert.equal(m.verdict, 'stated'); assert.equal(m.delta, '-6.7pp QoQ'); assert.match(m.unjudged!, /sequential/);
+    assert.equal(vars.filter((v) => v.key === 'operating_leverage').length, 0, 'no leverage ratio on a loss base');
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: true, variables: vars as any });
+    assert.notEqual(a.status, 'WEAKENING');
+    assert.match(a.because, /not read either way/);
+  });
+
+  test('LUMAXTECH — PAT growth is quoted before EPS growth; a ₹3 Cr one-off on ₹99 Cr PAT is immaterial', () => {
+    const graded = { source: 'graded', sales_yoy_pct: 32.9, net_profit_yoy_pct: 83.3, eps_yoy_pct: 109.0, pat_curr_cr: 99, pat_prev_cr: 54, opm_pct: 14, opm_prev_pct: 12, cfo_to_pat_ratio: 4.65 };
+    const summary = { one_offs: [{ item: 'Tooling revenue in Greenfuel', amount: 'around INR 3 crore', direction: 'gain', recurring: 'will_not_recur' }] };
+    const vars = extractVariables(graded, summary);
+    const eg = vars.find((v) => v.key === 'earnings_growth')!;
+    assert.equal(eg.delta, '+83.3%'); assert.equal(eg.before, '54 Cr'); assert.equal(eg.after, '99 Cr');
+    const oo = vars.find((v) => v.key === 'one_offs')!;
+    assert.equal(oo.verdict, 'flat'); assert.match(oo.evidence, /3% of reported profit/);
+    // A material gain still counts.
+    const big = extractVariables(graded, { one_offs: [{ item: 'Land sale', amount: 'INR 40 crore', direction: 'gain' }] }).find((v) => v.key === 'one_offs')!;
+    assert.equal(big.verdict, 'deteriorating');
+    // An unsized gain is shown, not judged.
+    const unsized = extractVariables(graded, { one_offs: [{ item: 'Insurance claim', amount: '', direction: 'gain' }] }).find((v) => v.key === 'one_offs')!;
+    assert.equal(unsized.verdict, 'stated'); assert.ok(unsized.unjudged);
+  });
+
+  test('the margin bridge prints its unit: a bare "-1.43" in opm_change_pp is pp', () => {
+    const m = extractVariables(null, { margin_bridge: { opm_change_pp: '-1.43', drivers: [] } }).find((v) => v.key === 'margin')!;
+    assert.equal(m.delta, '-1.43pp');
+  });
+
+  test('recent reporters — a results filing counts, an intimation does not; read-since-filing is current, read-before is due', () => {
+    assert.equal(isResultsFiling('Outcome of Board Meeting - Financial Results for Q2 FY27'), true);
+    assert.equal(isResultsFiling('Prior intimation of Board Meeting to consider financial results'), false);
+    assert.equal(isResultsFiling('Investor Presentation Q2 FY27'), true);
+    const items = [
+      { symbol: 'AAA', subject: 'Financial Results for the quarter ended 30 September 2026', filing_date: '2026-10-20T15:00:00' },
+      { symbol: 'AAA', subject: 'Intimation of board meeting', filing_date: '2026-10-12' },
+      { symbol: 'BBB', subject: 'Investor Presentation', filing_date: '2026-10-18' },
+      { symbol: 'CCC', subject: 'Financial Results', filing_date: '2026-09-30' },   // outside the window
+      { symbol: 'DDD', subject: 'Financial Results', filing_date: '2026-10-19' },
+    ];
+    const reported = reportedInWindow(items as any, ['AAA', 'BBB', 'CCC', 'DDD', 'EEE'], '2026-10-11');
+    assert.deepEqual(reported.map((r) => [r.ticker, r.reported_at]), [['AAA', '2026-10-20'], ['DDD', '2026-10-19'], ['BBB', '2026-10-18']]);
+    const L = (last: string | null, doc: string | null): any => ({ last_evidence_read_at: last, latest_document_date: doc });
+    const plan = planRecentReads(reported, {
+      AAA: L('2026-10-21T09:00:00Z', '2026-10-20'),   // read after the filing → current
+      BBB: L('2026-10-15T09:00:00Z', '2026-08-01'),   // read inside the window but BEFORE the filing → due
+      DDD: L(null, null),                              // never read → due
+    }, 5, 10, '2026-10-11');
+    assert.deepEqual(plan.due.map((d) => d.ticker), ['DDD', 'BBB']);
+    assert.deepEqual(plan.current.map((d) => d.ticker), ['AAA']);
+    assert.equal(plan.not_reported, 2);
+    assert.match(plan.due.find((d) => d.ticker === 'BBB')!.because, /before the 2026-10-18 filing/);
   });
 });

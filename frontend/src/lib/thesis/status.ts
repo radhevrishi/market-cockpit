@@ -115,6 +115,7 @@ export interface CheckedVariable {
   /** Other documents read for the same period that state a different value for
    *  this variable. Never resolved silently. (zzz759) */
   conflict?: { value: string; source: string }[] | null;
+  unjudged?: string | null;
 }
 
 export interface ThesisAssessment {
@@ -186,6 +187,8 @@ export interface ThesisAssessment {
      *  company told you and there is nothing to compare it to" and "nobody
      *  looked" are different states. (zzz755) */
     levelOnlyCore: string[];
+    /** Core variables shown but deliberately not judged, with the reason. */
+    unjudgedCore: string[];
     /** The core variables NOT yet checked, by name. The owner asked for this
      *  exactly: "6/10 core variables checked. Missing: utilisation, capex,
      *  new capacity, order book" — not a bare "evidence incomplete". */
@@ -325,6 +328,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       before: v?.before ?? null, after: v?.after ?? null, delta: v?.delta ?? null,
       comparison,
       conflict: v?.conflict ?? null,
+      unjudged: v?.unjudged ?? null,
       evidence: v?.evidence || (stoppedDisclosing
         ? `${comparison!.previous?.raw} in ${comparison!.previous_period}, and not disclosed in ${comparison!.current_period}. `
           + 'The figure was on file and has stopped being published. That is a decision, not an oversight, '
@@ -533,9 +537,17 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // and next quarter turns it into a direction — and still not a
     // confirmed mechanism.
     status = 'CONFIRMATION_REQUIRED';
-    because = `${coreLevelOnly.map((c) => `${c.label.toLowerCase()} (${c.after || c.before})`).join(' and ')} `
-      + `${coreLevelOnly.length === 1 ? 'was' : 'were'} disclosed as a level with nothing in the document to compare against, `
-      + 'so the direction is unknown. The figure is recorded; next quarter turns it into a trend.';
+    // A figure that is deliberately not judged says WHY; a bare level says
+    // it is a level. EXICOM's "cash conversion (0.32×) was disclosed as a
+    // level with nothing to compare against" was neither true nor the reason.
+    const reasoned = coreLevelOnly.filter((c) => c.unjudged);
+    const bareLevel = coreLevelOnly.filter((c) => !c.unjudged);
+    const parts: string[] = [];
+    if (reasoned.length) parts.push(reasoned.map((c) => `${c.label.toLowerCase()} (${c.after || c.before}) is not read either way — ${c.unjudged}`).join('; '));
+    if (bareLevel.length) parts.push(`${bareLevel.map((c) => `${c.label.toLowerCase()} (${c.after || c.before})`).join(' and ')} `
+      + `${bareLevel.length === 1 ? 'was' : 'were'} disclosed as a level with nothing in the document to compare against, `
+      + 'so the direction is unknown. The figure is recorded; next quarter turns it into a trend.');
+    because = parts.join('. ') + (reasoned.length && !bareLevel.length ? '. The numbers stand; the mechanism is neither confirmed nor contradicted by them.' : '');
   } else if (coreUp.length >= 1 && weighted >= 6 && allDimsConfirmed && input.evidenceReviewed) {
     // ── THE ONLY PATH TO GREEN.                                   (zzz723)
     //
@@ -736,7 +748,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       mechanism: tally(critical.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward')),
       forward: tally(critical.filter((c) => VAR_DIMENSION[c.key] === 'forward')),
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
-      levelOnlyCore: coreLevelOnly.map((c) => c.label),
+      levelOnlyCore: coreLevelOnly.filter((c) => !c.unjudged).map((c) => c.label),
+      unjudgedCore: coreLevelOnly.filter((c) => c.unjudged).map((c) => `${c.label} — ${c.unjudged}`),
       missingNeedsFiling: checked
         .filter((c) => c.verdict === 'unknown' && c.weight >= 3 && !GRADER_AVAILABLE.has(c.key))
         .map((c) => c.label),

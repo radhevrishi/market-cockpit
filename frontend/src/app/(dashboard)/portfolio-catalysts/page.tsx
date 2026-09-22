@@ -50,7 +50,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, batch, readFiling, readAll, stop } = useBook();
+  const { symbols, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
@@ -116,6 +116,18 @@ export default function PortfolioCatalystsPage() {
   const readCount = withEvidence.length;
   const docsRead = inSource.reduce((n, r) => n + (r.ledger?.latest_source_count || (r.documentsRead?.length || 0)), 0);
   const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE');
+  // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
+  // stored read predates the headline prompt (india-ai-summary-v9), so a
+  // re-read can fill it. A v9 read that still shows ⊘ is a filing that does
+  // not print the figure, and is NOT queued again. (zzz763)
+  const blockedOnHeadline = inSource.filter((r) => {
+    if (r.assessment?.status !== 'EVIDENCE_INCOMPLETE') return false;
+    if (!r.assessment.checked.some((c) => c.absence === 'no_grader_row')) return false;
+    const period = r.ledger && r.ledger.latest_period ? r.ledger.periods[r.ledger.latest_period] : null;
+    const pv = String(period?.prompt_version || '');
+    const m = /v(\d+)$/.exec(pv);
+    return !m || Number(m[1]) < 9;
+  });
   const newEvidence = inSource.filter((r) => r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE').length;
   const sourceDown = inSource.filter((r) => r.freshness?.state === 'SOURCE_UNAVAILABLE').length;
 
@@ -234,11 +246,43 @@ export default function PortfolioCatalystsPage() {
             }}>Stop</button>
           </>
         )}
+        {/* ── RECENT REPORTERS. Click only. (zzz763)
+            Re-reads the names that filed results in the last 10 days and
+            have not been read since that filing. Everything else is skipped
+            without a call — and the strip below says so, name by name. */}
+        {!batch.running && recent.state !== 'checking' && (
+          <button onClick={() => readRecentReporters(10)}
+            title="Asks the exchange feed which holdings filed results in the last 10 days, then re-reads ONLY those not yet read since their filing. A name whose evidence already post-dates its results is skipped without a model call. US names are not covered by the NSE feed and are skipped."
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
+            }}>&#8635; Update recent reporters (10d)</button>
+        )}
+        {/* ── THE 18 THAT NEED A v9 READ. (zzz763)
+            A holding with no grader row can only get revenue / profit / cash
+            from a results filing read under the headline prompt (v9). Names
+            read before that stay EVIDENCE INCOMPLETE until re-read. This is
+            the one button that spends: one model call per name, on click. */}
+        {!batch.running && blockedOnHeadline.length > 0 && (
+          <button onClick={() => readAll(blockedOnHeadline.map((r) => r.symbol), 3, { reprocess: true, exact: true })}
+            title="These names have no graded row and were read before the reader asked the filing for its headline figures. Re-reads each one once (force) so revenue growth, earnings growth and cash conversion can be filled from the results page. One model call per name."
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
+            }}>&#8635; Re-read {blockedOnHeadline.length} blocked on missing headline</button>
+        )}
+        {recent.state === 'checking' && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.amber }}>Checking who reported in the last 10 days…</span>
+        )}
         <a href="/exit-radar" style={{
           marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
           border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none',
         }}>Exit Radar →</a>
       </div>
+
+      {recent.state !== 'idle' && recent.state !== 'checking' && (
+        <RecentReportersStrip recent={recent} />
+      )}
 
       {batch.running && (
         <div style={{ height: 3, background: C.border, borderRadius: 2, overflow: 'hidden' }}>
@@ -318,6 +362,50 @@ export default function PortfolioCatalystsPage() {
           sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
         />
       ))}
+    </div>
+  );
+}
+
+
+// ── The recent-reporters result strip. Every name the pass touched is
+//    listed under the bucket it landed in, with the ledger fact that put it
+//    there, so "skipped" is never a mystery. (zzz763)
+function RecentReportersStrip({ recent }: { recent: ReturnType<typeof useBook>['recent'] }) {
+  const p = recent.plan;
+  const chip = (t: string, color: string, title?: string) => (
+    <span key={t} title={title} style={{ fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+      border: `1px solid ${color}`, color, marginRight: 4, marginBottom: 3, display: 'inline-block' }}>{t}</span>
+  );
+  const border = recent.state === 'error' ? '#EF4444' : recent.state === 'reading' ? C.cyan : C.amber;
+  return (
+    <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.7, background: C.bg, border: `1px solid ${border}`, borderRadius: 8, padding: '9px 13px' }}>
+      {recent.state === 'error' && <b style={{ color: '#EF4444' }}>{recent.error}</b>}
+      {recent.state !== 'error' && p && (
+        <>
+          <b style={{ color: C.text }}>
+            Last {recent.days} days{p.from ? ` (since ${p.from})` : ''}: {p.due.length + p.current.length} reported
+            {' · '}{p.due.length} {recent.state === 'reading' ? 're-reading' : 're-read'}
+            {' · '}{p.current.length} already current, skipped
+            {' · '}{p.not_reported} filed nothing
+            {recent.usSkipped ? ` · ${recent.usSkipped} US not covered by the NSE feed` : ''}
+          </b>
+          {recent.feedNote && <div style={{ color: C.amber }}>{recent.feedNote}</div>}
+          {recent.feed && recent.feed.days_failed.length > 0 && !recent.feedNote && (
+            <div style={{ color: C.faint }}>Feed answered nothing for {recent.feed.days_failed.join(', ')} — a filing on one of those days may be missing from this pass.</div>
+          )}
+          {p.due.length > 0 && (
+            <div><span style={{ color: C.faint, marginRight: 6 }}>{recent.state === 'reading' ? 'Reading' : 'Read'}:</span>
+              {p.due.map((d) => chip(`${d.ticker} · filed ${d.reported_at}`, C.cyan, `${d.subject} — ${d.because}`))}</div>
+          )}
+          {p.current.length > 0 && (
+            <div><span style={{ color: C.faint, marginRight: 6 }}>Skipped, already current:</span>
+              {p.current.map((d) => chip(`${d.ticker} · filed ${d.reported_at}`, C.faint, `${d.subject} — ${d.because}`))}</div>
+          )}
+          {recent.at && recent.state === 'done' && (
+            <div style={{ color: C.faint, fontSize: 10.5 }}>Finished {recent.at.slice(11, 16)} UTC · nothing runs again until you click.</div>
+          )}
+        </>
+      )}
     </div>
   );
 }

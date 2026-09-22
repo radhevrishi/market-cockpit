@@ -86,6 +86,11 @@ export interface StructuralVar {
    *  filing and a concall contradicting each other on a capacity is a fact
    *  about the disclosure, not a parsing detail. */
   conflict?: { value: string; source: string }[] | null;
+  /** Why a disclosed figure is shown but NOT judged — a loss base, an
+   *  unreadable sign, a sequential-only move, an unsized one-off. Distinct
+   *  from "level with no comparison", which is the default reading of a
+   *  stated value. Status prints this reason instead. (zzz763) */
+  unjudged?: string | null;
 }
 
 
@@ -97,9 +102,12 @@ const n = (v: unknown): number | null =>
 const PLACEHOLDER =
   /^(not\s+(stated|disclosed|quantified|available|applicable|given|provided)|n\/?a|none|unknown|—|-|nil)$/i;
 
+const PLACEHOLDER_PREFIX = /^(not\s+(stated|disclosed|quantified|available|applicable|given|provided|mentioned|specified)|no (figure|number|data|detail)s?\b|n\/?a\b|none\b|unknown\b)/i;
 export function said(v: unknown): boolean {
   const s = typeof v === 'string' ? v.trim() : '';
-  return s.length > 0 && !PLACEHOLDER.test(s);
+  // "Not stated in release" is a placeholder with a suffix, and AETHER
+  // printed it as a before value: "Not stated in release → 74%". (zzz763)
+  return s.length > 0 && !PLACEHOLDER.test(s) && !PLACEHOLDER_PREFIX.test(s);
 }
 
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v * 10) / 10}%`;
@@ -167,6 +175,21 @@ function deltaOf(before: string | null, after: string | null): string | null {
   return `${g >= 0 ? '+' : ''}${g.toFixed(0)}%`;
 }
 
+/** "+1400 Cr" on a slide means "more than 1,400 crore" — a level. Printed with
+ *  the plus in front it reads as a change of 1,400 crore. (zzz763) */
+export function levelText(s: string | null): string | null {
+  if (!s) return s;
+  const t = s.trim();
+  if (/^\+\s*\d/.test(t) && !/%|\bpp\b|\bbps\b/i.test(t)) return `over ${t.replace(/^\+\s*/, '')}`;
+  return t;
+}
+
+/** Working capital measured in DAYS is better when it falls. The same
+ *  variable stated as cash is not. (zzz763) */
+export function inverseByUnit(key: VarKey, text: string): boolean {
+  return key === 'working_capital' && /\bdays?\b|cycle/i.test(text);
+}
+
 export function varsFromEvents(events: StructuralEvent[] | null | undefined): StructuralVar[] {
   if (!Array.isArray(events) || !events.length) return [];
   const out: StructuralVar[] = [];
@@ -223,7 +246,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       // maximum level") is shown as what it is; a chart axis and a
       // wrong-unit value are shown as claims; a bare level is 'stated'.
       const mayJudge = a.value_type === 'ACTUAL' && !chart;
-      const inverted = NEGATIVE_VARS.has(key);
+      const inverted = NEGATIVE_VARS.has(key) || inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`);
       const verdict: VarVerdict = !mayJudge ? 'stated'
         : dir === 'up' ? (inverted ? 'deteriorating' : 'improving')
           : dir === 'down' ? (inverted ? 'improving' : 'deteriorating')
@@ -231,7 +254,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       out.push({
         key, label,
         kind: mayJudge ? 'fact' : 'claim',
-        before: a.before, after: a.after, delta, verdict,
+        before: levelText(a.before), after: levelText(a.after), delta, verdict,
         evidence: (quality === 'unit_mismatch' ? 'Value does not fit this variable (wrong unit or no such statement) — shown as a claim only: '
           : chart ? 'Read from a chart, figures unlabelled — verify on the slide: '
             : a.value_type !== 'ACTUAL' ? `Management ${a.value_type === 'MANAGEMENT_CLAIM' ? 'claim' : a.value_type.toLowerCase()}, not a reported figure: `
@@ -441,7 +464,27 @@ export function extractVariables(
 
   // ── GRADER FACTS ────────────────────────────────────────────────────────
   const salesY = n(graded?.sales_yoy_pct);
-  const epsY = n(graded?.eps_yoy_pct) ?? n(graded?.net_profit_yoy_pct);
+  // PAT growth first, EPS second — the same order the A/B/F/G classifier
+  // uses, so the board and the pattern never quote two different growth
+  // rates for one quarter. LUMAXTECH showed "+109%" (EPS) against a PAT
+  // growth of 83%. (zzz763)
+  const patGrowth = n(graded?.net_profit_yoy_pct);
+  const epsY = patGrowth ?? n(graded?.eps_yoy_pct);
+  const epsOnly = patGrowth == null && epsY != null;
+  const patCurr = n(graded?.pat_curr_cr) ?? n(graded?.net_income_curr_musd);
+  const patPrev = n(graded?.pat_prev_cr) ?? n(graded?.net_income_prev_musd);
+  const opmNow = n(graded?.opm_pct);
+  // ── A GROWTH RATE OFF A LOSS IS NOT A GROWTH RATE.               (zzz763)
+  //
+  // EXICOM's screener row: operating margin −6.6%, "net profit −3.4% YoY",
+  // no PAT figures. A company losing money at the operating line is almost
+  // certainly losing money at the bottom line, and a percentage change
+  // between two negative numbers says nothing about direction. That row
+  // drove THESIS WEAKENING on "earnings growth −3.4%". Where either period's
+  // profit is known to be negative — or unknown while the operating margin is
+  // negative — the rate is shown as unread, with the reason.
+  const lossBase = (patCurr != null && patCurr < 0) || (patPrev != null && patPrev < 0)
+    || (patCurr == null && patPrev == null && opmNow != null && opmNow < 0);
   const opmChange = n(graded?.opm_change_pp) ?? n(graded?.opm_delta_pp);
   // The screener exports carry no YoY margin bridge — only this quarter's OPM
   // and last quarter's. That is a SEQUENTIAL change, and it answers a
@@ -476,12 +519,21 @@ export function extractVariables(
       source: 'grader',
     });
   }
-  if (epsY != null) {
+  if (epsY != null && lossBase) {
     push({
       key: 'earnings_growth', label: VAR_LABEL.earnings_growth,
-      before: null, after: pct(epsY), delta: pct(epsY),
+      before: patPrev != null ? `${patPrev} Cr` : null, after: patCurr != null ? `${patCurr} Cr` : `${pct(epsY)} (loss base)`, delta: null,
+      verdict: 'unknown',
+      unjudged: 'a growth rate on a loss base has no direction',
+      evidence: `Reported as ${pct(epsY)} YoY, but ${patCurr != null && patCurr < 0 ? 'the latest quarter is a loss' : patPrev != null && patPrev < 0 ? 'the base quarter was a loss' : `the operating margin is ${opmNow?.toFixed(1)}%, so profit is almost certainly negative`}. A growth rate between negative numbers has no direction, so it is not read either way.`,
+      source: 'grader',
+    });
+  } else if (epsY != null) {
+    push({
+      key: 'earnings_growth', label: VAR_LABEL.earnings_growth,
+      before: patPrev != null ? `${patPrev} Cr` : null, after: patCurr != null ? `${patCurr} Cr` : pct(epsY), delta: pct(epsY),
       verdict: epsY >= 20 ? 'improving' : epsY >= 0 ? 'flat' : 'deteriorating',
-      evidence: `Earnings ${pct(epsY)} YoY, from the filed statements.`,
+      evidence: `${epsOnly ? 'EPS' : 'Profit after tax'} ${pct(epsY)} YoY, from the filed statements${epsOnly ? ' (PAT growth not on the row; EPS used)' : ''}.`,
       source: 'grader',
     });
   }
@@ -491,7 +543,7 @@ export function extractVariables(
   // faster than revenue IS operating leverage, arithmetically. The guard is
   // the same one the classifier uses — a ratio off a trivial revenue base is
   // noise, so below 1% growth the variable stays unknown rather than large.
-  if (salesY != null && epsY != null) {
+  if (salesY != null && epsY != null && !lossBase) {
     if (salesY >= 1) {
       const r = epsY / salesY;
       push({
@@ -529,7 +581,10 @@ export function extractVariables(
   // CUPID printed "+?pp" — a literal question mark the model wrote. A
   // bridge value is used only when it is a single clean pp figure.
   const mbRaw = said(mb?.opm_change_pp) ? String(mb.opm_change_pp).trim() : null;
-  const mbDelta = mbRaw && /^[+-]?\d+(?:\.\d+)?\s*(pp|bps|bp|%)?$/i.test(mbRaw) ? mbRaw : null;
+  const mbDeltaRaw = mbRaw && /^[+-]?\d+(?:\.\d+)?\s*(pp|bps|bp|%)?$/i.test(mbRaw) ? mbRaw : null;
+  // The field is `opm_change_pp`; a bare "-1.43" IS pp and prints as such.
+  // ALKYLAMINE printed "Operating margin -1.43" with no unit. (zzz763)
+  const mbDelta = mbDeltaRaw && /^[+-]?\d+(?:\.\d+)?$/.test(mbDeltaRaw) ? `${mbDeltaRaw}pp` : mbDeltaRaw;
   const drivers: any[] = Array.isArray(mb?.drivers) ? mb.drivers : [];
   if (mbDelta || opmChangeYoy != null || opmChangeQoq != null || opm != null) {
     // One source decides BOTH. The grader's own year-on-year bridge wins
@@ -555,7 +610,12 @@ export function extractVariables(
       delta: dvFromBridge
         ? mbDelta
         : (dv != null ? `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' QoQ' : ''}` : null),
-      verdict: dv == null ? 'unknown' : dv >= 1 ? 'improving' : dv > -1 ? 'flat' : 'deteriorating',
+      // A sequential move carries seasonality that a year-on-year move
+      // cancels; it is shown with its label and NOT counted for or against
+      // the thesis. EXICOM's "−6.7pp QoQ" was one of three "deteriorating"
+      // core variables behind a WEAKENING call. (zzz763)
+      verdict: dv == null ? 'unknown' : sequentialOnly ? 'stated' : dv >= 1 ? 'improving' : dv > -1 ? 'flat' : 'deteriorating',
+      unjudged: dv != null && sequentialOnly ? 'only a sequential (QoQ) move is on file, which carries seasonality' : null,
       evidence: `Operating margin ${opm != null ? `${opm.toFixed(1)}%` : ''}`
         + `${opmPrev != null ? ` (was ${opmPrev.toFixed(1)}%)` : ''}`
         + `${dv == null ? ' — change not quantified'
@@ -585,6 +645,10 @@ export function extractVariables(
       ?? n(graded?.profit_after_tax_latest_quarter);
     const negative = cfoToPat < 0;
     const lossMaking = patSign != null && patSign < 0;
+    // A POSITIVE ratio can hide two negatives. When profit is unknown and the
+    // operating margin is negative, 0.32× may be (−CFO)/(−PAT), and it must
+    // not read as "cash falls well below profit". (zzz763)
+    const signUnreadable = !negative && patSign == null && opmNow != null && opmNow < 0;
     // The screener's "CFO to PAT" is LAST FULL YEAR's cash flow over last
     // full year's profit — an annual figure sitting on a card about this
     // quarter, and its sign is being checked against the latest QUARTER's
@@ -594,11 +658,19 @@ export function extractVariables(
     push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
       before: null, after: `${cfoToPat.toFixed(2)}×${annual ? ' (last FY)' : ''}`, delta: null,
-      verdict: !negative
+      unjudged: signUnreadable ? 'the sign of the ratio cannot be read with a negative operating margin and no profit figure'
+        : lossMaking && !negative ? 'both cash and profit are negative, so the ratio has no meaning'
+          : negative && !lossMaking && patSign == null ? 'which side of the ratio is negative is not stated' : null,
+      verdict: signUnreadable || (lossMaking && !negative) ? 'unknown'
+        : !negative
         ? (cfoToPat >= 1 ? 'improving' : cfoToPat >= 0.6 ? 'flat' : 'deteriorating')
         : lossMaking ? 'flat'
           : patSign != null ? 'deteriorating' : 'unknown',
-      evidence: !negative
+      evidence: signUnreadable
+        ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}×${basis}, but the operating margin is ${opmNow?.toFixed(1)}% and no profit figure is on the row: a positive ratio here may be negative cash over a negative profit. It is not read either way.`
+        : lossMaking && !negative
+          ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}×${basis} against a LOSS — both sides negative. The ratio says nothing about cash quality, so it is not counted either way.`
+        : !negative
         ? `Operating cash flow is ${cfoToPat.toFixed(2)}× reported profit${basis}.`
         : lossMaking
           ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}× because the ${annual ? 'latest quarter' : 'quarter'} was loss-making. A ratio against a negative base says nothing about cash quality, so it is not counted either way.`
@@ -820,15 +892,49 @@ export function extractVariables(
   const oneOffs: any[] = Array.isArray(summary?.one_offs) ? summary.one_offs : [];
   if (oneOffs.length) {
     const gains = oneOffs.filter((o) => o?.direction === 'gain');
+    // ── A ONE-OFF IS A FINDING ONLY WHEN IT IS BIG ENOUGH TO BE ONE. (zzz763)
+    //
+    // LUMAXTECH: PAT ₹99 Cr, up 83%, and one one-off gain — "tooling revenue
+    // in Greenfuel, around INR 3 crore". Three per cent of profit. The F
+    // thesis condition "the jump is traced to one-off items" fired on it and
+    // the card said THESIS WEAKENING. A gain is sized against the profit it
+    // sits in: under 10% of PAT it is shown and counted FLAT; where no amount
+    // is stated it is shown as STATED, because an unsized item cannot trace
+    // anything; only a material, quantified gain counts against durability.
+    // Everything in raw rupees: the graded PAT is in crore; a stated amount
+    // carries its own magnitude word, and one without any is read as crore.
+    const rawOf = (v: unknown): number | null => {
+      if (!said(v)) return null;
+      const t = String(v);
+      const x = scaledNumber(t);
+      if (x == null) return null;
+      return /\b(crores?|cr|lakhs?|millions?|mn|billions?|bn|thousands?)\b/i.test(t) ? x : x * 1e7;
+    };
+    const profitRaw = patCurr != null ? patCurr * 1e7 : rawOf(summary?.headline?.profit);
+    const profitCr = profitRaw != null ? Math.round(profitRaw / 1e7) : null;
+    const sizedGains = gains.map((o) => rawOf(o?.amount)).filter((x): x is number => x != null);
+    const sized = sizedGains.length > 0;
+    const gainRaw = sizedGains.reduce((t, x) => t + Math.abs(x), 0);
+    const share = profitRaw != null && profitRaw > 0 && sized ? gainRaw / profitRaw : null;
+    const material = share == null ? null : share >= 0.1;
+    const verdict: VarVerdict = !gains.length ? 'flat'
+      : material === true ? 'deteriorating'
+        : material === false ? 'flat'
+          : 'stated';
     push({
       key: 'one_offs', label: VAR_LABEL.one_offs,
       before: null, after: `${oneOffs.length} item${oneOffs.length > 1 ? 's' : ''}`, delta: null,
-      // A one-off GAIN flatters this quarter and will not repeat, so it counts
-      // against the durability of the result even while it lifts the number.
-      verdict: gains.length ? 'deteriorating' : 'flat',
+      // A MATERIAL one-off GAIN flatters this quarter and will not repeat, so
+      // it counts against the durability of the result even while it lifts
+      // the number.
+      verdict,
+      unjudged: gains.length && material == null ? 'the one-off amount is not stated, so it cannot be sized against the result' : null,
       evidence: oneOffs.map((o) =>
         `${o?.direction === 'gain' ? '+' : '−'} ${o?.item}${said(o?.amount) ? ` (${o.amount})` : ''}`).join('; ')
-        + (gains.length ? ' — these will not repeat, so the base for next year is lower than it looks.' : ''),
+        + (!gains.length ? ''
+          : material === true ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit; they will not repeat, so the base for next year is lower than it looks.`
+            : material === false ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${profitCr != null ? ` (${profitCr} Cr)` : ''}: immaterial to the result, shown for the record.`
+              : ' — amount not stated, so it cannot be sized against the result; shown, not counted.'),
       source: 'filing',
     });
   }

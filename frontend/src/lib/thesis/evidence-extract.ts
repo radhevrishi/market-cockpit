@@ -385,14 +385,21 @@ export const CAPACITY_UNIT_RE =/\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|
 /** Pure: whether the value fits the variable and the evidence is a sentence. */
 export function judgeEventQuality(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): 'sentence' | 'chart' | 'unit_mismatch' {
   const ev = e.evidence_text || '';
-  // A run of axis labels is a CHART read first and foremost. It is judged
-  // ahead of the unit rules because the figures did come off that
-  // variable's slide — they are weak, not mis-filed, and the two states
-  // have different consequences downstream. (zzz755)
+  // ── A MIS-FILED VALUE IS MIS-FILED WHATEVER IT WAS READ FROM.      (zzz763)
+  //
+  // zzz755 judged CHART before the unit rules, on the reasoning that a chart
+  // figure is weak rather than wrong. But a chart axis is exactly where the
+  // worst mis-filings come from, and "chart" was letting them through: the
+  // REDINGTON row "utilisation 37 → 32" was a WORKING-CAPITAL-DAYS chart
+  // ("Q1FY27 Working Capital Days 37 30 32"), and DEEPAKNTR's ">175% Phenol
+  // and Acetone Production" was a three-word axis label that no sentence
+  // about utilisation would have passed. The value test now runs first; a
+  // chart is a chart only if its value could be this variable's at all.
+  if (!valueFitsVariable(e)) return 'unit_mismatch';
   const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
   const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
   if (words < 5 || figures > words) return 'chart';
-  return valueFitsVariable(e) ? 'sentence' : 'unit_mismatch';
+  return 'sentence';
 }
 
 // ── THE UNIT RULES APPLY TO EVERY ROW, NOT ONLY THE TYPED ONES.     (zzz762)
@@ -419,17 +426,38 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // rate (ETHOS "13.2%"). A percentage alone is not enough — half of
     // those are percentages. The SENTENCE has to be about utilisation.
     if (v === 'utilisation') {
+      // A chart has no sentence to name the variable (E2E's slide is a run
+      // of tick marks), so the wording test applies to sentences only; the
+      // VALUE rules below apply to both.
+      const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
+      const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
+      const chartShaped = words < 5 || figures > words;
       const saysUtilisation = /utilis|utiliz|operating at|running at|occupancy|load factor|\bCUF\b|\bPLF\b|capacity|full|maximum|peak|sold out/i.test(ev);
-      if (!saysUtilisation) return false;
-      const pctMatch = valueText.match(/-?\d+(?:\.\d+)?\s*%/);
+      if (!chartShaped && !saysUtilisation) return false;
+      // "We are already operating at 18% margins" matched "operating at" and
+      // filed a MARGIN as LUMAXTECH's utilisation. A sentence about margin,
+      // EBITDA, profit, growth or a share of sales is not about a fill rate
+      // unless it also says so in as many words. (zzz763)
+      if (!chartShaped && /margin|ebitda|profit|\bPAT\b|growth|share of|contribution|wallet|export/i.test(ev) && !/utilis|utiliz|\bCUF\b|\bPLF\b|occupancy|load factor/i.test(ev)) return false;
+      // A duration is never a fill rate: "37 days", "4 to 6 months". The
+      // unit field and the value text are both checked, because the model
+      // fills one or the other. (zzz763)
+      if (/\b(days?|months?|weeks?|years?|hours?)\b/i.test(`${e.unit || ''} ${valueText}`)) return false;
+      const pctMatch = valueText.match(/-?\d+(?:\.\d+)?(?:-odd)?\s*(%|per ?cent)/i);
       if (pctMatch) {
         const n = parseFloat(pctMatch[0]);
-        // Below zero is impossible; above 130 is a growth figure, not a
-        // fill rate. GIPCL's genuine 19.89% CUF survives.
-        if (!(n >= 0 && n <= 130)) return false;
+        // Below zero is impossible. Above 130 is a growth figure — unless the
+        // SENTENCE says utilisation in as many words: DEEPAKNTR "operating at
+        // about 170-odd percent utilization" is a de-bottlenecked plant, and
+        // the row carries the above-nameplate note for it. (zzz763)
+        const explicit = /utilis|utiliz/i.test(valueText);
+        if (!(n >= 0 && n <= (explicit ? 300 : 130))) return false;
         return true;
       }
-      return /full|maximum|peak|near|sold out|optimum|shift/i.test(valueText);
+      // Words that state a fill level. "nearly doubling" is not one of them,
+      // and a period label ("Q4 FY26") is not a value at all.
+      return /\b(full|maximum|peak|near|nearly full|sold out|optimum|optimal|shifts?)\b/i.test(valueText)
+        && !/doubl|tripl|growth|compared|versus|\bvs\b/i.test(valueText);
     }
     if (PCT_VARS.has(v)) return /%|per ?cent|pp\b|full|maximum|peak|near|shift|high|low|double|single/i.test(valueText) || /%/.test(String(e.unit || ''));
     // A capacity stated only in money is a capex figure filed under the
@@ -469,6 +497,10 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // bare "78.8%" here: a figure with no noun is not an answer to that
     // question, whatever it was a percentage of. (zzz762)
     if (v === 'capex_earning') return /[A-Za-z]{3,}/.test(valueText);
+    // "15 megawatt hours of orders in hand" is an ORDER, not a volume sold.
+    // EXICOM printed it as "Volume 15 MWh". (zzz763)
+    if (v === 'volume' && /orders? (in hand|book|backlog|intake)|pipeline|backlog|order book/i.test(ev)
+      && !/sold|dispatch|produc|sales volume|volumes? (grew|rose|increas|declin|fell)|deliver/i.test(ev)) return false;
     // An order book is a stock of money or units. A bare growth rate filed
     // as the book itself ("+22%") is the change wearing the level's label.
     if (v === 'order_book') {
@@ -569,6 +601,11 @@ export interface RankableReading {
   before: string | null;
   source: string | null | undefined;
   confidence: Confidence;
+  /** 'sentence' | 'chart' — a sentence beats a chart whatever the source tier.
+   *  UNIMECH's annual-report chart ("52%") outranked the transcript's
+   *  "approximately 58%" on tier alone while WHAT CHANGED, which skips
+   *  charts, showed 58%. (zzz763) */
+  quality?: 'sentence' | 'chart' | 'unit_mismatch';
 }
 
 // ── ONE RANKING, USED EVERYWHERE A WINNER IS PICKED.               (zzz762)
@@ -582,15 +619,18 @@ export interface RankableReading {
 // carries both sides of a move gives a comparison, and a comparison is worth
 // more than a tier. Tier decides between readings of the same shape, which
 // is exactly the SPECTRUM case — two bare levels.
+const QUALITY_RANK = { sentence: 0, chart: 1, unit_mismatch: 2 } as const;
 export function betterReading(a: RankableReading, b: RankableReading): number {
   return (VALUE_RANK[a.value_type] - VALUE_RANK[b.value_type])
+    || (QUALITY_RANK[a.quality || 'sentence'] - QUALITY_RANK[b.quality || 'sentence'])
     || ((a.before ? 0 : 1) - (b.before ? 0 : 1))
     || (sourceTier(a.source) - sourceTier(b.source))
     || (CONF_RANK[a.confidence] - CONF_RANK[b.confidence]);
 }
 
 export function bestEventPerVariable(events: StructuralEvent[]): Map<VarKey, VariableSlot> {
-  const better = betterReading;
+  const better = (a: StructuralEvent, b: StructuralEvent) =>
+    betterReading({ ...a, quality: judgeEventQuality(a) }, { ...b, quality: judgeEventQuality(b) });
   const out = new Map<VarKey, VariableSlot>();
   const actualsSeen = new Map<VarKey, StructuralEvent[]>();
   for (const e of events) {

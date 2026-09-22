@@ -34,6 +34,7 @@ import type { VarKey } from './taxonomy';
 import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
 import { recordPromises, checkPromises } from './guidance-ledger';
+import { planRecentReads, type RecentPlan, type ReportedFact } from './recent-reporters';
 import {
   freshnessOf, whatChanged, latestSummary,
   type CompanyLedger, type FreshnessState, type ChangeLine,
@@ -218,6 +219,21 @@ export function useBook(opts?: { includeBench?: boolean }) {
   const [rows, setRows] = useState<Record<string, BookRow>>({});
   const [loading, setLoading] = useState(true);
   const [batch, setBatch] = useState<{ running: boolean; done: number; total: number; resumable?: number; failed?: number }>({ running: false, done: 0, total: 0 });
+  // ── RECENT REPORTERS. On click only. (zzz763)
+  //   idle → checking (feed) → planned (who is due) → reading → done/error.
+  //   The plan is kept after the batch so the strip can say what was skipped
+  //   and why, which is the part the owner asked for: "if already updated it
+  //   should not be re-updated".
+  const [recent, setRecent] = useState<{
+    state: 'idle' | 'checking' | 'reading' | 'done' | 'error';
+    days: number;
+    plan: RecentPlan | null;
+    error: string | null;
+    feedNote: string | null;
+    feed: { items: number; days_fetched: number; days_failed: string[]; cached: boolean } | null;
+    usSkipped: number;
+    at: string | null;
+  }>({ state: 'idle', days: 10, plan: null, error: null, feedNote: null, feed: null, usSkipped: 0, at: null });
   const [note, setNote] = useState<UniverseNote>({
     book: 0, bench: 0, both: 0, benchFiltered: 0, benchUnchecked: 0, serverError: null,
   });
@@ -483,7 +499,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
    *   mode 'force' — re-read the current period (debug / manual refresh).
    *   mode 'check' — discovery only, no model: is there anything new?
    */
-  const readFiling = useCallback(async (sym: string, mode: 'incremental' | 'read' | 'force' | 'check' = 'incremental') => {
+  const readFiling = useCallback(async (sym: string, mode: 'incremental' | 'read' | 'force' | 'check' = 'incremental', opts?: { filingDate?: string | null }) => {
     const cur = rowsRef.current[sym];
     if (!cur) return;
     const isUs = cur.market === 'US';
@@ -492,7 +508,9 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // The graded row knows WHEN this holding last reported. Without it the
       // India reader searches only the rolling recent feed, which off-season
       // contains none of the book's results. (zzz724)
-      const fd = String(cur.graded?.filing_date || '').slice(0, 10);
+      // A caller that knows a NEWER filing date (the recent-reporters pass)
+      // hands it in; otherwise the graded row's date is the best on file.
+      const fd = String(opts?.filingDate || cur.graded?.filing_date || '').slice(0, 10);
       const dateQ = /^\d{4}-\d{2}-\d{2}$/.test(fd) ? `&filing_date=${fd}` : '';
       const modeQ = mode === 'force' ? '&force=1' : mode === 'check' ? '&mode=check' : mode === 'incremental' ? '&mode=incremental' : '';
       const url = isUs
@@ -610,13 +628,17 @@ export function useBook(opts?: { includeBench?: boolean }) {
    *   · The job header is recorded server-side before the first read, so a
    *     reload derives "37 updated · 77 remaining" from the ledgers.
    */
-  const readAll = useCallback(async (syms: string[], concurrency = 3, opts?: { reprocess?: boolean }) => {
+  const readAll = useCallback(async (syms: string[], concurrency = 3, opts?: { reprocess?: boolean; exact?: boolean; filingDates?: Record<string, string> }) => {
     const todo = syms.filter((s) => {
       const row = rowsRef.current[s];
       if (!row) return false;
+      if (row.state === 'loading') return false;
+      // `exact`: the caller has already decided who needs a read (the
+      // recent-reporters planner) — the freshness filter must not second-
+      // guess a list built from a newer fact than it holds. (zzz763)
+      if (opts?.exact) return true;
       if (opts?.reprocess) return true;
       const fr = row.freshness?.state;
-      if (row.state === 'loading') return false;
       if (!row.summary) return true;                                  // never read, or failed
       return fr === 'NEW_EVIDENCE_AVAILABLE' || fr === 'STALE';        // current names are skipped
     });
@@ -634,7 +656,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         // A throw here used to end the worker silently and the batch with it
         // — three names in, "finished". Every name is attempted; a failure is
         // recorded on its row and the loop continues. (zzz744)
-        try { await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental'); }
+        try { await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental', { filingDate: opts?.filingDates?.[todo[k]] || null }); }
         catch (e: any) {
           const sym = todo[k];
           setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], state: r[sym].summary ? 'done' : 'error', error: `batch: ${String(e?.message || e)}` } } : r));
@@ -652,5 +674,57 @@ export function useBook(opts?: { includeBench?: boolean }) {
 
   const stop = useCallback(() => { stopRef.current = true; }, []);
 
-  return { symbols, origins, note, rows, loading, batch, readFiling, readAll, stop };
+  /**
+   * Re-read ONLY the holdings that filed results in the last `days` days and
+   * have not been read since that filing. Never runs on its own. (zzz763)
+   *
+   *   1. Ask the exchange feed who reported, and when (no model, no ledger).
+   *   2. Plan against the ledgers already in the rows: a document on file or
+   *      a read dated on/after the filing → CURRENT, skipped without a call.
+   *   3. Read the rest, three at a time, in incremental mode — the route's
+   *      own newer-than check is the last guard, so a name the feed flagged
+   *      but whose sources list nothing new still costs no model call.
+   *
+   * The feed is NSE; US names are counted and skipped, never guessed.
+   */
+  const readRecentReporters = useCallback(async (days = 10) => {
+    const all = Object.values(rowsRef.current);
+    const india = all.filter((r) => r.market !== 'US').map((r) => r.symbol);
+    const usSkipped = all.length - india.length;
+    setRecent((r) => ({ ...r, state: 'checking', days, error: null, plan: null, feedNote: null, feed: null, usSkipped, at: null }));
+    if (!india.length) {
+      setRecent((r) => ({ ...r, state: 'done', at: new Date().toISOString(), plan: { days, from: '', due: [], current: [], not_reported: 0 } }));
+      return;
+    }
+    let j: any;
+    try {
+      const res = await fetch(`/api/v1/thesis/recent-reporters?days=${days}&tickers=${encodeURIComponent(india.join(','))}`, { cache: 'no-store' });
+      j = await res.json();
+      if (!res.ok || !j?.ok) throw new Error(j?.error || `HTTP ${res.status}`);
+    } catch (e: any) {
+      setRecent((r) => ({ ...r, state: 'error', error: `Could not ask the exchange feed who reported: ${String(e?.message || e)}` }));
+      return;
+    }
+    const reported: ReportedFact[] = Array.isArray(j.reported) ? j.reported : [];
+    const ledgers: Record<string, CompanyLedger | null> = {};
+    const loading = new Set<string>();
+    for (const r of all) { ledgers[r.symbol] = r.ledger || null; if (r.state === 'loading') loading.add(r.symbol); }
+    const plan = planRecentReads(reported, ledgers, india.length, days, String(j.from || ''), loading);
+    const feed = j.feed ? { items: Number(j.feed.items || 0), days_fetched: Number(j.feed.days_fetched || 0), days_failed: Array.isArray(j.feed.days_failed) ? j.feed.days_failed : [], cached: !!j.feed.cached } : null;
+    if (!plan.due.length) {
+      setRecent((r) => ({ ...r, state: 'done', plan, feed, feedNote: j.note || null, at: new Date().toISOString() }));
+      return;
+    }
+    setRecent((r) => ({ ...r, state: 'reading', plan, feed, feedNote: j.note || null }));
+    const filingDates: Record<string, string> = {};
+    for (const d of plan.due) filingDates[d.ticker] = d.reported_at;
+    try {
+      await readAll(plan.due.map((d) => d.ticker), 3, { exact: true, filingDates });
+      setRecent((r) => ({ ...r, state: 'done', at: new Date().toISOString() }));
+    } catch (e: any) {
+      setRecent((r) => ({ ...r, state: 'error', error: String(e?.message || e), at: new Date().toISOString() }));
+    }
+  }, [readAll]);
+
+  return { symbols, origins, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters };
 }

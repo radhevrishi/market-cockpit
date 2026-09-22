@@ -279,7 +279,11 @@ export function magnitudeOf(s: string | null | undefined): number {
 /** The leading number WITH its magnitude word applied. */
 export function scaledNumber(s: string | null | undefined): number | null {
   if (!s) return null;
-  const m = /-?\d[\d,]*\.?\d*/.exec(String(s));
+  // A digit glued to a letter is a LABEL, not a quantity: "Q4 FY26" is a
+  // period, "H1" a half, "B200" a product. BHAGCHEM printed "utilisation Q4
+  // FY26 → nearly doubling compared with Q4 FY26 (+0%)" because both sides
+  // parsed to 4. (zzz763)
+  const m = /(?<![A-Za-z\d])-?\d[\d,]*\.?\d*(?![A-Za-z])/.exec(String(s));
   if (!m) return null;
   const n = parseFloat(m[0].replace(/,/g, ''));
   if (!Number.isFinite(n)) return null;
@@ -298,6 +302,10 @@ export function deltaOf(before: string | null, after: string | null, unit: strin
   if (before && after && before.trim().toLowerCase() === after.trim().toLowerCase()) return null;
   const b = numOf(before), a = numOf(after);
   if (b == null || a == null) return null;
+  // The same NUMBER in two phrasings is the same figure. ENTERO's "Q4 FY26:
+  // 59 days → 59 days by Q4 FY26 (+0%)" and MOLBIO's "58% (March trailing)
+  // → 58% · +0pp" were restatements rendered as movements of zero. (zzz763)
+  if (a === b) return null;
   const pctUnit = /%/.test(String(unit || '')) || (/%/.test(before || '') && /%/.test(after || ''));
   if (pctUnit) { const d = a - b; return `${d >= 0 ? '+' : ''}${Math.round(d * 10) / 10}pp`; }
   if (b === 0) return null;
@@ -528,6 +536,7 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
   const rankable = (f: EvidenceFact): RankableReading => ({
     value_type: f.fact_or_management_statement === 'FACT' ? 'ACTUAL' : f.fact_or_management_statement,
     before: f.before_value, source: f.source_name || f.source_type, confidence: f.confidence,
+    quality: judgeEventQuality({ variable: f.metric_name, before: f.before_value, after: f.after_value, unit: f.unit, evidence_text: f.source_quote }),
   });
   const bestPer = (facts: EvidenceFact[]) => {
     const m = new Map<VarKey, EvidenceFact>();
@@ -558,12 +567,27 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
       const sign: ChangeLine['sign'] = !comparable ? '·' : d ? (d.startsWith('-') ? '-' : '+') : '·';
       lines.push({ sign, text: comparable ? `${label} ${p.value} → ${f.value}${d ? ` (${d})` : ''}` : `${label} ${f.value} (earlier period stated ${p.value} — different unit, not compared)`, metric: k, period: to, source: f.source_name });
     } else if (!p) {
-      const sign: ChangeLine['sign'] = dir === 'down' ? '-' : dir === 'up' ? '+' : '·';
+      const bn0 = scaledNumber(f.before_value), an0 = scaledNumber(f.after_value);
+      const arith: ChangeLine['sign'] | null = bn0 != null && an0 != null && bn0 !== an0 ? (an0 > bn0 ? '+' : '-') : null;
+      const sign: ChangeLine['sign'] = arith ?? (dir === 'down' ? '-' : dir === 'up' ? '+' : '·');
       // A figure restated identically is a LEVEL, not a move. (zzz758)
+      // The same number in two phrasings is restated too. (zzz763)
+      const bn = scaledNumber(f.before_value), an = scaledNumber(f.after_value);
       const restated = !!f.before_value && !!f.after_value
-        && f.before_value.trim().toLowerCase() === f.after_value.trim().toLowerCase();
+        && (f.before_value.trim().toLowerCase() === f.after_value.trim().toLowerCase()
+          || (bn != null && an != null && bn === an));
+      // ── THE DELTA IS ARITHMETIC, NEVER THE MODEL'S.                 (zzz763)
+      //
+      // GPPL printed "a little less than 1,000,000 metric tonnes → 1.6
+      // million metric tonnes (−100%)": the model's own `delta` field, taken
+      // verbatim. Two stated figures of one unit give a delta by division;
+      // where they do not, the model's string is used only if it is a rate.
+      const computed = f.before_value && f.after_value && sameUnit(f.before_value, f.after_value, f.unit, f.unit)
+        ? deltaOf(f.before_value, f.after_value, f.unit) : null;
+      const modelRate = f.delta && /^[+-]?\d+(?:\.\d+)?\s*(%|pp|bps)$/i.test(f.delta.trim()) && bn == null ? f.delta.trim() : null;
+      const shownDelta = computed || modelRate;
       const text = f.before_value && f.after_value && !restated
-        ? `${label} ${f.before_value} → ${f.after_value}${f.delta ? ` (${f.delta})` : ''}`
+        ? `${label} ${f.before_value} → ${f.after_value}${shownDelta ? ` (${shownDelta})` : ''}`
         : `${label} ${f.value}`;
       lines.push({ sign, text, metric: k, period: to, source: f.source_name });
     }
