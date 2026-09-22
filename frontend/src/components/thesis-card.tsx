@@ -52,25 +52,34 @@ import { BASIS_LABEL } from '@/lib/thesis/comparison';
 //   3. SEVERITY GETS THE ONLY SATURATED COLOUR ON THE CARD. A broken thesis
 //      is the single thing that should pull the eye across a fifty-row page.
 //
-// Every value is fixed rather than themed: these carry meaning, and a theme
-// that repainted "deteriorating" would repaint the meaning with it.
+// The HUE is fixed rather than themed: these carry meaning, and a theme that
+// repainted "deteriorating" would repaint the meaning with it. The LIGHTNESS
+// is not fixed — it tracks the background, because a colour nobody can read
+// carries no meaning either. (zzz761)
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
   text: 'var(--mc-text-1)', dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)',
 
   // Verdict scale — one step of lightness apart, readable on dark and light.
-  up: '#34D399',        // emerald 400
-  flat: '#94A3B8',      // slate 400
-  down: '#FB7185',      // rose 400 — a warning, not an alarm
-  absent: '#64748B',    // slate 500, deliberately quiet
+  // ── THE HUE IS FIXED; THE LIGHTNESS IS NOT.                  (zzz761)
+  //
+  // These were literal 400-level hexes, and on the light theme emerald-400
+  // sits at roughly 1.8:1 against white — the whole board read washed out.
+  // The variables keep one hue per meaning and swap lightness with the
+  // ground (globals.css), so "deteriorating" is the same rose on both
+  // themes and legible on both. Fallbacks preserve the dark values.
+  up: 'var(--mc-verdict-up, #34D399)',
+  flat: 'var(--mc-verdict-flat, #94A3B8)',
+  down: 'var(--mc-verdict-down, #FB7185)',
+  absent: 'var(--mc-verdict-absent, #64748B)',
 
   // Reserved for severity and for the one call to action.
-  alarm: '#F43F5E',     // rose 500 — thesis broken only
-  warn: '#FBBF24',      // amber 400 — confirmation required
+  alarm: 'var(--mc-verdict-alarm, #F43F5E)',
+  warn: 'var(--mc-verdict-warn, #FBBF24)',
   cyan: 'var(--mc-cyan)',
-  amber: '#FBBF24',
-  green: '#34D399',
-  red: '#FB7185',
+  amber: 'var(--mc-verdict-warn, #FBBF24)',
+  green: 'var(--mc-verdict-up, #34D399)',
+  red: 'var(--mc-verdict-down, #FB7185)',
 };
 
 const VERDICT: Record<VarVerdict, { mark: string; color: string; word: string }> = {
@@ -346,13 +355,40 @@ export function ThesisCard(p: ThesisCardProps) {
                             padding: '1px 6px', borderRadius: 4,
                             border: un
                               ? `1px ${isCore ? 'dashed' : 'solid'} ${isCore ? C.absent : 'transparent'}`
-                              : `1px solid ${v.color}55`,
+                              : `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
                             color: un ? C.absent : v.color,
-                            background: un ? 'transparent' : `${v.color}1A`,
+                            background: un ? 'transparent' : `color-mix(in srgb, ${v.color} 12%, transparent)`,
                           }}>
                           <span style={{ opacity: un ? 0.85 : 1 }}>{un ? ab!.mark : v.mark}</span>
                           {' '}{c.label}
-                          {!un && (c.delta || c.after) ? ` ${c.delta || c.after}` : ''}
+                          {/* ── BEFORE → NOW, NOT JUST THE DELTA.        (zzz761)
+                              This row printed `delta || after`, so every
+                              variable that HAD both sides showed only the
+                              change: GOLDIAM's order book read "▲ Order book
+                              +60.7%" while WHAT CHANGED, three inches below,
+                              read "INR140 crores → INR225 crores (+60.7%)".
+                              The before value was extracted, stored and then
+                              discarded by the renderer — which is exactly the
+                              "before and now not showing" the owner reported.
+                              REDINGTON was the same bug wearing a different
+                              hat: the chip showed the delta (−14%) and the
+                              status sentence showed the level (32), so one
+                              card stated two different numbers for one
+                              variable. One field order, everywhere. */}
+                          {!un && (c.before || c.after || c.delta) ? (
+                            <>
+                              {' '}
+                              {c.before && c.after ? (
+                                <>
+                                  <span style={{ opacity: 0.75 }}>{c.before} → </span>
+                                  <b>{c.after}</b>
+                                  {c.delta ? <span style={{ opacity: 0.9 }}> · {c.delta}</span> : null}
+                                </>
+                              ) : (
+                                <b>{c.after || c.delta}</b>
+                              )}
+                            </>
+                          ) : ''}
                         </span>
                       );
                     })}
@@ -376,7 +412,7 @@ export function ThesisCard(p: ThesisCardProps) {
           mechanism nobody has examined. */}
       {a && a.financialWarning.length > 0 && (
         <div style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.55, padding: '6px 9px', borderRadius: 6,
-          border: `1px solid ${C.down}`, background: `${C.down}12` }}>
+          border: `1px solid ${C.down}`, background: `color-mix(in srgb, ${C.down} 10%, transparent)` }}>
           <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 0.4, color: C.down }}>FINANCIAL WARNING </span>
           {a.financialWarning.map((w, i) => (
             <span key={i} style={{ color: C.text }}>{i > 0 ? ' · ' : ''}{w.label} <b style={{ color: C.down }}>{w.value}</b></span>

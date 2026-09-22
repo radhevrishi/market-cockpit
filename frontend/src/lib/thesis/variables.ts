@@ -242,7 +242,16 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
         conflict: conflicts.length ? conflicts : null,
         source: 'filing',
       });
-    } else if (f) {
+    } else if (f && judgeEventQuality(f) !== 'unit_mismatch') {
+      // ── A TARGET IS STILL SUBJECT TO THE UNIT RULES.             (zzz761)
+      //
+      // zzz755 dropped mis-filed ACTUALS and left this branch unguarded, so
+      // the same junk walked back in through the forward door: JINDRILL
+      // printed "◐ Capacity utilisation 4 to 6 months (guidance)" — a
+      // refurbishment period — and VIJAYA "◐ Capacity utilisation breakeven
+      // within 1 year (target)". Neither is a fill rate. A management target
+      // for a variable has to be a plausible value OF that variable before it
+      // is allowed to stand in for one.
       // A forward statement with no actual behind it is a claim, shown as
       // such — and the BOARD has to say so, not just the tooltip. AARTIPHARM
       // printed "◐ Capacity utilisation 80% plus" from a TARGET, which reads
@@ -359,6 +368,33 @@ export function extractVariables(
   const fromEvents = varsFromEvents(summary?.events);
   const covered = new Set<VarKey>(fromEvents.map((v) => v.key));
   out.push(...fromEvents);
+
+  // ── THE PRIOR THE SUMMARY ALREADY HELD.                          (zzz761)
+  //
+  // The events stage wins every key it covers, and that is right — the event
+  // carries the verbatim sentence. But the summary's `utilisation` block has
+  // its own `prior` field, and when the event captured only a level the prior
+  // was being discarded along with the rest of the summary row. So a filing
+  // that plainly said "utilisation rose from 72% to 80%" could still render as
+  // a bare 80%. This recovers ONLY the before — the current value, verdict and
+  // evidence stay the event's — and only when the event has no before of its
+  // own. Nothing is invented: the figure comes from the same read document.
+  const utBlock = summary?.utilisation || {};
+  if (said(utBlock.prior)) {
+    const row = out.find((v) => v.key === 'utilisation');
+    if (row && !row.before && row.after && row.kind !== 'claim') {
+      const b = String(utBlock.prior).trim();
+      const d = deltaOf(b, row.after);
+      const bn = numIn(b), an = numIn(row.after);
+      const moved = bn != null && an != null ? an - bn : null;
+      row.before = b;
+      row.delta = row.delta || d;
+      if (moved != null) {
+        row.verdict = moved >= 2 ? 'improving' : moved > -2 ? 'flat' : 'deteriorating';
+        row.evidence = `${b} → ${row.after}${d ? ` · ${d}` : ''} (both stated in the documents read). ${row.evidence}`;
+      }
+    }
+  }
   const push = (v: StructuralVar) => {
     if (covered.has(v.key)) {
       // ── A LEVEL FROM THE FILING MUST NOT BEAT A BRIDGE FROM THE

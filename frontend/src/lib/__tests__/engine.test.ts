@@ -1771,3 +1771,50 @@ describe('zzz760 — an unreadable document is not a dead end', () => {
     assert.doesNotMatch(v.evidence, /nameplate/);
   });
 });
+
+describe('zzz761 — before → now on the board, and targets obey the unit rules', () => {
+  const ev = (variable: string, value_type: string, after: string, text: string): any =>
+    ({ variable, value_type, before: null, after, unit: null, period: null, direction: 'up',
+      evidence_text: text, source: 'Concall transcript Jul 2026', confidence: 'HIGH' });
+
+  test('JINDRILL / VIJAYA — a target that is not a fill rate never stands in for one', () => {
+    // A refurbishment period filed as a utilisation GUIDANCE.
+    assert.equal(varsFromEvents([ev('utilisation', 'GUIDANCE', '4 to 6 months',
+      'Refurbishment periods of 4 to 6 months could delay redeployment of the rigs.')])
+      .filter((v) => v.key === 'utilisation').length, 0);
+    // A breakeven horizon filed as a utilisation TARGET.
+    assert.equal(varsFromEvents([ev('utilisation', 'TARGET', 'breakeven within 1 year',
+      'The new centres are expected to reach breakeven within 1 year of opening, management said.')])
+      .filter((v) => v.key === 'utilisation').length, 0);
+    // A real utilisation target still stands.
+    const ok = varsFromEvents([ev('utilisation', 'TARGET', '80%',
+      'We are targeting capacity utilisation of 80% across the plants by the end of the year.')]);
+    assert.equal(ok[0].after, '80% (target)');
+    assert.equal(ok[0].kind, 'claim');
+  });
+
+  test('the summary prior is recovered when the event captured only a level', () => {
+    const summary = {
+      events: [ev('utilisation', 'ACTUAL', '80%',
+        'Capacity utilisation across the plants stood at 80% for the quarter under review.')],
+      utilisation: { prior: '72%', current: '80%' },
+    };
+    const v = extractVars(null, summary).find((x) => x.key === 'utilisation')!;
+    assert.equal(v.before, '72%', 'the prior the summary already held is not discarded');
+    assert.equal(v.after, '80%');
+    assert.equal(v.delta, '+8pp');
+    assert.equal(v.verdict, 'improving');
+    assert.match(v.evidence, /72% → 80%/);
+  });
+
+  test('no prior in the summary leaves the level exactly as it was', () => {
+    const summary = {
+      events: [ev('utilisation', 'ACTUAL', '80%',
+        'Capacity utilisation across the plants stood at 80% for the quarter under review.')],
+      utilisation: { current: '80%' },
+    };
+    const v = extractVars(null, summary).find((x) => x.key === 'utilisation')!;
+    assert.equal(v.before, null, 'nothing is invented to fill the gap');
+    assert.equal(v.verdict, 'stated');
+  });
+});

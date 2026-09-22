@@ -584,6 +584,20 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + 'variables carried evidence. None of it moves the thesis either way.';
   }
 
+  // ── A CARD MUST NOT CONTRADICT ITSELF IN TWO LINES.              (zzz761)
+  //
+  // Eighteen holdings read "EVIDENCE NOT YET REVIEWED" above a sentence that
+  // said "Everything that COULD be read has been." Both came from the same
+  // status: EVIDENCE_INCOMPLETE carries one action label, and that label is
+  // right for a holding nobody has opened and wrong for one where three
+  // documents were read and the gap is a missing graded row. The status is
+  // correct — reading more cannot fill it — so the ACTION changes instead.
+  const blockedOnGrader = status === 'EVIDENCE_INCOMPLETE'
+    && core.some((c) => c.absence === 'no_grader_row');
+  const action: ThesisAssessment['action'] = blockedOnGrader
+    ? 'CONFIRMATION REQUIRED'
+    : ACTION[status];
+
   const triggered = checked
     .filter((c) => c.invalidation)
     .map((c) => ({ condition: c.invalidation as string, weight: c.weight, evidence: c.evidence }))
@@ -724,6 +738,6 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         .filter((c) => c.verdict === 'unknown' && c.weight >= 3 && !GRADER_AVAILABLE.has(c.key))
         .map((c) => c.label),
     },
-    action: ACTION[status],
+    action,
   };
 }

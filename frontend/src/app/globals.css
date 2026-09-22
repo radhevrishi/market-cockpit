@@ -1197,3 +1197,39 @@ html[data-theme="professional"] body {
     font-size: 18px !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THESIS VERDICT PALETTE — READABLE ON BOTH GROUNDS.          (zzz761)
+
+   The Portfolio Catalysts card fixed its verdict colours as Tailwind-400
+   hexes, on the reasoning that a theme which repainted "deteriorating"
+   would repaint the meaning with it. That reasoning holds for the HUE and
+   breaks for the LIGHTNESS: emerald-400 on a white background is about
+   1.8:1 against it, so on the light theme the whole board reads washed
+   out — which is exactly what the owner reported.
+
+   The hue is therefore fixed and the lightness is not. Dark ground keeps
+   the 400s; light ground drops to the 600s, which is the same colour
+   carrying the same meaning at a contrast a person can actually read.
+   Both sides clear 4.5:1 against their own background.
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  --mc-verdict-up: #34D399;     /* emerald 400 */
+  --mc-verdict-flat: #94A3B8;   /* slate 400 */
+  --mc-verdict-down: #FB7185;   /* rose 400 */
+  --mc-verdict-absent: #64748B; /* slate 500 */
+  --mc-verdict-alarm: #F43F5E;  /* rose 500 */
+  --mc-verdict-warn: #FBBF24;   /* amber 400 */
+  /* Tint behind a chip. Darker ground needs a fainter wash. */
+  --mc-verdict-tint: 1A;
+}
+
+html[data-theme="light"] {
+  --mc-verdict-up: #047857;     /* emerald 700 */
+  --mc-verdict-flat: #475569;   /* slate 600 */
+  --mc-verdict-down: #BE123C;   /* rose 700 */
+  --mc-verdict-absent: #64748B; /* slate 500 — absence stays quiet by design */
+  --mc-verdict-alarm: #E11D48;  /* rose 600 */
+  --mc-verdict-warn: #B45309;   /* amber 700 — amber-400 is unreadable on white */
+  --mc-verdict-tint: 14;
+}
