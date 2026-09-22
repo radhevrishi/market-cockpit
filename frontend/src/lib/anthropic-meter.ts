@@ -13,7 +13,7 @@
 //                                     set, else anthropic)
 //   OPENAI_MODEL                     (default gpt-5-mini; every caller's
 //                                     Claude model id maps to this one)
-//   OPENAI_REASONING_EFFORT          (default low — these are extraction
+//   OPENAI_REASONING_EFFORT          (default minimal — these are extraction
 //                                     calls, not essays)
 //
 // It does three things the raw fetch did not:
@@ -250,10 +250,17 @@ export function toOpenAIRequest(body: MessagesBody, model: string, reasoningEffo
   const sys = systemText(body.system);
   if (sys) messages.push({ role: 'system', content: sys });
   for (const m of body.messages) messages.push({ role: m.role, content: contentText(m.content) });
-  const out: Record<string, any> = { model, messages, max_completion_tokens: body.max_tokens };
+  const reasoning = /^gpt-5/.test(model) || /^o\d/.test(model);
+  // A caller's max_tokens is a budget for the VISIBLE answer. On reasoning
+  // models the same budget also pays for hidden reasoning tokens, and the
+  // first live call proved it: 2,600 completion tokens = the cap, and the
+  // function arguments arrived cut off mid-JSON. So reasoning models get
+  // headroom, and extraction runs at minimal effort — the prompts already
+  // say exactly what to file.
+  const out: Record<string, any> = { model, messages, max_completion_tokens: reasoning ? body.max_tokens * 2 + 4000 : body.max_tokens };
   // gpt-5 models take reasoning_effort and refuse a non-default temperature;
   // older models take temperature and ignore reasoning.
-  if (/^gpt-5/.test(model) || /^o\d/.test(model)) out.reasoning_effort = reasoningEffort;
+  if (reasoning) out.reasoning_effort = reasoningEffort;
   else if (typeof body.temperature === 'number') out.temperature = body.temperature;
   if (body.tools?.length) {
     out.tools = body.tools.map((t: any) => ({ type: 'function', function: { name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } } }));
@@ -349,7 +356,7 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: { signa
     return new Response(JSON.stringify({ error: { type: 'spend_cap', message: gate.message } }), { status: 402, headers: { 'content-type': 'application/json' } });
   }
   const model = openaiModel();
-  const req = toOpenAIRequest(body, model, process.env.OPENAI_REASONING_EFFORT || 'low');
+  const req = toOpenAIRequest(body, model, process.env.OPENAI_REASONING_EFFORT || 'minimal');
   let resp: Response;
   try {
     resp = await fetch('https://api.openai.com/v1/chat/completions', {

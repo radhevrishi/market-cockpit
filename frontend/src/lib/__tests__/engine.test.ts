@@ -1163,15 +1163,15 @@ describe('openai translation (zzz750)', () => {
       tools: [{ name: 'file_it', description: 'file', input_schema: { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] } }],
       tool_choice: { type: 'tool', name: 'file_it' },
       messages: [{ role: 'user', content: 'KMEW — Order win\n\nbody text' }],
-    }, 'gpt-5-mini', 'low');
-    assert.equal(r.model, 'gpt-5-mini'); assert.equal(r.max_completion_tokens, 1024); assert.equal(r.reasoning_effort, 'low');
+    }, 'gpt-5-mini', 'minimal');
+    assert.equal(r.model, 'gpt-5-mini'); assert.equal(r.max_completion_tokens, 1024 * 2 + 4000); assert.equal(r.reasoning_effort, 'minimal');
     assert.equal(r.temperature, undefined);                       // gpt-5 refuses a non-default temperature
     assert.deepEqual(r.messages[0], { role: 'system', content: 'You are careful.' });
     assert.equal(r.messages[1].content, 'KMEW — Order win\n\nbody text');
     assert.equal(r.tools[0].function.name, 'file_it'); assert.equal(r.tools[0].function.parameters.required[0], 'a');
     assert.deepEqual(r.tool_choice, { type: 'function', function: { name: 'file_it' } });
     const r2 = toOpenAIRequest({ model: 'x', max_tokens: 10, temperature: 0, messages: [{ role: 'user', content: 'hi' }] }, 'gpt-4.1-mini');
-    assert.equal(r2.temperature, 0); assert.equal(r2.reasoning_effort, undefined);
+    assert.equal(r2.temperature, 0); assert.equal(r2.reasoning_effort, undefined); assert.equal(r2.max_completion_tokens, 10);
   });
   test('a tool call comes back as a tool_use block; usage and stop_reason are Anthropic-shaped', () => {
     const a = fromOpenAIResponse({ id: 'c1', model: 'gpt-5-mini', choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: { name: 'file_it', arguments: '{"a":"₹279 Cr"}' } }] } }], usage: { prompt_tokens: 1200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 200 } } });
