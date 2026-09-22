@@ -144,6 +144,9 @@ function assess(row: BookRow): BookRow {
       } : null,
       // An evidence document has been read only when a summary came back.
       evidenceReviewed: !!row.summary,
+      // Without a graded or screener row the grader-computed variables can
+      // never be filled, whatever is read. (zzz757)
+      hasGraderRow: !!row.graded,
     }),
     capex: buildCapexChain(row.summary, vars),
     promiseNote: check ? check.detail : null,

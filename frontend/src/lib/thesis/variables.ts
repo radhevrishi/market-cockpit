@@ -226,7 +226,11 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   const push = (v: StructuralVar) => {
     if (covered.has(v.key)) return;
     // A value with no comparison basis is DISCLOSED. It is not absent.
-    if (v.verdict === 'unknown' && (v.after || v.before || v.delta)) v = { ...v, verdict: 'stated' };
+    const hasValue = !!(String(v.after || '').trim() || String(v.before || '').trim() || String(v.delta || '').trim());
+    if (v.verdict === 'unknown' && hasValue) v = { ...v, verdict: 'stated' };
+    // A STATED chip with nothing in it is worse than a hollow circle: it
+    // claims a disclosure and shows none. TI printed exactly that. (zzz757)
+    if (v.verdict === 'stated' && !hasValue) v = { ...v, verdict: 'unknown' };
     out.push(v);
   };
 

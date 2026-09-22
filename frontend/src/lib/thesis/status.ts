@@ -63,7 +63,7 @@
 import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
-import { VAR_LABEL, GRADER_AVAILABLE, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason } from './taxonomy';
+import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason } from './taxonomy';
 
 /** A variable the grader can fill without a document is OUTPUT. (zzz738) */
 const isOutput = (k: VarKey): boolean => VAR_DIMENSION[k] === 'financial' || GRADER_AVAILABLE.has(k);
@@ -252,16 +252,28 @@ export interface AssessInput {
    *  statements and the page must never print the first when it means the
    *  second. (zzz723) */
   evidenceReviewed?: boolean;
+  /** True when a graded or screener row exists for this company. Without one,
+   *  revenue growth / earnings / margin / cash conversion / ROCE can never be
+   *  filled by reading a filing, and the card must say so instead of asking
+   *  for another read. (zzz757) */
+  hasGraderRow?: boolean;
 }
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
   const thesis = thesisFor(input.pattern);
   const found = byKey(input.variables);
 
+  const graderMissing = input.hasGraderRow === false;
   const checked: CheckedVariable[] = thesis.variables.map((tv: ThesisVariable) => {
     const v = found[tv.key];
+    // ── SILENCE ON A RISK IS A CHECK THAT PASSED.                  (zzz757)
+    //
+    // Three documents read and no one-off found is the forensic test
+    // passing, not a gap in the evidence. Recorded as flat: checked, and
+    // nothing found. Never improving — absence is not a positive finding.
+    const silencePasses = !v && !!input.evidenceReviewed && SILENCE_IS_A_PASS.has(tv.key);
     // A variable the company did not disclose is UNKNOWN, never deteriorating.
-    const verdict: VarVerdict = v ? v.verdict : 'unknown';
+    const verdict: VarVerdict = v ? v.verdict : silencePasses ? 'flat' : 'unknown';
     const fired = !!tv.invalidatedWhen && verdict === 'deteriorating';
     return {
       // An undisclosed variable has no extracted row, so `v` is null and the
@@ -271,16 +283,21 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       key: tv.key, label: v?.label || VAR_LABEL[tv.key] || tv.key, weight: tv.weight, why: tv.why,
       verdict,
       before: v?.before ?? null, after: v?.after ?? null, delta: v?.delta ?? null,
-      evidence: v?.evidence || (input.evidenceReviewed
-        ? 'A document was read and is silent on this. Absence is evidence — a company that stops disclosing a figure has told you something — but it is never counted against the thesis.'
-        : 'No evidence document has been read for this holding yet.'),
+      evidence: v?.evidence || (silencePasses
+        ? `The documents read disclose no ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()}. For this variable that is the check passing: the condition "${tv.invalidatedWhen || 'it would have been disclosed'}" did not fire on anything that was read.`
+        : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed
+          ? 'This figure is computed from the filed statements by the grading engine, and this company has no graded or screener row on file. Reading more filings cannot produce it.'
+          : input.evidenceReviewed
+            ? 'A document was read and is silent on this. Absence is evidence — a company that stops disclosing a figure has told you something — but it is never counted against the thesis.'
+            : 'No evidence document has been read for this holding yet.'),
       invalidation: fired ? tv.invalidatedWhen : null,
       // The four absences are different facts and only one of them is fixable
       // by pressing a button. A grader-available variable that is still blank
       // after the row was loaded means the source simply did not carry it.
-      absence: v ? null
-        : input.evidenceReviewed ? 'not_disclosed'
-          : GRADER_AVAILABLE.has(tv.key) ? 'not_disclosed' : 'not_read',
+      absence: v || silencePasses ? null
+        : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed ? 'no_grader_row'
+          : input.evidenceReviewed ? 'not_disclosed'
+            : GRADER_AVAILABLE.has(tv.key) ? 'not_disclosed' : 'not_read',
     };
   });
 
@@ -395,6 +412,30 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         ? `The condition "${coreTriggered[0].invalidation}" has fired once; a break needs it confirmed or a second core condition alongside it. `
         : 'No stated thesis-break condition has been met. ')
       + 'A weak quarter is not a broken thesis — this is a prompt to look, not to act.';
+  } else if (input.evidenceReviewed && coreDisclosed.length < core.length
+      && core.every((c) => c.verdict !== 'unknown' || c.absence === 'not_disclosed')) {
+    // ── READ, AND THE COMPANY SAID NOTHING.                        (zzz757)
+    //
+    // Every core variable was either read or searched for and not found.
+    // "EVIDENCE NOT YET REVIEWED" was the wrong sentence on fifty of the
+    // owner's cards: three documents had been read on each, and the gap was
+    // the company's silence, not his. Silence cannot confirm a mechanism —
+    // so this is CONFIRMATION REQUIRED, not a green verdict and not a
+    // request to press the read button again.
+    const silent = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
+    status = 'CONFIRMATION_REQUIRED';
+    because = `The documents were read and disclose nothing about ${silent.join(' or ')}. `
+      + 'Silence is evidence about disclosure, never confirmation of a mechanism — '
+      + 'so the numbers stand and the reason behind them remains unestablished.';
+  } else if (coreDisclosed.length < core.length
+      && core.some((c) => c.absence === 'no_grader_row')) {
+    // The one absence no amount of reading can fix.
+    const gm = core.filter((c) => c.absence === 'no_grader_row').map((c) => c.label.toLowerCase());
+    status = 'EVIDENCE_INCOMPLETE';
+    because = `${gm.join(' and ')} ${gm.length === 1 ? 'is' : 'are'} computed from the filed statements by the grading engine, `
+      + 'and this company has no graded or screener row on file. Reading more filings cannot fill '
+      + `${gm.length === 1 ? 'it' : 'them'} — the name has to enter the graded universe first. `
+      + 'Everything that COULD be read has been.';
   } else if (!core.length || disclosed.length < 2) {
     // ── TWO WAYS TO REACH A VERDICT YOU HAVE NOT EARNED.          (zzz719)
     //
@@ -411,11 +452,19 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     //
     // Both now land at EVIDENCE INCOMPLETE, which is what they are.
     status = 'EVIDENCE_INCOMPLETE';
+    // JAMNAAUTO printed "Nothing has been read for this holding — no graded
+    // result, no screener row, no filing" on a card whose own header said
+    // "3 documents read · 8 facts". The sentence has to branch on whether a
+    // document was actually read. (zzz757)
     because = disclosed.length
       ? `Only ${disclosed.length} of ${checked.length} variables could be read, and none of them is decisive. `
         + 'Too little has been looked at to call this either way.'
-      : 'Nothing has been read for this holding — no graded result, no screener row, no filing. '
-        + 'This is an unchecked holding, not a quiet one.';
+      : input.evidenceReviewed
+        ? 'Documents were read, but nothing in them maps to a variable this thesis rests on, '
+          + 'and there is no graded or screener row to supply the financial ones. '
+          + 'The filings are on file; the thesis variables are not in them.'
+        : 'Nothing has been read for this holding — no graded result, no screener row, no filing. '
+          + 'This is an unchecked holding, not a quiet one.';
   } else if (coreDisclosed.length < core.length) {
     // Nothing is deteriorating, and the thesis has not been fully checked. A
     // positive verdict is not available here, and neither is a comfortable
@@ -424,9 +473,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     status = 'EVIDENCE_INCOMPLETE';
     because = `${coreDisclosed.length}/${core.length} core variables checked. `
       + `Missing: ${missing.join(', ')}. `
-      + (disclosed.length
-        ? 'No deterioration is visible in the evidence reviewed so far; remaining thesis-critical variables have not yet been reviewed.'
-        : 'Nothing has been read for this holding at all.');
+      + (!disclosed.length && !input.evidenceReviewed
+        ? 'Nothing has been read for this holding at all.'
+        : input.evidenceReviewed
+          ? 'No deterioration is visible in what was read. These remain open because no source so far has carried them.'
+          : 'No deterioration is visible in the evidence reviewed so far; remaining thesis-critical variables have not yet been reviewed.');
   } else if (coreJudged.length < core.length) {
     // Every core variable was disclosed, but at least one is a LEVEL with
     // no comparison basis. Better than unread — the figure is on the card

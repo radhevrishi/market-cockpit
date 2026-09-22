@@ -822,6 +822,85 @@ describe('structural evidence extraction', () => {
     assert.equal(junk.verdict, 'improving');
   });
 
+  // ── zzz757: "EVIDENCE NOT YET REVIEWED" on 50 cards that HAD been read ──
+  const F_VARS = (extra: any[] = []) => ([
+    { key: 'earnings_growth', label: 'Earnings growth', before: null, after: '+460.7%', delta: '+460.7%', verdict: 'improving', evidence: '', source: 'grader' },
+    { key: 'cash_conversion', label: 'Cash conversion', before: null, after: '3.66×', delta: null, verdict: 'improving', evidence: '', source: 'grader' },
+    { key: 'margin_driver', label: 'Margin driver', before: null, after: 'AC-led mix', delta: null, verdict: 'improving', evidence: '', source: 'filing' },
+    { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+39.1%', delta: '+39.1%', verdict: 'improving', evidence: '', source: 'grader' },
+    ...extra,
+  ] as any);
+
+  test('no one-off found in three documents is the forensic test PASSING, not a gap', () => {
+    // EMIL / MARKSANS / NEULANDLAB / GNFC shape: F pattern, one_offs core-4,
+    // nothing disclosed. Sixteen cards read "Missing: one-offs".
+    const a = assessThesis({ pattern: 'F', evidenceReviewed: true, hasGraderRow: true, variables: F_VARS() });
+    const oneOffs = a.checked.find((c) => c.key === 'one_offs')!;
+    assert.equal(oneOffs.verdict, 'flat');
+    assert.equal(oneOffs.absence, null);
+    assert.ok(!a.coverage.missingCore.includes('One-offs'));
+    assert.match(oneOffs.evidence, /check passing/);
+    assert.notEqual(a.status, 'EVIDENCE_INCOMPLETE');
+  });
+
+  test('silence only counts as a pass once something was actually read', () => {
+    const a = assessThesis({ pattern: 'F', evidenceReviewed: false, hasGraderRow: true, variables: F_VARS() });
+    const oneOffs = a.checked.find((c) => c.key === 'one_offs')!;
+    assert.equal(oneOffs.verdict, 'unknown');
+    assert.equal(a.status, 'EVIDENCE_INCOMPLETE');
+  });
+
+  test('a disclosed one-off still contradicts — the pass is absence, not amnesty', () => {
+    const a = assessThesis({ pattern: 'F', evidenceReviewed: true, hasGraderRow: true, variables: F_VARS([
+      { key: 'one_offs', label: 'One-offs', before: null, after: '1 item', delta: null, verdict: 'deteriorating', evidence: '', source: 'filing' },
+    ]) });
+    assert.equal(a.checked.find((c) => c.key === 'one_offs')!.verdict, 'deteriorating');
+    assert.equal(a.status, 'WEAKENING');
+  });
+
+  test('a grader-only variable with no graded row says so — it is not an unread holding', () => {
+    // ALKYLAMINE / BETA / CLEANMAX shape: documents read, no screener row, so
+    // revenue growth and cash conversion can never arrive from a filing.
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: false, variables: [
+      { key: 'utilisation', label: 'Capacity utilisation', before: null, after: '60-85%', delta: null, verdict: 'stated', evidence: '', source: 'filing' },
+    ] as any });
+    const rev = a.checked.find((c) => c.key === 'revenue_growth')!;
+    assert.equal(rev.absence, 'no_grader_row');
+    assert.equal(a.status, 'EVIDENCE_INCOMPLETE');
+    assert.match(a.because, /no graded or screener row/);
+    assert.match(a.because, /Reading more filings cannot fill/);
+    assert.doesNotMatch(a.because, /not yet been reviewed/);
+  });
+
+  test('read, and the company said nothing — that is CONFIRMATION REQUIRED, not "not yet reviewed"', () => {
+    // GESHIP / AVALON / REDINGTON shape: A pattern, utilisation never
+    // disclosed, everything else good.
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      { key: 'operating_leverage', label: 'Operating leverage', before: null, after: '2.4×', delta: '2.4×', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'margin', label: 'Operating margin', before: null, after: '+13.0pp', delta: '+13.0pp', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+66.9%', delta: '+66.9%', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'margin_driver', label: 'Margin driver', before: null, after: 'spot freight', delta: null, verdict: 'improving', evidence: '', source: 'filing' },
+    ] as any });
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.match(a.because, /disclose nothing about capacity utilisation/);
+    assert.equal(a.checked.find((c) => c.key === 'utilisation')!.absence, 'not_disclosed');
+  });
+
+  test('"nothing has been read" is never printed over a card that read documents', () => {
+    // JAMNAAUTO: header said "3 documents read · 8 facts", body said nothing
+    // had been read.
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: false, variables: [] });
+    assert.doesNotMatch(a.because, /Nothing has been read/);
+    const unread = assessThesis({ pattern: null, evidenceReviewed: false, hasGraderRow: false, variables: [] });
+    assert.match(unread.because, /Nothing has been read/);
+  });
+
+  test('a stated chip always carries a value — never an empty ◐', () => {
+    const vars = extractVariables(null, { utilisation: { current: '', prior: 'not stated', expected: '80%' } });
+    const u = vars.find((x) => x.key === 'utilisation');
+    if (u) assert.notEqual(u.verdict, 'stated');
+  });
+
   test('the tally adds up — stated and flat are counted, not dropped', () => {
     const a = assessThesis({ pattern: null, evidenceReviewed: true, variables: [
       { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+8%', delta: '+8%', verdict: 'flat', evidence: '', source: 'grader' },

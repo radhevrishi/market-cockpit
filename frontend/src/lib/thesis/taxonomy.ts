@@ -258,7 +258,17 @@ export type AbsenceReason =
   /** The variable cannot apply to this business (utilisation of a lender). */
   | 'not_applicable'
   /** Mentioned, but not in a form that can be read as a figure or direction. */
-  | 'unclear';
+  | 'unclear'
+  /** ── THE ABSENCE NO FILING CAN FILL.                            (zzz757)
+   *
+   *  Revenue growth, earnings growth, margin, cash conversion and ROCE are
+   *  computed from filed STATEMENTS by the grading engine, not read out of
+   *  a concall. A company with no graded and no screener row therefore has
+   *  them blank however many documents are read — and the page was telling
+   *  the owner "0/2 core variables checked · EVIDENCE NOT YET REVIEWED" on
+   *  holdings where three documents HAD been read and thirteen facts
+   *  extracted. Pressing the read button again can never change it. */
+  | 'no_grader_row';
 
 export const ABSENCE_MARK: Record<AbsenceReason, { mark: string; label: string; hint: string }> = {
   not_read: { mark: '○', label: 'not read',
@@ -267,9 +277,33 @@ export const ABSENCE_MARK: Record<AbsenceReason, { mark: string; label: string; 
     hint: 'A document was read and says nothing about this. Absence is evidence: a company that stops disclosing utilisation has told you something.' },
   not_applicable: { mark: 'n/a', label: 'not applicable',
     hint: 'This variable cannot apply to this kind of business, so it is never counted against the thesis.' },
+  no_grader_row: { mark: '⊘', label: 'no figures on file',
+    hint: 'This figure is computed from the filed statements by the grading engine, and this company has no graded or screener row. Reading more filings cannot fill it — the name needs to enter the graded universe first.' },
   unclear: { mark: '?', label: 'unclear',
     hint: 'Mentioned in the document but not in a form that can be read as a figure or a direction.' },
 };
+
+/**
+ * ── VARIABLES WHERE SILENCE IS THE GOOD ANSWER.                   (zzz757)
+ *
+ * The F · PROFIT JUMP ledger makes one-offs a CORE variable, and its
+ * invalidation condition is "The jump is traced to one-off or below-the-line
+ * items." Sixteen holdings sat at EVIDENCE INCOMPLETE reading "Missing:
+ * one-offs" with three documents read apiece — and what that actually means
+ * is that three documents were searched and NO one-off was found. That is
+ * the forensic test PASSING, and the page was filing it as a gap.
+ *
+ * These variables describe things that go WRONG. A read that found none of
+ * them is a check that passed, and it is recorded as flat — never as
+ * improving, because absence is not a positive finding either.
+ *
+ * The rule holds only after a document was genuinely read. Where nothing was
+ * read, silence means nothing at all.
+ */
+export const SILENCE_IS_A_PASS: ReadonlySet<VarKey> = new Set<VarKey>([
+  'one_offs', 'customer_loss', 'execution_delay', 'shutdown',
+  'capacity_bottleneck', 'supply_bottleneck',
+]);
 
 /** A variable's evidence can only ever be one of these three things, and the
  *  spec is explicit that they must never merge. */
