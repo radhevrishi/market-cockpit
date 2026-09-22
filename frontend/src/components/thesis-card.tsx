@@ -102,7 +102,7 @@ export interface ThesisCardProps {
   discoveryAttempts?: Array<{ source: string; outcome: string; detail: string; found: number }>;
   discoveryState?: string | null;
   /** Per-document result of the read attempt: read / download_failed / scanned / too_short. */
-  documentOutcomes?: Array<{ label: string; kind: string; outcome: string; chars: number; pages: number; detail?: string }>;
+  documentOutcomes?: Array<{ label: string; kind: string; outcome: string; chars: number; pages: number; detail?: string; url?: string }>;
   /** The AI summary has not been read for this holding yet. */
   needsRead?: boolean;
   reading?: boolean;
@@ -465,6 +465,15 @@ export function ThesisCard(p: ThesisCardProps) {
                     {c.comparison && !c.comparison.previous && c.comparison.current && (
                       <span style={{ display: 'block', fontSize: 9, color: C.faint }}>previous: NOT DISCLOSED</span>
                     )}
+                    {/* ── TWO DOCUMENTS, TWO NUMBERS. (zzz759) The written
+                        source supplies the value; the disagreement is shown
+                        rather than resolved out of sight. */}
+                    {c.conflict && c.conflict.length > 0 && (
+                      <span style={{ display: 'block', fontSize: 9, fontWeight: 800, color: C.warn }}
+                        title={c.conflict.map((x) => `${x.value} — ${x.source}`).join('\n')}>
+                        ⚠ sources disagree: {c.conflict.map((x) => x.value).join(' / ')}
+                      </span>
+                    )}
                   </span>
                   <span style={{ fontSize: 10.5, color: C.dim, flex: 1 }}>
                     {/* CAUSE AND WHETHER IT REPEATS — the two questions a
@@ -728,12 +737,27 @@ export function ThesisCard(p: ThesisCardProps) {
                             : d.outcome === 'too_short' ? `too short to be a filing (${d.chars} chars)`
                               : d.outcome === 'budget_exhausted' ? 'not read — reading budget spent on earlier documents'
                                 : d.outcome;
+                      // ── AN UNREADABLE DOCUMENT IS NOT A DEAD END.  (zzz760)
+                      //
+                      // A scanned filing has no text layer and this reader does
+                      // not OCR, so the engine can never extract from it. That is
+                      // an honest limit — but naming the document and then
+                      // withholding it leaves the owner with nothing to do. The
+                      // url is already on the record; the label becomes a link,
+                      // so "this reader cannot read it" turns into "here it is,
+                      // read it yourself" in one click.
+                      const name = d.url
+                        ? <a href={d.url} target="_blank" rel="noreferrer" style={{ color: ok ? C.text : C.cyan, textDecoration: 'none' }}>↗ {d.label}</a>
+                        : <span style={{ color: C.text }}>{d.label}</span>;
                       return (
                         <div key={i}>
                           <span style={{ color: ok ? C.up : d.outcome === 'download_failed' || d.outcome === 'scanned' ? C.alarm : C.faint }}>
                             {ok ? '✓' : '✕'}
                           </span>{' '}
-                          <span style={{ color: C.text }}>{d.label}</span> <span style={{ color: C.faint }}>({d.kind})</span> — {why}
+                          {name} <span style={{ color: C.faint }}>({d.kind})</span> — {why}
+                          {d.outcome === 'scanned' && d.url && (
+                            <span style={{ color: C.faint }}> · nothing here can be extracted from it; open it to read it yourself</span>
+                          )}
                         </div>
                       );
                     })}

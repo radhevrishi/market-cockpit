@@ -378,7 +378,9 @@ const CAPACITY_VARS = new Set(['capacity', 'capacity_addition', 'new_plant']);
 const CURRENCY_RE = /₹|\bINR|\bRs\.?|\bUSD|\$|\bEUR|€|crores?\b|\bcr\b|lakhs?\b|`\s*\d/i;
 // Kept for reference of what a capacity DOES look like; the rule is simpler
 // than a whitelist — money is never capacity.
-export const CAPACITY_UNIT_RE = /\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|tonnes?|\bMT\b|\bKL\b|\bKLD\b|\bKLPD\b|litres?|liters?|kilolit|units?\b|pieces|\bnos\b|plants?\b|lines?\b|beds?\b|racks?|GPUs?|servers?|cases\b|vehicles|\bx\b|\d\s*x\b|times|fold|monitors|pallets|sq\.?\s*ft|square|hectare|acre|kg\b|kilogram|barrels?|bpd|MMSCMD|MTPD|TPD|shifts?|machines?|looms?|spindles?|furnace|kilns?|cells?|modules?|wafers?|chips?/i;
+/** A scale word with nothing being scaled. See the capacity rule below. */
+const MAGNITUDE_ONLY_RE = /\b(mn|bn|millions?|billions?|trillions?|thousands?|k)\b/i;
+export const CAPACITY_UNIT_RE =/\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|tonnes?|\bMT\b|\bKL\b|\bKLD\b|\bKLPD\b|litres?|liters?|kilolit|units?\b|pieces|\bnos\b|plants?\b|lines?\b|beds?\b|racks?|GPUs?|servers?|cases\b|vehicles|\bx\b|\d\s*x\b|times|fold|monitors|pallets|sq\.?\s*ft|square|hectare|acre|kg\b|kilogram|barrels?|bpd|MMSCMD|MTPD|TPD|shifts?|machines?|looms?|spindles?|furnace|kilns?|cells?|modules?|wafers?|chips?/i;
 
 /** Pure: whether the value fits the variable and the evidence is a sentence. */
 export function judgeEventQuality(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): 'sentence' | 'chart' | 'unit_mismatch' {
@@ -422,6 +424,17 @@ export function judgeEventQuality(e: { variable: string; before: string | null; 
     if (CAPACITY_VARS.has(v)) {
       if (CURRENCY_RE.test(valueText)) return false;
       if (/%/.test(valueText) && !CAPACITY_UNIT_RE.test(valueText)) return false;
+      // ── A MAGNITUDE IS NOT A UNIT.                               (zzz759)
+      //
+      // HONASA carried "Installed capacity 24,785 Mn". Twenty-four thousand
+      // million OF WHAT? "Mn" is a multiplier, not a thing you can hold a
+      // capacity in, and a figure that names only a scale is almost always a
+      // money or a count lifted out of a financial table. zzz755 deliberately
+      // removed million/bn from the currency test so GESHIP's genuine "60
+      // million sq. ft." would survive — and it still does, because it names
+      // square feet. A bare count with no magnitude word ("42,000") also
+      // survives: it is unlabelled, not mis-filed.
+      if (MAGNITUDE_ONLY_RE.test(valueText) && !CAPACITY_UNIT_RE.test(valueText)) return false;
       return true;
     }
     // ── AN AMOUNT SPELLED OUT IN WORDS IS A LEGAL CLAUSE.          (zzz758)
@@ -481,23 +494,80 @@ export function verifiedDirection(e: { before: string | null; after: string | nu
  * their own key, so a card can show "84% actual · 90% target" and never mix
  * the two.
  */
-export function bestEventPerVariable(events: StructuralEvent[]): Map<VarKey, { actual: StructuralEvent | null; forward: StructuralEvent | null }> {
+// ── WHICH DOCUMENT WINS WHEN TWO DISAGREE.                         (zzz759)
+//
+// SPECTRUM's card read "3.0 MW" in WHAT CHANGED while the board showed
+// "3.3 MW" — two documents from the same quarter stating the same capacity
+// differently, and the tie was broken by which event happened to be parsed
+// first. That is not a rule, it is an accident.
+//
+// The order below is about how a figure is PRODUCED, not about how much the
+// document is worth overall. A results filing and an investor deck are
+// written, checked and signed; a concall is a person speaking, and a person
+// rounds — "about three megawatts" becomes 3.0 against a filed 3.3. So for a
+// FIGURE the written document wins, even though the transcript is usually the
+// richer read for causes and colour.
+//
+// AND THE TIE IS NEVER BROKEN SILENTLY. The losing value travels with the
+// variable as a conflict, because two sources disagreeing about a number is
+// itself something the owner should see.
+export function sourceTier(source: string | null | undefined): number {
+  const s = String(source || '').toLowerCase();
+  if (/result|financial statement|outcome of board|regulation 33|annual report/.test(s)) return 0;
+  if (/investor|presentation|deck|fact ?sheet/.test(s)) return 1;
+  if (/press release|media release|intimation|announcement/.test(s)) return 2;
+  if (/transcript|concall|con-?call|earnings call|audio/.test(s)) return 3;
+  return 4;
+}
+
+export interface VariableSlot {
+  actual: StructuralEvent | null;
+  forward: StructuralEvent | null;
+  /** Other ACTUAL readings of the same variable whose value differs from the
+   *  one that won. Empty when the sources agree. */
+  conflicts: StructuralEvent[];
+}
+
+const sameValue = (a: StructuralEvent, b: StructuralEvent) =>
+  String(a.after ?? a.before ?? '').trim().toLowerCase()
+  === String(b.after ?? b.before ?? '').trim().toLowerCase();
+
+export function bestEventPerVariable(events: StructuralEvent[]): Map<VarKey, VariableSlot> {
   const rank: Record<ValueType, number> = { ACTUAL: 0, GUIDANCE: 1, TARGET: 2, MANAGEMENT_CLAIM: 3 };
   const conf: Record<Confidence, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+  // Source tier sits AFTER the before-presence test on purpose: an event that
+  // carries both sides of a move gives a comparison, and a comparison is worth
+  // more than a tier. Tier decides between readings of the same shape, which
+  // is exactly the SPECTRUM case — two bare levels.
   const better = (a: StructuralEvent, b: StructuralEvent) =>
     (rank[a.value_type] - rank[b.value_type])
     || ((a.before ? 0 : 1) - (b.before ? 0 : 1))
+    || (sourceTier(a.source) - sourceTier(b.source))
     || (conf[a.confidence] - conf[b.confidence]);
-  const out = new Map<VarKey, { actual: StructuralEvent | null; forward: StructuralEvent | null }>();
+  const out = new Map<VarKey, VariableSlot>();
+  const actualsSeen = new Map<VarKey, StructuralEvent[]>();
   for (const e of events) {
-    const slot = out.get(e.variable) || { actual: null, forward: null };
+    const slot = out.get(e.variable) || { actual: null, forward: null, conflicts: [] };
     const isForward = e.value_type === 'GUIDANCE' || e.value_type === 'TARGET';
     if (isForward) {
       if (!slot.forward || better(e, slot.forward) < 0) slot.forward = e;
-    } else if (!slot.actual || better(e, slot.actual) < 0) {
-      slot.actual = e;
+    } else {
+      const seen = actualsSeen.get(e.variable) || [];
+      seen.push(e);
+      actualsSeen.set(e.variable, seen);
+      if (!slot.actual || better(e, slot.actual) < 0) slot.actual = e;
     }
     out.set(e.variable, slot);
+  }
+  for (const [k, slot] of out) {
+    const winner = slot.actual;
+    if (!winner) continue;
+    slot.conflicts = (actualsSeen.get(k) || [])
+      .filter((e) => e !== winner && e.value_type === 'ACTUAL' && winner.value_type === 'ACTUAL'
+        && !sameValue(e, winner)
+        // A different SHAPE is not a disagreement: a before→after move and a
+        // bare level are two readings of one quarter, not two answers.
+        && (!!e.before === !!winner.before));
   }
   return out;
 }

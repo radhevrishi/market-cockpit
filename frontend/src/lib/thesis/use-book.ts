@@ -71,7 +71,10 @@ export interface BookRow {
   /** EVIDENCE_FOUND | SEARCH_EXHAUSTED | RETRIEVAL_FAILED. A failed search
    *  and an absence of disclosure are different facts and are kept apart. */
   discoveryState?: string | null;
-  documentOutcomes?: Array<{ label: string; kind: string; outcome: string; chars: number; pages: number; detail?: string }>;
+  /** Every document the reader touched, INCLUDING the ones it could not read.
+   *  The url travels with them: a scanned filing this reader cannot OCR is a
+   *  dead end unless the card can hand the owner the document itself. (zzz760) */
+  documentOutcomes?: Array<{ label: string; kind: string; outcome: string; chars: number; pages: number; detail?: string; url?: string }>;
   // ── THE PERSISTENT LEDGER.                                     (zzz740)
   /** The company's evidence ledger as loaded from the server. Null when the
    *  company has never been read. The card renders from THIS after a reload,
@@ -109,7 +112,7 @@ function applyLedger(row: BookRow, ledger: CompanyLedger | null, freshness?: { s
     documentsRead: readDocs.map((d) => ({ label: d.label, kind: d.kind, source: d.source, period: d.period, url: d.url })),
     discoveryAttempts: p.discovery_attempts || undefined,
     discoveryState: p.discovery_state || null,
-    documentOutcomes: p.documents.filter((d) => d.outcome !== 'not_selected').map((d) => ({ label: d.label, kind: d.kind, outcome: d.outcome, chars: d.chars || 0, pages: d.pages || 0, detail: d.detail })),
+    documentOutcomes: p.documents.filter((d) => d.outcome !== 'not_selected').map((d) => ({ label: d.label, kind: d.kind, outcome: d.outcome, chars: d.chars || 0, pages: d.pages || 0, detail: d.detail, url: d.url })),
     pattern: classifyWithFiling(row.graded, stored.summary) || row.pattern,
     ledger, freshness: fr, reportingPeriod: p.reporting_period,
     changed: ch.lines, changedFrom: ch.from,

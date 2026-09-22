@@ -112,6 +112,9 @@ export interface CheckedVariable {
    *  the card most needs to show, and no amount of reading THIS filing finds
    *  it. (zzz758) */
   comparison?: MetricComparison | null;
+  /** Other documents read for the same period that state a different value for
+   *  this variable. Never resolved silently. (zzz759) */
+  conflict?: { value: string; source: string }[] | null;
 }
 
 export interface ThesisAssessment {
@@ -321,6 +324,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       verdict,
       before: v?.before ?? null, after: v?.after ?? null, delta: v?.delta ?? null,
       comparison,
+      conflict: v?.conflict ?? null,
       evidence: v?.evidence || (stoppedDisclosing
         ? `${comparison!.previous?.raw} in ${comparison!.previous_period}, and not disclosed in ${comparison!.current_period}. `
           + 'The figure was on file and has stopped being published. That is a decision, not an oversight, '

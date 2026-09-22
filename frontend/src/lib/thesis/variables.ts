@@ -77,6 +77,14 @@ export interface StructuralVar {
    *  comparison basis attached. Null where no earlier figure exists — and the
    *  card then says PREVIOUS: NOT DISCLOSED rather than inventing one. */
   comparison?: MetricComparison | null;
+  /** ── TWO SOURCES, TWO NUMBERS.                                  (zzz759)
+   *
+   *  Non-null when another document read for the same period states a
+   *  different value for this same variable. The more authoritative source
+   *  supplies the row; the disagreement is never resolved silently, because a
+   *  filing and a concall contradicting each other on a capacity is a fact
+   *  about the disclosure, not a parsing detail. */
+  conflict?: { value: string; source: string }[] | null;
 }
 
 
@@ -164,6 +172,33 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
   for (const [key, slot] of bestEventPerVariable(events)) {
     const a = slot.actual, f = slot.forward;
     const label = VAR_LABEL[key] || key;
+    // Only disagreements between values that would BOTH have been shown count.
+    // A wrong-unit reading losing to a good one is the filter working, not two
+    // sources contradicting each other.
+    const conflicts = (slot.conflicts || [])
+      .filter((c) => judgeEventQuality(c) !== 'unit_mismatch')
+      .map((c) => ({ value: String(c.after ?? c.before ?? ''), source: c.source }))
+      .filter((c) => c.value.trim().length > 0)
+      .slice(0, 3);
+    // ── ABOVE NAMEPLATE IS POSSIBLE, AND WORTH A SECOND LOOK.       (zzz760)
+    //
+    // VAML carried "Capacity utilisation 120%". The 0–130% band stays as it is
+    // — plants genuinely run above nameplate on extra shifts, and narrowing the
+    // band would throw away GIPCL's real 19.89% CUF along with the bad ones. But
+    // a figure over 100% is either a debottlenecked plant or a mis-read number,
+    // and those are worth telling apart, so the row says which question to ask
+    // instead of printing 120% as though it were ordinary.
+    const utPct = key === 'utilisation' && a
+      ? Number((`${a.after || a.before || ''}`.match(/-?\d+(?:\.\d+)?\s*%/) || [''])[0].replace('%', ''))
+      : NaN;
+    const overNameplate = Number.isFinite(utPct) && utPct > 100
+      ? ` ⓘ Above 100% of nameplate. That is real when a plant runs extra shifts or has been de-bottlenecked, `
+        + 'and it is also what a mis-read number looks like — check which before treating it as headroom exhausted.'
+      : '';
+    const conflictNote = conflicts.length
+      ? ` ⚠ SOURCES DISAGREE — ${conflicts.map((c) => `${c.value} (${c.source})`).join('; ')}. `
+        + 'The written document is shown; the other reading is kept here rather than discarded.'
+      : '';
     // ── A VALUE THAT IS NOT ABOUT THIS VARIABLE IS NOT THIS VARIABLE'S
     //    VALUE.                                                     (zzz755)
     //
@@ -202,7 +237,9 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
               : verdict === 'stated' ? 'Level only — no earlier figure in the text to compare against: ' : '')
           + `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
           + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
-          + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : ''),
+          + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : '')
+          + overNameplate + conflictNote,
+        conflict: conflicts.length ? conflicts : null,
         source: 'filing',
       });
     } else if (f) {
@@ -238,6 +275,24 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
 // asymmetry is the whole guard against §75: a previous value appears on a
 // card only when an earlier period record actually holds it.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── AN INSTALLED CAPACITY IS NOT A CAPACITY ADDITION.              (zzz759)
+//
+// MOREPEN showed "Installed capacity 200 KLD" and "Capacity added 200 KLD" on
+// the same card, from the same sentence. One sentence, filed twice under two
+// names — and the second one is scored `improving` by default, so a level the
+// company merely restated was counted as growth. Where the two carry the same
+// value, the ADDITION is the one that goes: "capacity is 200 KLD" is the far
+// more likely reading of a sentence that produced both, and a wrongly-claimed
+// expansion is the more expensive of the two errors.
+function dropRestatedCapacityAddition(vars: StructuralVar[]): StructuralVar[] {
+  const norm = (s: string | null | undefined) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const installed = vars.find((v) => v.key === 'capacity');
+  if (!installed) return vars;
+  const inst = norm(installed.after || installed.before);
+  if (!inst) return vars;
+  return vars.filter((v) => !(v.key === 'capacity_addition' && norm(v.after || v.before) === inst));
+}
 
 /** Magnitude below which a move is noise rather than a direction. */
 function movedEnough(c: MetricComparison): boolean {
@@ -305,7 +360,26 @@ export function extractVariables(
   const covered = new Set<VarKey>(fromEvents.map((v) => v.key));
   out.push(...fromEvents);
   const push = (v: StructuralVar) => {
-    if (covered.has(v.key)) return;
+    if (covered.has(v.key)) {
+      // ── A LEVEL FROM THE FILING MUST NOT BEAT A BRIDGE FROM THE
+      //    GRADER.                                                  (zzz758)
+      //
+      // AZAD's concall says "operating margin came in at 18.4%" — a level,
+      // no prior, verdict `stated`. The graded row holds 15.9% AND 18.4%,
+      // which is the same figure WITH the comparison the document omitted.
+      // The event row won simply because events are read first, so the card
+      // printed CONFIRMATION REQUIRED — "no comparison basis" — with the
+      // basis sitting one field away. Where the filing stated only a level
+      // and the grader has both sides, the grader's row replaces it and the
+      // ledger comparison, if any, is carried across.
+      const i = out.findIndex((x) => x.key === v.key);
+      const cur = i >= 0 ? out[i] : null;
+      const levelOnly = !!cur && GRADER_AVAILABLE.has(v.key)
+        && cur.verdict === 'stated' && !cur.before && !cur.comparison?.previous;
+      const hasBridge = v.verdict !== 'unknown' && !!(v.before || v.delta);
+      if (levelOnly && hasBridge) out[i] = { ...v, comparison: cur!.comparison ?? null };
+      return;
+    }
     // A value with no comparison basis is DISCLOSED. It is not absent.
     const hasValue = !!(String(v.after || '').trim() || String(v.before || '').trim() || String(v.delta || '').trim());
     if (v.verdict === 'unknown' && hasValue) v = { ...v, verdict: 'stated' };
@@ -770,7 +844,7 @@ export function extractVariables(
     });
   }
 
-  return applyComparisons(out, comparisons);
+  return applyComparisons(dropRestatedCapacityAddition(out), comparisons);
 }
 
 /** Index by key, last write wins — the filing beats the grader where both

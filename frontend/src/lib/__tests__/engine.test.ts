@@ -1677,3 +1677,97 @@ describe('zzz758 — magnitude words, restated figures, amounts in words', () =>
     }), 'sentence');
   });
 });
+
+import { sourceTier, bestEventPerVariable } from '../thesis/evidence-extract';
+import { extractVariables as extractVars } from '../thesis/variables';
+
+describe('zzz759 — magnitude-only capacity, source precedence, restated additions', () => {
+  const ev = (variable: string, after: string, source: string, text: string, before: string | null = null): any =>
+    ({ variable, value_type: 'ACTUAL', before, after, unit: null, period: null, direction: 'up',
+      evidence_text: text, source, confidence: 'HIGH' });
+
+  test('HONASA — a capacity stated only as a magnitude names no unit and is refused', () => {
+    assert.equal(judgeEventQuality({
+      variable: 'capacity', before: null, after: '24,785 Mn', unit: null,
+      evidence_text: 'Installed capacity for the year stood at 24,785 Mn as disclosed in the annual report.',
+    }), 'unit_mismatch');
+    // GESHIP's genuine figure names square feet, so it survives (zzz755 guard held).
+    assert.equal(judgeEventQuality({
+      variable: 'capacity', before: null, after: '60 million sq. ft.', unit: null,
+      evidence_text: 'The company operates an installed capacity of 60 million sq. ft. across its four plants.',
+    }), 'sentence');
+    // An unlabelled bare count is unlabelled, not mis-filed.
+    assert.equal(judgeEventQuality({
+      variable: 'capacity', before: null, after: '42,000', unit: null,
+      evidence_text: 'Installed capacity at the end of the period was 42,000 across all lines in operation.',
+    }), 'sentence');
+  });
+
+  test('SPECTRUM — the written document supplies the figure, and the disagreement is shown', () => {
+    assert.ok(sourceTier('Financial Results May 2026') < sourceTier('Investor presentation May 2026'));
+    assert.ok(sourceTier('Investor presentation May 2026') < sourceTier('Concall transcript May 2026'));
+    const vars = varsFromEvents([
+      ev('capacity', '3.0 MW', 'Concall transcript May 2026',
+        'Management said installed capacity at the site is now 3.0 MW following the latest addition.'),
+      ev('capacity', '3.3 MW', 'Investor presentation May 2026',
+        'The investor deck states installed capacity of 3.3 MW across the operating portfolio today.'),
+    ]);
+    const cap = vars.find((v) => v.key === 'capacity')!;
+    assert.equal(cap.after, '3.3 MW', 'the deck wins over the spoken figure');
+    assert.equal(cap.conflict!.length, 1);
+    assert.equal(cap.conflict![0].value, '3.0 MW');
+    assert.match(cap.evidence, /SOURCES DISAGREE/);
+  });
+
+  test('a comparison still beats a tier — an event carrying both sides wins', () => {
+    const slot = bestEventPerVariable([
+      ev('utilisation', '80%', 'Investor presentation Jul 2026',
+        'Capacity utilisation across the plants stood at 80% for the quarter under review.'),
+      ev('utilisation', '80%', 'Concall transcript Jul 2026',
+        'Capacity utilisation across the plants rose from 72% to 80% over the quarter, management said.', '72%'),
+    ]).get('utilisation')!;
+    assert.equal(slot.actual!.before, '72%', 'the row with a comparison is kept');
+    assert.equal(slot.conflicts.length, 0, 'different shapes are not a disagreement');
+  });
+
+  test('MOREPEN — capacity added is dropped when it merely restates installed capacity', () => {
+    const summary = { events: [
+      ev('capacity', '200 KLD', 'Concall transcript Jul 2026',
+        'The installed capacity at the Baddi facility is 200 KLD after the latest expansion was completed.'),
+      ev('capacity_addition', '200 KLD', 'Concall transcript Jul 2026',
+        'The installed capacity at the Baddi facility is 200 KLD after the latest expansion was completed.'),
+    ] };
+    const vars = extractVars(null, summary);
+    assert.ok(vars.some((v) => v.key === 'capacity'), 'installed capacity is kept');
+    assert.equal(vars.filter((v) => v.key === 'capacity_addition').length, 0,
+      'the duplicate addition — which would have scored as growth — is dropped');
+    // A genuinely different addition survives.
+    const vars2 = extractVars(null, { events: [
+      ev('capacity', '200 KLD', 'Concall transcript Jul 2026',
+        'The installed capacity at the Baddi facility is 200 KLD after the latest expansion was completed.'),
+      ev('capacity_addition', '50 KLD', 'Concall transcript Jul 2026',
+        'During the quarter the company added 50 KLD of fresh capacity at the Baddi facility site.'),
+    ] });
+    assert.equal(vars2.filter((v) => v.key === 'capacity_addition').length, 1);
+  });
+});
+
+describe('zzz760 — an unreadable document is not a dead end', () => {
+  const ev = (variable: string, after: string, text: string): any =>
+    ({ variable, value_type: 'ACTUAL', before: null, after, unit: null, period: null,
+      direction: 'up', evidence_text: text, source: 'Concall transcript Jul 2026', confidence: 'HIGH' });
+
+  test('VAML — utilisation above nameplate is kept, and says which question to ask', () => {
+    const [v] = varsFromEvents([ev('utilisation', '120%',
+      'Capacity utilisation across the two plants ran at 120% during the quarter on additional shifts.')]);
+    assert.equal(v.after, '120%', 'the figure is not thrown away — above nameplate is real');
+    assert.match(v.evidence, /Above 100% of nameplate/);
+    assert.match(v.evidence, /mis-read number/);
+  });
+
+  test('an ordinary utilisation carries no nameplate note', () => {
+    const [v] = varsFromEvents([ev('utilisation', '84%',
+      'Capacity utilisation across the two plants stood at 84% during the quarter under review.')]);
+    assert.doesNotMatch(v.evidence, /nameplate/);
+  });
+});
