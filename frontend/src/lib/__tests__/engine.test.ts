@@ -41,13 +41,13 @@ import {
 import {
   candidatesFromFilings, classifyExchangeDoc, rankCandidates, selectForReading, resolveDiscovery,
 } from '../thesis/evidence-discovery';
-import { findPassages, validateEvents } from '../thesis/evidence-extract';
+import { findPassages, validateEvents, judgeEventQuality } from '../thesis/evidence-extract';
 import {
   reportingPeriodFromDate, periodOrdinal, reportingPeriodForDocuments, factsFromEvents, documentId,
   emptyLedger, mergePeriod, recordAttempt, recordSeen, recordStatus, whatChanged, freshnessOf,
-  latestSummary, ledgerView, batchProgress, type CompanyLedger,
+  latestSummary, ledgerView, batchProgress, sameUnit, type CompanyLedger,
 } from '../thesis/evidence-ledger';
-import { varsFromEvents } from '../thesis/variables';
+import { varsFromEvents, isDenial } from '../thesis/variables';
 import { parseCompanyId, parseTopRatios, parseAnnouncements, parseChart } from '../ai-gainers/screener-company';
 import {
   classifyAnnouncement, buildFinding, returnsFromSeries, bandPrint, pricedInOf, scoreCatalyst, parseStatedValue, coverage,
@@ -205,10 +205,11 @@ describe('structural variables', () => {
     assert.match(v!.evidence, /loss-making/);
   });
 
-  test('a negative cash ratio with an unknown profit sign is UNKNOWN, never a guess', () => {
+  test('a negative cash ratio with an unknown profit sign is STATED (shown, not judged), never a guess', () => {
     const unknown = { ...row('KMEW'), cfo_to_pat_ratio: -21.3, pat_curr_cr: null };
     const v = extractVariables(unknown, null).find((x) => x.key === 'cash_conversion');
-    assert.equal(v!.verdict, 'unknown');
+    assert.equal(v!.verdict, 'stated');
+    assert.equal(v!.after, '-21.30×');
   });
 
   test('operating leverage is not computed off a trivial revenue base', () => {
@@ -683,12 +684,86 @@ describe('structural evidence extraction', () => {
     assert.equal(u.verdict, 'improving');
   });
 
-  test('a target with no actual behind it is a CLAIM with an unknown verdict', () => {
+  test('a target with no actual behind it is a CLAIM, stated and never confirmed', () => {
     const vars = varsFromEvents([
       { variable: 'utilisation', value_type: 'TARGET', before: null, after: '90%', unit: '%', period: 'FY28', direction: 'up', confidence: 'HIGH', source: 'Concall', evidence_text: 'We are targeting 90% utilisation by FY28 across the lines.' },
     ] as any);
     assert.equal(vars[0].kind, 'claim');
-    assert.equal(vars[0].verdict, 'unknown');
+    assert.equal(vars[0].verdict, 'stated');
+  });
+
+  // ── zzz754: what the live page got wrong on 22 Sept ───────────────────
+  test('a management claim never confirms — AZAD "guidance over 25%" is stated, not ▲', () => {
+    const vars = varsFromEvents([
+      { variable: 'guidance', value_type: 'MANAGEMENT_CLAIM', before: null, after: 'over 25%', unit: '%', period: null, direction: 'up', confidence: 'HIGH', source: 'Concall', evidence_text: 'We continue to expect growth of over 25% for the full year as the new plants ramp up.' },
+    ] as any);
+    assert.equal(vars[0].verdict, 'stated');
+    assert.equal(vars[0].kind, 'claim');
+  });
+
+  test('a level with no earlier figure and no move-word is stated — JINDRILL order book is not "flat"', () => {
+    const vars = varsFromEvents([
+      { variable: 'order_book', value_type: 'ACTUAL', before: null, after: 'INR1,310 crores', unit: 'INR crore', period: null, direction: 'flat', confidence: 'HIGH', source: 'd', evidence_text: 'The order book as of 30 June stands at INR1,310 crores across the four rigs.' },
+    ] as any);
+    assert.equal(vars[0].verdict, 'stated');
+  });
+
+  test('a move named in the sentence is kept — "improved to 80%" is improving', () => {
+    const vars = varsFromEvents([
+      { variable: 'utilisation', value_type: 'ACTUAL', before: null, after: '80%', unit: '%', period: 'Q1 FY27', direction: 'up', confidence: 'HIGH', source: 'd', evidence_text: 'Capacity utilisation improved to 80% in the quarter across the eight plants.' },
+    ] as any);
+    assert.equal(vars[0].verdict, 'improving');
+  });
+
+  test('more delay is worse — TI "execution delay up" is deteriorating, never ▲', () => {
+    const vars = varsFromEvents([
+      { variable: 'execution_delay', value_type: 'ACTUAL', before: null, after: '2 quarters', unit: null, period: null, direction: 'up', confidence: 'HIGH', source: 'd', evidence_text: 'The commissioning has been delayed by a further 2 quarters because of the transformer shortage.' },
+    ] as any);
+    assert.equal(vars[0].verdict, 'deteriorating');
+  });
+
+  test('capacity stated in money is a wrong-unit claim — EXICOM "USD100 million" and AZAD "INR150 crores per plant"', () => {
+    assert.equal(judgeEventQuality({ variable: 'capacity', before: null, after: 'USD100 million', unit: null, evidence_text: 'Our installed capacity today would be worth about USD100 million of revenue at full utilisation of the lines.' }), 'unit_mismatch');
+    assert.equal(judgeEventQuality({ variable: 'capacity', before: null, after: 'INR150 crores to about INR180-odd crores per plant', unit: null, evidence_text: 'Each plant has a revenue capacity of INR150 crores to about INR180-odd crores per plant at full run rate.' }), 'unit_mismatch');
+    assert.equal(judgeEventQuality({ variable: 'capacity', before: '42,000', after: '222,000', unit: 'units', evidence_text: 'Installed capacity has gone up from 42,000 units to 222,000 units after the Hyderabad plant.' }), 'sentence');
+    assert.equal(judgeEventQuality({ variable: 'capacity_addition', before: null, after: '3,000 MTPA', unit: null, evidence_text: 'The plant has an initial operational capacity of around 3,000 MTPA of esters.' }), 'sentence');
+  });
+
+  test('a duration filed as utilisation is a wrong-unit claim — JINDRILL "4 to 6 months"', () => {
+    assert.equal(judgeEventQuality({ variable: 'utilisation', before: null, after: '4 to 6 months', unit: null, evidence_text: 'Refurbishment periods of 4 to 6 months mean the rig will not be utilised until the third quarter.' }), 'unit_mismatch');
+  });
+
+  test('a denial in a risk field is checked-and-flat, not a deterioration — TI customer loss', () => {
+    const vars = extractVariables(null, { customers: { loss: 'No explicit customer losses stated; TSMA transitions in certain states resolved or resolving.' } });
+    const v = vars.find((x) => x.key === 'customer_loss');
+    assert.equal(v!.verdict, 'flat');
+    assert.equal(isDenial('No explicit customer losses stated'), true);
+    assert.equal(isDenial('Lost the Vodafone programme in Q1'), false);
+  });
+
+  test('a disclosed level from the summary is stated, not absent — utilisation with no prior', () => {
+    const vars = extractVariables(null, { utilisation: { current: '65%', prior: 'not stated', expected: 'not stated' } });
+    assert.equal(vars.find((x) => x.key === 'utilisation')!.verdict, 'stated');
+  });
+
+  test('cross-period deltas need the same unit — MOREPEN "314 kiloliters" vs "200 KLD" is not −36%', () => {
+    assert.equal(sameUnit('314 kiloliters', '200 KLD', null, null), false);
+    assert.equal(sameUnit('42,000', '222,000', 'units', 'units'), true);
+    assert.equal(sameUnit('60%-70%', '80%', '%', null), true);
+    assert.equal(sameUnit('9 lakh BP monitors', '18 lakh BP monitors', null, null), true);
+  });
+
+  test('the tally adds up — stated and flat are counted, not dropped', () => {
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, variables: [
+      { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+8%', delta: '+8%', verdict: 'flat', evidence: '', source: 'grader' },
+      { key: 'earnings_growth', label: 'Earnings growth', before: null, after: '-28%', delta: '-28%', verdict: 'deteriorating', evidence: '', source: 'grader' },
+      { key: 'order_book', label: 'Order book', before: null, after: 'INR1,310 crores', delta: null, verdict: 'stated', evidence: '', source: 'filing' },
+    ] as any });
+    for (const t of [a.coverage.output, a.coverage.mechanism, a.coverage.forward]) {
+      assert.equal(t.confirmed + t.pending + t.contradicted + t.stated + t.flat, t.total);
+    }
+    // A stated core variable is disclosed: it must not be listed as missing.
+    assert.ok(!a.coverage.missingCore.includes('Order book'));
   });
 
   test('a delta is never derived when the prior value is missing', () => {

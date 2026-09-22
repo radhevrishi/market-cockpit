@@ -76,6 +76,10 @@ const VERDICT: Record<VarVerdict, { mark: string; color: string; word: string }>
   improving: { mark: '▲', color: C.up, word: 'improving' },
   flat: { mark: '–', color: C.flat, word: 'flat, and checked' },
   deteriorating: { mark: '▼', color: C.down, word: 'deteriorating' },
+  // Disclosed, value shown, nothing to compare against. Neither an arrow
+  // nor a hollow circle: the company said it, the ledger cannot yet judge
+  // it. (zzz754)
+  stated: { mark: '◐', color: C.flat, word: 'disclosed — a level only, no comparison basis' },
   unknown: { mark: '○', color: C.absent, word: 'no value' },
 };
 
@@ -392,7 +396,7 @@ export function ThesisCard(p: ThesisCardProps) {
             ['MECHANISM', a.coverage.mechanism, 'the WHY — capacity, utilisation, orders, capex, customers, one-offs, cash'],
             ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
             ['FORWARD', a.coverage.forward, 'what management commits to next'],
-          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; total: number }, string]>)
+          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; total: number }, string]>)
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
               <div key={name} title={hint}>
@@ -403,6 +407,8 @@ export function ThesisCard(p: ThesisCardProps) {
                 <b style={{ color: t.pending ? C.warn : C.flat }}>{t.pending} pending</b>
                 {' · '}
                 <b style={{ color: t.contradicted ? C.down : C.flat }}>{t.contradicted} contradicted</b>
+                {(t.stated || 0) > 0 && <span style={{ color: C.flat }}> · {t.stated} stated</span>}
+                {(t.flat || 0) > 0 && <span style={{ color: C.flat }}> · {t.flat} flat</span>}
                 <span style={{ color: C.faint }}> · of {t.total}</span>
               </div>
             ))}

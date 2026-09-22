@@ -69,11 +69,16 @@ import { VAR_LABEL, GRADER_AVAILABLE, VAR_DIMENSION, DIMENSION_LABEL, type VarKe
 const isOutput = (k: VarKey): boolean => VAR_DIMENSION[k] === 'financial' || GRADER_AVAILABLE.has(k);
 
 /** Three counts, never a fraction. (zzz738) */
-function tally(vs: Array<{ verdict: string }>): { confirmed: number; pending: number; contradicted: number; total: number } {
+// Five counts that ADD UP to the total. "2 confirmed · 0 pending · 1
+// contradicted · of 4" left one variable unaccounted for on every card —
+// the flat one — and a reader cannot audit a sum that does not sum. (zzz754)
+function tally(vs: Array<{ verdict: string }>): { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number } {
   return {
     confirmed: vs.filter((c) => c.verdict === 'improving').length,
     pending: vs.filter((c) => c.verdict === 'unknown').length,
     contradicted: vs.filter((c) => c.verdict === 'deteriorating').length,
+    stated: vs.filter((c) => c.verdict === 'stated').length,
+    flat: vs.filter((c) => c.verdict === 'flat').length,
     total: vs.length,
   };
 }
@@ -151,9 +156,9 @@ export interface ThesisAssessment {
     // they confirm nothing about why, and "why" is the thesis. The counts
     // are now kept apart so a good print can never read as a proven
     // mechanism.
-    output: { confirmed: number; pending: number; contradicted: number; total: number };
-    mechanism: { confirmed: number; pending: number; contradicted: number; total: number };
-    forward: { confirmed: number; pending: number; contradicted: number; total: number };
+    output: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
+    mechanism: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
+    forward: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
     /** The core variables NOT yet checked, by name. The owner asked for this
      *  exactly: "6/10 core variables checked. Missing: utilisation, capex,
      *  new capacity, order book" — not a bare "evidence incomplete". */
@@ -217,7 +222,7 @@ export const STATUS_META: Record<ThesisStatus, { label: string; color: string; d
     meaning: 'The actual result materially EXCEEDS a figure management itself documented earlier. Never reached from strong growth alone — a company can grow 40% and still miss what it told you.' },
 };
 
-const SIGN: Record<VarVerdict, number> = { improving: 1, flat: 0, deteriorating: -1, unknown: 0 };
+const SIGN: Record<VarVerdict, number> = { improving: 1, flat: 0, deteriorating: -1, stated: 0, unknown: 0 };
 
 export interface AssessInput {
   pattern: AbfgPattern | null | undefined;
@@ -472,18 +477,20 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       const c = checked.find((x) => x.key === tv.key)!;
       const st: 'ok' | 'watch' | 'fired' | 'unknown' =
         c.verdict === 'deteriorating' ? 'fired'
-          : c.verdict === 'unknown' ? 'unknown'
+          : c.verdict === 'unknown' || c.verdict === 'stated' ? 'unknown'
             : c.verdict === 'flat' ? 'watch' : 'ok';
       return { condition: tv.invalidatedWhen, weight: tv.weight, status: st };
     })
     .sort((a, b) => b.weight - a.weight);
 
   const nextConfirmation = checked
-    .filter((c) => c.weight >= 3 && (c.verdict === 'unknown' || c.verdict === 'flat'))
+    .filter((c) => c.weight >= 3 && (c.verdict === 'unknown' || c.verdict === 'flat' || c.verdict === 'stated'))
     .slice(0, 3)
     .map((c) => c.verdict === 'unknown'
       ? `${c.label} — not disclosed this time. Whether it is disclosed next quarter is itself information.`
-      : `${c.label} — flat. It has to turn before the thesis can be called intact.`);
+      : c.verdict === 'stated'
+        ? `${c.label} — disclosed as a level (${c.after || c.before}) with nothing to compare against. Next quarter's figure turns it into a direction.`
+        : `${c.label} — flat. It has to turn before the thesis can be called intact.`);
 
   // ── THE STRUCTURAL CHANGE DETECTOR.                            (zzz717)
   //

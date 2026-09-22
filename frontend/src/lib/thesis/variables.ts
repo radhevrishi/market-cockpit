@@ -31,12 +31,24 @@ import {
   type VarKey, type VarGroup, type EvidenceKind,
 } from './taxonomy';
 
-import { bestEventPerVariable, type StructuralEvent } from './evidence-extract';
+import { bestEventPerVariable, judgeEventQuality, verifiedDirection, type StructuralEvent } from './evidence-extract';
 
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
 export type { VarKey, VarGroup, EvidenceKind };
 
-export type VarVerdict = 'improving' | 'flat' | 'deteriorating' | 'unknown';
+// ── FIVE VERDICTS, NOT FOUR.                                       (zzz754)
+//
+// 'unknown' used to mean two different things: "nobody disclosed this" and
+// "this was disclosed as a level with nothing to compare it to". The card
+// drew the same hollow circle for both, so EXICOM's "order book INR1,400
+// crores" and "utilisation 65%" — read, verified, on file — rendered as
+// ○ Order book / ○ Capacity utilisation, and the status text listed them
+// under "Missing". A figure the company stated is not missing.
+//
+//   stated  — disclosed, value shown, no comparison basis → neither
+//             confirms nor contradicts; counted as disclosed, never as absent.
+//   unknown — nothing on file for this variable.
+export type VarVerdict = 'improving' | 'flat' | 'deteriorating' | 'stated' | 'unknown';
 export type VarSource = 'grader' | 'filing';
 
 export interface StructuralVar {
@@ -109,6 +121,17 @@ function pctIn(s: unknown): number | null {
 // as a filed figure would be wrong in the way that costs money.
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Variables where MORE is WORSE. A model reports "execution delay: up"
+ *  meaning the delay grew; that is a deterioration, and TI's card printed it
+ *  as "▲ Execution delay" in green. (zzz754) */
+const NEGATIVE_VARS = new Set<VarKey>(['execution_delay', 'customer_loss', 'shutdown', 'capacity_bottleneck', 'supply_bottleneck', 'customer_concentration']);
+
+/** "No explicit customer losses stated", "none", "no delays" — the summary
+ *  put the company's denial into the field, and `said()` read a denial as a
+ *  disclosure. A denial is a CHECKED, FLAT variable, not a deterioration. */
+const DENIAL = /^(no|none|nil|not any|no explicit|no material|no significant|there (were|was|are|is) no|did not|does not|didn't|doesn't|without any)\b/i;
+export const isDenial = (v: unknown): boolean => said(v) && DENIAL.test(String(v).trim());
+
 const numIn = (s: string | null): number | null => {
   if (!s) return null;
   const m = s.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
@@ -135,19 +158,28 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
     const label = VAR_LABEL[key] || key;
     if (a) {
       const delta = deltaOf(a.before, a.after);
-      const verdict: VarVerdict = a.direction === 'up' ? 'improving'
-        : a.direction === 'down' ? 'deteriorating'
-          : a.direction === 'flat' ? 'flat' : 'unknown';
-      // A figure read off a chart axis is not a fact the card may confirm
-      // on: the numbers are on the slide but the text never says which is
-      // which. Shown as a claim, labelled, so the reader opens the slide.
-      const chart = a.evidence_quality === 'chart' || a.evidence_quality === 'unit_mismatch';
+      // Re-judged on load, so ledgers written before a rule existed obey it.
+      const quality = judgeEventQuality(a);
+      const dir = verifiedDirection(a);
+      const chart = quality === 'chart' || quality === 'unit_mismatch';
+      // Only a FILED figure from a real sentence with a verifiable move may
+      // confirm or contradict. A management claim ("3x capacity", "at
+      // maximum level") is shown as what it is; a chart axis and a
+      // wrong-unit value are shown as claims; a bare level is 'stated'.
+      const mayJudge = a.value_type === 'ACTUAL' && !chart;
+      const inverted = NEGATIVE_VARS.has(key);
+      const verdict: VarVerdict = !mayJudge ? 'stated'
+        : dir === 'up' ? (inverted ? 'deteriorating' : 'improving')
+          : dir === 'down' ? (inverted ? 'improving' : 'deteriorating')
+            : dir === 'flat' ? 'flat' : 'stated';
       out.push({
         key, label,
-        kind: a.value_type === 'ACTUAL' && !chart ? 'fact' : 'claim',
+        kind: mayJudge ? 'fact' : 'claim',
         before: a.before, after: a.after, delta, verdict,
-        evidence: (a.evidence_quality === 'unit_mismatch' ? 'Value does not fit this variable (wrong unit or no such statement) — shown as a claim only: '
-          : chart ? 'Read from a chart, figures unlabelled — verify on the slide: ' : '')
+        evidence: (quality === 'unit_mismatch' ? 'Value does not fit this variable (wrong unit or no such statement) — shown as a claim only: '
+          : chart ? 'Read from a chart, figures unlabelled — verify on the slide: '
+            : a.value_type !== 'ACTUAL' ? `Management ${a.value_type === 'MANAGEMENT_CLAIM' ? 'claim' : a.value_type.toLowerCase()}, not a reported figure: `
+              : verdict === 'stated' ? 'Level only — no earlier figure in the text to compare against: ' : '')
           + `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
           + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
           + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : ''),
@@ -158,7 +190,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       // such: the verdict is unknown because nothing has been achieved yet.
       out.push({
         key, label, kind: 'claim',
-        before: null, after: f.after, delta: null, verdict: 'unknown',
+        before: null, after: f.after, delta: null, verdict: 'stated',
         evidence: `${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Management target'}: ${f.after}${f.period ? ` by ${f.period}` : ''}. `
           + `"${f.evidence_text.slice(0, 200)}${f.evidence_text.length > 200 ? '…' : ''}" — ${f.source}`,
         source: 'filing',
@@ -176,7 +208,12 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   const fromEvents = varsFromEvents(summary?.events);
   const covered = new Set<VarKey>(fromEvents.map((v) => v.key));
   out.push(...fromEvents);
-  const push = (v: StructuralVar) => { if (!covered.has(v.key)) out.push(v); };
+  const push = (v: StructuralVar) => {
+    if (covered.has(v.key)) return;
+    // A value with no comparison basis is DISCLOSED. It is not absent.
+    if (v.verdict === 'unknown' && (v.after || v.before || v.delta)) v = { ...v, verdict: 'stated' };
+    out.push(v);
+  };
 
   // ── GRADER FACTS ────────────────────────────────────────────────────────
   const salesY = n(graded?.sales_yoy_pct);
@@ -309,6 +346,12 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
       ?? n(graded?.profit_after_tax_latest_quarter);
     const negative = cfoToPat < 0;
     const lossMaking = patSign != null && patSign < 0;
+    // The screener's "CFO to PAT" is LAST FULL YEAR's cash flow over last
+    // full year's profit — an annual figure sitting on a card about this
+    // quarter, and its sign is being checked against the latest QUARTER's
+    // profit. Both are said on the row so a −21× is read for what it is.
+    const annual = String(graded?.source || '') === 'screener';
+    const basis = annual ? ' (last full year, screener figure — not this quarter\'s)' : '';
     push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
       before: null, after: `${cfoToPat.toFixed(2)}×`, delta: null,
@@ -317,11 +360,11 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
         : lossMaking ? 'flat'
           : patSign != null ? 'deteriorating' : 'unknown',
       evidence: !negative
-        ? `Operating cash flow is ${cfoToPat.toFixed(2)}× reported profit.`
+        ? `Operating cash flow is ${cfoToPat.toFixed(2)}× reported profit${basis}.`
         : lossMaking
-          ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}× because the quarter was loss-making. A ratio against a negative base says nothing about cash quality, so it is not counted either way.`
+          ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}× because the ${annual ? 'latest quarter' : 'quarter'} was loss-making. A ratio against a negative base says nothing about cash quality, so it is not counted either way.`
           : patSign != null
-            ? `Operating cash flow is negative against a positive profit (${cfoToPat.toFixed(2)}×) — profit is not becoming cash.`
+            ? `Operating cash flow is negative against a positive profit (${cfoToPat.toFixed(2)}×${basis}) — profit is not becoming cash.${annual ? ' Sign inferred from the latest quarter\'s profit; the ratio itself is annual.' : ''}`
             : `Cash-to-profit reads ${cfoToPat.toFixed(2)}×, and which side is negative is not stated in this row. A negative ratio means the opposite thing depending on that, so it is left unread rather than guessed.`,
       source: 'grader',
     });
@@ -460,6 +503,13 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
     opts: { before?: string | null; delta?: string | null; kind?: EvidenceKind } = {},
   ) => {
     if (!after && !opts.before && !opts.delta) return;
+    // "No customer losses" is not a customer loss. The company was asked
+    // and said none: checked, flat, and worth showing as such.
+    if (verdict === 'deteriorating' && isDenial(after)) {
+      push({ key, label: VAR_LABEL[key], before: null, after, delta: null, verdict: 'flat',
+        evidence: `Company states none — ${after}`, source: 'filing', kind: opts.kind ?? 'fact' });
+      return;
+    }
     push({
       key, label: VAR_LABEL[key],
       before: opts.before ?? null, after, delta: opts.delta ?? null,

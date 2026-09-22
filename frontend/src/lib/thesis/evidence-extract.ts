@@ -343,19 +343,7 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
     // check — the numbers were in the text — and both were wrong facts on
     // the card (E2E "utilisation 160 → 374", TI "execution delay 90%").
     // Such events are kept as LOW-confidence claims and never as facts.
-    const valueText = `${before || ''} ${after || ''}`;
-    const PCT_VARS = new Set(['utilisation', 'margin_driver', 'exports', 'mix', 'customer_concentration']);
-    const unitOk = (() => {
-      if (PCT_VARS.has(variable)) return /%|per ?cent|pp\b|full|maximum|peak|near|shift|high|low|double|single/i.test(valueText) || /%/.test(String(e?.unit || ''));
-      if (variable === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
-      if (variable === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
-      if (variable === 'capacity_bottleneck' || variable === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);
-      return true;
-    })();
-    const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
-    const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
-    let evidence_quality: 'sentence' | 'chart' | 'unit_mismatch' = (words < 5 || figures > words) ? 'chart' : 'sentence';
-    if (!unitOk) evidence_quality = 'unit_mismatch';
+    const evidence_quality = judgeEventQuality({ variable, before, after, unit: e?.unit == null ? null : String(e.unit), evidence_text: ev });
     if (evidence_quality !== 'sentence') confidence = 'LOW';
 
     const key = `${variable}|${value_type}|${before}|${after}|${q.slice(0, 40)}`;
@@ -366,7 +354,7 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
       variable, value_type, before, after,
       unit: e?.unit == null ? null : String(e.unit),
       period: e?.period == null ? null : String(e.period),
-      direction,
+      direction: verifiedDirection({ before, after, direction, evidence_text: ev }),
       evidence_text: ev.slice(0, 600),
       source: String(e?.source || passages[0]?.doc || ''),
       confidence,
@@ -374,6 +362,74 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
     });
   }
   return { kept, dropped };
+}
+
+// ── 3b. QUALITY AND DIRECTION, RE-JUDGED AT READ TIME ─────────────────────
+//
+// These two checks are PURE and run both when an event is validated and
+// again when a stored event is loaded. Ledgers written before a check
+// existed carry no `evidence_quality`, and a stored event whose direction
+// was never verified is still on the card; re-judging on load means a rule
+// fix reaches every ledger already in KV without spending a model call to
+// re-read the documents. (zzz754)
+
+const PCT_VARS = new Set(['utilisation', 'margin_driver', 'exports', 'mix', 'customer_concentration']);
+const CAPACITY_VARS = new Set(['capacity', 'capacity_addition', 'new_plant']);
+const CURRENCY_RE = /₹|\bINR\b|\bRs\.?\b|\bUSD\b|\$|\bEUR\b|€|crores?\b|\bcr\b|lakhs?\b|\bmn\b|million|billion|`\s*\d/i;
+// Kept for reference of what a capacity DOES look like; the rule is simpler
+// than a whitelist — money is never capacity.
+export const CAPACITY_UNIT_RE = /\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|tonnes?|\bMT\b|\bKL\b|\bKLD\b|\bKLPD\b|litres?|liters?|kilolit|units?\b|pieces|\bnos\b|plants?\b|lines?\b|beds?\b|racks?|GPUs?|servers?|cases\b|vehicles|\bx\b|\d\s*x\b|times|fold|monitors|pallets|sq\.?\s*ft|square|hectare|acre|kg\b|kilogram|barrels?|bpd|MMSCMD|MTPD|TPD|shifts?|machines?|looms?|spindles?|furnace|kilns?|cells?|modules?|wafers?|chips?/i;
+
+/** Pure: whether the value fits the variable and the evidence is a sentence. */
+export function judgeEventQuality(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): 'sentence' | 'chart' | 'unit_mismatch' {
+  const ev = e.evidence_text || '';
+  const valueText = `${e.before || ''} ${e.after || ''}`;
+  const v = e.variable;
+  const unitOk = (() => {
+    if (PCT_VARS.has(v)) return /%|per ?cent|pp\b|full|maximum|peak|near|shift|high|low|double|single/i.test(valueText) || /%/.test(String(e.unit || ''));
+    // A capacity stated only in money is a capex figure filed under the
+    // wrong name: EXICOM "installed capacity USD100 million", AZAD
+    // "INR150 crores per plant". Money is not capacity.
+    if (CAPACITY_VARS.has(v)) return !CURRENCY_RE.test(valueText);
+    if (v === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
+    if (v === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
+    if (v === 'capacity_bottleneck' || v === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);
+    return true;
+  })();
+  const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
+  const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
+  let q: 'sentence' | 'chart' | 'unit_mismatch' = (words < 5 || figures > words) ? 'chart' : 'sentence';
+  if (!unitOk) q = 'unit_mismatch';
+  return q;
+}
+
+const UP_RE = /\bincreas|\bimprov|\bgrew\b|\bgrow(n|th)?\b|\bhigher\b|\bup\b|\bexpan|\brose\b|\bris(e|ing)\b|\bramp|\badded\b|\baddition|\bdoubl|\btripl|\b\d+\s*x\b|\bfrom\b.*\bto\b|\bscal(e|ed|ing) up|\bcommission|\bnew\b|\bwon\b|\bwin\b|\bbagged|\breceived\b|\bmaximum|\bpeak\b|\bfull\b/i;
+const DOWN_RE = /\bdeclin|\bfell\b|\bfall|\blower\b|\bdown\b|\bcontract(ed|ion)|\breduc|\bdrop|\bcut\b|\bslow|\bdeferr|\bdelay|\bcancel|\bloss|\blost\b|\bweak|\bshut|\bhalt|\bpostpon|\bslip/i;
+
+/**
+ * Pure: the direction the evidence sentence itself supports.
+ *
+ * A model reading "order book stands at INR1,310 crores" and answering
+ * `direction: flat` has asserted a comparison the sentence does not make;
+ * the same sentence with `up` is no better. A direction is kept only when
+ * the passage states an earlier value (so the move is arithmetic) or names
+ * the move in words. Otherwise the fact is a LEVEL, and the card says so
+ * rather than drawing an arrow. (zzz754)
+ */
+export function verifiedDirection(e: { before: string | null; after: string | null; direction: Direction; evidence_text: string; unit?: string | null }): Direction {
+  if (e.direction === 'unknown') return 'unknown';
+  const b = e.before ? numberTokens(e.before)[0] : null;
+  const a = e.after ? numberTokens(e.after)[0] : null;
+  if (b != null && a != null) {
+    const nb = parseFloat(b), na = parseFloat(a);
+    if (Number.isFinite(nb) && Number.isFinite(na) && nb !== na) return na > nb ? 'up' : 'down';
+    if (Number.isFinite(nb) && Number.isFinite(na)) return 'flat';
+  }
+  const ev = e.evidence_text || '';
+  if (e.direction === 'up' && UP_RE.test(ev)) return 'up';
+  if (e.direction === 'down' && DOWN_RE.test(ev)) return 'down';
+  if (e.direction === 'flat' && /\bflat\b|\bstable\b|\bunchanged\b|\bmaintain|\bsame\b|\bsteady\b|\bin line\b/i.test(ev)) return 'flat';
+  return 'unknown';
 }
 
 // ── 4. INTO THE LEDGER ─────────────────────────────────────────────────────

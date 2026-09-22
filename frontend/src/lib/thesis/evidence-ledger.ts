@@ -36,7 +36,7 @@
 
 import type { VarKey } from './taxonomy';
 import { VAR_LABEL, VAR_DIMENSION } from './taxonomy';
-import type { StructuralEvent } from './evidence-extract';
+import { judgeEventQuality, verifiedDirection, type StructuralEvent } from './evidence-extract';
 
 export const LEDGER_VERSION = 1;
 
@@ -90,7 +90,7 @@ export interface EvidenceEvent extends StructuralEvent {
   updated_at: string;
 }
 
-export interface Tally { confirmed: number; pending: number; contradicted: number; total: number }
+export interface Tally { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; total: number }
 
 export interface PeriodRecord {
   reporting_period: string;
@@ -263,6 +263,22 @@ export function deltaOf(before: string | null, after: string | null, unit: strin
   if (b === 0) return null;
   const p = ((a - b) / Math.abs(b)) * 100;
   return `${p >= 0 ? '+' : ''}${Math.round(p * 10) / 10}%`;
+}
+
+/** Pure: do two stated values carry the same unit? Unit words are taken from
+ *  the value strings themselves (the model's `unit` field is unreliable), so
+ *  "314 kiloliters" vs "200 KLD" is a mismatch and "42,000" vs "222,000" is
+ *  not (no unit on either side — the same bare count). */
+export function sameUnit(a: string, b: string, ua: string | null, ub: string | null): boolean {
+  const norm = (s: string) => Array.from(new Set(
+    s.toLowerCase().replace(/[\d,.\s₹$`\-–]+/g, ' ').replace(/%+/g, ' % ')
+      .replace(/\b(per|of|and|to|the|a|an|approx|approximately|about|around|nearly|over|~|odd|from)\b/g, ' ')
+      .split(/\s+/).filter(Boolean).map((w) => w.replace(/s$/, '')),
+  )).sort().join(' ');
+  const wa = norm(a), wb = norm(b);
+  if (wa && wb) return wa === wb;
+  if (!wa && !wb) return String(ua || '').toLowerCase().trim() === String(ub || '').toLowerCase().trim();
+  return false;
 }
 
 /** Pure: typed events → structured facts with stable ids. */
@@ -466,7 +482,11 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
     const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
     for (const f of facts) {
       if (f.fact_or_management_statement !== 'FACT') continue;
-      if (f.evidence_quality === 'unit_mismatch') continue;       // a wrong-unit figure is not a change
+      // Re-judged here, not trusted from the record: a fact stored before a
+      // sanity rule existed (E2E "utilisation 160 → 374", TI "execution
+      // delay 90%") must not keep printing as a change. (zzz754)
+      const q = judgeEventQuality({ variable: f.metric_name, before: f.before_value, after: f.after_value, unit: f.unit, evidence_text: f.source_quote });
+      if (q !== 'sentence') continue;
       const o = m.get(f.metric_name);
       if (!o || rank[f.confidence] < rank[o.confidence]) m.set(f.metric_name, f);
     }
@@ -477,22 +497,36 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
   for (const [k, f] of curF) {
     const p = prevF.get(k);
     const label = VAR_LABEL[k] || k;
+    const dir = verifiedDirection({ before: f.before_value, after: f.after_value, direction: f.direction, evidence_text: f.source_quote });
     if (p && p.value && f.value && p.value !== f.value) {
-      const d = deltaOf(p.value, f.value, f.unit);
-      const sign: ChangeLine['sign'] = f.direction === 'down' ? '-' : f.direction === 'up' ? '+' : '·';
-      lines.push({ sign, text: `${label} ${p.value} → ${f.value}${d ? ` (${d})` : ''}`, metric: k, period: to, source: f.source_name });
+      // Two periods, two figures — a delta only when they measure the same
+      // thing. MOREPEN's "314 kiloliters → 200 KLD (−36%)" compared a tank
+      // volume with a daily throughput. Different units: two levels, no arrow.
+      const comparable = sameUnit(p.value, f.value, p.unit, f.unit);
+      const d = comparable ? deltaOf(p.value, f.value, f.unit) : null;
+      const sign: ChangeLine['sign'] = !comparable ? '·' : d ? (d.startsWith('-') ? '-' : '+') : '·';
+      lines.push({ sign, text: comparable ? `${label} ${p.value} → ${f.value}${d ? ` (${d})` : ''}` : `${label} ${f.value} (earlier period stated ${p.value} — different unit, not compared)`, metric: k, period: to, source: f.source_name });
     } else if (!p) {
-      const sign: ChangeLine['sign'] = f.direction === 'down' ? '-' : f.direction === 'up' ? '+' : '·';
+      const sign: ChangeLine['sign'] = dir === 'down' ? '-' : dir === 'up' ? '+' : '·';
       const text = f.before_value && f.after_value
         ? `${label} ${f.before_value} → ${f.after_value}${f.delta ? ` (${f.delta})` : ''}`
         : `${label} ${f.value}`;
       lines.push({ sign, text, metric: k, period: to, source: f.source_name });
     }
   }
-  // New forward statements are worth a line too, marked as such.
+  // New forward statements are worth a line too, marked as such. One line
+  // per stated value: MOREPEN's "`825 Crore" came back filed as both an
+  // order book and a management target, and printing it twice made one
+  // sentence look like two disclosures.
+  const seenValue = new Set<string>(Array.from(curF.values()).map((f) => String(f.value || '').toLowerCase()));
   for (const f of cur.facts) {
     if (f.fact_or_management_statement === 'FACT') continue;
     if (prev && prev.facts.some((q) => q.metric_name === f.metric_name && q.fact_or_management_statement === f.fact_or_management_statement && q.value === f.value)) continue;
+    const vkey = String(f.value || '').toLowerCase();
+    if (vkey && seenValue.has(vkey)) continue;
+    seenValue.add(vkey);
+    // A value that does not fit its variable is not a statement either.
+    if (judgeEventQuality({ variable: f.metric_name, before: f.before_value, after: f.after_value, unit: f.unit, evidence_text: f.source_quote }) === 'unit_mismatch') continue;
     if (lines.length >= 12) break;
     lines.push({ sign: '·', text: `${VAR_LABEL[f.metric_name] || f.metric_name}: ${f.fact_or_management_statement.toLowerCase().replace('_', ' ')} ${f.value}`, metric: f.metric_name, period: to, source: f.source_name });
   }
