@@ -753,6 +753,75 @@ describe('structural evidence extraction', () => {
     assert.equal(sameUnit('9 lakh BP monitors', '18 lakh BP monitors', null, null), true);
   });
 
+  // ── zzz755: the live page on 22 Sept, second pass ─────────────────────
+  test('a level-only core variable cannot reach THESIS STRENGTHENING', () => {
+    // AETHER's shape: unclassified ledger, core = revenue_growth + cash_conversion.
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, variables: [
+      { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+27.2%', delta: '+27.2%', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'cash_conversion', label: 'Cash conversion', before: null, after: '2.25×', delta: null, verdict: 'stated', evidence: '', source: 'grader' },
+      { key: 'margin', label: 'Operating margin', before: null, after: '+1pp', delta: '+1pp', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'earnings_growth', label: 'Earnings growth', before: null, after: '+33.2%', delta: '+33.2%', verdict: 'improving', evidence: '', source: 'grader' },
+    ] as any });
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.ok(a.coverage.levelOnlyCore.includes('Cash conversion'));
+  });
+
+  test('green is still reachable when every core variable actually moved', () => {
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, variables: [
+      { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+27.2%', delta: '+27.2%', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'cash_conversion', label: 'Cash conversion', before: null, after: '2.25×', delta: null, verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'margin', label: 'Operating margin', before: null, after: '+3pp', delta: '+3pp', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'earnings_growth', label: 'Earnings growth', before: null, after: '+33.2%', delta: '+33.2%', verdict: 'improving', evidence: '', source: 'grader' },
+    ] as any });
+    assert.equal(a.status, 'STRENGTHENING');
+  });
+
+  test('a mis-filed actual is dropped, not shown as a level — REDINGTON capacity in rupees', () => {
+    const vars = varsFromEvents([
+      { variable: 'capacity', value_type: 'ACTUAL', before: null, after: '`10,161 crores', unit: null, period: null, direction: 'up', confidence: 'HIGH', source: 'd', evidence_text: 'Revenue for the quarter stood at `10,161 crores across the three geographies we operate in.' },
+    ] as any);
+    assert.equal(vars.length, 0);
+  });
+
+  test('utilisation needs a utilisation sentence — JINDRILL months, DIVGI rupees, VIJAYA hubs', () => {
+    const q = (after: string, ev: string) => judgeEventQuality({ variable: 'utilisation', before: null, after, unit: null, evidence_text: ev });
+    assert.equal(q('4 to 6 months', 'Refurbishment periods of 4 to 6 months mean the rig cannot be redeployed until Q3.'), 'unit_mismatch');
+    assert.equal(q('Rs. 5.7 crores', 'Other income for the quarter was Rs. 5.7 crores against the comparable period.'), 'unit_mismatch');
+    assert.equal(q('7 hub centers in Kolkata', 'We now operate 7 hub centers in Kolkata serving the eastern region.'), 'unit_mismatch');
+    assert.equal(q('-14%', 'Data centre revenue in Europe declined -14% during the quarter on lower deployments.'), 'unit_mismatch');
+    assert.equal(q('13.2%', 'Same-boutique revenue growth was 13.2% for the quarter across the network.'), 'unit_mismatch');
+    // Genuine ones survive, including a legitimately low solar CUF.
+    assert.equal(q('19.89% CUF', 'The 600 MW solar plant operated at 19.89% CUF during the quarter.'), 'sentence');
+    assert.equal(q('65%', 'Capacity utilisation across the Hyderabad lines was 65% for the quarter.'), 'sentence');
+    assert.equal(q('almost 100%', 'We are running at almost 100% utilisation on the specialty lines.'), 'sentence');
+  });
+
+  test('capacity stated as a bare percentage is mis-filed — GESHIP "About 25-26%"', () => {
+    assert.equal(judgeEventQuality({ variable: 'capacity', before: null, after: 'About 25-26%', unit: null, evidence_text: 'Our share of the coastal trade is About 25-26% of the total installed capacity in the country.' }), 'unit_mismatch');
+    assert.equal(judgeEventQuality({ variable: 'capacity', before: null, after: '60 million sq. ft.', unit: null, evidence_text: 'Installed capacity now stands at 60 million sq. ft. of laminates per annum.' }), 'sentence');
+  });
+
+  test('a forward-only value says so on the board — AARTIPHARM target utilisation', () => {
+    const vars = varsFromEvents([
+      { variable: 'utilisation', value_type: 'TARGET', before: null, after: '80% plus', unit: '%', period: null, direction: 'up', confidence: 'HIGH', source: 'd', evidence_text: 'We are targeting 80% plus utilisation at Atali once Block 1 stabilises.' },
+    ] as any);
+    assert.equal(vars[0].after, '80% plus (target)');
+  });
+
+  test('the margin delta and the margin verdict come from one number', () => {
+    // AETHER: grader says -1pp YoY, the filing bridge says +1pp. The card
+    // must never show a red arrow next to a positive figure.
+    const v = extractVariables({ opm_pct: 20, opm_prev_pct: 21 }, { margin_bridge: { opm_change_pp: '+1pp' } })
+      .find((x) => x.key === 'margin')!;
+    assert.equal(v.verdict, 'deteriorating');
+    assert.equal(v.delta, '-1.0pp');
+    // CUPID / RATEGAIN: "+?pp" is not a number and never reaches the card.
+    const junk = extractVariables({ opm_pct: 20, opm_prev_pct: 17 }, { margin_bridge: { opm_change_pp: '+?pp' } })
+      .find((x) => x.key === 'margin')!;
+    assert.equal(junk.delta, '+3.0pp');
+    assert.equal(junk.verdict, 'improving');
+  });
+
   test('the tally adds up — stated and flat are counted, not dropped', () => {
     const a = assessThesis({ pattern: null, evidenceReviewed: true, variables: [
       { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+8%', delta: '+8%', verdict: 'flat', evidence: '', source: 'grader' },
@@ -1111,7 +1180,10 @@ describe('zzz746 — extraction unit sanity and inferred values', () => {
     const passages: any[] = [{ family: 'utilisation', text: 'Our team grew from 160 to 374 people while utilisation stayed high.', doc: 'ar' }];
     const { kept } = validateEvents([{ variable: 'utilisation', value_type: 'ACTUAL', before: '160', after: '374', unit: null, period: 'FY26', direction: 'up', evidence_text: 'Our team grew from 160 to 374 people while utilisation stayed high.', source: 'ar', confidence: 'HIGH' }], passages);
     assert.equal(kept.length, 1); assert.equal(kept[0].evidence_quality, 'unit_mismatch'); assert.equal(kept[0].confidence, 'LOW');
-    assert.equal(varsFromEvents(kept)[0].kind, 'claim');
+    // zzz755: a value that is not about this variable is no longer rendered
+    // as the variable's value at all — it stays in the ledger for audit and
+    // the card shows the variable as undisclosed.
+    assert.equal(varsFromEvents(kept).length, 0);
   });
   test('an execution delay needs the passage to say delay', () => {
     const passages: any[] = [{ family: 'execution', text: 'We achieved 90% of the planned rollout in the quarter as scheduled.', doc: 't' }];

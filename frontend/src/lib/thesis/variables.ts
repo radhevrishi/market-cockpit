@@ -156,7 +156,19 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
   for (const [key, slot] of bestEventPerVariable(events)) {
     const a = slot.actual, f = slot.forward;
     const label = VAR_LABEL[key] || key;
-    if (a) {
+    // ── A VALUE THAT IS NOT ABOUT THIS VARIABLE IS NOT THIS VARIABLE'S
+    //    VALUE.                                                     (zzz755)
+    //
+    // zzz754 stopped a wrong-unit fact from CONFIRMING, but still printed
+    // it: the board showed "◐ Installed capacity ₹10,161 crores" on
+    // REDINGTON and "◐ Capacity utilisation 4 to 6 months" on JINDRILL.
+    // Marking a wrong number as unjudged does not make it less wrong. The
+    // mis-filed actual is dropped here; the variable falls through to its
+    // forward statement if it has one, and otherwise renders as an absence.
+    // The event itself stays in the ledger for audit.
+    const aOk = a && judgeEventQuality(a) !== 'unit_mismatch' ? a : null;
+    if (aOk) {
+      const a = aOk;
       const delta = deltaOf(a.before, a.after);
       // Re-judged on load, so ledgers written before a rule existed obey it.
       const quality = judgeEventQuality(a);
@@ -187,10 +199,13 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined): St
       });
     } else if (f) {
       // A forward statement with no actual behind it is a claim, shown as
-      // such: the verdict is unknown because nothing has been achieved yet.
+      // such — and the BOARD has to say so, not just the tooltip. AARTIPHARM
+      // printed "◐ Capacity utilisation 80% plus" from a TARGET, which reads
+      // as this quarter's fill rate. The type travels with the value. (zzz755)
+      const tag = f.value_type === 'GUIDANCE' ? 'guidance' : 'target';
       out.push({
         key, label, kind: 'claim',
-        before: null, after: f.after, delta: null, verdict: 'stated',
+        before: null, after: `${f.after} (${tag})`, delta: null, verdict: 'stated',
         evidence: `${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Management target'}: ${f.after}${f.period ? ` by ${f.period}` : ''}. `
           + `"${f.evidence_text.slice(0, 200)}${f.evidence_text.length > 200 ? '…' : ''}" — ${f.source}`,
         source: 'filing',
@@ -295,10 +310,24 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
   // ── MARGIN. The AI summary's bridge is preferred because it carries the
   //    REASON, which is the part that decides whether the change is structural.
   const mb = summary?.margin_bridge;
-  const mbDelta = said(mb?.opm_change_pp) ? String(mb.opm_change_pp) : null;
+  // ── THE DELTA AND THE VERDICT MUST COME FROM THE SAME NUMBER.   (zzz755)
+  //
+  // AETHER printed "▼ Operating margin +1pp" — a red arrow beside a
+  // positive number — because the DELTA was taken from the filing's
+  // margin bridge while the VERDICT was computed from the grader's
+  // year-on-year figure. TBZ printed the whole sentence "FY26: +4.46pp to
+  // 11.18% (presentation); Q4: +6.51pp to 13.45%" in the delta slot, and
+  // CUPID printed "+?pp" — a literal question mark the model wrote. A
+  // bridge value is used only when it is a single clean pp figure.
+  const mbRaw = said(mb?.opm_change_pp) ? String(mb.opm_change_pp).trim() : null;
+  const mbDelta = mbRaw && /^[+-]?\d+(?:\.\d+)?\s*(pp|bps|bp|%)?$/i.test(mbRaw) ? mbRaw : null;
   const drivers: any[] = Array.isArray(mb?.drivers) ? mb.drivers : [];
   if (mbDelta || opmChangeYoy != null || opmChangeQoq != null || opm != null) {
+    // One source decides BOTH. The grader's own year-on-year bridge wins
+    // because it is arithmetic on filed statements; the model's bridge is
+    // second; the sequential figure is last and is labelled as such.
     const dv = opmChangeYoy != null ? opmChangeYoy : (pctIn(mbDelta) ?? opmChangeQoq);
+    const dvFromBridge = opmChangeYoy == null && pctIn(mbDelta) != null;
     const structural = drivers.filter((d) => d?.nature === 'structural').length;
     const cyclical = drivers.filter((d) => d?.nature === 'cyclical').length;
     const why = drivers.length
@@ -314,8 +343,9 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
       // 10.5% itself were the bad news. (zzz719)
       before: opmPrev != null ? `${opmPrev.toFixed(1)}%` : null,
       after: opm != null ? `${opm.toFixed(1)}%` : null,
-      delta: mbDelta
-        || (dv != null ? `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' QoQ' : ''}` : null),
+      delta: dvFromBridge
+        ? mbDelta
+        : (dv != null ? `${dv >= 0 ? '+' : ''}${dv.toFixed(1)}pp${sequentialOnly ? ' QoQ' : ''}` : null),
       verdict: dv == null ? 'unknown' : dv >= 1 ? 'improving' : dv > -1 ? 'flat' : 'deteriorating',
       evidence: `Operating margin ${opm != null ? `${opm.toFixed(1)}%` : ''}`
         + `${opmPrev != null ? ` (was ${opmPrev.toFixed(1)}%)` : ''}`
@@ -354,7 +384,7 @@ export function extractVariables(graded: any | null, summary: any | null): Struc
     const basis = annual ? ' (last full year, screener figure — not this quarter\'s)' : '';
     push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
-      before: null, after: `${cfoToPat.toFixed(2)}×`, delta: null,
+      before: null, after: `${cfoToPat.toFixed(2)}×${annual ? ' (last FY)' : ''}`, delta: null,
       verdict: !negative
         ? (cfoToPat >= 1 ? 'improving' : cfoToPat >= 0.6 ? 'flat' : 'deteriorating')
         : lossMaking ? 'flat'

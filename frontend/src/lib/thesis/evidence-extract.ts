@@ -373,9 +373,9 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
 // fix reaches every ledger already in KV without spending a model call to
 // re-read the documents. (zzz754)
 
-const PCT_VARS = new Set(['utilisation', 'margin_driver', 'exports', 'mix', 'customer_concentration']);
+const PCT_VARS = new Set(['margin_driver', 'exports', 'mix', 'customer_concentration']);
 const CAPACITY_VARS = new Set(['capacity', 'capacity_addition', 'new_plant']);
-const CURRENCY_RE = /₹|\bINR\b|\bRs\.?\b|\bUSD\b|\$|\bEUR\b|€|crores?\b|\bcr\b|lakhs?\b|\bmn\b|million|billion|`\s*\d/i;
+const CURRENCY_RE = /₹|\bINR|\bRs\.?|\bUSD|\$|\bEUR|€|crores?\b|\bcr\b|lakhs?\b|`\s*\d/i;
 // Kept for reference of what a capacity DOES look like; the rule is simpler
 // than a whitelist — money is never capacity.
 export const CAPACITY_UNIT_RE = /\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|tonnes?|\bMT\b|\bKL\b|\bKLD\b|\bKLPD\b|litres?|liters?|kilolit|units?\b|pieces|\bnos\b|plants?\b|lines?\b|beds?\b|racks?|GPUs?|servers?|cases\b|vehicles|\bx\b|\d\s*x\b|times|fold|monitors|pallets|sq\.?\s*ft|square|hectare|acre|kg\b|kilogram|barrels?|bpd|MMSCMD|MTPD|TPD|shifts?|machines?|looms?|spindles?|furnace|kilns?|cells?|modules?|wafers?|chips?/i;
@@ -385,22 +385,51 @@ export function judgeEventQuality(e: { variable: string; before: string | null; 
   const ev = e.evidence_text || '';
   const valueText = `${e.before || ''} ${e.after || ''}`;
   const v = e.variable;
+  // A run of axis labels is a CHART read first and foremost. It is judged
+  // ahead of the unit rules because the figures did come off that
+  // variable's slide — they are weak, not mis-filed, and the two states
+  // have different consequences downstream. (zzz755)
+  const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
+  const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
+  if (words < 5 || figures > words) return 'chart';
   const unitOk = (() => {
+    // ── UTILISATION IS THE MOST-ABUSED VARIABLE ON THE PAGE.       (zzz755)
+    //
+    // Live on 22 Sept it carried: a duration (JINDRILL "4 to 6 months"), a
+    // money figure (DIVGI "Rs. 5.7 crores"), a location list (VIJAYA "7 hub
+    // centers in Kolkata"), a delivery date (UNIPARTS "first customer
+    // deliveries ... in Q3"), a headcount (E2E "160 → 374") and a growth
+    // rate (ETHOS "13.2%"). A percentage alone is not enough — half of
+    // those are percentages. The SENTENCE has to be about utilisation.
+    if (v === 'utilisation') {
+      const saysUtilisation = /utilis|utiliz|operating at|running at|occupancy|load factor|\bCUF\b|\bPLF\b|capacity|full|maximum|peak|sold out/i.test(ev);
+      if (!saysUtilisation) return false;
+      const pctMatch = valueText.match(/-?\d+(?:\.\d+)?\s*%/);
+      if (pctMatch) {
+        const n = parseFloat(pctMatch[0]);
+        // Below zero is impossible; above 130 is a growth figure, not a
+        // fill rate. GIPCL's genuine 19.89% CUF survives.
+        if (!(n >= 0 && n <= 130)) return false;
+        return true;
+      }
+      return /full|maximum|peak|near|sold out|optimum|shift/i.test(valueText);
+    }
     if (PCT_VARS.has(v)) return /%|per ?cent|pp\b|full|maximum|peak|near|shift|high|low|double|single/i.test(valueText) || /%/.test(String(e.unit || ''));
     // A capacity stated only in money is a capex figure filed under the
     // wrong name: EXICOM "installed capacity USD100 million", AZAD
-    // "INR150 crores per plant". Money is not capacity.
-    if (CAPACITY_VARS.has(v)) return !CURRENCY_RE.test(valueText);
+    // "INR150 crores per plant". Money is not capacity — and neither is a
+    // bare percentage (GESHIP "installed capacity About 25-26%").
+    if (CAPACITY_VARS.has(v)) {
+      if (CURRENCY_RE.test(valueText)) return false;
+      if (/%/.test(valueText) && !CAPACITY_UNIT_RE.test(valueText)) return false;
+      return true;
+    }
     if (v === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
     if (v === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
     if (v === 'capacity_bottleneck' || v === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);
     return true;
   })();
-  const words = (ev.match(/[A-Za-z]{3,}/g) || []).length;
-  const figures = (ev.match(/\d[\d,.]*%?/g) || []).length;
-  let q: 'sentence' | 'chart' | 'unit_mismatch' = (words < 5 || figures > words) ? 'chart' : 'sentence';
-  if (!unitOk) q = 'unit_mismatch';
-  return q;
+  return unitOk ? 'sentence' : 'unit_mismatch';
 }
 
 const UP_RE = /\bincreas|\bimprov|\bgrew\b|\bgrow(n|th)?\b|\bhigher\b|\bup\b|\bexpan|\brose\b|\bris(e|ing)\b|\bramp|\badded\b|\baddition|\bdoubl|\btripl|\b\d+\s*x\b|\bfrom\b.*\bto\b|\bscal(e|ed|ing) up|\bcommission|\bnew\b|\bwon\b|\bwin\b|\bbagged|\breceived\b|\bmaximum|\bpeak\b|\bfull\b/i;

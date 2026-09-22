@@ -159,6 +159,11 @@ export interface ThesisAssessment {
     output: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
     mechanism: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
     forward: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
+    /** Core variables disclosed as a LEVEL only — read, recorded, and not
+     *  yet a direction. Named separately from missingCore because "the
+     *  company told you and there is nothing to compare it to" and "nobody
+     *  looked" are different states. (zzz755) */
+    levelOnlyCore: string[];
     /** The core variables NOT yet checked, by name. The owner asked for this
      *  exactly: "6/10 core variables checked. Missing: utilisation, capex,
      *  new capacity, order book" — not a bare "evidence incomplete". */
@@ -287,6 +292,18 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const core = checked.filter((c) => c.weight === 4);
   const coreDisclosed = core.filter((c) => c.verdict !== 'unknown');
   const coreUp = coreDisclosed.filter((c) => c.verdict === 'improving');
+  // ── DISCLOSED IS NOT JUDGED.                                     (zzz755)
+  //
+  // zzz754 introduced STATED so a figure the company published would stop
+  // rendering as an absence. It then let STATED satisfy "this core variable
+  // has been checked", and the green count went from 3 to 43 in one deploy:
+  // AETHER reached THESIS STRENGTHENING with utilisation shown as a bare
+  // 74%, order book absent, capex absent and guidance a management range.
+  // A level with nothing to compare it against confirms nothing — it is
+  // exactly the state the page exists to make visible. Green needs every
+  // core variable to have MOVED in a direction the evidence supports.
+  const coreJudged = coreDisclosed.filter((c) => c.verdict !== 'stated');
+  const coreLevelOnly = coreDisclosed.filter((c) => c.verdict === 'stated');
 
   // ── WHICH DETERIORATIONS ARE ALLOWED TO MOVE THE STATUS.       (zzz738)
   //
@@ -410,6 +427,15 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + (disclosed.length
         ? 'No deterioration is visible in the evidence reviewed so far; remaining thesis-critical variables have not yet been reviewed.'
         : 'Nothing has been read for this holding at all.');
+  } else if (coreJudged.length < core.length) {
+    // Every core variable was disclosed, but at least one is a LEVEL with
+    // no comparison basis. Better than unread — the figure is on the card
+    // and next quarter turns it into a direction — and still not a
+    // confirmed mechanism.
+    status = 'CONFIRMATION_REQUIRED';
+    because = `${coreLevelOnly.map((c) => `${c.label.toLowerCase()} (${c.after || c.before})`).join(' and ')} `
+      + `${coreLevelOnly.length === 1 ? 'was' : 'were'} disclosed as a level with nothing in the document to compare against, `
+      + 'so the direction is unknown. The figure is recorded; next quarter turns it into a trend.';
   } else if (coreUp.length >= 1 && weighted >= 6 && allDimsConfirmed && input.evidenceReviewed) {
     // ── THE ONLY PATH TO GREEN.                                   (zzz723)
     //
@@ -539,6 +565,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       mechanism: tally(critical.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward')),
       forward: tally(critical.filter((c) => VAR_DIMENSION[c.key] === 'forward')),
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
+      levelOnlyCore: coreLevelOnly.map((c) => c.label),
       missingNeedsFiling: checked
         .filter((c) => c.verdict === 'unknown' && c.weight >= 3 && !GRADER_AVAILABLE.has(c.key))
         .map((c) => c.label),

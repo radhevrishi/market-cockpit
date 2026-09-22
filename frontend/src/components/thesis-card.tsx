@@ -417,6 +417,11 @@ export function ThesisCard(p: ThesisCardProps) {
               Core still unreviewed: <span style={{ color: C.text }}>{a.coverage.missingCore.join(', ')}</span>
             </div>
           )}
+          {a.coverage.levelOnlyCore.length > 0 && (
+            <div style={{ color: C.faint, marginTop: 2 }}>
+              Level only, no comparison basis: <span style={{ color: C.text }}>{a.coverage.levelOnlyCore.join(', ')}</span>
+            </div>
+          )}
           {a.coverage.missingNeedsFiling.length > 0 && p.needsRead && (
             <div style={{ color: C.faint, marginTop: 2 }}>
               {a.coverage.missingNeedsFiling.length} of the pending variables exist only in a filing, concall or

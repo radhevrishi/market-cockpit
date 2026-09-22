@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, Upload, ArrowUpDown, Edit3, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
@@ -870,6 +870,62 @@ function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave
   );
 }
 
+/**
+ * One row's worth of editing: entry price, quantity and notes together,
+ * saved in a single write. Local state so typing never re-renders the
+ * whole table, and Escape always gets you out. (zzz756)
+ */
+function EditHoldingRow({ row, colSpan, onSave, onCancel }: {
+  row: { symbol: string; entryPrice: number; quantity: number; notes?: string };
+  colSpan: number;
+  onSave: (p: { entryPrice: number; quantity: number; notes: string }) => void;
+  onCancel: () => void;
+}) {
+  const [price, setPrice] = useState(String(row.entryPrice ?? ''));
+  const [qty, setQty] = useState(String(row.quantity ?? ''));
+  const [notes, setNotes] = useState(row.notes ?? '');
+  const submit = () => onSave({ entryPrice: Number(price), quantity: Number(qty), notes });
+  const field = {
+    backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: 6,
+    padding: '6px 9px', color: 'var(--mc-text-0)', fontSize: 12, outline: 'none', width: '100%',
+    boxSizing: 'border-box' as const,
+  };
+  const lbl = { fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4, color: 'var(--mc-text-4)', display: 'block', marginBottom: 3 };
+  return (
+    <tr style={{ backgroundColor: 'rgba(34,211,238,0.05)', borderBottom: '1px solid var(--mc-bg-2)' }}>
+      <td colSpan={colSpan} style={{ padding: '10px 12px' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}
+          onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); if (e.key === 'Enter') submit(); }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-text-0)', paddingBottom: 7 }}>{row.symbol}</div>
+          <div style={{ width: 130 }}>
+            <label style={lbl}>ENTRY PRICE (₹)</label>
+            <input type="number" inputMode="decimal" value={price} autoFocus
+              onChange={(e) => setPrice(e.target.value)} style={field} />
+          </div>
+          <div style={{ width: 110 }}>
+            <label style={lbl}>QUANTITY</label>
+            <input type="number" inputMode="numeric" value={qty}
+              onChange={(e) => setQty(e.target.value)} style={field} />
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <label style={lbl}>NOTES — WHY YOU OWN IT</label>
+            <input type="text" value={notes} placeholder="e.g. capacity doubling, order book 2.4× revenue"
+              onChange={(e) => setNotes(e.target.value)} style={field} />
+          </div>
+          <button onClick={submit} style={{
+            padding: '7px 14px', borderRadius: 6, border: '1px solid var(--mc-bullish)',
+            background: 'rgba(16,185,129,0.12)', color: 'var(--mc-bullish)', fontSize: 11.5, fontWeight: 800, cursor: 'pointer',
+          }}>SAVE</button>
+          <button onClick={onCancel} style={{
+            padding: '7px 12px', borderRadius: 6, border: '1px solid var(--mc-border-2)',
+            background: 'transparent', color: 'var(--mc-text-3)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+          }}>CANCEL</button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 /* ── Main Page ─────────────────────────────────────────────────────── */
 
 /* ── PATCH 1100 — Market-cap helpers + Portfolio Analytics ──────────── */
@@ -1692,6 +1748,8 @@ function PortfolioRegimeExposure({ rows }: { rows: PortfolioRow[] }) {
 
 export default function PortfolioPage() {
   const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
+  /** The symbol whose row is open for editing, if any. (zzz756) */
+  const [editSymbol, setEditSymbol] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [intelligence, setIntelligence] = useState<Map<string, Signal>>(new Map());
   // PATCH 0445 BUG-021 — Per-symbol RRG trend label cache (LEADING /
@@ -1742,8 +1800,34 @@ export default function PortfolioPage() {
           let data: any = {};
           try { data = await res.json(); } catch { data = {}; }
           if (Array.isArray(data?.holdings) && data.holdings.length > 0) {
-            setHoldings(data.holdings);
-            setStoredHoldings(data.holdings);
+            // ── THE SERVER IS A UNION PARTNER, NOT A REPLACEMENT. (zzz756)
+            //
+            // The old line took the server list wholesale and wrote it
+            // over localStorage. Any position added while the server was
+            // unreachable was destroyed on the next load — silently, and
+            // by the code that was supposed to be restoring it. Both
+            // lists are now merged by symbol, and the LOCAL row wins on a
+            // conflict because it is the one the user edited most
+            // recently on this device.
+            const local = getStoredHoldings();
+            const byId = new Map<string, PortfolioHolding>();
+            for (const h of data.holdings as PortfolioHolding[]) {
+              if (h?.symbol) byId.set(String(h.symbol).toUpperCase(), h);
+            }
+            const localOnly: string[] = [];
+            for (const h of local) {
+              if (!h?.symbol) continue;
+              const k = String(h.symbol).toUpperCase();
+              if (!byId.has(k)) localOnly.push(h.symbol);
+              byId.set(k, h);
+            }
+            const merged = Array.from(byId.values());
+            setHoldings(merged);
+            setStoredHoldings(merged);
+            if (localOnly.length) {
+              // Push the un-synced rows up so the two copies converge.
+              void syncToAPI(merged);
+            }
             return;
           }
         }
@@ -1751,6 +1835,7 @@ export default function PortfolioPage() {
       setHoldings(getStoredHoldings());
     };
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch live quotes — bulk first, then individual for missing
@@ -1932,13 +2017,45 @@ export default function PortfolioPage() {
   }, [holdings.length]);
 
   // Sync holdings to API
-  const syncToAPI = useCallback((h: PortfolioHolding[]) => {
+  // ── A WRITE THAT DID NOT LAND MUST NOT TOAST "ADDED".          (zzz756)
+  //
+  // THE BUG: "I can't add new positions." The add handler worked — it set
+  // state, wrote localStorage, POSTed, and showed a green toast. The POST
+  // was fire-and-forget with a console.error on failure, and the server
+  // store has been unavailable for long stretches (the Upstash quota
+  // exhaustion of Day-6 is the documented case). So the row appeared,
+  // the toast said success, and on the next page load `init()` read the
+  // server list, found it non-empty, and called BOTH setHoldings AND
+  // setStoredHoldings with it — overwriting the local copy that actually
+  // had the new position. The holding vanished with no error anywhere.
+  //
+  // Now: localStorage is written first and is authoritative, the POST is
+  // awaited, and a failure is SAID OUT LOUD. The position is still saved
+  // on this device — that is true and worth knowing — but the user is
+  // told it has not reached the server.
+  const syncToAPI = useCallback(async (h: PortfolioHolding[]): Promise<boolean> => {
     setStoredHoldings(h);
-    fetch('/api/portfolio', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: CHAT_ID, secret: BOT_SECRET, action: 'set', holdings: h }),
-    }).then(r => { if (!r.ok) console.error('Portfolio sync failed'); }).catch(console.error);
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 10_000);
+      let r: Response;
+      try {
+        r = await fetch('/api/portfolio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId: CHAT_ID, secret: BOT_SECRET, action: 'set', holdings: h }),
+          signal: ctl.signal,
+        });
+      } finally { clearTimeout(timer); }
+      if (!r.ok) {
+        toast.error(`Saved on this device only — server refused the write (HTTP ${r.status}). It will not appear on your other devices yet.`);
+        return false;
+      }
+      return true;
+    } catch (e: any) {
+      toast.error(`Saved on this device only — could not reach the server (${String(e?.message || e).slice(0, 60)}).`);
+      return false;
+    }
   }, []);
 
   // PATCH 0446 BUG-021 v2 — Predicate used inside the row mapper to gate
@@ -2165,7 +2282,7 @@ export default function PortfolioPage() {
   }, [holdings]);
 
   // Handlers
-  const handleAdd = (h: PortfolioHolding) => {
+  const handleAdd = async (h: PortfolioHolding) => {
     const exists = holdings.find(x => x.symbol === h.symbol);
     if (exists) {
       // Average in
@@ -2173,13 +2290,13 @@ export default function PortfolioPage() {
       const avgPrice = ((exists.entryPrice * exists.quantity) + (h.entryPrice * h.quantity)) / totalQty;
       const updated = holdings.map(x => x.symbol === h.symbol ? { ...x, entryPrice: avgPrice, quantity: totalQty } : x);
       setHoldings(updated);
-      syncToAPI(updated);
-      toast.success(`${h.symbol} averaged in — ${totalQty} shares @ ₹${avgPrice.toFixed(2)}`);
+      const ok = await syncToAPI(updated);
+      if (ok) toast.success(`${h.symbol} averaged in — ${totalQty} shares @ ₹${avgPrice.toFixed(2)}`);
     } else {
       const updated = [...holdings, h];
       setHoldings(updated);
-      syncToAPI(updated);
-      toast.success(`${h.symbol} added to portfolio`);
+      const ok = await syncToAPI(updated);
+      if (ok) toast.success(`${h.symbol} added to portfolio`);
     }
     setShowAdd(false);
     setTimeout(fetchData, 500);
@@ -2191,6 +2308,24 @@ export default function PortfolioPage() {
     setHoldings(updated);
     syncToAPI(updated);
     toast.success(`${symbol} removed from portfolio`);
+  };
+
+  // ── EDIT A WHOLE POSITION, NOT ONE CELL AT A TIME.             (zzz756)
+  //
+  // Entry price and quantity were already editable, but only by clicking a
+  // dashed underline that nothing announced, and `notes` could be set when
+  // the position was created and never afterwards. One EDIT button per row
+  // opens all three together and saves them in one write.
+  const handleSaveRow = async (symbol: string, patch: { entryPrice: number; quantity: number; notes: string }) => {
+    if (!(patch.entryPrice > 0)) { toast.error('Entry price must be greater than zero'); return; }
+    if (!(patch.quantity > 0)) { toast.error('Quantity must be greater than zero'); return; }
+    const updated = holdings.map(h => h.symbol === symbol
+      ? { ...h, entryPrice: patch.entryPrice, quantity: patch.quantity, notes: patch.notes.trim() || undefined }
+      : h);
+    setHoldings(updated);
+    setEditSymbol(null);
+    const ok = await syncToAPI(updated);
+    if (ok) toast.success(`${symbol} updated`);
   };
 
   const handleUpdateField = (symbol: string, field: 'entryPrice' | 'quantity', value: number) => {
@@ -2440,7 +2575,7 @@ export default function PortfolioPage() {
                     { key: 'score' as SortField, label: 'SCORE', align: 'right' },
                     { key: 'symbol' as SortField, label: 'TREND', align: 'right', noSort: true },
                     { key: 'changePercent' as SortField, label: 'DAY%', align: 'right' },
-                    { key: 'symbol' as SortField, label: '', align: 'right', noSort: true },
+                    { key: 'symbol' as SortField, label: 'EDIT', align: 'right', noSort: true },
                   ].map((col, i) => (
                     // AUDIT_100 #8 — stable composite key on table headers.
                     <th key={`${col.key}|${col.label}|${i}`} onClick={() => !col.noSort && handleSort(col.key)} style={{
@@ -2472,7 +2607,7 @@ export default function PortfolioPage() {
                   const isStale = hasQuote && lastRefresh
                     ? (Date.now() - lastRefresh.getTime()) > 5 * 60_000
                     : false;
-                  return (
+                  const row = (
                     <tr key={r.symbol} style={{ borderBottom: idx < displayRows.length - 1 ? '1px solid var(--mc-bg-2)' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td onClick={() => openPassport(r.symbol)} title="Open Stock Passport" style={{ padding: '10px 12px', color: 'var(--mc-info)', fontWeight: '700', cursor: 'pointer' }}>{r.symbol}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--mc-text-0)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
@@ -2611,7 +2746,14 @@ export default function PortfolioPage() {
                           {hasQuote ? fmtPct(r.changePercent) : '—'}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button onClick={() => setEditSymbol(editSymbol === r.symbol ? null : r.symbol)}
+                          title={`Edit ${r.symbol} — entry price, quantity, notes`}
+                          style={{ background: 'none', border: 'none', color: editSymbol === r.symbol ? 'var(--mc-info)' : 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', borderRadius: '4px', marginRight: 2 }}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(34,211,238,0.12)'; e.currentTarget.style.color = '#22D3EE'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = editSymbol === r.symbol ? '#22D3EE' : '#4A5B6C'; }}>
+                          <Edit3 style={{ width: '14px', height: '14px' }} />
+                        </button>
                         <button onClick={() => handleRemove(r.symbol)} title="Remove from portfolio"
                           style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
                           onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; e.currentTarget.style.color = '#EF4444'; }}
@@ -2621,6 +2763,9 @@ export default function PortfolioPage() {
                       </td>
                     </tr>
                   );
+                  return editSymbol === r.symbol
+                    ? (<React.Fragment key={r.symbol}>{row}<EditHoldingRow row={r} colSpan={15} onSave={(patch) => handleSaveRow(r.symbol, patch)} onCancel={() => setEditSymbol(null)} /></React.Fragment>)
+                    : row;
                 })}
               </tbody>
             </table>
