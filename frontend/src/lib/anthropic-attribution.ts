@@ -24,7 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet } from './kv';
-import { anthropicMessages } from './anthropic-meter';
+import { anthropicMessages, modelConfigured } from './anthropic-meter';
 
 interface LlmInput {
   ticker: string;
@@ -66,7 +66,7 @@ function cacheKey(ticker: string, isoDate: string): string {
  * Caller MUST treat the return as optional and fall back to local scoring.
  */
 export async function enrichWithLLM(input: LlmInput): Promise<LlmAttribution | undefined> {
-  const key = process.env.ANTHROPIC_API_KEY;
+  const key = modelConfigured() ? 'configured' : '';
   if (!key) return undefined;
 
   const isoDate = new Date().toISOString().slice(0, 10);
@@ -92,7 +92,7 @@ export async function enrichWithLLM(input: LlmInput): Promise<LlmAttribution | u
       max_tokens: 400,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: prompt }],
-    }, { apiKey: key, signal: AbortSignal.timeout(20_000) });
+    }, { signal: AbortSignal.timeout(20_000) });
     if (!resp.ok) {
       console.warn(`[llm-attrib] HTTP ${resp.status} for ${input.ticker}`);
       return undefined;

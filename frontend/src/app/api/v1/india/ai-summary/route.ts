@@ -44,7 +44,7 @@ import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary } fr
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, type DocCandidate } from '@/lib/thesis/evidence-discovery';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
-import { anthropicMessages } from '@/lib/anthropic-meter';
+import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -217,8 +217,8 @@ export async function GET(req: NextRequest) {
     } catch { /* a cold cache is not an error */ }
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ ok: false, error: 'The summary service is not configured on this deployment.' });
+  if (!modelConfigured()) {
+    return NextResponse.json({ ok: false, error: `The summary service is not configured on this deployment (${modelKeyName()} missing).` });
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -390,7 +390,7 @@ export async function GET(req: NextRequest) {
   let data: any = null;
   try {
     const resp = await anthropicMessages('catalysts-summary', {
-      model: MODEL,
+      model: activeModel(MODEL),
       max_tokens: 4096,
       system: SYSTEM,
       tools: [SUMMARY_TOOL],
@@ -530,7 +530,7 @@ export async function GET(req: NextRequest) {
     const r = await extractStructuralEvents(
       read.map(({ doc, text: t }) => ({ label: doc.label, kind: doc.kind, text: t })),
       ticker,
-      { apiKey: process.env.ANTHROPIC_API_KEY!, model: MODEL },
+      { model: MODEL },
     );
     events = r.events;
     pipeline = r.pipeline;
@@ -563,7 +563,7 @@ export async function GET(req: NextRequest) {
     discovery_attempts: discovery.attempts,
     discovery_state: discovery.state,
     document_outcomes: outcomes,
-    model: MODEL,
+    model: activeModel(MODEL),
     ticker,
     quarter: quarter || null,
     chars_read: text.length,
@@ -580,7 +580,7 @@ export async function GET(req: NextRequest) {
     documents: docsFromRoute(payload.documents_read, outcomes, discovery.candidates),
     filingDate, events, summary: data,
     discoveryState: discovery.state, discoveryAttempts: discovery.attempts,
-    promptVersion: PROMPT_VERSION, model: MODEL,
+    promptVersion: PROMPT_VERSION, model: activeModel(MODEL),
     rawExtraction: { summary_call: (data as any).__raw_summary ?? null, events_call: rawExtraction, pipeline },
     pipeline,
   });

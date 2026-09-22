@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
-import { anthropicMessages } from '@/lib/anthropic-meter';
+import { anthropicMessages, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 
 export const runtime = 'nodejs';
 export const maxDuration = 55;
@@ -710,7 +710,7 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
         max_tokens: 1400,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
-      }, { apiKey, signal: AbortSignal.timeout(25_000) });
+      }, { signal: AbortSignal.timeout(25_000) });
     } catch (e) {
       // Network / abort error — transient, retry once.
       if (attempt === 0) {
@@ -939,10 +939,10 @@ function classifyPdfQuality(ext: ExtractedPdf | null): { quality: PdfQuality; ch
 
 // ─── POST handler ──────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY not set' }, { status: 503 });
+  if (!modelConfigured()) {
+    return NextResponse.json({ error: `${modelKeyName()} not set` }, { status: 503 });
   }
+  const apiKey = 'configured';   // the wrapper reads the key; this only satisfies the ctx shape
   let body: any;
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }); }
   const items: Array<{ ticker: string; period: string }> = Array.isArray(body?.items) ? body.items : [];

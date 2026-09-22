@@ -181,6 +181,12 @@ export function provider(): Provider {
   return process.env.OPENAI_API_KEY ? 'openai' : 'anthropic';
 }
 export const openaiModel = () => process.env.OPENAI_MODEL || 'gpt-5-mini';
+/** True when the active provider has a key. Callers ask THIS, never the env. */
+export const modelConfigured = () => (provider() === 'openai' ? !!process.env.OPENAI_API_KEY : !!process.env.ANTHROPIC_API_KEY);
+/** The env var a human must set for the active provider — for error text. */
+export const modelKeyName = () => (provider() === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY');
+/** The model that actually answers a call, for records and cards. */
+export const activeModel = (requested = 'claude-haiku-4-5-20251001') => (provider() === 'openai' ? openaiModel() : requested);
 
 const SHARD_TTL_S = 400 * 24 * 3600;   // 13 months: last year's months stay comparable
 

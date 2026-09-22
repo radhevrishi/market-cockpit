@@ -3569,7 +3569,7 @@ export default function EarningsPage() {
               {(aiStats.intimation_only || 0) > 0 ? `${aiStats.intimation_only} intimation-only (no transcript exists — Haiku skipped to save cost)` : ''}
               {aiStats.missing_pdf > 0 ? ` · ${aiStats.missing_pdf} no PDF` : ''}
               {aiStats.llm_failed > 0 ? ` · ${aiStats.llm_failed} LLM failed` : ''}
-              {(aiStats.batch_failures || 0) > 0 ? ` · ⚠ ${aiStats.batch_failures} batch timeouts (likely 🔧 ANTHROPIC_API_KEY missing in Railway env, OR upstream took >55s — set the key in Railway → Variables, redeploy, click 🤖 AI Guidance again)` : ''}
+              {(aiStats.batch_failures || 0) > 0 ? ` · ⚠ ${aiStats.batch_failures} batch timeouts (likely 🔧 model API key (OPENAI_API_KEY) missing in Railway env, OR upstream took >55s — set the key in Railway → Variables, redeploy, click 🤖 AI Guidance again)` : ''}
             </span>
           </div>
           {(aiStats.batch_failures || 0) > 0 && (aiStats.failed_tickers || []).length > 0 && (

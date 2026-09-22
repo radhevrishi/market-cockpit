@@ -37,7 +37,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet } from './kv';
-import { anthropicMessages } from '@/lib/anthropic-meter';
+import { anthropicMessages, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 
 export const AI_ANALYST_VERSION = 'ai-analyst-v1';
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -228,8 +228,7 @@ export async function assessCompany(inp: AnalystInput, opts: { force?: boolean }
     const hit = await readAssessment(inp.ticker, inp.accession);
     if (hit) return { assessment: hit, cached: true };
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { assessment: null, error: 'No ANTHROPIC_API_KEY is configured, so nothing was interpreted. The deterministic grade above is unaffected.' };
+  if (!modelConfigured()) return { assessment: null, error: `No ${modelKeyName()} is configured, so nothing was interpreted. The deterministic grade above is unaffected.` };
 
   let text = '';
   try {
@@ -239,7 +238,7 @@ export async function assessCompany(inp: AnalystInput, opts: { force?: boolean }
       temperature: 0,          // a ranking must not move because the dice moved
       system: SYSTEM,
       messages: [{ role: 'user', content: buildUserMessage(inp) }],
-    }, { apiKey, signal: AbortSignal.timeout(60_000) });
+    }, { signal: AbortSignal.timeout(60_000) });
     if (!resp.ok) {
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }

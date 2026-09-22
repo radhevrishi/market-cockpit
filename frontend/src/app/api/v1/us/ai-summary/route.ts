@@ -29,7 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { releaseDocument, filingExhibits, htmlToText } from '@/lib/us-guidance';
 import { submissions, tickerToCik } from '@/lib/us-edgar';
-import { anthropicMessages } from '@/lib/anthropic-meter';
+import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 import {
   SUMMARY_TOOL, SYSTEM_BASE,
   moneyTokens, numeralsIn, supported, pctTokens, valuesIn, supportedPct,
@@ -239,11 +239,10 @@ export async function GET(req: NextRequest) {
     if (hit?.summary && hit?.structured) return NextResponse.json({ ok: true, cached: true, ...hit });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY || '';
-  if (!apiKey) {
+  if (!modelConfigured()) {
     return NextResponse.json({
       ok: false, available: false,
-      error: 'No ANTHROPIC_API_KEY is configured for this deployment, so no summary can be written. The filing documents below are unaffected.',
+      error: `No ${modelKeyName()} is configured for this deployment, so no summary can be written. The filing documents below are unaffected.`,
     });
   }
 
@@ -309,7 +308,7 @@ export async function GET(req: NextRequest) {
         role: 'user',
         content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — read it and call file_earnings_summary.\n\n<release>\n${clipped}\n</release>`,
       }],
-    }, { apiKey, signal: AbortSignal.timeout(50_000) });
+    }, { signal: AbortSignal.timeout(50_000) });
     if (!resp.ok) {
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
@@ -458,7 +457,7 @@ export async function GET(req: NextRequest) {
   try { documents = (await filingExhibits(idxUrl)).slice(0, 12); } catch { documents = []; }
 
   const payload = {
-    summary, structured: data, source_url: sourceUrl, model: MODEL, documents,
+    summary, structured: data, source_url: sourceUrl, model: activeModel(MODEL), documents,
     dropped_lines: dropped.length || undefined,
     generated_at: new Date().toISOString(),
   };

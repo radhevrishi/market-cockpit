@@ -1109,7 +1109,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         });
         if (r.status === 503) {
           const body = await r.json().catch(() => ({}));
-          if (typeof body?.error === 'string' && /ANTHROPIC_API_KEY/i.test(body.error)) {
+          if (typeof body?.error === 'string' && /(ANTHROPIC|OPENAI)_API_KEY/i.test(body.error)) {
             configMissing = true; failed += chunk.length; done += chunk.length; setAiGuidanceProgress({done, total: needsFetch.length, failed, configMissing});
             break;
           }
@@ -2130,7 +2130,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                     🔄 Hard Refresh
                   </button>
                   <span style={{fontSize:F.xs,color:MUTED}}>{cachedCount > 0 ? `${cachedCount} cached · oldest ${daysAgo}d ago` : 'No cache yet'}</span>
-                  {aiGuidanceProgress.configMissing && <span style={{fontSize:F.xs,color:RED,fontWeight:800,padding:'2px 6px',background:`${RED}14`,borderRadius:4}}>🔧 ANTHROPIC_API_KEY not set in Railway</span>}
+                  {aiGuidanceProgress.configMissing && <span style={{fontSize:F.xs,color:RED,fontWeight:800,padding:'2px 6px',background:`${RED}14`,borderRadius:4}}>🔧 model API key not set in Railway (OPENAI_API_KEY)</span>}
                   {/* AI tier filter chips */}
                   {([
                     {key:'ALL', label:'All', color:MUTED},

@@ -1,6 +1,7 @@
 // PATCH 0931 — Haiku classifier health/diagnostic endpoint.
-// Visit /api/v1/haiku/health to verify ANTHROPIC_API_KEY is wired correctly,
-// see today's budget consumption, and optionally trigger a probe classification.
+// Visit /api/v1/haiku/health to verify the active model provider is wired
+// (OPENAI_API_KEY or ANTHROPIC_API_KEY, whichever AI_PROVIDER selects), see
+// today's budget consumption, and optionally trigger a probe classification.
 //
 // Curl examples:
 //   curl 'https://market-cockpit.vercel.app/api/v1/haiku/health'
@@ -11,7 +12,7 @@
 
 import { NextResponse } from 'next/server';
 import { classifyCatalyst, getHaikuBudget } from '@/lib/anthropic-classifier';
-import { anthropicMessages, readSpend, monthlyCapUsd } from '@/lib/anthropic-meter';
+import { anthropicMessages, readSpend, monthlyCapUsd, modelConfigured, modelKeyName, provider, openaiModel } from '@/lib/anthropic-meter';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -56,55 +57,51 @@ export async function GET(req: Request) {
   const authed = isAuthorized(req);
   const probe = url.searchParams.get('probe') === '1' && authed;
 
-  const rawKey = process.env.ANTHROPIC_API_KEY || '';
-  const hasApiKey = !!rawKey;
+  const hasApiKey = modelConfigured();
   const budget = await getHaikuBudget();
 
-  // PATCH 0931-followup3 — surface key FORMAT (length / prefix / suffix / whitespace)
-  // without exposing the value, so we can diagnose 401 invalid_x_api_key.
-  // Anthropic keys start with sk-ant-api03- and are ~108 chars long.
-  const keyDiagnostic = (rawKey && authed) ? {
-    length: rawKey.length,
-    first12: rawKey.slice(0, 12),
-    last4: rawKey.slice(-4),
-    startsWithSkAnt: rawKey.startsWith('sk-ant-'),
-    hasLeadingWhitespace: /^\s/.test(rawKey),
-    hasTrailingWhitespace: /\s$/.test(rawKey),
-    hasLeadingQuote: rawKey.startsWith('"') || rawKey.startsWith("'"),
-    hasTrailingQuote: rawKey.endsWith('"') || rawKey.endsWith("'"),
-    hasInternalSpace: /\s/.test(rawKey.trim()),
-    hasNewline: /[\r\n]/.test(rawKey),
-  } : null;
-
+  // zzz753 — the key-format diagnostic (length / prefix / suffix of the raw
+  // key) is gone for good. The route never reads a key value any more; it asks
+  // the wrapper whether a model is configured. What an authorised caller gets
+  // instead is the thing that actually matters now that the provider can be
+  // switched by environment variable: which provider and model are live, the
+  // name of the variable that must be set, and this month's metered spend.
   const out: any = {
     ok: true,
     service: 'haiku-classifier',
     hasApiKey,
     budget,
   };
-  // Only attached for an authorised caller — `keyDiagnostic` is null otherwise,
-  // and the field is omitted entirely rather than sent as null, so the response
-  // does not advertise that a richer version exists.
-  if (authed && keyDiagnostic) out.keyDiagnostic = keyDiagnostic;
+  if (authed) {
+    const spend = await readSpend();
+    out.model = {
+      provider: provider(),
+      model: provider() === 'openai' ? openaiModel() : 'anthropic (per-call model)',
+      key_variable: modelKeyName(),
+      configured: hasApiKey,
+      month_usd: Math.round((spend.total_usd || 0) * 10000) / 10000,
+      month_calls: spend.calls || 0,
+      monthly_cap_usd: monthlyCapUsd(),
+    };
+  }
   if (!authed && url.searchParams.get('probe') === '1') {
     out.probe = { error: 'probe requires authorisation (zzz678)' };
   }
 
   if (probe) {
     if (!hasApiKey) {
-      out.probe = { error: 'ANTHROPIC_API_KEY not set in Vercel env' };
+      out.probe = { error: `${modelKeyName()} not set in Railway env` };
     } else {
       // PATCH 0931-followup — bypass cache+classifier wrapper, call Anthropic
       // DIRECTLY so we can see the actual error message instead of null.
       const sample = 'MTAR Technologies announces acquisition of 51% stake in Anupam Rasayan for ₹1,369 Cr';
       const start = Date.now();
-      const apiKey = process.env.ANTHROPIC_API_KEY!;
       try {
         const resp = await anthropicMessages('health-probe', {
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 100,
           messages: [{ role: 'user', content: `Classify this corporate announcement into one of: M&A, EARNINGS, ORDER_WIN, CAPEX, MANAGEMENT, OTHER. Just the label.\n\n"${sample}"` }],
-        }, { apiKey, signal: AbortSignal.timeout(15_000) });
+        }, { signal: AbortSignal.timeout(15_000) });
         const elapsed_ms = Date.now() - start;
         const responseText = await resp.text();
         out.probe = {

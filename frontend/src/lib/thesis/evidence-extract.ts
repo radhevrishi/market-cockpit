@@ -223,7 +223,7 @@ export interface ReadDoc { label: string; kind: string; text: string; }
 export async function extractStructuralEvents(
   docs: ReadDoc[],
   ticker: string,
-  opts: { apiKey: string; model: string; maxPassages?: number },
+  opts: { apiKey?: string; model: string; maxPassages?: number },
 ): Promise<{ events: StructuralEvent[]; pipeline: ExtractionPipeline; raw?: any[] }> {
   const passages: Passage[] = [];
   for (const d of docs) passages.push(...findPassages(d.text, d.label));
@@ -256,7 +256,7 @@ export async function extractStructuralEvents(
       tools: [EVENT_TOOL],
       tool_choice: { type: 'tool', name: EVENT_TOOL.name },
       messages: [{ role: 'user', content: prompt }],
-    }, { apiKey: opts.apiKey, signal: AbortSignal.timeout(100_000) });
+    }, { signal: AbortSignal.timeout(100_000) });
     if (!resp.ok) {
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }

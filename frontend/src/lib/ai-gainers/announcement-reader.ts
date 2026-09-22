@@ -38,7 +38,7 @@ import {
   OPERATING_CATALYSTS, CORPORATE_CATALYSTS, NEGATIVE_CATALYSTS,
   type CatalystType, type Materiality, type StructuralDuration,
 } from './events';
-import { anthropicMessages } from '@/lib/anthropic-meter';
+import { anthropicMessages, modelConfigured } from '@/lib/anthropic-meter';
 import { kvGet, kvSet } from '@/lib/kv';
 
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -184,7 +184,7 @@ export async function readAnnouncement(
   a: AnnouncementItem,
   fetchText: (url: string) => Promise<string>,
 ): Promise<ReadAnnouncement | null> {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
+  if (!modelConfigured()) return null;
   const url = String(a.attachment_url || '');
   if (!url) return null;
 

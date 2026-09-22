@@ -20,7 +20,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet, isRedisAvailable } from './kv';
-import { anthropicMessages } from './anthropic-meter';
+import { anthropicMessages, modelConfigured } from './anthropic-meter';
 import { createHash } from 'crypto';
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
@@ -135,7 +135,7 @@ export async function classifyCatalyst(
     } catch {}
   }
   // 2. API key check
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = modelConfigured() ? 'configured' : '';
   if (!apiKey) return null;
   // 3. Budget check
   const budget = await readBudget();
@@ -207,7 +207,7 @@ If a field doesn't apply, OMIT it (don't use null). Keep entities object minimal
     max_tokens: 200,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }],
-  }, { apiKey, signal: AbortSignal.timeout(8_000) });   // 8s: Haiku usually answers in <2s
+  }, { signal: AbortSignal.timeout(8_000) });   // 8s: Haiku usually answers in <2s
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
