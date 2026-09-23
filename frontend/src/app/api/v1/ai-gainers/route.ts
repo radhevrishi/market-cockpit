@@ -31,9 +31,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { kvGet, kvSet } from '@/lib/kv';
-import { fetchIndiaGainers, INDIA_GAINERS_URL } from '@/lib/ai-gainers/screener-gainers';
+import { fetchIndiaGainers, INDIA_GAINERS_URL, indiaSession, partitionByCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
+import { istLastNWeekdays } from '@/lib/market-hours';
 import { readAnnouncementCached, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
+import {
+  parseCsv, usRowFromRecord, screenUsGainers, describeExclusions, describeUsExportAsOf,
+  type UsExclusion, type UsExportAsOf,
+} from '@/lib/ai-gainers/us-gainers';
 import {
   type GainerEvent, type Market, type EventSource,
   sourceTierOf, researchPriority, buildResearchQueue,
@@ -71,39 +76,12 @@ const US_GAINERS_FILE = 'weekly-gainer-usa.csv';
 const FRESH_DAYS = 14;
 const WINDOW_DAYS = 60;
 
-/** Minimal CSV reader — the TradingView export quotes any field containing a
- *  comma, and a naive split on "," corrupts every company description. */
-function parseCsv(text: string): Record<string, string>[] {
-  const rows: string[][] = [];
-  let cur: string[] = [], field = '', inQ = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQ) {
-      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
-      else field += c;
-    } else if (c === '"') inQ = true;
-    else if (c === ',') { cur.push(field); field = ''; }
-    else if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = ''; }
-    else if (c !== '\r') field += c;
-  }
-  if (field.length || cur.length) { cur.push(field); rows.push(cur); }
-  if (!rows.length) return [];
-  const head = rows[0].map((h) => h.trim());
-  return rows.slice(1)
-    .filter((r) => r.length > 1)
-    .map((r) => Object.fromEntries(head.map((h, i) => [h, (r[i] ?? '').trim()])));
-}
-
-const num = (v: unknown): number | null => {
-  const n = Number(String(v ?? '').replace(/[, ]/g, ''));
-  return Number.isFinite(n) ? n : null;
-};
-
 interface GainerRow {
   ticker: string; company: string; movePct: number | null; relVol: number | null; gapPct: number | null;
   // ── carried for the catalyst research sweep (zzz741) ──
   volume?: number | null; price?: number | null; marketCap?: number | null;   // ₹ Cr (IN) or $ M (US)
   perf?: { m1: number | null; m3: number | null; m6: number | null; y1: number | null } | null;
+  capTier?: string | null; flags?: string[]; exchange?: string | null;   // US only (zzz766)
 }
 
 /**
@@ -124,32 +102,40 @@ interface GainerRow {
  *   · it is a committed CSV refreshed by the sync workflow, so it is exactly
  *     as fresh as the last sync — which is now printed, not assumed.
  */
-async function readUsGainers(): Promise<{ rows: GainerRow[]; file: string; syncedAt: string | null }> {
+async function readUsGainers(): Promise<{ rows: GainerRow[]; file: string; syncedAt: string | null; rawRows: number; excluded: UsExclusion[]; asOf: UsExportAsOf | null; syncNote: string | null }> {
   const full = path.join(TV_DIR, US_GAINERS_FILE);
+  // ── WHEN WAS TRADINGVIEW ACTUALLY READ?                        (zzz766)
+  // The file's mtime is the moment the container was BUILT, not the moment
+  // the sync read TradingView — the live page printed a deploy time as the
+  // sync time. The sync workflow writes that moment into manifest.json.
   let syncedAt: string | null = null;
-  try { syncedAt = (await fs.stat(full)).mtime.toISOString(); } catch { syncedAt = null; }
+  let syncNote: string | null = null;
+  try {
+    const man = JSON.parse(await fs.readFile(path.join(TV_DIR, 'manifest.json'), 'utf8'));
+    const entry = (man?.files || []).find((f: any) => f?.name === US_GAINERS_FILE);
+    if (entry && entry.ok === false) syncNote = `The last TradingView sync FAILED for this screen${entry.error ? ` (${entry.error})` : ''}; the rows below are from an earlier sync of unknown date.`;
+    else if (typeof man?.lastSync === 'string') syncedAt = man.lastSync;
+  } catch { /* fall back to the file's own time, labelled as such */ }
+  if (!syncedAt && !syncNote) {
+    try { syncedAt = (await fs.stat(full)).mtime.toISOString(); syncNote = 'Sync time unknown — the time shown is when the file was written on this server.'; } catch { syncedAt = null; }
+  }
+  const asOf = syncedAt && !syncNote ? describeUsExportAsOf(syncedAt) : null;
   try {
     const raw = await fs.readFile(full, 'utf8');
-    const rows = parseCsv(raw).map((r) => ({
-      ticker: String(r['Symbol'] || '').toUpperCase(),
-      company: r['Description'] || '',
-      // The TradingView export quotes any header containing a comma, so the
-      // key is "Performance %, 1 week" and NOT "Performance % 1 week". The
-      // first version used the unquoted spelling, parsed cleanly, and made
-      // every gainer on the page read exactly 0% — a silent wrong answer,
-      // which is worse than a loud failure. Checked against the committed
-      // file rather than guessed.
-      movePct: num(r['Performance %, 1 week']) ?? num(r['Performance %, 1 month']),
-      relVol: num(r['Relative volume, 1 week']),
-      gapPct: num(r['Gap']),
-      volume: num(r['Volume']),
-      price: num(r['Price']),
-      marketCap: num(r['Market capitalization']) != null ? (num(r['Market capitalization'])! / 1e6) : null,
-      perf: { m1: num(r['Performance %, 1 month']), m3: num(r['Performance %, 3 months']), m6: num(r['Performance %, 6 months']), y1: num(r['Performance % 1 year']) },
-    })).filter((x) => x.ticker);
-    return { rows, file: US_GAINERS_FILE, syncedAt };
+    // ── A US LIST OF US SMALL/MID CAPS.                            (zzz766)
+    // The TradingView screen is multi-market: on 22 Sep it held 15 NSE/BSE
+    // rows and 17 large/mega caps (META, AMD, INTC…) among its 52. Each is
+    // dropped with its reason, and the reasons travel with the response.
+    const all = parseCsv(raw).map(usRowFromRecord).filter((x) => x.ticker);
+    const { kept, excluded } = screenUsGainers(all);
+    const rows: GainerRow[] = kept.map((r) => ({
+      ticker: r.ticker, company: r.company, movePct: r.movePct, relVol: r.relVol, gapPct: r.gapPct,
+      volume: r.volume, price: r.price, marketCap: r.marketCap, perf: r.perf,
+      capTier: r.capTier, flags: r.flags, exchange: r.exchange,
+    }));
+    return { rows, file: US_GAINERS_FILE, syncedAt, rawRows: all.length, excluded, asOf, syncNote };
   } catch {
-    return { rows: [], file: US_GAINERS_FILE, syncedAt };
+    return { rows: [], file: US_GAINERS_FILE, syncedAt, rawRows: 0, excluded: [], asOf, syncNote };
   }
 }
 
@@ -247,10 +233,15 @@ async function readGraded(origin: string, market: Market): Promise<{ rows: any[]
     }
   } catch { /* the day sweep below is the fallback */ }
 
-  const days = recentDays(market === 'US' ? 7 : 4);
+  // India's graders key their days in IST and trade Mon–Fri; the US sweep
+  // keeps its Eastern calendar days. (zzz766)
+  const days = market === 'US' ? recentDays(7) : istLastNWeekdays(4);
   const urls = market === 'US'
     ? days.map((d) => `${origin}/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1`)
-    : days.map((d) => `${origin}/api/v1/earnings/graded?date=${d}`);
+    // cache_only: the notes promise "nothing is computed on this page's
+    // clock", and a cold India day otherwise ran the full grader four times
+    // inside a 60-second scan. The bench above is the primary store. (zzz766)
+    : days.map((d) => `${origin}/api/v1/earnings/graded?date=${d}&cache_only=1`);
   const settled = await Promise.all(urls.map(async (url) => {
     try {
       const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
@@ -348,6 +339,14 @@ function materialityFromTier(tier: string, ageDays?: unknown): GainerEvent['mate
 }
 
 export async function GET(req: NextRequest) {
+  // A thrown error must come back as JSON the page can read, never as the
+  // framework's HTML 500 that the client then fails to parse. (zzz766)
+  try { return await scan(req); } catch (e: any) {
+    return NextResponse.json({ ok: false, error: `The gainers scan failed on the server: ${String(e?.message || e).slice(0, 300)}` }, { status: 500 });
+  }
+}
+
+async function scan(req: NextRequest) {
   const { searchParams, origin } = new URL(req.url);
   const market = (searchParams.get('market') || 'US').toUpperCase() === 'IN' ? 'IN' : 'US';
   const limit = Math.max(1, Math.min(25, parseInt(searchParams.get('limit') || '10', 10) || 10));
@@ -357,7 +356,11 @@ export async function GET(req: NextRequest) {
   // not do that twice. `?fresh=1` (the Rescan button) bypasses; the answer
   // says when it was generated so a cached scan is never mistaken for live.
   const fresh = searchParams.get('fresh') === '1';
-  const scanKey = `ai-gainers:v2:${market}:${limit}`;
+  // India's key carries the SESSION: a scan cached before 09:15 must not be
+  // served as the new session's board. US is v3: its universe is screened to
+  // US-listed small/mid caps, so a v2 payload is wrong. (zzz766)
+  const session = market === 'IN' ? indiaSession() : null;
+  const scanKey = market === 'IN' ? `ai-gainers:v3:IN:${session!.date}:${limit}` : `ai-gainers:v3:US:${limit}`;
   if (!fresh) {
     try {
       const hit: any = await kvGet(scanKey);
@@ -377,21 +380,24 @@ export async function GET(req: NextRequest) {
   // up 20% is the thing this pipeline refuses to treat as information.
   const [gainersRes, indiaRes, gradedRes] = await Promise.all([
     market === 'US' ? readUsGainers()
-      : Promise.resolve({ rows: [] as GainerRow[], file: '', syncedAt: null as string | null }),
+      : Promise.resolve({ rows: [] as GainerRow[], file: '', syncedAt: null as string | null, rawRows: 0, excluded: [] as UsExclusion[], asOf: null as UsExportAsOf | null, syncNote: null as string | null }),
     market === 'IN' ? fetchIndiaGainers()
       : Promise.resolve(null),
     readGraded(origin, market as Market),
   ]);
 
+  // Small/mid caps only: the owner's screen has no upper cap bound, so large
+  // caps are split out here and listed, never silently researched. (zzz766)
+  const capSplit = market === 'IN' ? partitionByCap(indiaRes?.rows || []) : { kept: [], largeCaps: [] };
   const gainers: GainerRow[] = market === 'IN'
-    ? (indiaRes?.rows || []).map((g) => ({
+    ? capSplit.kept.map((g) => ({
       ticker: g.ticker,
       company: g.company,
       movePct: g.movePct,
       relVol: null,
       gapPct: null,
       volume: g.volume,
-      price: null,
+      price: g.price ?? null,
       marketCap: g.marketCapCr,
       perf: null,
     }))
@@ -601,7 +607,7 @@ export async function GET(req: NextRequest) {
   const notes: string[] = [];
   notes.push(`Graded results were read from ${gradedRes.from} — ${gradedRes.rows.length} rows before de-duplication; `
     + (gainersListRead
-      ? `${gainers.filter((g) => gradedBy.has(g.ticker)).length} of today's ${gainers.length} gainers have a filed result behind them.`
+      ? `${gainers.filter((g) => gradedBy.has(g.ticker)).length} of ${market === 'US' ? 'this week\u2019s' : 'today\'s'} ${gainers.length} gainers have a filed result behind them.`
       : 'with no gainers list to scan, the graded bench itself was ranked.'));
   if (gradedRes.pending > 0) {
     notes.push(`${gradedRes.pending} of the days in the window are not graded yet — the engine was asked for them and has started, but nothing is computed on this page's clock. Rescan in a minute and they will be here.`);
@@ -610,7 +616,15 @@ export async function GET(req: NextRequest) {
     notes.push('No graded result was available for any day in the window, so no gainer could be matched to a filing. This is an empty answer, not a filtered one.');
   }
   if (market === 'US' && !gainers.length) {
-    notes.push('The TradingView gainers export could not be read, so only filed results were scanned. The list is a committed CSV refreshed by the sync workflow.');
+    notes.push(gainersRes.rawRows
+      ? `The TradingView export had ${gainersRes.rawRows} rows but none is a US-listed small/mid-cap gainer, so only filed results were scanned.`
+      : 'The TradingView gainers export could not be read, so only filed results were scanned. The list is a committed CSV refreshed by the sync workflow.');
+  }
+  if (market === 'US') {
+    const ex = describeExclusions(gainersRes.excluded, gainersRes.rawRows, gainers.length);
+    if (ex) notes.push(ex);
+    if (gainersRes.syncNote) notes.push(gainersRes.syncNote);
+    if (gainersRes.asOf) notes.push(gainersRes.asOf.label + ' The move is the 1-WEEK performance column, not a one-day move.');
   }
   if (market === 'IN') {
     if (indiaRes?.error) {
@@ -623,18 +637,30 @@ export async function GET(req: NextRequest) {
           : ' This host is a datacenter IP and screener.in refuses those; the fix is one environment variable '
             + '(SCREENER_PROXY_URL) pointing at a worker that can reach it.'));
     } else if (indiaRes) {
-      notes.push(`Read ${indiaRes.rows.length} gainers live from your screener.in screen `
-        + `(${indiaRes.totalReported ?? indiaRes.rows.length} reported, ${indiaRes.pages} page${indiaRes.pages === 1 ? '' : 's'}) `
-        + 'at the moment you loaded this page — not from an overnight copy, because a daily-gainers list copied at 2am is yesterday\'s.');
+      const ageMin = indiaRes.proxyCacheAgeMs != null ? Math.round(indiaRes.proxyCacheAgeMs / 60_000) : 0;
+      notes.push(`Read ${indiaRes.rows.length} gainers from your screener.in screen `
+        + `(${indiaRes.totalReported ?? indiaRes.rows.length} reported, ${indiaRes.pages} page${indiaRes.pages === 1 ? '' : 's'})`
+        + (ageMin >= 1 ? `, served from the proxy cache ${ageMin} min old` : ', live')
+        + ` — the 1-day return is for ${session!.label}.`);
+      if (indiaRes.error) notes.push(`Partial read: ${indiaRes.error}`);
+    }
+    if (capSplit.largeCaps.length) {
+      notes.push(`${capSplit.largeCaps.length} large cap${capSplit.largeCaps.length === 1 ? '' : 's'} (market cap ≥ ₹${LARGE_CAP_MIN_CR.toLocaleString('en-IN')} Cr) excluded — this brief is small and mid caps only: `
+        + capSplit.largeCaps.map((g) => `${g.ticker} (₹${Math.round(g.marketCapCr || 0).toLocaleString('en-IN')} Cr)`).join(', ') + '.');
     }
   }
   {
     const fresh = graded.filter((r: any) => typeof r._ageDays === 'number' && r._ageDays <= FRESH_DAYS).length;
     if (!fresh) {
       notes.push(
-        `No result was filed in the last ${FRESH_DAYS} days in this market, so nothing here is claimed as this week's catalyst. `
-        + `Filings up to ${WINDOW_DAYS} days old are shown as context and scored as confirmation, never as new information. `
-        + 'Outside earnings season a short queue is the correct answer, not a broken one.',
+        // One array joined, not `…` + `…` + '…': the production minifier
+        // folded that concatenation and DROPPED the middle clause, so the
+        // deployed note read "…in the last 14Filings up to 60 days…". (zzz766)
+        [
+          `No result was filed in the last ${FRESH_DAYS} days in this market, so nothing here is claimed as this week\u2019s catalyst.`,
+          `Filings up to ${WINDOW_DAYS} days old are shown as context and scored as confirmation, never as new information.`,
+          'Outside earnings season a short queue is the correct answer, not a broken one.',
+        ].join(' '),
       );
     }
   }
@@ -650,6 +676,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     market,
     generated_at: now,
+    session,
     served_from_cache: false,
     funnel,
     gainers_scanned: gainers.length,
@@ -665,7 +692,11 @@ export async function GET(req: NextRequest) {
       file: 'screener.in — Suresh daily gainers',
       url: INDIA_GAINERS_URL,
       synced_at: indiaRes?.fetchedAt ?? null,
-      window: '1-day return (read live from the screen, not a nightly copy)',
+      window: `1-day return — ${session!.label}`,
+      session,
+      large_cap_min_cr: LARGE_CAP_MIN_CR,
+      excluded_large_caps: capSplit.largeCaps.map((g) => ({ ticker: g.ticker, company: g.company, move_pct: g.movePct, market_cap: g.marketCapCr })),
+      proxy_cache_age_ms: indiaRes?.proxyCacheAgeMs ?? null,
       rows: gainers.length,
       total_reported: indiaRes?.totalReported ?? null,
       pages_read: indiaRes?.pages ?? 0,
@@ -678,7 +709,10 @@ export async function GET(req: NextRequest) {
       synced_at: gainersRes.syncedAt,
       window: '1-week performance (TradingView weekly gainers export)',
       rows: gainers.length,
-      total_reported: gainers.length,
+      total_reported: gainersRes.rawRows,
+      as_of: gainersRes.asOf,
+      sync_note: gainersRes.syncNote,
+      excluded: gainersRes.excluded,
       pages_read: 1,
       error: null,
       matched_to_a_filing: gainers.filter((g) => gradedBy.has(g.ticker)).length,
@@ -696,6 +730,7 @@ export async function GET(req: NextRequest) {
         price: g.price ?? null,
         market_cap: g.marketCap ?? null,
         perf: g.perf ?? null,
+        ...(market === 'US' ? { cap_tier: g.capTier ?? null, flags: g.flags ?? [], exchange: g.exchange ?? null } : {}),
       })),
     // The number that belongs in the funnel: filed results BEHIND A GAINER.
     // The bench size is reported separately so nobody reads 320 as the

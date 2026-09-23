@@ -31,7 +31,8 @@
 //   · Every third-party story is dated before it is believed.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { CatalystType } from './events';
+import { NEGATIVE_CATALYSTS, type CatalystType } from './events';
+import { classifyUsFiling, fmtUsdM } from './us-gainers';
 
 export type ResearchStatus =
   | 'catalyst'          // a dated, sourced event survived the reject gates
@@ -107,14 +108,30 @@ export interface Finding {
 // ── 1. CLASSIFY A FILING BY ITS SUBJECT (+ the source's summary) ──────────
 
 const RX = {
-  denial: /(clarification|reply|response)[^.]{0,80}(price movement|spurt in (price|volume)|volume|news (item|article)|rumou?r)|no (undisclosed|unpublished) (price sensitive )?information|not aware of any (information|event)|nothing (to|that needs to be) disclose/i,
-  exchangeQuery: /(exchange|nse|bse)[^.]{0,40}(query|clarification sought|seeks clarification)|query (from|by) (nse|bse|the exchange)/i,
+  // zzz766 — `[^.]` could not cross the dots in "Query Dated 18.09.2026", so a
+  // same-week reply to a volume query read as an exchange query and the
+  // finding fell back to an older denial. `replies` and "no undisclosed
+  // developments" are how the aggregator summarises these.
+  denial: /(clarification|reply|replies|response)\b.{0,120}?(price movement|movement in (the )?(price|volume)|spurt in (price|volume)|volume (movement|increase|rise|inquiry|query|surge)|\bvolume\b|news (item|article)|rumou?r)|no (undisclosed|unpublished) (price sensitive )?(information|developments?|events?)|not aware of any (information|event|development)|nothing (to|that needs to be) disclose/i,
+  exchangeQuery: /(exchange|nse|bse)[^.]{0,40}(query|clarification sought|seeks clarification|has sought clarification|sought clarification)|clarification sought from|query (from|by) (nse|bse|the exchange)/i,
+  // The exchange ASKING is not the company ANSWERING. Checked before the
+  // denial rule so "Exchange has sought clarification … movement in volume"
+  // is never read as the company's own denial. (zzz766)
+  exchangeAsk: /clarification sought|sought clarification|seeks clarification|seeking clarification/i,
+  companyReply: /\b(reply|replies|replied|response|responds|responded|confirms?|clarifies|clarified)\b/i,
+  // Operational damage is news, and bad news — a turbine failure is not "not
+  // classifiable". (zzz766, REGAAL 10 Sep 2026)
+  opsNegative: /disruption of (operations|production|supply)|(damage|damaged) (to|at|of)|\bdamage\b[^.]{0,40}(plant|unit|turbine|boiler|facility|factory)|(turbine|boiler|plant|unit|facility|factory)[^.]{0,40}\bdamage|major fire|\bfire (at|in|broke|incident|accident)|explosion|\bblast\b|accident at|(temporar(y|ily)|partial(ly)?) (shut|suspend|halt|clos)|suspension of (operations|production|manufacturing)|plant shut ?down|\block-?out\b|\bstrike\b at|force majeure|flood(ing|ed)? (at|in|damage)/i,
+  // Borrowing is financing, not a catalyst — and a debt raise dilutes no one.
+  debtOnly: /\bncds?\b|non[- ]convertible debenture|debentures?\b|commercial paper|term loan|borrowing|bank facilit|working capital (facility|limit|loan)|credit facilit/i,
+  equityWords: /\bequity\b|preferential|\bqip\b|qualified institution|warrant|rights (issue|shares)|\bfccb\b|convertible (warrant|equity|preference)/i,
+  newProduct: /product launch|\blaunch(ed|es|ing)?\b[^.]{0,60}(product|brand|range|variant|model|drug|molecule|platform|service)|began commercial sales|commenced commercial sales|commercial launch/i,
   negative: /against-vote|vote(s|d)? against|voting against|\biias\b|\bsesqi\b|proxy advis(or|er|ory)[^.]{0,60}against|ceased (as|to be) (an )?independent director|independent director[^.]{0,30}(ceased|resign|stepped down)|notice of delisting|item 3\.01|non-?compliance with (a )?(continued )?listing|going concern|non-reliance|restatement|item 4\.02|changes in registrant's certifying accountant|item 4\.01|resignation of (statutory |joint )?auditor|auditor.{0,20}resign|resignation.{0,40}independent director|independent director.{0,40}resign|(recommend|advis)[^.]{0,40}(vote )?against|sebi[^.]{0,30}(order|show cause|penalt|adjudicat)|penalty|default|insolvency|nclt|cirp|search (and|&) seizure|raid|fraud|forensic audit|winding up|delist|suspension of trading|gst evasion|income tax (search|survey)|qualified opinion|disclaimer of opinion|loss of (a )?(major|key) (customer|order)|order (cancell|terminat)|cancellation of order/i,
-  routine: /annual general meeting|\bagm\b|\begm\b|notice of (the )?(\d+\w* )?(annual|extraordinary)|newspaper|publication|brsr|business responsibility|annual report|trading window|esop|esos|espp|record date|dividend|book closure|investor (meet|presentation|conference|call)|analyst|con\.? ?call|earnings call|shareholders? meeting|postal ballot|voting result|scrutini[sz]er|compliance certificate|share transfer|loss of share|duplicate|reconciliation of share capital|shareholding pattern|corporate governance report|related party|secretarial|change in director|appointment of (company secretary|compliance officer)|cessation|retirement|intimation of (board|meeting)|outcome of board meeting[^.]{0,20}(unaudited|financial results)|closure of trading|letter to (non-email )?shareholders|kyc|website|change in (registered )?office|disclosure under regulation (29|31)|sast|xbrl|monitoring agency|statement of deviation|investor grievance|redressal|listing obligation|reg\.? ?7\(3\)|regulation 74|depository|certificate under|\bn-px\b|\bdef 14a\b|\bdefa14a\b|\bsc 13g\b|\b11-k\b|\bs-8\b|\barS\b|special window|re-?lodgement|physical share|esg (score|rating)|reaffirm|affirmed|conference participation|earnings? release date|date of (board|agm)|reconstitut|committee|policy|code of conduct|familiari[sz]ation|nomination|remuneration/i,
+  routine: /non-deal road ?show|road ?show|\bndr\b|board meeting intimation|prior intimation|annual general meeting|\bagm\b|\begm\b|notice of (the )?(\d+\w* )?(annual|extraordinary)|newspaper|publication|brsr|business responsibility|annual report|trading window|esop|esos|espp|record date|dividend|book closure|investor (meet|presentation|conference|call)|analyst|con\.? ?call|earnings call|shareholders? meeting|postal ballot|voting result|scrutini[sz]er|compliance certificate|share transfer|loss of share|duplicate|reconciliation of share capital|shareholding pattern|corporate governance report|related party|secretarial|change in director|appointment of (company secretary|compliance officer)|cessation|retirement|intimation of (board|meeting)|outcome of board meeting[^.]{0,20}(unaudited|financial results)|closure of trading|letter to (non-email )?shareholders|kyc|website|change in (registered )?office|disclosure under regulation (29|31)|sast|xbrl|monitoring agency|statement of deviation|investor grievance|redressal|listing obligation|reg\.? ?7\(3\)|regulation 74|depository|certificate under|\bn-px\b|\bdef 14a\b|\bdefa14a\b|\bsc 13g\b|\b11-k\b|\bs-8\b|\barS\b|special window|re-?lodgement|physical share|esg (score|rating)|reaffirm|affirmed|conference participation|earnings? release date|date of (board|agm)|reconstitut|committee|policy|code of conduct|familiari[sz]ation|nomination|remuneration/i,
   order: /material definitive agreement|item 1\.01|award[^.]{0,20}order|receipt of order|bagging|letter of award|\bloa\b|\bloi\b|letter of intent|work order|purchase order|contract (award|win|from|worth|value)|(won|wins|secured|bags|bagged|awarded|receives?|received)[^.]{0,80}(order|contract|project|tender|₹|rs\.?|inr|crore|lakh|usd|\$)|order (worth|valued|of)|supply (agreement|order)|framework agreement|l1 bidder|empanel/i,
-  capacity: /commission(ed|ing)|inaugurat|starting operations|commenced operations|completion of (the )?(project|construction|expansion|plant|facility)|ready for (leasing|commercial|operation)|commence(ment|d|s)? (of )?(commercial )?(production|operations)|capacity (expansion|addition|enhancement)|new (plant|facility|unit|line)|expansion of|greenfield|brownfield|plant (start|commenc)|trial (run|production)|start of (commercial )?production|first (batch|dispatch)/i,
+  capacity: /enhancement of [^.]{0,40}capacity|capacity (rises|rose|increased|enhanced|augment)|expansion (completed|commissioned)|augmentation of [^.]{0,30}capacity|commission(ed|ing)|inaugurat|starting operations|commenced operations|completion of (the )?(project|construction|expansion|plant|facility)|ready for (leasing|commercial|operation)|commence(ment|d|s)? (of )?(commercial )?(production|operations)|capacity (expansion|addition|enhancement)|new (plant|facility|unit|line)|expansion of|greenfield|brownfield|plant (start|commenc)|trial (run|production)|start of (commercial )?production|first (batch|dispatch)/i,
   certification: /certif|accredit|iso ?\d|as9100|nadcap|(regulatory|product|drug|usfda|fda|dcgi|cdsco|who|epa|ema|mhra) approval|\busfda\b|\bus fda\b|\beir\b|form 483|who[- ]gmp|\bgmp\b|(product|drug|manufacturing|import|export) licen[cs]e|licen[cs]e (granted|received|obtained)|registration (of|granted|received)|marketing authori[sz]ation|\bcep\b|ce mark|\banda\b|\bdmf\b|patent (grant|approv)|qualified (as|by) [^.]{0,40}(supplier|vendor)|(vendor|supplier) (approval|qualification)/i,
-  mna: /completion of acquisition|item 2\.01|\bsc 13d\b|acquisition of|acquire|acquires|acquired|takeover|merger|amalgamation|scheme of arrangement|demerger|joint venture|\bjv\b|memorandum of understanding|\bmou\b|strategic (partnership|alliance|investment|investor)|stake (purchase|sale)|slump sale|divest|open offer|share purchase agreement|\bspa\b/i,
+  mna: /acquisition consideration|consideration (for|of) (the )?acquisition|share swap|consideration other than cash|completion of acquisition|item 2\.01|\bsc 13d\b|acquisition of|acquire|acquires|acquired|takeover|merger|amalgamation|scheme of arrangement|demerger|joint venture|\bjv\b|memorandum of understanding|\bmou\b|strategic (partnership|alliance|investment|investor)|stake (purchase|sale)|slump sale|divest|open offer|share purchase agreement|\bspa\b/i,
   fundraise: /rights shares|allotted [\d,.]+ (crore|lakh|equity|shares)|raising (₹|rs|inr)|unregistered sales|item 3\.02|424b|prospectus|registration statement|at-the-market|preferential|qualified institutions? placement|\bqip\b|warrant|fund ?rais|rights issue|allotment of (equity|securities|shares)|issue of (equity|shares|securities)|private placement|conversion of|\bncd\b|debenture|borrowing|term loan/i,
   buyback: /buy[- ]?back/i,
   promoterBuy: /promoter[^.]{0,40}(acqui|purchas|bought|buy)|acquisition of shares[^.]{0,40}promoter|creeping acquisition/i,
@@ -122,10 +139,13 @@ const RX = {
   guidance: /guidance|outlook (raised|revised|upgrade)|revenue target|order book (of|at|stands)/i,
   newCustomer: /new (customer|client)|onboard|empanelled with|added .{0,30} as (a )?(customer|client)/i,
   results: /^10-[qk]\b|results of operations|item 2\.02|financial results|unaudited (financial )?results|audited results|quarterly results|results for the (quarter|period)|press release[^.]{0,20}(result|q[1-4])/i,
-  enabling: /to consider|consider(ation of)?|proposal|proposed|in-principle|approval of the board (for|to)|authori[sz](e|ation) to|intimation of board meeting|enabling resolution|subject to (shareholder|regulatory) approval/i,
+  enabling: /to consider|\bconsider(ing|ation of)?\b|proposal|proposed|in-principle|approval of the board (for|to)|authori[sz](e|ation) to|intimation of board meeting|enabling resolution|subject to (shareholder|regulatory) approval/i,
   scheduled: /(expected|likely|scheduled|slated|will be|to be) (commission|complet|operational|commenc)|by (q[1-4]|fy ?\d|h[12] |end of|march|june|september|december|\d{4})|target(ed)? (date|for completion)/i,
   executed: /inaugurat|commenced|started operations|has (been )?(commissioned|received|secured|completed|commenced|won|bagged|signed|executed|allotted|acquired)|commenced commercial|received (an? )?(order|loa|approval)|successfully/i,
-  renewal: /renew|extension of (the )?(existing|earlier)|re-?award|repeat order|same (customer|counterparty)|already (announced|disclosed)|earlier (announced|disclosed)|in continuation/i,
+  // An allotment made AS CONSIDERATION executes a deal announced earlier; it
+  // is follow-through, not fresh news. (zzz766 — GABRIEL's 11 Sep allotment
+  // for an earlier-approved acquisition scored FIRE as if it were new.)
+  renewal: /allot[\s\S]{0,140}?consideration|pursuant to (the )?(scheme|share purchase agreement|acquisition agreement)|renew|extension of (the )?(existing|earlier)|re-?award|repeat order|same (customer|counterparty)|already (announced|disclosed)|earlier (announced|disclosed)|in continuation/i,
   mgmtChange: /departure of (directors|certain officers)|item 5\.02|appointment of (chief|ceo|cfo|managing director)|resignation of (chief|ceo|cfo|managing director)/i,
   brokerNote: /initiat(es|ed|ion of) coverage|target price|\btp\b|buy rating|rating: buy|brokerage/i,
 };
@@ -164,8 +184,21 @@ export function parseStatedValue(text: string, market: 'IN' | 'US'): number | nu
 export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 'IN'): ClassifiedAnnouncement {
   const hay = `${a.subject} ${a.summary || ''}`;
   const base = { ...a, category: null as ClassifiedAnnouncement['category'], stage: null as Stage | null, valueStated: parseStatedValue(hay, market), incremental: !RX.renewal.test(hay), routineReason: null as string | null };
-  if (RX.denial.test(hay)) return { ...base, kind: 'denial', valueStated: null };
-  if (RX.exchangeQuery.test(hay)) return { ...base, kind: 'exchange_query', valueStated: null };
+  // US: the SEC form type and 8-K item code decide the KIND of event (zzz766).
+  // Item 1.01 is not an order, a 424B is not a positive "fundraising", and an
+  // Item 2.02 earnings release is not paperwork. A summary (a model read)
+  // still refines an item the form cannot classify.
+  if (market === 'US' && !a.summary) {
+    const us = classifyUsFiling(a);
+    if (us) return { ...base, ...us, valueStated: us.kind === 'catalyst' ? base.valueStated : null };
+  }
+  const saysNothing = /no (undisclosed|unpublished)|not aware of any|nothing (to|that needs to be) disclose/i.test(hay);
+  if (RX.exchangeAsk.test(hay) && !RX.companyReply.test(hay) && !saysNothing) return { ...base, kind: 'exchange_query', valueStated: null };
+  // A reply that CONFIRMS a reported event is the event, not a denial.
+  const confirms = /confirm(s|ed)? (the |that )?[^.]{0,40}(receipt|order|contract|acquisition|agreement|approval)|has (received|won|bagged|secured|signed)/i.test(hay);
+  if (RX.denial.test(hay) && !confirms) return { ...base, kind: 'denial', valueStated: null };
+  if (RX.exchangeQuery.test(hay) && !confirms) return { ...base, kind: 'exchange_query', valueStated: null };
+  if (RX.opsNegative.test(hay) && !/insurance claim (received|settled)|resumed|restored|back to normal/i.test(hay)) return { ...base, kind: 'negative', category: null, valueStated: null };
   if (RX.negative.test(hay)) return { ...base, kind: 'negative', category: /auditor/i.test(hay) ? 'auditor_resignation' : /sebi|penalt|search|raid|fraud|investigat/i.test(hay) ? 'regulatory_investigation' : /order (cancell|terminat)|cancellation|loss of/i.test(hay) ? 'order_cancellation' : null, valueStated: null };
   // THE SUBJECT DECIDES WHETHER A FILING IS PAPERWORK. An AGM notice whose
   // summary mentions "₹500 crore NCD authorisation" is still an AGM notice:
@@ -210,6 +243,11 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
     if (/downgrad|outlook[^.]{0,30}negative|watch[^.]{0,20}negative/i.test(hay)) return { ...base, kind: 'negative', category: null, valueStated: null };
     return { ...base, kind: 'routine', valueStated: null, routineReason: 'rating reaffirmed / assigned / ESG score' };
   }
+  if (RX.newProduct.test(hay)) return cat('new_product');
+  // Debt is financing, not a catalyst: an NCD placement or a term loan adds
+  // no revenue and dilutes no one. It is paperwork for this sweep. (zzz766 —
+  // GABRIEL's ₹1,000 Cr NCD approval ranked as a PRICED "catalyst".)
+  if (RX.debtOnly.test(hay) && !RX.equityWords.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'debt financing — borrowing is not a catalyst' };
   if (RX.fundraise.test(hay)) return cat('fundraising');
   if (RX.newCustomer.test(hay)) return cat('new_customer');
   if (RX.mgmtChange.test(hay)) return cat('management_change');
@@ -262,7 +300,7 @@ function materialityOf(c: ClassifiedAnnouncement, marketCap: number | null): { s
   // No value: type fallback, capped at 35 for announcements.
   const byType: Record<string, number> = {
     acquisition: 100, open_offer: 100, order_win: 85, production_ramp: 90, capacity_expansion: 70, regulatory_approval: 90,
-    revenue_guidance_increase: 85, quarterly_result: 80, new_customer: 75, joint_venture: 70, fundraising: 50, buyback: 55,
+    revenue_guidance_increase: 85, quarterly_result: 80, new_customer: 75, new_product: 50, joint_venture: 70, fundraising: 50, buyback: 55,
     promoter_purchase: 45, rating_action: 25, product_qualification: 60, demerger: 70, divestiture: 60,
   };
   const t = byType[String(c.category || '')] ?? 30;
@@ -271,12 +309,12 @@ function materialityOf(c: ClassifiedAnnouncement, marketCap: number | null): { s
 
 const TRANSMISSION: Record<string, number> = {
   order_win: 80, production_ramp: 80, capacity_expansion: 60, quarterly_result: 80, revenue_guidance_increase: 80,
-  regulatory_approval: 60, product_qualification: 40, new_customer: 60, acquisition: 60, open_offer: 40, joint_venture: 40,
+  regulatory_approval: 60, product_qualification: 40, new_customer: 60, new_product: 40, acquisition: 60, open_offer: 40, joint_venture: 40,
   demerger: 40, divestiture: 40, fundraising: 20, buyback: 20, promoter_purchase: 20, rating_action: 20, management_change: 20,
 };
 const PERSISTENCE: Record<string, number> = {
   order_win: 40, production_ramp: 100, capacity_expansion: 100, quarterly_result: 75, revenue_guidance_increase: 75,
-  regulatory_approval: 75, product_qualification: 75, new_customer: 75, acquisition: 75, open_offer: 40, joint_venture: 75,
+  regulatory_approval: 75, product_qualification: 75, new_customer: 75, new_product: 60, acquisition: 75, open_offer: 40, joint_venture: 75,
   demerger: 40, divestiture: 40, fundraising: 40, buyback: 40, promoter_purchase: 40, rating_action: 40,
 };
 
@@ -313,10 +351,24 @@ export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: numb
 // ── 4. FROM A SWEEP TO A FINDING ───────────────────────────────────────────
 
 /** The filing worth model-reading: the same choice `buildFinding` makes. */
-export function chooseCandidate(announcements: AnnouncementLite[], market: 'IN' | 'US', opts: { marketCap: number | null; returns: Returns | null; windowDays: number; now: Date }): ClassifiedAnnouncement | null {
+/** A filing published AFTER the session closed cannot have caused that
+ *  session's move. (zzz766) */
+export function filedAfterClose(dateIso: string | null | undefined, sessionCloseIso: string | null | undefined): boolean {
+  if (!dateIso || !sessionCloseIso) return false;
+  const t = Date.parse(dateIso), c = Date.parse(sessionCloseIso);
+  return Number.isFinite(t) && Number.isFinite(c) && t > c;
+}
+
+/** 15:30 IST on the session date, as an ISO instant. */
+export function indiaSessionCloseIso(sessionDate: string): string {
+  return `${sessionDate}T15:30:00+05:30`;
+}
+
+export function chooseCandidate(announcements: AnnouncementLite[], market: 'IN' | 'US', opts: { marketCap: number | null; returns: Returns | null; windowDays: number; now: Date; sessionCloseIso?: string | null }): ClassifiedAnnouncement | null {
   const inWindow = announcements
     .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, opts.now) }))
     .filter((a) => a.ageDays == null || a.ageDays <= opts.windowDays)
+    .filter((a) => !filedAfterClose(a.dateIso, opts.sessionCloseIso))
     .map((a) => classifyAnnouncement(a, market));
   const cands = inWindow.filter((a) => a.kind === 'catalyst' && a.category !== 'rating_action')
     .map((a) => ({ a, s: scoreCatalyst(a, { marketCap: opts.marketCap, returns: opts.returns, sourceTier: 'primary', verifiedQuote: false }).net }))
@@ -334,16 +386,21 @@ export interface SweepInput {
   sourceFailed: boolean;
   windowDays: number;
   now: Date;
+  /** When set, filings published after this instant are excluded from the
+   *  explanation of the move — they post-date it. (zzz766) */
+  sessionCloseIso?: string | null;
   /** A model-verified read of the chosen announcement, when one was made. */
   read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null } | null;
 }
 
 export function buildFinding(inp: SweepInput): Finding {
   const now = inp.now.toISOString();
-  const inWindow = inp.announcements
+  const allInWindow = inp.announcements
     .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, inp.now) }))
     .filter((a) => a.ageDays == null || a.ageDays <= inp.windowDays)
     .map((a) => classifyAnnouncement(a, inp.market));
+  const afterClose = allInWindow.filter((a) => filedAfterClose(a.dateIso, inp.sessionCloseIso));
+  const inWindow = allInWindow.filter((a) => !filedAfterClose(a.dateIso, inp.sessionCloseIso));
   const band = bandPrint(inp.movePct, inp.turnover, inp.market);
   const listingDays = inp.returns && inp.returns.history > 0 && inp.returns.history < 60 ? inp.returns.history : null;
   const base: Finding = {
@@ -355,7 +412,9 @@ export function buildFinding(inp: SweepInput): Finding {
     filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read,
     researchedAt: now, sources: inp.sources,
   };
-  if (band.band) base.notes.push(`Closed at the ${band.level}% band${inp.turnover != null ? ` on ${fmtMoney(inp.turnover, inp.market)} traded` : ''} — a band print measures the band, not demand.`);
+  if (band.band) base.notes.push(`Closed at the ${band.level}% band${inp.turnover != null ? ` (avg daily value ~${fmtMoney(inp.turnover, inp.market)}, 1-week average)` : ''} — a band print measures the band, not demand.`);
+  const lateSubstantive = afterClose.filter((a) => a.kind === 'catalyst' || a.kind === 'negative' || a.kind === 'denial');
+  if (lateSubstantive.length) base.notes.push(`Filed after the session closed, so it cannot explain this move: ${lateSubstantive.slice(0, 2).map((a) => `${short(a.summary || a.subject)} (${fmtDate(a.dateIso)})`).join('; ')}.`);
   if (inp.returns && inp.returns.m1 != null && inp.returns.m3 != null && inp.returns.m1 < 0 && inp.returns.m3 < 0) base.notes.push(`Down ${fmtPct(inp.returns.m1)} over 1M and ${fmtPct(inp.returns.m3)} over 3M — a one-day bounce in a falling stock, not a gainer.`);
 
   if (inp.sourceFailed && !inWindow.length) return { ...base, status: 'source_failed', notes: [...base.notes, 'The filing source could not be reached — this is not "nothing filed".'] };
@@ -379,7 +438,15 @@ export function buildFinding(inp: SweepInput): Finding {
   const laterCatalyst = denial && inWindow.some((a) => a.kind === 'catalyst' && (a.dateIso || '') >= (denial.dateIso || ''));
   if (denial && !laterCatalyst) return { ...base, status: 'denied', headline: `Company told the exchange it has no undisclosed information (${fmtDate(denial.dateIso)})`, sourceUrl: denial.url, sourceDate: denial.dateIso, sourceTier: 'primary', ageDays: denial.ageDays, notes: [...base.notes, 'A denial on a stock that is moving is a caution flag, not a catalyst.'] };
   if (denial) base.notes.push(`Company denied any undisclosed information on ${fmtDate(denial.dateIso)} (exchange query) — that answered an earlier spike; a filing followed.`);
-  const negative = inWindow.find((a) => a.kind === 'negative');
+  const isNegCat = (x: unknown) => (NEGATIVE_CATALYSTS as readonly string[]).includes(String(x));
+  const hasCatalyst = inWindow.some((a) => a.kind === 'catalyst')
+    || (!!inp.read && !isNegCat(inp.read.category) && inWindow.some((a) => a.url === inp.read!.url && a.kind === 'unclassified'));
+  // US: an offering filed beside a real catalyst is supply INTO the move — a
+  // flag on that catalyst, not a replacement for it. On its own it is the
+  // finding. (zzz766)
+  const dilution = inp.market === 'US' ? inWindow.find((a) => a.kind === 'negative' && a.category === 'dilution') : undefined;
+  const negative = inWindow.find((a) => a.kind === 'negative' && !(a === dilution && hasCatalyst));
+  if (negative && inp.market === 'US') return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.routineReason || negative.subject, 140), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, negative.category === 'dilution' ? 'An offering / registration is supply, not demand: it dilutes or releases stock for sale. No catalyst was filed beside it.' : 'A negative filing in the window. The move is not explained by it.'] };
   if (negative) return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.summary || negative.subject), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, 'The only substantive in-window filing is negative. The move is not explained by it.'] };
   const query = inWindow.find((a) => a.kind === 'exchange_query');
 
@@ -393,25 +460,41 @@ export function buildFinding(inp: SweepInput): Finding {
     .map((a) => ({ a, s: scoreCatalyst(a, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: false }).net }))
     .sort((x, y) => y.s - x.s)
     .map((x) => x.a);
+  // A model read of a filing the form type could not classify (US 8-K Item
+  // 1.01 / 7.01 / 8.01, 6-K) IS the classification. It used to be paid for and
+  // then dropped here, because only catalyst-kind filings were candidates.
+  const readItem = inp.read && !cands.length ? inWindow.find((a) => a.url === inp.read!.url && a.kind === 'unclassified') : undefined;
+  if (readItem && inp.read) {
+    if (isNegCat(inp.read.category)) {
+      return { ...base, status: 'negative', category: inp.read.category, headline: inp.read.headline, evidenceQuote: inp.read.quote, sourceUrl: readItem.url, sourceDate: readItem.dateIso, sourceTier: 'primary', ageDays: readItem.ageDays, notes: [...base.notes, 'Model-read filing; the quote was found verbatim in the document. The filing is negative.'] };
+    }
+    const refined = classifyAnnouncement({ ...readItem, summary: `${inp.read.headline}. ${inp.read.quote}` }, inp.market);
+    cands.push({ ...readItem, kind: 'catalyst', category: inp.read.category, stage: refined.stage || 'executed', valueStated: inp.read.valueStated ?? refined.valueStated, incremental: refined.incremental });
+  }
   if (listingDays != null) {
     // A recent listing is not a gainer, whatever it filed: there is no
     // comparable prior close, so the return is the listing, not the news.
     return { ...base, status: 'listing_artifact', headline: `Listed ~${listingDays} sessions ago — no comparable prior close${cands.length ? `; filed: ${shorten(cands[0].summary || cands[0].subject, 70)}` : ''}`, sourceUrl: cands[0]?.url || null, sourceDate: cands[0]?.dateIso || null, sourceTier: cands.length ? 'primary' : 'unsourced' };
   }
   if (!cands.length) {
-    if (!inWindow.length) return { ...base, status: 'none', headline: `No filing in the last ${inp.windowDays} days`, notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
+    if (!inWindow.length) return { ...base, status: 'none', headline: afterClose.length ? `No filing before the session closed (${afterClose.length} filed after it)` : `No filing in the last ${inp.windowDays} days`, notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
     const uncl = inWindow.filter((a) => a.kind === 'unclassified');
     const headline = uncl.length
       ? `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window; ${uncl.length} not classifiable from the subject (${uncl.slice(0, 2).map((a) => short(a.summary || a.subject)).join('; ')})`
       : `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window, all routine (${base.routine.slice(0, 2).map(short).join('; ')})`;
-    return { ...base, status: 'routine_only', headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? ['An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern.'] : [])] };
+    return { ...base, status: 'routine_only', headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, ageDays: (uncl[0] || inWindow[0]).ageDays, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? ['An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern.'] : [])] };
   }
   let c = cands[0];
   const verified = !!inp.read && inp.read.url === c.url;
   if (verified && inp.read) {
+    if (inp.market === 'US' && isNegCat(inp.read.category)) {
+      return { ...base, status: 'negative', category: inp.read.category, headline: inp.read.headline, evidenceQuote: inp.read.quote, sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays, notes: [...base.notes, 'Model-read filing; the quote was found verbatim in the document. The filing is negative.'] };
+    }
     c = { ...c, category: inp.read.category, valueStated: inp.read.valueStated ?? c.valueStated };
   }
   const scored = scoreCatalyst(c, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: verified });
+  // An offering into the move caps the verdict below FIRE (zzz766).
+  if (dilution && scored.verdict === 'FIRE') { scored.net = Math.min(scored.net, 44.9); scored.verdict = 'ROOM'; }
   const notes = [...base.notes];
   if (c.stage === 'enabling') notes.push('ENABLING, not executed: a board considering something has no size, no price and no counterparty yet.');
   if (c.stage === 'scheduled') notes.push('SCHEDULED, not executed: dated in the future. Nothing has been produced yet.');
@@ -419,6 +502,8 @@ export function buildFinding(inp: SweepInput): Finding {
   if (c.category === 'product_qualification' || c.category === 'regulatory_approval') notes.push('Qualification permits work; it books none.');
   if (c.category === 'rating_action' && /reaffirm|affirm/i.test(`${c.subject} ${c.summary || ''}`) && !/upgrad/i.test(`${c.subject} ${c.summary || ''}`)) notes.push('A reaffirmation is not an upgrade.');
   if (c.category === 'fundraising') notes.push('A raise is supply, not demand — dilution unless the use of proceeds is disclosed.');
+  if (c.category === 'quarterly_result' && !verified) notes.push('Results filed — the filing is the dated event; whether the numbers were good was not read here.');
+  if (dilution) notes.push(`⚠ Offering filed in the window (${shorten(dilution.subject, 60)}, ${fmtDate(dilution.dateIso)}) — supply into the move.`);
   if (scored.valuePctMcap != null && inp.movePct != null && scored.valuePctMcap < 2 && Math.abs(inp.movePct) >= 8) notes.push(`Item is ${scored.valuePctMcap}% of market cap against a ${fmtPct(inp.movePct)} move — look for the real driver.`);
   if (scored.components.pricedIn >= 80) notes.push(`Largely priced: ${fmtPct(inp.returns?.m1 ?? null)} 1M / ${fmtPct(inp.returns?.m3 ?? null)} 3M.`);
   if (!verified) notes.push('Headline from the filing subject and the source\'s summary; the document itself was not model-read — treat the figure as unverified.');
@@ -432,6 +517,15 @@ export function buildFinding(inp: SweepInput): Finding {
   };
 }
 
+/** A finding keeps its research but takes the latest move: the band flag and
+ *  its note are recomputed from the new close. (zzz766) */
+export function refreshFindingMove(f: Finding, movePct: number | null): Finding {
+  const band = bandPrint(movePct, f.turnover, f.market);
+  const notes = f.notes.filter((n) => !/^Closed at the \d+% band/.test(n));
+  if (band.band) notes.unshift(`Closed at the ${band.level}% band${f.turnover != null ? ` (avg daily value ~${fmtMoney(f.turnover, f.market)}, 1-week average)` : ''} — a band print measures the band, not demand.`);
+  return { ...f, movePct, bandPrint: band.band, bandLevel: band.level, notes };
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 export function shorten(s: string, max = 110): string {
@@ -441,7 +535,7 @@ export function shorten(s: string, max = 110): string {
 const short = (s: string) => shorten(s, 40);
 export function fmtPct(v: number | null): string { return v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`; }
 export function fmtDate(iso: string | null): string { return iso ? iso.slice(0, 10) : 'undated'; }
-export function fmtMoney(v: number, market: 'IN' | 'US'): string { return market === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)} Cr` : `$${v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1)} M`; }
+export function fmtMoney(v: number, market: 'IN' | 'US'): string { return market === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)} Cr` : fmtUsdM(v); }
 
 /** Coverage line, computed from findings so it cannot lie. */
 export function coverage(findings: Record<string, Finding>, universe: string[]): { researched: number; total: number; pct: number; byStatus: Record<string, number> } {

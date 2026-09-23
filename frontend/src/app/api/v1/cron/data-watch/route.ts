@@ -85,8 +85,8 @@ export async function GET(req: Request) {
   const now = new Date();
   const ist = istNow(now);
   const istDate = istToday(now);
-  const istHour = ist.getHours();
-  const istDow = ist.getDay();
+  const istHour = ist.getUTCHours();   // istNow() shifts the instant: UTC getters, or a non-UTC host double-shifts (zzz766)
+  const istDow = ist.getUTCDay();
   const indiaTradingDay = istDow >= 1 && istDow <= 5 && !isNseHoliday(now);
   const checks: Check[] = [];
   const t = () => Date.now();
@@ -105,7 +105,7 @@ export async function GET(req: Request) {
     };
     let c = await countUpcoming();
     const need = upcomingFloor(istDate);
-    const dayOfMonth = ist.getDate();
+    const dayOfMonth = ist.getUTCDate();
     const nextMissing = dayOfMonth >= 2 && !c.nextKnown;
     let healed: string | undefined;
     if ((c.up < need || nextMissing) && heal) {

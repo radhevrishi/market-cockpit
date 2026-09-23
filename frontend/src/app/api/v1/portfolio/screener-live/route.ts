@@ -19,7 +19,7 @@ export const maxDuration = 60;
 const MAX = 12;
 const TTL_OK = 24 * 3600;
 const TTL_FAIL = 6 * 3600;
-const key = (t: string) => `thesis:screener-live:v1:${t}`;
+const key = (t: string) => `thesis:screener-live:v2:${t}`;
 
 export async function GET(req: NextRequest) {
   const tickers = (new URL(req.url).searchParams.get('tickers') || '')

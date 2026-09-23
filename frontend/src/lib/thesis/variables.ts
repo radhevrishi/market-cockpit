@@ -36,6 +36,7 @@ import { scaledNumber, sameUnit, deltaOf as ledgerDeltaOf } from './evidence-led
 import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { normalizeEvent, gapToTarget } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
+import type { ChangeLine } from './evidence-ledger';
 
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
 export type { VarKey, VarGroup, EvidenceKind };
@@ -339,7 +340,10 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         // thing: AARTIPHARM's "~450 KL" installed and "9,500 metric tons"
         // planned are two products, and a ₹210 Cr project against a ₹149 Cr
         // block is two projects. The gap is printed only for rates (pp).
+        // A plan identical to the actual is the same figure twice (ICIL
+        // "60% to 65% · plan 60 to 65%").
         plan: f && judgeEventQuality(f) !== 'unit_mismatch' && String(f.after ?? '').trim()
+          && String(f.after).replace(/[^\d.]/g, '') !== String(a.after ?? '').replace(/[^\d.]/g, '')
           && (!/\d/.test(String(a.after ?? '')) || !/\d/.test(String(f.after)) || sameUnit(String(a.after ?? ''), String(f.after), a.unit, f.unit)) ? {
           value: String(f.after), type: f.value_type === 'GUIDANCE' ? 'GUIDANCE' : 'TARGET',
           quote: f.evidence_text.slice(0, 240), source: f.source,
@@ -478,7 +482,12 @@ export function applyComparisons(
     if (!isFact || !hasBasis || !c.previous) {
       return { ...v, comparison: c };
     }
-    const inverted = NEGATIVE_VARS.has(v.key);
+    // Days of working capital FALLING is the good direction — the same
+    // inverse reading the event path applies. NEULANDLAB "137 → 84 days"
+    // printed ▼ and CYIENTDLM "145 → 161 days" ▲ when the ledger comparison
+    // took over the row. (zzz765)
+    const inverted = NEGATIVE_VARS.has(v.key)
+      || inverseByUnit(v.key, `${c.current?.raw || ''} ${c.previous?.raw || ''} ${v.after || ''} ${v.before || ''}`);
     const moved = movedEnough(c);
     const verdict: VarVerdict = !moved || c.direction === 'flat'
       ? 'flat'
@@ -1190,8 +1199,17 @@ export function extractVariables(
     // coming in and a negative one about the same spend make it MIXED.
     const earns = /generat\w* (revenue|ebitda)|contribut\w* (revenue|to (revenue|ebitda|ebit))|commenced (commercial )?(operations|production)|already contributing|is contributing|running at \d|revenue from the (new|plant)|linked? .* to (improved|higher) (ebit|margin)/i.test(s_);
     const notYet = /not yet|below plan|behind (plan|schedule)|disappoint|delay|does not (state|tie|link)|did not state|no explicit link|no (quantified|explicit)|until commissioning|under construction|yet to/i.test(s_);
+    // ── A PLAN IS NOT EARNING, AND SILENCE IS NOT FAILURE.         (zzz765)
+    // MANINDS "expected to start contributing revenue from Mar '27" printed
+    // ▲; HSCL/ICIL/SAMBHV "no explicit link / did not state" printed ▼. The
+    // first is a forward statement, the second an absence of disclosure.
+    // Only an actual shortfall (delay, behind plan, disappointing) is ▼.
+    const future = /expected to (start )?(contribut|generat)|will (start )?(contribut|generat|add)|to contribute|from (FY|Q[1-4]|mar|apr|jun|sep|dec|oct|jan)\w*\s*'?\d{2}|once (commissioned|functional)|when (commissioned|fully ramped)|post[- ]commissioning/i.test(s_);
+    const shortfall = /below plan|behind (plan|schedule)|disappoint|\bdelay/i.test(s_);
     push_('capex_earning', s_,
-      earns && notYet ? 'stated' : earns ? 'improving' : notYet ? 'deteriorating' : 'unknown',
+      shortfall ? 'deteriorating'
+        : earns && !future ? (notYet ? 'stated' : 'improving')
+          : (notYet || future || earns) ? 'stated' : 'unknown',
       `Capex earning: ${s_}.${earns && notYet ? ' Part of the spend is earning and part is not yet — shown, not judged either way.' : ''}`);
   }
 
@@ -1294,4 +1312,54 @@ export function byKey(vars: StructuralVar[]): Partial<Record<VarKey, StructuralV
     if (!prev || (prev.source === 'grader' && v.source === 'filing')) m[v.key] = v;
   }
   return m;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHAT CHANGED, FROM THE BOARD'S OWN ROWS.                           (zzz765)
+//
+// The header list used to come from a separate ledger routine with its own
+// selection, so one card printed two figures for one variable (ENTERO one-offs
+// ₹56 Cr above, ₹11.5 Cr below; PICCADIL utilisation 80% above, 60% below)
+// and kept "Capacity utilisation 65% to 70%" (INNOVACAP's at-peak plan) that
+// the board had already re-typed as guidance. One source now: the rows.
+// ═══════════════════════════════════════════════════════════════════════════
+const stripTypeTag = (s: string | null | undefined) => String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '').trim();
+
+export function rowValueText(v: StructuralVar): string {
+  const after = stripTypeTag(v.after);
+  const planTxt = v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${v.plan.value}${v.plan.gap ? ` (gap ${v.plan.gap})` : ''}` : '';
+  if (v.statement === 'GUIDANCE' || v.statement === 'TARGET') {
+    if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${v.statement.toLowerCase()} MAINTAINED`;
+    return `${v.statement.toLowerCase()} ${after}`;
+  }
+  if (v.statement === 'MANAGEMENT_STATEMENT') return `management: “${after}”${planTxt}`;
+  if (v.statement === 'HISTORICAL') return `${[v.before, after].filter(Boolean).join(' → ')} — historical context (${v.asOf})`;
+  const c = v.comparison;
+  if (c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT') {
+    const ch = c.change_type === 'UNCHANGED' ? 'FLAT' : (c.change || v.delta || '');
+    return `${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
+  }
+  if (v.before && after) return `${v.before} → ${after}${v.delta ? ` · ${v.delta}` : ''}${planTxt}`;
+  return `${after || v.delta || ''}${v.delta && v.delta !== after && after ? ` · ${v.delta}` : ''}${planTxt}`;
+}
+
+export function rowChangeLines(vars: StructuralVar[], period: string | null): ChangeLine[] {
+  const rank = (v: StructuralVar) => v.statement === 'HISTORICAL' ? 5
+    : v.statement === 'GUIDANCE' || v.statement === 'TARGET' ? 4
+      : v.statement === 'MANAGEMENT_STATEMENT' ? 3
+        : v.verdict === 'deteriorating' ? 0 : v.verdict === 'improving' ? 1 : 2;
+  return vars
+    // Rows read from typed events (they carry the document they came from);
+    // the grader's financial rows have their own block on the card.
+    .filter((v) => v.source === 'filing' && !!v.sourceLabel && v.verdict !== 'unknown')
+    .map((v, i) => ({ v, i }))
+    .sort((a, b) => rank(a.v) - rank(b.v) || a.i - b.i)
+    .slice(0, 12)
+    .map(({ v }) => ({
+      sign: (v.statement && v.statement !== 'ACTUAL') ? '·' as const
+        : v.verdict === 'improving' ? '+' as const : v.verdict === 'deteriorating' ? '-' as const : '·' as const,
+      text: `${v.label} ${rowValueText(v)}`,
+      metric: v.key, period: period || v.asOf || '', source: v.sourceLabel || '',
+    }));
 }

@@ -97,7 +97,7 @@ export function valueClause(text: string, value: string | null | undefined): str
 
 const FORWARD = /\b(expect(?:s|ed|ing)?|anticipat\w*|will|shall|going to|plan(?:s|ned|ning)?|to be (?:commissioned|completed|added|operational)|upcoming|soon|next (?:couple|few|two|three|year|quarter)|in the coming|by (?:the )?(?:end|FY|Q[1-4]|20\d\d)|target(?:s|ed|ing)?|aim(?:s|ing)?|would|at peak|optimum|potential|pipeline|roadmap|on track to|(?:are|is|we're) (?:expanding|adding|setting up|building|doubling|tripling))\b/i;
 const NOT_FORWARD = /\b(than expected|as expected|was expected|were expected|had planned|as planned)\b/gi;
-const CURRENT_MARK = /\b(this (?:particular )?quarter|during the quarter|in the quarter|current(?:ly)?|today|as of now|as on date|as of date|at present|in hand|in Q[1-4]|stood at|achieved|recorded|reported|are live|is live)\b/i;
+const CURRENT_MARK = /\b(this (?:particular )?quarter|during the quarter|in the quarter|current(?:ly)?|today|as of now|as on date|as of date|at present|in hand|in Q[1-4]|stood at|stands? at|now stand|achieved|recorded|reported|are live|is live)\b/i;
 
 /** Where the value's first number sits inside `text`, or -1. */
 function numberAt(text: string, value: string | null | undefined): number {
@@ -115,10 +115,16 @@ function numberAt(text: string, value: string | null | undefined): number {
  *  decides unless a present-tense marker is just as close. */
 export function forwardAround(text: string, value: string | null | undefined): boolean {
   const c = valueClause(text, value).replace(NOT_FORWARD, ' ');
-  const i = numberAt(c, value);
-  if (i < 0) return FORWARD.test(c) && !CURRENT_MARK.test(c);
-  const near = c.slice(Math.max(0, i - 25), i + 25 + String(value || '').length);
-  const mid = c.slice(Math.max(0, i - 50), i + 50 + String(value || '').length);
+  const n = numberAt(c, value);
+  if (n < 0) return FORWARD.test(c) && !CURRENT_MARK.test(c);
+  // Anchor the window on the VALUE as written ("approximately INR87 crores"),
+  // not on its digits — otherwise the verb in front of a long value falls
+  // outside the window (UNIMECH "now stand at approximately INR87 crores").
+  const vs = c.toLowerCase().indexOf(String(value || '').toLowerCase().slice(0, 16));
+  const start = vs >= 0 && vs <= n ? vs : n;
+  const end = Math.max(n, start + String(value || '').length);
+  const near = c.slice(Math.max(0, start - 25), end + 25);
+  const mid = c.slice(Math.max(0, start - 50), end + 50);
   if (FORWARD.test(near) && !CURRENT_MARK.test(near)) return true;
   return FORWARD.test(mid) && !CURRENT_MARK.test(mid);
 }
@@ -221,8 +227,9 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
 /** "20–25%" → {lo:20, hi:25}; "25%" → {lo:25, hi:25}. Null when no number. */
 export function rangeOf(s: string | null | undefined): { lo: number; hi: number; pct: boolean } | null {
   const t = String(s || '').replace(/,/g, '');
-  // A hyphen after a digit is a range dash, not a minus: "20-25%".
-  const nums = Array.from(t.matchAll(/(?<![\d.])-?\d+(?:\.\d+)?/g)).map((m) => Number(m[0])).filter(Number.isFinite);
+  // A hyphen after a digit or a % is a range dash, not a minus: "20-25%",
+  // KIRIINDUS "70%-75%" (read as −75 → "gap +135pp").
+  const nums = Array.from(t.matchAll(/(?<![\d.%]\s*)-?\d+(?:\.\d+)?/g)).map((m) => Number(m[0])).filter(Number.isFinite);
   if (!nums.length) return null;
   const two = /\d\s*(?:%\s*)?(?:-|–|—|to)\s*-?\d/.test(t) && nums.length >= 2;
   const lo = nums[0], hi = two ? nums[1] : nums[0];

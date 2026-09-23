@@ -32,12 +32,20 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { fetchScreenerHtml, screenerProxyConfigured } from '@/lib/earnings/screener-fetch';
+import { NSE_HOLIDAYS } from '@/lib/market-hours';
 
 export interface ScreenerGainer {
   ticker: string;
   company: string;
   movePct: number | null;
+  /** The screen's "Avg Vol 1Wk" column — a one-week AVERAGE daily volume,
+   *  not the session's volume. Anything derived from it is labelled so. */
   volume: number | null;
+  /** Current market price from the screen's CMP column (₹). */
+  price?: number | null;
+  /** screener.in's internal company id — the dedup key. The same company can
+   *  appear under its NSE symbol and its BSE code. */
+  companyId?: string | null;
   pe: number | null;
   marketCapCr: number | null;
   profitVarPct: number | null;
@@ -50,8 +58,12 @@ export interface ScreenerGainersResult {
   /** Whether a reachable proxy is configured — so the page can say whether it
    *  is one environment variable away from working. */
   proxyConfigured?: boolean;
-  /** Null when the fetch failed; otherwise when this data was read. */
+  /** Null when the fetch failed; otherwise WHEN THE SCREEN WAS READ FROM
+   *  screener.in — the proxy's cache age is subtracted, so an hour-old
+   *  cached page is never stamped as read "now". (zzz766) */
   fetchedAt: string | null;
+  /** Age of the proxy-cached page in ms, when the proxy served from cache. */
+  proxyCacheAgeMs?: number | null;
   pages: number;
   totalReported: number | null;
   url: string;
@@ -105,6 +117,7 @@ export function parsePage(html: string): { rows: ScreenerGainer[]; total: number
   // The owner's column is literally "1day return %". Matched loosely so a
   // rename to "1 day return" or "Day return" still resolves.
   const iMove = findCol(headers, /1\s*-?\s*day\s*return|day\s*return|1d\s*return/i);
+  const iPrice = findCol(headers, /^cmp|current\s*price/i);
   const iVol = findCol(headers, /avg\s*vol/i);
   const iPe = findCol(headers, /^p\s*\/\s*e/i);
   const iMcap = findCol(headers, /mar\s*cap/i);
@@ -130,6 +143,7 @@ export function parsePage(html: string): { rows: ScreenerGainer[]; total: number
     // The NSE symbol lives in the company link, not in the visible text —
     // the visible text is a truncated display name ("Sr.Rayala.Hypo").
     const link = /href="\/company\/([^/"?]+)/.exec(tr);
+    const cid = /data-row-company-id="(\d+)"/.exec(m[0])?.[1] ?? null;
     const ticker = link ? link[1].toUpperCase() : '';
     if (!ticker) continue;
     const at = (i: number) => (i >= 0 && i < cells.length ? decode(stripTags(cells[i])) : '');
@@ -138,6 +152,8 @@ export function parsePage(html: string): { rows: ScreenerGainer[]; total: number
       company: at(iCompany) || ticker,
       movePct: num(at(iMove)),
       volume: num(at(iVol)),
+      price: num(at(iPrice)),
+      companyId: cid,
       pe: num(at(iPe)),
       marketCapCr: num(at(iMcap)),
       profitVarPct: num(at(iProfitVar)),
@@ -146,7 +162,9 @@ export function parsePage(html: string): { rows: ScreenerGainer[]; total: number
     });
   }
 
-  const totalM = /([\d,]+)\s*results/i.exec(html);
+  // "98 results" — anchored to a tag boundary so a phrase like "Q1 2026
+  // results" in a company name or note cannot be read as the row count.
+  const totalM = />\s*([\d,]+)\s*results\b/i.exec(html) || /([\d,]+)\s*results/i.exec(html);
   const total = totalM ? num(totalM[1]) : null;
   return { rows, total, error: rows.length ? null : 'the results table had no company rows' };
 }
@@ -160,6 +178,7 @@ export function parsePage(html: string): { rows: ScreenerGainer[]; total: number
 export async function fetchIndiaGainers(limitPages = MAX_PAGES): Promise<ScreenerGainersResult> {
   const out: ScreenerGainer[] = [];
   const seen = new Set<string>();
+  let oldestAgeMs: number | null = null;
   let total: number | null = null;
   let pages = 0;
   let firstError: string | null = null;
@@ -175,6 +194,7 @@ export async function fetchIndiaGainers(limitPages = MAX_PAGES): Promise<Screene
       break;
     }
     const html = got.html;
+    if (typeof got.ageMs === 'number') oldestAgeMs = Math.max(oldestAgeMs ?? 0, got.ageMs);
 
     const parsed = parsePage(html);
     if (parsed.error && !parsed.rows.length) {
@@ -185,8 +205,9 @@ export async function fetchIndiaGainers(limitPages = MAX_PAGES): Promise<Screene
     pages = p;
     let added = 0;
     for (const row of parsed.rows) {
-      if (seen.has(row.ticker)) continue;
-      seen.add(row.ticker);
+      const k = row.companyId ? `id:${row.companyId}` : `t:${row.ticker}`;
+      if (seen.has(k) || seen.has(`t:${row.ticker}`)) continue;
+      seen.add(k); seen.add(`t:${row.ticker}`);
       out.push(row);
       added++;
     }
@@ -198,10 +219,84 @@ export async function fetchIndiaGainers(limitPages = MAX_PAGES): Promise<Screene
   return {
     rows: out,
     proxyConfigured: screenerProxyConfigured(),
-    fetchedAt: out.length ? new Date().toISOString() : null,
+    fetchedAt: out.length ? new Date(Date.now() - (oldestAgeMs ?? 0)).toISOString() : null,
+    proxyCacheAgeMs: oldestAgeMs,
     pages,
     totalReported: total,
     url: INDIA_GAINERS_URL,
     error: out.length ? (firstError ? `partial read — ${firstError}` : null) : (firstError || 'no rows parsed'),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHICH SESSION THE SCREEN DESCRIBES.                               (zzz766)
+//
+// A "1day return" column always describes the LAST session that traded. Read
+// at 01:47 IST on a Wednesday it is Tuesday's move; read on a Saturday it is
+// Friday's; read on an exchange holiday it is the day before. The research
+// store was keyed by the IST calendar date, so a sweep that ran after
+// midnight filed Tuesday's gainers under Wednesday — and Wednesday's real
+// gainers were then merged into the same day, keeping Tuesday's moves for
+// every name that appeared on both boards. The key is the SESSION, not the
+// calendar.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface IndiaSession {
+  /** The trading date the screen's 1-day return belongs to, YYYY-MM-DD (IST). */
+  date: string;
+  /** open = in session now; pre_open = today before 09:15 (last session shown);
+   *  closed = today after 15:30; weekend / holiday = no session today. */
+  state: 'open' | 'pre_open' | 'closed' | 'weekend' | 'holiday';
+  /** True when the move is today's (in progress or just closed). */
+  isToday: boolean;
+  label: string;
+}
+
+const IST_MS = 5.5 * 3600_000;
+const ymd = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+const isTradingDate = (d: Date) => d.getUTCDay() !== 0 && d.getUTCDay() !== 6 && !NSE_HOLIDAYS.has(ymd(d));
+
+export function indiaSession(now: Date = new Date()): IndiaSession {
+  const ist = new Date(now.getTime() + IST_MS);            // wall-clock IST in the UTC fields
+  const today = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
+  const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  const dow = today.getUTCDay();
+  let state: IndiaSession['state'];
+  if (dow === 0 || dow === 6) state = 'weekend';
+  else if (NSE_HOLIDAYS.has(ymd(today))) state = 'holiday';
+  else if (mins < 9 * 60 + 15) state = 'pre_open';
+  else if (mins <= 15 * 60 + 30) state = 'open';
+  else state = 'closed';
+  const d = new Date(today);
+  if (state === 'weekend' || state === 'holiday' || state === 'pre_open') {
+    do { d.setUTCDate(d.getUTCDate() - 1); } while (!isTradingDate(d));
+  }
+  const date = ymd(d);
+  const nice = d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const label = state === 'open' ? `${nice} — session in progress (moves are intraday)`
+    : state === 'closed' ? `${nice} — today's closed session`
+      : `${nice} — last completed session (${state === 'pre_open' ? 'market not open yet today' : state === 'weekend' ? 'weekend' : 'exchange holiday today'})`;
+  return { date, state, isToday: state === 'open' || state === 'closed', label };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SMALL AND MID CAPS ONLY.                                           (zzz766)
+//
+// The owner's brief is small/mid caps. His screen filters market cap > ₹500 Cr
+// with no upper bound, so a ₹1.1 lakh Cr name (MEESHO, 22 Sep 2026) sat on
+// the board next to ₹700 Cr names and was researched like one. SEBI/AMFI
+// define large caps as the top 100 by full market cap; the 100th name sits
+// near ₹1,00,000 Cr, so that is the line. A name whose cap is unknown is
+// KEPT and flagged — dropping it would hide a gainer for a missing field.
+// ═══════════════════════════════════════════════════════════════════════════
+export const LARGE_CAP_MIN_CR = 100_000;
+
+export function isLargeCap(marketCapCr: number | null | undefined): boolean {
+  return typeof marketCapCr === 'number' && Number.isFinite(marketCapCr) && marketCapCr >= LARGE_CAP_MIN_CR;
+}
+
+export function partitionByCap<T extends { marketCapCr?: number | null }>(rows: T[]): { kept: T[]; largeCaps: T[] } {
+  const kept: T[] = [], largeCaps: T[] = [];
+  for (const r of rows) (isLargeCap(r.marketCapCr) ? largeCaps : kept).push(r);
+  return { kept, largeCaps };
 }

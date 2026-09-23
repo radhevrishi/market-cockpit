@@ -30,6 +30,7 @@
 
 'use client';
 
+import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { useMemo, useState } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
@@ -223,6 +224,35 @@ export default function PortfolioCatalystsPage() {
           );
         })}
       </div>
+
+      {/* ── ONE CLICK TO TRADINGVIEW. (zzz765) The three constructive
+          statuses combined — strengthening, confirmation required, running
+          ahead of plan — as NSE:TICKER, same toolbar as Conviction Beats.
+          Exchange suffixes (-BE, -SM) are dropped: TradingView lists the
+          base symbol. */}
+      {(() => {
+        const KEEP: Array<[string, string, string]> = [
+          ['STRENGTHENING', 'Strengthening', '🟢'],
+          ['CONFIRMATION_REQUIRED', 'Confirmation required', '🟡'],
+          ['POSITIVE_EXPECTATION_GAP', 'Running ahead of plan', '🟣'],
+        ];
+        const tv = (sym: string) => sym.toUpperCase().replace(/-(BE|SM|ST|BZ|E1)$/i, '');
+        const inIndia = inSource.filter((r) => r.market !== 'US');
+        const groups = KEEP.map(([k, label, emoji]) => ({
+          label, emoji,
+          tickers: Array.from(new Set(inIndia.filter((r) => r.assessment?.status === k).map((r) => tv(r.symbol)))),
+        })).filter((g) => g.tickers.length);
+        const all = Array.from(new Set(groups.flatMap((g) => g.tickers)));
+        if (!all.length) return null;
+        return (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', background: C.bg }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, marginBottom: 6 }}>
+              📋 Copy to TradingView — {all.length} names: {groups.map((g) => `${g.emoji} ${g.label} ${g.tickers.length}`).join(' · ')}
+            </div>
+            <TickerExportToolbar tickers={all} groups={groups} exchange="NSE" filenameHint="portfolio-catalysts-constructive" compact />
+          </div>
+        );
+      })()}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>

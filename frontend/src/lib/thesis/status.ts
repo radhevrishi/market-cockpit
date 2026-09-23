@@ -375,7 +375,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // Three documents read and no one-off found is the forensic test
     // passing, not a gap in the evidence. Recorded as flat: checked, and
     // nothing found. Never improving — absence is not a positive finding.
-    const comparison = cmp[tv.key] || null;
+    // The row's own (guarded) comparison when it has a row; the raw join only
+    // for a variable with no current row (NOT_DISCLOSED). VADILALIND's chip
+    // printed "150,000 → 380,000 · FLAT" from an unguarded comparison of a
+    // different plant. (zzz765)
+    const comparison = v ? (v.comparison ?? null) : (cmp[tv.key] || null);
     // ── A VARIABLE THAT STOPPED BEING DISCLOSED IS NOT SILENCE.    (zzz758)
     //
     // The pass-on-silence rule was written for risks nobody mentioned. It must
@@ -542,6 +546,65 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     ? ` Not yet established: ${missingRequired.map((c) => `${c.label.toLowerCase()}${c.verdict === 'stated' ? ' (level only)' : c.verdict === 'unknown' ? ' (not disclosed)' : ` (${c.verdict})`}`).join(', ')}.`
     : '';
 
+  // ── STRUCTURAL DRIVERS, FROM ANY FILING ROW.                     (zzz765)
+  //
+  // One rule for every name. Green needs a document read, output improving,
+  // nothing thesis-critical falling, and at least ONE structural driver the
+  // filing itself evidences — a physical or commercial reason for the numbers
+  // (utilisation or volume up, capacity added, order book up, capex already
+  // earning, working capital improving, or a stated margin driver such as mix
+  // or operating leverage). Cash conversion alone is earnings QUALITY, not a
+  // mechanism, so it can no longer turn a card green by itself; and a core
+  // figure the company does not disclose (or gives only as a target) no
+  // longer blocks green when another driver is evidenced — it is listed as
+  // what the next quarter must still confirm.
+  const DRIVER_KEYS = new Set<VarKey>(['utilisation', 'volume', 'capacity', 'capacity_addition', 'order_book', 'order_intake',
+    'book_to_bill', 'new_customer', 'capex_earning', 'working_capital', 'product_mix', 'margin_driver', 'exports',
+    'commissioning', 'qualification', 'regulatory_approval', 'price'] as VarKey[]);
+  const STRUCTURAL_WORDS = /mix|value[- ]add|premium|operating leverage|utili[sz]|volume|capacity|scale|pric|realis|realiz|efficien|cost (reduction|saving)|procurement|integration|new (plant|product|customer)|export/i;
+  const TEMPORARY_ONLY = /one[- ]off|one[- ]time|exceptional|forex|currency|inventory gain|refund|write[- ]?back|reversal|raw material (price )?spike|provision/i;
+  const isDriver = (v: StructuralVar): boolean => {
+    if (!DRIVER_KEYS.has(v.key) || v.source !== 'filing' || v.kind === 'claim' || v.unjudged) return false;
+    if (v.statement && v.statement !== 'ACTUAL') return false;
+    if (v.verdict !== 'improving') return false;
+    if (v.key === 'margin_driver') {
+      const t = `${v.after || ''} ${v.evidence || ''}`;
+      return STRUCTURAL_WORDS.test(t) && !(TEMPORARY_ONLY.test(t) && !STRUCTURAL_WORDS.test(t.replace(TEMPORARY_ONLY, '')));
+    }
+    return true;
+  };
+  // F · PROFIT JUMP asks WHY PROFIT jumped: only a driver that explains a
+  // margin or volume move counts there — an order book or an approval does
+  // not explain this quarter's profit.
+  // Each strategy counts the drivers that explain ITS mechanism: an approval
+  // does not explain an operating inflection, and capacity does not explain
+  // a demand explosion.
+  const STRATEGY_DRIVERS: Record<string, VarKey[]> = {
+    A: ['utilisation', 'volume', 'capacity', 'capacity_addition', 'margin_driver', 'product_mix', 'price', 'capex_earning', 'commissioning', 'working_capital'] as VarKey[],
+    B: ['order_book', 'order_intake', 'book_to_bill', 'new_customer', 'qualification', 'regulatory_approval', 'exports', 'capex_earning'] as VarKey[],
+    F: ['margin_driver', 'product_mix', 'volume', 'utilisation', 'capacity_addition', 'capex_earning', 'price'] as VarKey[],
+    G: ['working_capital', 'margin_driver', 'capex_earning', 'product_mix', 'price', 'volume'] as VarKey[],
+  };
+  const allowed = STRATEGY_DRIVERS[thesis.pattern] ? new Set<VarKey>(STRATEGY_DRIVERS[thesis.pattern]) : null;
+  const drivers = (input.variables || []).filter(isDriver).filter((v) => !allowed || allowed.has(v.key));
+  // A company still losing money is not a confirmed thesis, however fast the
+  // loss is shrinking (EXICOM: margin −19% → −7%). (zzz765)
+  const lossMaking = /^\s*-/.test(String(found.margin?.after || '')) || /^\s*-/.test(String(found.earnings_growth?.after || ''));
+  const structuralDown = checked.some((c) => structuralKeys.has(c.key) && c.verdict === 'deteriorating' && mayMoveStatus(c));
+  const oneOffsCleared = !found.one_offs || found.one_offs.verdict === 'flat' || !!found.one_offs.unjudged
+    || (found.one_offs.verdict === 'stated');
+  const cashOk = !found.cash_conversion || found.cash_conversion.verdict !== 'deteriorating';
+  const greenByDrivers = !!input.evidenceReviewed && outputImproved && !anyMaterialDown && !structuralDown
+    && drivers.length >= 1 && !lossMaking && (thesis.pattern !== 'F' || (oneOffsCleared && cashOk));
+  const stillToConfirm = core.filter((c) => !isFinancialOutput(c.key, c.source)
+    && c.verdict !== 'improving' && !(c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)))
+    .map((c) => `${c.label.toLowerCase()}${c.verdict === 'unknown' ? ' (not disclosed)' : c.verdict === 'stated' ? ` (${(c as any).statement === 'TARGET' || (c as any).statement === 'GUIDANCE' ? 'target only' : 'level only'}: ${c.after || c.before})` : ''}`);
+  const driverText = (v: StructuralVar) => {
+    const val = v.delta && v.before ? `${v.before} → ${v.after} (${v.delta})` : (v.after || '');
+    const label = v.key === 'capex_earning' ? 'capex earning' : v.label.toLowerCase();
+    return `${label}${val && val.length <= 60 ? ` ${val}` : ' (stated in the filing)'}`;
+  };
+
   // ── THE STATUS LADDER, most severe first. ──────────────────────────────
   let status: ThesisStatus;
   let because: string;
@@ -594,6 +657,18 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + (coreTriggered.some((c) => c.key === 'cash_conversion')
         ? 'A single cash-conversion reading is a review prompt and never a break on its own. ' : '')
       + 'A weak quarter is not a broken thesis — this is a prompt to look, not to act.';
+  } else if (greenByDrivers) {
+    status = 'STRENGTHENING';
+    // The count names what was actually evidenced: the strategy's own
+    // structural variables plus any other filing-evidenced driver, so a green
+    // card never reads "0/4 confirmed … mechanism confirmed".
+    const unionKeys = new Set<VarKey>([...structuralVars.map((c) => c.key), ...drivers.map((d) => d.key)]);
+    const unionConfirmed = new Set<VarKey>([...structuralConfirmedVars.map((c) => c.key), ...drivers.map((d) => d.key)]);
+    because = `no thesis-specific break condition fired. Structural evidence reviewed: ${unionConfirmed.size}/${unionKeys.size} variables confirmed. Financial output: ${outputSummary}. `
+      + `${STRENGTHENING_SENTENCE.replace(/\.$/, '')} — `
+      + `structural driver${drivers.length > 1 ? 's' : ''} evidenced in the filings: ${drivers.slice(0, 4).map(driverText).join('; ')}.`
+      + (thesis.pattern === 'F' ? ` Forensics: one-offs ${found.one_offs ? (found.one_offs.unjudged ? 'shown, not material to the call' : 'checked, not material') : 'none disclosed'}; cash conversion ${found.cash_conversion?.after || 'not deteriorating'}.` : '')
+      + (stillToConfirm.length ? ` Still to confirm next quarter: ${stillToConfirm.join(', ')}.` : '');
   } else if (input.evidenceReviewed && coreDisclosed.length < core.length
       && core.every((c) => c.verdict !== 'unknown' || c.absence === 'not_disclosed')) {
     // ── READ, AND THE COMPANY SAID NOTHING.                        (zzz757)

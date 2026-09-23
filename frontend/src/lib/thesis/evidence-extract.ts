@@ -529,6 +529,13 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     if ((v === 'order_book' || v === 'order_intake') && !/\d/.test(valueText)) return false;
     if (v === 'one_offs' && /\d/.test(valueText)
       && !/₹|\bINR|\bRs\.?|\bUSD|\$|crores?|\bcr\b|lakhs?|million|mn\b|billion|bn\b|items?|`/i.test(valueText)) return false;
+    // A one-off is an ITEM in the P&L. Revenue for the year (VADILALIND
+    // "Revenue from Operations of ₹1,109.54 crore"), operating cash flow
+    // (REDINGTON "Operating cash flows remained positive at ₹231 Crores")
+    // and a planned investment (CUPID "Planned investment of ₹331.53 Cr")
+    // are not one-offs, whatever the model filed them under. (zzz765)
+    if (v === 'one_offs' && !/one[- ]?off|one[- ]time|exceptional|non[- ]recurring|write[- ]?back|reversal|impairment|forex|foreign exchange|tax (reversal|benefit|credit|refund)|insurance claim|gain on (sale|disposal)|loss on (sale|disposal)|profit on sale|earn[- ]?out|\bvrs\b|settlement|arbitration|refund|provision|fair value|mark[- ]to[- ]market|\bmtm\b/i.test(ev)
+      && /revenue from operations|operating cash flow|cash flows? (from|remained)|planned investment|capex|capital expenditure|order book|turnover/i.test(ev)) return false;
     // "15 megawatt hours of orders in hand" is an ORDER, not a volume sold.
     // EXICOM printed it as "Volume 15 MWh". (zzz763)
     if (v === 'volume' && /orders? (in hand|book|backlog|intake)|pipeline|backlog|order book/i.test(ev)

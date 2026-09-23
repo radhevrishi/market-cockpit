@@ -2452,7 +2452,7 @@ describe('zzz765 reporting-period freshness, retrieval failure, OCR', () => {
 // zzz765 — THE QUARTERLY LEDGER: typed facts, before → after, plan beside
 // actual, historical context, capex lifecycle across quarters.
 // ═══════════════════════════════════════════════════════════════════════════
-import { normalizeEvent, guidanceMove, gapToTarget, historicalAsOf, periodEnd, periodStart } from '../thesis/fact-normalize';
+import { normalizeEvent, guidanceMove, gapToTarget, historicalAsOf, periodEnd, periodStart, rangeOf } from '../thesis/fact-normalize';
 import { capexLifecycle, buildCapexChain } from '../thesis/capex-chain';
 
 describe('zzz765 quarterly thesis ledger', () => {
@@ -2636,5 +2636,509 @@ describe('zzz765 parsing regressions found on live ledgers', () => {
     const flat = normalizeEvent({ variable: 'order_book', value_type: 'ACTUAL', before: null, after: 'INR 787 crore', unit: null, period: null, direction: 'unknown', confidence: 'HIGH', source: 's',
       evidence_text: 'The order book remained unchanged at INR 787 crore through the quarter.' } as any, 'Q1 FY27');
     assert.ok(flat.flat_stated);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz765 · round 2 — defects seen on the deployed page (22 Sep 2026).
+// ═══════════════════════════════════════════════════════════════════════════
+import { rowChangeLines, rowValueText } from '../thesis/variables';
+import { financialsFromHtml as fin2 } from '../thesis/screener-financials';
+import { readJson, humanError } from '../thesis/safe-json';
+
+describe('zzz765 round 2', () => {
+  const EV = (variable: string, value_type: string, before: string | null, after: string, text: string): any =>
+    ({ variable, value_type, before, after, unit: null, period: null, direction: 'unknown', evidence_text: text, source: 'Concall transcript Aug 2026', confidence: 'HIGH' });
+
+  test('working-capital days falling is ▲ even when a comparison takes over the row (NEULANDLAB 137 → 84 days)', () => {
+    const rows = varsFromEvents([EV('working_capital', 'ACTUAL', '137 days', '84 days',
+      'Working capital days of sale at 84 days in Q1FY27 as against 137 days in Q4FY26, mainly on account of decrease in receivables.')], 'Q1 FY27');
+    const cmp: any = { working_capital: { key: 'working_capital', label: 'Working capital', current: { raw: '84 days', value: 84, unit: 'day', isPercent: false }, previous: { raw: '137 days', value: 137, unit: 'day', isPercent: false },
+      current_period: 'Q1 FY27', previous_period: null, change: '-38.7%', change_relative: null, change_type: 'DECREASED', basis: 'WITHIN_DOCUMENT', direction: 'down', cause: null, forward: null, promised: null, line: '', evidence: '', source: '' } };
+    const v = applyComparisons(rows, cmp).find((x) => x.key === 'working_capital')!;
+    assert.equal(v.verdict, 'improving');
+  });
+
+  test('a "70%-75%" target is a range, not −75 (KIRIINDUS "gap +135pp")', () => {
+    assert.deepEqual(rangeOf('70%-75%'), { lo: 70, hi: 75, pct: true });
+    assert.equal(gapToTarget('60%', '70%-75%'), '-10pp');
+    assert.deepEqual(rangeOf('-5%'), { lo: -5, hi: -5, pct: true });
+  });
+
+  test('a plan identical to the actual is not printed twice (ICIL 60% to 65% · plan 60 to 65%)', () => {
+    const v = varsFromEvents([
+      EV('utilisation', 'ACTUAL', null, '60% to 65%', 'Overall, utilization has remained around 60% to 65% despite the recent addition of our greenfield facility in North Carolina.'),
+      EV('utilisation', 'GUIDANCE', null, '60 to 65%', 'So for utility bedding for this year, our endeavor is to be at 60 to 65% utilization.'),
+    ], 'Q1 FY27').find((x) => x.key === 'utilisation')!;
+    assert.equal(v.plan ?? null, null);
+  });
+
+  test('revenue, operating cash flow and planned investment are never one-offs', () => {
+    for (const [after, text] of [
+      ['` 1109.54 crore', 'The Company has earned Revenue from Operations of ` 1109.54 crore during the year ended on 31 st March, 2026 as against ` 1013.51 crore.'],
+      ['`231 Crores', 'Operating cash flows remained positive at `231 Crores, despite 20% revenue growth during the quarter under review.'],
+      ['331.53 Cr', 'Planned investment of 331.53 Cr in Baazar Style Retail to accelerate the growth of its consumer FMCG business.'],
+    ]) {
+      assert.equal(valueFitsVariable({ variable: 'one_offs', before: null, after, unit: null, evidence_text: text }), false, text);
+    }
+    assert.equal(valueFitsVariable({ variable: 'one_offs', before: null, after: '₹56 Cr', unit: null,
+      evidence_text: 'The quarter includes an exceptional item of ₹56 Cr relating to the earn-out expense on the acquisition.' }), true);
+  });
+
+  test('"order wins now stand at ₹87 Cr" is present tense, not a plan (UNIMECH)', () => {
+    const n = normalizeEvent(EV('order_book', 'ACTUAL', null, 'approximately INR87 crores',
+      'In the energy sector, our cumulative nuclear order wins now stand at approximately INR87 crores with execution planned during the next two years.'), 'Q1 FY27');
+    assert.equal(n.value_type, 'ACTUAL');
+  });
+
+  test('WHAT CHANGED is built from the board rows: typed, one figure per variable', () => {
+    const vars = varsFromEvents([
+      EV('utilisation', 'ACTUAL', null, '65% to 70%', 'INR1,400 crores. that is an optimum revenue that we anticipate at a utilization of 65% to 70%.'),
+      EV('capex', 'ACTUAL', null, 'INR943 million', 'The total capex for Q1 of FY27 was INR943 million, largely towards the new site.'),
+    ], 'Q1 FY27');
+    const lines = rowChangeLines(vars, 'Q1 FY27');
+    assert.ok(lines.some((l) => /Capacity utilisation guidance 65% to 70%/.test(l.text)), JSON.stringify(lines));
+    assert.ok(lines.some((l) => /Capex INR943 million/.test(l.text)));
+    assert.equal(rowValueText({ key: 'guidance', label: 'Guidance', before: null, after: 'maintained', delta: null, verdict: 'flat', evidence: '', source: 'filing', statement: 'GUIDANCE' } as any), 'guidance MAINTAINED');
+  });
+
+  test('capex earning: a future contribution is not ▲ and "no explicit link" is not ▼', () => {
+    const e = (t: string) => extractVariables(null, { capex_earning: t }).find((v) => v.key === 'capex_earning')!.verdict;
+    assert.equal(e("Jammu and Dammam capex expected to start contributing revenue from Mar '27 as per management."), 'stated');
+    assert.equal(e('Management links capex to future revenue but no explicit quantified revenue from each project until commissioning.'), 'stated');
+    assert.equal(e('Jammu capex (~INR480+ crore) is already contributing revenue (INR107 crores in Q1).'), 'improving');
+    assert.equal(e('Commissioning delayed by two quarters; plant behind schedule.'), 'deteriorating');
+  });
+
+  test('screener.in: a consolidated table with no year-ago quarter is reported as such (standalone is tried next)', () => {
+    const tbl = (head: string[], rows: Array<[string, string[]]>) =>
+      `<section id="quarters"><table><tr><th></th>${head.map((h) => `<th>${h}</th>`).join('')}</tr>` +
+      rows.map(([l, v]) => `<tr><td>${l} +</td>${v.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('') + `</table></section>`;
+    const r = fin2('E2E', tbl(['Dec 2025', 'Mar 2026', 'Jun 2026'], [['Sales', ['120', '140', '157']], ['Net Profit', ['30', '40', '44']]]), 'consolidated', 'u')!;
+    assert.equal(r.comparison_period, null);
+    assert.equal(r.sales_yoy_pct, null);
+  });
+
+  test('a non-JSON error page becomes a sentence, and "Failed to fetch" says what it means', async () => {
+    const j = await readJson(new Response('upstream error', { status: 502 }));
+    assert.equal(j.ok, false);
+    assert.match(j.error, /did not finish in time.*unchanged/);
+    assert.match(humanError(new TypeError('Failed to fetch')), /Could not reach the server/);
+    assert.match(humanError(new SyntaxError(`Unexpected token 'u', "upstream error" is not valid JSON`)), /did not finish in time/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz766 — INDIA DAILY GAINERS AUDIT. Every case below is a defect found by
+// reading the live board for the 22 Sep 2026 session (screener.in screen +
+// the deployed research store), fixed, and locked here.
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  indiaSession, partitionByCap, isLargeCap, LARGE_CAP_MIN_CR,
+} from '../ai-gainers/screener-gainers';
+import {
+  chooseCandidate, filedAfterClose, indiaSessionCloseIso, refreshFindingMove, type AnnouncementLite,
+} from '../ai-gainers/catalyst-research';
+import { readJsonResponse, describeFetchError } from '../ai-gainers/client-fetch';
+
+describe('zzz766 gainers India — screen, session and cap band', () => {
+  const html = fx('screener-gainers-2026-09-22.html');
+
+  test('the screen parser reads CMP and the company id (price was always null)', () => {
+    const { rows, total, error } = parsePage(html);
+    assert.equal(error, null);
+    assert.equal(total, 98, '"98 results" on the live screen');
+    const opt = rows.find((r) => r.ticker === 'OPTIEMUS')!;
+    assert.equal(opt.price, 708.9);
+    assert.equal(opt.companyId, '2342');
+    assert.equal(opt.marketCapCr, 6396.23);
+    assert.equal(opt.movePct, 20);
+    // BSE-code tickers survive (Hemant Surgical lists only on BSE).
+    assert.ok(rows.some((r) => r.ticker === '543916'));
+  });
+
+  test('large caps are split out, not researched: MEESHO at ₹1.11 lakh Cr on a small/mid board', () => {
+    const { rows } = parsePage(html);
+    const { kept, largeCaps } = partitionByCap(rows);
+    assert.deepEqual(largeCaps.map((r) => r.ticker), ['MEESHO']);
+    assert.equal(kept.length, rows.length - 1);
+    assert.ok(kept.some((r) => r.ticker === 'GABRIEL'), '₹26,108 Cr is a small/mid cap, kept');
+    assert.equal(LARGE_CAP_MIN_CR, 100_000);
+    assert.equal(isLargeCap(null), false, 'unknown cap is kept, never silently dropped');
+    assert.equal(isLargeCap(99_999), false);
+    assert.equal(isLargeCap(100_000), true);
+  });
+
+  test('the session is the last TRADED day, not the IST calendar day', () => {
+    // 01:50 IST Wed 23 Sep: the 1-day return is Tuesday's. The research store
+    // was keyed 2026-09-23 and would have merged Wednesday's board into it.
+    const pre = indiaSession(new Date('2026-09-22T20:20:00Z'));
+    assert.equal(pre.date, '2026-09-22'); assert.equal(pre.state, 'pre_open'); assert.equal(pre.isToday, false);
+    const open = indiaSession(new Date('2026-09-23T06:00:00Z'));          // 11:30 IST Wed
+    assert.equal(open.date, '2026-09-23'); assert.equal(open.state, 'open'); assert.equal(open.isToday, true);
+    const closed = indiaSession(new Date('2026-09-23T12:00:00Z'));        // 17:30 IST Wed
+    assert.equal(closed.date, '2026-09-23'); assert.equal(closed.state, 'closed');
+    const sat = indiaSession(new Date('2026-09-26T06:00:00Z'));           // Saturday
+    assert.equal(sat.date, '2026-09-25'); assert.equal(sat.state, 'weekend');
+    const monPre = indiaSession(new Date('2026-09-28T02:00:00Z'));        // Mon 07:30 IST
+    assert.equal(monPre.date, '2026-09-25', 'Monday before the open is still Friday\'s board');
+    const hol = indiaSession(new Date('2026-10-02T06:00:00Z'));           // Gandhi Jayanti (Fri)
+    assert.equal(hol.date, '2026-10-01'); assert.equal(hol.state, 'holiday');
+    assert.match(pre.label, /last completed session/);
+  });
+});
+
+describe('zzz766 gainers India — catalyst classification from live filings', () => {
+  const now = new Date('2026-09-22T20:20:00Z');
+  const A = (subject: string, summary: string | null, dateIso: string, url = `https://www.bseindia.com/x/${encodeURIComponent(subject).slice(0, 20)}.pdf`): AnnouncementLite =>
+    ({ subject, summary, url, dateIso, ageDays: null });
+  const cls = (a: AnnouncementLite) => classifyAnnouncement(a, 'IN');
+
+  test('capacity enhancement completed is a capacity catalyst, not "unclassifiable" (TRANSRAILL)', () => {
+    const c = cls(A('Enhancement Of Conductor Manufacturing Capacity', 'Phase 1 Silvassa conductor expansion completed; capacity rises from 24,000 to 40,800 Km/annum on September 21, 2026.', '2026-09-21T18:14:09+05:30'));
+    assert.equal(c.kind, 'catalyst'); assert.equal(c.category, 'capacity_expansion'); assert.equal(c.stage, 'executed');
+  });
+
+  test('a product launch with commercial sales is new_product (VILAS)', () => {
+    const c = cls(A('Product launch', 'Vilas Transcore launched PCCS and PCAS products and began commercial sales on 15 September 2026.', '2026-09-16T16:32:26+05:30'));
+    assert.equal(c.kind, 'catalyst'); assert.equal(c.category, 'new_product');
+  });
+
+  test('operational damage is NEGATIVE, never a catalyst and never "unclassified" (REGAAL)', () => {
+    const c = cls(A('Announcement Under Regulation 30 (LODR) - Disruption Of Operations', '10 MW turbine damage at 825 TPD Bihar plant; repair by about 30 September 2026.', '2026-09-10T19:31:20+05:30'));
+    assert.equal(c.kind, 'negative');
+  });
+
+  test('a reply whose subject carries a dotted date is still a denial (ASTEC 18.09.2026)', () => {
+    const reply = cls(A('Response To BSE Query Dated 18.09.2026', 'Astec Lifesciences replies to BSE volume inquiry, saying no undisclosed developments exist.', '2026-09-18T15:35:35+05:30'));
+    assert.equal(reply.kind, 'denial');
+    const ask = cls(A('Clarification sought from Astec Lifesciences Ltd', 'Exchange has sought clarification from Astec Lifesciences Ltd on September 18, 2026, with reference to Movement in Volume.', '2026-09-18T12:18:00+05:30'));
+    assert.equal(ask.kind, 'exchange_query', 'the exchange asking is not the company denying');
+    const f = buildFinding({ ticker: 'ASTEC', company: null, market: 'IN', movePct: 10.43, marketCap: 1770, turnover: 53, announcements: [
+      reply, ask,
+      A('Response To BSE E-Mail Seeking Clarification On Price Movement', 'Astec Lifesciences confirms no undisclosed developments behind recent volume increase.', '2026-09-11T10:10:37+05:30'),
+    ], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'denied');
+    assert.equal(f.sourceDate, '2026-09-18T15:35:35+05:30', 'the latest denial is the finding, not the 11 Sep one');
+  });
+
+  test('an NCD placement is debt financing — routine, not a PRICED "catalyst" (GABRIEL)', () => {
+    const c = cls(A('Announcement under Regulation 30 (LODR)-Meeting Updates', 'Approved private placement of 1,00,000 NCDs worth up to ₹1,000 crore, maturing September 10, 2029.', '2026-09-10T18:53:22+05:30'));
+    assert.equal(c.kind, 'routine'); assert.match(String(c.routineReason), /debt financing/);
+    // …while an equity raise is still a fundraising catalyst.
+    assert.equal(cls(A('Outcome of board meeting', 'Board approved preferential issue of equity shares aggregating ₹120 crore', '2026-09-10T18:00:00+05:30')).category, 'fundraising');
+  });
+
+  test('"acquisition consideration" is not "to consider": allotment executes an earlier deal (GABRIEL)', () => {
+    const c = cls(A('Announcement Under Regulation 30 (LODR) Regarding Allotment Of 1,44,04,204 Equity Shares T', 'Board approved allotment of 1.44 crore shares to AIPL on September 11, 2026, for ₹1,881.03 crore acquisition consideration.', '2026-09-11T22:33:49+05:30'));
+    assert.equal(c.kind, 'catalyst'); assert.equal(c.category, 'acquisition');
+    assert.equal(c.stage, 'executed', '"consideration" matched the enabling rule before');
+    assert.equal(c.incremental, false, 'follow-through on an announced deal — materiality capped');
+    assert.equal(c.valueStated, 1881.03);
+  });
+
+  test('cancelling a roadshow is paperwork', () => {
+    assert.equal(cls(A('Announcement Under Regulation 30 (LODR) Regarding Cancellation Of The Non-Deal Roadshow (N', 'Gabriel India cancelled its 15 September 2026 non-deal roadshow due to exigencies.', '2026-09-10T22:37:27+05:30')).kind, 'routine');
+  });
+});
+
+describe('zzz766 gainers India — a filing after the close cannot explain the move', () => {
+  const now = new Date('2026-09-22T20:20:00Z');
+  const close = indiaSessionCloseIso('2026-09-22');
+
+  test('session close is 15:30 IST', () => {
+    assert.equal(Date.parse(close), Date.parse('2026-09-22T10:00:00Z'));
+    assert.equal(filedAfterClose('2026-09-22T18:00:00+05:30', close), true);
+    assert.equal(filedAfterClose('2026-09-22T12:44:06+05:30', close), false);
+    assert.equal(filedAfterClose(null, close), false);
+  });
+
+  test('an evening order win is excluded from the explanation and named in a note', () => {
+    const anns: AnnouncementLite[] = [
+      { subject: 'Receipt of order', summary: 'Company bagged an order worth ₹300 crore from NTPC', url: 'https://www.bseindia.com/late.pdf', dateIso: '2026-09-22T19:05:00+05:30', ageDays: 0 },
+    ];
+    const f = buildFinding({ ticker: 'X', company: null, market: 'IN', movePct: 12, marketCap: 1500, turnover: 20, announcements: anns, returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now, sessionCloseIso: close });
+    assert.equal(f.status, 'none', 'never invent a catalyst from a filing that post-dates the move');
+    assert.match(String(f.headline), /No filing before the session closed/);
+    assert.ok(f.notes.some((n) => /after the session closed/.test(n)));
+    assert.equal(chooseCandidate(anns, 'IN', { marketCap: 1500, returns: null, windowDays: 21, now, sessionCloseIso: close }), null, 'no model read is spent on it either');
+    // Without a session bound (intraday) the same filing is the catalyst.
+    const g = buildFinding({ ticker: 'X', company: null, market: 'IN', movePct: 12, marketCap: 1500, turnover: 20, announcements: anns, returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(g.status, 'catalyst');
+  });
+
+  test('a re-registered name takes the closing move and its band flag (registered +6%, closed +20%)', () => {
+    const f = buildFinding({ ticker: 'NAMOEWASTE', company: null, market: 'IN', movePct: 6, marketCap: 724, turnover: 2.4, announcements: [], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.bandPrint, false);
+    const g = refreshFindingMove(f, 20);
+    assert.equal(g.movePct, 20); assert.equal(g.bandPrint, true); assert.equal(g.bandLevel, 20);
+    assert.ok(g.notes.some((n) => /20% band .*1-week average/.test(n)), 'the value is labelled a 1-week average, not "traded"');
+    const h = refreshFindingMove(g, 7.3);
+    assert.equal(h.bandPrint, false); assert.ok(!h.notes.some((n) => /band/.test(n)), 'a stale band note is removed');
+  });
+});
+
+describe('zzz766 gainers India — readable errors, readable page', () => {
+  test('an HTML 502 becomes a sentence, never "Unexpected token <"', async () => {
+    const r = new Response('<!DOCTYPE html><html><body>Bad Gateway</body></html>', { status: 502, headers: { 'content-type': 'text/html' } });
+    const res = await readJsonResponse(r, 'The gainers scan');
+    assert.equal(res.ok, false);
+    assert.match(String(res.error), /HTTP 502/);
+    assert.doesNotMatch(String(res.error), /Unexpected token|JSON/);
+  });
+
+  test('a JSON error body carries its own message; a good body passes through', async () => {
+    const bad = await readJsonResponse(new Response(JSON.stringify({ ok: false, error: 'screen unreachable' }), { status: 500 }));
+    assert.equal(bad.ok, false); assert.match(String(bad.error), /screen unreachable/);
+    const good = await readJsonResponse(new Response(JSON.stringify({ ok: true, queue: [] }), { status: 200 }));
+    assert.equal(good.ok, true); assert.deepEqual(good.json, { ok: true, queue: [] });
+    const empty = await readJsonResponse(new Response('', { status: 200 }));
+    assert.equal(empty.ok, false);
+  });
+
+  test('thrown fetches read as sentences', () => {
+    assert.match(describeFetchError(Object.assign(new Error('x'), { name: 'TimeoutError' })), /too long/);
+    assert.match(describeFetchError(new TypeError('Failed to fetch')), /Could not reach/);
+  });
+
+  test('the page has no text under 12px and no invalid "var(...)18" tag fills', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'ai-gainers', 'page.tsx'), 'utf8');
+    const small = Array.from(src.matchAll(/fontSize:\s*([\d.]+)/g)).map((m) => Number(m[1])).filter((n) => n < 12);
+    assert.deepEqual(small, [], 'owner: text too small/faint');
+    assert.ok(!/\$\{color\}18/.test(src), 'a theme variable + "18" is not a colour');
+    assert.ok(!/faint: 'var\(--mc-text-4\)'/.test(src), 'dimmest token is too faint on the dark panel');
+    assert.ok(!/room left/.test(src), 'verdict labels describe the catalyst, not a trade');
+    assert.ok(!/await r\.json\(\)|await rr\.json\(\)/.test(src), 'every response goes through readJsonResponse');
+    assert.ok(!/rows\.slice\(0, 8\)/.test(src), 'the queue shows every name the funnel counts');
+    // Page files may only default-export.
+    assert.deepEqual(Array.from(src.matchAll(/^export\s+(?!default)/gm)), []);
+  });
+
+  test('the India scan never computes grades on its own clock and keys its cache by session', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'app', 'api', 'v1', 'ai-gainers', 'route.ts'), 'utf8');
+    assert.match(src, /earnings\/graded\?date=\$\{d\}&cache_only=1/);
+    assert.match(src, /ai-gainers:v3:IN:\$\{session!\.date\}/);
+    // The minifier folded `…${x} days … week's catalyst. ` + `Filings…` and
+    // dropped the middle clause ("in the last 14Filings up to 60 days").
+    assert.match(src, /this week\\u2019s catalyst\.`,\n\s*`Filings up to/);
+    const rsrc = readFileSync(join(__dirname, '..', '..', 'app', 'api', 'v1', 'ai-gainers', 'research', 'route.ts'), 'utf8');
+    assert.match(rsrc, /indiaSession\(\)\.date/, 'research store keyed by session, not IST calendar day');
+    assert.match(rsrc, /STATE_TTL_S/);
+    const dw = readFileSync(join(__dirname, '..', '..', 'app', 'api', 'v1', 'cron', 'data-watch', 'route.ts'), 'utf8');
+    assert.match(dw, /istHour = ist\.getUTCHours\(\)/, 'istNow() is pre-shifted — local getters double-shift off UTC hosts');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz766 — USA side of the Daily Gainers, audited against the live deployment
+// on 22 Sep 2026. Fixtures are the bytes the sources served that day: the
+// TradingView weekly-gainers export and trimmed EDGAR submissions JSON.
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  parseCsv as usParseCsv, usRowFromRecord, screenUsGainers, describeExclusions, capTierUs, fmtUsdM,
+  describeUsExportAsOf, etToday, isNyseTradingDay, lastCompletedNyseSession, usPhaseAt,
+  announcementsFromSubmissions, classifyUsFiling, secTickerCandidates, edgarFilingUrl, MERGER_MARKER,
+} from '../ai-gainers/us-gainers';
+import { htmlToText } from '../ai-gainers/edgar-research';
+import { fmtMoney } from '../ai-gainers/catalyst-research';
+
+describe('zzz766 gainers USA — universe, session, EDGAR classification', () => {
+  const csv = fx('tv-weekly-gainer-usa-20260922.csv');
+  const all = usParseCsv(csv).map(usRowFromRecord).filter((r) => r.ticker);
+  const { kept, excluded } = screenUsGainers(all);
+  const edgar: Record<string, any> = JSON.parse(fx('edgar-submissions-us-20260922.json'));
+  const now = new Date('2026-09-22T20:30:00Z');   // 16:30 ET Tue, after the close
+  const annsOf = (t: string) => announcementsFromSubmissions(edgar[t], edgar[t].cik, 21, now);
+  const bySubject = (t: string, rx: RegExp) => annsOf(t).find((a) => rx.test(a.subject))!;
+
+  test('the US list holds no Indian listings (15 NSE/BSE rows in the live export)', () => {
+    assert.equal(all.length, 52);
+    assert.equal(all.filter((r) => r.exchange === 'NSE' || r.exchange === 'BSE').length, 15);
+    assert.ok(kept.every((r) => ['NASDAQ', 'NYSE'].includes(r.exchange)));
+    for (const t of ['OPTIEMUS', 'RAYMOND', 'TBZ', 'JASH', 'APOLLO']) assert.ok(!kept.some((r) => r.ticker === t), `${t} is an NSE row`);
+    assert.equal(excluded.filter((e) => e.kind === 'non_us').length, 15, 'every Indian row, including the NSE+BSE double listings');
+  });
+
+  test('duplicates are dropped once, with a reason', () => {
+    assert.equal(new Set(kept.map((r) => r.ticker)).size, kept.length);
+    const dup = screenUsGainers([
+      { ticker: 'ABC', company: 'Abc Inc', exchange: 'NASDAQ', movePct: 10, relVol: 1, gapPct: 0, volume: 1, price: 5, marketCap: 800, perf: { m1: 1, m3: 1, m6: 1, y1: 1 } },
+      { ticker: 'ABC', company: 'Abc Inc', exchange: 'NYSE', movePct: 9, relVol: 1, gapPct: 0, volume: 1, price: 5, marketCap: 800, perf: { m1: 1, m3: 1, m6: 1, y1: 1 } },
+    ]);
+    assert.equal(dup.kept.length, 1); assert.equal(dup.excluded[0].kind, 'duplicate');
+  });
+
+  test('small/mid only: > $10B is excluded (17 large/mega caps live), $50M–$10B kept', () => {
+    assert.equal(kept.length, 20);
+    assert.ok(kept.every((r) => r.marketCap != null && r.marketCap >= 50 && r.marketCap <= 10_000));
+    for (const t of ['META', 'AMD', 'INTC', 'QCOM', 'SHOP', 'NET', 'MSTR', 'DOCN', 'VICR', 'RMBS']) {
+      assert.equal(excluded.find((e) => e.ticker === t)?.kind, 'large_cap', t);
+    }
+    assert.equal(capTierUs(10_000), 'mid'); assert.equal(capTierUs(10_001), 'large'); assert.equal(capTierUs(250_000), 'mega');
+    assert.equal(capTierUs(49), 'nano'); assert.equal(capTierUs(299), 'micro'); assert.equal(capTierUs(null), null);
+    const note = describeExclusions(excluded, all.length, kept.length) || '';
+    assert.match(note, /Kept 20 of 52 .*large\/mega caps/);
+    assert.ok(!/MEESHO, MEESHO/.test(note), 'a double-listed ticker is named once');
+  });
+
+  test('noise: OTC, warrants/units, penny, nano, losers and missing caps are excluded', () => {
+    const b = { relVol: 1, gapPct: 0, volume: 1e6, perf: { m1: 1, m3: 1, m6: 1, y1: 1 } };
+    const r = screenUsGainers([
+      { ...b, ticker: 'OTCX', company: 'Otc Co', exchange: 'OTC', movePct: 40, price: 3, marketCap: 500 },
+      { ...b, ticker: 'LUNRW', company: 'Intuitive Machines, Inc. Warrants', exchange: 'NASDAQ', movePct: 40, price: 3, marketCap: 500 },
+      { ...b, ticker: 'ABCD.U', company: 'Abcd Units', exchange: 'NYSE', movePct: 40, price: 10, marketCap: 500 },
+      { ...b, ticker: 'PNY', company: 'Penny Corp', exchange: 'NASDAQ', movePct: 40, price: 0.4, marketCap: 120 },
+      { ...b, ticker: 'NANO', company: 'Nano Corp', exchange: 'NASDAQ', movePct: 40, price: 2, marketCap: 20 },
+      { ...b, ticker: 'DOWN', company: 'Down Corp', exchange: 'NASDAQ', movePct: -4, price: 2, marketCap: 400 },
+      { ...b, ticker: 'NOMC', company: 'No Cap Corp', exchange: 'NASDAQ', movePct: 5, price: 2, marketCap: null },
+      { ...b, ticker: 'SPCX', company: 'Blue Ocean Acquisition Corp', exchange: 'NASDAQ', movePct: 5, price: 10.4, marketCap: 150 },
+      { ...b, ticker: 'ADRX', company: 'Foo Holdings ADR', exchange: 'NYSE', movePct: 5, price: 10.4, marketCap: 1500 },
+    ]);
+    assert.deepEqual(r.excluded.map((e) => e.kind), ['otc', 'not_common', 'not_common', 'penny', 'nano_cap', 'not_gainer', 'no_mcap']);
+    assert.deepEqual(r.kept.map((k) => [k.ticker, k.capTier, k.flags.join()]), [['SPCX', 'micro', 'SPAC'], ['ADRX', 'small', 'ADR']]);
+  });
+
+  test('the move is the 1-week column only — never a silent 1-month fallback', () => {
+    const row = usRowFromRecord({ Symbol: 'X', Exchange: 'NASDAQ', 'Performance %, 1 week': '', 'Performance %, 1 month': '55', 'Market capitalization': '500000000' });
+    assert.equal(row.movePct, null);
+    assert.equal(row.perf.m1, 55); assert.equal(row.marketCap, 500);
+    assert.equal(screenUsGainers([row]).excluded[0].kind, 'no_move');
+  });
+
+  test('money formatting: $M below a billion, $B above, $T for mega', () => {
+    assert.equal(fmtUsdM(643.03), '$643M'); assert.equal(fmtUsdM(2083.27), '$2.1B'); assert.equal(fmtUsdM(1_896_822), '$1.90T');
+    assert.equal(fmtUsdM(12.34), '$12.3M'); assert.equal(fmtUsdM(null), '—');
+    assert.equal(fmtMoney(2083.27, 'US'), '$2.1B');
+    assert.equal(fmtMoney(279.33, 'IN'), '₹279 Cr', 'India unchanged');
+  });
+
+  test('US session: ET day key, NYSE holidays, weekends, intraday vs close, staleness', () => {
+    assert.equal(etToday(new Date('2026-09-23T00:30:00Z')), '2026-09-22', '20:30 ET is still the 22nd in New York');
+    assert.equal(isNyseTradingDay('2026-09-07'), false, 'Labor Day');
+    assert.equal(isNyseTradingDay('2026-11-26'), false, 'Thanksgiving');
+    assert.equal(isNyseTradingDay('2026-09-19'), false, 'Saturday');
+    assert.equal(isNyseTradingDay('2026-09-22'), true);
+    assert.equal(lastCompletedNyseSession(new Date('2026-09-08T12:00:00Z')), '2026-09-04', 'Tue 8am ET after Labor Day → Friday');
+    assert.equal(usPhaseAt(new Date('2026-09-22T17:12:39Z')), 'regular');
+    assert.equal(usPhaseAt(new Date('2026-11-27T19:00:00Z')), 'after_hours', '14:00 ET on the day-after-Thanksgiving early close');
+    // The live sync: 13:12 ET Tuesday — an INTRADAY snapshot, not a close.
+    const live = describeUsExportAsOf('2026-09-22T17:12:39.771Z', new Date('2026-09-22T20:30:00Z'))!;
+    assert.equal(live.intraday, true); assert.equal(live.session, '2026-09-22'); assert.equal(live.stale, false);
+    assert.match(live.label, /intraday snapshot/);
+    const nextDay = describeUsExportAsOf('2026-09-22T17:12:39.771Z', new Date('2026-09-23T21:00:00Z'))!;
+    assert.equal(nextDay.stale, true); assert.equal(nextDay.sessions_behind, 1);
+    // The scheduled IST sync lands before the US open → it is the PREVIOUS close.
+    const pre = describeUsExportAsOf('2026-09-22T04:30:00Z', new Date('2026-09-22T12:00:00Z'))!;
+    assert.equal(pre.phase, 'pre_market'); assert.equal(pre.session, '2026-09-21'); assert.equal(pre.stale, false);
+    const weekend = describeUsExportAsOf('2026-09-19T15:00:00Z', new Date('2026-09-21T12:00:00Z'))!;
+    assert.equal(weekend.session, '2026-09-18'); assert.equal(weekend.stale, false, 'Monday pre-open: Friday IS the latest close');
+    assert.equal(describeUsExportAsOf('2026-09-19T15:00:00Z', new Date('2026-09-21T21:00:00Z'))!.stale, true);
+    assert.equal(describeUsExportAsOf('not a date'), null);
+  });
+
+  test('EDGAR submissions → dated announcements: Form 4/A skipped, ET dates, session, working links', () => {
+    const prth = annsOf('PRTH');
+    assert.ok(!prth.some((a) => /^4\/A/.test(a.subject)), 'Form 4/A is insider mechanics');
+    const k8 = prth.find((a) => /^8-K/.test(a.subject))!;
+    assert.equal(k8.url, 'https://www.sec.gov/Archives/edgar/data/1653558/000121390026101651/ea0306047-8k_priority.htm');
+    assert.equal(k8.dateIso, '2026-09-21T07:40:34-04:00', 'acceptance time in ET');
+    assert.match(k8.subject, /before the open/);
+    assert.ok(k8.subject.includes(MERGER_MARKER), 'same document also filed as DEFA14A');
+    assert.ok(!prth.some((a) => /^DEFA14A/.test(a.subject)), 'the DEFA14A copy of the 8-K is one event, not two');
+    const docn = bySubject('DOCN', /^8-K/);
+    assert.match(docn.subject, /after the close/, '20:05Z = 16:05 ET');
+    const effect = bySubject('USDE', /^EFFECT/);
+    assert.match(effect.url, /xslEFFECTX01\/primary_doc\.xml$/);
+    assert.ok(!/Item/.test(effect.subject), 'items ",," is not three empty items');
+    assert.equal(edgarFilingUrl('0001653558', '0001213900-26-101651', ''), 'https://www.sec.gov/Archives/edgar/data/1653558/000121390026101651/0001213900-26-101651-index.htm');
+    assert.ok(secTickerCandidates('BRK.B').includes('BRK-B'));
+  });
+
+  test('Item 1.01 is never an order win: merger → acquisition, finance facility → unclassified', () => {
+    const prth = classifyAnnouncement(bySubject('PRTH', /^8-K/), 'US');
+    assert.equal(prth.kind, 'catalyst'); assert.equal(prth.category, 'acquisition', 'PRTH signed a take-private merger agreement');
+    const pf = buildFinding({ ticker: 'PRTH', company: null, market: 'US', movePct: 31, marketCap: 643, turnover: 70, announcements: annsOf('PRTH'), returns: { m1: 30, m3: 20, m6: 10, y1: 5, history: 999 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(pf.category, 'acquisition'); assert.match(pf.headline || '', /^8-K: Business combination agreement/);
+    const docn = classifyAnnouncement(bySubject('DOCN', /^8-K/), 'US');
+    assert.equal(docn.kind, 'unclassified', 'DOCN 1.01+2.03 was an equipment-finance facility');
+    const nuai = classifyAnnouncement(bySubject('NUAI', /^8-K/), 'US');
+    assert.notEqual(nuai.category, 'order_win');
+  });
+
+  test('offerings are negative dilution, never a positive "fundraising" catalyst', () => {
+    for (const rx of [/^424B3/, /^S-1\/A/]) {
+      const c = classifyAnnouncement(bySubject('USDE', rx), 'US');
+      assert.equal(c.kind, 'negative', rx.source); assert.equal(c.category, 'dilution');
+    }
+    assert.equal(classifyAnnouncement(bySubject('WOLF', /^S-3ASR/), 'US').category, 'dilution');
+    assert.equal(classifyUsFiling({ subject: '8-K: Item 1.01 Entry into a Material Definitive Agreement; Item 3.02 Unregistered Sales of Equity Securities' })?.category, 'dilution');
+    assert.equal(classifyUsFiling({ subject: 'D' })?.kind, 'negative');
+    assert.equal(classifyAnnouncement(bySubject('USDE', /^S-8/), 'US').kind, 'routine', 'an employee plan is not an offering');
+    const f = buildFinding({ ticker: 'USDE', company: 'StablecoinX', market: 'US', movePct: 94.3, marketCap: 368, turnover: 96, announcements: annsOf('USDE'), returns: { m1: 90, m3: 80, m6: null, y1: null, history: 999 }, holding: false, sources: ['SEC EDGAR submissions'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'negative'); assert.equal(f.category, 'dilution');
+    assert.match(f.headline || '', /424B3|S-1\/A|registration/);
+  });
+
+  test('an 8-K 2.02 / 10-Q is a results catalyst, not routine paperwork — and not claimed as good', () => {
+    const r = classifyUsFiling({ subject: '8-K: Item 2.02 Results of Operations and Financial Condition; Item 9.01 Financial Statements and Exhibits' });
+    assert.equal(r?.kind, 'catalyst'); assert.equal(r?.category, 'quarterly_result');
+    assert.equal(classifyUsFiling({ subject: '10-Q: 10-Q' })?.category, 'quarterly_result');
+    const f = buildFinding({ ticker: 'MDB', company: null, market: 'US', movePct: 14, marketCap: 3000, turnover: 50, announcements: [{ subject: '8-K: Item 2.02 Results of Operations and Financial Condition; Item 9.01 Financial Statements and Exhibits', summary: null, url: 'https://www.sec.gov/x.htm', dateIso: '2026-09-18T16:05:00-04:00', ageDays: 4 }], returns: { m1: 5, m3: 10, m6: 10, y1: 20, history: 999 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'quarterly_result');
+    assert.ok(f.notes.some((n) => /whether the numbers were good was not read/.test(n)));
+    assert.notEqual(f.verdict, 'FIRE', 'no stated value can never be FIRE');
+  });
+
+  test('governance paperwork is routine: 5.02 officer change, proxies, 13G, 13D/A', () => {
+    assert.equal(classifyAnnouncement(bySubject('SATL', /^8-K/), 'US').kind, 'routine', 'SATL 5.02 was scored "room left"');
+    assert.equal(classifyAnnouncement(bySubject('WOLF', /^DEF 14A/), 'US').kind, 'routine');
+    assert.equal(classifyAnnouncement(bySubject('NUAI', /^SCHEDULE 13G/), 'US').kind, 'routine');
+    assert.equal(classifyAnnouncement(bySubject('PRTH', /^SCHEDULE 13D\/A/), 'US').kind, 'routine');
+    assert.equal(classifyUsFiling({ subject: 'SCHEDULE 13D' })?.category, 'strategic_investor');
+    assert.equal(classifyUsFiling({ subject: 'SC TO-T' })?.category, 'open_offer');
+    assert.equal(classifyUsFiling({ subject: '425' })?.category, 'acquisition');
+    assert.equal(classifyUsFiling({ subject: '8-K: Item 4.02 Non-Reliance on Previously Issued Financial Statements' })?.kind, 'negative');
+    assert.equal(classifyUsFiling({ subject: '8-K: Item 3.01 Notice of Delisting' })?.kind, 'negative');
+    assert.equal(classifyUsFiling({ subject: '6-K: REPORT OF FOREIGN ISSUER' })?.kind, 'unclassified');
+  });
+
+  test('no catalyst is invented: an unread Item 8.01 stays unclassified; "no confirmed catalyst" when nothing', () => {
+    const wolf = buildFinding({ ticker: 'WOLF', company: null, market: 'US', movePct: 18, marketCap: 1494, turnover: 30, announcements: annsOf('WOLF').filter((a) => !/^S-3/.test(a.subject)), returns: { m1: 20, m3: 10, m6: 5, y1: -50, history: 999 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(wolf.status, 'routine_only'); assert.equal(wolf.verdict, null);
+    assert.match(wolf.headline || '', /not classifiable/);
+    const none = buildFinding({ ticker: 'LUNR', company: null, market: 'US', movePct: 14, marketCap: 3628, turnover: 70, announcements: [], returns: null, holding: false, sources: ['SEC EDGAR submissions'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(none.status, 'none'); assert.equal(none.category, null);
+  });
+
+  test('a paid model read of an unclassified 8-K is USED (it was dropped), and a negative read is negative', () => {
+    const item = { subject: '8-K: Item 8.01 Other Events; Item 9.01 Financial Statements and Exhibits', summary: null, url: 'https://www.sec.gov/Archives/edgar/data/1/2/x8k.htm', dateIso: '2026-09-21T07:00:00-04:00', ageDays: 1 };
+    const read = { url: item.url, headline: 'Awarded a $120 million five-year supply contract by a US utility', quote: 'The company has been awarded a $120 million five-year supply contract.', category: 'order_win' as const };
+    const f = buildFinding({ ticker: 'X', company: null, market: 'US', movePct: 25, marketCap: 600, turnover: 40, announcements: [item], returns: { m1: 20, m3: 10, m6: 5, y1: 0, history: 999 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now, read });
+    assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'order_win'); assert.equal(f.modelRead, true);
+    assert.equal(f.evidenceQuote, read.quote); assert.equal(f.valueStated, 120); assert.equal(f.valuePctMcap, 20);
+    const g = buildFinding({ ticker: 'X', company: null, market: 'US', movePct: 25, marketCap: 600, turnover: 40, announcements: [item], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now, read: { ...read, headline: 'Largest customer terminated its contract', quote: 'Our largest customer notified us that it terminated the agreement.', category: 'customer_loss' as const } });
+    assert.equal(g.status, 'negative'); assert.equal(g.category, 'customer_loss');
+  });
+
+  test('an offering beside a real catalyst is a flag on it, and caps it below FIRE', () => {
+    const cat8k = { subject: '8-K: Business combination agreement (also filed as merger communication) — Item 1.01 Entry into a Material Definitive Agreement', summary: null, url: 'https://www.sec.gov/a.htm', dateIso: '2026-09-21T07:00:00-04:00', ageDays: 1 };
+    const s3 = { subject: '424B5: PROSPECTUS SUPPLEMENT', summary: null, url: 'https://www.sec.gov/b.htm', dateIso: '2026-09-21T17:00:00-04:00', ageDays: 1 };
+    const f = buildFinding({ ticker: 'X', company: null, market: 'US', movePct: 30, marketCap: 500, turnover: 40, announcements: [cat8k, s3], returns: { m1: -5, m3: -10, m6: -20, y1: -30, history: 999 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'acquisition');
+    assert.ok(f.notes.some((n) => /Offering filed in the window/.test(n)));
+    assert.notEqual(f.verdict, 'FIRE');
+  });
+
+  test('India classification is untouched by the US rules', () => {
+    const pref = classifyAnnouncement({ subject: 'Announcement under Regulation 30 (LODR)-Allotment', summary: 'Allotment of equity shares on preferential basis raising ₹50 crore', url: 'x', dateIso: null, ageDays: 1 }, 'IN');
+    assert.equal(pref.kind, 'catalyst'); assert.equal(pref.category, 'fundraising');
+    const mgmt = classifyAnnouncement({ subject: 'Appointment of Chief Executive Officer', summary: null, url: 'x', dateIso: null, ageDays: 1 }, 'IN');
+    assert.equal(mgmt.category, 'management_change');
+  });
+
+  test('EDGAR HTML entities are decoded so a verbatim quote with an apostrophe still matches', () => {
+    const t = htmlToText('<p>The Company&#8217;s revenue grew 40%&#160;&#8212; a record.</p><script>x()</script>');
+    assert.equal(t, 'The Company’s revenue grew 40% — a record.');
+    assert.equal(quoteIsInDocument(t + ' '.repeat(10) + 'filler text to be long enough', "The Company's revenue grew 40% — a record."), true);
   });
 });

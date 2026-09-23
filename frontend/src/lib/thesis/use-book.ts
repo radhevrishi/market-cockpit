@@ -30,6 +30,8 @@ import { readConvictionBeats } from '@/lib/conviction-beats';
 import { classifyGradedRow, classifyWithFiling, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
+import { rowChangeLines } from './variables';
+import { readJson, humanError } from './safe-json';
 import type { VarKey } from './taxonomy';
 import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
@@ -195,6 +197,8 @@ function assess(row: BookRow): BookRow {
     }),
     capex: buildCapexChain(row.summary, vars, row.ledger || null),
     promiseNote: check ? check.detail : null,
+    // WHAT CHANGED comes from the same rows as the board. (zzz765)
+    changed: row.ledger ? rowChangeLines(vars, row.reportingPeriod || row.ledger.latest_period || null) : row.changed,
   };
 }
 
@@ -374,7 +378,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
             `/api/v1/portfolio/thesis-data?tickers=${encodeURIComponent(slice.join(','))}`,
             { cache: 'no-store' });
           if (!r.ok) continue;
-          const j = await r.json();
+          const j = await readJson(r);
           Object.assign(got, j?.rows || {});
         } catch { /* the filing path still answers for every holding */ }
         if (cancelled) return;
@@ -437,7 +441,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
           const slice = all.slice(i, i + 100);
           const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(slice.join(','))}`, { cache: 'no-store' });
           if (!r.ok) continue;
-          const j = await r.json();
+          const j = await readJson(r);
           Object.assign(ledgers, j?.ledgers || {});
           Object.assign(fresh, j?.freshness || {});
           if (j?.batch) batchInfo = j.batch;
@@ -501,7 +505,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
           try {
             const r = await fetch(`/api/v1/portfolio/screener-live?tickers=${encodeURIComponent(wantLive.slice(i, i + 12).join(','))}`, { cache: 'no-store' });
             if (!r.ok) continue;
-            const j = await r.json();
+            const j = await readJson(r);
             for (const [k, v] of Object.entries(j?.rows || {})) if (v) live[k.toUpperCase()] = v;
           } catch { /* one batch failing leaves those names as they were */ }
         }
@@ -524,7 +528,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         for (let i = 0; i < added.length && !cancelled; i += 100) {
           try {
             const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(added.slice(i, i + 100).join(','))}`, { cache: 'no-store' });
-            if (r.ok) Object.assign(addedLedgers, (await r.json())?.ledgers || {});
+            if (r.ok) Object.assign(addedLedgers, (await readJson(r))?.ledgers || {});
           } catch { /* the card says NEVER READ */ }
         }
         setRows((cur) => {
@@ -554,7 +558,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       try {
         const r = await fetch('/api/v1/concall-intel/transformation-screener?days=90&limit=200', { cache: 'no-store' });
         if (!r.ok || cancelled) return;
-        const j = await r.json();
+        const j = await readJson(r);
         const radar = new Map<string, number>();
         for (const e of (j?.entries || [])) radar.set(normSymbol(e.symbol), e.transformation_score);
         if (cancelled || !radar.size) return;
@@ -608,7 +612,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
         : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}${modeQ}${mode === 'check' ? '' : '&ocr=1'}`;  // ocr=1: a clicked read may OCR a scanned filing (zzz765)
       const res = await fetch(url, { cache: 'no-store' });
-      const j = await res.json();
+      const j = await readJson(res);
       if (mode === 'check') {
         setRows((r) => {
           const prev = r[sym];
@@ -705,7 +709,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       const periodRec = assessed.ledger && assessed.reportingPeriod ? assessed.ledger.periods[assessed.reportingPeriod] : null;
       if ((!j.from_ledger && !j.cached) || (periodRec && !periodRec.status)) { void postStatus(assessed); }
     } catch (e: any) {
-      setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'error', error: String(e?.message || e) } }));
+      setRows((r) => ({ ...r, [sym]: { ...r[sym], state: 'error', error: humanError(e) } }));
     }
   }, []);
 
@@ -750,7 +754,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         try { await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental', { filingDate: opts?.filingDates?.[todo[k]] || null }); }
         catch (e: any) {
           const sym = todo[k];
-          setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], state: r[sym].summary ? 'done' : 'error', error: `batch: ${String(e?.message || e)}` } } : r));
+          setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], state: r[sym].summary ? 'done' : 'error', error: `batch: ${humanError(e)}` } } : r));
         }
         done++;
         setBatch((b) => (b.running ? { ...b, done } : b));
@@ -804,16 +808,16 @@ export function useBook(opts?: { includeBench?: boolean }) {
       let j: any = null;
       try {
         const res = await fetch(`/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}&period=${encodeURIComponent(plan.target)}${fd}`, { cache: 'no-store' });
-        j = await res.json();
+        j = await readJson(res);
       } catch (e: any) {
-        j = { ok: false, error: String(e?.message || e) };
+        j = { ok: false, error: humanError(e) };
       }
       // Reload the ledger from the store — what was PERSISTED is what the card
       // compares, not what this response claims.
       let ledger: CompanyLedger | null = j?.ledger || null;
       try {
         const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(sym)}`, { cache: 'no-store' });
-        if (r.ok) ledger = (await r.json())?.ledgers?.[sym.toUpperCase()] || ledger;
+        if (r.ok) ledger = (await readJson(r))?.ledgers?.[sym.toUpperCase()] || ledger;
       } catch { /* the response's own ledger stands in */ }
       const prev = rowsRef.current[sym];
       if (!prev) return;
@@ -838,7 +842,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         try { await one(todo[k]); }
         catch (e: any) {
           const sym = todo[k];
-          setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], readNote: `Prior quarter read failed: ${String(e?.message || e)}` } } : r));
+          setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], readNote: `Prior quarter read failed: ${humanError(e)}` } } : r));
         }
         done++;
         setPriorBatch((b) => (b.running ? { ...b, done } : b));
@@ -879,10 +883,10 @@ export function useBook(opts?: { includeBench?: boolean }) {
     let j: any;
     try {
       const res = await fetch(`/api/v1/thesis/recent-reporters?days=${days}&tickers=${encodeURIComponent(india.join(','))}`, { cache: 'no-store' });
-      j = await res.json();
+      j = await readJson(res);
       if (!res.ok || !j?.ok) throw new Error(j?.error || `HTTP ${res.status}`);
     } catch (e: any) {
-      setRecent((r) => ({ ...r, state: 'error', error: `Could not ask the exchange feed who reported: ${String(e?.message || e)}` }));
+      setRecent((r) => ({ ...r, state: 'error', error: `Could not ask the exchange feed who reported: ${humanError(e)}` }));
       return;
     }
     const reported: ReportedFact[] = Array.isArray(j.reported) ? j.reported : [];
@@ -902,7 +906,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       await readAll(plan.due.map((d) => d.ticker), 3, { exact: true, filingDates });
       setRecent((r) => ({ ...r, state: 'done', at: new Date().toISOString() }));
     } catch (e: any) {
-      setRecent((r) => ({ ...r, state: 'error', error: String(e?.message || e), at: new Date().toISOString() }));
+      setRecent((r) => ({ ...r, state: 'error', error: humanError(e), at: new Date().toISOString() }));
     }
   }, [readAll]);
 

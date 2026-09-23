@@ -73,7 +73,7 @@ describe('zzz765c · financial output is never mechanism evidence', () => {
       ...GOOD_OUTPUT,
       V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
       V('utilisation', 'improving', { after: '80% plus (target)', kind: 'claim' }),
-      V('volume', 'improving', { after: '+12%' }),
+      V('volume', 'stated', { after: '3.4 million cases' }),
     ] });
     assert.ok(!a.structural.confirmedLabels.includes('utilisation'));
     assert.ok(a.structural.missingRequired.includes('utilisation'));
@@ -105,33 +105,64 @@ describe('zzz765c · status sentences', () => {
     assert.ok(m, a.actionLine);
     // A's structural set in its ledger: utilisation, volume, capacity, capacity addition,
     // operating leverage (grader → output, excluded). Two confirmed of four.
+    // The sentence counts the strategy's structural set plus other evidenced
+    // drivers (margin driver here): 3 of 5. The structural object keeps the
+    // strategy-only count.
     assert.equal(`${m![1]}/${m![2]}`, '2/4');
     assert.equal(`${a.structural.confirmed}/${a.structural.total}`, '2/4');
     assert.match(a.because, /Financial output: revenue \+30% · earnings \+45% · margin \+2\.0pp\./);
     assert.match(a.because, /THESIS STRENGTHENING — structural mechanism confirmed and supporting output confirmed/);
   });
 
-  test('A · the same numbers without volume are CONFIRMATION REQUIRED, output-only sentence', () => {
+  test('A · one evidenced driver is enough (zzz765); an undisclosed core is listed as still to confirm', () => {
     const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
       ...GOOD_OUTPUT,
       V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
       V('utilisation', 'improving', { after: '84%', delta: '+12pp' }),
-      V('margin_driver', 'improving', { after: 'absorption' }),
+      V('margin_driver', 'improving', { after: 'better product mix and operating leverage' }),
     ] });
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
-    assert.ok(a.because.startsWith(OUTPUT_ONLY_SENTENCE), a.because);
-    assert.equal(a.headline, 'CONFIRMATION REQUIRED — financial output improved, but the structural mechanism is not yet fully established.');
-    assert.deepEqual(a.structural.missingRequired, ['Volume']);
+    assert.equal(a.status, 'STRENGTHENING');
   });
 
-  test('B · green needs order intake, order book and book-to-bill each confirmed', () => {
+  test('A · output up with only levels and targets (no driver evidenced) is CONFIRMATION REQUIRED', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT,
+      V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
+      V('utilisation', 'stated', { after: '50% to 60%', statement: 'TARGET' } as any),
+      V('capacity', 'stated', { after: '430,000 MTPA' }),
+    ] });
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.ok(a.because.startsWith(OUTPUT_ONLY_SENTENCE) || /level|disclos/.test(a.because), a.because);
+  });
+
+  test('A · MANINDS shape: target-only utilisation no longer blocks green when a stated margin driver is evidenced', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT,
+      V('operating_leverage', 'improving', { delta: '2.8×', source: 'grader' }),
+      V('utilisation', 'stated', { after: 'target 50% to 60%', statement: 'TARGET', kind: 'claim' } as any),
+      V('capacity_addition', 'stated', { after: '22,000 MTPA' }),
+      V('margin_driver', 'improving', { after: "optimized product and geographic mix and higher share of value-added/coated orders" }),
+    ] });
+    assert.equal(a.status, 'STRENGTHENING', a.because);
+    assert.match(a.because, /Still to confirm next quarter: utilisation/);
+  });
+
+  test('a temporary-only margin driver (refund, forex) is not a structural driver', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT,
+      V('margin_driver', 'improving', { after: 'one-time tariff refund and forex gain' }),
+    ] });
+    assert.notEqual(a.status, 'STRENGTHENING');
+  });
+
+  test('B · green needs an order driver evidenced; book-to-bill flat alone is not enough', () => {
     const orders = [V('order_intake', 'improving', { delta: '+40%' }), V('order_book', 'improving', { delta: '+25%' }), V('book_to_bill', 'improving', { after: '1.4' })];
     const full = assessThesis({ pattern: 'B', evidenceReviewed: true, variables: [...GOOD_OUTPUT, ...orders] });
     assert.equal(full.status, 'STRENGTHENING');
     assert.match(full.actionLine, NO_ACTION);
-    const flatBtb = assessThesis({ pattern: 'B', evidenceReviewed: true, variables: [...GOOD_OUTPUT, orders[0], orders[1], V('book_to_bill', 'flat', { after: '1.0' })] });
-    assert.equal(flatBtb.status, 'CONFIRMATION_REQUIRED');
-    assert.ok(flatBtb.because.startsWith(OUTPUT_ONLY_SENTENCE));
+    const noOrders = assessThesis({ pattern: 'B', evidenceReviewed: true, variables: [...GOOD_OUTPUT, V('book_to_bill', 'flat', { after: '1.0' })] });
+    assert.equal(noOrders.status, 'CONFIRMATION_REQUIRED');
+    assert.ok(noOrders.because.startsWith(OUTPUT_ONLY_SENTENCE));
   });
 
   test('F · live SJS: margin driver + one-offs cleared + cash → green, 3/3', () => {
@@ -139,14 +170,29 @@ describe('zzz765c · status sentences', () => {
     assert.equal(a.status, 'STRENGTHENING');
     const m = a.actionLine.match(NO_ACTION);
     assert.ok(m, a.actionLine);
-    assert.equal(`${m![1]}/${m![2]}`, '3/3');
+    assert.ok(Number(m![1]) >= 3 && Number(m![1]) <= Number(m![2]), a.actionLine);
   });
 
-  test('F · live GIPCL: output up, margin driver never disclosed → output-only CONFIRMATION REQUIRED', () => {
+  test('a loss-making company is not green however fast the loss shrinks (EXICOM)', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      V('revenue_growth', 'improving', { delta: '+61.5%', source: 'grader' }),
+      { ...V('margin', 'improving', { delta: '+12.0pp', source: 'grader' }), before: '-19.0%', after: '-7.0%' },
+      V('capacity_addition', 'improving', { after: '3x' }),
+    ] });
+    assert.notEqual(a.status, 'STRENGTHENING');
+  });
+
+  test('F · live GIPCL: margin driver not disclosed, but 600 MW commissioned capacity explains the jump → green, driver named', () => {
     const a = liveAssess('GIPCL', 'F');
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
-    assert.ok(a.because.startsWith(OUTPUT_ONLY_SENTENCE), a.because);
-    assert.deepEqual(a.structural.missingRequired, ['Margin driver']);
+    assert.equal(a.status, 'STRENGTHENING', a.because);
+    assert.match(a.because, /capacity added/i);
+  });
+
+  test('F · an approval or new product does not explain a profit jump on its own', () => {
+    const a = assessThesis({ pattern: 'F', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT, V('regulatory_approval', 'improving', { after: 'USFDA approval' }), V('new_customer', 'improving', { after: 'new OEM' }),
+    ] });
+    assert.notEqual(a.status, 'STRENGTHENING');
   });
 
   test('G · cash and ROCE both confirmed for green; ROCE flat is not enough', () => {

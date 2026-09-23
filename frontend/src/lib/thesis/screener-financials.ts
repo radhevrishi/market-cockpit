@@ -172,6 +172,14 @@ export function isCurrentPeriod(period: string | null, now = new Date()): boolea
 export async function fetchScreenerFinancials(ticker: string): Promise<{ row: ScreenerFinancials | null; error: string | null }> {
   const sym = encodeURIComponent(screenerSymbol(ticker));
   let lastErr: string | null = null;
+  // ── CONSOLIDATED FIRST, BUT NOT AT ANY PRICE.                     (zzz765)
+  // ALKYLAMINE's consolidated page ends in Mar 2020 (the company stopped
+  // consolidating) and E2E / LCL / VAML have fewer than five consolidated
+  // quarters, so there is no year-ago column and growth came out blank.
+  // A stale or growth-less consolidated table falls back to standalone; a
+  // current consolidated table without a year-ago column is kept only when
+  // standalone cannot do better.
+  let fallback: ScreenerFinancials | null = null;
   for (const [basis, url] of [
     ['consolidated', `https://www.screener.in/company/${sym}/consolidated/`],
     ['standalone', `https://www.screener.in/company/${sym}/`],
@@ -179,11 +187,11 @@ export async function fetchScreenerFinancials(ticker: string): Promise<{ row: Sc
     const got = await fetchScreenerHtml(url, 15_000);
     if (!got.html) { lastErr = got.error || 'unreachable'; continue; }
     const row = financialsFromHtml(ticker, got.html, basis, url);
-    if (row && (row.sales_curr_cr != null || row.pat_curr_cr != null)) {
-      if (!isCurrentPeriod(row.period)) return { row: null, error: `latest quarter on the page is ${row.period} — too old to stand as this quarter` };
-      return { row, error: null };
-    }
-    lastErr = 'no quarterly table';
+    if (!row || (row.sales_curr_cr == null && row.pat_curr_cr == null)) { lastErr = 'no quarterly table'; continue; }
+    if (!isCurrentPeriod(row.period)) { lastErr = `latest ${basis} quarter on the page is ${row.period} — too old to stand as this quarter`; continue; }
+    if (row.comparison_period) return { row, error: null };
+    fallback = fallback || row;
+    lastErr = `${basis} table has no year-ago quarter`;
   }
-  return { row: null, error: lastErr };
+  return fallback ? { row: fallback, error: null } : { row: null, error: lastErr };
 }
