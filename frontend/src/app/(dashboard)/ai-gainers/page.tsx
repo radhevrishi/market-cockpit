@@ -139,7 +139,7 @@ export default function AiGainersPage() {
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   // ── THE CATALYST SWEEP.                                         (zzz741)
-  // Runs by itself once the scan is in: every name on the board is researched
+  // Runs on a click (zzz767 — it spends model reads): every name on the board is researched
   // in ~40s chunks and persisted server-side, so a reload resumes rather than
   // restarts. Coverage is a fraction and it is printed.
   const [research, setResearch] = useState<ResearchPayload | null>(null);
@@ -201,8 +201,9 @@ export default function AiGainersPage() {
         const rr = await fetch(`/api/v1/ai-gainers/research?market=${m}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
         const rres = await readJsonResponse<ResearchPayload>(rr, 'The research service');
         if (rres.ok && rres.json && genRef.current === gen) setResearch(rres.json);
-      } catch { /* the sweep below will answer */ }
-      void sweep(m, j.scanned || [], gen);
+      } catch { /* the research button will answer */ }
+      // The sweep spends model reads, so it runs only on a click — opening
+      // the page is free. What was already researched today shows above. (zzz767)
     } catch (e: any) {
       if (genRef.current !== gen) return;
       setErr(String(e?.message || 'The gainers pipeline did not answer.'));
@@ -258,6 +259,20 @@ export default function AiGainersPage() {
             Researching {research.coverage.researched}/{research.coverage.total}…
           </span>
         )}
+        {data && !sweeping && (() => {
+          const scannedN = (data.scanned || []).length;
+          const total = research?.coverage.total || 0;
+          const pending = total ? (research?.remaining ?? 0) : scannedN;
+          if (!scannedN || (total && pending <= 0)) return null;
+          return (
+            <button onClick={() => sweep(market, data.scanned || [], genRef.current)}
+              title="Reads the filings behind each move with the AI model. Runs only when you click."
+              style={{ fontSize: 12, fontWeight: 800, padding: '4px 12px', borderRadius: 999,
+                border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>
+              ▶ Research catalysts · {pending} {total ? 'remaining' : 'names'} (uses AI)
+            </button>
+          );
+        })()}
         <button onClick={() => load(market, true)} disabled={loading}
           style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
             border: `1px solid ${C.border}`, background: C.bg, color: C.dim, cursor: loading ? 'wait' : 'pointer' }}>
@@ -291,7 +306,7 @@ export default function AiGainersPage() {
       )}
 
       {data && level === 'market' && (
-        <MarketLevel data={data} structural={structural.length} onDrill={() => setLevel('queue')} />
+        <MarketLevel data={data} structural={structural.length} research={research} onDrill={() => setLevel('queue')} />
       )}
 
       {data && level === 'queue' && (
@@ -368,6 +383,15 @@ const istTime = (iso: string | null | undefined) => {
   if (!Number.isFinite(d.getTime())) return 'unknown';
   return `${d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })} IST`;
 };
+/** A US timestamp in New York time, with IST beside it — a bare browser-local
+ *  "23/09/2026, 05:52:58" named no zone. (zzz767) */
+const etTime = (iso: string | null | undefined) => {
+  if (!iso) return 'unknown';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return 'unknown';
+  const et = d.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${et} ET · ${istTime(iso)}`;
+};
 
 /** Which session the India board describes, stated before anything else: a
  *  screen read after midnight or on a weekend is the LAST session's move. */
@@ -386,7 +410,7 @@ function SessionBanner({ s, generatedAt, cached }: { s: Session; generatedAt: st
 }
 
 function ResearchLevel({ research, sweeping, market, onResume, scoredOnly }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void; scoredOnly?: boolean }) {
-  if (!research) return <div style={{ fontSize: 12, color: C.dim }}>Waiting for the scan…</div>;
+  if (!research) return <div style={{ fontSize: 13, color: C.dim }}>{sweeping ? 'Researching…' : 'No catalyst research for this session yet. Click “▶ Research catalysts” above — it runs only when you click, because it uses AI reads.'}</div>;
   const all = Object.values(research.findings || {});
   const cov = research.coverage;
   const scored = all.filter((f) => f.status === 'catalyst').sort((a, b) => (b.net ?? -1) - (a.net ?? -1));
@@ -546,7 +570,7 @@ function ScannedLevel({ data }: { data: Payload }) {
             ? <span style={{ color: C.faint, fontWeight: 400 }}> (of {sl.total_reported} reported{excluded.length ? `, ${excluded.length} large cap${excluded.length === 1 ? '' : 's'} excluded` : ''})</span> : null}
         </div>
         <div style={{ fontSize: 12, color: C.dim, marginTop: 3, lineHeight: 1.5 }}>
-          Read {isIN ? istTime(sl.synced_at) : (sl.synced_at ? new Date(sl.synced_at).toLocaleString() : 'unknown')}
+          Read {isIN ? istTime(sl.synced_at) : etTime(sl.synced_at)}
           {sl.window ? <> · window: <b style={{ color: C.text }}>{sl.window}</b></> : null}
           {' · '}{sl.matched_to_a_filing} of {sl.rows} matched to a filed result.
         </div>
@@ -631,19 +655,25 @@ function Chip({ on, onClick, children, color }: { on: boolean; onClick: () => vo
 }
 
 /** LEVEL 1 — the funnel, stated as counts rather than asserted as a number. */
-function MarketLevel({ data, structural, onDrill }: { data: Payload; structural: number; onDrill: () => void }) {
+function MarketLevel({ data, structural, onDrill, research }: { data: Payload; structural: number; onDrill: () => void; research: ResearchPayload | null }) {
   const f = data.funnel;
+  // The funnel counted catalysts in FILED RESULTS only, while the queue it
+  // drills into lists the catalyst sweep — "Show me the 1" opened 8. Both are
+  // printed now, each named for what it counted. (zzz767)
+  const swept = research && research.coverage.total > 0 ? research : null;
+  const sweptScored = swept ? Object.values(swept.findings || {}).filter((x: any) => x.status === 'catalyst').length : null;
   const steps = [
     { n: data.gainers_scanned || f.scanned, l: 'gainers scanned', w: data.market === 'IN' ? 'your screener.in screen, small and mid caps only' : 'the committed screen for this market' },
     { n: data.graded_available, l: 'filed results available', w: 'results the graders have already read' },
-    { n: f.withCatalyst, l: 'had a catalyst', w: 'a filing behind the move, after clustering duplicates' },
+    { n: f.withCatalyst, l: 'had a catalyst in a filed result', w: 'a results filing behind the move, after clustering duplicates' },
+    { n: sweptScored ?? '—', l: 'carry a catalyst in recent filings', w: swept ? `catalyst research read ${swept.coverage.researched}/${swept.coverage.total} names' recent filings` : 'not researched yet — use “▶ Research catalysts” (runs only on click)' },
     { n: structural, l: 'could matter beyond a quarter', w: 'the effect is medium- or long-lived, not one print' },
     { n: f.queue, l: 'deserve your attention', w: 'ranked by research priority, never by percentage gain' },
   ];
   return (
     <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '14px 16px' }}>
       <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 10 }}>
-        THE FUNNEL · {data.market === 'IN' ? istTime(data.generated_at) : new Date(data.generated_at).toLocaleString()}
+        THE FUNNEL · {data.market === 'IN' ? istTime(data.generated_at) : etTime(data.generated_at)}
       </div>
       {steps.map((s, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '5px 0',
@@ -657,7 +687,7 @@ function MarketLevel({ data, structural, onDrill }: { data: Payload; structural:
       <button onClick={onDrill} style={{
         marginTop: 12, fontSize: 12, fontWeight: 700, padding: '5px 13px', borderRadius: 999,
         border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
-      }}>Show me the {f.queue} →</button>
+      }}>{sweptScored != null ? `Show me the ${sweptScored} with a catalyst →` : `Show me the ${f.queue} →`}</button>
     </div>
   );
 }

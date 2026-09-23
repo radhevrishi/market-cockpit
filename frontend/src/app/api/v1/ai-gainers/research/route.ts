@@ -148,6 +148,31 @@ async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLi
   );
 }
 
+/** What the page is shown: errors only for names still on today's board (the
+ *  US state carried "RAYMOND: ticker not in the SEC company list" from an
+ *  earlier India-contaminated export), and findings stored before a scoring
+ *  rule tightened re-capped at read time. (zzz767) */
+function presentErrors(errors: string[], universe: Array<{ ticker: string }>): string[] {
+  const on = new Set(universe.map((u) => u.ticker.toUpperCase()));
+  return errors.filter((e) => { const t = String(e).split(':')[0].trim().toUpperCase(); return !t || !/^[A-Z0-9.&-]+$/.test(t) || on.has(t); }).slice(-5);
+}
+function presentFindings<T extends Record<string, any>>(findings: T): T {
+  const out: Record<string, any> = {};
+  for (const [k, f] of Object.entries(findings || {})) {
+    if (f && f.status === 'catalyst' && f.category === 'fundraising'
+      && /\bncds?\b|non[- ]convertible debenture|debentures?\b|commercial paper|term loan/i.test(String(f.headline || ''))
+      && !/\bequity\b|preferential|\bqip\b|warrant|rights (issue|shares)/i.test(String(f.headline || ''))) {
+      // Debt is financing, not a catalyst (zzz766) — findings stored before
+      // that rule are re-read the same way here.
+      out[k] = { ...f, status: 'routine_only', net: null, verdict: null, components: null, routine: [...(f.routine || []), String(f.headline)] };
+      continue;
+    }
+    out[k] = f && f.category === 'management_change' && typeof f.net === 'number' && f.net > 15
+      ? { ...f, net: 15, verdict: 'WEAK' } : f;
+  }
+  return out as T;
+}
+
 // Both handlers answer JSON even when they throw. (zzz766)
 export async function GET(req: NextRequest) {
   try {
@@ -159,7 +184,7 @@ export async function GET(req: NextRequest) {
     if (!raw) return NextResponse.json({ ok: true, market, date, session, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, universe: [] });
     const { st, excluded } = smallMidOnly(raw);
     const cov = coverage(st.findings, st.universe.map((u) => u.ticker));
-    return NextResponse.json({ ok: true, market, date, session, coverage: cov, findings: st.findings, remaining: cov.total - cov.researched, universe: st.universe, excluded_large_caps: excluded, large_cap_min_cr: market === 'IN' ? LARGE_CAP_MIN_CR : null, updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], errors: st.errors.slice(-5) });
+    return NextResponse.json({ ok: true, market, date, session, coverage: cov, findings: presentFindings(st.findings), remaining: cov.total - cov.researched, universe: st.universe, excluded_large_caps: excluded, large_cap_min_cr: market === 'IN' ? LARGE_CAP_MIN_CR : null, updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], errors: presentErrors(st.errors, st.universe) });
   } catch (e) { return jsonError(e); }
 }
 
@@ -306,7 +331,7 @@ async function research(req: NextRequest) {
   return NextResponse.json({
     ok: true, market, date, session: market === 'IN' ? indiaSession(now) : null, excluded_large_caps: excluded, large_cap_min_cr: market === 'IN' ? LARGE_CAP_MIN_CR : null,
     researched_now: done, elapsed_ms: Date.now() - t0,
-    coverage: cov, remaining: cov.total - cov.researched, findings: st.findings, updated_at: st.updated_at, model_reads: st.model_reads,
-    model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], reads_skipped_for_ceiling: readsSkippedForCeiling, errors: st.errors.slice(-5),
+    coverage: cov, remaining: cov.total - cov.researched, findings: presentFindings(st.findings), updated_at: st.updated_at, model_reads: st.model_reads,
+    model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], reads_skipped_for_ceiling: readsSkippedForCeiling, errors: presentErrors(st.errors, st.universe),
   });
 }

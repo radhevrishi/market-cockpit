@@ -243,11 +243,13 @@ export default function PortfolioCatalystsPage() {
           tickers: Array.from(new Set(inIndia.filter((r) => r.assessment?.status === k).map((r) => tv(r.symbol)))),
         })).filter((g) => g.tickers.length);
         const all = Array.from(new Set(groups.flatMap((g) => g.tickers)));
+        const usLeft = inSource.filter((r) => r.market === 'US' && KEEP.some(([k]) => r.assessment?.status === k)).length;
         if (!all.length) return null;
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', background: C.bg }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, marginBottom: 6 }}>
-              📋 Copy to TradingView — {all.length} names: {groups.map((g) => `${g.emoji} ${g.label} ${g.tickers.length}`).join(' · ')}
+              📋 Copy to TradingView · India (NSE) — {all.length} names: {groups.map((g) => `${g.emoji} ${g.label} ${g.tickers.length}`).join(' · ')}
+              {usLeft > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: C.faint }}> · {usLeft} US name{usLeft === 1 ? '' : 's'} in these statuses not included (NSE list)</span>}
             </div>
             <TickerExportToolbar tickers={all} groups={groups} exchange="NSE" filenameHint="portfolio-catalysts-constructive" compact />
           </div>
@@ -316,23 +318,23 @@ export default function PortfolioCatalystsPage() {
             among its documents, unread. Reading it gives every variable a
             before, so the card can say "72% → 80% · +8pp". */}
         {!anyRunning && needPrior.length > 0 && (
-          <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+          <>
             <button onClick={() => readPriorPeriods(needPrior.map((r) => r.symbol))}
               title="For each name whose ledger has only its latest quarter, reads the quarter before it (concall transcript first, then investor presentation, then results) and stores it as its own period. The latest quarter is never changed. Three at a time; you can stop and resume."
               style={{
-                fontSize: 15, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
-                border: `1px solid ${C.cyan}`, background: 'transparent', color: C.text,
+                fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
               }}>&#8635; Read prior quarter for {needPrior.length} (enables before &rarr; after)</button>
-            <span style={{ fontSize: 15, color: C.text, fontWeight: 600 }}>
-              Calls the model once per company ({needPrior.length} calls), only when you click.
+            <span style={{ fontSize: 12.5, color: C.dim }}>
+              uses AI · {needPrior.length} call{needPrior.length === 1 ? '' : 's'}, only on click
             </span>
-          </span>
+          </>
         )}
         {priorBatch.running && (
           <>
-            <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Reading prior quarter {priorBatch.done} of {priorBatch.total}…</span>
+            <span style={{ fontSize: 13.5, fontWeight: 800, color: C.cyan }}>Reading prior quarter {priorBatch.done} of {priorBatch.total}…</span>
             <button onClick={stop} style={{
-              fontSize: 15, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
             }}>Stop</button>
           </>

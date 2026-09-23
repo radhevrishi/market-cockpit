@@ -2697,8 +2697,8 @@ describe('zzz765 round 2', () => {
       EV('capex', 'ACTUAL', null, 'INR943 million', 'The total capex for Q1 of FY27 was INR943 million, largely towards the new site.'),
     ], 'Q1 FY27');
     const lines = rowChangeLines(vars, 'Q1 FY27');
-    assert.ok(lines.some((l) => /Capacity utilisation guidance 65% to 70%/.test(l.text)), JSON.stringify(lines));
-    assert.ok(lines.some((l) => /Capex INR943 million/.test(l.text)));
+    assert.ok(lines.some((l) => /Capacity utilisation — guidance: 65% to 70%/.test(l.text)), JSON.stringify(lines));
+    assert.ok(lines.some((l) => /Capex: INR943 million/.test(l.text)));
     assert.equal(rowValueText({ key: 'guidance', label: 'Guidance', before: null, after: 'maintained', delta: null, verdict: 'flat', evidence: '', source: 'filing', statement: 'GUIDANCE' } as any), 'guidance MAINTAINED');
   });
 
@@ -3140,5 +3140,65 @@ describe('zzz766 gainers USA — universe, session, EDGAR classification', () =>
     const t = htmlToText('<p>The Company&#8217;s revenue grew 40%&#160;&#8212; a record.</p><script>x()</script>');
     assert.equal(t, 'The Company’s revenue grew 40% — a record.');
     assert.equal(quoteIsInDocument(t + ' '.repeat(10) + 'filler text to be long enough', "The Company's revenue grew 40% — a record."), true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz767 · round 3 — defects seen on the deployed page (23 Sep 2026).
+// ═══════════════════════════════════════════════════════════════════════════
+import { delayVerdict, isDenial as isDenial3 } from '../thesis/variables';
+import { hedgedAround } from '../thesis/fact-normalize';
+
+describe('zzz767 round 3', () => {
+  const EV = (variable: string, value_type: string, before: string | null, after: string, text: string): any =>
+    ({ variable, value_type, before, after, unit: null, period: null, direction: 'unknown', evidence_text: text, source: 'Concall transcript Aug 2026', confidence: 'HIGH' });
+
+  test('a schedule or a possibility is not an execution delay ▼; a delay that happened is', () => {
+    assert.equal(delayVerdict('Phase‑2 targeted Q2 FY28 (timing risk implicit).'), 'stated');
+    assert.equal(delayVerdict("B200 deliveries upcoming for next lot expected in 'next couple of months'."), 'stated');
+    assert.equal(delayVerdict('Refurbishment periods of 4-6 months could delay redeployment.'), 'stated');
+    assert.equal(delayVerdict('Financial closure not complete; vendor timelines may shift commissions'), 'stated');
+    assert.equal(delayVerdict('Dahej commissioning delayed from this quarter to next.'), 'deteriorating');
+    assert.equal(delayVerdict('Customer-deferred volumes on large CDMO contract.'), 'deteriorating');
+  });
+
+  test('reassurances are denials: "projects on schedule", "no stated delays"', () => {
+    assert.equal(isDenial3('Projects on schedule; Phase 1 commissioning in Q3.'), true);
+    assert.equal(isDenial3('Management says all capex is on track.'), true);
+    assert.equal(isDenial3('Plant behind schedule, not on track.'), false);
+    const v = extractVariables(null, { risks: { delay: 'Projects are on schedule as per plan.' } }).find((x) => x.key === 'execution_delay')!;
+    assert.equal(v.verdict, 'flat');
+  });
+
+  test('a hedged figure is a management estimate, not an actual (AZAD "maybe INR1,200 crores")', () => {
+    assert.equal(hedgedAround('the asset base is maybe INR1,200 crores including capital WIP', 'INR1,200 crores'), true);
+    assert.equal(hedgedAround('Capex for the year was INR1,200 crores.', 'INR1,200 crores'), false);
+    const rows = varsFromEvents([EV('capex', 'ACTUAL', null, 'INR1,200 crores', 'Our gross block is maybe INR1,200 crores, including capital work in progress.')], 'Q1 FY27');
+    const r = rows.find((x) => x.key === 'capex')!;
+    assert.notEqual(r.statement, 'ACTUAL');
+  });
+
+  test('one-offs need one-off words, and a headline figure is not an item (IKS PAT INR193 crores)', () => {
+    assert.equal(valueFitsVariable({ variable: 'one_offs', before: null, after: 'INR 16,818.00', unit: null, evidence_text: 'Total income INR 16,818.00 INR 14,200.00' }), false);
+    assert.equal(valueFitsVariable({ variable: 'one_offs', before: null, after: 'INR193 crores', unit: null,
+      evidence_text: 'growth of PAT, which is reflected at about 28% year-on-year, coming in at INR193 crores, which again, if you were to adjust for the one-time exceptional acquisition costs, it goes even higher.' }), false);
+    assert.equal(valueFitsVariable({ variable: 'one_offs', before: null, after: 'INR11.5 crores', unit: null,
+      evidence_text: 'Q4 had a higher impact because of the one-off, INR56 crores were there, including INR11.5 crores of one- off items.' }), true);
+  });
+
+  test('WHAT CHANGED lines separate the variable from its typed value', () => {
+    const rows = varsFromEvents([EV('capacity_addition', 'GUIDANCE', null, '8 plants', 'We plan to add 8 plants over the next two years.')], 'Q1 FY27');
+    const lines = rowChangeLines(rows, 'Q1 FY27');
+    assert.ok(lines.some((l) => / — guidance: 8 plants/.test(l.text)), JSON.stringify(lines));
+  });
+});
+
+import { scoreCatalyst as scoreCat767 } from '../ai-gainers/catalyst-research';
+describe('zzz767 gainers', () => {
+  test('a board appointment is never "not yet priced in" (INOD scored 44)', () => {
+    const c: any = { subject: 'Innodata appoints Admiral Rogers to its Board', summary: null, kind: 'catalyst', category: 'management_change', stage: 'executed', valueStated: null, incremental: true, ageDays: 5 };
+    const s = scoreCat767(c, { marketCap: 2000, returns: { m1: 0.3, m3: -26, m6: null, y1: null } as any, sourceTier: 'primary', verifiedQuote: true });
+    assert.ok(s.net <= 15, String(s.net));
+    assert.notEqual(s.verdict, 'ROOM');
   });
 });

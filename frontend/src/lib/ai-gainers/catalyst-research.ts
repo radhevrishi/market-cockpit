@@ -343,6 +343,10 @@ export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: numb
     // An event with no stated value cannot be FIRE: "never let an unmeasured
     // event pay the same as a measured 30%-of-mcap one." It can still be ROOM.
     if (mat.pct == null && net >= 45) net = 44.9;
+    // An appointment or a resignation moves no revenue. INOD's new director
+    // scored 44 — "ROOM, not yet priced in" — on freshness alone. It is shown
+    // as a dated fact and capped at WEAK. (zzz767)
+    if (c.category === 'management_change') net = Math.min(net, 15);
     verdict = net >= 45 ? 'FIRE' : net >= 30 ? 'ROOM' : net >= 18 ? 'PRICED' : net >= 8 ? 'WEAK' : 'NONE';
   }
   return { net: Math.round(net * 10) / 10, components: { freshness, materiality: mat.score, transmission, persistence, sourceMult, pricedIn }, verdict, valuePctMcap: mat.pct == null ? null : Math.round(mat.pct * 100) / 100 };

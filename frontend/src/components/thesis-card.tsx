@@ -132,7 +132,7 @@ function chipValue(c: RowLike): string {
   if (c.statement === 'GUIDANCE' || c.statement === 'TARGET') {
     // "maintained" / "raised" are the finding; print them as such.
     if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${c.statement.toLowerCase()} MAINTAINED`;
-    return `${c.statement.toLowerCase()} ${after}`;
+    return `${c.statement.toLowerCase()}: ${after}`;
   }
   if (c.statement === 'MANAGEMENT_STATEMENT') return `“${after}”${planTxt}`;
   if (c.statement === 'HISTORICAL') return `${[c.before, after].filter(Boolean).join(' → ')} (${c.asOf})`;
@@ -149,6 +149,10 @@ function chipValue(c: RowLike): string {
 function priorNote(c: RowLike, depth: number): string | null {
   if (c.statement !== 'ACTUAL' && c.statement != null) return null;
   if (c.before) return null;
+  // The grader's rows compare against the filed prior quarter / year already
+  // (+14.5pp QoQ, +1645% YoY); "prior period not read yet" under them was
+  // false. Any row carrying its own change has a before. (zzz767)
+  if ((c as any).source === 'grader' || (c.delta && /[+\-−]?\d/.test(c.delta))) return null;
   // Only a FIGURE has a previous value; a sentence of commentary does not.
   if (!/(?<![A-Za-z])\d/.test(String(c.after ?? ''))) return null;
   const cmp = c.comparison;

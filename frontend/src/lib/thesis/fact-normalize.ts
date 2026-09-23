@@ -200,6 +200,20 @@ export interface NormalizedEvent extends StructuralEvent {
  * Correct the TYPE of a reading from its own sentence. The value strings are
  * never edited; only `value_type`, and `before` for a stated flat.
  */
+const HEDGE = /\b(maybe|may be|perhaps|possibly|probably|could be|might be|would be around|we (?:think|believe|feel)|i (?:think|believe|feel)|ballpark|tentatively|anywhere between)\b/i;
+/** Hedge word within ~40 characters before the value (same sentence). */
+export function hedgedAround(text: string | null | undefined, value: string | null | undefined): boolean {
+  const t = String(text || ''), v = String(value || '').trim();
+  if (!t || !v) return false;
+  const digits = v.match(/\d[\d,.]*/)?.[0];
+  let at = t.indexOf(v);
+  if (at < 0 && digits) at = t.indexOf(digits);
+  if (at < 0) return false;
+  const before = t.slice(Math.max(0, at - 40), at);
+  const cut = Math.max(before.lastIndexOf('. '), before.lastIndexOf('; '));
+  return HEDGE.test(cut >= 0 ? before.slice(cut + 1) : before);
+}
+
 export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | null): NormalizedEvent {
   const out: NormalizedEvent = { ...e };
   const clause = valueClause(e.evidence_text, e.after ?? e.before);
@@ -213,6 +227,14 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
     out.value_type = 'ACTUAL';
     out.original_value_type = e.value_type;
     out.retyped_because = 'the sentence ties it to the current quarter';
+  }
+  // ── A HEDGED FIGURE IS NOT A REPORTED ONE.                       (zzz767)
+  // "Capex maybe INR1,200 crores" printed as an actual. A hedge word right
+  // before the value makes it a management estimate.
+  if (out.value_type === 'ACTUAL' && hedgedAround(e.evidence_text, e.after ?? e.before)) {
+    out.value_type = 'MANAGEMENT_CLAIM';
+    out.original_value_type = e.value_type;
+    out.retyped_because = 'the figure is hedged ("maybe", "could be", "approximately we think")';
   }
   const hist = historicalAsOf({ ...e, value_type: out.value_type }, reportingPeriod);
   if (hist) out.historical_as_of = hist;

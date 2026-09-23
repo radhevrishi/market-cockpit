@@ -534,8 +534,21 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // (REDINGTON "Operating cash flows remained positive at ₹231 Crores")
     // and a planned investment (CUPID "Planned investment of ₹331.53 Cr")
     // are not one-offs, whatever the model filed them under. (zzz765)
-    if (v === 'one_offs' && !/one[- ]?off|one[- ]time|exceptional|non[- ]recurring|write[- ]?back|reversal|impairment|forex|foreign exchange|tax (reversal|benefit|credit|refund)|insurance claim|gain on (sale|disposal)|loss on (sale|disposal)|profit on sale|earn[- ]?out|\bvrs\b|settlement|arbitration|refund|provision|fair value|mark[- ]to[- ]market|\bmtm\b/i.test(ev)
-      && /revenue from operations|operating cash flow|cash flows? (from|remained)|planned investment|capex|capital expenditure|order book|turnover/i.test(ev)) return false;
+    if (v === 'one_offs' && !/one[- ]?off|one[- ]time|exceptional|non[- ]recurring|write[- ]?back|reversal|impairment|forex|foreign exchange|tax (reversal|benefit|credit|refund)|insurance claim|gain on (sale|disposal)|loss on (sale|disposal)|profit on sale|earn[- ]?out|\bvrs\b|settlement|arbitration|refund|provision|fair value|mark[- ]to[- ]market|\bmtm\b|other income|extraordinary|discontinued/i.test(ev)) return false;
+    // A headline figure named right before the value is that figure, not an
+    // item: IKS "PAT … coming in at INR193 crores, which … adjusted for the
+    // one-time costs" and "33% EBITDA at INR294 crores". (zzz767)
+    if (v === 'one_offs') {
+      const val = String(e.after || e.before || '').trim();
+      const at = val ? ev.indexOf(val) : -1;
+      if (at > 0) {
+        const pre = ev.slice(Math.max(0, at - 80), at);
+        if (/\b(PAT|net profit|profit after tax|EBITDA|revenue|sales|turnover|topline)\b/i.test(pre)
+          && !/one[- ]?off|one[- ]time|exceptional|non[- ]recurring|write[- ]?back|reversal|impairment|refund|provision|gain on|loss on|other income|expenses? of|costs? of/i.test(pre)) return false;
+      }
+    }
+    // Any one-off without one-off vocabulary is a line read off a table
+    // ("INR 16,818.00" from a "Total income" chart row) — never an item. (zzz767)
     // "15 megawatt hours of orders in hand" is an ORDER, not a volume sold.
     // EXICOM printed it as "Volume 15 MWh". (zzz763)
     if (v === 'volume' && /orders? (in hand|book|backlog|intake)|pipeline|backlog|order book/i.test(ev)

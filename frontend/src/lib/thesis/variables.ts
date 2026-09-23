@@ -177,7 +177,29 @@ const NEGATIVE_VARS = new Set<VarKey>(['execution_delay', 'customer_loss', 'shut
  *  put the company's denial into the field, and `said()` read a denial as a
  *  disclosure. A denial is a CHECKED, FLAT variable, not a deterioration. */
 const DENIAL = /^(no|none|nil|not any|no explicit|no material|no significant|there (were|was|are|is) no|did not|does not|didn't|doesn't|without any)\b/i;
-export const isDenial = (v: unknown): boolean => said(v) && DENIAL.test(String(v).trim());
+/** "Projects on schedule", "no stated delays", "not delayed", "on track" —
+ *  a reassurance, not a delay. Anywhere in the value, not only at the start. (zzz767) */
+const REASSURANCE = /\b(no (?:stated|explicit|specific|new|major|material|reported|cited|significant)?\s*(?:capex |project |execution )?delays?\b|not (?:been )?delayed|on (?:schedule|track|time)\b|as per (?:schedule|plan)|within (?:the )?(?:timeline|schedule))/i;
+const DELAY_WORDS = /\b(delayed by|slipp(?:ed|age)|pushed (?:out|back)|deferred|postponed|behind schedule)\b/i;
+/** A delay field is a ▼ only when it reports a delay that HAPPENED. A
+ *  timeline ("Phase-2 targeted Q2 FY28"), a plan ("deliveries expected in the
+ *  next couple of months") or a possibility ("could delay", "timelines may
+ *  shift") is stated, not judged. E2E, BHAGCHEM, KMEW and AARTIPHARM printed
+ *  a red ▼ Execution delay for a schedule. (zzz767) */
+const HAPPENED_DELAY = /\b(delay(?:ed|s)?|slipp(?:ed|age)|pushed (?:out|back)|deferr(?:ed|al)|postpon|behind schedule|gating|stoppage|suspen(?:ded|sion)|halt(?:ed)?|disrupt(?:ed|ion)|curtail(?:ed|ment)?|cancell?(?:ed|ation))/i;
+const POSSIBLE_DELAY = /\b(could|may|might|can|possible|possibly|potential(?:ly)?|risk of)\s+(?:be\s+)?(?:a\s+)?(?:further\s+)?(delay\w*|slip\w*|shift\w*|push\w*|defer\w*)/gi;
+export function delayVerdict(text: string | null): VarVerdict {
+  const t = String(text || '');
+  if (!t) return 'unknown';
+  if (isDenial(t)) return 'deteriorating';          // push_ turns a denial into flat
+  return HAPPENED_DELAY.test(t.replace(POSSIBLE_DELAY, ' ')) ? 'deteriorating' : 'stated';
+}
+export const isDenial = (v: unknown): boolean => {
+  if (!said(v)) return false;
+  const t = String(v).trim();
+  if (DENIAL.test(t)) return true;
+  return REASSURANCE.test(t) && !DELAY_WORDS.test(t);
+};
 
 const numIn = (s: string | null): number | null => {
   if (!s) return null;
@@ -316,7 +338,11 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       const mayJudge = isFact && key !== 'one_offs'
         && (flatStated || !needsTwoFigures || (!!a.before && !!delta) || (key === 'utilisation' && namesMove));
       const inverted = NEGATIVE_VARS.has(key) || inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`);
-      const verdict: VarVerdict = !mayJudge ? 'stated'
+      // "No stated delays" / "projects on schedule" read as an execution
+      // delay ▼. A denial on a more-is-worse variable is checked and flat. (zzz767)
+      const denied = NEGATIVE_VARS.has(key) && (isDenial(a.after) || isDenial(a.evidence_text));
+      const verdict: VarVerdict = denied ? 'flat'
+        : !mayJudge ? 'stated'
         : flatStated ? 'flat'
         : dir === 'up' ? (inverted ? 'deteriorating' : 'improving')
           : dir === 'down' ? (inverted ? 'improving' : 'deteriorating')
@@ -1094,7 +1120,9 @@ export function extractVariables(
           : 'the one-off amount is not stated, so it cannot be sized against the result',
       evidence: oneOffs.map((o) => {
         const d = oneOffLine(parseOneOff(String(o?.item || ''), said(o?.amount) ? String(o.amount) : null));
-        return `${o?.direction === 'gain' ? '+' : '−'} ${d || o?.item}${d && o?.item ? ` — “${String(o.item).slice(0, 120)}”` : ''}`;
+        // The direction mark carries the sign: SFL printed "− -6". (zzz767)
+        const dd = d ? String(d).replace(/^\s*[-−+]\s*/, '') : d;
+        return `${o?.direction === 'gain' ? '+' : '−'} ${dd || o?.item}${dd && o?.item ? ` — “${String(o.item).slice(0, 120)}”` : ''}`;
       }).join('; ')
         + (!gains.length ? ''
           : material === true ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit growth is ${Math.round(exGrowth * 100)}%` : ''} — the jump rests on items that will not repeat.`
@@ -1130,7 +1158,7 @@ export function extractVariables(
     // and said none: checked, flat, and worth showing as such.
     if (verdict === 'deteriorating' && isDenial(after)) {
       push({ key, label: VAR_LABEL[key], before: null, after, delta: null, verdict: 'flat',
-        evidence: `Company states none — ${after}`, source: 'filing', kind: opts.kind ?? 'fact' });
+        evidence: `Company states no ${VAR_LABEL[key].toLowerCase()} — ${after}`, source: 'filing', kind: opts.kind ?? 'fact' });
       return;
     }
     push({
@@ -1167,7 +1195,7 @@ export function extractVariables(
   push_('revenue_visibility', str(ob.coverage) || str(dem.revenue_visibility), 'unknown',
     `Revenue visibility: ${str(ob.coverage) || str(dem.revenue_visibility)}.`);
   if (str(dem.cancellations)) {
-    push_('execution_delay', str(dem.cancellations), 'deteriorating',
+    push_('execution_delay', str(dem.cancellations), delayVerdict(str(dem.cancellations)),
       `Order cancellations or deferrals: ${dem.cancellations}.`);
   }
 
@@ -1252,7 +1280,7 @@ export function extractVariables(
     push_('supply_bottleneck', str(risk.supply_bottleneck), removed ? 'improving' : 'deteriorating',
       `Supply bottleneck: ${risk.supply_bottleneck}.`);
   }
-  push_('execution_delay', str(risk.delay), 'deteriorating', `Delay: ${str(risk.delay)}.`);
+  push_('execution_delay', str(risk.delay), delayVerdict(str(risk.delay)), `Delay: ${str(risk.delay)}.`);
   push_('shutdown', str(risk.shutdown), 'deteriorating', `Shutdown: ${str(risk.shutdown)}.`);
   push_('market_share', str(risk.market_share), 'unknown', `Market share: ${str(risk.market_share)}.`);
   push_('pricing_power', str(risk.pricing_power), 'unknown', `Pricing power: ${str(risk.pricing_power)}.`);
@@ -1331,7 +1359,7 @@ export function rowValueText(v: StructuralVar): string {
   const planTxt = v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${v.plan.value}${v.plan.gap ? ` (gap ${v.plan.gap})` : ''}` : '';
   if (v.statement === 'GUIDANCE' || v.statement === 'TARGET') {
     if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${v.statement.toLowerCase()} MAINTAINED`;
-    return `${v.statement.toLowerCase()} ${after}`;
+    return `${v.statement.toLowerCase()}: ${after}`;
   }
   if (v.statement === 'MANAGEMENT_STATEMENT') return `management: “${after}”${planTxt}`;
   if (v.statement === 'HISTORICAL') return `${[v.before, after].filter(Boolean).join(' → ')} — historical context (${v.asOf})`;
@@ -1359,7 +1387,10 @@ export function rowChangeLines(vars: StructuralVar[], period: string | null): Ch
     .map(({ v }) => ({
       sign: (v.statement && v.statement !== 'ACTUAL') ? '·' as const
         : v.verdict === 'improving' ? '+' as const : v.verdict === 'deteriorating' ? '-' as const : '·' as const,
-      text: `${v.label} ${rowValueText(v)}`,
+      // A separator between the variable and its value: "Guidance management:
+      // “over 25%”" and "Capacity added guidance 8 plants" read as one run-on
+      // phrase. (zzz767)
+      text: `${v.label}${v.statement && v.statement !== 'ACTUAL' ? ' — ' : ': '}${rowValueText(v)}`,
       metric: v.key, period: period || v.asOf || '', source: v.sourceLabel || '',
     }));
 }
