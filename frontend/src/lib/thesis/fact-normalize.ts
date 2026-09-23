@@ -144,9 +144,20 @@ const EVENT_VARS = new Set(['commissioning', 'new_plant', 'capex_status', 'new_c
  * began, it is context, not this quarter's evidence. Returns the label of the
  * date it is pinned to ("Mar 2025", "FY25", "earlier years"), or null.
  */
-export function historicalAsOf(e: Pick<StructuralEvent, 'after' | 'before' | 'evidence_text'> & { variable?: string; value_type?: string }, reportingPeriod: string | null | undefined): string | null {
+export function historicalAsOf(e: Pick<StructuralEvent, 'after' | 'before' | 'evidence_text'> & { variable?: string; value_type?: string; period?: string | null }, reportingPeriod: string | null | undefined): string | null {
   const start = periodStart(reportingPeriod);
   if (!start || !e.after) return null;
+  // 0. A company-history timeline line: "2006 Expanded annual manufacturing
+  //    capacity from 160 million to 400 million units" (CUPID's annual
+  //    report) was read as this quarter's capacity, ▲. A sentence that OPENS
+  //    with a year, or an event dated to a bare year, before this period
+  //    began is history. (zzz768)
+  const sent0 = valueSentence(e.evidence_text, e.after);
+  const lead = /^\s*((?:19|20)\d{2})\b(?!\s*[-–]\s*\d)/.exec(sent0) || /^\s*((?:19|20)\d{2})\s*$/.exec(String(e.period || ''));
+  if (lead) {
+    const y = Number(lead[1]);
+    if (monthEnd(y, 11) < start) return String(y);
+  }
   if (e.variable && EVENT_VARS.has(e.variable)) return null;
   if (e.value_type && e.value_type !== 'ACTUAL') return null;
   const pick = (ds: Array<{ label: string; end: Date }>) => {

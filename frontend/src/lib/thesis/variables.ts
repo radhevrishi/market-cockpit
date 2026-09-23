@@ -341,7 +341,12 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       // "No stated delays" / "projects on schedule" read as an execution
       // delay ▼. A denial on a more-is-worse variable is checked and flat. (zzz767)
       const denied = NEGATIVE_VARS.has(key) && (isDenial(a.after) || isDenial(a.evidence_text));
+      const amountOnly = key === 'capex' || key === 'capex_status' || (key === 'working_capital' && !inverted);
+      // "The Pune facility is under commissioning" is not commissioned. (zzz768)
+      const notYet = key === 'commissioning' && /\b(under commissioning|to be commissioned|yet to (be )?commission|will be commissioned|expected to (be )?commission)/i.test(`${a.after || ''} ${a.evidence_text}`);
       const verdict: VarVerdict = denied ? 'flat'
+        : notYet ? 'stated'
+        : amountOnly && mayJudge && !flatStated && (dir === 'up' || dir === 'down') ? 'stated'
         : !mayJudge ? 'stated'
         : flatStated ? 'flat'
         : dir === 'up' ? (inverted ? 'deteriorating' : 'improving')
@@ -515,7 +520,13 @@ export function applyComparisons(
     const inverted = NEGATIVE_VARS.has(v.key)
       || inverseByUnit(v.key, `${c.current?.raw || ''} ${c.previous?.raw || ''} ${v.after || ''} ${v.before || ''}`);
     const moved = movedEnough(c);
-    const verdict: VarVerdict = !moved || c.direction === 'flat'
+    // A capex budget or a working-capital AMOUNT moving has no good direction
+    // on its own: WENDT's working capital ₹52 → ₹65 Cr printed ▲ improving,
+    // NEULANDLAB's capex plan ₹1,460 → ₹870 Cr ▼. Shown with its change,
+    // not judged. Working-capital DAYS keep the inverse reading. (zzz768)
+    const amountOnly = v.key === 'capex' || v.key === 'capex_status' || (v.key === 'working_capital' && !inverted);
+    const verdict: VarVerdict = amountOnly && moved && c.direction !== 'flat' ? 'stated'
+      : !moved || c.direction === 'flat'
       ? 'flat'
       : c.direction === 'up' ? (inverted ? 'deteriorating' : 'improving')
         : c.direction === 'down' ? (inverted ? 'improving' : 'deteriorating')
@@ -530,7 +541,7 @@ export function applyComparisons(
       delta: c.change ?? v.delta,
       verdict,
       kind: 'fact',
-      evidence: `${c.previous.raw} (${c.previous_period}) → ${c.current?.raw ?? v.after ?? ''} (${c.current_period})`
+      evidence: `${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${c.current?.raw ?? v.after ?? ''}${c.current_period ? ` (${c.current_period})` : ''}`
         + `${c.change ? ` · ${c.change}` : ''}${c.change_relative ? ` (${c.change_relative})` : ''}`
         + ` · ${BASIS_LABEL[c.basis]}. `
         + (c.cause
@@ -1352,11 +1363,25 @@ export function byKey(vars: StructuralVar[]): Partial<Record<VarKey, StructuralV
 // and kept "Capacity utilisation 65% to 70%" (INNOVACAP's at-peak plan) that
 // the board had already re-typed as guidance. One source now: the rows.
 // ═══════════════════════════════════════════════════════════════════════════
-const stripTypeTag = (s: string | null | undefined) => String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '').trim();
+// A PDF's rupee glyph often extracts as a backtick: "` 110 crore". (zzz768)
+export const rupeeGlyph = (s: string) => s.replace(/`\s*(?=\d)/g, '₹').replace(/(?<![A-Za-z])H\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/g, '₹');
+/** Every string in a stored summary / ledger with the PDF rupee glyph fixed.
+ *  Display-only: stored ledgers are not rewritten. URLs are left alone. (zzz768) */
+export function deepRupeeGlyph<T>(v: T): T {
+  if (typeof v === 'string') return (/^https?:\/\//.test(v) ? v : rupeeGlyph(v)) as unknown as T;
+  if (Array.isArray(v)) return v.map((x) => deepRupeeGlyph(x)) as unknown as T;
+  if (v && typeof v === 'object') {
+    const o: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) o[k] = k === 'url' || k === 'source_url' ? x : deepRupeeGlyph(x);
+    return o as T;
+  }
+  return v;
+}
+const stripTypeTag = (s: string | null | undefined) => rupeeGlyph(String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '').trim());
 
 export function rowValueText(v: StructuralVar): string {
   const after = stripTypeTag(v.after);
-  const planTxt = v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${v.plan.value}${v.plan.gap ? ` (gap ${v.plan.gap})` : ''}` : '';
+  const planTxt = v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupeeGlyph(v.plan.value)}${v.plan.gap ? ` (gap ${v.plan.gap})` : ''}` : '';
   if (v.statement === 'GUIDANCE' || v.statement === 'TARGET') {
     if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${v.statement.toLowerCase()} MAINTAINED`;
     return `${v.statement.toLowerCase()}: ${after}`;
@@ -1364,7 +1389,10 @@ export function rowValueText(v: StructuralVar): string {
   if (v.statement === 'MANAGEMENT_STATEMENT') return `management: “${after}”${planTxt}`;
   if (v.statement === 'HISTORICAL') return `${[v.before, after].filter(Boolean).join(' → ')} — historical context (${v.asOf})`;
   const c = v.comparison;
-  if (c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT') {
+  if (c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT'
+    // "25 KLPD → 25 KLPD Ethanol plant", "₹23 Cr → over six months of
+    // inventory": a prior that cannot be compared is not printed as a before. (zzz768)
+    && c.change_type !== 'NOT_COMPARABLE') {
     const ch = c.change_type === 'UNCHANGED' ? 'FLAT' : (c.change || v.delta || '');
     return `${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
   }
@@ -1390,7 +1418,14 @@ export function rowChangeLines(vars: StructuralVar[], period: string | null): Ch
       // A separator between the variable and its value: "Guidance management:
       // “over 25%”" and "Capacity added guidance 8 plants" read as one run-on
       // phrase. (zzz767)
-      text: `${v.label}${v.statement && v.statement !== 'ACTUAL' ? ' — ' : ': '}${rowValueText(v)}`,
+      // "Guidance — guidance: x" and "Management target — target: x" say the
+      // type twice; the label already names it. (zzz768)
+      text: (() => {
+        const val = rowValueText(v);
+        const t = (v.statement || '').toLowerCase();
+        if ((t === 'guidance' || t === 'target') && new RegExp(`\\b${t}\\b`, 'i').test(v.label) && val.startsWith(`${t}: `)) return `${v.label}: ${val.slice(t.length + 2)}`;
+        return `${v.label}${v.statement && v.statement !== 'ACTUAL' ? ' — ' : ': '}${val}`;
+      })(),
       metric: v.key, period: period || v.asOf || '', source: v.sourceLabel || '',
     }));
 }

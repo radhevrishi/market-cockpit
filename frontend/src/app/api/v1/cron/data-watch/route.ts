@@ -78,6 +78,13 @@ export async function GET(req: Request) {
   const expected = process.env.CRON_SECRET || '';
   if (expected && provided !== expected) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const heal = searchParams.get('no_heal') !== '1';
+  // ── MODEL SPEND IS CLICK-ONLY.                                    (zzz768)
+  // The owner's rule: a model call happens because someone clicked, never
+  // because a schedule fired. The gainers sweep and the held-name evidence
+  // reads below both spend model calls, so a scheduled run only REPORTS them
+  // unless MC_AUTO_SPEND=1 is set on the server. Free heals (calendar
+  // ingest, cron re-runs) still run.
+  const autoSpend = process.env.MC_AUTO_SPEND === '1';
   const alert = searchParams.get('no_alert') !== '1';
   const secretQ = expected ? `&secret=${encodeURIComponent(expected)}` : '';
   const base = internalBase(req);
@@ -192,7 +199,7 @@ export async function GET(req: Request) {
     const state = await getJson(base, `/api/v1/ai-gainers/research?market=IN`);
     let cov = state.json?.coverage || { researched: 0, total: 0, pct: 0 };
     let healed: string | undefined;
-    if ((cov.total === 0 || cov.pct < 90) && heal) {
+    if ((cov.total === 0 || cov.pct < 90) && heal && autoSpend) {
       const scan = await getJson(base, `/api/v1/ai-gainers?market=IN&limit=15`, 120_000);
       const rows = (scan.json?.scanned || []).map((g: any) => ({ ticker: g.ticker, company: g.company, move_pct: g.move_pct, volume: g.volume ?? null, price: g.price ?? null, market_cap: g.market_cap ?? null, perf: g.perf ?? null }));
       let calls = 0, researched = 0, remaining = -1;
@@ -210,10 +217,11 @@ export async function GET(req: Request) {
       cov = after.json?.coverage || cov;
       healed = healed || `swept ${researched} names in ${calls} calls (${rows.length} scanned) → ${cov.researched}/${cov.total} researched`;
     }
-    const level: Level = cov.total === 0 ? 'fail' : cov.pct >= 90 ? 'ok' : 'warn';
+    // With spend click-only, an unswept day is the expected state, not a fault.
+    const level: Level = !autoSpend ? 'ok' : cov.total === 0 ? 'fail' : cov.pct >= 90 ? 'ok' : 'warn';
     checks.push({
       id: 'ai-gainers', name: 'AI Daily Gainers (IN) sweep', level,
-      detail: `${cov.researched}/${cov.total} researched (${cov.pct}%) · model reads ${state.json?.model_reads ?? '?'}/${state.json?.model_reads_ceiling ?? '?'}`, healed,
+      detail: `${cov.researched}/${cov.total} researched (${cov.pct}%) · model reads ${state.json?.model_reads ?? '?'}/${state.json?.model_reads_ceiling ?? '?'}${autoSpend ? '' : ' · sweep runs on click (auto-spend off)'}`, healed,
       action: level === 'fail' ? 'The screener gainers scan returned no names: check the screener.in screen URL and the mc-proxy Worker.' : undefined,
       ms: t() - t0,
     });
@@ -242,7 +250,7 @@ export async function GET(req: Request) {
       let healed: string | undefined;
       let read = 0, skippedNoNew = 0, failed = 0;
       const outcomes: string[] = [];
-      if (due.length && heal && !modelDown) {
+      if (due.length && heal && autoSpend && !modelDown) {
         const deadline = Date.now() + 150_000;
         for (const tk of due) {
           if (Date.now() > deadline) break;
@@ -254,10 +262,10 @@ export async function GET(req: Request) {
         healed = `read ${read}, no new evidence ${skippedNoNew}, failed ${failed} of ${due.length} due${outcomes.length ? ` — ${outcomes.slice(0, 3).join('; ')}` : ''}`;
       }
       const remaining = Math.max(0, due.length - read - skippedNoNew);
-      const level: Level = modelDown ? 'warn' : failed > 0 && read === 0 && due.length > 0 ? 'fail' : 'ok';
+      const level: Level = modelDown && autoSpend ? 'warn' : failed > 0 && read === 0 && due.length > 0 ? 'fail' : 'ok';
       checks.push({
         id: 'portfolio-evidence', name: 'Portfolio Catalysts evidence (held names)', level,
-        detail: `${held.length} held · ${due.length} due (never read / stale / new evidence) · ${remaining} still due after this run`, healed,
+        detail: `${held.length} held · ${due.length} due (never read / stale / new evidence) · ${remaining} still due after this run${autoSpend ? '' : ' · reads run on click (auto-spend off)'}`, healed,
         action: modelDown ? 'Not attempted: the model is refusing calls (see Anthropic API).' : level === 'fail' ? 'Every attempted read failed: open one card → Read latest evidence and read the outcome text.' : undefined,
         ms: t() - t0,
       });

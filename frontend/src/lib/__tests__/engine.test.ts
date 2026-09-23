@@ -3202,3 +3202,62 @@ describe('zzz767 gainers', () => {
     assert.notEqual(s.verdict, 'ROOM');
   });
 });
+
+import { classifyAnnouncement as classify768 } from '../ai-gainers/catalyst-research';
+describe('zzz768', () => {
+  test('an 8-K item title with a summary is not an order win (PRTH 1.01 + 5.02)', () => {
+    const a: any = { subject: '8-K: Item 1.01 Entry into a Material Definitive Agreement; Item 5.02 Departure of Directors or Certain Officers', summary: 'Entry into a Material Definitive Agreement; Departure of Directors or Certain Officers', url: 'x', dateIso: '2026-09-21', ageDays: 2 };
+    assert.notEqual(classify768(a, 'US').category, 'order_win');
+    const b: any = { subject: 'Press release', summary: 'The company has received a purchase order worth $40 million from a US utility.', url: 'x', dateIso: '2026-09-21', ageDays: 2 };
+    assert.equal(classify768(b, 'US').category, 'order_win');
+  });
+});
+
+import { parseStatedValue as psv768 } from '../ai-gainers/catalyst-research';
+describe('zzz768 India gainers classification', () => {
+  const A = (subject: string, summary: string | null = null): any => ({ subject, summary, url: 'x', dateIso: '2026-09-21', ageDays: 2 });
+  test('counts are not rupees; rupee millions and full rupee amounts are', () => {
+    assert.equal(psv768('APSSDC SaaS GenAI platform award for up to 20 lakh users', 'IN'), null);
+    assert.equal(psv768('Board approved preferential allotment of 2.82 lakh shares', 'IN'), null);
+    assert.ok(Math.abs((psv768('Letter of Award aggregating to Rs. 4,884.61 Million (inclusive of taxes)', 'IN') ?? 0) - 488.461) < 1e-6);
+    assert.equal(psv768('Allotment of 25,00,000 Warrants at 240/- aggregating upto 60,00,00,000/- (Rupees Sixty Crore Only)', 'IN'), 60);
+    assert.equal(psv768('order worth Rs 5,000 lakh', 'IN'), 50);
+  });
+  test('an order received is executed even with a delivery date', () => {
+    const c = classifyAnnouncement(A('Receipt of order', 'Lineage Power has received a Letter of Award of Rs. 4,884.61 Million from NGSL for BESS supply to be completed by March 2027.'), 'IN');
+    assert.equal(c.category, 'order_win'); assert.equal(c.stage, 'executed');
+  });
+  test('tribunal-sanctioned amalgamation is not negative; officer changes and buyback extinguishment are routine', () => {
+    assert.equal(classifyAnnouncement(A('General Updates', 'NCLT sanctioned Mawana Foods’ amalgamation into Mawana Sugars on 3 September 2026.'), 'IN').kind, 'routine');
+    assert.equal(classifyAnnouncement(A('General Updates', 'Manisha Kadagathur resigns as CHRO effective 30 September.'), 'IN').category, 'management_change');
+    assert.equal(classifyAnnouncement(A('Buyback', 'Extinguishment of 8,68,100 equity shares following buyback at Rs. 900 per share'), 'IN').kind, 'routine');
+    assert.equal(classifyAnnouncement(A('General Updates', 'EIL signed PMC/EPCM contract over ₹450 crore with a refinery'), 'IN').category, 'order_win');
+  });
+});
+
+import { historicalAsOf as hist768 } from '../thesis/fact-normalize';
+import { rupeeGlyph } from '../thesis/variables';
+describe('zzz768 thesis board', () => {
+  const EV = (variable: string, value_type: string, before: string | null, after: string, text: string): any =>
+    ({ variable, value_type, before, after, unit: null, period: null, direction: 'unknown', evidence_text: text, source: 'Annual report', confidence: 'HIGH' });
+  test('a company-history line is historical context (CUPID "2006 … 160 to 400 million units")', () => {
+    assert.equal(hist768(EV('capacity', 'ACTUAL', '160 million', '400 million units', '2006 Expanded annual manufacturing capacity from 160 million to 400 million units, strengthening production.'), 'Q1 FY27'), '2006');
+  });
+  test('a working-capital amount or a capex budget moving is shown, not judged', () => {
+    const rows = varsFromEvents([{ ...EV('working_capital', 'ACTUAL', '52 crores', '65 crores', 'Working capital went up from 52 crores to 65 crores this quarter.'), direction: 'up' }], 'Q1 FY27');
+    assert.equal(rows.find((r) => r.key === 'working_capital')!.verdict, 'stated');
+    const days = varsFromEvents([{ ...EV('working_capital', 'ACTUAL', '137 days', '84 days', 'Working capital days improved from 137 days to 84 days.'), direction: 'down' }], 'Q1 FY27');
+    assert.equal(days.find((r) => r.key === 'working_capital')!.verdict, 'improving');
+  });
+  test('debt repayment is not capex; revenue is not a volume; "under commissioning" is not commissioned', () => {
+    assert.equal(valueFitsVariable({ variable: 'capex', before: null, after: 'reduced the debt by about 10 crores', unit: null, evidence_text: 'We have reduced the debt by about 10 crores.' }), false);
+    assert.equal(valueFitsVariable({ variable: 'volume', before: null, after: 'revenue reaching a 15-quarter high of INR1,300 crore', unit: null, evidence_text: 'revenue reaching a 15-quarter high of INR1,300 crore' }), false);
+    const rows = varsFromEvents([EV('commissioning', 'ACTUAL', null, 'The Pune facility is under commissioning', 'The Pune facility is under commissioning and will start in Q3.')], 'Q1 FY27');
+    assert.notEqual(rows.find((r) => r.key === 'commissioning')?.verdict, 'improving');
+  });
+  test('PDF rupee glyphs print as ₹', () => {
+    assert.equal(rupeeGlyph('` 110 crore plus working capital'), '₹110 crore plus working capital');
+    assert.equal(rupeeGlyph('H257 crore'), '₹257 crore');
+    assert.equal(rupeeGlyph('Phase H2 FY27'), 'Phase H2 FY27');
+  });
+});

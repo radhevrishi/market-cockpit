@@ -53,7 +53,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods } = useBook();
+  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
@@ -206,8 +206,15 @@ export default function PortfolioCatalystsPage() {
         )}
       </div>
 
+      {/* Until the stored evidence is in, every card reads "incomplete" and
+          the counters are wrong — say so instead of showing them. (zzz768) */}
+      {evidenceLoading && !loading && (
+        <div role="status" style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan, padding: '8px 12px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg }}>
+          Loading stored evidence for {inSource.length} companies… statuses, counts and the TradingView list appear when it is in (no AI is used).
+        </div>
+      )}
       {/* ── THE FIVE SIGNALS. Not fifty scores. ─────────────────────────── */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', opacity: evidenceLoading ? 0.35 : 1, pointerEvents: evidenceLoading ? 'none' : undefined }}>
         {ORDER.map((s) => {
           const m = STATUS_META[s];
           const on = filter === s;
@@ -218,7 +225,7 @@ export default function PortfolioCatalystsPage() {
                 cursor: 'pointer', border: `1px solid ${on ? m.color : C.border}`,
                 background: on ? `${m.color}18` : C.bg,
               }}>
-              <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{counts[s] || 0}</span>
+              <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{evidenceLoading ? '…' : (counts[s] || 0)}</span>
               <span style={{ fontSize: 12.5, fontWeight: 800, color: on ? `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` : C.dim }}>{m.dot} {m.label}</span>
             </button>
           );
@@ -243,6 +250,7 @@ export default function PortfolioCatalystsPage() {
           tickers: Array.from(new Set(inIndia.filter((r) => r.assessment?.status === k).map((r) => tv(r.symbol)))),
         })).filter((g) => g.tickers.length);
         const all = Array.from(new Set(groups.flatMap((g) => g.tickers)));
+        if (evidenceLoading) return null;
         const usLeft = inSource.filter((r) => r.market === 'US' && KEEP.some(([k]) => r.assessment?.status === k)).length;
         if (!all.length) return null;
         return (
@@ -259,7 +267,7 @@ export default function PortfolioCatalystsPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>
           {list.length} of {inSource.length} shown · {note.book} held · {note.bench} bench ·{' '}
-          <b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {inSource.length - readCount} remaining · {docsRead} documents read
+          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {inSource.length - readCount} remaining · {docsRead} documents read</>}
           {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
           {sourceDown > 0 && <> · {sourceDown} source unavailable</>}
         </span>
@@ -269,7 +277,7 @@ export default function PortfolioCatalystsPage() {
           background: onlyRead ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
         }}>{onlyRead ? 'Only names with evidence read' : 'Show all'}</button>
 
-        {!batch.running ? (
+        {evidenceLoading ? null : !batch.running ? (
           <button onClick={() => readAll(list.map((r) => r.symbol))}
             title="Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
             style={{
@@ -289,7 +297,7 @@ export default function PortfolioCatalystsPage() {
             Re-reads the names that filed results in the last 10 days and
             have not been read since that filing. Everything else is skipped
             without a call — and the strip below says so, name by name. */}
-        {!batch.running && recent.state !== 'checking' && (
+        {!batch.running && !evidenceLoading && recent.state !== 'checking' && (
           <button onClick={() => readRecentReporters(10)}
             title="Asks the exchange feed which holdings filed results in the last 10 days, then re-reads ONLY those not yet read since their filing. A name whose evidence already post-dates its results is skipped without a model call. US names are not covered by the NSE feed and are skipped."
             style={{
@@ -302,7 +310,7 @@ export default function PortfolioCatalystsPage() {
             from a results filing read under the headline prompt (v9). Names
             read before that stay EVIDENCE INCOMPLETE until re-read. This is
             the one button that spends: one model call per name, on click. */}
-        {!batch.running && blockedOnHeadline.length > 0 && (
+        {!batch.running && !evidenceLoading && blockedOnHeadline.length > 0 && (
           <button onClick={() => readAll(blockedOnHeadline.map((r) => r.symbol), 3, { reprocess: true, exact: true })}
             title="These names have no graded row and were read before the reader asked the filing for its headline figures. Re-reads each one once (force) so revenue growth, earnings growth and cash conversion can be filled from the results page. One model call per name."
             style={{
@@ -317,7 +325,7 @@ export default function PortfolioCatalystsPage() {
             Each ledger holds one quarter; the one before is already listed
             among its documents, unread. Reading it gives every variable a
             before, so the card can say "72% → 80% · +8pp". */}
-        {!anyRunning && needPrior.length > 0 && (
+        {!anyRunning && !evidenceLoading && needPrior.length > 0 && (
           <>
             <button onClick={() => readPriorPeriods(needPrior.map((r) => r.symbol))}
               title="For each name whose ledger has only its latest quarter, reads the quarter before it (concall transcript first, then investor presentation, then results) and stores it as its own period. The latest quarter is never changed. Three at a time; you can stop and resume."
@@ -386,7 +394,7 @@ export default function PortfolioCatalystsPage() {
           whenever the book is under-read, because a thesis engine judging a
           book it has not read is the failure this page was rebuilt to fix.
           (zzz717) */}
-      {!loading && readCount < inSource.length && (
+      {!loading && !evidenceLoading && readCount < inSource.length && (
         <div style={{ fontSize: 14, color: C.dim, lineHeight: 1.6, background: C.bg,
           border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
           <b style={{ color: C.text }}>

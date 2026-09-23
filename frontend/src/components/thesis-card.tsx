@@ -117,7 +117,8 @@ const STATEMENT_TAG: Record<string, { word: string; color: string }> = {
   TARGET: { word: 'TARGET', color: C.cyan },
   HISTORICAL: { word: 'HISTORICAL CONTEXT', color: C.faint },
 };
-const stripTag = (s: string | null | undefined) => String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '').trim();
+const rupee = (s: string) => s.replace(/`\s*(?=\d)/g, '₹').replace(/(?<![A-Za-z])H\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/g, '₹');
+const stripTag = (s: string | null | undefined) => rupee(String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '')).trim();
 
 type RowLike = {
   verdict: VarVerdict; before: string | null; after: string | null; delta: string | null;
@@ -128,7 +129,7 @@ type RowLike = {
 /** The compact value a chip shows — one figure, typed. */
 function chipValue(c: RowLike): string {
   const after = stripTag(c.after);
-  const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${c.plan.value}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
+  const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupee(c.plan.value)}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
   if (c.statement === 'GUIDANCE' || c.statement === 'TARGET') {
     // "maintained" / "raised" are the finding; print them as such.
     if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${c.statement.toLowerCase()} MAINTAINED`;
@@ -137,7 +138,7 @@ function chipValue(c: RowLike): string {
   if (c.statement === 'MANAGEMENT_STATEMENT') return `“${after}”${planTxt}`;
   if (c.statement === 'HISTORICAL') return `${[c.before, after].filter(Boolean).join(' → ')} (${c.asOf})`;
   const cmp = c.comparison;
-  if (cmp && cmp.previous && cmp.basis !== 'NONE' && cmp.basis !== 'WITHIN_DOCUMENT') {
+  if (cmp && cmp.previous && cmp.basis !== 'NONE' && cmp.basis !== 'WITHIN_DOCUMENT' && cmp.change_type !== 'NOT_COMPARABLE') {
     const ch = cmp.change_type === 'UNCHANGED' ? 'FLAT' : (cmp.change || c.delta || '');
     return `${cmp.previous.raw} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
   }

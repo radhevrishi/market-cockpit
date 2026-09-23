@@ -156,15 +156,25 @@ function presentErrors(errors: string[], universe: Array<{ ticker: string }>): s
   const on = new Set(universe.map((u) => u.ticker.toUpperCase()));
   return errors.filter((e) => { const t = String(e).split(':')[0].trim().toUpperCase(); return !t || !/^[A-Z0-9.&-]+$/.test(t) || on.has(t); }).slice(-5);
 }
+const unEntity = (v: unknown) => typeof v === 'string'
+  ? v.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+  : v;
 function presentFindings<T extends Record<string, any>>(findings: T): T {
   const out: Record<string, any> = {};
-  for (const [k, f] of Object.entries(findings || {})) {
+  for (const [k, f0] of Object.entries(findings || {})) {
+    // "AIL Dixon&#x27;s" — stored before the reader decoded hex entities. (zzz768)
+    const f = f0 ? { ...f0, headline: unEntity(f0.headline), evidenceQuote: unEntity(f0.evidenceQuote), company: unEntity(f0.company),
+      notes: Array.isArray(f0.notes) ? f0.notes.map(unEntity) : f0.notes, routine: Array.isArray(f0.routine) ? f0.routine.map(unEntity) : f0.routine } : f0;
     if (f && f.status === 'catalyst' && f.category === 'fundraising'
       && /\bncds?\b|non[- ]convertible debenture|debentures?\b|commercial paper|term loan/i.test(String(f.headline || ''))
       && !/\bequity\b|preferential|\bqip\b|warrant|rights (issue|shares)/i.test(String(f.headline || ''))) {
       // Debt is financing, not a catalyst (zzz766) — findings stored before
       // that rule are re-read the same way here.
-      out[k] = { ...f, status: 'routine_only', net: null, verdict: null, components: null, routine: [...(f.routine || []), String(f.headline)] };
+      out[k] = { ...f, status: 'routine_only', headline: `Debt financing — ${String(f.headline)}`, net: null, verdict: null, components: null, notes: (f.notes || []).filter((n: string) => !/A raise is supply/.test(n)).concat('Borrowing is financing, not a catalyst.'), routine: [...(f.routine || []), String(f.headline)] };
+      continue;
+    }
+    if (f && f.status !== 'catalyst' && Array.isArray(f.notes) && /\bncds?\b|debenture/i.test(String(f.headline || ''))) {
+      out[k] = { ...f, notes: f.notes.filter((n: string) => !/A raise is supply/.test(n)) };
       continue;
     }
     out[k] = f && f.category === 'management_change' && typeof f.net === 'number' && f.net > 15
@@ -243,7 +253,10 @@ async function research(req: NextRequest) {
   }
 
   const holdings = await loadHoldings(origin);
-  if (body?.reprocess === true) { st.findings = {}; st.model_reads = 0; }   // explicit re-run of the day, e.g. after a rule change
+  // Explicit re-run of the day after a rule change. The day's model-read
+  // count is KEPT: re-used reads come from the 30-day cache and cost nothing,
+  // and the daily ceiling still bounds any new read. (zzz768)
+  if (body?.reprocess === true) { st.findings = {}; }
   const todo = st.universe
     .filter((u) => !st.findings[u.ticker] || st.findings[u.ticker].status === 'unresearched' || (st.findings[u.ticker].status === 'source_failed' && body?.retry_failed))
     .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity));

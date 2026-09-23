@@ -393,7 +393,7 @@ function describe(c: MetricComparison): string {
       return `${L} was ${c.previous?.raw} in ${c.previous_period} and is not disclosed in ${c.current_period ?? 'this period'}. `
         + 'A company that stops disclosing a figure has told you something.';
     case 'NOT_COMPARABLE':
-      return `${L} ${cur} (${c.current_period}). ${c.previous_period} stated ${c.previous?.raw}, in a different unit — the two are not subtracted.`;
+      return `${L} ${cur}${c.current_period ? ` (${c.current_period})` : ''}. ${c.previous_period || 'An earlier statement'} stated ${c.previous?.raw}, in a different unit — the two are not subtracted.`;
     case 'NEW':
       return `${L} ${cur}. First figure on file — previous: NOT DISCLOSED.`;
     case 'NEWLY_DISCLOSED':
@@ -404,7 +404,7 @@ function describe(c: MetricComparison): string {
       return `${L} ${c.previous?.raw} → ${cur} · unchanged ${BASIS_LABEL[c.basis]}.`;
     default:
       if (c.guidance_move && c.guidance_move !== 'NOT_COMPARABLE') {
-        return `${L} ${c.guidance_move.toLowerCase()}: ${c.previous?.raw} (${c.previous_period}) → ${cur} (${c.current_period}).`;
+        return `${L} ${c.guidance_move.toLowerCase()}: ${c.previous?.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${cur}${c.current_period ? ` (${c.current_period})` : ''}.`;
       }
       return `${L} ${c.previous?.raw} → ${cur}`
         + `${c.change ? ` · ${c.change}` : ''}`

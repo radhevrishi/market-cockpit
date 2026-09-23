@@ -268,11 +268,12 @@ function urlHash(s: string): string {
 
 export const readCacheKey = (url: string) => `ai-gainers:annread:v1:${urlHash(url)}`;
 
-export interface CachedRead { read: ReadAnnouncement | null; cached: boolean }
+export interface CachedRead { read: ReadAnnouncement | null; cached: boolean; skipped?: boolean }
 
 export async function readAnnouncementCached(
   a: AnnouncementItem,
   fetchText: (url: string) => Promise<string>,
+  opts: { cacheOnly?: boolean } = {},
 ): Promise<CachedRead> {
   const url = String(a.attachment_url || '');
   if (!url) return { read: null, cached: false };
@@ -281,6 +282,8 @@ export async function readAnnouncementCached(
     const hit = await kvGet<{ read: ReadAnnouncement | null }>(k);
     if (hit && 'read' in hit) return { read: hit.read, cached: true };
   } catch { /* a cold cache is a normal cache */ }
+  // A page open answers from what was already read; only a click pays. (zzz768)
+  if (opts.cacheOnly) return { read: null, cached: false, skipped: true };
   const read = await readAnnouncement(a, fetchText);
   try { await kvSet(k, { read, at: new Date().toISOString() }, READ_CACHE_TTL_S); } catch { /* the read still counts; only the next one pays again */ }
   return { read, cached: false };

@@ -151,7 +151,7 @@ export default function AiGainersPage() {
   const genRef = useRef(0);
   const sweepGenRef = useRef(-1);
 
-  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number) => {
+  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number, reprocess = false) => {
     if (sweepGenRef.current === gen) return;          // this generation is already sweeping
     sweepGenRef.current = gen;
     setSweeping(true);
@@ -162,7 +162,7 @@ export default function AiGainersPage() {
         try {
           r = await fetch('/api/v1/ai-gainers/research', {
             method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
-            body: JSON.stringify({ market: m, rows: i === 0 ? rows : [], budget_ms: 40_000 }),
+            body: JSON.stringify({ market: m, rows: i === 0 ? rows : [], budget_ms: 40_000, ...(i === 0 && reprocess ? { reprocess: true } : {}) }),
             signal: AbortSignal.timeout(75_000),
           });
         } catch (e) { throw new Error(describeFetchError(e, 'The research service')); }
@@ -274,6 +274,7 @@ export default function AiGainersPage() {
           );
         })()}
         <button onClick={() => load(market, true)} disabled={loading}
+          title="Re-reads the gainers screen now and reads any new exchange announcements behind the moves (AI reads, only on this click)."
           style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
             border: `1px solid ${C.border}`, background: C.bg, color: C.dim, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Scanning…' : '↻ Rescan'}
@@ -302,7 +303,8 @@ export default function AiGainersPage() {
 
       {level === 'research' && (
         <ResearchLevel research={research} sweeping={sweeping} market={market}
-          onResume={() => data && sweep(market, data.scanned || [], genRef.current)} />
+          onResume={() => data && sweep(market, data.scanned || [], genRef.current)}
+          onRescore={() => data && sweep(market, data.scanned || [], genRef.current, true)} />
       )}
 
       {data && level === 'market' && (
@@ -409,13 +411,15 @@ function SessionBanner({ s, generatedAt, cached }: { s: Session; generatedAt: st
   );
 }
 
-function ResearchLevel({ research, sweeping, market, onResume, scoredOnly }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void; scoredOnly?: boolean }) {
+function ResearchLevel({ research, sweeping, market, onResume, onRescore, scoredOnly }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void; onRescore?: () => void; scoredOnly?: boolean }) {
   if (!research) return <div style={{ fontSize: 13, color: C.dim }}>{sweeping ? 'Researching…' : 'No catalyst research for this session yet. Click “▶ Research catalysts” above — it runs only when you click, because it uses AI reads.'}</div>;
   const all = Object.values(research.findings || {});
   const cov = research.coverage;
   const scored = all.filter((f) => f.status === 'catalyst').sort((a, b) => (b.net ?? -1) - (a.net ?? -1));
   const rejected = all.filter((f) => f.status === 'denied' || f.status === 'negative');
-  const bands = all.filter((f) => f.bandPrint && f.status !== 'catalyst').sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  // A name already listed as denied/negative or as a listing artifact is not
+  // listed again as a band print (WEL, SUNDROP, Technocrats appeared twice). (zzz768)
+  const bands = all.filter((f) => f.bandPrint && f.status !== 'catalyst' && f.status !== 'denied' && f.status !== 'negative' && f.status !== 'listing_artifact').sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
   const listings = all.filter((f) => f.status === 'listing_artifact');
   const unexplained = all.filter((f) => (f.status === 'none' || f.status === 'routine_only') && !f.bandPrint).sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
   const UNEXPLAINED_SHOWN = 80;
@@ -448,7 +452,8 @@ function ResearchLevel({ research, sweeping, market, onResume, scoredOnly }: { r
         {failed.length > 0 && <> · <span style={{ color: C.amber }}>{failed.length} source failed</span></>}
         {research.model_reads != null && <> · {research.model_reads} documents model-read</>}
         {sweeping ? <span style={{ color: C.cyan }}> · researching…</span>
-          : research.remaining > 0 ? <button onClick={onResume} style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>Resume · {research.remaining} remaining</button> : null}
+          : research.remaining > 0 ? <button onClick={onResume} style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>Resume · {research.remaining} remaining</button>
+            : onRescore && cov.total > 0 ? <button onClick={onRescore} title="Re-classifies and re-scores today's names with the current rules. Filings already model-read are re-used from cache, so this costs little or nothing." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>↻ Re-score today with current rules</button> : null}
         {research.error && (
           <div role="alert" style={{ color: C.amber, marginTop: 4 }}>
             {research.error}{' '}
@@ -661,12 +666,18 @@ function MarketLevel({ data, structural, onDrill, research }: { data: Payload; s
   // drills into lists the catalyst sweep — "Show me the 1" opened 8. Both are
   // printed now, each named for what it counted. (zzz767)
   const swept = research && research.coverage.total > 0 ? research : null;
-  const sweptScored = swept ? Object.values(swept.findings || {}).filter((x: any) => x.status === 'catalyst').length : null;
+  // The research universe is every name seen today across scans; the funnel
+  // counts the names on THIS board and says how many more came from earlier
+  // scans. (zzz768)
+  const onBoard = new Set((data.scanned || []).map((g) => String(g.ticker).toUpperCase()));
+  const sweptAll = swept ? Object.values(swept.findings || {}).filter((x: any) => x.status === 'catalyst') : [];
+  const sweptScored = swept ? sweptAll.filter((x: any) => onBoard.has(String(x.ticker).toUpperCase())).length : null;
+  const sweptEarlier = swept ? sweptAll.length - (sweptScored ?? 0) : 0;
   const steps = [
     { n: data.gainers_scanned || f.scanned, l: 'gainers scanned', w: data.market === 'IN' ? 'your screener.in screen, small and mid caps only' : 'the committed screen for this market' },
     { n: data.graded_available, l: 'filed results available', w: 'results the graders have already read' },
     { n: f.withCatalyst, l: 'had a catalyst in a filed result', w: 'a results filing behind the move, after clustering duplicates' },
-    { n: sweptScored ?? '—', l: 'carry a catalyst in recent filings', w: swept ? `catalyst research read ${swept.coverage.researched}/${swept.coverage.total} names' recent filings` : 'not researched yet — use “▶ Research catalysts” (runs only on click)' },
+    { n: sweptScored ?? '—', l: 'carry a catalyst in recent filings', w: swept ? `of the ${onBoard.size} on this board · research read ${swept.coverage.researched}/${swept.coverage.total} names seen today${sweptEarlier > 0 ? ` (${sweptEarlier} more with a catalyst from earlier scans)` : ''}` : 'not researched yet — use “▶ Research catalysts” (runs only on click)' },
     { n: structural, l: 'could matter beyond a quarter', w: 'the effect is medium- or long-lived, not one print' },
     { n: f.queue, l: 'deserve your attention', w: 'ranked by research priority, never by percentage gain' },
   ];
@@ -687,7 +698,7 @@ function MarketLevel({ data, structural, onDrill, research }: { data: Payload; s
       <button onClick={onDrill} style={{
         marginTop: 12, fontSize: 12, fontWeight: 700, padding: '5px 13px', borderRadius: 999,
         border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
-      }}>{sweptScored != null ? `Show me the ${sweptScored} with a catalyst →` : `Show me the ${f.queue} →`}</button>
+      }}>{sweptScored != null ? `Show me the catalysts (${sweptScored + sweptEarlier}) →` : `Show me the ${f.queue} →`}</button>
     </div>
   );
 }

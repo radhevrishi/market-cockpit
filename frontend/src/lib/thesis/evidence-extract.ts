@@ -549,6 +549,13 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     }
     // Any one-off without one-off vocabulary is a line read off a table
     // ("INR 16,818.00" from a "Total income" chart row) — never an item. (zzz767)
+    // "Reduced the debt by about 10 crores" is a repayment, not capex
+    // (PICCADIL printed ▼ Capex). "Revenue reaching INR1,300 crore" is
+    // revenue, not a volume (JUBLINGREA). (zzz768)
+    if ((v === 'capex' || v === 'capex_status') && /(reduc\w*|repa(y|id)\w*|pa(id|y)[ -]?(down|off))[^.]{0,30}\bdebt|\bdebt\b[^.]{0,30}(reduc|repa|pa(id|y)[ -]?(down|off))/i.test(valueText)
+      && !/capex|capital expenditure|invest(ed|ment)|spent|deploy/i.test(valueText)) return false;
+    if (v === 'volume' && /₹|\bINR|\bRs\.?|crores?|\bcr\b|revenue|sales of/i.test(String(e.after || ''))
+      && !/tonn?e|\bmt\b|units?|litre|liter|\bkl\b|pieces|pcs|sq ?ft|mw|volume/i.test(String(e.after || ''))) return false;
     // "15 megawatt hours of orders in hand" is an ORDER, not a volume sold.
     // EXICOM printed it as "Volume 15 MWh". (zzz763)
     if (v === 'volume' && /orders? (in hand|book|backlog|intake)|pipeline|backlog|order book/i.test(ev)

@@ -503,6 +503,7 @@ async function scan(req: NextRequest) {
   // scorer still never sees a price magnitude.
   let announcementsRead = 0;
   let announcementsConsidered = 0;
+  let announcementsUnread = 0;
   if (gainers.length) {
     const unmatched = gainers
       .filter((g) => !gradedBy.has(g.ticker))
@@ -530,10 +531,13 @@ async function scan(req: NextRequest) {
       // the route has a 60-second ceiling. Six in sequence fits; six at once
       // against the exchange's CDN does not deserve to.
       for (const { g, a } of candidates) {
-        const { read } = await readAnnouncementCached(a, async (url) => {
+        // A page open reads only what is already cached; the Rescan click
+        // (fresh=1) is what pays for new model reads. (zzz768)
+        const { read, skipped } = await readAnnouncementCached(a, async (url) => {
           const ext = await extractPdfText(url, { signal: AbortSignal.timeout(20_000) });
           return ext?.text || '';
-        });
+        }, { cacheOnly: !fresh });
+        if (skipped) { announcementsUnread++; continue; }
         if (!read) continue;
         announcementsRead++;
         const tier = sourceTierOf(read.sourceUrl);
@@ -664,7 +668,11 @@ async function scan(req: NextRequest) {
       );
     }
   }
-  if (announcementsConsidered) {
+  if (announcementsUnread) {
+    notes.push(`${announcementsUnread} announcement${announcementsUnread === 1 ? '' : 's'} behind gainers with no filed result ${announcementsUnread === 1 ? 'was' : 'were'} not read on this page open — press ↻ Rescan to read ${announcementsUnread === 1 ? 'it' : 'them'} (uses AI reads).`);
+  }
+  if (announcementsConsidered - announcementsUnread > 0) {
+    announcementsConsidered -= announcementsUnread;
     notes.push(`Phase 2 read ${announcementsConsidered} exchange announcement${announcementsConsidered === 1 ? '' : 's'} `
       + `for gainers with no filed result behind them, and ${announcementsRead} produced a catalyst. `
       + 'Board-meeting intimations, AGM notices and voting results are filtered out before any model call, and a '

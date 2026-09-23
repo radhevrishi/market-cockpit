@@ -30,7 +30,7 @@ import { readConvictionBeats } from '@/lib/conviction-beats';
 import { classifyGradedRow, classifyWithFiling, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
-import { rowChangeLines } from './variables';
+import { rowChangeLines, deepRupeeGlyph } from './variables';
 import { readJson, humanError } from './safe-json';
 import type { VarKey } from './taxonomy';
 import { assessThesis, type ThesisAssessment } from './status';
@@ -98,7 +98,9 @@ export interface BookRow {
 
 /** Fold a server ledger into a row: the latest period's summary becomes the
  *  card's evidence, exactly as a fresh read would. */
-function applyLedger(row: BookRow, ledger: CompanyLedger | null, freshness?: { state: FreshnessState; detail: string } | null): BookRow {
+function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshness?: { state: FreshnessState; detail: string } | null): BookRow {
+  // "` 480+ Crore" — the PDF's rupee glyph — printed on cards. (zzz768)
+  const ledger = ledger0 ? deepRupeeGlyph(ledger0) : ledger0;
   const fr = freshness || freshnessOf(ledger);
   const stored = latestSummary(ledger);
   if (!stored) {
@@ -234,6 +236,10 @@ export function useBook(opts?: { includeBench?: boolean }) {
   const [origins, setOrigins] = useState<Record<string, BookOrigin>>({});
   const [rows, setRows] = useState<Record<string, BookRow>>({});
   const [loading, setLoading] = useState(true);
+  // Rows paint before the stored evidence arrives; until it does, every card
+  // reads "evidence incomplete" and the counters are wrong (89 incomplete /
+  // 0 strengthening for ten seconds). The page waits on this. (zzz768)
+  const [evidenceLoading, setEvidenceLoading] = useState(true);
   const [batch, setBatch] = useState<{ running: boolean; done: number; total: number; resumable?: number; failed?: number }>({ running: false, done: 0, total: 0 });
   // The prior-quarter backfill's own progress (zzz765). Same shape as `batch`,
   // its own server header, and — like every read here — started by a click.
@@ -463,6 +469,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
           if (pr && !pr.status && updates[sym].assessment) toPost.push(updates[sym]);
         }
         setRows((r) => ({ ...r, ...updates }));
+        setEvidenceLoading(false);
         // Back-fill: a period persisted before statuses were recorded gets
         // its status on first load. Sequential and best-effort.
         for (const r of toPost.slice(0, 60)) { if (cancelled) break; await postStatus(r); }
@@ -481,6 +488,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
           setPriorBatch({ running: false, done: priorInfo.done + priorInfo.skipped + priorInfo.failed, total: priorInfo.tickers.length, resumable: priorInfo.finished_at ? 0 : priorInfo.remaining, failed: priorInfo.failed });
         }
       } catch { /* the page still works from graded data; the cards say NEVER READ */ }
+      finally { if (!cancelled) setEvidenceLoading(false); }
       if (cancelled) return;
 
       // ── STAGE 5 — THE NAMES NOBODY HAD A ROW FOR.                (zzz764)
@@ -910,5 +918,5 @@ export function useBook(opts?: { includeBench?: boolean }) {
     }
   }, [readAll]);
 
-  return { symbols, origins, note, rows, loading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods };
+  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods };
 }

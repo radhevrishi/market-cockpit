@@ -128,7 +128,10 @@ const RX = {
   newProduct: /product launch|\blaunch(ed|es|ing)?\b[^.]{0,60}(product|brand|range|variant|model|drug|molecule|platform|service)|began commercial sales|commenced commercial sales|commercial launch/i,
   negative: /against-vote|vote(s|d)? against|voting against|\biias\b|\bsesqi\b|proxy advis(or|er|ory)[^.]{0,60}against|ceased (as|to be) (an )?independent director|independent director[^.]{0,30}(ceased|resign|stepped down)|notice of delisting|item 3\.01|non-?compliance with (a )?(continued )?listing|going concern|non-reliance|restatement|item 4\.02|changes in registrant's certifying accountant|item 4\.01|resignation of (statutory |joint )?auditor|auditor.{0,20}resign|resignation.{0,40}independent director|independent director.{0,40}resign|(recommend|advis)[^.]{0,40}(vote )?against|sebi[^.]{0,30}(order|show cause|penalt|adjudicat)|penalty|default|insolvency|nclt|cirp|search (and|&) seizure|raid|fraud|forensic audit|winding up|delist|suspension of trading|gst evasion|income tax (search|survey)|qualified opinion|disclaimer of opinion|loss of (a )?(major|key) (customer|order)|order (cancell|terminat)|cancellation of order/i,
   routine: /non-deal road ?show|road ?show|\bndr\b|board meeting intimation|prior intimation|annual general meeting|\bagm\b|\begm\b|notice of (the )?(\d+\w* )?(annual|extraordinary)|newspaper|publication|brsr|business responsibility|annual report|trading window|esop|esos|espp|record date|dividend|book closure|investor (meet|presentation|conference|call)|analyst|con\.? ?call|earnings call|shareholders? meeting|postal ballot|voting result|scrutini[sz]er|compliance certificate|share transfer|loss of share|duplicate|reconciliation of share capital|shareholding pattern|corporate governance report|related party|secretarial|change in director|appointment of (company secretary|compliance officer)|cessation|retirement|intimation of (board|meeting)|outcome of board meeting[^.]{0,20}(unaudited|financial results)|closure of trading|letter to (non-email )?shareholders|kyc|website|change in (registered )?office|disclosure under regulation (29|31)|sast|xbrl|monitoring agency|statement of deviation|investor grievance|redressal|listing obligation|reg\.? ?7\(3\)|regulation 74|depository|certificate under|\bn-px\b|\bdef 14a\b|\bdefa14a\b|\bsc 13g\b|\b11-k\b|\bs-8\b|\barS\b|special window|re-?lodgement|physical share|esg (score|rating)|reaffirm|affirmed|conference participation|earnings? release date|date of (board|agm)|reconstitut|committee|policy|code of conduct|familiari[sz]ation|nomination|remuneration/i,
-  order: /material definitive agreement|item 1\.01|award[^.]{0,20}order|receipt of order|bagging|letter of award|\bloa\b|\bloi\b|letter of intent|work order|purchase order|contract (award|win|from|worth|value)|(won|wins|secured|bags|bagged|awarded|receives?|received)[^.]{0,80}(order|contract|project|tender|₹|rs\.?|inr|crore|lakh|usd|\$)|order (worth|valued|of)|supply (agreement|order)|framework agreement|l1 bidder|empanel/i,
+  // "Material definitive agreement" / Item 1.01 is the SEC's name for ANY
+  // contract — a finance facility, a lease, a merger. It is never by itself
+  // an order win (PRTH, NUAI printed "order win" from the item title). (zzz768)
+  order: /award[^.]{0,20}order|receipt of order|bagging|letter of award|\bloa\b|\bloi\b|letter of intent|work order|purchase order|contract (award|win|from|worth|value)|(won|wins|secured|bags|bagged|awarded|receives?|received)[^.]{0,80}(order|contract|project|tender|₹|rs\.?|inr|crore|lakh|usd|\$)|order (worth|valued|of)|supply (agreement|order)|framework agreement|l1 bidder|empanel|\b(epc|epcm|pmc)\b[^.]{0,20}contract|signed[^.]{0,40}\bcontract\b/i,
   capacity: /enhancement of [^.]{0,40}capacity|capacity (rises|rose|increased|enhanced|augment)|expansion (completed|commissioned)|augmentation of [^.]{0,30}capacity|commission(ed|ing)|inaugurat|starting operations|commenced operations|completion of (the )?(project|construction|expansion|plant|facility)|ready for (leasing|commercial|operation)|commence(ment|d|s)? (of )?(commercial )?(production|operations)|capacity (expansion|addition|enhancement)|new (plant|facility|unit|line)|expansion of|greenfield|brownfield|plant (start|commenc)|trial (run|production)|start of (commercial )?production|first (batch|dispatch)/i,
   certification: /certif|accredit|iso ?\d|as9100|nadcap|(regulatory|product|drug|usfda|fda|dcgi|cdsco|who|epa|ema|mhra) approval|\busfda\b|\bus fda\b|\beir\b|form 483|who[- ]gmp|\bgmp\b|(product|drug|manufacturing|import|export) licen[cs]e|licen[cs]e (granted|received|obtained)|registration (of|granted|received)|marketing authori[sz]ation|\bcep\b|ce mark|\banda\b|\bdmf\b|patent (grant|approv)|qualified (as|by) [^.]{0,40}(supplier|vendor)|(vendor|supplier) (approval|qualification)/i,
   mna: /acquisition consideration|consideration (for|of) (the )?acquisition|share swap|consideration other than cash|completion of acquisition|item 2\.01|\bsc 13d\b|acquisition of|acquire|acquires|acquired|takeover|merger|amalgamation|scheme of arrangement|demerger|joint venture|\bjv\b|memorandum of understanding|\bmou\b|strategic (partnership|alliance|investment|investor)|stake (purchase|sale)|slump sale|divest|open offer|share purchase agreement|\bspa\b/i,
@@ -146,7 +149,9 @@ const RX = {
   // is follow-through, not fresh news. (zzz766 — GABRIEL's 11 Sep allotment
   // for an earlier-approved acquisition scored FIRE as if it were new.)
   renewal: /allot[\s\S]{0,140}?consideration|pursuant to (the )?(scheme|share purchase agreement|acquisition agreement)|renew|extension of (the )?(existing|earlier)|re-?award|repeat order|same (customer|counterparty)|already (announced|disclosed)|earlier (announced|disclosed)|in continuation/i,
-  mgmtChange: /departure of (directors|certain officers)|item 5\.02|appointment of (chief|ceo|cfo|managing director)|resignation of (chief|ceo|cfo|managing director)/i,
+  // Officer changes worded as sentences ("resigns as CHRO", "Board appointed
+  // seven senior leaders") were left "not classifiable". (zzz768)
+  mgmtChange: /departure of (directors|certain officers)|item 5\.02|appointment of (chief|ceo|cfo|managing director)|resignation of (chief|ceo|cfo|managing director)|(resign(ed|s|ation)?|appoint(ed|s|ment)?|designated|re-?designat\w*|steps? down|stepped down)\b[^.]{0,80}\b(chief|ceo|cfo|coo|chro|cto|cmo|managing director|whole[- ]time director|president|senior (management|leadership|leaders)|company secretary)\b/i,
   brokerNote: /initiat(es|ed|ion of) coverage|target price|\btp\b|buy rating|rating: buy|brokerage/i,
 };
 
@@ -166,8 +171,17 @@ export function parseStatedValue(text: string, market: 'IN' | 'US'): number | nu
   if (market === 'IN') {
     const cr = /(?:₹|rs\.?|inr)\s*([\d.]+)\s*(crore|cr\b|crores)/i.exec(t) || /([\d.]+)\s*(crore|crores|\bcr\b)/i.exec(t);
     if (cr) { const n = parseFloat(cr[1]); return Number.isFinite(n) ? n : null; }
-    const lakh = /(?:₹|rs\.?|inr)?\s*([\d.]+)\s*(lakh|lacs?)/i.exec(t);
+    // "20 lakh users", "2.82 lakh shares", "70 lakh warrants" are counts, not
+    // money: a lakh is ₹ only when a currency marks it. (zzz768 — RNIT ₹0.2 Cr)
+    const lakh = /(?:₹|rs\.?|inr)\s*([\d.]+)\s*(lakh|lacs?)/i.exec(t);
     if (lakh) { const n = parseFloat(lakh[1]); return Number.isFinite(n) ? n / 100 : null; }
+    // "Rs. 4,884.61 Million" (PACEDIGITK) — rupee millions.
+    const inrM = /(?:₹|rs\.?|inr)\s*([\d.]+)\s*(million|mn\b)/i.exec(t);
+    if (inrM) { const n = parseFloat(inrM[1]); return Number.isFinite(n) ? n / 10 : null; }
+    // "aggregating upto 60,00,00,000/-" (LIKHITHA) — a rupee amount written in
+    // full; commas are already stripped.
+    const full = /(?:₹|rs\.?|inr)?\s*(\d{7,})(?:\.\d+)?\s*\/-/i.exec(t);
+    if (full) { const n = parseFloat(full[1]); return Number.isFinite(n) ? n / 1e7 : null; }
     const usd = /(?:usd|\$)\s*([\d.]+)\s*(million|mn|m\b)/i.exec(t);
     if (usd) { const n = parseFloat(usd[1]); return Number.isFinite(n) ? n * 8.5 : null; }   // ≈ ₹85/$ → ₹ Cr
     const usdB = /(?:usd|\$)\s*([\d.]+)\s*(billion|bn)/i.exec(t);
@@ -192,6 +206,14 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
     const us = classifyUsFiling(a);
     if (us) return { ...base, ...us, valueStated: us.kind === 'catalyst' ? base.valueStated : null };
   }
+  // A scheme the tribunal SANCTIONED is group restructuring, not insolvency
+  // (MAWANASUG's amalgamation read as NEGATIVE because it names the NCLT);
+  // a buyback's share extinguishment is the tail of an event already priced;
+  // an officer joining or leaving moves no revenue. (zzz768)
+  if (/(nclt|tribunal)[^.]{0,120}(sanction|approv)|(sanction|approv)[^.]{0,80}(nclt|tribunal)/i.test(hay) && /amalgamation|scheme|merger|demerger|arrangement/i.test(hay)) {
+    return { ...base, kind: 'routine', valueStated: null, routineReason: 'scheme sanctioned by the tribunal — group restructuring' };
+  }
+  if (/extinguish/i.test(hay) && /buy[- ]?back/i.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'shares extinguished after a completed buyback' };
   const saysNothing = /no (undisclosed|unpublished)|not aware of any|nothing (to|that needs to be) disclose/i.test(hay);
   if (RX.exchangeAsk.test(hay) && !RX.companyReply.test(hay) && !saysNothing) return { ...base, kind: 'exchange_query', valueStated: null };
   // A reply that CONFIRMS a reported event is the event, not a denial.
@@ -216,6 +238,7 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   if (/(acquired|bought|purchased|sold|disposed)[^.]{0,20}[\d,.]+ (\S+ ){0,3}shares/i.test(hay) && !/open offer|stake|%|per ?cent/i.test(hay)) {
     return /promoter/i.test(hay) && !/sold|disposed/i.test(hay) ? { ...base, kind: 'catalyst', category: 'promoter_purchase', stage: 'executed', valueStated: null } : { ...base, kind: 'routine', valueStated: null, routineReason: 'insider trade' };
   }
+  if (/authori[sz]ed[^.]{0,40}\bkmps?\b|\bkmps?\b[^.]{0,40}authori[sz]ed[^.]{0,40}materiality/i.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'KMP authorisation under Reg 30' };
   const subjectRoutine = RX.routine.test(a.subject) && !RX.order.test(a.subject) && !RX.capacity.test(a.subject) && !RX.certification.test(a.subject) && !RX.mna.test(a.subject) && !RX.rating.test(a.subject);
   if (subjectRoutine) return { ...base, kind: 'routine', valueStated: null, routineReason: (RX.routine.exec(a.subject) || [''])[0].toLowerCase().trim() || 'routine' };
   // An MoU, a letter of intent or anything "non-binding" is ENABLING: nothing
@@ -223,7 +246,13 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   const stage: Stage = (RX.enabling.test(hay) || /non-binding|memorandum of understanding|\bmou\b|letter of intent|\bloi\b|in-principle|term sheet|proposed/i.test(hay)) ? 'enabling'
     : ((RX.scheduled.test(hay) || /will (begin|start|commence|be commissioned)|is expected to|likely to/i.test(hay)) && !RX.executed.test(hay)) ? 'scheduled' : 'executed';
   const cat = (c: ClassifiedAnnouncement['category']): ClassifiedAnnouncement => ({ ...base, kind: 'catalyst', category: c, stage });
-  if (RX.order.test(hay)) return cat('order_win');
+  // An order RECEIVED is booked the day it arrives; the delivery date in the
+  // same sentence is its execution schedule, not the event. PACEDIGITK's LoA
+  // printed "SCHEDULED, not executed". An LoI stays enabling. (zzz768)
+  if (RX.order.test(hay)) {
+    const booked = stage === 'scheduled' && /(receiv|award|bagg|secur|won\b|wins\b|signed)/i.test(hay) && !/letter of intent|\bloi\b/i.test(hay);
+    return booked ? { ...cat('order_win'), stage: 'executed' } : cat('order_win');
+  }
   if (RX.capacity.test(hay)) return cat(/commission|commenc|start|first (batch|dispatch)/i.test(hay) ? 'production_ramp' : 'capacity_expansion');
   if (RX.buyback.test(hay)) return cat('buyback');
   if (RX.promoterBuy.test(hay) && !/inter[- ]se|gift|transmission|off-market transfer/i.test(hay)) return cat('promoter_purchase');
@@ -495,6 +524,11 @@ export function buildFinding(inp: SweepInput): Finding {
       return { ...base, status: 'negative', category: inp.read.category, headline: inp.read.headline, evidenceQuote: inp.read.quote, sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays, notes: [...base.notes, 'Model-read filing; the quote was found verbatim in the document. The filing is negative.'] };
     }
     c = { ...c, category: inp.read.category, valueStated: inp.read.valueStated ?? c.valueStated };
+  }
+  // Debt is financing, whichever reader filed it as a raise. (zzz768 — KUANTUM NCDs)
+  const cHay = `${c.subject} ${c.summary || ''} ${verified && inp.read ? inp.read.headline : ''}`;
+  if (c.category === 'fundraising' && RX.debtOnly.test(cHay) && !RX.equityWords.test(cHay)) {
+    return { ...base, status: 'routine_only', headline: `Debt financing — ${shorten(c.summary || c.subject, 90)}`, sourceUrl: c.url, sourceDate: c.dateIso, ageDays: c.ageDays, sourceTier: 'primary', notes: [...base.notes, 'Borrowing is financing, not a catalyst.'] };
   }
   const scored = scoreCatalyst(c, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: verified });
   // An offering into the move caps the verdict below FIRE (zzz766).
