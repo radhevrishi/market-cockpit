@@ -156,7 +156,7 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
       V('guidance', 2, 'Execution timing shows up in guidance first.',
         'Management reduces forward expectations.'),
       V('capacity_addition', 1, 'Capacity is how the book gets built.', ''),
-      V('new_customer', 1, 'Where the next book comes from.', ''),
+      V('new_customer', 2, 'Customer and programme wins are where the next book comes from.', ''),
     ],
   },
 
@@ -189,6 +189,10 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
         'Management declines to guide, or reduces forward expectations.'),
       V('raw_materials', 2, 'An input-cost windfall explains many profit jumps and does not repeat.', ''),
       V('roce', 1, 'Whether the jump shows up in returns on capital.', ''),
+      // zzz770 — the owner's F map also names operating leverage and price/mix
+      // as candidate causes of the jump. Confirming, never gates on their own.
+      V('operating_leverage', 2, 'Profit outrunning revenue is the jump itself; a stated fixed-cost cause makes it operational.', ''),
+      V('mix', 2, 'A mix shift is a structural cause; a price spike is not.', ''),
     ],
   },
 
@@ -214,6 +218,11 @@ export const THESES: Record<AbfgPattern | 'UNCLASSIFIED', Thesis> = {
       V('working_capital', 2, 'Quality shows up in working-capital discipline.', ''),
       V('capex', 1, 'Capital discipline is part of why it compounds quietly.', ''),
       V('market_share', 1, 'Quiet share gain is the best kind.', ''),
+      // zzz770 — balance sheet and forensics are part of "quality".
+      V('debt', 2, 'A quiet compounder funds itself; rising borrowing is the first sign it cannot.',
+        'Borrowing rises to fund working capital or losses.'),
+      V('one_offs', 2, 'Recurring earnings are the point; a one-off inside the profit is the forensic check.',
+        'The earnings rest on items that will not repeat.'),
     ],
   },
 

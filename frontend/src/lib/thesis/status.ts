@@ -64,7 +64,9 @@ import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
-import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason } from './taxonomy';
+import { periodEnd } from './fact-normalize';
+import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason,
+  type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile } from './taxonomy';
 
 /** A variable the grader can fill without a document is OUTPUT. (zzz738) */
 const isOutput = (k: VarKey): boolean => VAR_DIMENSION[k] === 'financial' || GRADER_AVAILABLE.has(k);
@@ -104,22 +106,67 @@ const OUTPUT_SHORT: Array<[VarKey, string]> = [
   ['revenue_growth', 'revenue'], ['earnings_growth', 'earnings'], ['margin', 'margin'],
 ];
 
+// ── THE STATUS TEXT AGREES WITH THE LABEL.                        (zzz770)
+// "🟢 THESIS STRENGTHENING … NO THESIS ACTION TRIGGERED" read as two verdicts
+// on one card. Every action line now opens with its own status label, and the
+// three sentences below are the owner's wording.
 export const OUTPUT_ONLY_SENTENCE =
-  'Financial output improved, but the structural mechanism is not yet fully established.';
+  'Financial output improved, but the structural cause has not yet been established.';
 export const STRENGTHENING_SENTENCE =
-  'THESIS STRENGTHENING — structural mechanism confirmed and supporting output confirmed.';
+  'THESIS STRENGTHENING — structural mechanism confirmed and financial evidence supports it. No separate invalidation trigger is present.';
+export const CONFIRMATION_SENTENCE =
+  'CONFIRMATION REQUIRED — financial output improved, but the structural cause has not yet been established.';
+export const INCOMPLETE_SENTENCE =
+  'EVIDENCE INCOMPLETE — required thesis variables remain unreviewed. This is not evidence of deterioration.';
+const INCOMPLETE_BECAUSE = 'Required thesis variables remain unreviewed. This is not evidence of deterioration. ';
+const STRENGTHENING_BECAUSE = 'Structural mechanism confirmed and financial evidence supports it. No separate invalidation trigger is present. ';
+
+/** Cash conversion is thesis-critical only where it IS the thesis: the F
+ *  forensic test and G's "the quality is the cash". Everywhere else a weak
+ *  reading is a FINANCIAL WARNING, shown and never a status mover. (zzz770) */
+export const cashIsThesisCritical = (pattern: string | null | undefined): boolean => pattern === 'F' || pattern === 'G';
+
+/** A negative cash-to-profit ratio from a grader row is an ANNUAL ratio whose
+ *  sign may come from either side. It is UNCLEAR — validation required —
+ *  and counted neither way. (zzz770) */
+export const NEGATIVE_CASH_UNCLEAR = 'validation required — a negative cash-to-profit ratio; which side (cash or profit) is negative for the same period is not established';
+const isNegativeRatio = (s: unknown) => /^\s*[-−]\s*\d/.test(String(s ?? ''));
+
+/** For each core MECHANISM variable, the evidenced drivers that establish the
+ *  same physical / commercial mechanism when the variable itself is silent.
+ *  Utilisation's absorption can be shown by volume or capacity coming on
+ *  stream; an order book by intake or book-to-bill. A margin driver or a
+ *  product-mix story is NOT absorption. (zzz770) */
+const MECH_SUBSTITUTES: Partial<Record<VarKey, VarKey[]>> = {
+  utilisation: ['volume', 'capacity', 'capacity_addition', 'capex_earning', 'commissioning'],
+  order_book: ['order_intake', 'book_to_bill'],
+  order_intake: ['order_book', 'book_to_bill'],
+  book_to_bill: ['order_book', 'order_intake'],
+};
 
 /** Three counts, never a fraction. (zzz738) */
 // Five counts that ADD UP to the total. "2 confirmed · 0 pending · 1
 // contradicted · of 4" left one variable unaccounted for on every card —
 // the flat one — and a reader cannot audit a sum that does not sum. (zzz754)
-function tally(vs: Array<{ verdict: string }>): { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number } {
+// UNCLEAR is never contradicted and NOT_APPLICABLE is never pending: both are
+// taken out of the five verdict counts and reported on their own, so the seven
+// still add up to the total and `core_variables` excludes what cannot apply.
+// (zzz770)
+export interface Tally {
+  confirmed: number; pending: number; contradicted: number; stated: number; flat: number;
+  unclear: number; not_applicable: number; core_variables: number; total: number;
+}
+function tally(vs: Array<{ verdict: string; state?: EvidenceState }>): Tally {
+  const na = vs.filter((c) => c.state === 'NOT_APPLICABLE').length;
+  const unclear = vs.filter((c) => c.state === 'UNCLEAR').length;
+  const live = vs.filter((c) => c.state !== 'NOT_APPLICABLE' && c.state !== 'UNCLEAR');
   return {
-    confirmed: vs.filter((c) => c.verdict === 'improving').length,
-    pending: vs.filter((c) => c.verdict === 'unknown').length,
-    contradicted: vs.filter((c) => c.verdict === 'deteriorating').length,
-    stated: vs.filter((c) => c.verdict === 'stated').length,
-    flat: vs.filter((c) => c.verdict === 'flat').length,
+    confirmed: live.filter((c) => c.verdict === 'improving').length,
+    pending: live.filter((c) => c.verdict === 'unknown').length,
+    contradicted: live.filter((c) => c.verdict === 'deteriorating').length,
+    stated: live.filter((c) => c.verdict === 'stated').length,
+    flat: live.filter((c) => c.verdict === 'flat').length,
+    unclear, not_applicable: na, core_variables: vs.length - na,
     total: vs.length,
   };
 }
@@ -146,6 +193,11 @@ export interface CheckedVariable {
    *  read and was silent, it cannot apply, or it was mentioned unclearly.
    *  Null when the variable DOES have a value. (zzz723) */
   absence: AbsenceReason | null;
+  /** FOUND / NOT_DISCLOSED / NOT_SEARCHED / UNCLEAR / NOT_APPLICABLE /
+   *  SOURCE_UNAVAILABLE / RETRIEVAL_FAILED. Never a bare dash. (zzz770) */
+  state: EvidenceState;
+  /** The specific reason behind UNCLEAR or NOT_APPLICABLE, when known. */
+  stateReason: string | null;
   /** The cross-period join for this variable, when the ledger holds one. It is
    *  attached even where the variable has NO current value — a figure that was
    *  disclosed for four quarters and is absent from the fifth is the change
@@ -201,7 +253,14 @@ export interface ThesisAssessment {
    *  cash conversion at 0.32× is a fact worth a red line on the card; it is
    *  not, on its own, evidence that an unclassified thesis is weakening
    *  when no document has been read. (zzz738) */
-  financialWarning: Array<{ label: string; value: string }>;
+  financialWarning: Array<{ label: string; value: string; note?: string }>;
+  /** ── THE THESIS LOGIC CHAIN, FROM EVIDENCE ONLY.               (zzz770)
+   *  OBSERVATION → CAUSE → STRUCTURAL / TEMPORARY → THESIS IMPACT → FORWARD.
+   *  A step the evidence does not establish says "not established". */
+  logicChain: Array<{ step: 'OBSERVATION' | 'CAUSE' | 'STRUCTURAL / TEMPORARY' | 'THESIS IMPACT' | 'FORWARD'; text: string; established: boolean }>;
+  /** Core mechanism variables that are unknown (not disclosed / not searched)
+   *  with no substitute driver evidenced — the gap that keeps green away. */
+  coreMechanismGaps: string[];
   /** How much of the thesis could be checked at all. */
   coverage: {
     checked: number; disclosed: number; corePossible: number; coreDisclosed: number;
@@ -231,9 +290,9 @@ export interface ThesisAssessment {
     // they confirm nothing about why, and "why" is the thesis. The counts
     // are now kept apart so a good print can never read as a proven
     // mechanism.
-    output: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
-    mechanism: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
-    forward: { confirmed: number; pending: number; contradicted: number; stated: number; flat: number; total: number };
+    output: Tally;
+    mechanism: Tally;
+    forward: Tally;
     /** Core variables disclosed as a LEVEL only — read, recorded, and not
      *  yet a direction. Named separately from missingCore because "the
      *  company told you and there is nothing to compare it to" and "nobody
@@ -252,17 +311,17 @@ export interface ThesisAssessment {
   };
   /** The action the OWNER takes. Never a trade. */
   action:
-    | 'EVIDENCE NOT YET REVIEWED' | 'CONFIRMATION REQUIRED' | 'RESULTS FIGURES NOT ON FILE'
-    | 'NO THESIS ACTION TRIGGERED' | 'MONITORING — NO THESIS INVALIDATION'
-    | 'THESIS WEAKENING — REVIEW EVIDENCE' | 'EXIT REVIEW'
-    | 'RE-UNDERWRITE — RUNNING BEHIND STATED PLAN'
-    | 'RE-UNDERWRITE — RUNNING AHEAD OF STATED PLAN';
+    | 'EVIDENCE INCOMPLETE' | 'CONFIRMATION REQUIRED' | 'EVIDENCE INCOMPLETE — RESULTS FIGURES NOT ON FILE'
+    | 'THESIS STRENGTHENING' | 'NO MATERIAL CHANGE'
+    | 'THESIS WEAKENING — REVIEW EVIDENCE' | 'THESIS BROKEN — EXIT REVIEW'
+    | 'RUNNING BEHIND PLAN — RE-UNDERWRITE'
+    | 'RUNNING AHEAD OF PLAN — RE-UNDERWRITE';
   /** Per required dimension: has the mechanism been established there? */
   dimensions: Array<{ dimension: VarDimension; label: string;
     state: 'confirmed' | 'contradicted' | 'unestablished'; by: string[] }>;
   /** Each link of the thesis mechanism, and whether the evidence confirms it.
    *  The spec's "OPERATING LEVERAGE CONFIRMED", rather than "earnings beat". */
-  mechanismCheck: Array<{ link: string; state: 'confirmed' | 'contradicted' | 'unchecked' }>;
+  mechanismCheck: Array<{ link: string; state: 'confirmed' | 'contradicted' | 'unchecked' | 'unclear' }>;
   mechanismVerdict: string;
   /** ── STRUCTURAL vs OUTPUT, as the status sentence states them. (zzz765c)
    *  `confirmed/total` is the X/Y printed on the card; `required` are the
@@ -289,30 +348,31 @@ export interface ThesisAssessment {
 // else he owns. It knows what the evidence says about the thesis. The decision
 // stays with him, so the labels now describe the EVIDENCE state and nothing
 // more.
+// Every action opens with its status's own label. (zzz770)
 const ACTION: Record<ThesisStatus, ThesisAssessment['action']> = {
-  EVIDENCE_INCOMPLETE: 'EVIDENCE NOT YET REVIEWED',
+  EVIDENCE_INCOMPLETE: 'EVIDENCE INCOMPLETE',
   CONFIRMATION_REQUIRED: 'CONFIRMATION REQUIRED',
-  STRENGTHENING: 'NO THESIS ACTION TRIGGERED',
-  NEUTRAL: 'MONITORING — NO THESIS INVALIDATION',
+  STRENGTHENING: 'THESIS STRENGTHENING',
+  NEUTRAL: 'NO MATERIAL CHANGE',
   WEAKENING: 'THESIS WEAKENING — REVIEW EVIDENCE',
-  BROKEN: 'EXIT REVIEW',
-  NEGATIVE_EXPECTATION_GAP: 'RE-UNDERWRITE — RUNNING BEHIND STATED PLAN',
-  POSITIVE_EXPECTATION_GAP: 'RE-UNDERWRITE — RUNNING AHEAD OF STATED PLAN',
+  BROKEN: 'THESIS BROKEN — EXIT REVIEW',
+  NEGATIVE_EXPECTATION_GAP: 'RUNNING BEHIND PLAN — RE-UNDERWRITE',
+  POSITIVE_EXPECTATION_GAP: 'RUNNING AHEAD OF PLAN — RE-UNDERWRITE',
 };
 
 export const STATUS_META: Record<ThesisStatus, { label: string; color: string; dot: string; meaning: string }> = {
   EVIDENCE_INCOMPLETE: { label: 'EVIDENCE INCOMPLETE', color: '#64748B', dot: '○',
-    meaning: 'The core variables this thesis rests on have not been checked yet. The financial trend is shown for what it is; no verdict is claimed on top of it.' },
+    meaning: 'Required thesis variables remain unreviewed. This is unknown, not bad — it is not evidence of deterioration.' },
   STRENGTHENING: { label: 'THESIS STRENGTHENING', color: '#10B981', dot: '🟢',
-    meaning: 'Structural mechanism confirmed and supporting output confirmed. No thesis-specific break condition fired.' },
+    meaning: 'Structural mechanism confirmed and financial evidence supports it. No separate invalidation trigger is present.' },
   NEUTRAL: { label: 'NO MATERIAL CHANGE', color: '#94A3B8', dot: '⚪',
-    meaning: 'Nothing in the latest evidence moves the thesis either way.' },
+    meaning: 'Every thesis-critical variable was reviewed and none moved materially. Not the same as "nothing negative found".' },
   WEAKENING: { label: 'THESIS WEAKENING', color: '#F59E0B', dot: '🟠',
     meaning: 'Important evidence deteriorated. This is a prompt to look, not to sell.' },
   BROKEN: { label: 'THESIS BROKEN', color: '#EF4444', dot: '🔴',
     meaning: 'A core assumption behind owning this has been invalidated by the evidence.' },
   CONFIRMATION_REQUIRED: { label: 'CONFIRMATION REQUIRED', color: '#FBBF24', dot: '🟡',
-    meaning: 'The numbers improved, but the operating mechanism behind them has not been established. Good results are the RESULT of a thesis, never proof that it is intact.' },
+    meaning: 'Financial output improved, but the structural cause has not yet been established. Good results are the RESULT of a thesis, never proof that it is intact.' },
   NEGATIVE_EXPECTATION_GAP: { label: 'RUNNING BEHIND PLAN', color: '#C084FC', dot: '🟣',
     meaning: 'The actual result materially TRAILS a figure management itself documented earlier. Reached only by comparing plan against actual — never from weak growth, because a company can shrink and still beat what it promised.' },
   POSITIVE_EXPECTATION_GAP: { label: 'RUNNING AHEAD OF PLAN', color: '#818CF8', dot: '🟣',
@@ -360,16 +420,68 @@ export interface AssessInput {
   /** The status this holding carried at the previous read, so a change of
    *  status can be explained rather than silently replaced. (zzz758) */
   previousStatus?: { status: string; period: string } | null;
+  /** The newest period the ledger holds evidence for, and the newest period
+   *  every listed company should have published by now. When the first is
+   *  more than two quarters behind the second, the drivers on file describe
+   *  a business as it was, and cannot confirm the mechanism today. (zzz769) */
+  evidencePeriod?: string | null;
+  expectedPeriod?: string | null;
+  /** Sector / industry / the company's own descriptive text, used ONLY to mark
+   *  physical-capacity variables NOT_APPLICABLE for a services, software or
+   *  financial business. Conservative; absent means nothing is N/A. (zzz770) */
+  business?: BusinessProfile | null;
+  /** The last discovery ended RETRIEVAL_FAILED. (zzz770) */
+  retrievalFailed?: boolean;
 }
+
+/** Whole quarters between two period labels ("Q4 FY24" → "Q1 FY27" = 9), or
+ *  null when either cannot be read. (zzz769) */
+export function quartersBehind(evidence: string | null | undefined, expected: string | null | undefined): number | null {
+  const a = periodEnd(evidence), b = periodEnd(expected);
+  if (!a || !b) return null;
+  return Math.round((b.getTime() - a.getTime()) / (91.3 * 86_400_000));
+}
+/** Evidence older than this many quarters cannot confirm a mechanism. */
+export const STALE_EVIDENCE_QUARTERS = 2;
+
+/** "THESIS WEAKENING — thesis-critical …": the sentence after the dash is not
+ *  a new sentence. Leaves acronyms and figures alone. */
+/** A margin move smaller than this is shown, never a status mover. (zzz770) */
+export const MARGIN_MATERIAL_PP = 3;
+const isMaterialDown = (c: { key: VarKey; verdict: string; delta: string | null; after: string | null }): boolean => {
+  if (c.verdict !== 'deteriorating') return false;
+  if (c.key !== 'margin') return true;
+  const m = String(c.delta ?? '').match(/[-−]?\d+(?:\.\d+)?(?=\s*pp)/);
+  if (!m) return true;
+  return Math.abs(Number(m[0].replace('−', '-'))) >= MARGIN_MATERIAL_PP;
+};
+const lcFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
   const thesis = thesisFor(input.pattern);
   const found = byKey(input.variables);
-  const cmp = input.comparisons || {};
+  const comps = input.comparisons || {};
 
   const graderMissing = input.hasGraderRow === false;
+  const cashCritical = cashIsThesisCritical(thesis.pattern);
+  // Physical capacity cannot apply to a services / software / financial
+  // business: N/A, never pending. A figure that WAS disclosed is kept. (zzz770)
+  const servicesBusiness = isServicesBusiness(input.business);
   const checked: CheckedVariable[] = thesis.variables.map((tv: ThesisVariable) => {
-    const v = found[tv.key];
+    let v = found[tv.key];
+    // ── A NEGATIVE CASH RATIO IS UNCLEAR, NOT A VERDICT.           (zzz770)
+    // The grader's CFO/PAT is last full year's ratio; its sign can come from
+    // either side, and the quarter's profit cannot settle which. LLOYDSENGG
+    // read "✕ −1.28×" against its thesis. It is shown, marked validation
+    // required, and counted neither way. A same-period filing figure with a
+    // positive profit (cash < 0 / profit > 0) is not ambiguous and is kept.
+    if (v && v.key === 'cash_conversion' && v.source === 'grader' && isNegativeRatio(v.after)) {
+      v = { ...v, verdict: 'stated', unjudged: NEGATIVE_CASH_UNCLEAR };
+    } else if (v && v.unjudged && v.verdict === 'unknown' && v.after) {
+      // Read and deliberately not judged: a disclosed value, UNCLEAR. (zzz770)
+      v = { ...v, verdict: 'stated' };
+    }
+    const notApplicable = !v && servicesBusiness && PHYSICAL_CAPACITY_VARS.has(tv.key);
     // ── SILENCE ON A RISK IS A CHECK THAT PASSED.                  (zzz757)
     //
     // Three documents read and no one-off found is the forensic test
@@ -379,7 +491,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // for a variable with no current row (NOT_DISCLOSED). VADILALIND's chip
     // printed "150,000 → 380,000 · FLAT" from an unguarded comparison of a
     // different plant. (zzz765)
-    const comparison = v ? (v.comparison ?? null) : (cmp[tv.key] || null);
+    const comparison = v ? (v.comparison ?? null) : (comps[tv.key] || null);
     // ── A VARIABLE THAT STOPPED BEING DISCLOSED IS NOT SILENCE.    (zzz758)
     //
     // The pass-on-silence rule was written for risks nobody mentioned. It must
@@ -387,7 +499,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // now gone quiet on it — that is a disclosure DECISION, and the card says
     // so with the last known value beside it.
     const stoppedDisclosing = !v && comparison?.change_type === 'NOT_DISCLOSED';
-    const silencePasses = !v && !stoppedDisclosing && !!input.evidenceReviewed && SILENCE_IS_A_PASS.has(tv.key);
+    const silencePasses = !v && !notApplicable && !stoppedDisclosing && !!input.evidenceReviewed && SILENCE_IS_A_PASS.has(tv.key);
     // A variable the company did not disclose is UNKNOWN, never deteriorating.
     const verdict: VarVerdict = v ? v.verdict : silencePasses ? 'flat' : 'unknown';
     const fired = !!tv.invalidatedWhen && verdict === 'deteriorating';
@@ -411,7 +523,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       quote: v?.quote ?? null,
       context: v?.context ?? null,
       retyped: v?.retyped ?? null,
-      evidence: v?.evidence || (stoppedDisclosing
+      evidence: v?.evidence || (notApplicable
+        ? 'Not applicable: this is a services / software / financial business, so there is no physical capacity or plant to fill. Never counted as pending.'
+        : stoppedDisclosing
         ? `${comparison!.previous?.raw} in ${comparison!.previous_period}, and not disclosed in ${comparison!.current_period}. `
           + 'The figure was on file and has stopped being published. That is a decision, not an oversight, '
           + 'and it is recorded here rather than counted as a pass.'
@@ -423,10 +537,12 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
             ? 'A document was read and is silent on this. Absence is evidence — a company that stops disclosing a figure has told you something — but it is never counted against the thesis.'
             : 'No evidence document has been read for this holding yet.'),
       invalidation: fired ? tv.invalidatedWhen : null,
+      state: 'FOUND' as EvidenceState, stateReason: (v?.unjudged ?? null) as string | null,
       // The four absences are different facts and only one of them is fixable
       // by pressing a button. A grader-available variable that is still blank
       // after the row was loaded means the source simply did not carry it.
       absence: v || silencePasses ? null
+        : notApplicable ? 'not_applicable'
         // A fetch that failed is not a company that was silent. (zzz765)
         : input.sourceUnavailable && !input.evidenceReviewed ? 'source_unavailable'
         : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed ? 'no_grader_row'
@@ -434,13 +550,30 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
             : GRADER_AVAILABLE.has(tv.key) ? 'not_disclosed' : 'not_read',
     };
   });
+  // ── THE EVIDENCE STATE OF EVERY VARIABLE.                        (zzz770)
+  for (const c of checked) {
+    if (c.verdict !== 'unknown') {
+      c.state = c.unjudged ? 'UNCLEAR' : 'FOUND';
+      c.stateReason = c.unjudged ?? null;
+    } else {
+      c.state = stateOfAbsence(c.absence, !!input.retrievalFailed);
+      c.stateReason = c.state === 'NOT_APPLICABLE' ? 'services / software / financial business — no physical capacity to fill'
+        : c.absence === 'no_grader_row' ? 'no graded or screener row on file, and no document read prints it'
+          : c.comparison?.change_type === 'NOT_DISCLOSED' && c.comparison.previous
+            ? `was ${c.comparison.previous.raw} in ${c.comparison.previous_period}; not disclosed since` : null;
+    }
+  }
+  // What cannot apply is never part of the thesis being judged. (zzz770)
+  const applicable = checked.filter((c) => c.state !== 'NOT_APPLICABLE');
 
   const disclosed = checked.filter((c) => c.verdict !== 'unknown');
   // Thesis-critical = everything this ledger weights 3 or 4. The denominator
   // of the evidence matrix, and the only honest answer to "how much of this
-  // thesis has been examined".
-  const critical = checked.filter((c) => c.weight >= 3);
-  const core = checked.filter((c) => c.weight === 4);
+  // thesis has been examined". The tallies keep N/A visible (counted apart);
+  // the judgement runs on what can apply. (zzz770)
+  const criticalAll = checked.filter((c) => c.weight >= 3);
+  const critical = applicable.filter((c) => c.weight >= 3);
+  const core = applicable.filter((c) => c.weight === 4);
   const coreDisclosed = core.filter((c) => c.verdict !== 'unknown');
   const coreUp = coreDisclosed.filter((c) => c.verdict === 'improving');
   // ── DISCLOSED IS NOT JUDGED.                                     (zzz755)
@@ -469,6 +602,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const requiredDims = new Set(thesis.requiresConfirmationIn);
   const mayMoveStatus = (c: { key: VarKey }) =>
     requiredDims.has(VAR_DIMENSION[c.key])
+    && (c.key !== 'cash_conversion' || cashCritical)
     && (input.evidenceReviewed === true || thesis.pattern !== 'UNCLASSIFIED');
   const coreDown = coreDisclosed.filter((c) => c.verdict === 'deteriorating' && mayMoveStatus(c));
   const supportDown = checked.filter((c) => c.weight === 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
@@ -477,11 +611,17 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // F, G and the unclassified ledger weight cash conversion 4: there a bad
   // reading may move the status, to WEAKENING at most. A and B weight it 2 —
   // context, shown as a warning so it is never hidden, and never a mover.
-  const cashCore = checked.some((c) => c.key === 'cash_conversion' && c.weight === 4);
+  // ── CASH IS THESIS-CRITICAL ONLY FOR F AND G.                    (zzz770)
+  // The owner's rule. The unclassified ledger weighted it 4 and CUPID /
+  // LLOYDSENGG sat at WEAKENING on one annual screener ratio. Elsewhere a weak
+  // reading is a FINANCIAL WARNING: shown in red, never a status mover.
   const financialWarning = checked
     .filter((c) => c.verdict === 'deteriorating'
-      && ((c.weight >= 3 && !mayMoveStatus(c)) || (c.key === 'cash_conversion' && !cashCore)))
-    .map((c) => ({ label: c.label, value: c.delta || c.after || 'deteriorating' }));
+      && ((c.weight >= 3 && !mayMoveStatus(c)) || (c.key === 'cash_conversion' && !cashCritical)))
+    .map((c) => ({ label: c.label, value: c.delta || c.after || 'deteriorating',
+      note: c.key === 'cash_conversion' && !cashCritical
+        ? `cash conversion is not thesis-critical for ${thesis.pattern === 'UNCLASSIFIED' ? 'a holding with no classified strategy' : `strategy ${thesis.pattern}`} — shown as a warning, status unchanged`
+        : 'not part of this thesis\'s required evidence — shown as a warning, status unchanged' }));
   const guidanceDown = checked.some((c) => c.key === 'guidance' && c.verdict === 'deteriorating');
 
   const weighted = checked.reduce((a, c) => a + SIGN[c.verdict] * c.weight, 0);
@@ -519,11 +659,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // three documents read and no material one-off is the F forensic check
   // clearing, and it counts as cleared, never as improving.
   const structuralKeys = new Set<VarKey>(STRATEGY_STRUCTURAL[thesis.pattern] || []);
-  const structuralVars = checked.filter((c) => structuralKeys.has(c.key)
+  const structuralVars = applicable.filter((c) => structuralKeys.has(c.key)
     && !isFinancialOutput(c.key, c.source));
+  // The silence pass is SILENCE: a one-off that WAS disclosed (MOREPENLAB's
+  // ₹25.83 Cr exceptional item) is not a cleared forensic check. (zzz770)
   const structurallyConfirmed = (c: CheckedVariable): boolean =>
-    c.kind !== 'claim' && !isFinancialOutput(c.key, c.source)
-    && (c.verdict === 'improving' || (c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key) && !!input.evidenceReviewed));
+    c.kind !== 'claim' && !isFinancialOutput(c.key, c.source) && c.state !== 'UNCLEAR'
+    && (c.verdict === 'improving' || (c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key) && !!input.evidenceReviewed && !c.after && !c.source));
   // Required = what the ledger weights 3+. Grader operating leverage is
   // excluded above, so A's gate is the physical one: utilisation and volume.
   const structuralRequired = structuralVars.filter((c) => c.weight >= 3);
@@ -543,7 +685,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     && !checked.some((c) => c.weight >= 3 && VAR_DIMENSION[c.key] === 'financial' && c.verdict === 'deteriorating');
   const structuralLine = `Structural evidence reviewed: ${structuralConfirmedVars.length}/${structuralVars.length} variables confirmed.`;
   const notEstablished = missingRequired.length
-    ? ` Not yet established: ${missingRequired.map((c) => `${c.label.toLowerCase()}${c.verdict === 'stated' ? ' (level only)' : c.verdict === 'unknown' ? ' (not disclosed)' : ` (${c.verdict})`}`).join(', ')}.`
+    ? ` Not yet established: ${missingRequired.map((c) => `${c.label.toLowerCase()}${c.state === 'UNCLEAR' ? ' (unclear — validation required)'
+      : c.key === 'cash_conversion' && !cashCritical && c.verdict === 'deteriorating' ? ' (weak — shown as a financial warning, not thesis-critical here)'
+        : c.verdict === 'stated' ? ' (level only)' : c.verdict === 'unknown' ? ` (${c.state === 'NOT_SEARCHED' ? 'not searched' : 'not disclosed'})` : ` (${c.verdict})`}`).join(', ')}.`
     : '';
 
   // ── STRUCTURAL DRIVERS, FROM ANY FILING ROW.                     (zzz765)
@@ -594,15 +738,33 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const oneOffsCleared = !found.one_offs || found.one_offs.verdict === 'flat' || !!found.one_offs.unjudged
     || (found.one_offs.verdict === 'stated');
   const cashOk = !found.cash_conversion || found.cash_conversion.verdict !== 'deteriorating';
+  // ── A CORE MECHANISM NOBODY HAS SEEN CANNOT BE "CONFIRMED".     (zzz770)
+  // GOLDIAM read green on a mix story with capacity utilisation — core to an
+  // operating-inflection thesis — never disclosed. A silent core mechanism
+  // variable blocks green unless a driver of the SAME mechanism is evidenced
+  // (volume or capacity for absorption; intake or book-to-bill for an order
+  // book). A disclosed target or level is not silence (MANINDS).
+  const coreMechanismGaps = core.filter((c) => {
+    const subs = MECH_SUBSTITUTES[c.key];
+    if (!subs || isFinancialOutput(c.key, c.source)) return false;
+    if (c.state === 'FOUND' || c.state === 'UNCLEAR') return false;
+    return !drivers.some((d) => subs.includes(d.key)) && !structuralConfirmedVars.some((x) => subs.includes(x.key));
+  });
   const greenByDrivers = !!input.evidenceReviewed && outputImproved && !anyMaterialDown && !structuralDown
-    && drivers.length >= 1 && !lossMaking && (thesis.pattern !== 'F' || (oneOffsCleared && cashOk));
+    && drivers.length >= 1 && !lossMaking && (thesis.pattern !== 'F' || (oneOffsCleared && cashOk))
+    && coreMechanismGaps.length === 0;
   const stillToConfirm = core.filter((c) => !isFinancialOutput(c.key, c.source)
     && c.verdict !== 'improving' && !(c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)))
-    .map((c) => `${c.label.toLowerCase()}${c.verdict === 'unknown' ? ' (not disclosed)' : c.verdict === 'stated' ? ` (${(c as any).statement === 'TARGET' || (c as any).statement === 'GUIDANCE' ? 'target only' : 'level only'}: ${c.after || c.before})` : ''}`);
+    .map((c) => `${c.label.toLowerCase()}${c.state === 'UNCLEAR' ? ` (unclear — validation required: ${c.after || c.before})` : c.verdict === 'unknown' ? ` (${c.state === 'NOT_SEARCHED' ? 'not searched' : 'not disclosed'})` : c.verdict === 'stated' ? ` (${(c as any).statement === 'TARGET' || (c as any).statement === 'GUIDANCE' ? 'target only' : 'level only'}: ${c.after || c.before})` : ''}`);
   const driverText = (v: StructuralVar) => {
     const val = v.delta && v.before ? `${v.before} → ${v.after} (${v.delta})` : (v.after || '');
     const label = v.key === 'capex_earning' ? 'capex earning' : v.label.toLowerCase();
-    return `${label}${val && val.length <= 60 ? ` ${val}` : ' (stated in the filing)'}`;
+    if (val && val.length <= 60) return `${label} ${val}`;
+    // The clause of a long statement that names the mechanism, never a
+    // bare "(stated in the filing)". (zzz770)
+    const clauses = String(val).split(/[;.]\s+/).map((x) => x.trim()).filter(Boolean);
+    const pick = clauses.find((x) => STRUCTURAL_WORDS.test(x) && !TEMPORARY_ONLY.test(x)) || clauses[0] || '';
+    return pick ? `${label}: ${pick.length > 90 ? `${pick.slice(0, 89)}…` : pick}` : `${label} (stated in the filing)`;
   };
 
   // ── THE STATUS LADDER, most severe first. ──────────────────────────────
@@ -646,11 +808,22 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `Plan: ${input.promiseGap.plan} · Actual: ${input.promiseGap.actual}`
       + `${input.promiseGap.variance ? ` · Variance: ${input.promiseGap.variance}` : ''}. `
       + input.promiseGap.detail;
-  } else if (coreDown.length >= 1 || supportDown.length >= 2) {
+  } else if (coreDown.length >= 1 || supportDown.length >= 2 || supportDown.some(isMaterialDown)) {
     status = 'WEAKENING';
-    const downAll = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating');
-    because = `Thesis-critical mechanism deteriorating — `
-      + `${downAll.map((c) => `${c.label.toLowerCase()} ${c.delta || c.after || ''}`.trim()).join(', ')}. `
+    const downAll = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
+    // ── SAY PRECISELY WHAT IS WEAKENING, AND WHAT IS NOT.          (zzz770)
+    // MOREPENLAB: earnings +409%, margin up, no mechanism confirmed, cash
+    // 0.34×. For a profit jump cash conversion IS the forensic test, so the
+    // status stays WEAKENING — but the card must not read as thesis failure.
+    const onlyCash = downAll.length > 0 && downAll.every((c) => c.key === 'cash_conversion');
+    const cashRow = downAll.find((c) => c.key === 'cash_conversion');
+    because = (onlyCash && outputImproved
+      ? `Financial output improved (${outputSummary}), but the structural mechanism is not established `
+        + `(${structuralConfirmedVars.length} of ${structuralVars.length} structural variables confirmed) — this is not thesis failure. `
+        + `WEAKENING because cash conversion, thesis-critical for ${thesis.pattern === 'F' ? 'a profit jump (the forensic test)' : 'this strategy'}, reads ${cashRow!.after || cashRow!.delta}: `
+        + 'reported profit is not yet converting into operating cash. '
+      : `Thesis-critical mechanism deteriorating — `
+        + `${downAll.map((c) => `${c.label.toLowerCase()} ${c.delta || c.after || ''}`.trim()).join(', ')}. `)
       + (coreTriggered.length
         ? `The condition "${coreTriggered[0].invalidation}" has fired once; a break needs it confirmed or a second core condition alongside it. `
         : 'No stated thesis-break condition has been met. ')
@@ -664,9 +837,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // card never reads "0/4 confirmed … mechanism confirmed".
     const unionKeys = new Set<VarKey>([...structuralVars.map((c) => c.key), ...drivers.map((d) => d.key)]);
     const unionConfirmed = new Set<VarKey>([...structuralConfirmedVars.map((c) => c.key), ...drivers.map((d) => d.key)]);
-    because = `no thesis-specific break condition fired. Structural evidence reviewed: ${unionConfirmed.size}/${unionKeys.size} variables confirmed. Financial output: ${outputSummary}. `
-      + `${STRENGTHENING_SENTENCE.replace(/\.$/, '')} — `
-      + `structural driver${drivers.length > 1 ? 's' : ''} evidenced in the filings: ${drivers.slice(0, 4).map(driverText).join('; ')}.`
+    because = `${STRENGTHENING_BECAUSE}Structural evidence reviewed: ${unionConfirmed.size}/${unionKeys.size} variables confirmed. Financial output: ${outputSummary}. `
+      + `Structural driver${drivers.length > 1 ? 's' : ''} evidenced in the filings: ${drivers.slice(0, 4).map(driverText).join('; ')}.`
       + (thesis.pattern === 'F' ? ` Forensics: one-offs ${found.one_offs ? (found.one_offs.unjudged ? 'shown, not material to the call' : 'checked, not material') : 'none disclosed'}; cash conversion ${found.cash_conversion?.after || 'not deteriorating'}.` : '')
       + (stillToConfirm.length ? ` Still to confirm next quarter: ${stillToConfirm.join(', ')}.` : '');
   } else if (input.evidenceReviewed && coreDisclosed.length < core.length
@@ -682,9 +854,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const silent = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
     status = 'CONFIRMATION_REQUIRED';
     because = (outputImproved ? `${OUTPUT_ONLY_SENTENCE} ` : '')
-      + `The documents were read and disclose nothing about ${silent.join(' or ')}. `
-      + 'Silence is evidence about disclosure, never confirmation of a mechanism — '
-      + 'so the numbers stand and the reason behind them remains unestablished.';
+      + `The documents were read and disclose nothing about ${silent.join(' or ')} — core to this thesis, so `
+      + `${silent.length === 1 ? 'it is' : 'they are'} UNKNOWN. `
+      + 'Unknown, not negative: silence is never counted against the thesis, and never confirms its mechanism either'
+      + (drivers.length ? ` — the ${drivers.slice(0, 2).map(driverText).join('; ')} evidenced does not establish the same mechanism.` : '.');
   } else if (coreDisclosed.length < core.length
       && core.some((c) => c.absence === 'no_grader_row')) {
     // No graded row AND no results filing with the figure on its first page.
@@ -693,7 +866,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // only, or were read before the headline was asked for.
     const gm = core.filter((c) => c.absence === 'no_grader_row').map((c) => c.label.toLowerCase());
     status = 'EVIDENCE_INCOMPLETE';
-    because = `${gm.join(' and ')} ${gm.length === 1 ? 'is' : 'are'} not on file: this company has no graded or screener row, `
+    because = INCOMPLETE_BECAUSE + `${gm.join(' and ').replace(/^./, (x) => x.toUpperCase())} ${gm.length === 1 ? 'is' : 'are'} not on file: this company has no graded or screener row, `
       + 'and none of the documents read prints the figure on its results page. '
       + `A results filing that states ${gm.length === 1 ? 'it' : 'them'} — re-read once the quarterly results are on file — fills this; `
       + 'a transcript or a deck alone does not.';
@@ -717,7 +890,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // result, no screener row, no filing" on a card whose own header said
     // "3 documents read · 8 facts". The sentence has to branch on whether a
     // document was actually read. (zzz757)
-    because = disclosed.length
+    because = INCOMPLETE_BECAUSE + (disclosed.length
       ? `Only ${disclosed.length} of ${checked.length} variables could be read, and none of them is decisive. `
         + 'Too little has been looked at to call this either way.'
       : input.evidenceReviewed
@@ -725,14 +898,14 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           + 'and there is no graded or screener row to supply the financial ones. '
           + 'The filings are on file; the thesis variables are not in them.'
         : 'Nothing has been read for this holding — no graded result, no screener row, no filing. '
-          + 'This is an unchecked holding, not a quiet one.';
+          + 'This is an unchecked holding, not a quiet one.');
   } else if (coreDisclosed.length < core.length) {
     // Nothing is deteriorating, and the thesis has not been fully checked. A
     // positive verdict is not available here, and neither is a comfortable
     // "no material change" — both would claim more than has been looked at.
     const missing = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
     status = 'EVIDENCE_INCOMPLETE';
-    because = `${coreDisclosed.length}/${core.length} core variables checked. `
+    because = INCOMPLETE_BECAUSE + `${coreDisclosed.length}/${core.length} core variables checked. `
       + `Missing: ${missing.join(', ')}. `
       + (!disclosed.length && !input.evidenceReviewed
         ? 'Nothing has been read for this holding at all.'
@@ -756,8 +929,17 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + `${bareLevel.length === 1 ? 'was' : 'were'} disclosed as a level with nothing in the document to compare against, `
       + 'so the direction is unknown. The figure is recorded; next quarter turns it into a trend.');
     because = parts.join('. ') + (reasoned.length && !bareLevel.length ? '. The numbers stand; the mechanism is neither confirmed nor contradicted by them.' : '');
+  } else if (input.evidenceReviewed && !outputImproved && critical.length > 0
+      && critical.every((c) => c.verdict === 'flat')) {
+    // ── NO MATERIAL CHANGE IS A HIGH BAR.                          (zzz770)
+    // Every thesis-critical variable that can apply was reviewed and read as
+    // unchanged. Not "nothing negative found": a level with nothing to
+    // compare against, or an unread variable, never reaches this branch.
+    status = 'NEUTRAL';
+    because = `All ${critical.length} thesis-critical variables were reviewed and none moved materially: `
+      + `${critical.map((c) => `${c.label.toLowerCase()}${c.after ? ` ${c.after}` : ''}`).join(', ')}.`;
   } else if (coreUp.length >= 1 && weighted >= 6 && allDimsConfirmed && input.evidenceReviewed
-      && structuralGate && outputImproved) {
+      && structuralGate && outputImproved && coreMechanismGaps.length === 0) {
     // ── THE ONLY PATH TO GREEN.                                   (zzz723)
     //
     // Three gates, and the third is the one the owner caught. AETHER reached
@@ -778,8 +960,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // thesis-critical in it falling. The card prints `action — because`, so
     // the sentence opens exactly as the owner specified.
     status = 'STRENGTHENING';
-    because = `no thesis-specific break condition fired. ${structuralLine} Financial output: ${outputSummary}. `
-      + `${STRENGTHENING_SENTENCE.replace(/\.$/, '')} — `
+    because = `${STRENGTHENING_BECAUSE}${structuralLine} Financial output: ${outputSummary}. Confirmed: `
       + `${structuralConfirmedVars.map((c) => {
         const v = c.delta || c.after;
         return `${c.label.toLowerCase()} ${c.verdict === 'flat' ? '(checked, nothing material)'
@@ -805,10 +986,15 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + `${unestablished.length === 1 ? 'has' : 'have'} not been established. ${structuralLine}${notEstablished} `
       + 'A good result is the OUTPUT of this thesis, not evidence that the mechanism behind it is intact.';
   } else if (anyMaterialDown) {
+    // Only a SMALL move (a margin dip under the materiality line) reaches
+    // here; a material one is WEAKENING above. The label's meaning holds:
+    // output moved up, the cause is unestablished, and the dip is named.
     status = 'CONFIRMATION_REQUIRED';
-    const down = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating');
-    because = `${down.map((c) => c.label.toLowerCase()).join(', ')} moved the wrong way. `
-      + 'Not enough to call the thesis weakening, too much to call it unchanged.';
+    const down = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
+    const ups = OUTPUT_SHORT.filter(([k]) => found[k]?.verdict === 'improving').map(([k, n]) => `${n} ${found[k]!.delta || found[k]!.after}`);
+    because = (ups.length ? `Financial output improved (${ups.join(' · ')}), but the structural cause has not yet been established. ` : '')
+      + `${down.map((c) => `${c.label} ${c.delta || c.after || ''}`.trim()).join(', ')} moved the wrong way — `
+      + `below the ${MARGIN_MATERIAL_PP}pp materiality line, so it is shown and does not weaken the thesis on its own.`;
   } else if (!input.evidenceReviewed) {
     // Good numbers, every core variable checked, and no document read. That
     // is not "nothing changed" and it is certainly not confirmation — it is a
@@ -821,10 +1007,32 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         + 'and a result without a cause is not a confirmed thesis.'
       : 'Every variable available without reading a document has been checked and none is decisive. '
         + 'No filing, concall or announcement has been read, so "nothing changed" is not a claim this page can make yet.';
+  } else if (critical.some((c) => c.verdict === 'improving')) {
+    // Something improved and the mechanism gate was not passed: that is a
+    // result awaiting its cause, never "no material change". (zzz770)
+    status = 'CONFIRMATION_REQUIRED';
+    because = `${outputImproved ? `${OUTPUT_ONLY_SENTENCE} ` : ''}${structuralLine}${notEstablished} Financial output: ${outputSummary}.`;
   } else {
     status = 'NEUTRAL';
     because = `Every dimension this thesis rests on was reviewed and ${disclosed.length} of ${checked.length} `
-      + 'variables carried evidence. None of it moves the thesis either way.';
+      + 'variables carried evidence; no thesis-critical variable improved or deteriorated.';
+  }
+
+  // ── OLD EVIDENCE CANNOT CONFIRM TODAY'S MECHANISM.               (zzz769)
+  //
+  // MINDSPACE's only evidence on file was Q4 FY24 — "newer document seen, not
+  // yet read" — and it sat at THESIS STRENGTHENING on two-year-old structural
+  // drivers. A driver describes the business in the period it was read for.
+  // Where that period is more than two quarters behind the one every company
+  // should have published by now, a positive status is capped: the drivers
+  // are shown, and the card asks for the latest filing instead of vouching
+  // for a mechanism nobody has looked at since.
+  const staleBy = quartersBehind(input.evidencePeriod, input.expectedPeriod);
+  const staleEvidence = staleBy != null && staleBy > STALE_EVIDENCE_QUARTERS;
+  if (staleEvidence && (status === 'STRENGTHENING' || status === 'NEUTRAL' || status === 'POSITIVE_EXPECTATION_GAP')) {
+    status = 'CONFIRMATION_REQUIRED';
+    because = `The evidence on file is ${input.evidencePeriod} — too old to confirm this quarter's mechanism; read the latest filing. `
+      + `${input.expectedPeriod} is the latest period due, ${staleBy} quarters later. What the ${input.evidencePeriod} evidence showed: ${because}`;
   }
 
   // ── A CARD MUST NOT CONTRADICT ITSELF IN TWO LINES.              (zzz761)
@@ -840,7 +1048,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // The badge says EVIDENCE INCOMPLETE; the sentence must not open with a
   // different status name. (zzz764)
   const action: ThesisAssessment['action'] = blockedOnGrader
-    ? 'RESULTS FIGURES NOT ON FILE'
+    ? 'EVIDENCE INCOMPLETE — RESULTS FIGURES NOT ON FILE'
     : ACTION[status];
 
   const triggered = checked
@@ -881,9 +1089,18 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         return `${c.label} — last disclosed at ${k.previous.raw} in ${k.previous_period} and absent since. `
           + 'Whether the next filing restores it is the test; continued silence on a figure that used to be published is itself the answer.';
       }
+      if (c.state === 'UNCLEAR') {
+        return `${c.label} — UNCLEAR (${c.stateReason || 'not judgeable as read'}). The next read has to state it in a form that can be judged.`;
+      }
+      if (c.verdict === 'stated' && known && (!/\d/.test(known) || known.length > 40)) {
+        return `${c.label} — stated in words, with nothing earlier to compare against. The next read has to show which way it is moving.`;
+      }
       if (c.verdict === 'stated' && known) {
         return `${c.label} — ${known} recorded with no earlier figure on file. `
           + `Next period's read turns it into a direction: above ${known} confirms, below it contradicts.`;
+      }
+      if (c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)) {
+        return `${c.label} — ${known ? `${known} on file` : 'none found in the documents read'}. The next read has to confirm it does not recur.`;
       }
       if (c.verdict === 'flat' && known) {
         return `${c.label} — flat at ${known}${k?.basis && k.basis !== 'NONE' ? ` ${BASIS_LABEL[k.basis]}` : ''}. `
@@ -943,32 +1160,103 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // included, so a good print "held" most links by itself. Links are now the
   // non-output, non-forward thesis-critical variables, each judged on its own
   // row by the same test the STRENGTHENING gate uses.
-  const mechanismCheck = checked
-    .filter((c) => c.weight >= 3 && !isFinancialOutput(c.key, c.source) && VAR_DIMENSION[c.key] !== 'forward')
+  // Cash is a mechanism link only where it is thesis-critical, and a driver
+  // that turned the card green is a link the evidence confirmed — so the
+  // chain can never say "NOT YET CONFIRMED" under a green badge. (zzz770)
+  const mechanismCheck: ThesisAssessment['mechanismCheck'] = critical
+    .filter((c) => !isFinancialOutput(c.key, c.source) && VAR_DIMENSION[c.key] !== 'forward'
+      && (c.key !== 'cash_conversion' || cashCritical))
     .map((c) => ({
       link: c.label,
-      state: (structurallyConfirmed(c) ? 'confirmed'
-        : c.verdict === 'deteriorating' ? 'contradicted' : 'unchecked') as 'confirmed' | 'contradicted' | 'unchecked',
+      state: (structurallyConfirmed(c) && !staleEvidence ? 'confirmed'
+        : c.state === 'UNCLEAR' ? 'unclear'
+          : c.verdict === 'deteriorating' ? 'contradicted' : 'unchecked') as 'confirmed' | 'contradicted' | 'unchecked' | 'unclear',
     }));
+  if (status === 'STRENGTHENING' && !staleEvidence) {
+    for (const d of drivers) {
+      const lbl = d.key === 'capex_earning' ? 'Capex earning' : (d.label || VAR_LABEL[d.key]);
+      const at = mechanismCheck.find((m) => m.link === lbl);
+      if (at) at.state = 'confirmed'; else mechanismCheck.push({ link: lbl, state: 'confirmed' });
+    }
+  }
   const confirmedLinks = mechanismCheck.filter((m) => m.state === 'confirmed').length;
   const contradicted = mechanismCheck.filter((m) => m.state === 'contradicted');
   const unchecked = mechanismCheck.filter((m) => m.state === 'unchecked');
-  const mechanismVerdict = !mechanismCheck.length
+  const mechanismVerdict = staleEvidence && !contradicted.length
+    ? `${thesis.name} NOT YET CONFIRMED — the evidence on file is ${input.evidencePeriod}, ${staleBy} quarters behind ${input.expectedPeriod}; it cannot confirm the mechanism today.`
+    : !mechanismCheck.length && status === 'STRENGTHENING'
+    ? `${thesis.name} — no classified strategy mechanism to confirm; the ledger's own required evidence holds${structuralConfirmedVars.length ? `: ${structuralConfirmedVars.map((c) => c.label.toLowerCase()).join(', ')}` : ''}.`
+    : !mechanismCheck.length
     ? `${thesis.name} NOT YET CONFIRMED — this ledger has no thesis-critical structural variable; financial output alone cannot confirm a mechanism.`
     : contradicted.length
     ? `${thesis.name} CONTRADICTED — ${contradicted.map((m) => m.link.toLowerCase()).join(', ')} moving the wrong way.`
-    : unchecked.length
+    : unchecked.length && status === 'STRENGTHENING'
+      ? `${thesis.name} CONFIRMED BY THE EVIDENCED DRIVERS — ${confirmedLinks} of ${mechanismCheck.length} links hold; `
+        + `${unchecked.map((m) => m.link.toLowerCase()).join(', ')} still to confirm next quarter.`
+    : unchecked.length || mechanismCheck.some((m) => m.state === 'unclear')
       ? `${thesis.name} NOT YET CONFIRMED — ${confirmedLinks} of ${mechanismCheck.length} links hold; `
-        + `${unchecked.map((m) => m.link.toLowerCase()).join(', ')} still open.`
+        + `${[...unchecked, ...mechanismCheck.filter((m) => m.state === 'unclear')].map((m) => `${m.link.toLowerCase()}${m.state === 'unclear' ? ' (unclear)' : ''}`).join(', ')} still open.`
       : `${thesis.name} CONFIRMED — all ${mechanismCheck.length} links of the mechanism hold on this evidence.`;
 
   const headline = status === 'STRENGTHENING' ? STRENGTHENING_SENTENCE
-    : status === 'CONFIRMATION_REQUIRED' && because.startsWith(OUTPUT_ONLY_SENTENCE)
-      ? `CONFIRMATION REQUIRED — ${OUTPUT_ONLY_SENTENCE.charAt(0).toLowerCase()}${OUTPUT_ONLY_SENTENCE.slice(1)}`
-      : STATUS_META[status].label;
+    : status === 'CONFIRMATION_REQUIRED' && because.startsWith(OUTPUT_ONLY_SENTENCE) ? CONFIRMATION_SENTENCE
+      : status === 'EVIDENCE_INCOMPLETE' ? INCOMPLETE_SENTENCE
+        : STATUS_META[status].label;
+
+  // ── THE THESIS LOGIC CHAIN.                                      (zzz770)
+  // Built only from what was read. A step with nothing behind it says so.
+  const NE = 'not established';
+  const logicChain: ThesisAssessment['logicChain'] = (() => {
+    const out: ThesisAssessment['logicChain'] = [];
+    out.push(outputSummary !== 'not on file'
+      ? { step: 'OBSERVATION', text: `Financial output: ${outputSummary}.`, established: true }
+      : { step: 'OBSERVATION', text: `${NE} — no financial figures on file for this period.`, established: false });
+    const md = found.margin_driver;
+    const statedCauses = changes.filter((c) => c.cause).slice(0, 2).map((c) => `${c.label.toLowerCase()}: ${c.cause!.text}`);
+    const causeText = drivers.length ? drivers.slice(0, 3).map(driverText).join('; ')
+      : md && md.after && md.kind !== 'claim' ? `margin driver stated: ${md.after}`
+        : statedCauses.length ? statedCauses.join('; ') : '';
+    out.push(causeText
+      ? { step: 'CAUSE', text: causeText.length > 300 ? `${causeText.slice(0, 297)}…` : causeText, established: true }
+      : { step: 'CAUSE', text: `${NE} — no document read states why the output moved.`, established: false });
+    const causeBlob = [causeText, md?.after || '', md?.evidence || ''].join(' ');
+    const structural = STRUCTURAL_WORDS.test(causeBlob) || causeSummary.structural > 0;
+    const temporary = TEMPORARY_ONLY.test(causeBlob) || causeSummary.temporary > 0
+      || (!!found.one_offs && found.one_offs.verdict !== 'flat' && !!found.one_offs.after);
+    const oneOffTxt = found.one_offs && found.one_offs.verdict !== 'flat' && found.one_offs.after ? ` (one-off on file: ${found.one_offs.after})` : '';
+    out.push(!causeText && !temporary
+      ? { step: 'STRUCTURAL / TEMPORARY', text: `${NE} — the cause is not known, so whether it repeats is not known.`, established: false }
+      : structural && temporary
+        ? { step: 'STRUCTURAL / TEMPORARY', text: `MIXED — a structural cause is stated alongside a temporary one${oneOffTxt}; only the structural part repeats.`, established: true }
+        : structural
+          ? { step: 'STRUCTURAL / TEMPORARY', text: 'STRUCTURAL — the stated cause is operational (mix, volume, capacity, pricing or efficiency) and can repeat.', established: true }
+          : temporary
+            ? { step: 'STRUCTURAL / TEMPORARY', text: `TEMPORARY — the stated cause is one-off or cyclical${oneOffTxt}; it does not repeat on its own.`, established: true }
+            : { step: 'STRUCTURAL / TEMPORARY', text: `${NE} — a cause is stated but not classifiable as structural or temporary.`, established: false });
+    const impact: Record<ThesisStatus, string> = {
+      STRENGTHENING: 'Mechanism established and output supports it — the thesis is strengthening.',
+      CONFIRMATION_REQUIRED: outputImproved
+        ? 'Output improved; the thesis mechanism is not established — neither confirmed nor contradicted.'
+        : 'The thesis mechanism is not established by the evidence read.',
+      WEAKENING: `A thesis-critical variable is deteriorating (${checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c)).map((c) => c.label.toLowerCase()).join(', ') || 'see above'}) — review, not exit.`,
+      BROKEN: `A stated break condition is met — ${triggered.slice(0, 2).map((t) => t.condition).join(' / ')}.`,
+      NEUTRAL: 'Every thesis-critical variable reviewed; nothing moved materially.',
+      NEGATIVE_EXPECTATION_GAP: `Behind management's own earlier plan — ${input.promiseGap?.plan ?? ''} vs actual ${input.promiseGap?.actual ?? ''}.`,
+      POSITIVE_EXPECTATION_GAP: `Ahead of management's own earlier plan — ${input.promiseGap?.plan ?? ''} vs actual ${input.promiseGap?.actual ?? ''}.`,
+      EVIDENCE_INCOMPLETE: `${NE} — required thesis variables are unreviewed; unknown, not bad.`,
+    };
+    out.push({ step: 'THESIS IMPACT', text: impact[status], established: status !== 'EVIDENCE_INCOMPLETE' });
+    const g = found.guidance || found.management_target;
+    const gTxt = g ? (g.plan ? `${g.plan.type === 'TARGET' ? 'target' : 'guidance'} ${g.plan.value}` : String(g.after ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '')) || null : null;
+    out.push(gTxt && !/^not (stated|disclosed)/i.test(gTxt)
+      ? { step: 'FORWARD', text: `${g!.label}: ${gTxt}${g!.statement === 'GUIDANCE' || g!.statement === 'TARGET' || g!.kind === 'claim' ? ' (management statement, not a result)' : ''}.`, established: true }
+      : { step: 'FORWARD', text: `${NE} — no guidance or target on file.`, established: false });
+    return out;
+  })();
 
   return {
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
+    logicChain, coreMechanismGaps: coreMechanismGaps.map((c) => c.label),
     mechanismCheck, mechanismVerdict, dimensions,
     structural: {
       confirmed: structuralConfirmedVars.length, total: structuralVars.length,
@@ -977,13 +1265,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       missingRequired: missingRequired.map((c) => c.label),
       gatePassed: structuralGate,
     },
-    outputSummary, headline, actionLine: `${action} — ${because}`,
+    outputSummary, headline, actionLine: `${action} — ${lcFirst(because)}`,
     changes, causeSummary, statusChangeReason,
     historyDepth: input.historyDepth ?? 0,
     coverage: {
       checked: checked.length, disclosed: disclosed.length,
       corePossible: core.length, coreDisclosed: coreDisclosed.length,
-      criticalTotal: critical.length,
+      criticalTotal: criticalAll.length,
       criticalConfirmed: critical.filter((c) => c.verdict === 'improving').length,
       criticalPending: critical.filter((c) => c.verdict === 'unknown').length,
       criticalContradicted: critical.filter((c) => c.verdict === 'deteriorating').length,
@@ -991,9 +1279,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       // earnings, leverage, AND cash conversion / ROCE. MECHANISM is what
       // only a document can supply. The dividing line is the data source,
       // because that is exactly the line the "4 confirmed" bug crossed.
-      output: tally(critical.filter((c) => isOutput(c.key))),
-      mechanism: tally(critical.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward')),
-      forward: tally(critical.filter((c) => VAR_DIMENSION[c.key] === 'forward')),
+      output: tally(criticalAll.filter((c) => isOutput(c.key))),
+      mechanism: tally(criticalAll.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward')),
+      forward: tally(criticalAll.filter((c) => VAR_DIMENSION[c.key] === 'forward')),
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
       levelOnlyCore: coreLevelOnly.filter((c) => !c.unjudged).map((c) => c.label),
       unjudgedCore: coreLevelOnly.filter((c) => c.unjudged).map((c) => `${c.label} — ${c.unjudged}`),
@@ -1003,4 +1291,32 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     },
     action,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHY A HOLDING IS ON THE EXIT RADAR — NEVER A PRICE.              (zzz770)
+//
+// The radar surfaces only these reasons. Each is read off the assessment's
+// own evidence; there is no price, drawdown, market-cap or technical input
+// anywhere in this engine to read (a static test enforces it).
+// ═══════════════════════════════════════════════════════════════════════════
+export type ExitReason =
+  | 'THESIS INVALIDATION' | 'BREAK CONDITION MET' | 'EXECUTION FAILURE'
+  | 'GUIDANCE FAILURE' | 'CUSTOMER LOSS' | 'STRUCTURAL DETERIORATION';
+export const EXIT_REASONS: readonly ExitReason[] = [
+  'THESIS INVALIDATION', 'BREAK CONDITION MET', 'EXECUTION FAILURE', 'GUIDANCE FAILURE', 'CUSTOMER LOSS', 'STRUCTURAL DETERIORATION',
+];
+const EXECUTION_KEYS = new Set<VarKey>(['execution_delay', 'commissioning', 'capacity_bottleneck', 'supply_bottleneck', 'shutdown', 'capex_earning']);
+
+/** The radar reason for an assessment, or null when it does not belong on
+ *  the radar at all (every non-deteriorated status). */
+export function exitReasonOf(a: Pick<ThesisAssessment, 'status' | 'checked' | 'triggered'>): ExitReason | null {
+  if (a.status === 'BROKEN') return a.triggered.length ? 'BREAK CONDITION MET' : 'THESIS INVALIDATION';
+  if (a.status === 'NEGATIVE_EXPECTATION_GAP') return 'GUIDANCE FAILURE';
+  if (a.status !== 'WEAKENING') return null;
+  const down = a.checked.filter((c) => c.verdict === 'deteriorating').sort((x, y) => y.weight - x.weight);
+  if (down.some((c) => c.key === 'customer_loss')) return 'CUSTOMER LOSS';
+  if (down.some((c) => c.key === 'guidance' || c.key === 'management_target' || c.key === 'promise_vs_actual')) return 'GUIDANCE FAILURE';
+  if (down.some((c) => EXECUTION_KEYS.has(c.key))) return 'EXECUTION FAILURE';
+  return 'STRUCTURAL DETERIORATION';
 }

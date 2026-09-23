@@ -41,7 +41,11 @@ import {
   type CompanyLedger, type EvidenceFact, type PeriodRecord,
 } from './evidence-ledger';
 import { judgeEventQuality, verifiedDirection, betterReading, type StructuralEvent } from './evidence-extract';
-import { normalizeEvent, guidanceMove, type GuidanceMove } from './fact-normalize';
+import { normalizeEvent, guidanceMove, datesIn, type GuidanceMove } from './fact-normalize';
+import {
+  comparability, deltaText, lineageOf, samePeriodPair, factTypeOf, normalizeValue,
+  PRIOR_NOT_DISCLOSED, type FactType, type Lineage, type NormalizedValue,
+} from './fact-model';
 
 // ── the vocabulary ─────────────────────────────────────────────────────────
 
@@ -148,6 +152,18 @@ export interface MetricComparison {
   promised: { value: string; kind: 'GUIDANCE' | 'TARGET'; period: string; by: string | null } | null;
   /** One sentence, assembled from the fields above. Nothing new is asserted. */
   line: string;
+  /** ── THE COMPARABILITY VERDICT BEHIND THE DELTA.                 (zzz770)
+   *  `comparable: false` with a reason whenever a prior exists but may not be
+   *  subtracted (unit, scope, basis, definition, same period). */
+  comparability?: { comparable: boolean; reason: string | null; conversion_method: string | null } | null;
+  /** The type of the CURRENT reading (owner's seven types). */
+  fact_type?: FactType | null;
+  /** Where the current and previous figures came from, never dropped. */
+  lineage?: { current: Lineage | null; previous: Lineage | null } | null;
+  /** The whole per-period history of this variable (see metricSeries). */
+  series?: MetricSeries | null;
+  /** "68% → 74% · +6pp" / "74% · prior comparable value not disclosed". */
+  display?: string;
   /** The verbatim sentence the current figure came from. */
   evidence: string;
   source: string;
@@ -309,6 +325,9 @@ export function changeBetween(prev: Quantity, cur: Quantity): { change: string |
   if (b == null || a == null) return { change: null, relative: null, direction: 'unknown' };
   const d = a - b;
   const dir: 'up' | 'down' | 'flat' = Math.abs(d) < 1e-9 ? 'flat' : d > 0 ? 'up' : 'down';
+  // An unchanged figure has no delta to print: "59 → 59 · +0%" (ENTERO) read
+  // as a measured move. The change TYPE says unchanged. (zzz770)
+  if (dir === 'flat') return { change: null, relative: null, direction: 'flat' };
   const sign = d >= 0 ? '+' : '';
   if (prev.isPercent && cur.isPercent) {
     const pp = `${sign}${Math.round(d * 10) / 10}pp`;
@@ -321,6 +340,34 @@ export function changeBetween(prev: Quantity, cur: Quantity): { change: string |
 }
 
 // ── the walk ───────────────────────────────────────────────────────────────
+
+/** The change between two readings the comparability engine passed: pp for
+ *  percentages (with the relative move second), relative percent otherwise,
+ *  computed on the NORMALISED values so lakh↔crore and KTPA↔MT are exact. */
+function changeOf(prevQ: Quantity, curQ: Quantity, pn: NormalizedValue | null, cn: NormalizedValue | null): { change: string | null; relative: string | null; direction: 'up' | 'down' | 'flat' | 'unknown' } {
+  if ((prevQ.isPercent && curQ.isPercent) || !pn || !cn || pn.normalized_value == null || cn.normalized_value == null) return changeBetween(prevQ, curQ);
+  const d = deltaText(pn, cn);
+  return { change: d.text === 'unchanged' ? null : d.text, relative: null, direction: d.direction };
+}
+
+/** A reading as the comparability engine sees it. The period is the one the
+ *  figure DESCRIBES: a date written into the value ("82.88 crore deployed in
+ *  April 2026", CUPID — filed under two ledger periods) wins over the ledger
+ *  period it happened to be read in. (zzz770) */
+function comparableOf(f: EvidenceFact, period: string, factType: FactType) {
+  // The first figure's own clause: "82.88 crore is deployed in April 2026 and
+  // 36.93 crore in May 2026" describes April for its first figure.
+  const own = datesIn(String(f.value ?? '').split(/\band\b|;|,(?!\d)/)[0]);
+  const pinned = own.length ? own.reduce((x, y) => (y.end > x.end ? y : x)).label : null;
+  return { key: f.metric_name, value: String(f.value ?? ''), unit: f.unit, quote: f.source_quote, period: pinned || period, fact_type: factType };
+}
+
+/** The type of a stored fact, read from its own sentence. */
+function typeOfFact(f: EvidenceFact, period: string): FactType {
+  const e = asEvent(f, period);
+  return factTypeOf({ valueType: e.historical_as_of && e.value_type === 'ACTUAL' ? 'HISTORICAL' : e.value_type, key: f.metric_name,
+    value: f.value, text: f.source_quote, source: f.source_name, retyped: (e as any).retyped_because });
+}
 
 const CONF_RANK: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
@@ -413,6 +460,26 @@ function describe(c: MetricComparison): string {
   }
 }
 
+/** A before→after the document states inside one sentence, when it is a real
+ *  comparison: same measure, a figure on both sides, and NOT two statements
+ *  of one period. "Q4 FY26: 59 days → 59 days by Q4 FY26" (ENTERO) is the
+ *  same period twice — a duplicate, never "+0%". (zzz770) */
+function innerPrior(f: EvidenceFact, curQ: Quantity): Quantity | null {
+  const innerPrev = quantity(f.before_value, f.unit);
+  if (!innerPrev || !f.after_value) return null;
+  if (samePeriodPair(f.before_value, f.after_value)) return null;
+  if (innerPrev.value != null && curQ.value != null && innerPrev.value === curQ.value) return null;
+  const c = comparability(
+    { key: f.metric_name, value: innerPrev.raw, unit: f.unit, quote: f.source_quote, period: null },
+    { key: f.metric_name, value: curQ.raw, unit: f.unit, quote: f.source_quote, period: null },
+  );
+  // The unit rule is the engine's; the scope rule does not apply to two sides
+  // of one sentence, which share their scope by construction.
+  if (!c.comparable && !/scope|plant|segment|basis|definition/.test(String(c.reason))) return null;
+  if (!c.comparable && !sameUnit(innerPrev.raw, curQ.raw, f.unit, f.unit)) return null;
+  return innerPrev;
+}
+
 /**
  * Walk the whole ledger and produce one comparison per variable.
  *
@@ -455,7 +522,7 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
     return null;
   };
 
-  const put = (c: MetricComparison) => { out[c.key] = { ...c, line: describe(c) }; };
+  const put = (c: MetricComparison) => { out[c.key] = { ...c, line: describe(c), display: displayOf(c) }; };
 
   // ── 1. Variables with a figure in the CURRENT period. ────────────────────
   for (const [k, f] of curActuals) {
@@ -499,17 +566,35 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
       line: '',
       evidence: f.source_quote,
       source: f.source_name,
+      fact_type: typeOfFact(f, to),
+      comparability: null,
+      lineage: { current: lineageOf({ ...f, period: to }, cur.documents), previous: null },
     };
 
     if (prior) {
       const prevQ = quantity(prior.fact.value, prior.fact.unit);
       if (prevQ) {
-        // Rule 2: the units decide whether a delta may exist at all.
-        if (!sameUnit(prevQ.raw, curQ.raw, prior.fact.unit, f.unit)) {
-          put({ ...base, previous: prevQ, previous_period: prior.period, change_type: 'NOT_COMPARABLE', basis: basisFor(prior.period, to), direction: 'unknown' });
+        // Rule 2 (zzz770): the comparability engine decides whether a delta
+        // may exist at all — same metric, unit (normalised only where exact),
+        // scope (plant / project / phase / segment), basis, definition, and a
+        // different period. Anything else is NOT COMPARABLE, with the reason.
+        const comp = comparability(comparableOf(prior.fact, prior.period, 'ACTUAL'), comparableOf(f, to, 'ACTUAL'));
+        const prevLineage = lineageOf({ ...prior.fact, period: prior.period }, ledger.periods[prior.period]?.documents);
+        if (comp.same_period) {
+          // One period stated in two ledger periods: a duplicate, kept as
+          // corroboration of the same figure, never a change.
+          put({ ...base, change_type: earlier.length ? 'NEWLY_DISCLOSED' : 'NEW',
+            comparability: { comparable: false, reason: comp.reason, conversion_method: null },
+            lineage: { current: base.lineage?.current ?? null, previous: prevLineage } });
           continue;
         }
-        const ch = changeBetween(prevQ, curQ);
+        if (!comp.comparable) {
+          put({ ...base, previous: prevQ, previous_period: prior.period, change_type: 'NOT_COMPARABLE', basis: basisFor(prior.period, to), direction: 'unknown',
+            comparability: { comparable: false, reason: comp.reason, conversion_method: null },
+            lineage: { current: base.lineage?.current ?? null, previous: prevLineage } });
+          continue;
+        }
+        const ch = changeOf(prevQ, curQ, comp.prev_norm, comp.cur_norm);
         const same = prevQ.raw.trim().toLowerCase() === curQ.raw.trim().toLowerCase();
         put({
           ...base,
@@ -518,6 +603,8 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
           change_type: same || ch.direction === 'flat' ? 'UNCHANGED' : ch.direction === 'up' ? 'INCREASED' : ch.direction === 'down' ? 'DECREASED' : 'NOT_COMPARABLE',
           basis: basisFor(prior.period, to),
           direction: ch.direction === 'unknown' ? base.direction : ch.direction,
+          comparability: { comparable: true, reason: null, conversion_method: comp.conversion_method },
+          lineage: { current: base.lineage?.current ?? null, previous: prevLineage },
         });
         continue;
       }
@@ -528,9 +615,9 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
     // silent" — the second is a disclosure event in its own right.
     if (earlier.length) {
       // The document may still state its own before→after inside one sentence.
-      const innerPrev = quantity(f.before_value, f.unit);
-      if (innerPrev && f.after_value && sameUnit(innerPrev.raw, curQ.raw, f.unit, f.unit)) {
-        const ch = changeBetween(innerPrev, curQ);
+      const innerPrev = innerPrior(f, curQ);
+      if (innerPrev) {
+        const ch = changeOf(innerPrev, curQ, normalizeValue(innerPrev.raw, f.unit), normalizeValue(curQ.raw, f.unit));
         put({
           ...base, previous: innerPrev, previous_period: null,
           change: ch.change, change_relative: ch.relative,
@@ -543,9 +630,9 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
       put({ ...base, change_type: 'NEWLY_DISCLOSED' });
       continue;
     }
-    const innerPrev = quantity(f.before_value, f.unit);
-    if (innerPrev && f.after_value && sameUnit(innerPrev.raw, curQ.raw, f.unit, f.unit)) {
-      const ch = changeBetween(innerPrev, curQ);
+    const innerPrev = innerPrior(f, curQ);
+    if (innerPrev) {
+      const ch = changeOf(innerPrev, curQ, normalizeValue(innerPrev.raw, f.unit), normalizeValue(curQ.raw, f.unit));
       put({
         ...base, previous: innerPrev, previous_period: null,
         change: ch.change, change_relative: ch.relative, basis: 'WITHIN_DOCUMENT',
@@ -590,6 +677,9 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
           : null,
         promised: null,
         line: '', evidence: f.source_quote, source: f.source_name,
+        fact_type: null,
+        comparability: null,
+        lineage: { current: null, previous: lineageOf({ ...f, period: earlier[i] }, p.documents) },
       });
     }
   }
@@ -605,6 +695,13 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
     if (!curQ) continue;
     const prevQ = prior ? quantity(prior.fact.value, prior.fact.unit) : null;
     const repeated = !!prevQ && prevQ.raw.trim().toLowerCase() === curQ.raw.trim().toLowerCase();
+    // Two forward statements are one guidance moving only when they measure
+    // the same thing: GPPL's "2 → 5 million MT liquid cargo" and "260–270k
+    // RoRo cars" are two plans, never a revision of one. (zzz770)
+    const fwdType = (x: EvidenceFact): FactType => x.fact_or_management_statement === 'TARGET' ? 'MANAGEMENT_TARGET' : 'MANAGEMENT_GUIDANCE';
+    const fwdCmp = prior && prevQ && !repeated
+      ? comparability({ ...comparableOf(prior.fact, prior.period, fwdType(prior.fact)), fact_type: 'MANAGEMENT_GUIDANCE' }, { ...comparableOf(f, to, fwdType(f)), fact_type: 'MANAGEMENT_GUIDANCE' })
+      : null;
     put({
       key: k, label: VAR_LABEL[k] || k,
       current: curQ, current_period: to,
@@ -627,11 +724,21 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
         }
         : null,
       line: '', evidence: f.source_quote, source: f.source_name,
+      fact_type: fwdType(f),
+      comparability: fwdCmp ? { comparable: fwdCmp.comparable, reason: fwdCmp.reason, conversion_method: fwdCmp.conversion_method } : null,
+      lineage: {
+        current: lineageOf({ ...f, period: to }, cur.documents),
+        previous: prior ? lineageOf({ ...prior.fact, period: prior.period }, ledger.periods[prior.period]?.documents) : null,
+      },
     });
     // A non-repeated forward statement is not an "increase" unless the numbers
     // say so. Correct it with the arithmetic where both sides parse.
     const c = out[k]!;
-    if (prevQ && !repeated) {
+    if (fwdCmp && !fwdCmp.comparable) {
+      out[k] = { ...c, guidance_move: 'NOT_COMPARABLE', change_type: 'NOT_COMPARABLE', direction: 'unknown' };
+      out[k]!.line = describe(out[k]!);
+      out[k]!.display = displayOf(out[k]!);
+    } else if (prevQ && !repeated) {
       // A guidance RANGE is compared as a range: "20–25% → 25–30%" is RAISED
       // by its midpoint, not "+25%" off the first number. (zzz765)
       const gm = guidanceMove(prevQ.raw, curQ.raw);
@@ -651,12 +758,107 @@ export function buildComparisons(ledger: CompanyLedger | null | undefined): Part
         };
       }
       out[k]!.line = describe(out[k]!);
+      out[k]!.display = displayOf(out[k]!);
     } else if (repeated) {
       out[k] = { ...c, guidance_move: 'MAINTAINED' };
     }
   }
 
+  // ── 4. The full history rides with every comparison. ───────────────────
+  for (const k of Object.keys(out) as VarKey[]) {
+    const c = out[k]!;
+    c.series = metricSeries(ledger, k);
+  }
   return out;
+}
+
+/** The printed form the owner asked for: "68% → 74% · +6pp", "59 days → 59
+ *  days · unchanged", "74% · prior comparable value not disclosed". */
+export function displayOf(c: MetricComparison): string {
+  const cur = c.current?.raw ?? null;
+  const p = c.previous_period ? ` (${c.previous_period})` : '';
+  switch (c.change_type) {
+    case 'NOT_DISCLOSED': return `${c.previous?.raw}${p} → not disclosed${c.current_period ? ` (${c.current_period})` : ''}`;
+    case 'NOT_COMPARABLE': return `${cur ?? ''} · NOT COMPARABLE${c.previous ? ` with ${c.previous.raw}${p}` : ''}${c.comparability?.reason ? ` — ${c.comparability.reason}` : ''}`;
+    case 'NEW': case 'NEWLY_DISCLOSED': return `${cur ?? ''} · ${PRIOR_NOT_DISCLOSED}`;
+    case 'REITERATED': return `${cur ?? ''} · maintained${c.previous_period ? ` since ${c.previous_period}` : ''}`;
+    case 'UNCHANGED': return `${c.previous?.raw ?? ''}${p} → ${cur ?? ''} · unchanged`;
+    default:
+      if (c.guidance_move && c.guidance_move !== 'NOT_COMPARABLE') return `${c.previous?.raw ?? ''}${p} → ${cur ?? ''} · ${c.guidance_move.toLowerCase()}`;
+      return `${c.previous?.raw ?? ''}${p} → ${cur ?? ''}${c.change ? ` · ${c.change}` : ''}`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE TIME SERIES — EVERY PERIOD, INCLUDING THE SILENT ONES.         (zzz770)
+//
+// "65% → 70% → 70% → not disclosed". A period on file with no figure for the
+// metric is NOT DISCLOSED — never zero, never a decline. Consecutive disclosed
+// points get a delta only when the comparability engine passes them.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface SeriesPoint {
+  period: string;
+  status: 'DISCLOSED' | 'NOT_DISCLOSED';
+  value: string | null;
+  normalized: NormalizedValue | null;
+  fact_type: FactType | null;
+  lineage: Lineage | null;
+  /** Change from the previous DISCLOSED point, when comparable. */
+  change_from_prior: string | null;
+  comparable_with_prior: boolean | null;
+  reason: string | null;
+}
+
+export interface MetricSeries {
+  key: VarKey;
+  label: string;
+  points: SeriesPoint[];
+  /** "65% (Q1 FY26) → 70% (Q2 FY26) → 70% (Q3 FY26) → not disclosed (Q4 FY26)". */
+  display: string;
+  /** Over the disclosed, comparable points. The latest period silent is its
+   *  own state, never a direction. */
+  trend: 'UP' | 'DOWN' | 'FLAT' | 'MIXED' | 'SINGLE' | 'NOT_DISCLOSED' | 'NONE';
+}
+
+export function metricSeries(ledger: CompanyLedger | null | undefined, key: VarKey): MetricSeries {
+  const label = VAR_LABEL[key] || key;
+  const empty: MetricSeries = { key, label, points: [], display: '', trend: 'NONE' };
+  if (!ledger?.periods) return empty;
+  const ordered = Object.keys(ledger.periods).sort((a, b) => periodOrdinal(a) - periodOrdinal(b));
+  const points: SeriesPoint[] = [];
+  let lastDisclosed: { f: EvidenceFact; period: string } | null = null;
+  const dirs: Array<'up' | 'down' | 'flat'> = [];
+  for (const period of ordered) {
+    const p = ledger.periods[period];
+    const f = p ? actualsIn(p).get(key) : undefined;
+    if (!f) {
+      points.push({ period, status: 'NOT_DISCLOSED', value: null, normalized: null, fact_type: null, lineage: null, change_from_prior: null, comparable_with_prior: null, reason: null });
+      continue;
+    }
+    let change: string | null = null, comparable: boolean | null = null, reason: string | null = null;
+    if (lastDisclosed) {
+      const c = comparability(comparableOf(lastDisclosed.f, lastDisclosed.period, 'ACTUAL'), comparableOf(f, period, 'ACTUAL'));
+      comparable = c.comparable; reason = c.reason;
+      if (c.comparable) {
+        const d = deltaText(c.prev_norm!, c.cur_norm!);
+        change = d.text;
+        if (d.direction !== 'unknown') dirs.push(d.direction);
+      }
+    }
+    points.push({ period, status: 'DISCLOSED', value: String(f.value), normalized: normalizeValue(f.value, f.unit), fact_type: typeOfFact(f, period),
+      lineage: lineageOf({ ...f, period }, p!.documents), change_from_prior: change, comparable_with_prior: comparable, reason });
+    lastDisclosed = { f, period };
+  }
+  if (!points.some((x) => x.status === 'DISCLOSED')) return { ...empty, points, display: points.map((x) => `not disclosed (${x.period})`).join(' → ') };
+  const display = points.map((x) => (x.status === 'DISCLOSED' ? `${x.value} (${x.period})` : `not disclosed (${x.period})`)).join(' → ');
+  const latest = points[points.length - 1];
+  const trend: MetricSeries['trend'] = latest.status === 'NOT_DISCLOSED' ? 'NOT_DISCLOSED'
+    : !dirs.length ? 'SINGLE'
+      : dirs.every((d) => d === 'flat') ? 'FLAT'
+        : dirs.every((d) => d !== 'down') ? 'UP'
+          : dirs.every((d) => d !== 'up') ? 'DOWN' : 'MIXED';
+  return { key, label, points, display, trend };
 }
 
 /** How many periods of history this ledger actually holds. The card needs it

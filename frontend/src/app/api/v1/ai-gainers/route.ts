@@ -35,6 +35,7 @@ import { fetchIndiaGainers, INDIA_GAINERS_URL, indiaSession, partitionByCap, LAR
 import { istLastNWeekdays } from '@/lib/market-hours';
 import { readAnnouncementCached, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
+import { compactFiledRow } from '@/lib/ai-gainers/research-view';
 import {
   parseCsv, usRowFromRecord, screenUsGainers, describeExclusions, describeUsExportAsOf,
   type UsExclusion, type UsExportAsOf,
@@ -745,6 +746,12 @@ async function scan(req: NextRequest) {
     // second stage of a 122-row funnel again.
     graded_available: gainersListRead ? gainers.filter((g) => gradedBy.has(g.ticker)).length : gradedBy.size,
     graded_bench_size: gradedBy.size,
+    // zzz770 AG-A — the filed-result rows behind the board, with the numbers
+    // the research view needs (revenue / PAT / EPS YoY, margins, CFO/PAT,
+    // TTM revenue from the quarterly tail). Figures only as filed; a missing
+    // field stays null and the view prints "Not disclosed".
+    filed_results: (gainersListRead ? gainers.filter((g) => gradedBy.has(g.ticker)).map((g) => gradedBy.get(g.ticker)) : Array.from(gradedBy.values()))
+      .slice(0, 200).map(compactFiledRow),
     notes,
     queue: queue.map(({ event, priority }) => ({
       ticker: event.ticker,

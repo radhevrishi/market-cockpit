@@ -40,10 +40,10 @@ import { kvGet, kvSet } from '@/lib/kv';
 import {
   loadLedger, persistEvidenceRun, persistAttempt, persistSeen, docsFromRoute,
 } from '@/lib/thesis/evidence-store';
-import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary } from '@/lib/thesis/evidence-ledger';
+import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary, unseenDocuments, contentHash } from '@/lib/thesis/evidence-ledger';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, nextBestCandidate, attemptOutcome, type DocCandidate } from '@/lib/thesis/evidence-discovery';
-import { ocrPdf, pdfTextQuality, OCR_MAX_PER_READ } from '@/lib/thesis/pdf-ocr';
+import { ocrPdf, OCR_MAX_PER_READ, readOneDocument } from '@/lib/thesis/pdf-ocr';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
 import { previousPeriod, isReportingPeriod, isOlderPeriod, selectPriorPeriodDocuments, ledgerDocuments } from '@/lib/thesis/prior-period';
 import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
@@ -271,9 +271,10 @@ export async function GET(req: NextRequest) {
     } catch { /* a cold cache is not an error */ }
   }
 
-  if (!modelConfigured()) {
-    return NextResponse.json({ ok: false, error: `The summary service is not configured on this deployment (${modelKeyName()} missing).` });
-  }
+  // The model key is checked only where a model call follows (below the
+  // check / incremental-skip branches): "Check for new evidence" is discovery
+  // only and must work without it. (zzz770)
+  const runMode = force ? 'force' : priorTarget ? 'prior' : mode;
 
   // ══════════════════════════════════════════════════════════════════════
   // EVIDENCE DISCOVERY, THEN EXTRACTION — IN THAT ORDER.          (zzz737)
@@ -314,7 +315,19 @@ export async function GET(req: NextRequest) {
       })),
     ], priorTarget)
     : discovery.candidates;
-  const toRead = selectForReading(pool, MAX_DOCS);
+  // A DOCUMENT NOT SEEN BEFORE is new evidence even when its date is not
+  // newer (a transcript filed the same day as the results, a presentation
+  // re-posted under a new url) — identity is the document, not the date.
+  // Unseen documents of the newest unseen period are offered to the selector
+  // first, so the read takes them in; the other kinds are filled from the
+  // ranked pool as before so the period's summary stays whole (re-reading a
+  // listed document is idempotent: same fact ids). (zzz770)
+  const unseen = priorTarget ? [] : unseenDocuments(ledgerBefore, discovery.candidates, startedAt);
+  const unseenTop = unseen.map((d) => d.reporting_period || '').sort((a, b) => periodOrdinal(b) - periodOrdinal(a))[0] || null;
+  const unseenFirst: DocCandidate[] = !force && ledgerBefore?.latest_period && unseenTop
+    ? pool.filter((c) => unseen.some((u) => u.url === c.url && u.reporting_period === unseenTop))
+    : [];
+  const toRead = selectForReading(unseenFirst.length ? [...unseenFirst, ...pool.filter((c) => !unseenFirst.includes(c))] : pool, MAX_DOCS);
 
   if (priorTarget && !toRead.length) {
     // NOTHING FOR THAT QUARTER. Two different facts, kept apart: a source we
@@ -326,7 +339,7 @@ export async function GET(req: NextRequest) {
       ? `No ${priorTarget} document on file and ${discovery.attempts.filter((a) => a.outcome === 'error').map((a) => a.source).join(', ')} could not be reached.`
       : `Every source was reached; none lists a ${priorTarget} transcript, presentation or results document for ${ticker}.`;
     const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, unreachable ? 'SOURCE_UNAVAILABLE' : 'NO_DISCLOSURE',
-      unreachable ? why : null, attemptExtra({ documents_found: discovery.candidates.length }));
+      unreachable ? why : null, { ...attemptExtra({ documents_found: discovery.candidates.length }), failureKind: 'source_unreachable', mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({
       ok: false, state: unreachable ? 'RETRIEVAL_FAILED' : 'SEARCH_EXHAUSTED', target_period: priorTarget,
       error: why, ledger: attempt.ledger, persisted: attempt.persisted,
@@ -341,19 +354,20 @@ export async function GET(req: NextRequest) {
   const newestCandidatePeriod = reportingPeriodFromDate(newestCandidateDate)?.period || null;
   const latestOnFile = ledgerBefore?.latest_period || null;
   const latestOnFileDate = ledgerBefore?.latest_document_date || null;
-  const hasNewer = !!newestCandidateDate && (
+  const hasNewer = (!!newestCandidateDate && (
     !latestOnFile
     || (newestCandidatePeriod != null && periodOrdinal(newestCandidatePeriod) > periodOrdinal(latestOnFile))
     || (!!latestOnFileDate && newestCandidateDate > latestOnFileDate)
-  );
+  )) || (!!latestOnFile && unseen.length > 0);
 
   if (mode === 'check' && !priorTarget) {
     const ledger = discovery.state === 'RETRIEVAL_FAILED' && !toRead.length
-      ? (await persistAttempt(ticker, 'IN', runId, startedAt, 'SOURCE_UNAVAILABLE', discovery.summary)).ledger
-      : await persistSeen(ticker, 'IN', newestCandidateDate);
+      ? (await persistAttempt(ticker, 'IN', runId, startedAt, 'SOURCE_UNAVAILABLE', discovery.summary, { failureKind: 'source_unreachable', mode: 'check', attempts: discovery.attempts })).ledger
+      : await persistSeen(ticker, 'IN', newestCandidateDate, discovery.candidates, { runId, attempts: discovery.attempts });
     return NextResponse.json({
       ok: true, mode: 'check', ticker,
       new_evidence: hasNewer,
+      unseen_documents: unseen.map((d) => ({ label: d.label, kind: d.kind, date: d.date_iso, period: d.reporting_period })),
       newest_document_date: newestCandidateDate, newest_period: newestCandidatePeriod,
       latest_period_on_file: latestOnFile, latest_document_on_file: latestOnFileDate,
       candidates: toRead.map((c) => ({ label: c.label, kind: c.kind, period: c.period, date: c.dateIso, source: c.source })),
@@ -364,7 +378,7 @@ export async function GET(req: NextRequest) {
 
   if (mode === 'incremental' && !priorTarget && !force && latestOnFile && !hasNewer) {
     const stored = latestSummary(ledgerBefore);
-    const { ledger } = await persistAttempt(ticker, 'IN', runId, startedAt, 'SKIPPED_NO_NEW_EVIDENCE', null, { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate });
+    const { ledger } = await persistAttempt(ticker, 'IN', runId, startedAt, 'SKIPPED_NO_NEW_EVIDENCE', null, { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate, mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({
       ok: true, skipped: 'SKIPPED_NO_NEW_EVIDENCE', cached: true, from_ledger: true,
       structured: stored?.summary || null, events: stored?.period.events || [],
@@ -375,13 +389,17 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  if (!modelConfigured()) {
+    return NextResponse.json({ ok: false, error: `The summary service is not configured on this deployment (${modelKeyName()} missing).` });
+  }
+
   const read: Array<{ doc: DocCandidate; text: string }> = [];
   // EVERY DOCUMENT GETS AN OUTCOME, not just the ones that were read. The
   // owner's spec separates "download failed" from "scanned image" from
   // "too short to be a filing" because each calls for a different next step
   // (retry / OCR / ignore). A single "could not be read" collapsed all three.
   type DocOutcome = 'read' | 'download_failed' | 'scanned' | 'too_short' | 'budget_exhausted';
-  const outcomes: Array<{ url: string; label: string; kind: string; outcome: DocOutcome; chars: number; pages: number; detail?: string }> = [];
+  const outcomes: Array<{ url: string; label: string; kind: string; outcome: DocOutcome; chars: number; pages: number; detail?: string; hash?: string | null }> = [];
   let budget = MAX_CHARS;
   // ── A FAILED DOCUMENT IS REPLACED, NOT JUST RECORDED.            (zzz765)
   // AETHER's August presentation did not download and the read went ahead
@@ -411,41 +429,28 @@ export async function GET(req: NextRequest) {
     // presentation is 7.8 MB and its annual report 8 MB, both over the 5 MB
     // results-PDF cap, and both came back as "no response" because the
     // convenience wrapper dropped the reason. The real reason is now kept
-    // and shown on the card. (zzz744)
-    const e = await extractPdfText(cand.url, { maxBytes: 25 * 1024 * 1024, timeoutMs: 30_000 });
-    let body = String(e?.text || '');
-    const pages = Number(e?.pages || 0);
-    if (!e || e.source === 'FAILED') {
-      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'download_failed', chars: 0, pages, detail: e?.failure_reason || 'no response' });
-      replace(cand);
-      continue;
-    }
-    // Below 1,200 characters a one- or two-page file is an intimation or a
-    // cover note; a multi-page file with almost no text per page is a scan.
-    const quality = pdfTextQuality(body.length, pages, body);
-    let viaOcr = false;
-    if (quality === 'scanned') {
+    // and shown on the card. (zzz744) The decision itself — download, text
+    // quality, OCR of a scan — is readOneDocument (lib/thesis/pdf-ocr), so the
+    // scanned-PDF path is tested without a network. (zzz770)
+    const r = await readOneDocument(cand, {
+      extract: (u) => extractPdfText(u, { maxBytes: 25 * 1024 * 1024, timeoutMs: 30_000 }) as any,
+      ocr: (u, l) => ocrPdf(u, l, MODEL),
       // OCR only inside this clicked read, and at most OCR_MAX_PER_READ times.
-      const ocr = !allowOcr
-        ? { ok: false as const, detail: 'OCR unavailable — only a clicked read may OCR' }
-        : ocrUsed < OCR_MAX_PER_READ && Date.now() - loopStart < 60_000
-          ? (ocrUsed++, await ocrPdf(cand.url, cand.label, MODEL))
-          : { ok: false as const, detail: 'OCR unavailable — per-read OCR limit reached' };
-      if (!ocr.ok) {
-        outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'scanned', chars: body.length, pages, detail: ocr.detail });
-        replace(cand);
-        continue;
-      }
-      body = ocr.text;
-      viaOcr = true;
-    } else if (quality === 'too_short') {
-      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'too_short', chars: body.length, pages });
+      ocrGate: () => (!allowOcr ? 'OCR unavailable — only a clicked read may OCR'
+        : ocrUsed < OCR_MAX_PER_READ && Date.now() - loopStart < 60_000 ? (ocrUsed++, true)
+          : 'OCR unavailable — per-read OCR limit reached'),
+    });
+    const pages = r.pages;
+    if (r.outcome !== 'read') {
+      outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: r.outcome, chars: r.chars, pages, ...(r.detail ? { detail: r.detail } : {}) });
       replace(cand);
       continue;
     }
+    const body = r.text;
+    const viaOcr = r.viaOcr;
     const slice = body.slice(0, budget);
     budget -= slice.length;
-    outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'read', chars: slice.length, pages, ...(viaOcr ? { detail: 'ocr' } : {}) });
+    outcomes.push({ url: cand.url, label: cand.label, kind: cand.kind, outcome: 'read', chars: slice.length, pages, hash: contentHash(body), ...(viaOcr ? { detail: 'ocr' } : {}) });
     read.push({ doc: cand, text: slice });
   }
 
@@ -466,10 +471,14 @@ export async function GET(req: NextRequest) {
     // A source that errored, or a document we could not download or OCR,
     // is SOURCE_UNAVAILABLE — never NO_DISCLOSURE. (zzz765)
     const outcome = attemptOutcome(discovery.attempts, outcomes);
+    // Which failure: a document we could not download / OCR is the reader's
+    // (RETRIEVAL_FAILED); a source that errored with nothing read is the
+    // source's (SOURCE_UNAVAILABLE). Neither is NOT_DISCLOSED. (zzz770)
+    const docFailed = outcomes.some((o) => o.outcome === 'download_failed' || o.outcome === 'scanned' || o.outcome === 'budget_exhausted');
     const attempt = await persistAttempt(ticker, 'IN', runId, startedAt,
       outcome,
       outcome === 'SOURCE_UNAVAILABLE' ? (docReasons || discovery.summary) : null,
-      attemptExtra({ documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate }));
+      { ...attemptExtra({ documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate }), failureKind: docFailed ? 'document_unreadable' : 'source_unreachable', mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({
       ok: false,
       state, target_period: priorTarget,
@@ -503,6 +512,11 @@ export async function GET(req: NextRequest) {
   // The check now applies only when every document read is a results filing,
   // which is the case it was written for. (zzz737)
   if (read.every((r) => r.doc.kind === 'results') && !looksLikeIndiaResults(text)) {
+    // Recorded, so the ledger says "searched, nothing readable" instead of
+    // looking never searched. Intimations are the company's filing, not our
+    // failure: NO_DISCLOSURE for this attempt. (zzz770)
+    await persistAttempt(ticker, 'IN', runId, startedAt, 'NO_DISCLOSURE', 'documents found are intimations or notices, not statements of results',
+      { ...attemptExtra({ documents_found: discovery.candidates.length }), mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({
       ok: false,
       state: 'SEARCH_EXHAUSTED',
@@ -530,17 +544,19 @@ export async function GET(req: NextRequest) {
       // as a number. The message is safe to show: it never carries the key.
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
-      const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API HTTP ${resp.status}${detail ? `: ${detail}` : ''}`, attemptExtra({ documents_found: discovery.candidates.length }));
+      const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API HTTP ${resp.status}${detail ? `: ${detail}` : ''}`, { ...attemptExtra({ documents_found: discovery.candidates.length }), failureKind: 'model_failed', mode: runMode, attempts: discovery.attempts });
       return NextResponse.json({ ok: false, error: `The summary service returned HTTP ${resp.status}${detail ? `: ${detail}` : '.'}`, state: 'RETRIEVAL_FAILED', discovery_attempts: discovery.attempts, document_outcomes: outcomes, ledger: attempt.ledger, persisted: attempt.persisted });
     }
     const j = await resp.json();
     const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === SUMMARY_TOOL.name);
     data = call?.input || null;
   } catch (e: any) {
-    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API: ${String(e?.message || e)}`.slice(0, 300), attemptExtra({ documents_found: discovery.candidates.length }));
+    const attempt = await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', `model API: ${String(e?.message || e)}`.slice(0, 300), { ...attemptExtra({ documents_found: discovery.candidates.length }), failureKind: 'model_failed', mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({ ok: false, error: `The summary service did not answer (${String(e?.message || e)}).`, state: 'RETRIEVAL_FAILED', discovery_attempts: discovery.attempts, document_outcomes: outcomes, ledger: attempt.ledger, persisted: attempt.persisted });
   }
   if (!data) {
+    await persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', 'the summary service answered without filing a result',
+      { ...attemptExtra({ documents_found: discovery.candidates.length }), failureKind: 'model_failed', mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({ ok: false, error: 'The summary service answered without filing a result.' });
   }
 
@@ -647,13 +663,19 @@ export async function GET(req: NextRequest) {
   }
 
 
+  // A reading rejected by verification is the READER's failure, recorded so
+  // the ledger never shows it as not searched or not disclosed. (zzz770)
+  const rejected = async (why: string) => persistAttempt(ticker, 'IN', runId, startedAt, 'FAILED', why.slice(0, 300),
+    { ...attemptExtra({ documents_found: discovery.candidates.length }), failureKind: 'model_failed', mode: runMode, attempts: discovery.attempts });
   if (!data.positives.length && !data.negatives.length && !data.verdict_line) {
+    await rejected(`summary discarded: cited figures absent from the filing (${dropped.slice(0, 3).join(', ')})`);
     return NextResponse.json({
       ok: false,
       error: `The summary cited figures that do not appear in the filing (${dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown.`,
     });
   }
   if (posBefore >= 3 && data.positives.length < posBefore * 0.5) {
+    await rejected(`summary discarded: most figures absent from the filing (${dropped.slice(0, 3).join(', ')})`);
     return NextResponse.json({
       ok: false,
       error: `Most of the summary's figures could not be found in the filing (${dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown in part.`,
@@ -734,10 +756,13 @@ export async function GET(req: NextRequest) {
     rawExtraction: { summary_call: (data as any).__raw_summary ?? null, events_call: rawExtraction, pipeline },
     pipeline,
     expectPeriod: priorTarget,
+    mode: runMode,
   });
   return NextResponse.json({
     ok: true, cached: false, ...payload, target_period: priorTarget,
     reporting_period: persisted.period, ledger: persisted.ledger,
     persisted: persisted.persisted, persist_error: persisted.error,
+    // NEW_PERIOD / NEW_EVIDENCE / REVISIONS / NO_CHANGES, with counts. (zzz770)
+    changes: persisted.diff,
   });
 }

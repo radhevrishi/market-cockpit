@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { loadLedgers, persistStatus, loadBatch, saveBatch, type BatchHeader } from '@/lib/thesis/evidence-store';
-import { freshnessOf, batchProgress, type CompanyLedger } from '@/lib/thesis/evidence-ledger';
+import { freshnessOf, batchProgress, type CompanyLedger, type CompanyEvidenceState } from '@/lib/thesis/evidence-ledger';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -31,10 +31,16 @@ export async function GET(req: NextRequest) {
 
   let withEvidence = 0, sourceUnavailable = 0, noDisclosure = 0, newEvidence = 0;
   const freshness: Record<string, { state: string; detail: string }> = {};
+  // The owner's seven states, per company, from the persisted ledger. (zzz770)
+  const byState: Record<CompanyEvidenceState, number> = {
+    NOT_SEARCHED: 0, EVIDENCE_INCOMPLETE: 0, CURRENT: 0, NEW_EVIDENCE_AVAILABLE: 0,
+    STALE: 0, SOURCE_UNAVAILABLE: 0, RETRIEVAL_FAILED: 0,
+  };
   for (const t of tickers) {
     const l = ledgers[t] || null;
     const f = freshnessOf(l);
     freshness[t] = f;
+    if (f.evidence_state) byState[f.evidence_state]++;
     if (l?.latest_period) withEvidence++;
     if (f.state === 'SOURCE_UNAVAILABLE') sourceUnavailable++;
     if (f.state === 'NEW_EVIDENCE_AVAILABLE') newEvidence++;
@@ -50,7 +56,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true, tickers: tickers.length, ledgers, freshness,
-    counts: { requested: tickers.length, with_evidence: withEvidence, remaining: tickers.length - withEvidence, source_unavailable: sourceUnavailable, no_disclosure: noDisclosure, new_evidence_available: newEvidence },
+    counts: { requested: tickers.length, with_evidence: withEvidence, remaining: tickers.length - withEvidence, source_unavailable: sourceUnavailable, no_disclosure: noDisclosure, new_evidence_available: newEvidence, by_state: byState },
     batch: batchView,
     prior_batch: priorBatchView,
   });

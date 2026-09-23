@@ -38,11 +38,15 @@ import type { VarKey } from './taxonomy';
 import { VAR_LABEL, VAR_DIMENSION } from './taxonomy';
 import { judgeEventQuality, verifiedDirection, betterReading, type RankableReading, type StructuralEvent } from './evidence-extract';
 
-export const LEDGER_VERSION = 1;
+// ── SCHEMA VERSION 2 (zzz770). Every field added in v2 is OPTIONAL, so a v1
+// ledger read from KV still type-checks and renders; `migrateLedger` fills the
+// v2 fields in memory on read, and the upgraded shape reaches KV only with the
+// next real write (a read never writes). See migrateLedger for the mapping.
+export const LEDGER_VERSION = 2;
 
 /** A document that was found for the period, and what happened to it. */
 export interface LedgerDocument {
-  id: string;                 // stable: sha-ish of the url
+  id: string;                 // stable: sha-ish of the url (facts reference it)
   url: string;
   label: string;
   kind: string;
@@ -54,6 +58,20 @@ export interface LedgerDocument {
   chars?: number;
   pages?: number;
   detail?: string;
+  // ── v2 (zzz770) ──
+  /** url + published date + reporting period (+ text hash when read). Two
+   *  documents with one url but different dates are different documents. */
+  fingerprint?: string;
+  /** The reporting period this document resolves to (reportingPeriodFromDate). */
+  reporting_period?: string | null;
+  /** Did we get the bytes? `failed` is OUR failure, never a disclosure gap. */
+  retrieval_status?: 'retrieved' | 'failed' | 'not_attempted';
+  /** Did the text reach the reader? */
+  read_status?: 'read' | 'unreadable' | 'skipped';
+  /** Hash of the text the reader saw, when it saw any. */
+  content_hash?: string | null;
+  first_seen_at?: string | null;
+  last_read_at?: string | null;
 }
 
 /** One structured fact. The owner's schema (§4), with the identity key. */
@@ -80,6 +98,22 @@ export interface EvidenceFact {
   evidence_quality: 'sentence' | 'chart' | 'unit_mismatch';
   extracted_at: string;
   updated_at: string;
+  // ── v2 lineage and history (zzz770) ──
+  source_url?: string | null;
+  /** When the source document was published (= source_date). */
+  source_published_date?: string | null;
+  /** The date the fact describes: the reporting period's end. */
+  effective_date?: string | null;
+  /** When the document text was retrieved for this fact. */
+  retrieved_at?: string | null;
+  /** Page or section, when the source says. Never guessed. */
+  source_section?: string | null;
+  /** ACTIVE facts are what every reader sees; a SUPERSEDED fact lives in
+   *  `PeriodRecord.superseded_facts` and is never deleted. */
+  record_status?: 'ACTIVE' | 'SUPERSEDED';
+  supersedes?: string | null;
+  superseded_by?: string | null;
+  superseded_at?: string | null;
 }
 
 export interface EvidenceEvent extends StructuralEvent {
@@ -88,6 +122,10 @@ export interface EvidenceEvent extends StructuralEvent {
   source_document_id: string | null;
   extracted_at: string;
   updated_at: string;
+  record_status?: 'ACTIVE' | 'SUPERSEDED';
+  supersedes?: string | null;
+  superseded_by?: string | null;
+  superseded_at?: string | null;
 }
 
 export interface Tally { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; total: number }
@@ -103,6 +141,11 @@ export interface PeriodRecord {
   documents_skipped: number;
   facts: EvidenceFact[];
   events: EvidenceEvent[];
+  /** History, never deleted (zzz770): a fact or event a later read of the
+   *  SAME period revised. Kept out of `facts`/`events` so every reader of
+   *  those arrays sees only the active record. */
+  superseded_facts?: EvidenceFact[];
+  superseded_events?: EvidenceEvent[];
   /** The verified summary the card renders (`structured` from the route). */
   summary: any;
   /** Assigned by the status engine on the client and posted back. */
@@ -135,11 +178,69 @@ export interface EvidenceRun {
    *  rendered anywhere. Kept only on the last few runs to bound the record. */
   raw_extraction_json?: any;
   pipeline?: any;
+  /** v2 (zzz770): WHY a run produced nothing. `source_unreachable` — a source
+   *  errored; `document_unreadable` — documents existed and could not be
+   *  downloaded / OCR'd; `model_failed` — the reader's own call failed or its
+   *  output was rejected. None of the three is ever a disclosure gap. */
+  failure_kind?: FailureKind | null;
+  mode?: string | null;
 }
+
+export type FailureKind = 'source_unreachable' | 'document_unreadable' | 'model_failed';
 
 export interface StatusEntry { reporting_period: string; status: string; because: string | null; at: string }
 
+/** The legacy five (kept: the card, the cron and existing callers switch on
+ *  them). The owner's seven explicit states are `CompanyEvidenceState`. */
 export type FreshnessState = 'CURRENT' | 'NEW_EVIDENCE_AVAILABLE' | 'STALE' | 'NEVER_READ' | 'SOURCE_UNAVAILABLE';
+
+/**
+ * THE SEVEN COMPANY EVIDENCE STATES (zzz770), explicit and distinct:
+ *   NOT_SEARCHED           no search has ever run for this company
+ *   EVIDENCE_INCOMPLETE    searched/read, but no structural fact is on file
+ *                          (nothing readable disclosed, or a read with 0 facts)
+ *   CURRENT                the expected reporting period is on file
+ *   NEW_EVIDENCE_AVAILABLE a document not yet read has been seen at a source
+ *   STALE                  a newer period is due and none has been found
+ *   SOURCE_UNAVAILABLE     a source could not be reached (our outage)
+ *   RETRIEVAL_FAILED       documents exist but could not be downloaded, OCR'd
+ *                          or read (our reader's failure)
+ * The last two are never "not disclosed".
+ */
+export type CompanyEvidenceState =
+  | 'NOT_SEARCHED' | 'EVIDENCE_INCOMPLETE' | 'CURRENT' | 'NEW_EVIDENCE_AVAILABLE'
+  | 'STALE' | 'SOURCE_UNAVAILABLE' | 'RETRIEVAL_FAILED';
+
+/** A document seen at a source by a check, not yet read. */
+export interface SeenDocument { id: string; url: string; label: string; kind: string; date_iso: string | null; reporting_period: string | null; seen_at: string }
+
+/** One compact line per evidence run, persisted on the ledger (last 10). */
+export interface RunLogEntry {
+  run_id: string;
+  at: string;
+  ticker: string;
+  mode: string | null;
+  outcome: EvidenceRun['outcome'];
+  period: string | null;
+  sources_searched: number;
+  sources_failed: string[];
+  documents_found: number;
+  documents_read: number;
+  documents_new: number;
+  facts_extracted: number;
+  facts_new: number;
+  facts_updated: number;
+  facts_superseded: number;
+  events_created: number;
+  variables_changed: string[];
+  /** NO_CHANGES when a re-read found exactly what was on file. */
+  changes: 'NEW_PERIOD' | 'NEW_EVIDENCE' | 'REVISIONS' | 'NO_CHANGES' | 'NONE';
+  status_before: string | null;
+  status_after: string | null;
+  state_before: CompanyEvidenceState;
+  state_after: CompanyEvidenceState;
+  error: string | null;
+}
 
 export interface CompanyLedger {
   version: number;
@@ -161,6 +262,15 @@ export interface CompanyLedger {
   runs: EvidenceRun[];
   created_at: string;
   updated_at: string;
+  // ── v2 (zzz770) ──
+  /** Documents a check saw and no read has taken in yet. Any of them makes
+   *  the company NEW_EVIDENCE_AVAILABLE; a read that lists them clears them. */
+  pending_documents?: SeenDocument[];
+  /** Compact observability, last RUN_LOG_MAX runs. */
+  run_log?: RunLogEntry[];
+  /** Set when the stored shape was upgraded in memory (not persisted until
+   *  the next write). */
+  migrated_from_version?: number | null;
 }
 
 // ── identity ───────────────────────────────────────────────────────────────
@@ -178,6 +288,31 @@ export function stableId(s: string): string {
 }
 
 export function documentId(url: string): string { return 'doc_' + stableId(url.trim().toLowerCase()); }
+
+/** v2 (zzz770): the document's identity beyond its url — url + published date
+ *  + reporting period (+ a hash of its text when it was read). The `id` stays
+ *  url-only because facts reference it; the fingerprint is what says "this is
+ *  the same document, already seen". */
+export function documentFingerprint(url: string, dateIso: string | null | undefined, period: string | null | undefined, hash?: string | null): string {
+  return 'fp_' + stableId(`${String(url || '').trim().toLowerCase()}|${String(dateIso || '').slice(0, 10)}|${period || ''}|${hash || ''}`);
+}
+
+/** Pure: a short, stable hash of a document's text (first 20k chars). */
+export function contentHash(text: string | null | undefined): string | null {
+  const t = String(text || '');
+  return t.length ? 'h_' + stableId(t.slice(0, 20_000)) : null;
+}
+
+/** Pure: a document outcome → its retrieval and read statuses. */
+export function documentStatuses(outcome: LedgerDocument['outcome']): { retrieval_status: NonNullable<LedgerDocument['retrieval_status']>; read_status: NonNullable<LedgerDocument['read_status']> } {
+  switch (outcome) {
+    case 'read': return { retrieval_status: 'retrieved', read_status: 'read' };
+    case 'download_failed': return { retrieval_status: 'failed', read_status: 'unreadable' };
+    case 'scanned': return { retrieval_status: 'retrieved', read_status: 'unreadable' };
+    case 'too_short': return { retrieval_status: 'retrieved', read_status: 'skipped' };
+    default: return { retrieval_status: 'not_attempted', read_status: 'skipped' };
+  }
+}
 
 /** company + period + evidence_type + metric + source document + value type.
  *  Running the same period twice therefore lands on the same id. */
@@ -221,6 +356,16 @@ export function reportingPeriodFromDate(dateIso: string | null | undefined): { p
   };
 }
 
+/** "Q1 FY27" → "2026-06-30". Null for anything that is not a quarter. */
+export function periodEndDate(period: string | null | undefined): string | null {
+  const m = /^Q([1-4])\s+FY(\d{2})$/.exec(String(period || '').trim());
+  if (!m) return null;
+  const q = parseInt(m[1], 10), fyEnd = 2000 + parseInt(m[2], 10);
+  const [y, mo] = q === 4 ? [fyEnd, 3] : [fyEnd - 1, q * 3 + 3];
+  const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return `${y}-${String(mo).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+}
+
 /** Sort key so "Q4 FY26" < "Q1 FY27". */
 export function periodOrdinal(period: string): number {
   const m = /^Q([1-4])\s+FY(\d{2,4})$/.exec(period.trim());
@@ -262,9 +407,9 @@ function evidenceTypeOf(k: VarKey, valueType: string): EvidenceFact['evidence_ty
 // tonnes with kilolitres.
 const MAGNITUDE: Array<[RegExp, number]> = [
   [/\btrillions?\b/i, 1e12],
-  [/\b(billions?|bn)\b/i, 1e9],
-  [/\b(crores?|cr)\b/i, 1e7],
-  [/\b(millions?|mn)\b/i, 1e6],
+  [/(?:\b|(?<=\d))(billions?|bn)\b/i, 1e9],
+  [/(?:\b|(?<=\d))(crores?|cr)\b/i, 1e7],
+  [/(?:\b|(?<=\d))(millions?|mn)\b/i, 1e6],
   [/\blakhs?\b/i, 1e5],
   [/\bthousands?\b/i, 1e3],
 ];
@@ -285,7 +430,13 @@ export function scaledNumber(s: string | null | undefined): number | null {
   // parsed to 4. (zzz763)
   // …except a CURRENCY glued to its amount: "INR140 crores" is ₹140 Cr, and
   // GOLDIAM's order book INR140 → INR225 crores read as no number at all. (zzz765)
-  const m = /(?:(?<=(?:INR|USD|EUR|GBP|JPY|Rs|RS|US\$|₹|\$))|(?<![A-Za-z\d]))-?\d[\d,]*\.?\d*(?![A-Za-z])/.exec(String(s));
+  // …and a UNIT glued to its amount is still the amount: "3920MT/PA" is
+  // 3,920 MT. The old lookahead let the regex back off one digit to "392"
+  // (the next character, "0", is not a letter), so PRECWIRE printed
+  // "3920MT/PA → 4620 MT/PA · +1078.6%" and "10MW" read as 1. A number now
+  // ends where its digits end, and a letter right after it is allowed only
+  // when it spells a unit or a magnitude. (zzz769)
+  const m = /(?:(?<=(?:INR|USD|EUR|GBP|JPY|Rs|RS|US\$|₹|\$))|(?<![A-Za-z\d]))-?\d[\d,]*\.?\d*(?:(?![A-Za-z\d]|[.,]\d)|(?=(?:MTPA|KTPA|TPA|MTPD|TPD|MT|MW[hp]?|GW[hp]?|kW[hp]?|KW[hp]?|KL(?:PD|D)?|kl|kg|KG|tons?|tonnes?|x|X|cr|Cr|CR|crores?|Crores?|mn|Mn|MN|bn|Bn|BN)(?![A-Za-z])))/.exec(String(s));
   if (!m) return null;
   const n = parseFloat(m[0].replace(/,/g, ''));
   if (!Number.isFinite(n)) return null;
@@ -380,9 +531,118 @@ export function factsFromEvents(ticker: string, period: string, events: Structur
       confidence: e.confidence,
       evidence_quality: e.evidence_quality || 'sentence',
       extracted_at: now, updated_at: now,
+      ...factLineage(doc, period, now),
     });
   }
   return { facts, events: out };
+}
+
+/** v2 lineage fields for a fact, from its source document. Page/section is
+ *  filled only when the document says so — never guessed. */
+function factLineage(doc: LedgerDocument | null, period: string, now: string): Partial<EvidenceFact> {
+  return {
+    source_url: doc ? doc.url : null,
+    source_published_date: doc ? doc.date_iso : null,
+    effective_date: periodEndDate(period),
+    retrieved_at: doc?.last_read_at || now,
+    source_section: null,
+    record_status: 'ACTIVE', supersedes: null, superseded_by: null, superseded_at: null,
+  };
+}
+
+/** Pure: fill a document's v2 fields from what it already carries. */
+export function normaliseDocument(d: LedgerDocument, now: string): LedgerDocument {
+  const rp = d.reporting_period !== undefined ? d.reporting_period : (reportingPeriodFromDate(d.date_iso)?.period || null);
+  const st = documentStatuses(d.outcome);
+  return {
+    ...d,
+    id: d.id || documentId(d.url),
+    reporting_period: rp,
+    retrieval_status: d.retrieval_status || st.retrieval_status,
+    read_status: d.read_status || st.read_status,
+    content_hash: d.content_hash ?? null,
+    fingerprint: d.fingerprint || documentFingerprint(d.url, d.date_iso, rp, d.content_hash),
+    first_seen_at: d.first_seen_at || now,
+    last_read_at: d.last_read_at ?? (d.outcome === 'read' ? now : null),
+  };
+}
+
+/** Pure: fill a fact's v2 fields (legacy facts get ACTIVE and their lineage
+ *  from the period's documents). */
+function normaliseFact(f: EvidenceFact, docs: LedgerDocument[]): EvidenceFact {
+  if (f.record_status) return f;
+  const doc = f.source_document_id ? docs.find((d) => d.id === f.source_document_id) || null : null;
+  return {
+    ...f,
+    source_url: f.source_url ?? (doc ? doc.url : null),
+    source_published_date: f.source_published_date ?? f.source_date ?? null,
+    effective_date: f.effective_date ?? periodEndDate(f.reporting_period),
+    retrieved_at: f.retrieved_at ?? f.extracted_at,
+    source_section: f.source_section ?? null,
+    record_status: 'ACTIVE', supersedes: f.supersedes ?? null, superseded_by: null, superseded_at: null,
+  };
+}
+
+function normaliseEvent(e: EvidenceEvent): EvidenceEvent {
+  return e.record_status ? e : { ...e, record_status: 'ACTIVE', supersedes: e.supersedes ?? null, superseded_by: null, superseded_at: null };
+}
+
+/** Pure: a period record with every v2 field present. */
+export function normalisePeriod(p: PeriodRecord, now: string): PeriodRecord {
+  const documents = (p.documents || []).map((d) => normaliseDocument(d, p.extracted_at || now));
+  return {
+    ...p,
+    documents,
+    facts: (p.facts || []).map((f) => normaliseFact(f, documents)),
+    events: (p.events || []).map(normaliseEvent),
+    superseded_facts: p.superseded_facts || [],
+    superseded_events: p.superseded_events || [],
+  };
+}
+
+/**
+ * THE MIGRATION (v1 → v2). Pure, idempotent, lossless.
+ *
+ *   · every document gains fingerprint, reporting_period, retrieval_status,
+ *     read_status (derived from `outcome`), first_seen_at (the period's
+ *     extraction time) and last_read_at (same, for read documents);
+ *   · every fact gains its lineage (source_url from its document,
+ *     source_published_date = source_date, effective_date = period end,
+ *     retrieved_at = extracted_at) and record_status ACTIVE;
+ *   · every event gains record_status ACTIVE;
+ *   · each period gains empty superseded_facts / superseded_events;
+ *   · the ledger gains pending_documents [] and a run_log rebuilt from the
+ *     runs already on file (counts only; nothing invented).
+ * Nothing is removed and no value changes. The result is written back only
+ * by the next real save — loading never writes.
+ */
+export function migrateLedger(raw: any): CompanyLedger | null {
+  if (!raw || typeof raw !== 'object' || !raw.periods || typeof raw.periods !== 'object') return null;
+  const from = Number(raw.version || 1);
+  if (from >= LEDGER_VERSION && Array.isArray(raw.run_log) && Array.isArray(raw.pending_documents)) return raw as CompanyLedger;
+  const now = String(raw.updated_at || raw.created_at || new Date(0).toISOString());
+  const periods: Record<string, PeriodRecord> = {};
+  for (const [k, p] of Object.entries<any>(raw.periods)) if (p) periods[k] = normalisePeriod(p as PeriodRecord, now);
+  const runs: EvidenceRun[] = Array.isArray(raw.runs) ? raw.runs : [];
+  const run_log: RunLogEntry[] = Array.isArray(raw.run_log) ? raw.run_log : runs.slice(-RUN_LOG_MAX).map((r) => ({
+    run_id: r.run_id, at: r.finished_at, ticker: String(raw.ticker || ''), mode: r.mode ?? null, outcome: r.outcome,
+    period: r.reporting_period ?? null, sources_searched: 0, sources_failed: [],
+    documents_found: r.documents_found || 0, documents_read: r.documents_read || 0, documents_new: 0,
+    facts_extracted: r.facts_extracted || 0, facts_new: 0, facts_updated: 0, facts_superseded: 0,
+    events_created: r.events_extracted || 0, variables_changed: [],
+    changes: 'NONE' as const, status_before: null, status_after: null,
+    state_before: 'NOT_SEARCHED' as const, state_after: 'NOT_SEARCHED' as const, error: r.error ?? null,
+  }));
+  return {
+    ...raw,
+    version: LEDGER_VERSION,
+    periods,
+    status_history: Array.isArray(raw.status_history) ? raw.status_history : [],
+    runs,
+    pending_documents: Array.isArray(raw.pending_documents) ? raw.pending_documents : [],
+    run_log,
+    migrated_from_version: from < LEDGER_VERSION ? from : (raw.migrated_from_version ?? null),
+  } as CompanyLedger;
 }
 
 // ── merge ──────────────────────────────────────────────────────────────────
@@ -393,40 +653,135 @@ export function emptyLedger(ticker: string, market: 'IN' | 'US', now: string): C
     latest_source_count: 0, last_evidence_read_at: null, last_attempt: null,
     newest_seen_document_date: null, newest_seen_period: null,
     status_history: [], runs: [], created_at: now, updated_at: now,
+    pending_documents: [], run_log: [], migrated_from_version: null,
   };
 }
 
 const MAX_RUNS = 12;
 const RAW_KEPT_ON_LAST_N_RUNS = 3;
+export const RUN_LOG_MAX = 10;
+const SUPERSEDED_MAX = 60;
+
+/** What one merge changed — the basis of "NO CHANGES" on a second read. */
+export interface MergeDiff {
+  period: string;
+  is_new_period: boolean;
+  documents_new: number;
+  facts_new: number;
+  facts_updated: number;
+  facts_unchanged: number;
+  facts_superseded: number;
+  events_new: number;
+  events_superseded: number;
+  variables_changed: string[];
+  changes: RunLogEntry['changes'];
+}
+
+const norm = (s: string | null | undefined) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+/** Same stated reading? Timestamps, confidence wording and quotes may move
+ *  between two reads of one document; the VALUE is what makes a revision. */
+function sameFactValue(a: EvidenceFact, b: EvidenceFact): boolean {
+  return norm(a.value) === norm(b.value) && norm(a.before_value) === norm(b.before_value)
+    && norm(a.after_value) === norm(b.after_value) && norm(a.unit) === norm(b.unit)
+    && a.fact_or_management_statement === b.fact_or_management_statement;
+}
+const eventSlot = (e: EvidenceEvent) => `${e.variable}|${e.value_type}|${e.source_document_id || 'nodoc'}`;
+
+/** Every document id any period of the ledger lists. */
+function knownDocumentIds(ledger: CompanyLedger): Set<string> {
+  const s = new Set<string>();
+  for (const p of Object.values(ledger.periods || {})) for (const d of p?.documents || []) if (d?.id) s.add(d.id);
+  return s;
+}
 
 /**
  * Upsert one period into the ledger. IDEMPOTENT: the same period read twice
  * produces the same facts and events (same ids), with `updated_at` moved and
  * confidence/quote refreshed. Other periods are untouched — Q1 stays when Q2
  * arrives.
+ *
+ * HISTORY IS NEVER DESTROYED (zzz770). A re-read of the SAME period whose
+ * value differs for a fact slot (same metric, value type, document) moves the
+ * old fact to `superseded_facts` as SUPERSEDED (superseded_by → the new id;
+ * the new fact `supersedes` → the archived id). An event revised one-for-one
+ * (same variable, value type, document; exactly one on each side) is kept the
+ * same way in `superseded_events`. An identical re-read supersedes nothing.
  */
-export function mergePeriod(ledger: CompanyLedger, incoming: PeriodRecord, run: EvidenceRun): CompanyLedger {
+export function mergePeriodDetailed(ledger0: CompanyLedger, incoming0: PeriodRecord, run: EvidenceRun): { ledger: CompanyLedger; diff: MergeDiff } {
+  const ledger = migrateLedger(ledger0) || ledger0;
   const now = run.finished_at;
-  const prev = ledger.periods[incoming.reporting_period];
+  const incoming = normalisePeriod(incoming0, now);
+  const prev0 = ledger.periods[incoming.reporting_period];
+  const prev = prev0 ? normalisePeriod(prev0, now) : null;
+  const known = knownDocumentIds(ledger);
+  const diff: MergeDiff = {
+    period: incoming.reporting_period, is_new_period: !prev,
+    documents_new: incoming.documents.filter((d) => !known.has(d.id)).length,
+    facts_new: 0, facts_updated: 0, facts_unchanged: 0, facts_superseded: 0,
+    events_new: 0, events_superseded: 0, variables_changed: [], changes: 'NONE',
+  };
+  const changedVars = new Set<string>();
   let period: PeriodRecord;
   if (!prev) {
     period = incoming;
+    diff.facts_new = incoming.facts.length;
+    diff.events_new = incoming.events.length;
+    for (const f of incoming.facts) changedVars.add(f.metric_name);
   } else {
+    const supF = [...(prev.superseded_facts || [])];
+    const supE = [...(prev.superseded_events || [])];
     const facts = new Map(prev.facts.map((f) => [f.id, f]));
     for (const f of incoming.facts) {
       const old = facts.get(f.id);
-      facts.set(f.id, old ? { ...old, ...f, extracted_at: old.extracted_at, updated_at: now } : f);
+      if (!old) { facts.set(f.id, f); diff.facts_new++; changedVars.add(f.metric_name); continue; }
+      if (sameFactValue(old, f)) {
+        facts.set(f.id, { ...old, ...f, extracted_at: old.extracted_at, updated_at: now, supersedes: old.supersedes ?? null, record_status: 'ACTIVE' });
+        diff.facts_unchanged++;
+        continue;
+      }
+      // A genuine revision: the old reading is archived, not overwritten.
+      const archivedId = `${old.id}~${stableId(`${old.updated_at}|${old.value ?? ''}|${old.after_value ?? ''}`)}`;
+      if (!supF.some((x) => x.id === archivedId)) {
+        supF.push({ ...old, id: archivedId, record_status: 'SUPERSEDED', superseded_by: f.id, superseded_at: now });
+        diff.facts_superseded++;
+      }
+      facts.set(f.id, { ...f, updated_at: now, supersedes: archivedId, record_status: 'ACTIVE' });
+      diff.facts_updated++;
+      changedVars.add(f.metric_name);
     }
     const events = new Map(prev.events.map((e) => [e.id, e]));
+    const incomingIds = new Set(incoming.events.map((e) => e.id));
+    const inBySlot = new Map<string, EvidenceEvent[]>();
+    for (const e of incoming.events) inBySlot.set(eventSlot(e), [...(inBySlot.get(eventSlot(e)) || []), e]);
     for (const e of incoming.events) {
       const old = events.get(e.id);
-      events.set(e.id, old ? { ...old, ...e, extracted_at: old.extracted_at, updated_at: now } : e);
+      if (old) { events.set(e.id, { ...old, ...e, extracted_at: old.extracted_at, updated_at: now, supersedes: old.supersedes ?? null, record_status: 'ACTIVE' }); continue; }
+      diff.events_new++;
+      let supersedes: string | null = null;
+      const slot = eventSlot(e);
+      const olds = prev.events.filter((x) => eventSlot(x) === slot && !incomingIds.has(x.id));
+      if (e.source_document_id && (inBySlot.get(slot) || []).length === 1 && olds.length === 1
+        && prev.events.filter((x) => eventSlot(x) === slot).length === 1) {
+        const o = olds[0];
+        events.delete(o.id);
+        supE.push({ ...o, record_status: 'SUPERSEDED', superseded_by: e.id, superseded_at: now });
+        supersedes = o.id;
+        diff.events_superseded++;
+      }
+      events.set(e.id, { ...e, supersedes, record_status: 'ACTIVE' });
     }
     const docs = new Map(prev.documents.map((d) => [d.id, d]));
-    for (const d of incoming.documents) docs.set(d.id, d);
+    for (const d of incoming.documents) {
+      const old = docs.get(d.id);
+      // A document already read keeps its read record when a later pass only
+      // lists it again (not_selected): a re-listing is not an un-reading.
+      if (old && old.outcome === 'read' && d.outcome === 'not_selected') { docs.set(d.id, old); continue; }
+      docs.set(d.id, old ? { ...old, ...d, first_seen_at: old.first_seen_at || d.first_seen_at, content_hash: d.content_hash ?? old.content_hash ?? null } : d);
+    }
     period = {
       ...prev, ...incoming,
       facts: Array.from(facts.values()), events: Array.from(events.values()), documents: Array.from(docs.values()),
+      superseded_facts: supF.slice(-SUPERSEDED_MAX), superseded_events: supE.slice(-SUPERSEDED_MAX),
       // A status assigned earlier is kept until the client posts a new one.
       status: incoming.status ?? prev.status, status_because: incoming.status_because ?? prev.status_because,
       tallies: incoming.tallies ?? prev.tallies,
@@ -437,13 +792,18 @@ export function mergePeriod(ledger: CompanyLedger, incoming: PeriodRecord, run: 
     period.documents_failed = period.documents.filter((d) => d.outcome === 'download_failed' || d.outcome === 'scanned').length;
     period.documents_skipped = period.documents.filter((d) => d.outcome === 'too_short' || d.outcome === 'budget_exhausted' || d.outcome === 'not_selected').length;
   }
+  diff.variables_changed = Array.from(changedVars).sort();
+  diff.changes = diff.is_new_period ? 'NEW_PERIOD'
+    : (diff.facts_updated || diff.facts_superseded || diff.events_superseded) ? 'REVISIONS'
+      : (diff.facts_new || diff.events_new || diff.documents_new) ? 'NEW_EVIDENCE' : 'NO_CHANGES';
+
   const periods = { ...ledger.periods, [incoming.reporting_period]: period };
   const ordered = Object.keys(periods).sort((a, b) => periodOrdinal(a) - periodOrdinal(b));
   const latest = ordered.length ? ordered[ordered.length - 1] : null;
   const runs = [...ledger.runs.filter((r) => r.run_id !== run.run_id), run].slice(-MAX_RUNS)
     .map((r, i, arr) => (i < arr.length - RAW_KEPT_ON_LAST_N_RUNS ? { ...r, raw_extraction_json: undefined } : r));
-  return {
-    ...ledger, periods, latest_period: latest,
+  const merged: CompanyLedger = {
+    ...ledger, version: LEDGER_VERSION, periods, latest_period: latest,
     latest_document_date: latest ? periods[latest].latest_document_date : null,
     latest_source_count: latest ? periods[latest].documents_read : 0,
     // A backfilled OLDER period is not a read of the current evidence: the
@@ -455,6 +815,14 @@ export function mergePeriod(ledger: CompanyLedger, incoming: PeriodRecord, run: 
     newest_seen_period: latest && periodOrdinal(latest) >= periodOrdinal(ledger.newest_seen_period || '') ? latest : ledger.newest_seen_period,
     runs, updated_at: now,
   };
+  // A document a check saw is no longer pending once any period lists it.
+  const nowKnown = knownDocumentIds(merged);
+  merged.pending_documents = (ledger.pending_documents || []).filter((d) => !nowKnown.has(d.id));
+  return { ledger: merged, diff };
+}
+
+export function mergePeriod(ledger: CompanyLedger, incoming: PeriodRecord, run: EvidenceRun): CompanyLedger {
+  return mergePeriodDetailed(ledger, incoming, run).ledger;
 }
 
 /** Record an attempt that produced no period (source down, nothing disclosed,
@@ -467,27 +835,112 @@ export function recordAttempt(ledger: CompanyLedger, run: EvidenceRun): CompanyL
   };
 }
 
-/** A "check for new evidence" pass saw documents at a source. */
-export function recordSeen(ledger: CompanyLedger, newestDocDate: string | null, now: string): CompanyLedger {
+/** A "check for new evidence" pass saw documents at a source. `unseen` are
+ *  documents (from `unseenDocuments`) no period lists yet: they are kept as
+ *  pending, which makes the company NEW_EVIDENCE_AVAILABLE even when their
+ *  date is not newer than the last read (a transcript filed the same day as
+ *  the results, a presentation posted under a new url). (zzz770) */
+export function recordSeen(ledger: CompanyLedger, newestDocDate: string | null, now: string, unseen?: SeenDocument[]): CompanyLedger {
   const rp = reportingPeriodFromDate(newestDocDate);
+  const known = knownDocumentIds(ledger);
+  const pending = new Map((ledger.pending_documents || []).map((d) => [d.id, d]));
+  for (const d of unseen || []) if (!known.has(d.id) && !pending.has(d.id)) pending.set(d.id, d);
   return {
     ...ledger, updated_at: now,
     newest_seen_document_date: maxDate(ledger.newest_seen_document_date, newestDocDate),
     newest_seen_period: rp && periodOrdinal(rp.period) > periodOrdinal(ledger.newest_seen_period || '') ? rp.period : ledger.newest_seen_period,
+    pending_documents: Array.from(pending.values()).slice(-20),
   };
 }
 
+const NEW_EVIDENCE_KINDS = new Set(['transcript', 'investor_presentation', 'results', 'annual_report']);
+
+/**
+ * Pure: the candidates no period of the ledger lists — by document id — that
+ * could carry evidence (not 'other') and report on the latest period on file
+ * or a later one. An older unseen filing is history, not new evidence. A
+ * candidate with no date is not claimed as new. (zzz770)
+ */
+export function unseenDocuments(ledger: CompanyLedger | null | undefined, candidates: Array<{ url: string; kind: string; label?: string; dateIso?: string | null; date_iso?: string | null }>, now: string): SeenDocument[] {
+  const known = ledger ? knownDocumentIds(ledger) : new Set<string>();
+  const latest = ledger?.latest_period ? periodOrdinal(ledger.latest_period) : -1;
+  const out: SeenDocument[] = [];
+  const seen = new Set<string>();
+  for (const c of candidates || []) {
+    // Only the kinds a read takes in: a routine announcement is not a reason
+    // to re-read a quarter.
+    if (!c?.url || !NEW_EVIDENCE_KINDS.has(c.kind)) continue;
+    const id = documentId(c.url);
+    if (known.has(id) || seen.has(id)) continue;
+    const date = c.dateIso ?? c.date_iso ?? null;
+    const rp = reportingPeriodFromDate(date)?.period || null;
+    if (!rp) continue;
+    if (latest >= 0 && periodOrdinal(rp) < latest) continue;
+    seen.add(id);
+    out.push({ id, url: c.url, label: c.label || c.url, kind: c.kind, date_iso: date, reporting_period: rp, seen_at: now });
+  }
+  return out;
+}
+
 /** The client's status engine assigned a status to a period. History is
- *  appended only when the status actually changed. */
+ *  appended only when the status actually changed. The newest run-log entry
+ *  for that period gets its `status_after` if it has none yet. */
 export function recordStatus(ledger: CompanyLedger, period: string, status: string, because: string | null, tallies: PeriodRecord['tallies'], now: string): CompanyLedger {
   const p = ledger.periods[period];
   if (!p) return ledger;
   const last = ledger.status_history[ledger.status_history.length - 1];
   const changed = !last || last.reporting_period !== period || last.status !== status;
+  const log = (ledger.run_log || []).slice();
+  for (let i = log.length - 1; i >= 0; i--) {
+    if (log[i].period === period) { if (!log[i].status_after) log[i] = { ...log[i], status_after: status }; break; }
+  }
   return {
     ...ledger, updated_at: now,
     periods: { ...ledger.periods, [period]: { ...p, status, status_because: because, tallies: tallies ?? p.tallies, updated_at: now } },
     status_history: changed ? [...ledger.status_history, { reporting_period: period, status, because, at: now }].slice(-40) : ledger.status_history,
+    ...(ledger.run_log ? { run_log: log } : {}),
+  };
+}
+
+/** Append a run-log entry (bounded to the last RUN_LOG_MAX). */
+export function appendRunLog(ledger: CompanyLedger, entry: RunLogEntry): CompanyLedger {
+  const log = [...(ledger.run_log || []).filter((e) => e.run_id !== entry.run_id), entry].slice(-RUN_LOG_MAX);
+  return { ...ledger, run_log: log };
+}
+
+/** One line of structured JSON for the server log. */
+export function runLogLine(entry: RunLogEntry): string {
+  return JSON.stringify({ evt: 'evidence_run', ...entry });
+}
+
+/** Pure: build a run-log entry from what a run did. */
+export function buildRunLogEntry(args: {
+  ticker: string; run: EvidenceRun; before: CompanyLedger | null; after: CompanyLedger;
+  diff?: MergeDiff | null; attempts?: Array<{ source: string; outcome: string }>; now?: Date | string;
+}): RunLogEntry {
+  const { run, before, after, diff } = args;
+  const attempts = args.attempts || [];
+  const prevStatus = before?.latest_period ? before.periods[before.latest_period]?.status ?? null : null;
+  const nowD = args.now || run.finished_at;
+  return {
+    run_id: run.run_id, at: run.finished_at, ticker: args.ticker, mode: run.mode ?? null, outcome: run.outcome,
+    period: diff?.period ?? run.reporting_period ?? null,
+    sources_searched: attempts.length,
+    sources_failed: attempts.filter((a) => a.outcome === 'error').map((a) => a.source),
+    documents_found: run.documents_found || 0, documents_read: run.documents_read || 0,
+    documents_new: diff?.documents_new || 0,
+    facts_extracted: run.facts_extracted || 0,
+    facts_new: diff?.facts_new || 0, facts_updated: diff?.facts_updated || 0, facts_superseded: diff?.facts_superseded || 0,
+    events_created: diff?.events_new || 0,
+    variables_changed: diff?.variables_changed || [],
+    changes: diff?.changes || 'NONE',
+    status_before: prevStatus,
+    // The status is assigned by the client's engine after the write; it is
+    // filled in by recordStatus when that arrives.
+    status_after: diff ? null : prevStatus,
+    state_before: evidenceStateOf(before, nowD).state,
+    state_after: evidenceStateOf(after, nowD).state,
+    error: run.error,
   };
 }
 
@@ -551,6 +1004,9 @@ export interface FreshnessView {
    *  that was after the expected period became due. */
   last_checked_at: string | null;
   checked_since_due: boolean;
+  /** The owner's seven explicit states (zzz770) and the reason for it. */
+  evidence_state?: CompanyEvidenceState;
+  evidence_detail?: string;
 }
 
 const STATE_OF: Record<Staleness, FreshnessState> = {
@@ -568,7 +1024,7 @@ const STATE_OF: Record<Staleness, FreshnessState> = {
  *                           been found at any source
  *   CURRENT                 the latest known period is the expected one
  */
-export function freshnessOf(ledger: CompanyLedger | null, now: Date | string = new Date()): FreshnessView {
+function freshnessCore(ledger: CompanyLedger | null, now: Date | string = new Date()): FreshnessView {
   const exp = latestExpectedPeriod(now);
   const known = ledger?.latest_period || null;
   const lastChecked = [ledger?.last_attempt?.at || null, ledger?.last_evidence_read_at || null].filter((x): x is string => !!x).sort().pop() || null;
@@ -592,11 +1048,17 @@ export function freshnessOf(ledger: CompanyLedger | null, now: Date | string = n
   if (ledger.newest_seen_document_date && ledger.latest_document_date && ledger.newest_seen_document_date > ledger.latest_document_date) {
     return out('UPDATE_AVAILABLE', `a newer document (${ledger.newest_seen_document_date}) exists than the one last read (${ledger.latest_document_date})`, true);
   }
+  // A document of the current (or a later) period that no read has taken in
+  // yet — seen by a check under a url the ledger does not list. (zzz770)
+  const pend = pendingDocuments(ledger);
+  if (pend.length) {
+    return out('UPDATE_AVAILABLE', `${pend.length} unread document${pend.length === 1 ? '' : 's'} seen for ${pend[0].reporting_period}: ${pend.slice(0, 3).map((d) => d.label).join('; ')}`, true);
+  }
   // A failed PRIOR-quarter backfill says nothing about the current period's
   // sources being down; it is recorded in the run log, not on the card. (zzz765)
   const attemptRun = ledger.last_attempt ? ledger.runs.find((r) => r.run_id === ledger.last_attempt!.run_id) : null;
   const attemptOnOlder = !!attemptRun?.reporting_period && attemptRun.reporting_period !== ledger.latest_period;
-  if (!attemptOnOlder && ledger.last_attempt?.outcome === 'SOURCE_UNAVAILABLE' && ledger.last_attempt.at > (ledger.last_evidence_read_at || '')) {
+  if (!attemptOnOlder && ledger.last_attempt?.outcome === 'SOURCE_UNAVAILABLE' && ledger.last_attempt.at >= (ledger.last_evidence_read_at || '')) {
     return out('SOURCE_UNAVAILABLE', `last check failed: ${ledger.last_attempt.error || 'source unreachable'} — showing ${known}`);
   }
   if (periodOrdinal(known) >= 0 && periodOrdinal(known) < periodOrdinal(exp.period)) {
@@ -605,6 +1067,78 @@ export function freshnessOf(ledger: CompanyLedger | null, now: Date | string = n
       : `${exp.period} results were due by ${exp.due_date}; the sources have not been searched since — check for new evidence`);
   }
   return out('CURRENT', `${known} · read ${(ledger.last_evidence_read_at || '').slice(0, 10)}`);
+}
+
+/** Pending documents that still matter: not listed by any period, and of
+ *  the latest period on file or a later one. */
+export function pendingDocuments(ledger: CompanyLedger | null | undefined): SeenDocument[] {
+  if (!ledger?.pending_documents?.length) return [];
+  const known = knownDocumentIds(ledger);
+  const latest = ledger.latest_period ? periodOrdinal(ledger.latest_period) : -1;
+  return ledger.pending_documents.filter((d) => !known.has(d.id) && (latest < 0 || periodOrdinal(d.reporting_period || '') >= latest));
+}
+
+/** Pure: why did this run produce nothing? Explicit on v2 runs; inferred on
+ *  v1 runs from their outcome and error text. */
+export function failureKindOf(run: Pick<EvidenceRun, 'outcome' | 'error' | 'failure_kind'> | null | undefined): FailureKind | null {
+  if (!run) return null;
+  if (run.failure_kind) return run.failure_kind;
+  if (run.outcome === 'FAILED') return 'model_failed';
+  if (run.outcome !== 'SOURCE_UNAVAILABLE') return null;
+  return /download|scanned|ocr|could not be read|none could be read|budget/i.test(String(run.error || '')) ? 'document_unreadable' : 'source_unreachable';
+}
+
+/**
+ * Pure: the company's evidence state — one of the owner's seven — from the
+ * persisted ledger alone. Currentness is per company, from ITS latest
+ * reporting period against the reporting calendar, never a global cutoff.
+ * A retrieval failure maps to SOURCE_UNAVAILABLE or RETRIEVAL_FAILED and is
+ * never read as an absence of disclosure.
+ */
+export function evidenceStateOf(ledger: CompanyLedger | null | undefined, now: Date | string = new Date()): { state: CompanyEvidenceState; detail: string } {
+  const f = freshnessCore(ledger || null, now);
+  const la = ledger?.last_attempt || null;
+  const run = la ? (ledger!.runs || []).find((r) => r.run_id === la.run_id) || { outcome: la.outcome, error: la.error } : null;
+  const failState = (kind: FailureKind | null): CompanyEvidenceState => (kind === 'source_unreachable' ? 'SOURCE_UNAVAILABLE' : 'RETRIEVAL_FAILED');
+  if (!ledger?.latest_period) {
+    if (pendingDocuments(ledger).length || (ledger?.newest_seen_document_date && !la)) {
+      return { state: 'NEW_EVIDENCE_AVAILABLE', detail: 'documents have been found at a source and not yet read' };
+    }
+    if (!la) return { state: 'NOT_SEARCHED', detail: 'no search has run for this company' };
+    if (la.outcome === 'SOURCE_UNAVAILABLE' || la.outcome === 'FAILED') {
+      const k = failureKindOf(run as any);
+      return { state: failState(k), detail: la.error || (k === 'source_unreachable' ? 'the source could not be reached' : 'documents could not be read') };
+    }
+    return { state: 'EVIDENCE_INCOMPLETE', detail: la.outcome === 'NO_DISCLOSURE' ? 'searched — no readable document at any source' : 'searched — nothing read yet' };
+  }
+  switch (f.staleness) {
+    case 'UPDATE_AVAILABLE': return { state: 'NEW_EVIDENCE_AVAILABLE', detail: f.detail };
+    case 'SOURCE_UNAVAILABLE': return { state: failState(failureKindOf(run as any)), detail: f.detail };
+    case 'STALE_NO_NEWER_FILING': return { state: 'STALE', detail: f.detail };
+    default: break;
+  }
+  // A reader failure on the CURRENT period after the last read. (A failed
+  // prior-quarter backfill says nothing about the current period.)
+  const attemptOnOlder = !!(run as any)?.reporting_period && (run as any).reporting_period !== ledger.latest_period;
+  if (la && la.outcome === 'FAILED' && !attemptOnOlder && la.at >= (ledger.last_evidence_read_at || '')) {
+    return { state: 'RETRIEVAL_FAILED', detail: `last read failed: ${la.error || 'reader error'} — showing ${ledger.latest_period}` };
+  }
+  const p = ledger.periods[ledger.latest_period];
+  if (!p || !p.documents_read || (!(p.facts || []).length && !(p.events || []).length)) {
+    return { state: 'EVIDENCE_INCOMPLETE', detail: `${ledger.latest_period} on file but ${!p || !p.documents_read ? 'no document was read' : 'no structural fact was extracted'}` };
+  }
+  return { state: 'CURRENT', detail: f.detail };
+}
+
+/**
+ * Pure: the freshness of a company's evidence against the reporting calendar.
+ * `state` keeps the old five values for existing callers; `staleness` is the
+ * sharper classification; `evidence_state` is the owner's seven (zzz770).
+ */
+export function freshnessOf(ledger: CompanyLedger | null, now: Date | string = new Date()): FreshnessView {
+  const f = freshnessCore(ledger, now);
+  const e = evidenceStateOf(ledger, now);
+  return { ...f, evidence_state: e.state, evidence_detail: e.detail };
 }
 
 /** Pure: the one-line freshness text a card shows. (zzz765)
@@ -616,6 +1150,11 @@ export function freshnessLine(f: Partial<FreshnessView> & { state: FreshnessStat
   const last = f.latest_known_period ? `Last evidence: ${f.latest_known_period}` : null;
   const exp = f.latest_expected_period ? `Latest expected: ${f.latest_expected_period}` : null;
   const join = (...xs: Array<string | null | false | undefined>) => xs.filter(Boolean).join(' · ');
+  // The owner's explicit states the legacy five cannot say. (zzz770)
+  if (f.evidence_state === 'RETRIEVAL_FAILED') return { label: 'RETRIEVAL FAILED', text: join(last, 'documents exist but could not be read — not a disclosure gap'), tone: 'alarm' };
+  if (f.evidence_state === 'EVIDENCE_INCOMPLETE') return { label: 'EVIDENCE INCOMPLETE', text: join(last, f.evidence_detail || 'no structural fact on file'), tone: 'warn' };
+  if (f.evidence_state === 'NEW_EVIDENCE_AVAILABLE' && staleness === 'NEVER_READ') return { label: '↻ Update available', text: join(exp, 'documents found, not yet read'), tone: 'warn' };
+  if (f.evidence_state === 'NOT_SEARCHED') return { label: 'NOT SEARCHED', text: join(exp), tone: 'muted' };
   switch (staleness) {
     case 'CURRENT': return { label: 'CURRENT', text: join(last, f.latest_source_date && `source dated ${f.latest_source_date}`), tone: 'ok' };
     case 'UPDATE_AVAILABLE': return { label: '↻ Update available', text: join(last, 'newer document seen, not yet read'), tone: 'warn' };

@@ -23,6 +23,11 @@
 // shows him selling into and regretting. A break needs two core variables
 // down together, or one plus management reducing its own forward guidance:
 // the point at which the company itself agrees the mechanism has stopped.
+//
+// EVERY ROW NAMES ITS REASON, and the reason can only be one of six:
+// thesis invalidation, a stated break condition, execution failure, guidance
+// failure, customer loss or structural deterioration (exitReasonOf). There is
+// no price category because there is no price input. (zzz770)
 // ═══════════════════════════════════════════════════════════════════════════
 
 'use client';
@@ -30,7 +35,7 @@
 import { useMemo } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
-import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
+import { STATUS_META, exitReasonOf, type ThesisStatus } from '@/lib/thesis/status';
 import { CAPEX_META } from '@/lib/thesis/capex-chain';
 
 const C = {
@@ -69,7 +74,7 @@ export default function ExitRadarPage() {
   }, [all]);
 
   const flagged = useMemo(() => all
-    .filter((r) => ACTIONABLE.includes(r.assessment?.status as ThesisStatus))
+    .filter((r) => ACTIONABLE.includes(r.assessment?.status as ThesisStatus) && !!r.assessment && exitReasonOf(r.assessment) != null)
     .sort((a, b) => {
       const ai = ORDER.indexOf(a.assessment!.status), bi = ORDER.indexOf(b.assessment!.status);
       if (ai !== bi) return ai - bi;
@@ -174,7 +179,7 @@ export default function ExitRadarPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '92px 168px 1fr 108px',
             gap: 10, padding: '7px 12px', borderBottom: `1px solid ${C.border}`,
             fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>
-            <span>STOCK</span><span>THESIS</span><span>TRIGGER &amp; EVIDENCE</span><span>SEVERITY</span>
+            <span>STOCK</span><span>THESIS</span><span>REASON · TRIGGER &amp; EVIDENCE</span><span>SEVERITY</span>
           </div>
           {flagged.map((r) => {
             const a = r.assessment!;
@@ -186,6 +191,7 @@ export default function ExitRadarPage() {
                 <span style={{ fontSize: 12, fontWeight: 900, color: C.text }}>{r.symbol}</span>
                 <span style={{ fontSize: 10.5, color: C.dim }}>{a.thesis.name}</span>
                 <span style={{ fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
+                  <b style={{ color: m.color, letterSpacing: 0.3 }}>{exitReasonOf(a)}</b>{' · '}
                   <b style={{ color: C.text }}>{top ? top.condition : a.because}</b>
                   {top && <span> — {top.evidence}</span>}
                 </span>
@@ -219,11 +225,19 @@ export default function ExitRadarPage() {
       {/* The full evidence cards for everything flagged. */}
       {flagged.map((r) => (
         <ThesisCard key={r.symbol} defaultOpen
+          origin={r.origin || 'book'}
           symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
           radarScore={r.radarScore} assessment={r.assessment} capex={r.capex}
           documentsRead={r.documentsRead}
           discoveryAttempts={r.discoveryAttempts}
           discoveryState={r.discoveryState}
+          documentOutcomes={r.documentOutcomes}
+          ledger={r.ledger}
+          freshness={r.freshness}
+          reportingPeriod={r.reportingPeriod}
+          changed={r.changed}
+          changedFrom={r.changedFrom}
+          dataPeriod={r.graded?.period || null}
           needsRead={r.state === 'idle' || r.state === 'error'}
           reading={r.state === 'loading'}
           onRead={() => readFiling(r.symbol)}

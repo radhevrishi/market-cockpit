@@ -10,6 +10,15 @@
 //
 // GET  ?market=IN
 //   The day's findings and the coverage fraction. No research happens here.
+//   `stale_rules` counts findings built under an older RULES_VERSION.
+//
+// POST { market, rescoreOnly: true, rows? }                          (zzz769)
+//   Re-classifies and re-scores the day's EXISTING findings under the
+//   current rules, from inputs stored with each finding or — for findings
+//   stored before inputs were kept — the free filing/price fetches, with
+//   model reads taken ONLY from the read cache (cacheOnly). It never makes a
+//   model read, never adds a name, never touches the day's read count, so
+//   the page may call it on open without a click.
 //
 // A finding is produced for EVERY name swept — none / routine_only / denied /
 // negative / listing_artifact / source_failed are all findings — so coverage
@@ -20,12 +29,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch } from '@/lib/ai-gainers/screener-company';
 import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
-import { buildFinding, coverage, classifyAnnouncement, chooseCandidate, ageDaysOf, indiaSessionCloseIso, refreshFindingMove, type Finding, type AnnouncementLite } from '@/lib/ai-gainers/catalyst-research';
+import { buildFinding, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
+import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { readBookState } from '@/lib/book-store';
 import { etToday, capTierUs } from '@/lib/ai-gainers/us-gainers';
+import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -37,13 +48,25 @@ const MODEL_READS_PER_CALL = 4;
 interface ResearchState {
   market: 'IN' | 'US';
   date: string;
-  universe: Array<{ ticker: string; company: string | null; movePct: number | null; volume: number | null; price: number | null; marketCap: number | null; perf: any }>;
+  universe: UniverseEntry[];
   findings: Record<string, Finding>;
+  /** What each finding was built from, so a rules change re-scores without
+   *  a refetch or a model read. (zzz769) */
+  inputs?: Record<string, StoredSweepInputs>;
+  /** RULES_VERSION every finding in the state was built under, or the older
+   *  stamp while any finding predates the current rules. (zzz769) */
+  rules_version?: string | null;
+  /** Names dropped from the universe (large caps found on the company page,
+   *  US out-of-scope caps) — persisted, so the page does not count them as
+   *  board names awaiting research forever. (zzz769) */
+  excluded?: string[];
   started_at: string;
   updated_at: string;
   model_reads: number;
   errors: string[];
 }
+
+interface UniverseEntry { ticker: string; company: string | null; movePct: number | null; volume: number | null; price: number | null; marketCap: number | null; perf: any; filedResult?: boolean }
 
 const KEY = (m: string, d: string) => `ai-gainers:research:v1:${m}:${d}`;
 // A session's research is read for a few days at most. Without a TTL every
@@ -137,7 +160,7 @@ async function loadHoldings(_origin: string): Promise<Set<string>> {
 }
 
 /** A model read of one filing, cached by URL for 30 days (shared with the scan route). */
-async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLite): Promise<{ read: ReadAnnouncement | null; cached: boolean }> {
+async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLite, opts: { cacheOnly?: boolean } = {}): Promise<{ read: ReadAnnouncement | null; cached: boolean }> {
   return readAnnouncementCached(
     { symbol: ticker, subject: a.subject, attachment_url: a.url, filing_date: a.dateIso?.slice(0, 10) || null },
     async (url) => {
@@ -145,42 +168,29 @@ async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLi
       const ext = await extractPdfText(url, { signal: AbortSignal.timeout(20_000) });
       return ext?.text || '';
     },
+    opts,
   );
 }
 
-/** What the page is shown: errors only for names still on today's board (the
- *  US state carried "RAYMOND: ticker not in the SEC company list" from an
- *  earlier India-contaminated export), and findings stored before a scoring
- *  rule tightened re-capped at read time. (zzz767) */
-function presentErrors(errors: string[], universe: Array<{ ticker: string }>): string[] {
-  const on = new Set(universe.map((u) => u.ticker.toUpperCase()));
-  return errors.filter((e) => { const t = String(e).split(':')[0].trim().toUpperCase(); return !t || !/^[A-Z0-9.&-]+$/.test(t) || on.has(t); }).slice(-5);
+/** The response every handler answers with: findings decoded, errors as
+ *  one short line per ticker, coverage, and the rules-version state. */
+function statePayload(st: ResearchState, excluded: string[]) {
+  const tickers = st.universe.map((u) => u.ticker);
+  const cov = coverage(st.findings, tickers);
+  const errs = presentErrorLines(st.errors, st.universe, 5);
+  return {
+    coverage: cov, remaining: cov.total - cov.researched, findings: presentFindings(st.findings), universe: st.universe,
+    excluded_large_caps: Array.from(new Set([...excluded, ...(st.excluded || [])])), large_cap_min_cr: st.market === 'IN' ? LARGE_CAP_MIN_CR : null,
+    updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[st.market],
+    errors: errs.map((e) => e.short), error_details: errs.map((e) => e.full),
+    rules_version: st.rules_version ?? null, rules_version_current: RULES_VERSION, stale_rules: staleRuleTickers(st.findings, tickers).length,
+  };
 }
-const unEntity = (v: unknown) => typeof v === 'string'
-  ? v.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-  : v;
-function presentFindings<T extends Record<string, any>>(findings: T): T {
-  const out: Record<string, any> = {};
-  for (const [k, f0] of Object.entries(findings || {})) {
-    // "AIL Dixon&#x27;s" — stored before the reader decoded hex entities. (zzz768)
-    const f = f0 ? { ...f0, headline: unEntity(f0.headline), evidenceQuote: unEntity(f0.evidenceQuote), company: unEntity(f0.company),
-      notes: Array.isArray(f0.notes) ? f0.notes.map(unEntity) : f0.notes, routine: Array.isArray(f0.routine) ? f0.routine.map(unEntity) : f0.routine } : f0;
-    if (f && f.status === 'catalyst' && f.category === 'fundraising'
-      && /\bncds?\b|non[- ]convertible debenture|debentures?\b|commercial paper|term loan/i.test(String(f.headline || ''))
-      && !/\bequity\b|preferential|\bqip\b|warrant|rights (issue|shares)/i.test(String(f.headline || ''))) {
-      // Debt is financing, not a catalyst (zzz766) — findings stored before
-      // that rule are re-read the same way here.
-      out[k] = { ...f, status: 'routine_only', headline: `Debt financing — ${String(f.headline)}`, net: null, verdict: null, components: null, notes: (f.notes || []).filter((n: string) => !/A raise is supply/.test(n)).concat('Borrowing is financing, not a catalyst.'), routine: [...(f.routine || []), String(f.headline)] };
-      continue;
-    }
-    if (f && f.status !== 'catalyst' && Array.isArray(f.notes) && /\bncds?\b|debenture/i.test(String(f.headline || ''))) {
-      out[k] = { ...f, notes: f.notes.filter((n: string) => !/A raise is supply/.test(n)) };
-      continue;
-    }
-    out[k] = f && f.category === 'management_change' && typeof f.net === 'number' && f.net > 15
-      ? { ...f, net: 15, verdict: 'WEAK' } : f;
-  }
-  return out as T;
+
+/** The state's stamp: current only when every finding is. */
+function stampRules(st: ResearchState) {
+  const stale = staleRuleTickers(st.findings, st.universe.map((u) => u.ticker)).length;
+  if (!stale) st.rules_version = RULES_VERSION;
 }
 
 // Both handlers answer JSON even when they throw. (zzz766)
@@ -191,22 +201,81 @@ export async function GET(req: NextRequest) {
     const date = searchParams.get('date') || todayFor(market);
     const session = market === 'IN' ? indiaSession() : null;
     const raw = await loadState(market, date);
-    if (!raw) return NextResponse.json({ ok: true, market, date, session, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, universe: [] });
+    if (!raw) return NextResponse.json({ ok: true, market, date, session, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, universe: [], errors: [], error_details: [], rules_version: null, rules_version_current: RULES_VERSION, stale_rules: 0 });
     const { st, excluded } = smallMidOnly(raw);
-    const cov = coverage(st.findings, st.universe.map((u) => u.ticker));
-    return NextResponse.json({ ok: true, market, date, session, coverage: cov, findings: presentFindings(st.findings), remaining: cov.total - cov.researched, universe: st.universe, excluded_large_caps: excluded, large_cap_min_cr: market === 'IN' ? LARGE_CAP_MIN_CR : null, updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], errors: presentErrors(st.errors, st.universe) });
+    const payload = statePayload(st, excluded);
+    const view = await viewFor(st, market, date, session);
+    return NextResponse.json({ ok: true, market, date, session, ...payload, view });
   } catch (e) { return jsonError(e); }
 }
 
-export async function POST(req: NextRequest) {
-  try { return await research(req); } catch (e) { return jsonError(e); }
+// ── THE RESEARCH VIEW, SERVER-SIDE  (zzz770 AG-A) ───────────────────────────
+// Built from what is already stored: the day's findings, its universe, the
+// cached scan's filed-result rows and the book. KV reads only — opening the
+// page never makes a model call or an upstream fetch here.
+
+async function loadBook(): Promise<{ held: string[]; watch: string[] }> {
+  try {
+    const st: any = await readBookState(process.env.NEXT_PUBLIC_CHAT_ID || '5057319640');
+    const rows: any[] = st?.tickers || st?.book?.tickers || [];
+    return {
+      held: rows.filter((x) => x?.held).map((x) => String(x.ticker || '').toUpperCase()),
+      watch: rows.filter((x) => x?.watchlisted || x?.benched).map((x) => String(x.ticker || '').toUpperCase()),
+    };
+  } catch { return { held: [], watch: [] }; }
 }
 
-async function research(req: NextRequest) {
+/** The scan's filed-result rows from its 20-minute cache (the page scans
+ *  with limit=15). A cold cache is an empty list, never a fresh scan. */
+async function cachedFiledResults(market: 'IN' | 'US', date: string): Promise<{ rows: any[]; generatedAt: string | null }> {
+  for (const limit of [15, 10, 25]) {
+    try {
+      const hit: any = await kvGet(market === 'IN' ? `ai-gainers:v3:IN:${date}:${limit}` : `ai-gainers:v3:US:${limit}`);
+      if (hit && hit.ok) return { rows: Array.isArray(hit.filed_results) ? hit.filed_results : [], generatedAt: hit.generated_at || null };
+    } catch { /* next */ }
+  }
+  return { rows: [], generatedAt: null };
+}
+
+async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, session: ReturnType<typeof indiaSession> | null): Promise<ResearchView | null> {
+  try {
+    const [book, filed] = await Promise.all([loadBook(), cachedFiledResults(market, date)]);
+    const status = market === 'IN'
+      ? (session && session.date !== date ? 'previous_session' : session?.state === 'open' ? 'live' : session?.state === 'closed' ? 'closed' : 'last_completed')
+      : 'weekly_export';
+    return buildResearchView({
+      market,
+      findings: presentFindings(st.findings),
+      board: st.universe.map((u) => ({ ticker: u.ticker, company: u.company, move_pct: u.movePct, market_cap: u.marketCap, perf: u.perf })),
+      filedResults: filed.rows,
+      holdings: book.held,
+      watchlist: book.watch,
+      errors: st.errors,
+      now: st.updated_at,
+      session: {
+        date, scanAt: st.updated_at || null, status, cached: true,
+        // A stored day that is not the current session is never labelled today.
+        label: market === 'IN' ? (session && session.date === date ? session.label : `Session ${date} (stored)`) : `US week to ${date}`,
+        isToday: market === 'IN' ? (session ? session.isToday && session.date === date : null) : null,
+      },
+    });
+  } catch { return null; }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    let body: any = {};
+    try { body = await req.json(); } catch { body = {}; }
+    // The no-spend path is decided FIRST and never falls through to the
+    // sweep: `rescoreOnly` cannot make a model read whatever else is sent.
+    if (body?.rescoreOnly === true) return await rescoreOnly(req, body);
+    return await research(req, body);
+  } catch (e) { return jsonError(e); }
+}
+
+async function research(req: NextRequest, body: any) {
   const t0 = Date.now();
   const { origin } = new URL(req.url);
-  let body: any = {};
-  try { body = await req.json(); } catch { body = {}; }
   const market: 'IN' | 'US' = String(body?.market || 'IN').toUpperCase() === 'US' ? 'US' : 'IN';
   const date = String(body?.date || todayFor(market));
   const budget = Math.max(5_000, Math.min(48_000, Number(body?.budget_ms) || DEFAULT_BUDGET_MS));
@@ -216,6 +285,9 @@ async function research(req: NextRequest) {
   const nowIso = now.toISOString();
   const loaded = (await loadState(market, date)) || { market, date, universe: [], findings: {}, started_at: nowIso, updated_at: nowIso, model_reads: 0, errors: [] };
   const { st, excluded } = smallMidOnly(loaded);
+  st.inputs = st.inputs || {};
+  st.excluded = st.excluded || [];
+  const exclude = (t: string) => { if (!excluded.includes(t)) excluded.push(t); if (!st.excluded!.includes(t)) st.excluded!.push(t); };
   const sessionCloseIso = market === 'IN' ? indiaSessionCloseIso(date) : null;
 
   // US: the list the page sends IS today's universe. Names that fell off the
@@ -225,6 +297,7 @@ async function research(req: NextRequest) {
     const sent = new Set(rows.map((r) => String(r?.ticker || '').toUpperCase()));
     st.universe = st.universe.filter((u) => sent.has(u.ticker));
     st.findings = Object.fromEntries(Object.entries(st.findings).filter(([t]) => sent.has(t)));
+    st.inputs = Object.fromEntries(Object.entries(st.inputs).filter(([t]) => sent.has(t)));
   }
   // Register the universe. A ticker already present keeps its finding but
   // takes the NEW move: a name registered at 10:00 on +6% that closed +19%
@@ -233,8 +306,8 @@ async function research(req: NextRequest) {
   for (const r of rows) {
     const t = String(r?.ticker || '').toUpperCase();
     if (!t) continue;
-    if (market === 'IN' && isLargeCap(r?.market_cap)) { if (!excluded.includes(t)) excluded.push(t); continue; }
-    if (market === 'US' && !have.has(t) && usOutOfScope({ marketCap: r?.market_cap ?? null })) continue;
+    if (market === 'IN' && isLargeCap(r?.market_cap)) { exclude(t); continue; }
+    if (market === 'US' && !have.has(t) && usOutOfScope({ marketCap: r?.market_cap ?? null })) { exclude(t); continue; }
     const prev = have.get(t);
     if (prev) {
       const mv = typeof r?.move_pct === 'number' ? r.move_pct : prev.movePct;
@@ -245,9 +318,10 @@ async function research(req: NextRequest) {
       if (r?.volume != null) prev.volume = r.volume;
       if (r?.price != null) prev.price = r.price;
       if (r?.market_cap != null) prev.marketCap = r.market_cap;
+      if (typeof r?.filed_result === 'boolean') prev.filedResult = r.filed_result;
       continue;
     }
-    const u = { ticker: t, company: r?.company || null, movePct: r?.move_pct ?? null, volume: r?.volume ?? null, price: r?.price ?? null, marketCap: r?.market_cap ?? null, perf: r?.perf ?? null };
+    const u: UniverseEntry = { ticker: t, company: r?.company || null, movePct: r?.move_pct ?? null, volume: r?.volume ?? null, price: r?.price ?? null, marketCap: r?.market_cap ?? null, perf: r?.perf ?? null, filedResult: r?.filed_result === true };
     have.set(t, u);
     st.universe.push(u);
   }
@@ -256,7 +330,7 @@ async function research(req: NextRequest) {
   // Explicit re-run of the day after a rule change. The day's model-read
   // count is KEPT: re-used reads come from the 30-day cache and cost nothing,
   // and the daily ceiling still bounds any new read. (zzz768)
-  if (body?.reprocess === true) { st.findings = {}; }
+  if (body?.reprocess === true) { st.findings = {}; st.inputs = {}; }
   const todo = st.universe
     .filter((u) => !st.findings[u.ticker] || st.findings[u.ticker].status === 'unresearched' || (st.findings[u.ticker].status === 'source_failed' && body?.retry_failed))
     .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity));
@@ -267,6 +341,7 @@ async function research(req: NextRequest) {
   const save = async () => {
     st.updated_at = new Date().toISOString();
     st.errors = st.errors.slice(-40);
+    stampRules(st);
     try { await kvSet(KEY(market, date), st, STATE_TTL_S); unsaved = 0; lastSave = Date.now(); } catch { /* the next call re-does these names */ }
   };
   for (const u of todo) {
@@ -282,7 +357,7 @@ async function research(req: NextRequest) {
         if (isLargeCap(marketCap)) {
           // The screen's cap was missing or stale; the company page says large.
           st.universe = st.universe.filter((x) => x.ticker !== u.ticker);
-          if (!excluded.includes(u.ticker)) excluded.push(u.ticker);
+          exclude(u.ticker);
           continue;
         }
         returns = cr.returns;
@@ -304,13 +379,11 @@ async function research(req: NextRequest) {
       // Model-read the best catalyst candidate when the budget allows: a
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
       let read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null } | null = null;
-      const inWindow = announcements.map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, now) })).filter((a) => a.ageDays == null || a.ageDays <= WINDOW_DAYS);
       // The SAME candidate the finding will score — the first version chose
       // "first catalyst in list order" here and "highest-scoring" in the
       // finding, so every verified quote was attached to the wrong filing
       // and dropped: 22 model reads, zero verified rows.
-      const cand = chooseCandidate(announcements, market, { marketCap, returns, windowDays: WINDOW_DAYS, now, sessionCloseIso })
-        || (market === 'US' ? inWindow.map((a) => classifyAnnouncement(a, market)).find((c) => c.kind === 'unclassified' && (/item (1\.0[12]|2\.01|7\.01|8\.01)/i.test(c.subject) || /^6-K/i.test(c.subject))) : undefined);
+      const cand = pickReadCandidate(announcements, market, { marketCap, returns, windowDays: WINDOW_DAYS, now, sessionCloseIso });
       const underDailyCeiling = st.model_reads + modelReads < MAX_MODEL_READS_PER_DAY[market];
       if (cand && !underDailyCeiling) readsSkippedForCeiling++;
       if (cand && underDailyCeiling && modelReads < MODEL_READS_PER_CALL && Date.now() - t0 < budget - 12_000
@@ -324,14 +397,15 @@ async function research(req: NextRequest) {
         if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst };
       }
 
-      st.findings[u.ticker] = buildFinding({
+      st.findings[u.ticker] = { ...buildFinding({
         ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap, turnover,
-        announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso,
-      });
+        announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult,
+      }), rulesVersion: RULES_VERSION };
+      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read }, WINDOW_DAYS, now);
       done++;
     } catch (e: any) {
       st.errors.push(`${u.ticker}: ${String(e?.message || e)}`);
-      st.findings[u.ticker] = buildFinding({ ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap: u.marketCap, turnover: null, announcements: [], returns: null, holding: holdings.has(u.ticker), sources: [], sourceFailed: true, windowDays: WINDOW_DAYS, now });
+      st.findings[u.ticker] = { ...buildFinding({ ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap: u.marketCap, turnover: null, announcements: [], returns: null, holding: holdings.has(u.ticker), sources: [], sourceFailed: true, windowDays: WINDOW_DAYS, now }), rulesVersion: RULES_VERSION };
     }
     st.model_reads += modelReads; modelReads = 0;
     unsaved++;
@@ -340,11 +414,90 @@ async function research(req: NextRequest) {
   // Always persist at the end — also when only the universe or moves changed.
   await save();
 
-  const cov = coverage(st.findings, st.universe.map((u) => u.ticker));
   return NextResponse.json({
-    ok: true, market, date, session: market === 'IN' ? indiaSession(now) : null, excluded_large_caps: excluded, large_cap_min_cr: market === 'IN' ? LARGE_CAP_MIN_CR : null,
-    researched_now: done, elapsed_ms: Date.now() - t0,
-    coverage: cov, remaining: cov.total - cov.researched, findings: presentFindings(st.findings), updated_at: st.updated_at, model_reads: st.model_reads,
-    model_reads_ceiling: MAX_MODEL_READS_PER_DAY[market], reads_skipped_for_ceiling: readsSkippedForCeiling, errors: presentErrors(st.errors, st.universe),
+    ok: true, market, date, session: market === 'IN' ? indiaSession(now) : null,
+    researched_now: done, elapsed_ms: Date.now() - t0, reads_skipped_for_ceiling: readsSkippedForCeiling,
+    ...statePayload(st, excluded),
+    view: await viewFor(st, market, date, market === 'IN' ? indiaSession(now) : null),
+  });
+}
+
+// ── RE-SCORE ONLY — no model read, ever.                             (zzz769)
+async function rescoreOnly(req: NextRequest, body: any) {
+  const t0 = Date.now();
+  const { origin } = new URL(req.url);
+  const market: 'IN' | 'US' = String(body?.market || 'IN').toUpperCase() === 'US' ? 'US' : 'IN';
+  const date = String(body?.date || todayFor(market));
+  const budget = Math.max(5_000, Math.min(45_000, Number(body?.budget_ms) || DEFAULT_BUDGET_MS));
+  const loaded = await loadState(market, date);
+  const session = market === 'IN' ? indiaSession() : null;
+  if (!loaded) return NextResponse.json({ ok: true, market, date, session, rescored_now: 0, rescore_failed: 0, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, universe: [], errors: [], error_details: [], rules_version: null, rules_version_current: RULES_VERSION, stale_rules: 0 });
+  const { st, excluded } = smallMidOnly(loaded);
+  st.inputs = st.inputs || {};
+  const sessionCloseIso = market === 'IN' ? indiaSessionCloseIso(date) : null;
+  // Rows update what the scan knows about names ALREADY in the universe (the
+  // filed-result flag, the latest move). A rescore adds and drops nothing.
+  const rows: any[] = Array.isArray(body?.rows) ? body.rows : [];
+  const byTicker = new Map(st.universe.map((u) => [u.ticker, u] as const));
+  for (const r of rows) {
+    const u = byTicker.get(String(r?.ticker || '').toUpperCase());
+    if (!u) continue;
+    if (typeof r?.filed_result === 'boolean') u.filedResult = r.filed_result;
+    if (typeof r?.move_pct === 'number') u.movePct = r.move_pct;
+  }
+  const holdings = await loadHoldings(origin);
+  const stale = new Set(staleRuleTickers(st.findings, st.universe.map((u) => u.ticker)));
+  let rescored = 0, failed = 0;
+  for (const u of st.universe) {
+    if (!stale.has(u.ticker)) continue;
+    if (Date.now() - t0 > budget) break;
+    try {
+      let inputs: StoredSweepInputs | undefined = st.inputs[u.ticker];
+      if (!inputs) {
+        // Stored before inputs were kept: the FREE fetches only — the
+        // screener.in company page / price history, or EDGAR submissions.
+        const now = new Date();
+        if (market === 'IN') {
+          const cr = await fetchCompanyResearch(u.ticker, now);
+          if (!cr.sources.length) { failed++; continue; }        // keep the old finding rather than a "source failed" one
+          const px = cr.lastClose ?? cr.price;
+          inputs = compactInputs({ announcements: cr.announcements, returns: cr.returns, marketCap: cr.marketCapCr ?? u.marketCap, turnover: u.volume != null && px != null ? (u.volume * px) / 1e7 : null, sources: cr.sources, sourceFailed: false, fetchedAt: now.toISOString() }, WINDOW_DAYS, now);
+        } else {
+          const er = await fetchEdgarResearch(u.ticker, WINDOW_DAYS, now, { timeoutMs: 8_000 });
+          if (!er.sources.length) { failed++; continue; }
+          const returns: Returns | null = u.perf ? { m1: u.perf.m1 ?? null, m3: u.perf.m3 ?? null, m6: u.perf.m6 ?? null, y1: u.perf.y1 ?? null, history: 999 } : null;
+          inputs = compactInputs({ announcements: er.announcements, returns, marketCap: u.marketCap, turnover: u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null, sources: er.sources, sourceFailed: false, fetchedAt: now.toISOString() }, WINDOW_DAYS, now);
+        }
+      }
+      // The read for the filing the CURRENT rules choose: the stored one if
+      // it is the same filing, else the read cache only. cacheOnly never
+      // calls the model — a filing nobody has paid to read stays unread.
+      const at = new Date(inputs.fetchedAt);
+      const cand = pickReadCandidate(inputs.announcements, market, { marketCap: inputs.marketCap, returns: inputs.returns, windowDays: WINDOW_DAYS, now: at, sessionCloseIso });
+      let read: StoredSweepInputs['read'] = null;
+      if (cand) {
+        if (inputs.read && inputs.read.url === cand.url) read = inputs.read;
+        else {
+          const { read: r } = await cachedRead(market, u.ticker, cand, { cacheOnly: true });
+          if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst };
+        }
+      }
+      inputs = { ...inputs, read };
+      st.inputs[u.ticker] = inputs;
+      const f = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
+      st.findings[u.ticker] = f;
+      rescored++;
+    } catch { failed++; }
+  }
+  if (rescored) {
+    st.updated_at = new Date().toISOString();
+    stampRules(st);
+    try { await kvSet(KEY(market, date), st, STATE_TTL_S); } catch { /* the next open re-scores again — it is free */ }
+  }
+  return NextResponse.json({
+    ok: true, market, date, session, rescore_only: true, model_reads_made: 0,
+    rescored_now: rescored, rescore_failed: failed, elapsed_ms: Date.now() - t0,
+    ...statePayload(st, excluded),
+    view: await viewFor(st, market, date, session),
   });
 }

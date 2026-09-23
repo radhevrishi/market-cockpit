@@ -24,9 +24,9 @@
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
-import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, type CapexChain } from '@/lib/thesis/capex-chain';
+import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, LIFECYCLE_LABEL, type CapexChain } from '@/lib/thesis/capex-chain';
 import type { VarVerdict } from '@/lib/thesis/variables';
-import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, type VarGroup } from '@/lib/thesis/taxonomy';
+import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, EVIDENCE_STATE_META, evidenceStateLine, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
 import { freshnessLine } from '@/lib/thesis/evidence-ledger';
@@ -117,7 +117,11 @@ const STATEMENT_TAG: Record<string, { word: string; color: string }> = {
   TARGET: { word: 'TARGET', color: C.cyan },
   HISTORICAL: { word: 'HISTORICAL CONTEXT', color: C.faint },
 };
-const rupee = (s: string) => s.replace(/`\s*(?=\d)/g, '₹').replace(/(?<![A-Za-z])H\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/g, '₹');
+// "!833 million" (AETHER) is the same PDF rupee glyph as "`" and "H". (zzz769)
+export const rupee = (s: string) => s.replace(/`\s*(?=\d)/g, '₹').replace(/(?<![A-Za-z])H\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/g, '₹')
+  .replace(/!\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/gi, '₹');
+/** Two statements of a value that say the same thing. (zzz769) */
+const sameText = (a: unknown, b: unknown) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase() && String(a ?? '').trim() !== '';
 const stripTag = (s: string | null | undefined) => rupee(String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '')).trim();
 
 type RowLike = {
@@ -127,7 +131,7 @@ type RowLike = {
 };
 
 /** The compact value a chip shows — one figure, typed. */
-function chipValue(c: RowLike): string {
+export function chipValue(c: RowLike): string {
   const after = stripTag(c.after);
   const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupee(c.plan.value)}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
   if (c.statement === 'GUIDANCE' || c.statement === 'TARGET') {
@@ -136,11 +140,17 @@ function chipValue(c: RowLike): string {
     return `${c.statement.toLowerCase()}: ${after}`;
   }
   if (c.statement === 'MANAGEMENT_STATEMENT') return `“${after}”${planTxt}`;
-  if (c.statement === 'HISTORICAL') return `${[c.before, after].filter(Boolean).join(' → ')} (${c.asOf})`;
-  const cmp = c.comparison;
-  if (cmp && cmp.previous && cmp.basis !== 'NONE' && cmp.basis !== 'WITHIN_DOCUMENT' && cmp.change_type !== 'NOT_COMPARABLE') {
-    const ch = cmp.change_type === 'UNCHANGED' ? 'FLAT' : (cmp.change || c.delta || '');
-    return `${cmp.previous.raw} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
+  // A historical row on the board read as this period's figure: CASTROLIND
+  // "◐ Guidance INR1,871 crores (FY26)". It says it is history. (zzz769)
+  if (c.statement === 'HISTORICAL') return `history: ${[c.before, after].filter(Boolean).join(' → ')} (${c.asOf})`;
+  const cmpr = c.comparison;
+  // "LGFT (Q3 FY26) → LGFT · FLAT" is one statement repeated: say so. (zzz769)
+  if (cmpr && cmpr.previous && cmpr.basis !== 'NONE' && cmpr.basis !== 'WITHIN_DOCUMENT' && sameText(cmpr.previous.raw, after)) {
+    return `${after} · unchanged since ${cmpr.previous_period || 'the last disclosure'}${planTxt}`;
+  }
+  if (cmpr && cmpr.previous && cmpr.basis !== 'NONE' && cmpr.basis !== 'WITHIN_DOCUMENT' && cmpr.change_type !== 'NOT_COMPARABLE') {
+    const ch = cmpr.change_type === 'UNCHANGED' ? 'FLAT' : (cmpr.change || c.delta || '');
+    return `${cmpr.previous.raw} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
   }
   if (c.before && after) return `${c.before} → ${after}${c.delta ? ` · ${c.delta}` : ''}${planTxt}`;
   return `${after || c.delta || ''}${c.delta && c.delta !== after && after ? ` · ${c.delta}` : ''}${planTxt}`;
@@ -156,10 +166,10 @@ function priorNote(c: RowLike, depth: number): string | null {
   if ((c as any).source === 'grader' || (c.delta && /[+\-−]?\d/.test(c.delta))) return null;
   // Only a FIGURE has a previous value; a sentence of commentary does not.
   if (!/(?<![A-Za-z])\d/.test(String(c.after ?? ''))) return null;
-  const cmp = c.comparison;
-  if (cmp?.previous && cmp.change_type === 'NOT_COMPARABLE') return `prior ${cmp.previous.raw} (${cmp.previous_period}) — not directly comparable`;
-  if (cmp?.previous) return null;
-  if (cmp?.change_type === 'NEWLY_DISCLOSED') return 'not disclosed in the earlier periods on file';
+  const cmpr = c.comparison;
+  if (cmpr?.previous && cmpr.change_type === 'NOT_COMPARABLE') return `prior ${cmpr.previous.raw} (${cmpr.previous_period}) — not directly comparable`;
+  if (cmpr?.previous) return null;
+  if (cmpr?.change_type === 'NEWLY_DISCLOSED') return 'not disclosed in the earlier periods on file';
   return depth <= 1 ? 'prior period not read yet — no previous value on file' : 'prior value unavailable';
 }
 
@@ -247,6 +257,17 @@ export function ThesisCard(p: ThesisCardProps) {
     .sort((x, y) => orderOf(x.c) - orderOf(y.c) || y.c.weight - x.c.weight || x.i - y.i)
     .map((x) => x.c);
   const unchecked = (a?.checked || []).filter((c) => c.verdict === 'unknown');
+  // ── EVERY ABSENCE SAYS WHICH ABSENCE IT IS.                      (zzz770)
+  // "NOT DISCLOSED — searched concall + results filing", never a bare dash.
+  const stateLine = (c: { state?: string; stateReason?: string | null }) =>
+    evidenceStateLine((c.state || 'NOT_SEARCHED') as any, { docs: p.documentsRead || null, reason: c.stateReason || null });
+  // The capex lifecycle in one line, where the evidence has one. (zzz770)
+  const capexLine = (() => {
+    const ps = p.capex?.lifecycleProjects || [];
+    const best = ps.find((x) => x.steps.some((st) => st.step === 'REVENUE_CONTRIBUTION' && st.state === 'actual'))
+      || ps.find((x) => x.name !== 'Capacity and capex not tied to a named project') || ps[0];
+    return best ? best.line : null;
+  })();
 
   return (
     <div style={{
@@ -257,6 +278,11 @@ export function ThesisCard(p: ThesisCardProps) {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 17, fontWeight: 900, color: C.text }}>{p.symbol}</span>
         <span style={{ fontSize: 12, fontWeight: 800, color: C.faint }}>{p.market}</span>
+        {!p.origin && (
+          <span title="Whether this name is held or only on the conviction bench is not known to this card."
+            style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3, border: `1px dashed ${C.faint}`, color: C.faint }}>
+            BOOK / BENCH not stated</span>
+        )}
         {p.origin && (
           <span title={p.origin === 'bench'
             ? 'On the conviction bench and passing the quality preset. NOT a holding — this is a candidate, and nothing here implies you own it.'
@@ -270,8 +296,9 @@ export function ThesisCard(p: ThesisCardProps) {
             }}>{ORIGIN_META[p.origin].icon} {ORIGIN_META[p.origin].short}</span>
         )}
         {p.tier && (
-          <span style={{ fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
-            border: `1px solid ${C.border}`, color: C.dim }}>{p.tier}</span>
+          <span title="Conviction label from the results grading. It describes the quarter's print and never sets the thesis status."
+            style={{ fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
+              border: `1px solid ${C.border}`, color: C.dim }}>conviction · {p.tier}</span>
         )}
         {pm && p.pattern && (
           <span title={p.pattern.because} style={{
@@ -396,7 +423,7 @@ export function ThesisCard(p: ThesisCardProps) {
       {/* The one-line verdict is always visible; the evidence expands. */}
       {a && (
         <div style={{ marginTop: 7, fontSize: 14, color: C.dim, lineHeight: 1.55 }}>
-          <b style={{ color: ink(sm?.color) }}>{a.action}</b> — {a.because}
+          <b style={{ color: ink(sm?.color) }}>{a.action}</b> — {a.actionLine.slice(a.action.length + 3)}
         </div>
       )}
 
@@ -427,9 +454,20 @@ export function ThesisCard(p: ThesisCardProps) {
                   <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1 }}>
                     {items.map((c) => {
                       const v = VERDICT[c.verdict];
-                      const un = c.verdict === 'unknown';
+                      const lifecycle = c.key === 'capex_earning' && capexLine;
+                      const un = c.verdict === 'unknown' && !lifecycle;
                       const ab = un ? (c.absence ? ABSENCE_MARK[c.absence] : ABSENCE_MARK.not_read) : null;
                       const isCore = c.weight >= 4;
+                      const unclear = (c as any).state === 'UNCLEAR';
+                      if (lifecycle) {
+                        return (
+                          <span key={c.key} title={`Capex lifecycle, from the documents read:\n${(p.capex?.lifecycleProjects || []).map((x) => `${x.name}: ${x.line}`).join('\n')}`}
+                            style={{ fontSize: 12, fontWeight: 600, padding: '1px 6px', borderRadius: 4, color: C.text,
+                              border: `1px solid ${C.border}`, background: C.bg2 }}>
+                            ◐ Capex lifecycle: <b>{lifecycle}</b>
+                          </span>
+                        );
+                      }
                       // Absence is never coloured and never competes with a
                       // finding; a CORE absence is the one exception and gets
                       // a dotted outline rather than a colour, so it reads as
@@ -437,8 +475,10 @@ export function ThesisCard(p: ThesisCardProps) {
                       return (
                         <span key={c.key}
                           title={un
-                            ? `${c.label} — ${ab!.label}. ${ab!.hint}${isCore ? '\n\nCORE to this thesis.' : ''}`
-                            : `${c.label} — ${v.word}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
+                            ? `${c.label} — ${stateLine(c as any)}. ${ab!.hint}${isCore ? '\n\nCORE to this thesis.' : ''}`
+                            : unclear
+                              ? `${c.label} — ${stateLine(c as any)}. Counted neither as confirmed nor as contradicted.\n\n${c.evidence}`
+                              : `${c.label} — ${v.word}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
                           style={{
                             fontSize: 12, fontWeight: isCore ? 800 : 600,
                             padding: '1px 6px', borderRadius: 4,
@@ -448,8 +488,10 @@ export function ThesisCard(p: ThesisCardProps) {
                             color: un ? C.absent : v.color,
                             background: un ? 'transparent' : `color-mix(in srgb, ${v.color} 12%, transparent)`,
                           }}>
-                          <span style={{ opacity: 1 }}>{un ? ab!.mark : v.mark}</span>
+                          <span style={{ opacity: 1 }}>{un ? ab!.mark : unclear ? '?' : v.mark}</span>
                           {' '}{c.label}
+                          {un && <span style={{ fontSize: 11 }}> · {EVIDENCE_STATE_META[((c as any).state || 'NOT_SEARCHED') as keyof typeof EVIDENCE_STATE_META].short}</span>}
+                          {unclear && <span style={{ fontSize: 11 }}> · unclear</span>}
                           {/* ── BEFORE → NOW, NOT JUST THE DELTA.        (zzz761)
                               This row printed `delta || after`, so every
                               variable that HAD both sides showed only the
@@ -493,9 +535,10 @@ export function ThesisCard(p: ThesisCardProps) {
           border: `1px solid ${C.down}`, background: `color-mix(in srgb, ${C.down} 10%, transparent)` }}>
           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.down }}>FINANCIAL WARNING </span>
           {a.financialWarning.map((w, i) => (
-            <span key={i} style={{ color: C.text }}>{i > 0 ? ' · ' : ''}{w.label} <b style={{ color: C.down }}>{w.value}</b></span>
+            <span key={i} style={{ color: C.text }}>{i > 0 ? ' · ' : ''}{w.label} <b style={{ color: C.down }}>{w.value}</b>
+              {w.note && <span style={{ color: C.faint }}> ({w.note})</span>}</span>
           ))}
-          <span style={{ color: C.faint }}> — not thesis-critical for this pattern{p.needsRead ? ', and no document has been read' : ''}; shown, not counted.</span>
+          <span style={{ color: C.faint }}> — shown, not counted towards the status{p.needsRead ? '; no document has been read yet' : ''}.</span>
         </div>
       )}
 
@@ -511,25 +554,29 @@ export function ThesisCard(p: ThesisCardProps) {
             ['MECHANISM', a.coverage.mechanism, 'the WHY — capacity, utilisation, orders, capex, customers, one-offs, cash'],
             ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
             ['FORWARD', a.coverage.forward, 'what management commits to next'],
-          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; total: number }, string]>)
+          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; unclear?: number; not_applicable?: number; core_variables?: number; total: number }, string]>)
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
               <div key={name} title={hint}>
                 <span style={{ display: 'inline-block', minWidth: 78, fontSize: 11, fontWeight: 800, letterSpacing: 0.4,
                   color: name === 'MECHANISM' ? C.text : C.faint }}>{name}</span>
+                <span style={{ color: C.faint }}>{t.core_variables ?? t.total} core · </span>
                 <b style={{ color: t.confirmed ? C.up : C.flat }}>{t.confirmed} confirmed</b>
                 {' · '}
                 <b style={{ color: t.pending ? C.warn : C.flat }}>{t.pending} pending</b>
                 {' · '}
                 <b style={{ color: t.contradicted ? C.down : C.flat }}>{t.contradicted} contradicted</b>
-                {(t.stated || 0) > 0 && <span style={{ color: C.flat }}> · {t.stated} stated</span>}
+                {(t.unclear || 0) > 0 && <span style={{ color: C.flat }} title="Read, but not judgeable either way — never counted as contradicted."> · {t.unclear} unclear</span>}
+                {(t.stated || 0) > 0 && <span style={{ color: C.flat }}> · {t.stated} level only</span>}
                 {(t.flat || 0) > 0 && <span style={{ color: C.flat }}> · {t.flat} flat</span>}
-                <span style={{ color: C.faint }}> · of {t.total}</span>
+                {(t.not_applicable || 0) > 0 && <span style={{ color: C.faint }} title="Cannot apply to this business — never counted as pending."> · {t.not_applicable} n/a</span>}
               </div>
             ))}
           {a.coverage.missingCore.length > 0 && (
             <div style={{ color: C.faint, marginTop: 2 }}>
-              Core still unreviewed: <span style={{ color: C.text }}>{a.coverage.missingCore.join(', ')}</span>
+              Core unknown (not bad):{' '}
+              <span style={{ color: C.text }}>{a.checked.filter((c) => c.weight >= 4 && c.verdict === 'unknown' && c.state !== 'NOT_APPLICABLE')
+                .map((c) => `${c.label} — ${stateLine(c)}`).join(' · ')}</span>
             </div>
           )}
           {a.coverage.levelOnlyCore.length > 0 && (
@@ -734,7 +781,7 @@ export function ThesisCard(p: ThesisCardProps) {
             </div>
             {a.mechanismCheck.map((m) => {
               const col = m.state === 'confirmed' ? C.green : m.state === 'contradicted' ? C.red : C.faint;
-              const mark = m.state === 'confirmed' ? '✓' : m.state === 'contradicted' ? '✕' : '○';
+              const mark = m.state === 'confirmed' ? '✓' : m.state === 'contradicted' ? '✕' : m.state === 'unclear' ? '?' : '○';
               return (
                 <div key={m.link} style={{ fontSize: 13.5, color: C.dim, padding: '1px 0' }}>
                   <span style={{ color: col, fontWeight: 900, marginRight: 6 }}>{mark}</span>{m.link}
@@ -750,14 +797,14 @@ export function ThesisCard(p: ThesisCardProps) {
           </Section>
 
           {/* ── CAPEX CHAIN ───────────────────────────────────────────── */}
-          {p.capex && p.capex.state !== 'none' && (() => {
+          {p.capex && (p.capex.state !== 'none' || (p.capex.lifecycleProjects || []).length > 0) && (() => {
             const m = CAPEX_META[p.capex!.state];
             return (
-              <Section label="CAPEX — DID THE MONEY EARN?" color={m.color}>
+              <Section label="CAPEX LIFECYCLE — announced → spent → capacity → commissioned → commercial production → utilisation → revenue → margin → ROCE / FCF" color={m.color}>
                 <div style={{ fontSize: 13, fontWeight: 900, color: ink(m.color), marginBottom: 4 }}>
                   {m.dot} {m.label}
                 </div>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
+                {!(p.capex!.lifecycleProjects || []).length && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
                   {p.capex!.links.map((l, i) => (
                     <span key={i} style={{
                       fontSize: 12, padding: '1px 6px', borderRadius: 3,
@@ -767,11 +814,39 @@ export function ThesisCard(p: ThesisCardProps) {
                       textDecoration: l.known ? 'none' : 'line-through',
                     }}>{l.name}{l.value ? ` ${l.value}` : ''}</span>
                   ))}
-                </div>
+                </div>}
                 {/* ── THE LIFECYCLE, ACROSS EVERY QUARTER ON FILE. (zzz765)
                     Announced → spent → built → commissioned → producing →
                     earning. A later quarter adds a layer; none is erased. */}
-                {p.capex!.stage && (
+                {/* ── PROJECT BY PROJECT: actual ✓ · target ◌ · implied ◐ · pending ○. (zzz770)
+                    Announced ≠ spent ≠ earning; revenue contribution ≠ margin contribution. */}
+                {(p.capex!.lifecycleProjects || []).map((pj) => (
+                  <div key={pj.project_id} style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{pj.name}</div>
+                    <div style={{ fontSize: 13, color: C.text, marginBottom: 3 }}>{pj.line}</div>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+                      {pj.steps.map((st, i) => (
+                        <span key={st.step} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <span title={st.state === 'actual' ? `ACTUAL — ${st.quote || st.value || ''}${st.source ? `\nSource: ${st.source}` : ''}`
+                              : st.state === 'target' ? `TARGET / EXPECTED — not yet happened. ${st.quote || st.value || ''}${st.source ? `\nSource: ${st.source}` : ''}`
+                                : st.state === 'implied' ? 'Implied by a later stage that is disclosed; not itself disclosed.'
+                                  : 'Nothing on file for this step.'}
+                            style={{
+                              padding: '1px 6px', borderRadius: 3, fontWeight: st.state === 'actual' ? 800 : 500,
+                              color: st.state === 'actual' ? C.text : st.state === 'target' ? ink(C.cyan) : C.faint,
+                              border: `1px ${st.state === 'target' ? 'dashed' : 'solid'} ${st.state === 'actual' ? C.up : st.state === 'target' ? C.cyan : C.border}`,
+                              background: st.state === 'actual' ? `color-mix(in srgb, ${C.up} 12%, transparent)` : 'transparent',
+                            }}>
+                            {st.state === 'actual' ? '✓' : st.state === 'target' ? '◌' : st.state === 'implied' ? '◐' : '○'} {LIFECYCLE_LABEL[st.step]}
+                            {st.state === 'target' ? ' (target)' : ''}
+                          </span>
+                          {i < pj.steps.length - 1 && <span style={{ color: C.faint }}>→</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {!(p.capex!.lifecycleProjects || []).length && p.capex!.stage && (
                   <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center', marginBottom: 5, fontSize: 12.5 }}>
                     {CAPEX_STAGES.map((st, i) => {
                       const reached = CAPEX_STAGES.indexOf(p.capex!.stage!) >= i;
@@ -797,7 +872,7 @@ export function ThesisCard(p: ThesisCardProps) {
                     {p.capex!.earning.source && <span style={{ color: C.faint }}> — {p.capex!.earning.source}</span>}
                   </div>
                 )}
-                {(p.capex!.lifecycle || []).length > 0 && (
+                {(p.capex!.lifecycle || []).length > 0 && !(p.capex!.lifecycleProjects || []).length && (
                   <div style={{ fontSize: 12.5, color: C.dim, marginBottom: 4 }}>
                     {(p.capex!.lifecycle || []).map((e) => (
                       <div key={e.period}>
@@ -830,6 +905,18 @@ export function ThesisCard(p: ThesisCardProps) {
               <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>📓 {p.promiseNote}</div>
             )}
           </Section>
+
+          {/* ── THESIS LOGIC CHAIN — from the evidence only.        (zzz770) */}
+          {a.logicChain && a.logicChain.length > 0 && (
+            <Section label="THESIS LOGIC — observation → cause → structural / temporary → thesis impact → forward">
+              {a.logicChain.map((l) => (
+                <div key={l.step} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '1px 0' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.3, minWidth: 150, color: l.established ? C.dim : C.faint }}>{l.step}</span>
+                  <span style={{ fontSize: 13.5, lineHeight: 1.5, color: l.established ? C.text : C.faint }}>{l.text}</span>
+                </div>
+              ))}
+            </Section>
+          )}
 
           {a.nextConfirmation.length > 0 && (
             <Section label="NEXT THING TO WATCH">
@@ -864,10 +951,20 @@ export function ThesisCard(p: ThesisCardProps) {
             </div>
           </Section>
 
-          {unchecked.length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 12.5, color: C.faint, lineHeight: 1.5 }}>
-              Not disclosed this quarter, so not counted either way: {unchecked.map((c) => c.label.toLowerCase()).join(', ')}.
-            </div>
+          {/* ── EVIDENCE STATE, VARIABLE BY VARIABLE.              (zzz770)
+              Never a bare dash: which absence it is, and what was searched. */}
+          {(unchecked.length > 0 || a.checked.some((c) => c.state === 'UNCLEAR')) && (
+            <Section label="EVIDENCE STATE — what is unknown, and why (never counted against the thesis)">
+              {a.checked.filter((c) => c.verdict === 'unknown' || c.state === 'UNCLEAR')
+                .sort((x, y) => y.weight - x.weight)
+                .map((c) => (
+                  <div key={c.key} style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
+                    <b style={{ color: c.weight >= 3 ? C.text : C.dim }}>{c.label}</b>
+                    {c.weight >= 4 && <span style={{ fontSize: 11, fontWeight: 800, color: C.faint }}> CORE</span>}
+                    {' — '}{c.key === 'capex_earning' && capexLine ? `see the capex lifecycle below` : stateLine(c)}
+                  </div>
+                ))}
+            </Section>
           )}
 
           {/* ── WHAT WAS READ, AND WHAT WAS TRIED.                  (zzz737)

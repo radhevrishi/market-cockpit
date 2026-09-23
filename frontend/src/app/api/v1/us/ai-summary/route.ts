@@ -27,6 +27,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { persistUsReading } from '@/lib/thesis/us-evidence';
 import { releaseDocument, filingExhibits, htmlToText } from '@/lib/us-guidance';
 import { submissions, tickerToCik } from '@/lib/us-edgar';
 import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
@@ -236,7 +237,12 @@ export async function GET(req: NextRequest) {
   const key = `us-ai-summary:${PROMPT_VERSION}:${acc}`;
   if (!force) {
     const hit = await kvGet<any>(key);
-    if (hit?.summary && hit?.structured) return NextResponse.json({ ok: true, cached: true, ...hit });
+    if (hit?.summary && hit?.structured) {
+      // A cached reading not yet in the company ledger is filed there now —
+      // no model call — so a reload finds it. (zzz770)
+      const led = await persistUsReading({ ticker, sourceUrl: hit.source_url || null, filingDate: filingDate || null, structured: hit.structured, model: hit.model || null, promptVersion: PROMPT_VERSION, generatedAt: hit.generated_at || null, cached: true });
+      return NextResponse.json({ ok: true, cached: true, ...hit, ...(led.ledger ? { ledger: led.ledger, persisted: led.persisted, persist_error: led.error, changes: led.changes } : {}) });
+    }
   }
 
   if (!modelConfigured()) {
@@ -479,5 +485,8 @@ export async function GET(req: NextRequest) {
     generated_at: new Date().toISOString(),
   };
   await kvSet(key, payload, TTL_S);
-  return NextResponse.json({ ok: true, cached: false, ...payload });
+  // Persisted per company, like every India read: the page reconstructs the
+  // card from the ledger after a reload, never from this response. (zzz770)
+  const led = await persistUsReading({ ticker, sourceUrl, filingDate: filingDate || null, structured: data, model: payload.model, promptVersion: PROMPT_VERSION, generatedAt: payload.generated_at, cached: false });
+  return NextResponse.json({ ok: true, cached: false, ...payload, ...(led.ledger ? { ledger: led.ledger, persisted: led.persisted, persist_error: led.error, changes: led.changes } : {}) });
 }

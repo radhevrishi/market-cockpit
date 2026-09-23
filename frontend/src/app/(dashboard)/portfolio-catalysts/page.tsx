@@ -37,6 +37,7 @@ import { ThesisCard } from '@/components/thesis-card';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
+import { evidenceCounts } from '@/lib/thesis/evidence-counts';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -53,7 +54,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods } = useBook();
+  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
@@ -115,10 +116,14 @@ export default function PortfolioCatalystsPage() {
   // evidence when its persisted ledger holds a period — that is what
   // survives a reload. `documents read` sums the documents actually read
   // for the latest period on file. (zzz740)
-  const withEvidence = inSource.filter((r) => !!r.summary);
-  const readCount = withEvidence.length;
-  const docsRead = inSource.reduce((n, r) => n + (r.ledger?.latest_source_count || (r.documentsRead?.length || 0)), 0);
-  const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE');
+  // zzz770: every header figure is derived from the PERSISTED ledgers
+  // (evidenceCounts) — a summary held only in this tab's state after a failed
+  // save is not "evidence read", and a bench name is never counted as held.
+  const ec = useMemo(() => evidenceCounts(inSource), [inSource]);
+  const readCount = ec.evidence_read;
+  const docsRead = ec.documents_read;
+  const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
+    || (['NEW_EVIDENCE_AVAILABLE', 'STALE', 'RETRIEVAL_FAILED', 'SOURCE_UNAVAILABLE'] as Array<string | undefined>).includes(r.freshness?.evidence_state));
   // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
   // stored read predates the headline prompt (india-ai-summary-v9), so a
   // re-read can fill it. A v9 read that still shows ⊘ is a filing that does
@@ -135,9 +140,9 @@ export default function PortfolioCatalystsPage() {
   // before its latest AND already lists a document for that quarter. Derived
   // from the ledgers, so a name drops out the moment its backfill lands.
   const needPrior = list.filter((r) => r.market !== 'US' && !!priorBackfillPlan(r.ledger || null));
-  const anyRunning = batch.running || priorBatch.running;
-  const newEvidence = inSource.filter((r) => r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE').length;
-  const sourceDown = inSource.filter((r) => r.freshness?.state === 'SOURCE_UNAVAILABLE').length;
+  const anyRunning = batch.running || priorBatch.running || checkBatch.running;
+  const newEvidence = ec.new_evidence;
+  const sourceDown = ec.source_unavailable;
 
   if (!symbols.length && !loading) {
     return (
@@ -266,10 +271,13 @@ export default function PortfolioCatalystsPage() {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>
-          {list.length} of {inSource.length} shown · {note.book} held · {note.bench} bench ·{' '}
+          {list.length} of {inSource.length} shown · {ec.held} held · {ec.bench} bench ·{' '}
           {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {inSource.length - readCount} remaining · {docsRead} documents read</>}
+          {!evidenceLoading && ec.incomplete > 0 && <> · {ec.incomplete} evidence incomplete</>}
           {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
+          {!evidenceLoading && ec.stale > 0 && <> · {ec.stale} stale</>}
           {sourceDown > 0 && <> · {sourceDown} source unavailable</>}
+          {!evidenceLoading && ec.retrieval_failed > 0 && <> · {ec.retrieval_failed} retrieval failed</>}
         </span>
         <button onClick={() => setOnlyRead((v) => !v)} style={{
           fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
@@ -304,6 +312,30 @@ export default function PortfolioCatalystsPage() {
               fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
             }}>&#8635; Update recent reporters (10d)</button>
+        )}
+        {/* ── CHECK ALL FOR NEW EVIDENCE. Discovery only, no AI. (zzz770)
+            Searches each name's sources and files unread documents on its
+            own ledger, so only the companies with a new filing turn NEW
+            EVIDENCE AVAILABLE. Nothing is read and no model is called. */}
+        {!anyRunning && !evidenceLoading && (
+          <button onClick={() => checkAll(list.map((r) => r.symbol))}
+            title="Searches the sources of every India name in view for documents not yet on file. Discovery only — no AI, nothing is read. Names with a new filing are marked NEW EVIDENCE AVAILABLE; Read evidence then reads only those."
+            style={{
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.border}`, background: 'transparent', color: C.dim,
+            }}>&#8635; Check all for new evidence (no AI)</button>
+        )}
+        {checkBatch.running && (
+          <>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>Checking sources {checkBatch.done} of {checkBatch.total}… {checkBatch.found} with new evidence</span>
+            <button onClick={stop} style={{
+              fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
+            }}>Stop</button>
+          </>
+        )}
+        {!checkBatch.running && checkBatch.total > 0 && (
+          <span style={{ fontSize: 13, color: C.faint }}>Last check: {checkBatch.done} of {checkBatch.total} searched · {checkBatch.found} with new evidence (no AI used)</span>
         )}
         {/* ── THE 18 THAT NEED A v9 READ. (zzz763)
             A holding with no grader row can only get revenue / profit / cash

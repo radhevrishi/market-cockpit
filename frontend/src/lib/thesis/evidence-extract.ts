@@ -382,6 +382,33 @@ const CURRENCY_RE = /₹|\bINR|\bRs\.?|\bUSD|\$|\bEUR|€|crores?\b|\bcr\b|lakhs
 const MAGNITUDE_ONLY_RE = /\b(mn|bn|millions?|billions?|trillions?|thousands?|k)\b/i;
 export const CAPACITY_UNIT_RE =/\bMW\b|\bMWh\b|\bGW\b|\bTPA\b|\bMTPA\b|\bKTPA\b|tonnes?|\bMT\b|\bKL\b|\bKLD\b|\bKLPD\b|litres?|liters?|kilolit|units?\b|pieces|\bnos\b|plants?\b|lines?\b|beds?\b|racks?|GPUs?|servers?|cases\b|vehicles|\bx\b|\d\s*x\b|times|fold|monitors|pallets|sq\.?\s*ft|square|hectare|acre|kg\b|kilogram|barrels?|bpd|MMSCMD|MTPD|TPD|shifts?|machines?|looms?|spindles?|furnace|kilns?|cells?|modules?|wafers?|chips?/i;
 
+/** Three or more bare figures separated only by spaces or slashes. (zzz769) */
+export function isNumberRow(s: string | null | undefined): boolean {
+  const t = String(s ?? '').trim();
+  if (!t || /[A-Za-z]/.test(t)) return false;
+  const toks = t.split(/[\s/]+/).filter(Boolean);
+  return toks.length >= 3 && toks.every((x) => /^[+-]?[\d][\d,.]*%?$/.test(x));
+}
+const MONTH_RE = /\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\b/gi;
+/** A value that is only a date or a date range. (zzz769) */
+export function isDateOnly(s: string | null | undefined): boolean {
+  const t = String(s ?? '').trim();
+  if (!/\d/.test(t)) return false;
+  const hasDate = MONTH_RE.test(t) || /\b(FY|CY|Q[1-4]|H[12])\s*'?\d{2,4}\b/i.test(t) || /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/.test(t);
+  MONTH_RE.lastIndex = 0;
+  if (!hasDate) return false;
+  const rest = t.replace(MONTH_RE, ' ')
+    .replace(/\b(FY|CY|Q[1-4]|H[12])\s*'?\d{2,4}\b/gi, ' ')
+    .replace(/\d+\s*(st|nd|rd|th)\b/gi, ' ')
+    .replace(/\b(to|till|until|from|by|on|and|through|the|of|end|start|beginning|valid)\b/gi, ' ')
+    .replace(/[\d\s,.\-–/()']+/g, ' ');
+  MONTH_RE.lastIndex = 0;
+  return !/[A-Za-z]/.test(rest);
+}
+const NUMBER_WORD_RE = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|fifty|hundred|thousand|double|doubl\w*|tripl\w*|twice)\b/i;
+const CONCRETE_ASSET_RE = /\b(lines?|plants?|facilit(y|ies)|units?|blocks?|smelters?|kilns?|reactors?|furnaces?|mills?|vessels?|rigs?|stores?|boutiques?|sheds?|sites?)\b/i;
+const FORWARD_WORD_RE = /\b(expect\w*|guid\w*|target\w*|will|would|aim\w*|plan\w*|outlook|project(ed|ion|ing)|anticipat\w*|going forward|forecast\w*|intend\w*|likely|next (year|quarter|fiscal)|coming (year|quarters?)|by (FY|CY|Q[1-4])\s*'?\d{2})/i;
+
 /** Pure: whether the value fits the variable and the evidence is a sentence. */
 export function judgeEventQuality(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): 'sentence' | 'chart' | 'unit_mismatch' {
   const ev = e.evidence_text || '';
@@ -416,6 +443,12 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
   const ev = e.evidence_text || '';
   const valueText = `${e.before || ''} ${e.after || ''}`;
   const v = e.variable;
+  // ── A ROW OF A TABLE IS NOT A VALUE.                              (zzz769)
+  // ULTRAMAR order intake "584 86403 27.6 27.6 1", LCL installed capacity
+  // "240/13,800/108,000": three or more bare figures with nothing naming any
+  // of them. Whatever variable they were filed under, nobody can say which
+  // figure is which.
+  if (isNumberRow(e.before) || isNumberRow(e.after)) return false;
   const unitOk = (() => {
     // ── UTILISATION IS THE MOST-ABUSED VARIABLE ON THE PAGE.       (zzz755)
     //
@@ -454,7 +487,10 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
         // SENTENCE says utilisation in as many words: DEEPAKNTR "operating at
         // about 170-odd percent utilization" is a de-bottlenecked plant, and
         // the row carries the above-nameplate note for it. (zzz763)
-        const explicit = /utilis|utiliz/i.test(valueText);
+        // The sentence counts too, when it is a sentence (zzz770): an
+        // above-100% figure then reaches the board as UNCLEAR — validation
+        // required — instead of vanishing.
+        const explicit = /utilis|utiliz/i.test(valueText) || (!chartShaped && /utilis|utiliz/i.test(ev));
         if (!(n >= 0 && n <= (explicit ? 300 : 130))) return false;
         return true;
       }
@@ -470,6 +506,17 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // bare percentage (GESHIP "installed capacity About 25-26%").
     if (CAPACITY_VARS.has(v)) {
       if (CURRENCY_RE.test(valueText)) return false;
+      // ── A ROOFTOP SOLAR PLANT IS NOT PRODUCTION CAPACITY.         (zzz769)
+      // TATVA "155 kW rooftop solar", MENONBE "3,870 kWp", SOTL "2,061 kWp",
+      // EMIL "187 kW": captive power in kilowatts, not what the company
+      // makes. MW / GW stay — for a solar company that IS the capacity.
+      if (/\d\s*kWp?\b|\bkWp?\b/i.test(valueText)) return false;
+      if (/rooftop/i.test(valueText) && !/\b(MW|GW)p?\b/i.test(valueText)) return false;
+      // "We continue to invest in talent, capacity, and inventory" (AVALON),
+      // "Creation of Additional capacity to meet Anticipated demand"
+      // (JAMNAAUTO), "meaningful incremental capacity" (SHILPAMED): an
+      // addition with no figure and no asset is an intention, not a plant.
+      if (v === 'capacity_addition' && !/\d/.test(valueText) && !NUMBER_WORD_RE.test(valueText) && !CONCRETE_ASSET_RE.test(valueText)) return false;
       if (/%/.test(valueText) && !CAPACITY_UNIT_RE.test(valueText)) return false;
       // ── A MAGNITUDE IS NOT A UNIT.                               (zzz759)
       //
@@ -493,7 +540,30 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // company's working capital is one lakh twenty thousand rupees.
     if (/\(\s*(rupees|rs\.?|inr|us dollars?|dollars?)\b[^)]*\bonly\s*\)/i.test(valueText + ' ' + ev)
       || /\d\s*\/-/.test(valueText)) return false;
-    if (v === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline/i.test(ev);
+    // ── CAPEX IS MONEY.                                            (zzz769)
+    // MOREPENLAB "57012.81", LCL "5 to 6 months", ANTELOPUS "recovered in
+    // under 12 months", SBCL "approval is valid until June 30, 2032", SFL
+    // "about 42 stores are in operation", CLEANMAX "419 MWp", AVALON "10x":
+    // a figure with no money in it is a duration, a count, a capacity or a
+    // multiple — not a capital spend. A status may be stated in words
+    // ("Phase 1 commissioned in Q3 FY26") and keeps that latitude.
+    if (v === 'capex' || v === 'capex_status') {
+      if (/\b(barrels?|casks?)\b/i.test(valueText)) return false;
+      if (/\b(cash|bank) balances?\b/i.test(valueText)) return false;
+      if (/\bexpenses?\b|\bopex\b/i.test(valueText) && !/capex|capital|invest|plant|project|expansion/i.test(valueText)) return false;
+      const money = /₹|\bINR|\bRs\.?|\bUSD|\$|\bEUR|€|crores?|\bcrs?\b|\d\s*crs?\b|lakhs?|\bmn\b|\d\s*mn\b|millions?|\bbn\b|\d\s*bn\b|billions?|%|`\s*\d|!\s*\d/i.test(valueText);
+      const statusWords = v === 'capex_status'
+        && /commission|complet|progress|under construction|construct|ramp|trial|phase|on track|on schedule|delay|started|commenced|operational|awarded|ordered|installed|approved|tendered|mobili/i.test(valueText);
+      // A period label is not a figure: "no significant capex during FY27"
+      // is a statement, not a number without a unit.
+      const figures = valueText.replace(/\b(FY|CY|H[12]|Q[1-4])\s*'?\d{2,4}\b/gi, ' ');
+      if (/\d/.test(figures) && !money && !statusWords) return false;
+    }
+    // A bottleneck is a constraint, not a sum: VIJAYA "close to INR 10
+    // crores" names nothing that is constrained. (zzz769)
+    if (v === 'capacity_bottleneck' && CURRENCY_RE.test(valueText)
+      && !/[A-Za-z]{3,}/.test(valueText.replace(/₹|\bINR\b|\bRs\.?|\bUSD\b|crores?|\bcr\b|lakhs?|millions?|\bmn\b|billions?|\bbn\b|\b(close to|about|around|approx(imately)?|nearly|roughly|over|under|up to|of)\b/gi, ' '))) return false;
+    if (v === 'execution_delay') return /delay|postpone|behind schedule|slip|deferr|later than|pushed|rescheduled|extended timeline|\bpaus(e|ed|ing)\b/i.test(ev);
     if (v === 'shutdown') return /shut ?down|closure|outage|maintenance|halt/i.test(ev);
     if (v === 'capacity_bottleneck' || v === 'supply_bottleneck') return /bottleneck|constrain|shortage|limited by|unable to|sold out|waiting/i.test(ev);
     // "Is the capex earning yet?" is answered in words — utilisation of the
@@ -527,6 +597,24 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
       if (/\d/.test(valueText) && !/days?|cycle|₹|\bINR|\bRs\.?|`|crores?|\bcr\b|lakhs?|million|\bmn\b|billion|\bbn\b|%|\d\s*x\b|\bx\b|times|turn/i.test(valueText)) return false;
     }
     if ((v === 'order_book' || v === 'order_intake') && !/\d/.test(valueText)) return false;
+    // A value per share is a dividend or an EPS, not working capital
+    // (CASTROLIND "INR6.25 per share"). (zzz769)
+    if (v === 'working_capital' && /per share|\/\s*share\b/i.test(valueText)) return false;
+    // A new customer is a name, not a contract window: MOREPENLAB "20 th
+    // October 2026 to 19 th October 2029". (zzz769)
+    if ((v === 'new_customer' || v === 'guidance') && isDateOnly(valueText)) return false;
+    // ── A RESULT IS NOT GUIDANCE.                                    (zzz769)
+    // SAREGAMA "Music Revenue at INR 2,306 Mn registered 39% YoY growth";
+    // TBZ "Revenue from Operations at ₹ 8,409.74 million (up 34.8% YoY)" —
+    // the quarter that was, filed as a forward statement, and TBZ's printed
+    // "▲ Guidance confirmed". A guidance value must look forward.
+    if (v === 'guidance'
+      && (/\b(registered|reported|recorded|achieved|delivered|posted)\b/i.test(valueText) || /\(\s*(up|down)\s+[\d.]+\s*%\s*(yoy|y-o-y|year[- ]on[- ]year|qoq)\s*\)/i.test(valueText))
+      && !FORWARD_WORD_RE.test(valueText)) return false;
+    // A fund-raise utilisation table is not a P&L one-off (E2E "Total raised
+    // 15,919.34 Mn and utilized till FY26"). (zzz769)
+    if (v === 'one_offs' && /\braised\b|\butili[sz](ed|ation)\b|\bproceeds\b|\bIPO\b|\bQIP\b/i.test(valueText)
+      && !/one[- ]?off|one[- ]time|exceptional|non[- ]recurring|write[- ]?back|impairment|gain on|loss on|profit on sale/i.test(valueText)) return false;
     if (v === 'one_offs' && /\d/.test(valueText)
       && !/₹|\bINR|\bRs\.?|\bUSD|\$|crores?|\bcr\b|lakhs?|million|mn\b|billion|bn\b|items?|`/i.test(valueText)) return false;
     // A one-off is an ITEM in the P&L. Revenue for the year (VADILALIND
@@ -554,6 +642,13 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // revenue, not a volume (JUBLINGREA). (zzz768)
     if ((v === 'capex' || v === 'capex_status') && /(reduc\w*|repa(y|id)\w*|pa(id|y)[ -]?(down|off))[^.]{0,30}\bdebt|\bdebt\b[^.]{0,30}(reduc|repa|pa(id|y)[ -]?(down|off))/i.test(valueText)
       && !/capex|capital expenditure|invest(ed|ment)|spent|deploy/i.test(valueText)) return false;
+    // A bank facility is financing, not capex and not working capital:
+    // MOREPENLAB "unsecured term loan facilities aggregating ₹13,000 lakhs"
+    // (filed as capex) and "repaid secured working capital facilities
+    // aggregating ₹9,900 lakhs" (filed as working capital). (zzz770)
+    if ((v === 'capex' || v === 'capex_status' || v === 'working_capital')
+      && /\b(term loans?|loan facilit\w*|(?:working capital|credit|banking|secured|unsecured) facilit\w*|borrowings?|debentures?|\bWCDL\b|cash credit|demand loan)\b/i.test(`${valueText} ${String((e as any).evidence_text || '')}`)
+      && !/capex|capital expenditure|spent|deployed|days|cycle|receivable|inventor|debtor|payable/i.test(`${valueText} ${String((e as any).evidence_text || '')}`)) return false;
     if (v === 'volume' && /₹|\bINR|\bRs\.?|crores?|\bcr\b|revenue|sales of/i.test(String(e.after || ''))
       && !/tonn?e|\bmt\b|units?|litre|liter|\bkl\b|pieces|pcs|sq ?ft|mw|volume/i.test(String(e.after || ''))) return false;
     // "15 megawatt hours of orders in hand" is an ORDER, not a volume sold.
@@ -565,6 +660,10 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     if (v === 'order_book') {
       const after = String(e.after || '').trim();
       if (after && /^[+-]?\d+(?:\.\d+)?\s*(%|pp|bps)$/i.test(after)) return false;
+      // An order book whose only figure is a share is a mix, not a book:
+      // LUMAXIND "88% LED". (zzz769)
+      const nums = valueText.match(/\d[\d,.]*\s*%?/g) || [];
+      if (nums.length && nums.every((x) => /%/.test(x))) return false;
       return true;
     }
     return true;

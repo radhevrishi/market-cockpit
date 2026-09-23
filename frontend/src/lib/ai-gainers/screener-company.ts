@@ -46,7 +46,8 @@ export function parseTopRatios(html: string): { marketCapCr: number | null; pric
   return { marketCapCr: mc, price: px, high52: hl[0] ?? null, low52: hl[1] ?? null, pe };
 }
 
-const decode = (s: string) => s.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&hellip;/g, '…').replace(/\s+/g, ' ').trim();
+// "Scrutinizer''s Report" (KTKBANK): a doubled apostrophe is one. (zzz769)
+const decode = (s: string) => s.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&hellip;/g, '…').replace(/(\w)''(?=\w)/g, "$1'").replace(/\s+/g, ' ').trim();
 
 /** The announcement list: works on the full page and on the ajax fragment. */
 export function parseAnnouncements(html: string, now = new Date()): AnnouncementLite[] {

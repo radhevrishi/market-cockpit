@@ -32,16 +32,17 @@ import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
 import { rowChangeLines, deepRupeeGlyph } from './variables';
 import { readJson, humanError } from './safe-json';
-import type { VarKey } from './taxonomy';
+import { businessProfileOf, type VarKey } from './taxonomy';
 import { assessThesis, type ThesisAssessment } from './status';
 import { buildCapexChain, type CapexChain } from './capex-chain';
 import { recordPromises, checkPromises } from './guidance-ledger';
 import { planRecentReads, type RecentPlan, type ReportedFact } from './recent-reporters';
 import { priorBackfillPlan } from './prior-period';
 import {
-  freshnessOf, whatChanged, latestSummary,
-  type CompanyLedger, type FreshnessState, type ChangeLine,
+  freshnessOf, whatChanged, latestSummary, latestExpectedPeriod,
+  type CompanyLedger, type FreshnessState, type ChangeLine, type CompanyEvidenceState,
 } from './evidence-ledger';
+import { evidenceReadLine, changesNote } from './evidence-counts';
 
 export interface BookRow {
   symbol: string;
@@ -84,7 +85,7 @@ export interface BookRow {
    *  company has never been read. The card renders from THIS after a reload,
    *  not from a model call. */
   ledger?: CompanyLedger | null;
-  freshness?: { state: FreshnessState; detail: string } | null;
+  freshness?: { state: FreshnessState; detail: string; evidence_state?: CompanyEvidenceState; evidence_detail?: string } | null;
   reportingPeriod?: string | null;
   changed?: ChangeLine[];
   changedFrom?: string | null;
@@ -98,7 +99,7 @@ export interface BookRow {
 
 /** Fold a server ledger into a row: the latest period's summary becomes the
  *  card's evidence, exactly as a fresh read would. */
-function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshness?: { state: FreshnessState; detail: string } | null): BookRow {
+export function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshness?: { state: FreshnessState; detail: string } | null): BookRow {
   // "` 480+ Crore" — the PDF's rupee glyph — printed on cards. (zzz768)
   const ledger = ledger0 ? deepRupeeGlyph(ledger0) : ledger0;
   const fr = freshness || freshnessOf(ledger);
@@ -164,7 +165,12 @@ function assess(row: BookRow): BookRow {
   // figure without one says PREVIOUS: NOT DISCLOSED and stops there.
   const comparisons = buildComparisons(row.ledger || null);
   const hist = historyDepth(row.ledger || null);
-  const vars = extractVariables(row.graded, row.summary, comparisons, { period: row.reportingPeriod || row.ledger?.latest_period || null });
+  const period = row.reportingPeriod || row.ledger?.latest_period || null;
+  const vars = extractVariables(row.graded, row.summary, comparisons, {
+    period,
+    // Source lineage: every fact carries the document it came from. (zzz770)
+    documents: (period && row.ledger?.periods?.[period]?.documents) || null,
+  });
   const check = row.summary ? checkPromises(row.symbol, row.summary) : null;
   // The status carried by the newest period that is NOT the one being
   // assessed — so a status change can name what it moved from.
@@ -193,9 +199,16 @@ function assess(row: BookRow): BookRow {
       // An evidence document has been read only when a summary came back.
       evidenceReviewed: !!row.summary,
       sourceUnavailable: row.ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE',
+      // A failed read is RETRIEVAL_FAILED, never "not disclosed". (zzz770)
+      retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || row.ledger?.last_attempt?.outcome === 'FAILED',
+      // Services / software / financial businesses: capacity is N/A. (zzz770)
+      business: businessProfileOf(row.graded, row.summary),
       // Without a graded or screener row the grader-computed variables can
       // never be filled, whatever is read. (zzz757)
       hasGraderRow: !!row.graded,
+      // Evidence two years old must not confirm today's mechanism. (zzz769)
+      evidencePeriod: row.ledger?.latest_period || row.reportingPeriod || null,
+      expectedPeriod: latestExpectedPeriod().period,
     }),
     capex: buildCapexChain(row.summary, vars, row.ledger || null),
     promiseNote: check ? check.detail : null,
@@ -606,6 +619,13 @@ export function useBook(opts?: { includeBench?: boolean }) {
     const cur = rowsRef.current[sym];
     if (!cur) return;
     const isUs = cur.market === 'US';
+    // A check is discovery only and must never spend: the US reader has no
+    // discovery mode (every call may be a model call), so a US check is a
+    // note, not a request. (zzz770)
+    if (isUs && mode === 'check') {
+      setRows((r) => ({ ...r, [sym]: { ...r[sym], readNote: 'Check for new evidence searches India sources only — for a US name use Read evidence (one model call, on click).' } }));
+      return;
+    }
     setRows((r) => ({ ...r, [sym]: { ...r[sym], state: mode === 'check' ? r[sym].state : 'loading', error: undefined, readNote: mode === 'check' ? 'checking sources…' : null } }));
     try {
       // The graded row knows WHEN this holding last reported. Without it the
@@ -617,7 +637,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       const dateQ = /^\d{4}-\d{2}-\d{2}$/.test(fd) ? `&filing_date=${fd}` : '';
       const modeQ = mode === 'force' ? '&force=1' : mode === 'check' ? '&mode=check' : mode === 'incremental' ? '&mode=incremental' : '';
       const url = isUs
-        ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}`
+        ? `/api/v1/us/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}${mode === 'force' ? '&force=1' : ''}`
         : `/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}${dateQ}${modeQ}${mode === 'check' ? '' : '&ocr=1'}`;  // ocr=1: a clicked read may OCR a scanned filing (zzz765)
       const res = await fetch(url, { cache: 'no-store' });
       const j = await readJson(res);
@@ -626,9 +646,10 @@ export function useBook(opts?: { includeBench?: boolean }) {
           const prev = r[sym];
           const ledger: CompanyLedger | null = j?.ledger || prev.ledger || null;
           const fr = j?.freshness || freshnessOf(ledger);
+          const unseen: any[] = Array.isArray(j?.unseen_documents) ? j.unseen_documents : [];
           const note = j?.ok
             ? (j.new_evidence
-              ? `New evidence found: ${(j.candidates || []).slice(0, 3).map((c: any) => c.label).join('; ')}${j.newest_period ? ` (${j.newest_period})` : ''}`
+              ? `New evidence found: ${(unseen.length ? unseen : (j.candidates || [])).slice(0, 3).map((c: any) => c.label).join('; ')}${j.newest_period ? ` (${j.newest_period})` : ''} — not read yet (no model was called)`
               : (j.discovery_state === 'RETRIEVAL_FAILED' ? `Source unavailable — ${fr.detail}` : 'No newer relevant filing found. Evidence remains current.'))
             : `Check failed: ${j?.error || res.status}`;
           return { ...r, [sym]: { ...prev, ledger, freshness: fr, readNote: note, discoveryAttempts: j?.discovery_attempts || prev.discoveryAttempts, discoveryState: j?.discovery_state || prev.discoveryState } };
@@ -685,30 +706,41 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // every ledger had `status: null` and an empty history. (zzz742)
       const prev = rowsRef.current[sym];
       const ledger: CompanyLedger | null = j.ledger || null;
+      // ── THE CARD AFTER A READ IS THE CARD AFTER A RELOAD.          (zzz770)
+      // When the read landed in the store, the row is rebuilt from the
+      // PERSISTED ledger through applyLedger — the exact path a page load
+      // takes — so nothing on the card exists only in React state. Only a
+      // read whose save failed is shown from the response, marked NOT SAVED.
+      const landed = !!ledger && !!ledger.latest_period && j.persisted !== false;
+      const base: BookRow = { ...prev, sourceUrl: src || prev.sourceUrl };
+      const fromStore = landed ? applyLedger(base, ledger) : null;
       const ch = ledger ? whatChanged(ledger) : { lines: [], from: null };
-      const assessed = assess({
-        ...prev, summary: j.structured, sourceUrl: src || prev.sourceUrl, state: 'done' as const,
-        documentsRead: j.documents_read || undefined,
-        discoveryAttempts: j.discovery_attempts || undefined,
-        documentOutcomes: j.document_outcomes || undefined,
-        discoveryState: j.discovery_state || null,
-        // zzz724 — re-classify with the filing in hand. Order-book growth
-        // exists only in the document, so B can only ever fire here.
-        pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
-        ledger: ledger || prev.ledger || null,
-        freshness: freshnessOf(ledger || prev.ledger || null),
-        reportingPeriod: j.reporting_period || prev.reportingPeriod || null,
-        changed: ch.lines, changedFrom: ch.from,
-        // `persisted` is the route's word, not ours. A read that did not
-        // land is shown as such — never as "Evidence updated".
-        persisted: j.from_ledger ? true : (j.persisted ?? null),
-        persistError: j.persist_error || null,
-        readNote: j.from_ledger
-          ? 'Loaded from the evidence ledger — no new read.'
-          : j.persisted === false
-            ? `Read ${(j.documents_read || []).length} document(s) but the save FAILED: ${j.persist_error || 'unknown'} — this will not survive a reload.`
-            : `Evidence updated · ${(j.documents_read || []).length} document(s) read · ${(j.events || []).length} facts extracted`,
-      });
+      const note = j.from_ledger
+        ? 'Loaded from the evidence ledger — no new read.'
+        : j.persisted === false
+          ? `Read ${(j.documents_read || []).length} document(s) but the save FAILED: ${j.persist_error || 'unknown'} — this will not survive a reload.`
+          : [evidenceReadLine(ledger), changesNote(j.changes)].filter(Boolean).join(' · ');
+      const assessed = fromStore
+        ? { ...fromStore, persisted: j.from_ledger ? true : (j.persisted ?? true), persistError: j.persist_error || null, readNote: note }
+        : assess({
+          ...base, summary: j.structured, state: 'done' as const,
+          documentsRead: j.documents_read || undefined,
+          discoveryAttempts: j.discovery_attempts || undefined,
+          documentOutcomes: j.document_outcomes || undefined,
+          discoveryState: j.discovery_state || null,
+          // zzz724 — re-classify with the filing in hand. Order-book growth
+          // exists only in the document, so B can only ever fire here.
+          pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
+          ledger: ledger || prev.ledger || null,
+          freshness: freshnessOf(ledger || prev.ledger || null),
+          reportingPeriod: j.reporting_period || prev.reportingPeriod || null,
+          changed: ch.lines, changedFrom: ch.from,
+          // `persisted` is the route's word, not ours. A read that did not
+          // land is shown as such — never as "Evidence updated".
+          persisted: j.from_ledger ? true : (j.persisted ?? null),
+          persistError: j.persist_error || null,
+          readNote: note,
+        });
       setRows((r) => ({ ...r, [sym]: assessed }));
       try { recordPromises(sym, j.structured, src); } catch { /* ledger is best-effort */ }
       // Status history is recorded for a fresh read AND for a ledger load
@@ -742,8 +774,13 @@ export function useBook(opts?: { includeBench?: boolean }) {
       if (opts?.exact) return true;
       if (opts?.reprocess) return true;
       const fr = row.freshness?.state;
+      const es = row.freshness?.evidence_state;
       if (!row.summary) return true;                                  // never read, or failed
-      return fr === 'NEW_EVIDENCE_AVAILABLE' || fr === 'STALE';        // current names are skipped
+      // Only the names that need it: new evidence, stale, or a failed last
+      // attempt (retried). CURRENT names are skipped without a call; the
+      // server's incremental check is the last guard either way. (zzz770)
+      return fr === 'NEW_EVIDENCE_AVAILABLE' || fr === 'STALE'
+        || es === 'NEW_EVIDENCE_AVAILABLE' || es === 'STALE' || es === 'RETRIEVAL_FAILED' || es === 'SOURCE_UNAVAILABLE';
     });
     if (!todo.length) return;
     stopRef.current = false;
@@ -776,6 +813,33 @@ export function useBook(opts?: { includeBench?: boolean }) {
   }, [readFiling]);
 
   const stop = useCallback(() => { stopRef.current = true; }, []);
+
+  /**
+   * CHECK FOR NEW EVIDENCE — every name, discovery only, NO MODEL. (zzz770)
+   * Each company's sources are searched and the documents no period lists
+   * yet are filed as pending on ITS ledger, so a Q2 filing by one company
+   * marks only that company NEW EVIDENCE AVAILABLE. Nothing is read.
+   */
+  const [checkBatch, setCheckBatch] = useState<{ running: boolean; done: number; total: number; found: number }>({ running: false, done: 0, total: 0, found: 0 });
+  const checkAll = useCallback(async (syms: string[], concurrency = 4) => {
+    const todo = syms.filter((s) => { const r = rowsRef.current[s]; return !!r && r.market !== 'US' && r.state !== 'loading'; });
+    if (!todo.length) return;
+    stopRef.current = false;
+    setCheckBatch({ running: true, done: 0, total: todo.length, found: 0 });
+    let i = 0, done = 0;
+    const worker = async () => {
+      while (!stopRef.current) {
+        const k = i++;
+        if (k >= todo.length) return;
+        try { await readFiling(todo[k], 'check'); } catch { /* recorded on the row */ }
+        done++;
+        const found = Object.values(rowsRef.current).filter((r) => todo.includes(r.symbol) && (r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.evidence_state === 'NEW_EVIDENCE_AVAILABLE')).length;
+        setCheckBatch((b) => ({ ...b, done, found }));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, worker));
+    setCheckBatch((b) => ({ ...b, running: false }));
+  }, [readFiling]);
 
   /**
    * READ THE PRIOR QUARTER — so a level gets a before. On click only. (zzz765)
@@ -815,7 +879,8 @@ export function useBook(opts?: { includeBench?: boolean }) {
         ? `&filing_date=${String(best.date_iso).slice(0, 10)}` : '';
       let j: any = null;
       try {
-        const res = await fetch(`/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}&period=${encodeURIComponent(plan.target)}${fd}`, { cache: 'no-store' });
+        // ocr=1: a clicked prior-quarter read may OCR a scanned filing too. (zzz770)
+        const res = await fetch(`/api/v1/india/ai-summary?ticker=${encodeURIComponent(sym)}&period=${encodeURIComponent(plan.target)}${fd}&ocr=1`, { cache: 'no-store' });
         j = await readJson(res);
       } catch (e: any) {
         j = { ok: false, error: humanError(e) };
@@ -918,5 +983,5 @@ export function useBook(opts?: { includeBench?: boolean }) {
     }
   }, [readAll]);
 
-  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods };
+  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch };
 }

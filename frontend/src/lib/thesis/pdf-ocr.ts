@@ -119,3 +119,42 @@ export async function ocrPdf(url: string, label: string, model: string, opts: { 
     return unavailable(e?.name === 'TimeoutError' ? 'model call timed out' : String(e?.message || e));
   }
 }
+
+// ── ONE DOCUMENT, READ OR ACCOUNTED FOR.                         (zzz770)
+//
+// The reader's per-document decision — download, judge the text layer, OCR a
+// scan when this read may, or record why not — as one function with its I/O
+// injected, so the scanned-PDF path is tested without a network or a model.
+// Every failure is an OUTCOME (download_failed / scanned / too_short), never
+// an absence of disclosure.
+
+export type DocumentRead =
+  | { outcome: 'read'; text: string; pages: number; viaOcr: boolean }
+  | { outcome: 'download_failed' | 'scanned' | 'too_short'; chars: number; pages: number; detail?: string };
+
+export interface DocumentReadDeps {
+  /** pdf text extraction; null or source 'FAILED' is a failed download. */
+  extract: (url: string) => Promise<{ text?: string | null; pages?: number | null; source?: string; failure_reason?: string } | null>;
+  /** OCR of a scanned PDF (ocrPdf in production). */
+  ocr: (url: string, label: string) => Promise<OcrResult>;
+  /** true when this read may spend an OCR call now, else the reason not. */
+  ocrGate: () => true | string;
+}
+
+export async function readOneDocument(doc: { url: string; label: string }, deps: DocumentReadDeps): Promise<DocumentRead> {
+  const e = await deps.extract(doc.url);
+  const body = String(e?.text || '');
+  const pages = Number(e?.pages || 0);
+  if (!e || e.source === 'FAILED') return { outcome: 'download_failed', chars: 0, pages, detail: e?.failure_reason || 'no response' };
+  // Below 1,200 characters a one- or two-page file is an intimation or a
+  // cover note; a multi-page file with almost no text per page is a scan.
+  const quality = pdfTextQuality(body.length, pages, body);
+  if (quality === 'too_short') return { outcome: 'too_short', chars: body.length, pages };
+  if (quality === 'scanned') {
+    const gate = deps.ocrGate();
+    const ocr: OcrResult = gate === true ? await deps.ocr(doc.url, doc.label) : { ok: false, detail: gate };
+    if (!ocr.ok) return { outcome: 'scanned', chars: body.length, pages, detail: ocr.detail };
+    return { outcome: 'read', text: ocr.text, pages, viaOcr: true };
+  }
+  return { outcome: 'read', text: body, pages, viaOcr: false };
+}

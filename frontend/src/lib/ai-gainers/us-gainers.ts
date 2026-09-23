@@ -416,6 +416,8 @@ export function classifyUsFiling(a: Pick<AnnouncementLite, 'subject'>): UsClass 
     return neg('dilution', form === 'D' || form === 'D/A' ? 'Form D — exempt (private) securities offering' : `${form} — registration / prospectus for securities: supply, dilution or resale overhang`);
   }
   if (/^NT (10-[QK]|20-F)/.test(form)) return neg(null, `${form} — late periodic filing`);
+  // Forms 3/4/5 are insider ownership reports: who holds what, not an event. (zzz770)
+  if (/^[345](\/A)?$/.test(form)) return routine(`Form ${form} — insider ownership report`);
   if (/^(SC 13D|SCHEDULE 13D)$/.test(form)) return cat('strategic_investor');
   if (/^(SC 13D|SCHEDULE 13D)\/A$/.test(form)) return routine('13D amendment — a holder\'s stake changed; direction not stated in the form type');
   if (/^(SC 13G|SCHEDULE 13G)(\/A)?$/.test(form)) return routine('13G — passive 5% holder');

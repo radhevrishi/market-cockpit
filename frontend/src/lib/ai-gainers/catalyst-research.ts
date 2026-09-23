@@ -34,6 +34,14 @@
 import { NEGATIVE_CATALYSTS, type CatalystType } from './events';
 import { classifyUsFiling, fmtUsdM } from './us-gainers';
 
+/** The version of the classification + scoring rules a finding was built
+ *  under. BUMP IT whenever classifyAnnouncement / parseStatedValue /
+ *  scoreCatalyst / buildFinding change what a finding says: a stored day
+ *  whose findings carry an older version is re-scored automatically on the
+ *  next page open, from filings already fetched and model reads already
+ *  cached — never a new model read. (zzz769) */
+export const RULES_VERSION = '2026-09-23.zzz770';
+
 export type ResearchStatus =
   | 'catalyst'          // a dated, sourced event survived the reject gates
   | 'denied'            // the company told the exchange it has nothing to disclose
@@ -103,6 +111,8 @@ export interface Finding {
   modelRead: boolean;
   researchedAt: string;
   sources: string[];               // which sources answered
+  /** RULES_VERSION the finding was built under (absent = before zzz769). */
+  rulesVersion?: string;
 }
 
 // ── 1. CLASSIFY A FILING BY ITS SUBJECT (+ the source's summary) ──────────
@@ -150,8 +160,10 @@ const RX = {
   // for an earlier-approved acquisition scored FIRE as if it were new.)
   renewal: /allot[\s\S]{0,140}?consideration|pursuant to (the )?(scheme|share purchase agreement|acquisition agreement)|renew|extension of (the )?(existing|earlier)|re-?award|repeat order|same (customer|counterparty)|already (announced|disclosed)|earlier (announced|disclosed)|in continuation/i,
   // Officer changes worded as sentences ("resigns as CHRO", "Board appointed
-  // seven senior leaders") were left "not classifiable". (zzz768)
-  mgmtChange: /departure of (directors|certain officers)|item 5\.02|appointment of (chief|ceo|cfo|managing director)|resignation of (chief|ceo|cfo|managing director)|(resign(ed|s|ation)?|appoint(ed|s|ment)?|designated|re-?designat\w*|steps? down|stepped down)\b[^.]{0,80}\b(chief|ceo|cfo|coo|chro|cto|cmo|managing director|whole[- ]time director|president|senior (management|leadership|leaders)|company secretary)\b/i,
+  // seven senior leaders") were left "not classifiable". (zzz768) An honorific
+  // or an initial ("appoints Mr. R. Kumar as CFO") is not a sentence end, and
+  // "Change in Senior Management Personnel" names no verb at all. (zzz769)
+  mgmtChange: /departure of (directors|certain officers)|change(s)? in (the )?(senior management|key managerial|kmps?\b|management personnel|smp\b)|item 5\.02|appointment of (chief|ceo|cfo|managing director)|resignation of (chief|ceo|cfo|managing director)|(resign(ed|s|ation)?|appoint(ed|s|ment)?|designated|re-?designat\w*|steps? down|stepped down)\b(?:[^.]|(?<=\b(?:mr|ms|mrs|dr|shri|smt|[a-z]))\.){0,80}\b(chief|ceo|cfo|coo|chro|cto|cmo|managing director|whole[- ]time director|president|senior (management|leadership|leaders)|company secretary)\b/i,
   brokerNote: /initiat(es|ed|ion of) coverage|target price|\btp\b|buy rating|rating: buy|brokerage/i,
 };
 
@@ -169,7 +181,10 @@ export function parseStatedValue(text: string, market: 'IN' | 'US'): number | nu
   // value. The figure is dropped so the item is scored as unmeasured.
   const t = text.replace(/,/g, '').replace(/(impl(y|ies|ying)|estimat(e|ed|es|ing)|potential(ly)?|opportunity|could|may|might|expected to|up to|targeting|aims?|envisag|projected|likely)[^.]{0,60}?(₹|rs\.?|inr|usd|\$)\s*[\d.]+\s*(crore|cr\b|crores|lakh|lacs?|million|mn|billion|bn|m\b)/gi, ' ');
   if (market === 'IN') {
-    const cr = /(?:₹|rs\.?|inr)\s*([\d.]+)\s*(crore|cr\b|crores)/i.exec(t) || /([\d.]+)\s*(crore|crores|\bcr\b)/i.exec(t);
+    // A bare "1.2 crore equity shares" / "2 crore users" is a COUNT: without a
+    // currency mark a crore is money only when no counted noun follows. (zzz769)
+    const cr = /(?:₹|rs\.?|inr)\s*([\d.]+)\s*(crore|cr\b|crores)/i.exec(t)
+      || /([\d.]+)\s*(crores?|\bcr\b)(?!\s*(?:fully[- ]paid\s+|equity\s+|new\s+|convertible\s+)*(?:shares?|warrants?|units?|users?|customers?|subscribers?|tonnes?|litres?|equity|securities|options|policies|accounts|households|people|beneficiaries))/i.exec(t);
     if (cr) { const n = parseFloat(cr[1]); return Number.isFinite(n) ? n : null; }
     // "20 lakh users", "2.82 lakh shares", "70 lakh warrants" are counts, not
     // money: a lakh is ₹ only when a currency marks it. (zzz768 — RNIT ₹0.2 Cr)
@@ -238,7 +253,7 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   if (/(acquired|bought|purchased|sold|disposed)[^.]{0,20}[\d,.]+ (\S+ ){0,3}shares/i.test(hay) && !/open offer|stake|%|per ?cent/i.test(hay)) {
     return /promoter/i.test(hay) && !/sold|disposed/i.test(hay) ? { ...base, kind: 'catalyst', category: 'promoter_purchase', stage: 'executed', valueStated: null } : { ...base, kind: 'routine', valueStated: null, routineReason: 'insider trade' };
   }
-  if (/authori[sz]ed[^.]{0,40}\bkmps?\b|\bkmps?\b[^.]{0,40}authori[sz]ed[^.]{0,40}materiality/i.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'KMP authorisation under Reg 30' };
+  if (/authori[sz]\w*[^.]{0,80}(\bkmps?\b|key managerial personnel)|(\bkmps?\b|key managerial personnel)[^.]{0,80}authori[sz]\w*|regulation 30\s*\(5\)|reg\.? ?30\s*\(5\)/i.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'KMP authorisation under Reg 30' };
   const subjectRoutine = RX.routine.test(a.subject) && !RX.order.test(a.subject) && !RX.capacity.test(a.subject) && !RX.certification.test(a.subject) && !RX.mna.test(a.subject) && !RX.rating.test(a.subject);
   if (subjectRoutine) return { ...base, kind: 'routine', valueStated: null, routineReason: (RX.routine.exec(a.subject) || [''])[0].toLowerCase().trim() || 'routine' };
   // An MoU, a letter of intent or anything "non-binding" is ENABLING: nothing
@@ -424,6 +439,10 @@ export interface SweepInput {
   sessionCloseIso?: string | null;
   /** A model-verified read of the chosen announcement, when one was made. */
   read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null } | null;
+  /** The graders hold a filed quarterly result behind this move (the scan's
+   *  filed-results rows). A recent listing that has one is NOT a listing
+   *  artifact only: the result is the context, the listing a caveat. (zzz769) */
+  filedResult?: boolean;
 }
 
 export function buildFinding(inp: SweepInput): Finding {
@@ -436,6 +455,7 @@ export function buildFinding(inp: SweepInput): Finding {
   const inWindow = allInWindow.filter((a) => !filedAfterClose(a.dateIso, inp.sessionCloseIso));
   const band = bandPrint(inp.movePct, inp.turnover, inp.market);
   const listingDays = inp.returns && inp.returns.history > 0 && inp.returns.history < 60 ? inp.returns.history : null;
+  const hasResult = !!inp.filedResult || allInWindow.some((a) => /^results filing/.test(a.routineReason || ''));
   const base: Finding = {
     ticker: inp.ticker, company: inp.company, market: inp.market, movePct: inp.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
     status: 'none', category: null, stage: null, headline: null, evidenceQuote: null, sourceUrl: null, sourceDate: null, sourceTier: 'unsourced',
@@ -454,11 +474,13 @@ export function buildFinding(inp: SweepInput): Finding {
   // No price history at all (a name too new for the chart API) plus the
   // paperwork a fresh listing files — Reg 7 / Reg 8(2) / listing intimation
   // — is a recent listing until proven otherwise.
-  if (!inp.returns && inWindow.some((a) => /regulation 7\b|regulation 8\(2\)|listing of (equity|shares)|allotment of equity shares pursuant to (the )?(ipo|initial public)|basis of allotment/i.test(`${a.subject} ${a.summary || ''}`))) {
+  if (!inp.returns && !hasResult && inWindow.some((a) => /regulation 7\b|regulation 8\(2\)|listing of (equity|shares)|allotment of equity shares pursuant to (the )?(ipo|initial public)|basis of allotment/i.test(`${a.subject} ${a.summary || ''}`))) {
     return { ...base, status: 'listing_artifact', headline: 'No price history and listing paperwork in the window — a recent listing, no comparable prior close', sourceUrl: inWindow[0].url, sourceDate: inWindow[0].dateIso, sourceTier: 'primary' };
   }
   if (listingDays != null) {
-    base.notes.push(`Only ${listingDays} sessions of price history — a recent listing; trailing returns mean nothing yet.`);
+    base.notes.push(hasResult
+      ? `Recent listing — only ${listingDays} sessions of price history, so there is no comparable prior close and trailing returns mean nothing yet. The filed quarterly result is the context for the move; this is a caveat on it, not a contradiction.`
+      : `Only ${listingDays} sessions of price history — a recent listing; trailing returns mean nothing yet.`);
   }
 
   // Reject-first. A denial or a negative filing in the window is the finding,
@@ -504,18 +526,22 @@ export function buildFinding(inp: SweepInput): Finding {
     const refined = classifyAnnouncement({ ...readItem, summary: `${inp.read.headline}. ${inp.read.quote}` }, inp.market);
     cands.push({ ...readItem, kind: 'catalyst', category: inp.read.category, stage: refined.stage || 'executed', valueStated: inp.read.valueStated ?? refined.valueStated, incremental: refined.incremental });
   }
-  if (listingDays != null) {
+  if (listingDays != null && !hasResult) {
     // A recent listing is not a gainer, whatever it filed: there is no
     // comparable prior close, so the return is the listing, not the news.
     return { ...base, status: 'listing_artifact', headline: `Listed ~${listingDays} sessions ago — no comparable prior close${cands.length ? `; filed: ${shorten(cands[0].summary || cands[0].subject, 70)}` : ''}`, sourceUrl: cands[0]?.url || null, sourceDate: cands[0]?.dateIso || null, sourceTier: cands.length ? 'primary' : 'unsourced' };
   }
   if (!cands.length) {
-    if (!inWindow.length) return { ...base, status: 'none', headline: afterClose.length ? `No filing before the session closed (${afterClose.length} filed after it)` : `No filing in the last ${inp.windowDays} days`, notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
+    // A result the graders hold is the context for this move: the finding
+    // says so rather than "no filing" beside a filed-result row. (zzz769)
+    const resultLead = inp.filedResult ? 'Quarterly result on file — ranked in the filed-results rows of the research queue. ' : '';
+    if (resultLead) base.notes.unshift('A results filing is scored by the graded funnel (revenue, PAT, tier), not by this sweep.');
+    if (!inWindow.length) return { ...base, status: 'none', headline: resultLead + (afterClose.length ? `No filing before the session closed (${afterClose.length} filed after it)` : `No filing in the last ${inp.windowDays} days`), notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
     const uncl = inWindow.filter((a) => a.kind === 'unclassified');
     const headline = uncl.length
       ? `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window; ${uncl.length} not classifiable from the subject (${uncl.slice(0, 2).map((a) => short(a.summary || a.subject)).join('; ')})`
       : `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window, all routine (${base.routine.slice(0, 2).map(short).join('; ')})`;
-    return { ...base, status: 'routine_only', headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, ageDays: (uncl[0] || inWindow[0]).ageDays, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? ['An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern.'] : [])] };
+    return { ...base, status: 'routine_only', headline: resultLead + headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, ageDays: (uncl[0] || inWindow[0]).ageDays, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? ['An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern.'] : [])] };
   }
   let c = cands[0];
   const verified = !!inp.read && inp.read.url === c.url;
@@ -586,4 +612,57 @@ export function coverage(findings: Record<string, Finding>, universe: string[]):
     if (f && s !== 'unresearched') researched++;
   }
   return { researched, total: universe.length, pct: universe.length ? Math.round((researched / universe.length) * 100) : 0, byStatus: by };
+}
+
+// ── 5. RE-SCORING WITHOUT A MODEL  (zzz769) ─────────────────────────────────
+
+/** What a sweep fetched for one name, kept beside the finding so a rules
+ *  change re-scores the day from the same inputs — no refetch, no model. */
+export interface StoredSweepInputs {
+  announcements: AnnouncementLite[];
+  returns: Returns | null;
+  marketCap: number | null;
+  turnover: number | null;
+  sources: string[];
+  sourceFailed: boolean;
+  /** The instant the inputs were fetched: freshness is re-scored against it. */
+  fetchedAt: string;
+  read?: SweepInput['read'];
+}
+
+/** Keeps only what a finding can use (the window, a bounded summary): the
+ *  day's state is one KV value and must stay well under its size limit. */
+export function compactInputs(inp: Omit<StoredSweepInputs, 'announcements'> & { announcements: AnnouncementLite[] }, windowDays: number, now: Date): StoredSweepInputs {
+  const announcements = inp.announcements
+    .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, now) }))
+    .filter((a) => a.ageDays == null || a.ageDays <= windowDays)
+    .slice(0, 25)
+    .map((a) => ({ subject: String(a.subject || '').slice(0, 300), summary: a.summary ? String(a.summary).slice(0, 400) : null, url: a.url, dateIso: a.dateIso, ageDays: a.ageDays }));
+  return { ...inp, announcements };
+}
+
+/** The filing a sweep would model-read — the same candidate the finding
+ *  scores, plus (US) an 8-K/6-K item only a read can classify. */
+export function pickReadCandidate(announcements: AnnouncementLite[], market: 'IN' | 'US', opts: { marketCap: number | null; returns: Returns | null; windowDays: number; now: Date; sessionCloseIso?: string | null }): ClassifiedAnnouncement | null {
+  const c = chooseCandidate(announcements, market, opts);
+  if (c || market !== 'US') return c;
+  const inWindow = announcements.map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, opts.now) })).filter((a) => a.ageDays == null || a.ageDays <= opts.windowDays);
+  return inWindow.map((a) => classifyAnnouncement(a, market)).find((x) => x.kind === 'unclassified' && (/item (1\.0[12]|2\.01|7\.01|8\.01)/i.test(x.subject) || /^6-K/i.test(x.subject))) || null;
+}
+
+/** A finding rebuilt from stored inputs under the CURRENT rules. Pure: the
+ *  caller supplies any model read, and only from cache. */
+export function rescoreFromInputs(inp: StoredSweepInputs, meta: { ticker: string; company: string | null; market: 'IN' | 'US'; movePct: number | null; holding: boolean; filedResult?: boolean; windowDays: number; sessionCloseIso?: string | null }, read: SweepInput['read'] = inp.read ?? null): Finding {
+  const now = new Date(inp.fetchedAt);
+  const f = buildFinding({
+    ticker: meta.ticker, company: meta.company, market: meta.market, movePct: meta.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
+    announcements: inp.announcements, returns: inp.returns, holding: meta.holding, sources: inp.sources, sourceFailed: inp.sourceFailed,
+    windowDays: meta.windowDays, now: Number.isFinite(now.getTime()) ? now : new Date(), read, sessionCloseIso: meta.sessionCloseIso, filedResult: meta.filedResult,
+  });
+  return { ...f, rulesVersion: RULES_VERSION };
+}
+
+/** Findings built under older rules — the ones an automatic re-score redoes. */
+export function staleRuleTickers(findings: Record<string, Finding>, universe: string[]): string[] {
+  return universe.filter((t) => { const f = findings[t]; return !!f && f.status !== 'unresearched' && f.rulesVersion !== RULES_VERSION; });
 }

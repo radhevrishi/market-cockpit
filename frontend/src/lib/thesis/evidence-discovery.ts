@@ -108,6 +108,31 @@ const KIND_RANK: Record<DocKind, number> = {
   other: 5,
 };
 
+/**
+ * THE SOURCE FALLBACK ORDER (zzz770), for the same document kind and date:
+ *   0 company investor-relations site      — not wired (no per-company IR map)
+ *   1 official filings: NSE exchange feed, SEC EDGAR
+ *   2 BSE corporate announcements
+ *   3 screener.in company page             (transcripts, decks, annual reports)
+ *   4 reputable secondary                  — not wired
+ * Every wired source is ALWAYS searched (a failure never ends the search);
+ * this order only breaks ties between otherwise equal candidates, and
+ * `nextBestCandidate` replaces a document that failed with the next one of
+ * the same period from any source. Screener FINANCIALS are a separate path
+ * (screener-live), never a document here. A search where every source failed
+ * is RETRIEVAL_FAILED → SOURCE_UNAVAILABLE, never NO_DISCLOSURE.
+ */
+export const SOURCE_PRECEDENCE: Record<string, number> = {
+  'company investor relations': 0,
+  'exchange filing feed': 1,
+  'SEC EDGAR': 1,
+  'BSE corporate announcements': 2,
+  'screener.in company page': 3,
+};
+export function sourcePrecedence(source: string | null | undefined): number {
+  return SOURCE_PRECEDENCE[String(source || '')] ?? 4;
+}
+
 /** Pure: rank candidates for reading, nearest-period first within a kind. */
 export function rankCandidates(candidates: DocCandidate[], near?: string | null): DocCandidate[] {
   const nearMs = near ? Date.parse(near) : NaN;
@@ -133,7 +158,9 @@ export function rankCandidates(candidates: DocCandidate[], near?: string | null)
       const as = rs(a), bs = rs(b);
       if (as !== bs) return as - bs;
     }
-    return String(b.dateIso || '').localeCompare(String(a.dateIso || ''));
+    const byDate = String(b.dateIso || '').localeCompare(String(a.dateIso || ''));
+    if (byDate) return byDate;
+    return sourcePrecedence(a.source) - sourcePrecedence(b.source);
   });
 }
 

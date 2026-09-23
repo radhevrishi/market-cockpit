@@ -96,7 +96,7 @@ export const VAR_LABEL: Record<VarKey, string> = {
 
   capex: 'Capex',
   capex_status: 'Capex status',
-  capex_earning: 'Capex earning yet?',
+  capex_earning: 'Capex earning',
   maintenance_vs_growth: 'Growth vs maintenance capex',
 
   new_customer: 'New customer',
@@ -318,3 +318,131 @@ export type EvidenceKind =
   | 'claim'
   /** This engine derived it from stated figures. Arithmetic only. */
   | 'derived';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PER-VARIABLE EVIDENCE STATE.                                    (zzz770)
+//
+// The owner's rule: once evidence has been read, a variable never shows a bare
+// "—". It shows WHICH of seven different facts it is, because they lead to
+// different actions:
+//
+//   FOUND               a value was read (a direction, a level, a statement)
+//   NOT_DISCLOSED       documents were read and are silent on it
+//   NOT_SEARCHED        nothing that could carry it has been read yet
+//   UNCLEAR             read, but not in a form that can be judged (a ratio
+//                       whose sign or denominator is ambiguous)
+//   NOT_APPLICABLE      it cannot apply to this business or this thesis
+//   SOURCE_UNAVAILABLE  the source that carries it is not on file
+//   RETRIEVAL_FAILED    a fetch failed — says nothing about the company
+//
+// UNCLEAR is never counted as contradicted, NOT_APPLICABLE never as pending.
+// ═══════════════════════════════════════════════════════════════════════════
+export type EvidenceState =
+  | 'FOUND' | 'NOT_DISCLOSED' | 'NOT_SEARCHED' | 'UNCLEAR'
+  | 'NOT_APPLICABLE' | 'SOURCE_UNAVAILABLE' | 'RETRIEVAL_FAILED';
+
+export const EVIDENCE_STATE_META: Record<EvidenceState, { word: string; short: string; hint: string }> = {
+  FOUND: { word: 'FOUND', short: 'found', hint: 'A value was read from the evidence.' },
+  NOT_DISCLOSED: { word: 'NOT DISCLOSED', short: 'not disclosed',
+    hint: 'The documents read say nothing about this. Unknown — never counted against the thesis.' },
+  NOT_SEARCHED: { word: 'NOT SEARCHED', short: 'not searched',
+    hint: 'No document that could carry this has been read yet. Unknown, not bad.' },
+  UNCLEAR: { word: 'UNCLEAR', short: 'unclear',
+    hint: 'Read, but not in a form that can be judged either way. Counted neither as confirmed nor as contradicted.' },
+  NOT_APPLICABLE: { word: 'N/A', short: 'n/a',
+    hint: 'Not relevant to this business or this thesis. Never counted as pending.' },
+  SOURCE_UNAVAILABLE: { word: 'SOURCE UNAVAILABLE', short: 'source unavailable',
+    hint: 'The source that carries this figure is not on file. Says nothing about the company.' },
+  RETRIEVAL_FAILED: { word: 'RETRIEVAL FAILED', short: 'retrieval failed',
+    hint: 'A fetch failed on the last attempt. Says nothing about what the company disclosed.' },
+};
+
+/** The state an absence reason maps to. */
+export function stateOfAbsence(a: AbsenceReason | null | undefined, retrievalFailed = false): EvidenceState {
+  switch (a) {
+    case 'not_read': return 'NOT_SEARCHED';
+    case 'source_unavailable': return retrievalFailed ? 'RETRIEVAL_FAILED' : 'SOURCE_UNAVAILABLE';
+    case 'not_disclosed': return 'NOT_DISCLOSED';
+    case 'not_applicable': return 'NOT_APPLICABLE';
+    case 'unclear': return 'UNCLEAR';
+    case 'no_grader_row': return 'SOURCE_UNAVAILABLE';
+    default: return 'NOT_SEARCHED';
+  }
+}
+
+/** Short document names for "searched current filing + concall". */
+export function searchedPhrase(docs: Array<{ kind?: string | null; label?: string | null }> | null | undefined): string {
+  const names: string[] = [];
+  for (const d of docs || []) {
+    const k = `${d.kind || ''} ${d.label || ''}`.toLowerCase();
+    const n = /transcript|concall|earnings call/.test(k) ? 'concall'
+      : /presentation|\bppt\b|deck/.test(k) ? 'presentation'
+        : /annual report/.test(k) ? 'annual report'
+          : /result|financial/.test(k) ? 'results filing'
+            : /announcement|reg(?:ulation)?\.? ?30|press/.test(k) ? 'exchange announcement'
+              : 'filing';
+    if (!names.includes(n)) names.push(n);
+  }
+  return names.length ? names.join(' + ') : '';
+}
+
+/** The words a card prints for a variable in a given state — never a bare dash.
+ *  `reason` is the specific cause for UNCLEAR / N/A when one is known. */
+export function evidenceStateLine(state: EvidenceState, o: { docs?: Array<{ kind?: string | null; label?: string | null }> | null; reason?: string | null } = {}): string {
+  const searched = searchedPhrase(o.docs);
+  switch (state) {
+    case 'FOUND': return 'FOUND';
+    case 'NOT_DISCLOSED': return `NOT DISCLOSED — ${searched ? `searched ${searched}` : 'searched the documents read'}`;
+    case 'NOT_SEARCHED': return 'NOT SEARCHED — no document that could carry it has been read yet';
+    case 'UNCLEAR': return `UNCLEAR — ${o.reason || 'read, but not in a form that can be judged'}`;
+    case 'NOT_APPLICABLE': return `N/A — ${o.reason || 'not relevant to this thesis'}`;
+    case 'SOURCE_UNAVAILABLE': return `SOURCE UNAVAILABLE — ${o.reason || 'the source that carries it is not on file'}`;
+    case 'RETRIEVAL_FAILED': return `RETRIEVAL FAILED — ${o.reason || 'the last fetch failed; nothing is inferred from it'}`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICES / SOFTWARE — WHERE A PLANT DOES NOT EXIST.             (zzz770)
+//
+// Capacity and utilisation are physical variables. For a software, IT-services
+// or financial-services business they are not "pending" — there is no plant to
+// fill — so they are NOT_APPLICABLE. The detection is deliberately
+// conservative: it needs an explicit sector/industry word or several services
+// words in the company's own text, and never fires on a manufacturer that
+// merely mentions software. A variable that IS disclosed is always kept.
+// ═══════════════════════════════════════════════════════════════════════════
+export const PHYSICAL_CAPACITY_VARS: ReadonlySet<VarKey> = new Set<VarKey>([
+  'capacity', 'capacity_addition', 'utilisation', 'capacity_bottleneck', 'new_plant',
+]);
+const SERVICES_SECTOR = /\b(it services|information technology|software|saas|technology services|it consulting|consulting|bpo|bpm|business process|staffing|recruitment|edtech|education services|banks?|banking|nbfc|non[- ]banking|financial services|insurance|asset management|wealth management|broking|stock ?broking|capital markets|fintech)\b/i;
+const MANUFACTURING = /\b(manufactur\w*|plants?|factory|factories|mtpa|tonnes?|tons?|kld|mw\b|utili[sz]ation|capacity additions?|installed capacity|production lines?|dipping lines?|forging|casting|smelter|refinery|furnace|reactor|kiln|spindles?|looms?|gpus?|data cent(?:re|er)s?)\b/i;
+const SERVICES_TEXT = /\b(software|saas|subscription|licen[cs]e revenue|annual recurring revenue|\barr\b|headcount|attrition|billable|offshore|onsite|digital transformation|it services|consulting|deal wins?|tcv|clients? (?:in|across)|loan book|aum|disbursements?|net interest margin|\bnim\b|gross npa|premiums?|policyholders?|brokerage|services (?:segment|revenue|business)|engineering services|deal (?:momentum|pipeline|wins?)|anchor accounts?|revenue cycle management)\b/gi;
+
+export interface BusinessProfile { sector?: string | null; industry?: string | null; text?: string | null }
+
+/** True only on clear evidence of a services / software / financial business. */
+export function isServicesBusiness(b: BusinessProfile | null | undefined): boolean {
+  if (!b) return false;
+  const label = `${b.sector || ''} ${b.industry || ''}`.trim();
+  if (label && SERVICES_SECTOR.test(label) && !MANUFACTURING.test(label)) return true;
+  const text = String(b.text || '');
+  if (!text) return false;
+  const hits = new Set((text.match(SERVICES_TEXT) || []).map((s) => s.toLowerCase()));
+  const phys = (text.match(new RegExp(MANUFACTURING.source, 'gi')) || []).length;
+  return hits.size >= 3 && phys === 0;
+}
+
+/** Business text from what the row actually carries: a graded row's sector /
+ *  industry if present, and the read summary's own descriptive sentences. */
+export function businessProfileOf(graded: any | null | undefined, summary: any | null | undefined): BusinessProfile | null {
+  const s = summary || {};
+  const parts: string[] = [];
+  const push = (v: unknown) => { if (typeof v === 'string' && v.trim()) parts.push(v); };
+  push(s.verdict_line); push(s.mix_shift); push(s.management);
+  for (const g of Array.isArray(s.segments) ? s.segments : []) { push(g?.name); push(g?.detail); }
+  for (const p of Array.isArray(s.positives) ? s.positives : []) { push(p?.label); push(p?.detail); }
+  const sector = graded?.sector ?? graded?.industry_group ?? null;
+  const industry = graded?.industry ?? null;
+  if (!parts.length && !sector && !industry) return null;
+  return { sector: sector ? String(sector) : null, industry: industry ? String(industry) : null, text: parts.join(' · ') || null };
+}

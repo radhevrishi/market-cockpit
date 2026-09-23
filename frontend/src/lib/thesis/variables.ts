@@ -32,11 +32,18 @@ import {
 } from './taxonomy';
 
 import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
-import { scaledNumber, sameUnit, deltaOf as ledgerDeltaOf } from './evidence-ledger';
+import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
-import { normalizeEvent, gapToTarget } from './fact-normalize';
+import { normalizeEvent, gapToTarget, hedgedAround, rangeOf } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
-import type { ChangeLine } from './evidence-ledger';
+import type { ChangeLine, LedgerDocument } from './evidence-ledger';
+import {
+  factTypeOf, metricGroupOf, validateReading, validateCashConversion, lineageOf, normalizeValue,
+  comparability, samePeriodPair, scopeOf, hasQuantity, isCommentaryOnly, RECURRING_METRICS, EVENT_METRICS,
+  PRIOR_NOT_DISCLOSED, FACT_TYPE_LABEL,
+  type FactType, type MetricGroup, type Validation, type Lineage, type NormalizedValue, type FactScope,
+} from './fact-model';
+export type { FactType, MetricGroup, Validation, Lineage, NormalizedValue, FactScope };
 
 export { VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE };
 export type { VarKey, VarGroup, EvidenceKind };
@@ -113,6 +120,28 @@ export interface StructuralVar {
   context?: { value: string; asOf: string; quote: string; source: string }[] | null;
   /** Why the reading's type was corrected from the model's label. */
   retyped?: string | null;
+  // ── THE FACT MODEL.                                              (zzz770)
+  /** The owner's seven types: ACTUAL, MANAGEMENT_GUIDANCE, MANAGEMENT_TARGET,
+   *  MANAGEMENT_COMMENTARY, HISTORICAL, ESTIMATE, SECONDARY_REPORT. */
+  fact_type?: FactType;
+  /** OUTPUT (what happened: revenue, margin, earnings, cash, ROCE…) or
+   *  MECHANISM (why: capacity, utilisation, orders, customers, capex…). */
+  metric_group?: MetricGroup;
+  /** UNCLEAR = "validation required": shown, counted neither confirmed nor
+   *  contradicted (verdict 'stated' or 'unknown', `unjudged` carries why). */
+  validation?: Validation | null;
+  /** Where the figure came from: id, name, url, type, date, period, page, quote. */
+  lineage?: Lineage | null;
+  /** raw_value / raw_unit / normalized_value / normalized_unit / conversion_method. */
+  normalized?: NormalizedValue | null;
+  /** Plant / project / phase / segment / basis the figure's clause names. */
+  scope?: FactScope | null;
+  /** Other readings of the SAME figure for the same period (a duplicate
+   *  kept as corroboration, never a change). */
+  corroboration?: { value: string; source: string }[] | null;
+  /** The row as the owner asked it printed: "68% → 74% · +6pp", "74% · prior
+   *  comparable value not disclosed", "Actual: 74% · Target: 80%+". */
+  display?: string;
 }
 
 
@@ -180,14 +209,22 @@ const DENIAL = /^(no|none|nil|not any|no explicit|no material|no significant|the
 /** "Projects on schedule", "no stated delays", "not delayed", "on track" —
  *  a reassurance, not a delay. Anywhere in the value, not only at the start. (zzz767) */
 const REASSURANCE = /\b(no (?:stated|explicit|specific|new|major|material|reported|cited|significant)?\s*(?:capex |project |execution )?delays?\b|not (?:been )?delayed|on (?:schedule|track|time)\b|as per (?:schedule|plan)|within (?:the )?(?:timeline|schedule))/i;
-const DELAY_WORDS = /\b(delayed by|slipp(?:ed|age)|pushed (?:out|back)|deferred|postponed|behind schedule)\b/i;
+const DELAY_WORDS = /\b(delayed by|slipp(?:ed|age)|pushed (?:out|back)|deferred|postponed|behind schedule|paused)\b/i;
 /** A delay field is a ▼ only when it reports a delay that HAPPENED. A
  *  timeline ("Phase-2 targeted Q2 FY28"), a plan ("deliveries expected in the
  *  next couple of months") or a possibility ("could delay", "timelines may
  *  shift") is stated, not judged. E2E, BHAGCHEM, KMEW and AARTIPHARM printed
  *  a red ▼ Execution delay for a schedule. (zzz767) */
-const HAPPENED_DELAY = /\b(delay(?:ed|s)?|slipp(?:ed|age)|pushed (?:out|back)|deferr(?:ed|al)|postpon|behind schedule|gating|stoppage|suspen(?:ded|sion)|halt(?:ed)?|disrupt(?:ed|ion)|curtail(?:ed|ment)?|cancell?(?:ed|ation))/i;
-const POSSIBLE_DELAY = /\b(could|may|might|can|possible|possibly|potential(?:ly)?|risk of)\s+(?:be\s+)?(?:a\s+)?(?:further\s+)?(delay\w*|slip\w*|shift\w*|push\w*|defer\w*)/gi;
+// A customer's "temporary pause on CDMO volumes" is a deferral that happened
+// (JUBLINGREA). (zzz769)
+const HAPPENED_DELAY = /\b(delay(?:ed|s)?|slipp(?:ed|age)|pushed (?:out|back)|deferr(?:ed|al)|postpon|behind schedule|gating|stoppage|suspen(?:ded|sion)|halt(?:ed)?|disrupt(?:ed|ion)|curtail(?:ed|ment)?|cancell?(?:ed|ation)|paus(?:e|ed|ing)\b)/i;
+// ── A POSSIBILITY IS NOT A DELAY, HOWEVER IT IS WORDED.            (zzz769)
+// "potential project execution delays" (TDPOWERSYS) has two words between the
+// hedge and the delay; "(risk if delayed)" (TI) is a condition. Both printed
+// ▼ Execution delay. Up to three words may sit between the hedge and the
+// delay word, and a conditional ("if / should / in case of … delayed") or a
+// "risk of … delay" is a possibility too.
+const POSSIBLE_DELAY = /\b(?:(?:could|may|might|can|possible|possibly|potential(?:ly)?|risks?(?: of)?|any)\s+(?:[\w-]+\s+){0,3}?|(?:if|should|unless|in case(?: of)?|in the event(?: of)?|risk if)\s+(?:[\w-]+\s+){0,3}?)(delay\w*|slip\w*|shift\w*|push\w*|defer\w*|postpon\w*|paus\w*)/gi;
 export function delayVerdict(text: string | null): VarVerdict {
   const t = String(text || '');
   if (!t) return 'unknown';
@@ -200,6 +237,28 @@ export const isDenial = (v: unknown): boolean => {
   if (DENIAL.test(t)) return true;
   return REASSURANCE.test(t) && !DELAY_WORDS.test(t);
 };
+
+/** One-off vocabulary: an item that is a genuine non-repeating P&L event. */
+const ONE_OFF_EVENT = /one[- ]?off|one[- ]time|exceptional|non[- ]recurring|write[- ]?back|reversal|impairment|gain on (sale|disposal)|loss on (sale|disposal)|profit on sale|sale of|insurance|settlement|arbitration|refund|fair value|mark[- ]to[- ]market|\bmtm\b|forex|foreign exchange|earn[- ]?out|provision/i;
+/** A proceeds-utilisation table (IPO / QIP money raised and spent). */
+export const isFundRaiseLine = (t: string): boolean =>
+  /\braised\b|\butili[sz](ed|ation)\b|\bproceeds\b|\bIPO\b|\bQIP\b/i.test(t) && !ONE_OFF_EVENT.test(t);
+/** An amount expected in a later period is not in this quarter's profit. */
+const ONE_OFF_FUTURE = /\bexpected\b|\bwill be\b|\bto be (received|recognised|recognized|booked)\b|\banticipat|\blikely\b|\bupcoming\b|\bin the coming\b/i;
+/** Routine other income — interest, treasury, dividends — is not a one-off. */
+const ONE_OFF_ROUTINE = /other income|other gain|\binterest\b|treasury|dividend income|investment income|\bFDR\b|fixed deposit/i;
+
+/** A margin driver that names a mechanism which LIFTS the margin, and does
+ *  not describe a decline, pressure or hit. (zzz769) */
+const DRIVER_POSITIVE = /improv|expan|higher margin|operating leverage|better|richer|premium|favou?rable|value[- ]added/i;
+const DRIVER_NEGATIVE = /declin|decreas|pressure|impact|headwind|compress|contract(ed|ion)|drag|weigh|adverse|erod|squeez|under-?absorp|lower (absorption|realis|realiz|volume|utilis|utiliz|margin)|one[- ]time expense|deleverag/i;
+export function marginDriverPositive(detail: string): boolean {
+  const t = String(detail || '');
+  if (!DRIVER_POSITIVE.test(t)) return false;
+  // A positive word inside a negative description ("better than the
+  // decline feared") still leaves the driver describing pressure.
+  return !DRIVER_NEGATIVE.test(t) || /improv|expan|operating leverage/i.test(t) && !/declin|decreas|compress/i.test(t);
+}
 
 const numIn = (s: string | null): number | null => {
   if (!s) return null;
@@ -240,7 +299,23 @@ export function inverseByUnit(key: VarKey, text: string): boolean {
   return key === 'working_capital' && /\bdays?\b|cycle/i.test(text);
 }
 
-export function varsFromEvents(events: StructuralEvent[] | null | undefined, period?: string | null): StructuralVar[] {
+/** A figure, not a label: "Phase 1", "Unit 2", "Q3 FY26" carry digits and
+ *  measure nothing. (zzz769) */
+function hasFigure(s: string | null | undefined): boolean {
+  return /\d/.test(String(s ?? '')
+    .replace(/\b(phase|unit|line|block|stage|tranche|site|plant|building|module)\s*[-#]?\s*\d+\b/gi, ' ')
+    .replace(/\b(FY|CY|H[12]|Q[1-4])\s*'?\d{2,4}\b/gi, ' '));
+}
+/** The plan states the actual's own figure again. (zzz769) */
+function samePlanFigure(actual: string | null | undefined, plan: string | null | undefined): boolean {
+  const a = String(actual ?? ''), p = String(plan ?? '');
+  if (a.replace(/[^\d.]/g, '') === p.replace(/[^\d.]/g, '')) return true;
+  const ra = rangeOf(a), rp = rangeOf(p);
+  return !!ra && !!rp && ra.lo === rp.lo && ra.hi === rp.hi && ra.pct === rp.pct
+    && magnitudeOf(a) === magnitudeOf(p);
+}
+
+export function varsFromEvents(events: StructuralEvent[] | null | undefined, period?: string | null, docs?: LedgerDocument[] | null): StructuralVar[] {
   if (!Array.isArray(events) || !events.length) return [];
   const out: StructuralVar[] = [];
   // ── TYPE FIRST, THEN RANK.                                       (zzz765)
@@ -255,7 +330,9 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
   const norm = events.map((e) => normalizeEvent(e, period));
   const historical = norm.filter((e) => e.historical_as_of && e.value_type === 'ACTUAL');
   const live = norm.filter((e) => !(e.historical_as_of && e.value_type === 'ACTUAL'))
-    .filter((e) => judgeEventQuality(e) !== 'unit_mismatch');
+    // Commentary carries no figure, so no unit test applies; it is kept and
+    // typed as what it is rather than dropped. (zzz770)
+    .filter((e) => e.commentary || judgeEventQuality(e) !== 'unit_mismatch');
   const slots = bestEventPerVariable(live);
   for (const [key, slot] of slots) {
     const a = slot.actual as (StructuralEvent & { flat_stated?: boolean; retyped_because?: string | null }) | null;
@@ -264,11 +341,28 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
     // Only disagreements between values that would BOTH have been shown count.
     // A wrong-unit reading losing to a good one is the filter working, not two
     // sources contradicting each other.
+    // ── A DIFFERENT MEASURE IS NOT A DISAGREEMENT.                 (zzz770)
+    // GPPL's 1.6m MT of liquids, 5.2m MT of liquid-cargo capacity and 260–270k
+    // RoRo cars are three scopes, not three answers to one question. Only a
+    // reading the comparability engine would subtract is a conflict.
+    const winnerVal = a ? String(a.after ?? a.before ?? '') : '';
     const conflicts = (slot.conflicts || [])
       .filter((c) => judgeEventQuality(c) !== 'unit_mismatch')
+      .filter((c) => !a || comparability(
+        { key, value: String(c.after ?? c.before ?? ''), unit: c.unit, quote: c.evidence_text, period: null },
+        { key, value: winnerVal, unit: a.unit, quote: a.evidence_text, period: null }).comparable)
       .map((c) => ({ value: String(c.after ?? c.before ?? ''), source: c.source }))
       .filter((c) => c.value.trim().length > 0)
       .slice(0, 3);
+    // The same figure read again from another document of the same period is
+    // corroboration — kept, never a change and never a conflict.
+    const winNum = scaledNumber(winnerVal);
+    const corroboration = a ? live
+      .filter((e) => e !== a && e.variable === key && e.value_type === 'ACTUAL' && e.source !== a.source)
+      .filter((e) => { const x = String(e.after ?? e.before ?? ''); return winNum != null && scaledNumber(x) === winNum && sameUnit(x, winnerVal, e.unit, a.unit); })
+      .map((e) => ({ value: String(e.after ?? e.before ?? ''), source: e.source }))
+      .filter((c, i, arr) => arr.findIndex((y) => y.source === c.source) === i)
+      .slice(0, 3) : [];
     // ── ABOVE NAMEPLATE IS POSSIBLE, AND WORTH A SECOND LOOK.       (zzz760)
     //
     // VAML carried "Capacity utilisation 120%". The 0–130% band stays as it is
@@ -298,17 +392,20 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
     // mis-filed actual is dropped here; the variable falls through to its
     // forward statement if it has one, and otherwise renders as an absence.
     // The event itself stays in the ledger for audit.
-    const aOk = a && judgeEventQuality(a) !== 'unit_mismatch' ? a : null;
+    const aOk = a && ((a as any).commentary || judgeEventQuality(a) !== 'unit_mismatch') ? a : null;
     if (aOk) {
       const a0 = aOk;
       // A pair that states one number twice is a LEVEL. (zzz764)
       // "Unchanged at ₹1,200 Cr" is a comparison the company made: the two
       // sides are the same figure and the row says FLAT, not a bare level.
       const flatStated = !!a0.flat_stated && a0.value_type === 'ACTUAL';
-      const a = flatStated ? { ...a0, before: a0.after } : restatedPair(a0.before, a0.after) ? { ...a0, before: null } : a0;
+      // Two sides dated to ONE period are one figure stated twice (ENTERO
+      // "Q4 FY26: 59 days → 59 days by Q4 FY26"), never a move. (zzz770)
+      const a = flatStated ? { ...a0, before: a0.after }
+        : restatedPair(a0.before, a0.after) || samePeriodPair(a0.before, a0.after) ? { ...a0, before: null } : a0;
       const delta = flatStated ? 'FLAT' : deltaOf(a.before, a.after);
       // Re-judged on load, so ledgers written before a rule existed obey it.
-      const quality = judgeEventQuality(a);
+      const quality = (a as any).commentary ? 'sentence' as const : judgeEventQuality(a);
       const dir = verifiedDirection(a);
       const chart = quality === 'chart' || quality === 'unit_mismatch';
       // Only a FILED figure from a real sentence with a verifiable move may
@@ -344,7 +441,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       const amountOnly = key === 'capex' || key === 'capex_status' || (key === 'working_capital' && !inverted);
       // "The Pune facility is under commissioning" is not commissioned. (zzz768)
       const notYet = key === 'commissioning' && /\b(under commissioning|to be commissioned|yet to (be )?commission|will be commissioned|expected to (be )?commission)/i.test(`${a.after || ''} ${a.evidence_text}`);
-      const verdict: VarVerdict = denied ? 'flat'
+      const verdict0: VarVerdict = denied ? 'flat'
         : notYet ? 'stated'
         : amountOnly && mayJudge && !flatStated && (dir === 'up' || dir === 'down') ? 'stated'
         : !mayJudge ? 'stated'
@@ -352,6 +449,13 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         : dir === 'up' ? (inverted ? 'deteriorating' : 'improving')
           : dir === 'down' ? (inverted ? 'improving' : 'deteriorating')
             : dir === 'flat' ? 'flat' : 'stated';
+      // ── SUSPICIOUS IS NOT BAD; IT IS UNREAD.                        (zzz770)
+      // DEEPAKNTR "170-odd percent" utilisation with no stated denominator is
+      // a validation question, counted neither confirmed nor contradicted.
+      const validation = validateReading(key, a.after, a.evidence_text);
+      const unclear = validation.state === 'UNCLEAR';
+      const verdict: VarVerdict = unclear ? 'stated' : verdict0;
+      const statement: StructuralVar['statement'] = isFact ? 'ACTUAL' : potential ? 'MANAGEMENT_STATEMENT' : a.value_type === 'MANAGEMENT_CLAIM' ? 'MANAGEMENT_STATEMENT' : a.value_type === 'GUIDANCE' ? 'GUIDANCE' : a.value_type === 'TARGET' ? 'TARGET' : 'MANAGEMENT_STATEMENT';
       out.push({
         key, label,
         kind: isFact ? 'fact' : 'claim',
@@ -363,19 +467,36 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
           + `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
           + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
           + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : '')
-          + overNameplate + conflictNote,
+          + (validation.metric_definition ? ` ⓘ Definition stated by the source: "${validation.metric_definition}".` : unclear ? `${overNameplate} ⓘ ${validation.reason}.` : overNameplate) + conflictNote,
         conflict: conflicts.length ? conflicts : null,
+        corroboration: corroboration.length ? corroboration : null,
         source: 'filing',
-        statement: isFact ? 'ACTUAL' : potential ? 'MANAGEMENT_STATEMENT' : a.value_type === 'MANAGEMENT_CLAIM' ? 'MANAGEMENT_STATEMENT' : a.value_type === 'GUIDANCE' ? 'GUIDANCE' : a.value_type === 'TARGET' ? 'TARGET' : 'MANAGEMENT_STATEMENT',
+        statement,
+        fact_type: factTypeOf({ statement, key, value: a.after, text: a.evidence_text, source: a.source, retyped: a.retyped_because }),
+        validation,
+        lineage: lineageOf({ ...(a as any), period: period || a.period || null }, docs),
+        normalized: normalizeValue(a.after ?? a.before, a.unit),
+        scope: scopeOf(a.evidence_text, a.after ?? a.before),
         // The plan rides beside the actual only when it measures the same
         // thing: AARTIPHARM's "~450 KL" installed and "9,500 metric tons"
         // planned are two products, and a ₹210 Cr project against a ₹149 Cr
         // block is two projects. The gap is printed only for rates (pp).
         // A plan identical to the actual is the same figure twice (ICIL
         // "60% to 65% · plan 60 to 65%").
+        // ── A PLAN MEASURED DIFFERENTLY IS A DIFFERENT PLAN.           (zzz769)
+        // TI "Volume: 3.4 million cases · target mid-double digit" set a
+        // count beside a growth rate. Both sides carry figures in the same
+        // unit, or neither carries a figure. And "the same figure" compares
+        // the leading figures: MENONBE "6.74 crore · plan 6.74 crore fully
+        // deployed in FY26" differed only in the year.
         plan: f && judgeEventQuality(f) !== 'unit_mismatch' && String(f.after ?? '').trim()
-          && String(f.after).replace(/[^\d.]/g, '') !== String(a.after ?? '').replace(/[^\d.]/g, '')
-          && (!/\d/.test(String(a.after ?? '')) || !/\d/.test(String(f.after)) || sameUnit(String(a.after ?? ''), String(f.after), a.unit, f.unit)) ? {
+          && !samePlanFigure(a.after, f.after)
+          && hasFigure(a.after) === hasFigure(f.after)
+          // Same measure AND same scope (zzz770): "80% plus" is a percent like
+          // "74%"; a Plant B target never rides beside a Plant A actual.
+          && (!hasFigure(a.after) || comparability(
+            { key, value: String(a.after ?? ''), unit: a.unit, quote: a.evidence_text, period: null },
+            { key, value: String(f.after), unit: f.unit, quote: f.evidence_text, period: null }).comparable) ? {
           value: String(f.after), type: f.value_type === 'GUIDANCE' ? 'GUIDANCE' : 'TARGET',
           quote: f.evidence_text.slice(0, 240), source: f.source,
           gap: isFact && /%/.test(String(a.after ?? '')) && /%/.test(String(f.after)) ? gapToTarget(a.after, f.after) : null,
@@ -384,7 +505,9 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         sourceLabel: a.source || null,
         quote: a.evidence_text.slice(0, 300),
         retyped: a.retyped_because || null,
-        unjudged: potential ? 'described as revenue potential over the next years, not an executable order book' : null,
+        unjudged: potential ? 'described as revenue potential over the next years, not an executable order book'
+          : unclear ? validation.reason
+            : (a as any).commentary ? 'management commentary — an expectation with no figure, not a value and not a confirmation' : null,
       });
     } else if (f && judgeEventQuality(f) !== 'unit_mismatch') {
       // ── A TARGET IS STILL SUBJECT TO THE UNIT RULES.             (zzz761)
@@ -415,6 +538,11 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         sourceLabel: f.source || null,
         quote: f.evidence_text.slice(0, 300),
         retyped: (f as any).retyped_because || null,
+        fact_type: f.value_type === 'GUIDANCE' ? 'MANAGEMENT_GUIDANCE' : 'MANAGEMENT_TARGET',
+        validation: null,
+        lineage: lineageOf({ ...(f as any), period: period || f.period || null }, docs),
+        normalized: normalizeValue(f.after, f.unit),
+        scope: scopeOf(f.evidence_text, f.after),
       });
     }
   }
@@ -427,17 +555,23 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
   // row of its own that is never judged.
   for (const h of historical) {
     if (judgeEventQuality(h) === 'unit_mismatch') continue;
-    const ctx = { value: [h.before, h.after].filter(Boolean).join(' → '), asOf: String(h.historical_as_of), quote: h.evidence_text.slice(0, 240), source: h.source };
+    // One period stated twice is one figure (ENTERO "Q4 FY26: 59 days → 59 days by Q4 FY26"). (zzz770)
+    const hBefore = restatedPair(h.before, h.after) || samePeriodPair(h.before, h.after) ? null : h.before;
+    const ctx = { value: [hBefore, h.after].filter(Boolean).join(' → '), asOf: String(h.historical_as_of), quote: h.evidence_text.slice(0, 240), source: h.source };
     const row = out.find((v) => v.key === h.variable);
     if (row) { row.context = [...(row.context || []), ctx]; continue; }
     out.push({
       key: h.variable, label: VAR_LABEL[h.variable] || h.variable, kind: 'fact',
-      before: levelText(h.before), after: levelText(h.after), delta: null, verdict: 'stated',
+      before: levelText(hBefore), after: levelText(h.after), delta: null, verdict: 'stated',
       evidence: `Historical context (${h.historical_as_of}), not ${period || 'this period'}'s evidence: ${h.evidence_text.slice(0, 220)} — ${h.source}`,
       source: 'filing', statement: 'HISTORICAL', asOf: String(h.historical_as_of),
       sourceLabel: h.source, quote: h.evidence_text.slice(0, 300),
       unjudged: `historical context — dated ${h.historical_as_of}, before ${period || 'this reporting period'}`,
       context: null,
+      fact_type: 'HISTORICAL',
+      lineage: lineageOf({ ...(h as any), period: String(h.historical_as_of) }, docs),
+      normalized: normalizeValue(h.after, h.unit),
+      scope: scopeOf(h.evidence_text, h.after),
     });
   }
   return out;
@@ -507,7 +641,10 @@ export function applyComparisons(
     if (v.statement === 'HISTORICAL') return v;
     // A claim is never turned into a measured direction by a comparison: a
     // target restated is management repeating itself, not a business moving.
-    const isFact = v.kind !== 'claim' && v.source === 'filing';
+    // A value that carries its own hedge ("maybe INR30 crores") is a
+    // management estimate whatever path it arrived by. (zzz769)
+    const isFact = v.kind !== 'claim' && v.source === 'filing' && !hedgedAround(null, v.after)
+      && v.validation?.state !== 'UNCLEAR';
     const hasBasis = c.basis !== 'NONE'
       && (c.change_type === 'INCREASED' || c.change_type === 'DECREASED' || c.change_type === 'UNCHANGED');
     if (!isFact || !hasBasis || !c.previous) {
@@ -556,13 +693,13 @@ export function extractVariables(
   graded: any | null,
   summary: any | null,
   comparisons?: Partial<Record<VarKey, MetricComparison>> | null,
-  opts?: { period?: string | null },
+  opts?: { period?: string | null; documents?: LedgerDocument[] | null },
 ): StructuralVar[] {
   const out: StructuralVar[] = [];
   // Typed events first. Any key they cover is not re-pushed from the
   // summary's loose fields below — one variable, one row, and the row with
   // the verbatim evidence wins.
-  const fromEvents = varsFromEvents(summary?.events, opts?.period ?? null);
+  const fromEvents = varsFromEvents(summary?.events, opts?.period ?? null, opts?.documents ?? null);
   const covered = new Set<VarKey>(fromEvents.map((v) => v.key));
   out.push(...fromEvents);
 
@@ -623,9 +760,25 @@ export function extractVariables(
     // variable, so the sentence tests pass; only a value that cannot BE that
     // variable is dropped, and the card then shows the hollow circle, which is
     // the truth: nothing usable was read for it.
-    if (v.source === 'filing' && !valueFitsVariable({
+    const commentary = v.source === 'filing' && isCommentaryOnly(v.key, v.after, `${v.after || ''} ${v.evidence || ''}`) && !v.before && !hasQuantity(v.delta);
+    if (v.source === 'filing' && !commentary && !valueFitsVariable({
       variable: v.key, before: v.before, after: v.after, unit: null, evidence_text: v.evidence,
     })) return;
+    // ── AN EXPECTATION IN A VALUE SLOT IS COMMENTARY.              (zzz770)
+    // The summary's order-book "growth" slot can hold "should go up in line
+    // with supplies" (EMCURE). It is shown as what it is — management
+    // commentary — and never as an order-book value or a confirmation.
+    if (commentary) {
+      v = { ...v, kind: 'claim', statement: 'MANAGEMENT_STATEMENT', fact_type: 'MANAGEMENT_COMMENTARY', verdict: 'stated', delta: null,
+        unjudged: 'management commentary — an expectation with no figure, not a value and not a confirmation' };
+    }
+    // Utilisation above 100% with no stated denominator is a validation
+    // question on this path too (DEEPAKNTR). (zzz770)
+    if (v.source === 'filing' && !v.validation) {
+      const val = validateReading(v.key, v.after, v.evidence);
+      if (val.state === 'UNCLEAR') v = { ...v, validation: val, verdict: v.verdict === 'unknown' ? 'unknown' : 'stated', unjudged: val.reason };
+      else if (val.metric_definition) v = { ...v, validation: val };
+    }
     // A value with no comparison basis is DISCLOSED. It is not absent.
     const hasValue = !!(String(v.after || '').trim() || String(v.before || '').trim() || String(v.delta || '').trim());
     if (v.verdict === 'unknown' && hasValue) v = { ...v, verdict: 'stated' };
@@ -831,18 +984,30 @@ export function extractVariables(
     // profit. Both are said on the row so a −21× is read for what it is.
     const annual = ['screener', 'screener-live'].includes(String(graded?.source || ''));
     const basis = annual ? ' (last full year, screener figure — not this quarter\'s)' : '';
+    // ── A NEGATIVE RATIO WHOSE DENOMINATOR IS ANOTHER PERIOD.        (zzz770)
+    // LLOYDSENGG −3.72×: an annual ratio whose sign was "read" against the
+    // latest QUARTER's profit. Neither side of the ratio is known for the
+    // ratio's own period, so it is a validation question, not a verdict.
+    const cashVal = validateCashConversion(cfoToPat, { profitSign: patSign == null ? null : Math.sign(patSign), ratioPeriodMatchesProfit: !annual });
+    const cashUnclear = negative && cashVal.state === 'UNCLEAR' && patSign != null;
     push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
       before: null, after: `${cfoToPat.toFixed(2)}×${annual ? ' (last FY)' : ''}`, delta: null,
-      unjudged: signUnreadable ? 'the sign of the ratio cannot be read with a negative operating margin and no profit figure'
+      unjudged: cashUnclear ? cashVal.reason
+        : signUnreadable ? 'the sign of the ratio cannot be read with a negative operating margin and no profit figure'
         : lossMaking && !negative ? 'both cash and profit are negative, so the ratio has no meaning'
           : negative && !lossMaking && patSign == null ? 'which side of the ratio is negative is not stated' : null,
-      verdict: signUnreadable || (lossMaking && !negative) ? 'unknown'
+      validation: cashUnclear || (negative && patSign == null) ? cashVal
+        : signUnreadable ? { state: 'UNCLEAR', flags: ['NEGATIVE_RATIO_SIGN_UNCLEAR'], reason: 'validation required — the sign of the ratio cannot be read', metric_definition: null } : null,
+      verdict: cashUnclear ? 'stated'
+        : signUnreadable || (lossMaking && !negative) ? 'unknown'
         : !negative
         ? (cfoToPat >= 1 ? 'improving' : cfoToPat >= 0.6 ? 'flat' : 'deteriorating')
         : lossMaking ? 'flat'
           : patSign != null ? 'deteriorating' : 'unknown',
-      evidence: signUnreadable
+      evidence: cashUnclear
+        ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}×${basis}. The ratio is annual and the only profit figure on file is the latest quarter's, so which side is negative — and against what denominator — cannot be read. Validation required; not counted either way.`
+        : signUnreadable
         ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}×${basis}, but the operating margin is ${opmNow?.toFixed(1)}% and no profit figure is on the row: a positive ratio here may be negative cash over a negative profit. It is not read either way.`
         : lossMaking && !negative
           ? `Cash-to-profit reads ${cfoToPat.toFixed(2)}×${basis} against a LOSS — both sides negative. The ratio says nothing about cash quality, so it is not counted either way.`
@@ -1069,9 +1234,22 @@ export function extractVariables(
     });
   }
 
-  const oneOffs: any[] = Array.isArray(summary?.one_offs) ? summary.one_offs : [];
+  // ── NOT EVERY LINE UNDER "ONE-OFFS" IS ONE.                       (zzz769)
+  // E2E carried "Total raised 15,919.34 Mn and utilized till FY26 … balance
+  // 1,326.79 Mn" — an IPO-proceeds utilisation table, not a P&L item. It is
+  // dropped. MANINDS "Rs 35-50 crore expected in FY27" is a FUTURE receipt —
+  // not in this quarter's profit, so it is shown and never sized against it.
+  // WONDERLA "₹9.47 Cr other gain · other income" is routine treasury income
+  // — shown, not counted as a one-off gain.
+  const oneOffs: any[] = (Array.isArray(summary?.one_offs) ? summary.one_offs : [])
+    .filter((o: any) => !isFundRaiseLine(`${o?.item ?? ''} ${o?.amount ?? ''}`));
   if (oneOffs.length) {
-    const gains = oneOffs.filter((o) => o?.direction === 'gain');
+    const oText = (o: any) => `${o?.item ?? ''} ${o?.amount ?? ''}`;
+    const future = (o: any) => ONE_OFF_FUTURE.test(oText(o));
+    const routine = (o: any) => ONE_OFF_ROUTINE.test(oText(o)) && !ONE_OFF_EVENT.test(oText(o));
+    const gainsAll = oneOffs.filter((o) => o?.direction === 'gain');
+    const gains = gainsAll.filter((o) => !future(o) && !routine(o));
+    const setAside = gainsAll.length - gains.length;
     // ── A ONE-OFF IS A FINDING ONLY WHEN IT IS BIG ENOUGH TO BE ONE. (zzz763)
     //
     // LUMAXTECH: PAT ₹99 Cr, up 83%, and one one-off gain — "tooling revenue
@@ -1111,7 +1289,7 @@ export function extractVariables(
     const material = share == null || share > 1 ? null
       : exGrowth != null ? exGrowth < 0.2
         : share >= 0.25;
-    const verdict: VarVerdict = !gains.length ? 'flat'
+    const verdict: VarVerdict = !gains.length ? (setAside ? 'stated' : 'flat')
       : material === true ? 'deteriorating'
         : material === false ? 'flat'
           : 'stated';
@@ -1126,7 +1304,8 @@ export function extractVariables(
       // it counts against the durability of the result even while it lifts
       // the number.
       verdict,
-      unjudged: !gains.length || material != null ? null
+      unjudged: !gains.length && setAside ? 'the gain is expected in a later period or is routine other / interest / treasury income — not a one-off in this quarter\'s profit'
+        : !gains.length || material != null ? null
         : share != null && share > 1 ? 'the stated one-off exceeds the reported profit, so the two are on different bases (pre-exceptional profit, a prior period or another currency) — verify in the filing'
           : 'the one-off amount is not stated, so it cannot be sized against the result',
       evidence: oneOffs.map((o) => {
@@ -1135,7 +1314,7 @@ export function extractVariables(
         const dd = d ? String(d).replace(/^\s*[-−+]\s*/, '') : d;
         return `${o?.direction === 'gain' ? '+' : '−'} ${dd || o?.item}${dd && o?.item ? ` — “${String(o.item).slice(0, 120)}”` : ''}`;
       }).join('; ')
-        + (!gains.length ? ''
+        + (!gains.length ? (setAside ? ' — expected in a later period or routine other / interest income: not a one-off in this quarter\'s profit, so not counted.' : '')
           : material === true ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit growth is ${Math.round(exGrowth * 100)}%` : ''} — the jump rests on items that will not repeat.`
             : material === false ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit still grew ${Math.round(exGrowth * 100)}%` : ''}: the jump does not rest on them. Shown for the record.`
               : share != null && share > 1 ? ` — stated one-offs exceed the reported profit${profitCr != null ? ` (${profitCr} Cr)` : ''}; different bases, not judged.`
@@ -1318,16 +1497,26 @@ export function extractVariables(
   //    one built on a raw-material tailwind or forex does not, and the two
   //    read identically on the face of the P&L.
   if (drivers.length) {
+    // ── A STRUCTURAL DRIVER OF A DECLINE IS NOT AN IMPROVEMENT.     (zzz769)
+    // WENDT printed "▲ Margin driver" for "lower absorption cost due to
+    // decreased topline leading to EBITDA decline; one-time expenses …
+    // impacted FY results": the model tagged it structural, and structural
+    // was read as good. Only a driver that names a positive mechanism counts;
+    // one that describes pressure is shown and not judged.
     const structuralN = drivers.filter((d) => d?.nature === 'structural').length;
+    const positiveN = drivers.filter((d) => d?.nature === 'structural' && marginDriverPositive(String(d?.detail || ''))).length;
     push({
       key: 'margin_driver', label: VAR_LABEL.margin_driver,
       before: null,
       after: drivers.map((d) => String(d?.detail || '')).filter(Boolean).slice(0, 2).join('; '),
       delta: null,
-      verdict: structuralN > 0 ? 'improving' : 'flat',
-      evidence: structuralN > 0
-        ? `${structuralN} of ${drivers.length} disclosed margin drivers are structural — that part repeats.`
-        : 'Every disclosed margin driver is cyclical or one-off. This margin does not repeat on its own.',
+      verdict: positiveN > 0 ? 'improving' : structuralN > 0 ? 'stated' : 'flat',
+      unjudged: positiveN === 0 && structuralN > 0 ? 'the structural drivers disclosed describe pressure or name no positive mechanism' : null,
+      evidence: positiveN > 0
+        ? `${positiveN} of ${drivers.length} disclosed margin drivers are structural improvements — that part repeats.`
+        : structuralN > 0
+          ? `${structuralN} of ${drivers.length} disclosed margin drivers are structural, but none names a mechanism that lifts the margin (${drivers.map((d) => String(d?.detail || '')).filter(Boolean).slice(0, 2).join('; ').slice(0, 200)}). Shown, not counted as an improvement.`
+          : 'Every disclosed margin driver is cyclical or one-off. This margin does not repeat on its own.',
       source: 'filing', kind: 'fact',
     });
   }
@@ -1338,8 +1527,25 @@ export function extractVariables(
     if (!v.statement) v.statement = v.key === 'guidance' ? 'GUIDANCE' : v.key === 'management_target' ? 'TARGET'
       : v.source === 'grader' ? 'ACTUAL' : v.kind === 'claim' ? 'MANAGEMENT_STATEMENT' : 'ACTUAL';
     if (v.asOf === undefined) v.asOf = opts?.period ?? null;
+    decorate(v, graded, opts?.period ?? null);
   }
-  return applyComparisons(dropRestatedCapacityAddition(out), comparisons);
+  return applyComparisons(dropRestatedCapacityAddition(out), comparisons).map((v) => ({ ...v, display: rowDisplay(v) }));
+}
+
+/** Every row carries its type, group, validation, normalised value and
+ *  lineage, whichever path built it. Nothing already set is overwritten. (zzz770) */
+function decorate(v: StructuralVar, graded: any | null, period: string | null): void {
+  if (!v.fact_type) v.fact_type = factTypeOf({ statement: v.statement, key: v.key, value: v.after, text: v.evidence, retyped: v.retyped });
+  if (!v.metric_group) v.metric_group = metricGroupOf(v.key, v.source);
+  if (v.validation === undefined) v.validation = null;
+  if (v.normalized === undefined) v.normalized = v.after ? normalizeValue(v.after) : null;
+  if (!v.lineage) {
+    v.lineage = v.source === 'grader'
+      ? { source_id: null, source_name: `Filed statements (${String(graded?.source || 'grader')})`, source_url: graded?.source_url ?? null,
+        source_type: 'financial_statements', publication_date: graded?.filing_date ?? null, period: graded?.period ?? period, page_section: null, quote: v.evidence }
+      : { source_id: null, source_name: v.sourceLabel || 'Verified summary of the documents read', source_url: null, source_type: 'summary',
+        publication_date: null, period: v.asOf ?? period, page_section: null, quote: v.quote || v.evidence };
+  }
 }
 
 /** Index by key, last write wins — the filing beats the grader where both
@@ -1364,7 +1570,9 @@ export function byKey(vars: StructuralVar[]): Partial<Record<VarKey, StructuralV
 // the board had already re-typed as guidance. One source now: the rows.
 // ═══════════════════════════════════════════════════════════════════════════
 // A PDF's rupee glyph often extracts as a backtick: "` 110 crore". (zzz768)
-export const rupeeGlyph = (s: string) => s.replace(/`\s*(?=\d)/g, '₹').replace(/(?<![A-Za-z])H\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/g, '₹');
+// …and as "!" (AETHER "Capex: !833 million · plan !1,000 million"). (zzz769)
+export const rupeeGlyph = (s: string) => s.replace(/`\s*(?=\d)/g, '₹').replace(/(?<![A-Za-z])H\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/g, '₹')
+  .replace(/!\s?(?=\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|mn\b|million|billion|bn\b))/gi, '₹');
 /** Every string in a stored summary / ledger with the PDF rupee glyph fixed.
  *  Display-only: stored ledgers are not rewritten. URLs are left alone. (zzz768) */
 export function deepRupeeGlyph<T>(v: T): T {
@@ -1379,40 +1587,156 @@ export function deepRupeeGlyph<T>(v: T): T {
 }
 const stripTypeTag = (s: string | null | undefined) => rupeeGlyph(String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '').trim());
 
-export function rowValueText(v: StructuralVar): string {
+/** The ACTUAL figure with its comparison, as the owner asked: "68% (Q4 FY26)
+ *  → 74% · +6pp", "59 days (Q4 FY26) → 59 days · unchanged", "74% · NOT
+ *  COMPARABLE with … — reason". With `priorNote`, a recurring figure with no
+ *  prior reads "74% · prior comparable value not disclosed". (zzz770) */
+function actualCore(v: StructuralVar, priorNote: boolean): string {
   const after = stripTypeTag(v.after);
-  const planTxt = v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupeeGlyph(v.plan.value)}${v.plan.gap ? ` (gap ${v.plan.gap})` : ''}` : '';
-  if (v.statement === 'GUIDANCE' || v.statement === 'TARGET') {
-    if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${v.statement.toLowerCase()} MAINTAINED`;
-    return `${v.statement.toLowerCase()}: ${after}`;
-  }
-  if (v.statement === 'MANAGEMENT_STATEMENT') return `management: “${after}”${planTxt}`;
-  if (v.statement === 'HISTORICAL') return `${[v.before, after].filter(Boolean).join(' → ')} — historical context (${v.asOf})`;
   const c = v.comparison;
+  const numeric = hasQuantity(after);
+  if (c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT' && c.change_type === 'NOT_COMPARABLE' && after
+    && numeric && hasQuantity(c.previous.raw)) {
+    return `${after} · NOT COMPARABLE with ${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''}${c.comparability?.reason ? ` — ${c.comparability.reason}` : ''}`;
+  }
+  // "LGFT (Q3 FY26) → LGFT · FLAT" (KINGFA) is one statement made twice, not
+  // a measured flat. (zzz769) A FIGURE made twice across two genuinely
+  // different periods is "59 → 59 · unchanged". (zzz770)
+  if (c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT'
+    && String(c.previous.raw ?? '').trim().toLowerCase() === after.toLowerCase() && after) {
+    if (!numeric) return `${after} · unchanged since ${c.previous_period || 'the last disclosure'}`;
+    return `${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${after} · unchanged`;
+  }
   if (c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT'
     // "25 KLPD → 25 KLPD Ethanol plant", "₹23 Cr → over six months of
     // inventory": a prior that cannot be compared is not printed as a before. (zzz768)
     && c.change_type !== 'NOT_COMPARABLE') {
-    const ch = c.change_type === 'UNCHANGED' ? 'FLAT' : (c.change || v.delta || '');
-    return `${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${after}${ch ? ` · ${ch}` : ''}${planTxt}`;
+    const ch = c.change_type === 'UNCHANGED' ? 'unchanged' : (c.change || v.delta || '');
+    return `${c.previous.raw}${c.previous_period ? ` (${c.previous_period})` : ''} → ${after}${ch ? ` · ${ch}` : ''}`;
   }
-  if (v.before && after) return `${v.before} → ${after}${v.delta ? ` · ${v.delta}` : ''}${planTxt}`;
-  return `${after || v.delta || ''}${v.delta && v.delta !== after && after ? ` · ${v.delta}` : ''}${planTxt}`;
+  // A zero move is no move: "13.0% → 13.0% · +0.0pp" reads "unchanged".
+  const zero = /^[+-]?0(?:\.0+)?\s*(?:pp|%|bps)?$/i.test(String(v.delta || '').trim());
+  if (v.before && after) return `${v.before} → ${after}${v.delta ? ` · ${v.delta === 'FLAT' || zero ? 'unchanged' : v.delta}` : ''}`;
+  const lvl = `${after || v.delta || ''}${v.delta && v.delta !== after && after ? ` · ${v.delta}` : ''}`;
+  // Only a FIGURE is a level in a series — not a sentence that contains one.
+  const figure = after.length <= 40 && /^[~≈<>+]?\s*(?:₹|INR|Rs\.?|USD|\$|approx\w*\s+)?\s*\d/i.test(after);
+  if (priorNote && v.source === 'filing' && figure && !v.delta && RECURRING_METRICS.has(v.key)) return `${lvl} · ${PRIOR_NOT_DISCLOSED}`;
+  return lvl;
 }
 
-export function rowChangeLines(vars: StructuralVar[], period: string | null): ChangeLine[] {
-  const rank = (v: StructuralVar) => v.statement === 'HISTORICAL' ? 5
-    : v.statement === 'GUIDANCE' || v.statement === 'TARGET' ? 4
-      : v.statement === 'MANAGEMENT_STATEMENT' ? 3
-        : v.verdict === 'deteriorating' ? 0 : v.verdict === 'improving' ? 1 : 2;
+/** A plan beside the actual, never merged into it: "Actual: 74% · Target:
+ *  80%+ · gap −6pp" (AARTIPHARM). (zzz770) */
+function withPlan(core: string, v: StructuralVar): string {
+  if (!v.plan) return core;
+  return `Actual: ${core} · ${v.plan.type === 'TARGET' ? 'Target' : 'Guidance'}: ${rupeeGlyph(v.plan.value)}${v.plan.gap ? ` · gap ${v.plan.gap}` : ''}`;
+}
+const validationTail = (v: StructuralVar) => v.validation?.state === 'UNCLEAR' ? ' · validation required'
+  : v.validation?.metric_definition ? ` · definition: ${v.validation.metric_definition}` : '';
+
+export function rowValueText(v: StructuralVar): string {
+  const after = stripTypeTag(v.after);
+  if (v.statement === 'GUIDANCE' || v.statement === 'TARGET') {
+    if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${v.statement.toLowerCase()} MAINTAINED`;
+    const gm = v.comparison?.guidance_move;
+    if (gm && gm !== 'NOT_COMPARABLE' && gm !== 'MAINTAINED' && v.comparison?.previous) {
+      return `${v.statement.toLowerCase()}: ${v.comparison.previous.raw}${v.comparison.previous_period ? ` (${v.comparison.previous_period})` : ''} → ${after} · ${gm.toLowerCase()}`;
+    }
+    return `${v.statement.toLowerCase()}: ${after}`;
+  }
+  if (v.statement === 'MANAGEMENT_STATEMENT') return `management: “${after}”${v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupeeGlyph(v.plan.value)}` : ''}`;
+  if (v.statement === 'HISTORICAL') return `${[v.before, after].filter(Boolean).join(' → ')} — historical context (${v.asOf})`;
+  return withPlan(actualCore(v, false), v) + validationTail(v);
+}
+
+/** The whole row as printed on the board (StructuralVar.display). (zzz770) */
+export function rowDisplay(v: StructuralVar): string {
+  const after = stripTypeTag(v.after);
+  switch (v.statement) {
+    case 'HISTORICAL': return `Historical context (${v.asOf}): ${[v.before, after].filter(Boolean).join(' → ')}`;
+    case 'GUIDANCE': case 'TARGET': {
+      const tag = v.statement === 'TARGET' ? 'Target' : 'Guidance';
+      if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${tag}: maintained`;
+      const moved = v.comparison?.guidance_move && v.comparison.guidance_move !== 'NOT_COMPARABLE' && v.comparison.previous
+        ? `${v.comparison.previous.raw}${v.comparison.previous_period ? ` (${v.comparison.previous_period})` : ''} → ${after} · ${v.comparison.guidance_move.toLowerCase()}` : after;
+      // A target is never shown as the actual: "Target: 80%+ · actual not disclosed".
+      return `${tag}: ${moved}${RECURRING_METRICS.has(v.key) ? ' · actual not disclosed' : ''}`;
+    }
+    case 'MANAGEMENT_STATEMENT':
+      return `${FACT_TYPE_LABEL[v.fact_type === 'ESTIMATE' ? 'ESTIMATE' : 'MANAGEMENT_COMMENTARY']}: “${after}”`;
+    default:
+      return withPlan(actualCore(v, true), v) + validationTail(v);
+  }
+}
+
+// ── THE CHANGE CLASSES.                                             (zzz770)
+//
+// WHAT CHANGED lists only real changes, each one of three kinds:
+//   PERIOD_CHANGE    the figure against a previous comparable period
+//                    (across ledger periods, or a before→after the document
+//                    states itself);
+//   NEW_EVENT        something happened this period — a plant commissioned,
+//                    a customer won or lost, an approval — no arithmetic;
+//   GUIDANCE_CHANGE  guidance moved (raised / lowered / narrowed / widened).
+// A bare level with no prior and no event ("Installed capacity 152,000 MT")
+// is not a change: it stays on the board and leaves this list. Historical
+// context is never a current change.
+export type ChangeClass = 'PERIOD_CHANGE' | 'NEW_EVENT' | 'GUIDANCE_CHANGE';
+export const CHANGE_CLASS_LABEL: Record<ChangeClass, string> = {
+  PERIOD_CHANGE: 'vs previous comparable period',
+  NEW_EVENT: 'new event',
+  GUIDANCE_CHANGE: 'guidance moved',
+};
+export interface ClassifiedChangeLine extends ChangeLine { change_class: ChangeClass }
+
+const EVENT_DONE = /\b(commissioned|launched|added|won|signed|received|approved|qualified|opened|started|commenced|completed|acquired|lost|shut|onboarded|inaugurated|secured|bagged|went live|is live|are live|now operational|became operational|made operational|operationali[sz]ed|began|terminated|cancelled|exited)\b/i;
+const EVENT_NOT_YET = /\b(under (?:commissioning|development|construction|implementation|execution|trial)|being (?:set up|built|constructed|commissioned)|in progress|to be commissioned|yet to|will be|expected to|plan(?:s|ned)? to|likely|going to|would|upcoming|proposed)\b/i;
+const GUIDANCE_MOVED = /^(raised|lowered|revised|cut|upgraded|downgraded|withdrawn|narrowed|widened|increased|reduced)\b/i;
+
+export function changeClassOf(v: StructuralVar): ChangeClass | null {
+  if (v.statement === 'HISTORICAL' || v.verdict === 'unknown') return null;
+  if (v.validation?.state === 'UNCLEAR') return null;
+  if (v.statement === 'GUIDANCE' || v.statement === 'TARGET') {
+    const gm = v.comparison?.guidance_move;
+    if (gm && ['RAISED', 'LOWERED', 'NARROWED', 'WIDENED'].includes(gm)) return 'GUIDANCE_CHANGE';
+    if (v.key === 'guidance' && GUIDANCE_MOVED.test(stripTypeTag(v.after))) return 'GUIDANCE_CHANGE';
+    return null;
+  }
+  const text = `${v.after || ''} ${v.quote || ''}`;
+  if (v.statement === 'MANAGEMENT_STATEMENT') {
+    if (v.fact_type === 'MANAGEMENT_COMMENTARY' && v.unjudged) return null;
+    return EVENT_METRICS.has(v.key) && EVENT_DONE.test(text) && !EVENT_NOT_YET.test(v.after || '') ? 'NEW_EVENT' : null;
+  }
+  const c = v.comparison;
+  // An event already on file in an earlier period and restated now is the
+  // same event, not a new one and not a change (IFBAGRO "25 KLPD ethanol
+  // plant", SCI "3,000 DWT"). (zzz770)
+  if (EVENT_METRICS.has(v.key) && c && c.previous && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT'
+    && (c.change_type === 'UNCHANGED' || (c.change_type === 'NOT_COMPARABLE' && !(hasQuantity(c.previous.raw) && hasQuantity(v.after))))) return null;
+  if (c && c.previous && c.basis !== 'NONE' && ['INCREASED', 'DECREASED', 'UNCHANGED'].includes(c.change_type)) return 'PERIOD_CHANGE';
+  if (v.before && v.after && v.delta) return 'PERIOD_CHANGE';
+  if (EVENT_METRICS.has(v.key)) {
+    if (v.key === 'execution_delay' || v.key === 'customer_loss' || v.key === 'shutdown') return v.verdict === 'deteriorating' ? 'NEW_EVENT' : null;
+    if (v.key === 'capacity_bottleneck' || v.key === 'supply_bottleneck') return v.verdict === 'improving' || v.verdict === 'deteriorating' ? 'NEW_EVENT' : null;
+    if (v.key === 'commissioning' || v.key === 'capex_status') return EVENT_DONE.test(text) && !EVENT_NOT_YET.test(`${v.after || ''}`) ? 'NEW_EVENT' : null;
+    return EVENT_NOT_YET.test(v.after || '') ? null : 'NEW_EVENT';
+  }
+  return null;
+}
+
+export function rowChangeLines(vars: StructuralVar[], period: string | null): ClassifiedChangeLine[] {
+  const rank = (v: StructuralVar) => v.statement === 'GUIDANCE' || v.statement === 'TARGET' ? 4
+    : v.statement === 'MANAGEMENT_STATEMENT' ? 3
+      : v.verdict === 'deteriorating' ? 0 : v.verdict === 'improving' ? 1 : 2;
+  const CLASS_ORDER: Record<ChangeClass, number> = { PERIOD_CHANGE: 0, NEW_EVENT: 1, GUIDANCE_CHANGE: 2 };
   return vars
     // Rows read from typed events (they carry the document they came from);
     // the grader's financial rows have their own block on the card.
     .filter((v) => v.source === 'filing' && !!v.sourceLabel && v.verdict !== 'unknown')
-    .map((v, i) => ({ v, i }))
-    .sort((a, b) => rank(a.v) - rank(b.v) || a.i - b.i)
+    .map((v, i) => ({ v, i, cls: changeClassOf(v) }))
+    .filter((x): x is { v: StructuralVar; i: number; cls: ChangeClass } => x.cls != null)
+    .sort((a, b) => CLASS_ORDER[a.cls] - CLASS_ORDER[b.cls] || rank(a.v) - rank(b.v) || a.i - b.i)
     .slice(0, 12)
-    .map(({ v }) => ({
+    .map(({ v, cls }) => ({
       sign: (v.statement && v.statement !== 'ACTUAL') ? '·' as const
         : v.verdict === 'improving' ? '+' as const : v.verdict === 'deteriorating' ? '-' as const : '·' as const,
       // A separator between the variable and its value: "Guidance management:
@@ -1427,5 +1751,16 @@ export function rowChangeLines(vars: StructuralVar[], period: string | null): Ch
         return `${v.label}${v.statement && v.statement !== 'ACTUAL' ? ' — ' : ': '}${val}`;
       })(),
       metric: v.key, period: period || v.asOf || '', source: v.sourceLabel || '',
+      change_class: cls,
     }));
+}
+
+/** Historical context, kept OUT of WHAT CHANGED and labelled as what it is:
+ *  "Working capital — Historical context (Mar 2025): INR440 Cr → INR593 Cr"
+ *  (ETHOSLTD). For a card that wants to show it beneath the changes. (zzz770) */
+export function rowContextLines(vars: StructuralVar[], period: string | null): ChangeLine[] {
+  return vars
+    .filter((v) => v.source === 'filing' && v.statement === 'HISTORICAL')
+    .slice(0, 6)
+    .map((v) => ({ sign: '·' as const, text: `${v.label} — ${rowDisplay(v)}`, metric: v.key, period: period || v.asOf || '', source: v.sourceLabel || '' }));
 }

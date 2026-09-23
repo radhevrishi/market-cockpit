@@ -22,6 +22,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { StructuralEvent, ValueType } from './evidence-extract';
+import type { VarKey } from './taxonomy';
 
 const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 const monthEnd = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0));
@@ -205,6 +206,8 @@ export interface NormalizedEvent extends StructuralEvent {
   historical_as_of?: string | null;
   /** The document says the figure did not move ("unchanged at ₹1,200 Cr"). */
   flat_stated?: boolean;
+  /** An expectation with no figure — MANAGEMENT_COMMENTARY. (zzz770) */
+  commentary?: boolean;
 }
 
 /**
@@ -215,7 +218,11 @@ const HEDGE = /\b(maybe|may be|perhaps|possibly|probably|could be|might be|would
 /** Hedge word within ~40 characters before the value (same sentence). */
 export function hedgedAround(text: string | null | undefined, value: string | null | undefined): boolean {
   const t = String(text || ''), v = String(value || '').trim();
-  if (!t || !v) return false;
+  if (!v) return false;
+  // A hedge INSIDE the value is the same hedge: NRBBEARING's order book
+  // "INR25 crores → maybe INR30 crores" printed ▲ as a reported move. (zzz769)
+  if (HEDGE.test(v)) return true;
+  if (!t) return false;
   const digits = v.match(/\d[\d,.]*/)?.[0];
   let at = t.indexOf(v);
   if (at < 0 && digits) at = t.indexOf(digits);
@@ -228,7 +235,13 @@ export function hedgedAround(text: string | null | undefined, value: string | nu
 export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | null): NormalizedEvent {
   const out: NormalizedEvent = { ...e };
   const clause = valueClause(e.evidence_text, e.after ?? e.before);
-  if (e.value_type === 'ACTUAL' && forwardAround(e.evidence_text, e.after ?? e.before)) {
+  // A "by <period>" that ENDED before this reporting period began is not a
+  // plan: ENTERO's "59 days by Q4 FY26" read in Q1 FY27 printed as
+  // guidance beside the quarter's actual. (zzz770)
+  const start0 = periodStart(reportingPeriod);
+  const ownDates = datesIn(String(e.after ?? e.before ?? ''));
+  const pastDated = !!start0 && ownDates.length > 0 && ownDates.every((d) => d.end < start0);
+  if (e.value_type === 'ACTUAL' && !pastDated && forwardAround(e.evidence_text, e.after ?? e.before)) {
     out.value_type = 'GUIDANCE';
     out.original_value_type = e.value_type;
     out.retyped_because = 'the sentence states it as expected or planned, not achieved';
@@ -247,6 +260,19 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
     out.original_value_type = e.value_type;
     out.retyped_because = 'the figure is hedged ("maybe", "could be", "approximately we think")';
   }
+  // ── AN EXPECTATION IS NOT A VALUE.                               (zzz770)
+  // EMCURE "Order book should go up in line with supplies" was read as an
+  // order-book value and a demand confirmation. A recurring quantitative
+  // variable with no figure and expectation wording is management
+  // commentary, whatever label the model gave it.
+  if (isCommentaryOnly(e.variable, e.after ?? e.before, e.evidence_text)) {
+    if (out.value_type !== 'MANAGEMENT_CLAIM') {
+      out.original_value_type = out.original_value_type ?? e.value_type;
+      out.value_type = 'MANAGEMENT_CLAIM';
+      out.retyped_because = 'an expectation with no figure — management commentary, not a value';
+    }
+    out.commentary = true;
+  }
   const hist = historicalAsOf({ ...e, value_type: out.value_type }, reportingPeriod);
   if (hist) out.historical_as_of = hist;
   if (out.value_type === 'ACTUAL' && e.after && !e.before && FLAT_WORDS.test(clause) && !/\b(improv|increas|rose|declin|decreas|fell)/i.test(clause)) {
@@ -254,6 +280,32 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
   }
   return out;
 }
+
+// ── commentary: an expectation with no figure ─────────────────  (zzz770)
+
+/** A quantity. Labels such as "Phase 2" or "Q4 FY26" are not quantities. */
+export function hasQuantity(s: string | null | undefined): boolean {
+  return /\d/.test(String(s ?? '')
+    .replace(/\b(phase|unit|line|block|stage|tranche|site|plant|building|module)\s*[-#]?\s*\d+\b/gi, ' ')
+    .replace(/\b(FY|CY|H[12]|Q[1-4])\s*'?\d{2,4}\b/gi, ' '));
+}
+/** Recurring quantitative variables: a figure for these is a level in a time
+ *  series, and a figure with no prior is printed "prior comparable value not
+ *  disclosed". Event-shaped variables (a plant, a customer) are not levels. */
+export const RECURRING_METRICS: ReadonlySet<VarKey> = new Set<VarKey>([
+  'utilisation', 'capacity', 'order_book', 'order_intake', 'book_to_bill', 'working_capital',
+  'debt', 'fcf', 'volume', 'price', 'exports', 'margin', 'cash_conversion', 'roce',
+  'capex', 'customer_concentration', 'market_share', 'revenue_visibility',
+]);
+/** An expectation about a quantitative variable that states no figure:
+ *  "Order book should go up in line with supplies" (EMCURE). Commentary. */
+const EXPECTATION = /\b(should|would|could|may|might|expect\w*|anticipat\w*|hope\w*|likely|going to|will|in line with|on track)\b/i;
+export function isCommentaryOnly(key: VarKey, value: string | null | undefined, text?: string | null): boolean {
+  if (!RECURRING_METRICS.has(key)) return false;
+  if (hasQuantity(value)) return false;
+  return EXPECTATION.test(`${value || ''} ${text || ''}`);
+}
+
 
 // ── guidance moves ──────────────────────────────────────────────────────────
 
