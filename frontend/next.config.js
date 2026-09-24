@@ -16,6 +16,8 @@ const nextConfig = {
     // PATCH 0683 — added 'xlsx' so /api/concall/parse can extract Excel
     // workbooks alongside transcripts (same lib auto-valuation uses).
     serverComponentsExternalPackages: ['pdf-parse', 'mammoth', 'xlsx'],
+    // zzz778 — src/instrumentation.ts adds the service key to self-fetches.
+    instrumentationHook: true,
   },
   // Belt-and-braces: also tell webpack to not try and bundle these on the
   // server build pass.  Some Next.js versions need both signals.

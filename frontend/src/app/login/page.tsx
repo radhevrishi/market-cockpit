@@ -1,134 +1,36 @@
 'use client';
-
+// zzz778 — the one public page. Owner password → site cookie → back to `next`.
 import { useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { BarChart3, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const [pw, setPw] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError('');
+    setBusy(true); setMsg(null);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!res.ok) {
-        let detail = `Login failed (${res.status})`;
-        try {
-          const data = await res.json();
-          detail = data.detail || detail;
-        } catch {
-          detail = `Server error (${res.status}): ${res.statusText}`;
-        }
-        throw new Error(detail);
+      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok) {
+        const next = new URLSearchParams(window.location.search).get('next') || '/';
+        window.location.href = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+        return;
       }
-      const data = await res.json();
-      localStorage.setItem('token', data.access_token);
-      router.push('/');
-    } catch (err: unknown) {
-      if (err instanceof TypeError && err.message === 'Failed to fetch') {
-        setError('Service temporarily unavailable. Please try again in a moment.');
-      } else {
-        setError(err instanceof Error ? err.message : 'Login failed');
-      }
-    } finally {
-      setLoading(false);
-    }
+      setMsg(j.error === 'not_configured' ? j.message : j.error === 'wrong_password' ? 'Wrong password.' : r.status === 429 ? 'Too many attempts — wait a minute.' : 'Login failed.');
+    } catch { setMsg('Network error — try again.'); }
+    setBusy(false);
   };
-
   return (
-    <div className="min-h-screen bg-[#0D1B2E] flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-3">
-            <BarChart3 className="w-8 h-8 text-[#0F7ABF]" />
-            <span className="text-2xl font-bold text-white tracking-wide">MARKET COCKPIT</span>
-          </div>
-          <p className="text-[#8899AA] text-sm">India + US Equity Intelligence Platform</p>
-        </div>
-
-        {/* Card */}
-        <div className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl p-8 shadow-2xl">
-          <h1 className="text-xl font-semibold text-white mb-6">Sign in to your cockpit</h1>
-
-          {error && (
-            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-5">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-              <span className="text-red-400 text-sm">{error}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-xs font-medium text-[#8899AA] uppercase tracking-wider mb-2">
-                Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-                placeholder="you@example.com"
-                className="w-full bg-[#0D1B2E] border border-[#2A3B4C] rounded-lg px-4 py-3 text-white text-sm placeholder-[#4A5B6C] focus:outline-none focus:border-[#0F7ABF] focus:ring-1 focus:ring-[#0F7ABF] transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#8899AA] uppercase tracking-wider mb-2">
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  required
-                  placeholder="••••••••"
-                  className="w-full bg-[#0D1B2E] border border-[#2A3B4C] rounded-lg px-4 py-3 pr-12 text-white text-sm placeholder-[#4A5B6C] focus:outline-none focus:border-[#0F7ABF] focus:ring-1 focus:ring-[#0F7ABF] transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#4A5B6C] hover:text-[#8899AA] transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#0F7ABF] hover:bg-[#0E6DAD] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors text-sm"
-            >
-              {loading ? 'Signing in…' : 'Sign In'}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center">
-            <span className="text-[#4A5B6C] text-sm">Don&apos;t have an account? </span>
-            <Link href="/register" className="text-[#0F7ABF] hover:text-[#38A9E8] text-sm font-medium transition-colors">
-              Create account
-            </Link>
-          </div>
-        </div>
-
-        <p className="text-center text-[#2A3B4C] text-xs mt-6">
-          For personal use only · Not financial advice
-        </p>
-      </div>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0B1220', color: '#F1F5F9', fontFamily: 'system-ui, sans-serif', padding: 16 }}>
+      <form onSubmit={submit} style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 12, padding: 24, border: '1px solid #1F2A3D', borderRadius: 12, background: '#101A2C' }}>
+        <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: 0.5 }}>MARKET COCKPIT</div>
+        <div style={{ fontSize: 13, color: '#AEBBCB' }}>Private. Enter the owner password.</div>
+        <input type="password" autoFocus autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password"
+          style={{ fontSize: 15, padding: '10px 12px', borderRadius: 8, border: '1px solid #2A3A55', background: '#0B1220', color: '#F1F5F9' }} />
+        <button type="submit" disabled={busy || !pw} style={{ fontSize: 15, fontWeight: 800, padding: '10px 12px', borderRadius: 8, border: 'none', background: '#22D3EE', color: '#0B1220', cursor: busy ? 'wait' : 'pointer', opacity: busy || !pw ? 0.6 : 1 }}>{busy ? 'Checking…' : 'Log in'}</button>
+        {msg && <div role="alert" style={{ fontSize: 13, color: '#FBBF24' }}>{msg}</div>}
+      </form>
     </div>
   );
 }

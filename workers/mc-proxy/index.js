@@ -390,7 +390,8 @@ async function warmCompanyPages(env) {
   const deadline = Date.now() + 20_000;
   let tickers = [];
   try {
-    const r = await fetch(BOOK_STATE_URL, { signal: AbortSignal.timeout(8_000) });
+    // zzz778: book/state needs the service key; PROXY_SECRET is shared with Railway.
+    const r = await fetch(BOOK_STATE_URL, { signal: AbortSignal.timeout(8_000), headers: env.PROXY_SECRET ? { 'x-mc-key': env.PROXY_SECRET } : {} });
     if (!r.ok) return;
     const j = await r.json();
     const rows = (j && j.book && Array.isArray(j.book.tickers)) ? j.book.tickers : [];

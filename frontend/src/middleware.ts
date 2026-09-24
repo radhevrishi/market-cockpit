@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rateLimit';
+import { SITE_COOKIE, PUBLIC_PAGE_PATHS, isProtectedApi, expectedToken, safeEqual, hasServiceKey } from '@/lib/site-auth';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Global Edge middleware — applies a per-IP rate ceiling to /api/*
@@ -25,6 +26,7 @@ const HEAVY_ROUTES = [
   '/api/earnings/fmp-proxy',
   '/api/concall/parse',
   '/api/market/multibagger',
+  '/api/auth/login',          // zzz778 — password guessing is capped at 30/min/IP
 ];
 
 // PATCH 1101zzz13 — Cheap KV-backed read routes. They return cached
@@ -70,7 +72,19 @@ function clientIp(req: NextRequest): string {
   );
 }
 
-export function middleware(req: NextRequest) {
+// zzz778 — owner login. See lib/site-auth.ts.
+async function isOwner(req: NextRequest): Promise<boolean> {
+  const want = await expectedToken();
+  const got = req.cookies.get(SITE_COOKIE)?.value || '';
+  return !!want && !!got && safeEqual(want, got);
+}
+function isService(req: NextRequest): boolean {
+  return hasServiceKey(req.headers.get('x-mc-key'))
+    || hasServiceKey(req.headers.get('x-cron-secret'))
+    || hasServiceKey(req.nextUrl.searchParams.get('secret'));
+}
+
+export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // PATCH 0699 — Handle legacy slug redirects before any other middleware logic.
@@ -82,7 +96,19 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(url, 308);
   }
 
-  if (!path.startsWith('/api/')) return NextResponse.next();
+  if (!path.startsWith('/api/')) {
+    // zzz778 — every page is the owner's. Static assets never reach here
+    // (see the matcher); /login is the only public page.
+    if (PUBLIC_PAGE_PATHS.includes(normalisedPath) || await isOwner(req)) return NextResponse.next();
+    const url = new URL('/login', req.url);
+    url.searchParams.set('next', `${path}${req.nextUrl.search}`);
+    return NextResponse.redirect(url, 307);
+  }
+
+  // zzz778 — personal data and paid AI: owner cookie or a service key.
+  if (isProtectedApi(path) && !(await isOwner(req)) && !isService(req)) {
+    return NextResponse.json({ ok: false, error: 'login required', login: '/login' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
+  }
 
   // PATCH 1101zzz13 — Bypass rate limit for cheap KV-cached read routes.
   // These return cached payloads with negligible cost. Without this,
@@ -134,15 +160,10 @@ export function middleware(req: NextRequest) {
 // PATCH 0699 — matcher expanded so the middleware fires on the legacy slugs
 // (not just /api/*) so the redirects above can intercept them. Other paths
 // pass through with NextResponse.next() unchanged.
+// zzz778 — every path except Next's static output and plain static files,
+// so the page gate covers the whole site. API paths keep the rate limits.
 export const config = {
   matcher: [
-    '/api/:path*',
-    '/activity',
-    '/strategic-vis',
-    '/calendar',
-    '/guidance',
-    '/my-book',
-    '/concall-ai',
-    '/re-rating',
+    '/((?!_next/static|_next/image|favicon\\.ico|robots\\.txt|manifest\\.json|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|webmanifest|txt|xml|css|js|map|woff2?)$).*)',
   ],
 };
