@@ -176,18 +176,22 @@ export interface Tally {
   /** Deteriorations in variables NOT mapped to this thesis type: context,
    *  never contradicted and never status-changing. (zzz773) */
   watch?: number;
+  /** zzz777: an adverse EARLIER-period reading still open (e.g. FY26 cash
+   *  0.59× while Q1 FY27 is not disclosed). Not contradicted — historical. */
+  historical?: number;
   /** Every contradicted, pending, unclear and watch variable BY NAME, with
    *  its figure — "3 confirmed · 1 contradicted" named nothing. (zzz773) */
-  named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[] };
+  named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[] };
 }
 type TallyRow = { verdict: string; state?: EvidenceState; readings?: 0 | 1 | 2; watch?: boolean; label?: string; key?: VarKey;
   after?: string | null; before?: string | null; delta?: string | null; stateReason?: string | null; historical?: HistoricalItem | null };
-function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch') => string): Tally {
+function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch' | 'historical') => string): Tally {
   const na = vs.filter((c) => c.state === 'NOT_APPLICABLE').length;
   const unclearRows = vs.filter((c) => c.state === 'UNCLEAR');
   const live = vs.filter((c) => c.state !== 'NOT_APPLICABLE' && c.state !== 'UNCLEAR');
   const flats = live.filter((c) => c.verdict === 'flat');
-  const contra = live.filter((c) => c.verdict === 'deteriorating' && !c.watch);
+  const hist = live.filter((c) => c.verdict === 'deteriorating' && !c.watch && !!c.historical?.active);
+  const contra = live.filter((c) => c.verdict === 'deteriorating' && !c.watch && !c.historical?.active);
   const watch = live.filter((c) => c.verdict === 'deteriorating' && c.watch);
   const pend = live.filter((c) => c.verdict === 'unknown');
   const f = fmt || ((c: TallyRow) => String(c.label || c.key || ''));
@@ -201,7 +205,9 @@ function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pendi
     unclear: unclearRows.length, not_applicable: na, core_variables: vs.length - na,
     total: vs.length,
     watch: watch.length,
+    historical: hist.length,
     named: {
+      historical: hist.map((c) => f(c, 'historical')),
       contradicted: contra.map((c) => f(c, 'contradicted')),
       pending: pend.map((c) => f(c, 'pending')),
       unclear: unclearRows.map((c) => f(c, 'unclear')),
@@ -351,7 +357,9 @@ export interface ThesisVerdict {
     /** Printed variables that moved the WRONG way. Never also in `missing`:
      *  a contradicted variable was found, it is not absent. Optional so older
      *  consumers keep compiling. (zzz772) */
-    contradicted?: string[] };
+    contradicted?: string[];
+    /** zzz777: adverse earlier-period readings still open — not contradicted. */
+    historical?: string[] };
 }
 export interface CatalystRank {
   score: number;                       // 0–100
@@ -361,7 +369,7 @@ export interface CatalystRank {
   statusPoints: number;
   why: string;
 }
-export type CatalystGroup = 'Demand' | 'Capacity' | 'Volume' | 'Capex earning' | 'Customers' | 'Approvals' | 'Margin mechanism' | 'Balance sheet';
+export type CatalystGroup = 'Demand' | 'Capacity' | 'Volume' | 'Capex earning' | 'Capex commissioned' | 'Customers' | 'Approvals' | 'Margin mechanism' | 'Balance sheet';
 export interface ThesisAssessment {
   /** zzz771: the three separated dimensions. Optional until PC-2 fills it. */
   verdict?: ThesisVerdict;
@@ -477,7 +485,7 @@ export interface ThesisAssessment {
     state: 'confirmed' | 'contradicted' | 'unestablished'; by: string[] }>;
   /** Each link of the thesis mechanism, and whether the evidence confirms it.
    *  The spec's "OPERATING LEVERAGE CONFIRMED", rather than "earnings beat". */
-  mechanismCheck: Array<{ link: string; state: 'confirmed' | 'contradicted' | 'unchecked' | 'unclear' }>;
+  mechanismCheck: Array<{ link: string; state: 'confirmed' | 'contradicted' | 'unchecked' | 'unclear' | 'historical' }>;
   mechanismVerdict: string;
   /** ── STRUCTURAL vs OUTPUT, as the status sentence states them. (zzz765c)
    *  `confirmed/total` is the X/Y printed on the card; `required` are the
@@ -1754,10 +1762,15 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // wrong way was found; it is reported as contradicted, never as missing.
     const labelOf = (k: VarKey) => VAR_LABEL[k] || checked.find((c) => c.key === k)?.label || k;
     const openKeys = [...printedKeys].filter((k) => !printedConfirmed.has(k));
-    const contradictedKeys = openKeys.filter((k) => checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch));
-    const missing = openKeys.filter((k) => !contradictedKeys.includes(k)).map(labelOf);
+    // zzz777: an adverse EARLIER-period reading still open is historical
+    // unresolved, not contradicted by the current period.
+    const histKeys = openKeys.filter((k) => checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch && c.historical?.active)
+      && !checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch && !c.historical?.active));
+    const contradictedKeys = openKeys.filter((k) => !histKeys.includes(k) && checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch));
+    const missing = openKeys.filter((k) => !contradictedKeys.includes(k) && !histKeys.includes(k)).map(labelOf);
     const contradictedLabels = contradictedKeys.map(labelOf);
-    const coreContradicted = coreDown.length > 0 || structuralDown;
+    const currentDown = checked.filter((c) => c.verdict === 'deteriorating' && mayMoveStatus(c) && (c.weight === 4 || structuralKeys.has(c.key)) && !c.historical?.active);
+    const coreContradicted = (coreDown.length > 0 || structuralDown) && currentDown.length > 0;
     const anyConfirmed = mechX > 0 || drivers.length > 0;
     const coreOpen = coreMechanism.filter((c) => c.verdict === 'unknown' || c.state === 'UNCLEAR');
     // TI: WEAKENING on margin and earnings, while no core MECHANISM variable
@@ -1833,7 +1846,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
                 : `output did not improve (${outputSummary}); mechanism ${mechX}/${mechY} confirmed — nothing read calls a direction`;
     }
     return { breakTrigger, direction, directionWhy, evidence, evidenceWhy,
-      coverage: { confirmed: mechX, applicable: mechY, missing, contradicted: contradictedLabels } };
+      coverage: { confirmed: mechX, applicable: mechY, missing, contradicted: contradictedLabels, historical: histKeys.map(labelOf) } };
   })();
   // The card's status sentence opens with the staleness, whatever the status:
   // the reader must know the evidence is old before reading what it said.
@@ -1897,7 +1910,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const m = new Map<VarKey, string>();
     for (const d of drivers) if (d.key !== 'cash_conversion') m.set(d.key, driverText(d));
     for (const d of variables.filter(onTrackDriver)) if (d.key !== 'cash_conversion' && !m.has(d.key)) {
-      m.set(d.key, d.key === 'capex_status' ? `capex status: ${[...new Set(String(d.after).replace(/_/g, ' ').split(/\s*;\s*/).filter(Boolean))].join('; ')}` : driverText(d));
+      m.set(d.key, d.key === 'capex_status' ? (() => { const st = [...new Set(String(d.after).replace(/_/g, ' ').split(/\s*;\s*/).filter(Boolean))]; return `capex status: ${st.join('; ')}${st.some((x) => /commercial production|operational/i.test(x)) ? ' (producing — revenue contribution not yet disclosed)' : ' (commissioned — not yet proven earning)'}`; })() : driverText(d));
     }
     // One list, one punctuation: "(management remark).; qualification" and
     // "presentation.." were the joins of sentences that already ended. (zzz775)
@@ -2131,7 +2144,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       link: c.label,
       state: (structurallyEvidenced(c) && !staleEvidence ? 'confirmed'
         : c.state === 'UNCLEAR' ? 'unclear'
-          : c.verdict === 'deteriorating' ? 'contradicted' : 'unchecked') as 'confirmed' | 'contradicted' | 'unchecked' | 'unclear',
+          : c.verdict === 'deteriorating' ? (c.historical?.active ? 'historical' : 'contradicted') : 'unchecked') as 'confirmed' | 'contradicted' | 'unchecked' | 'unclear' | 'historical',
     }));
   if (status === 'STRENGTHENING' && !staleEvidence) {
     for (const d of drivers) {
@@ -2154,9 +2167,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     : unchecked.length && status === 'STRENGTHENING'
       ? `${thesis.name} CONFIRMED BY THE EVIDENCED DRIVERS — ${confirmedLinks} of ${mechanismCheck.length} links hold; `
         + `${unchecked.map((m) => m.link.toLowerCase()).join(', ')} still to confirm next quarter.`
-    : unchecked.length || mechanismCheck.some((m) => m.state === 'unclear')
+    : unchecked.length || mechanismCheck.some((m) => m.state === 'unclear' || m.state === 'historical')
       ? `${thesis.name} NOT YET CONFIRMED — ${confirmedLinks} of ${mechanismCheck.length} links hold; `
-        + `${[...unchecked, ...mechanismCheck.filter((m) => m.state === 'unclear')].map((m) => `${m.link.toLowerCase()}${m.state === 'unclear' ? ' (unclear)' : ''}`).join(', ')} still open.`
+        + `${[...unchecked, ...mechanismCheck.filter((m) => m.state === 'unclear' || m.state === 'historical')].map((m) => `${m.link.toLowerCase()}${m.state === 'unclear' ? ' (unclear)' : m.state === 'historical' ? ' (historical unresolved)' : ''}`).join(', ')} still open.`
       : `${thesis.name} CONFIRMED — all ${mechanismCheck.length} links of the mechanism hold on this evidence.`;
 
   const headline = status === 'STRENGTHENING' ? STRENGTHENING_SENTENCE
@@ -2219,15 +2232,27 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
 
   /** "Earnings growth — -55.8% vs thesis expectation", "Cash conversion —
    *  Q1 FY27 not disclosed (FY26: 0.51× historical)". (zzz773) */
-  const tallyName = (c0: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch'): string => {
+  const tallyName = (c0: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch' | 'historical'): string => {
     const c = c0 as CheckedVariable;
     const name = VAR_LABEL[c.key] || c.label;
     const fig = c.historical?.active ? `${c.historical.period}: ${c.historical.value} (historical / unresolved)` : (c.delta || c.after || c.before || '');
+    if (kind === 'historical') return `${name} — ${c.historical!.period}: ${c.historical!.value} (earlier period, not a ${curAdj} reading — resolves with the next disclosed figure)`;
     if (kind === 'contradicted') return `${name} — ${fig} vs thesis expectation${c.invalidation ? ` ("${c.invalidation.replace(/\.$/, '')}")` : ''}`;
     if (kind === 'watch') return `${name} — ${fig} (not mapped to the ${thesis.name} thesis — context, status unchanged)`;
     if (kind === 'unclear') return `${name} — ${c.stateReason || c.unjudged || 'validation required'}${fig ? `: ${fig}` : ''}`;
     return `${name} — ${c.historical ? `${curNot} (${c.historical.period}: ${c.historical.value} · historical)` : c.state === 'NOT_SEARCHED' ? 'not searched' : c.state === 'SOURCE_UNAVAILABLE' ? 'source unavailable' : 'not disclosed'}`;
   };
+  // ── A NEAREST-FIT THESIS IS PROVISIONAL.                          (zzz777)
+  // An auto nearest-fit type was chosen by the engine, not by the owner. It
+  // must not manufacture a thesis and then a thesis-break from it: until the
+  // owner confirms the type, a WEAKENING / BROKEN reading asks for that
+  // confirmation instead.
+  if ((status === 'WEAKENING' || status === 'BROKEN') && (input.pattern as any)?.fit === 'nearest') {
+    const was = status;
+    status = 'CONFIRMATION_REQUIRED';
+    because = `Provisional thesis — the type is an automatic nearest fit (${thesis.name}), not one you confirmed. Under it this would read ${was === 'BROKEN' ? 'BROKEN' : 'WEAKENING'}: ${lcFirst(because)} `
+      + `Resolves with: confirm or change the thesis type with the picker — confirmed, the reading stands as ${was === 'BROKEN' ? 'BROKEN' : 'WEAKENING'}.`;
+  }
   // ── CATALYST RANK — which intact theses carry the strongest evidenced
   // catalyst. (zzz776) Output growth is capped so a base-effect quarter
   // cannot outrank a real order book; each mechanism group counts once;
@@ -2241,7 +2266,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const outPts = Math.round((Math.min(Math.max(rev ?? 0, 0), 60) / 60) * 12 + (Math.min(Math.max(earn ?? 0, 0), 100) / 100) * 9 + Math.min(Math.max(mpp ?? 0, 0), 8) * 0.5);
     const GROUP: Partial<Record<string, CatalystGroup>> = {
       order_book: 'Demand', order_intake: 'Demand', book_to_bill: 'Demand', revenue_visibility: 'Demand', exports: 'Demand',
-      capacity_addition: 'Capacity', capacity: 'Capacity', new_plant: 'Capacity', commissioning: 'Capex earning', capex_status: 'Capex earning', capex_earning: 'Capex earning',
+      capacity_addition: 'Capacity', capacity: 'Capacity', new_plant: 'Capacity', commissioning: 'Capex commissioned', capex_status: 'Capex commissioned', capex_earning: 'Capex earning',
       volume: 'Volume', utilisation: 'Volume', new_customer: 'Customers', qualification: 'Approvals', approval: 'Approvals',
       margin_driver: 'Margin mechanism', product_mix: 'Margin mechanism', price: 'Margin mechanism', working_capital: 'Balance sheet',
     };
@@ -2259,9 +2284,17 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           if (k === 'exports') return { pts: q ? 10 : 4, quantified: q };           // export growth is demand breadth, not backlog
           return { pts: q ? (CHANGE.test(t) ? 18 : 16) : 6, quantified: q };
         case 'Capacity': return { pts: q && CHANGE.test(t) ? 12 : q ? 6 : 4, quantified: q && CHANGE.test(t) };
+        // zzz777 — CAPEX LIFECYCLE: announced → spent → built → commissioned →
+        // production → utilisation → revenue → margin. Only revenue / margin
+        // contribution is EARNING; commissioned is not yet proven earning.
         case 'Capex earning':
-          if (k === 'capex_earning') return { pts: 12, quantified: q };
-          return /commission|commercial production|operational|completed/i.test(t) ? { pts: 7, quantified: false } : { pts: 0, quantified: false };
+          if (/ebitda|margin|profit/i.test(t) && q) return { pts: 14, quantified: true };    // margin contribution quantified
+          if (/revenue|contribut|sales|turnover/i.test(t) && q) return { pts: 12, quantified: true };
+          return { pts: 8, quantified: false };                                           // earning, stated without a figure
+        case 'Capex commissioned':
+          if (/commercial production|production (started|commenced)|operational/i.test(t)) return { pts: 5, quantified: false };   // early earning evidence
+          if (/commission|completed/i.test(t)) return { pts: 3, quantified: false };           // built, not yet proven earning
+          return { pts: 0, quantified: false };                                               // announced / under construction
         case 'Volume': { const big = q && !(pct && Number(pct[1]) < 5); return { pts: big ? 12 : 4, quantified: big }; }
         case 'Customers':
           if (/\b(contract|order|lta|long[- ]term agreement|supplies (started|commenced)|supply agreement|awarded)\b/i.test(t)) return { pts: 9, quantified: q };

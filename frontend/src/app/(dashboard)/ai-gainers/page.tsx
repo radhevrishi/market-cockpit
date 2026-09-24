@@ -392,11 +392,11 @@ export default function AiGainersPage() {
       )}
       {sweeping && (
         <span style={{ fontSize: 12, color: C.cyan, fontWeight: 700 }}>
-          {rescoring ? 'Re-scoring with current rules (no AI)…' : `Researching ${covShown ? `${covShown.researched}/${covShown.total}` : ''}…`}
+          {rescoring ? 'SCAN ✓ complete · re-scoring with current rules (no AI)…' : `SCAN ✓ complete · AI research ${covShown ? `${covShown.researched}/${covShown.total}` : ''} running…`}
         </span>
       )}
       {covShown && covShown.total > 0 && !sweeping && (
-        <span style={{ fontSize: 12, color: C.faint }} title={`Research completion, not catalysts found: ${covShown.researched} of the ${covShown.total} small/mid-cap gainers have had their filings researched. ${board.length > covShown.total ? `The other ${board.length - covShown.total} of the ${board.length} scanned are large caps (≥ ₹${(research?.large_cap_min_cr ?? 100000).toLocaleString('en-IN')} Cr), excluded from catalyst research.` : ''}`}>Catalyst research {covShown.researched}/{covShown.total} small/mid caps{board.length > covShown.total ? ` · ${board.length - covShown.total} large caps excluded` : ''}</span>
+        <span style={{ fontSize: 12, color: C.faint }} title={`Research completion, not catalysts found: ${covShown.researched} of the ${covShown.total} small/mid-cap gainers have had their filings researched. ${board.length > covShown.total ? `The other ${board.length - covShown.total} of the ${board.length} scanned are large caps (≥ ₹${(research?.large_cap_min_cr ?? 100000).toLocaleString('en-IN')} Cr), excluded from catalyst research.` : ''}`}>{covShown.researched >= covShown.total ? '✓ ' : ''}AI research {covShown.researched}/{covShown.total} small/mid caps{board.length > covShown.total ? ` · ${board.length - covShown.total} large caps excluded` : ''}</span>
       )}
       {!sweeping && rescored && (
         <span title="Findings stored under older rules were re-classified and re-scored from filings already fetched and model reads already cached. No model read was made." style={{ fontSize: 12, color: C.faint }}>

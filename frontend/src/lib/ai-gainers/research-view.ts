@@ -653,7 +653,7 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       break;
     case 'enabling':
       say('Binding order', false, 'Not yet — enabling stage');
-      say('Value', hasValue);
+      say('Company economics (value / revenue share)', hasValue && !/\bgdv\b|gross development value|potential|may unlock/i.test(hay));
       say('Conversion timing', false, 'Unknown');
       break;
     case 'capacity':
@@ -666,6 +666,7 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       say('Price', hasValue);
       say('Funding', /funded|cash|debt|internal accruals|share swap/i.test(hay));
       say('Target revenue / EBITDA', /revenue|ebitda|turnover/i.test(hay));
+      say('Earnings contribution', /accretive|eps|earnings contribution/i.test(hay));
       say('Dilution', false, 'Unknown');
       break;
     case 'earnings':
@@ -687,7 +688,21 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       u.push('Filings in window: Unknown (source unavailable)');
       break;
     case 'negative': case 'denial':
-      u.push('Financial impact: Not disclosed');
+      // zzz777: a negative event is sized by exposure, cash and recurrence.
+      say('Financial exposure', hasValue);
+      say('Cash impact (paid / deposited / provided)', /paid|deposit|provision|pre-?deposit/i.test(hay));
+      say('Recurrence (one-off or repeating)', /one[- ]off|one[- ]time|recurring|similar (notice|demand)s?/i.test(hay), 'Unknown');
+      break;
+    case 'approval':
+      // zzz777: a licence / approval opens a market; the unknown is its size.
+      say('Addressable commercial impact', hasValue);
+      say('Commercial start date', /commercial|supplies|launch|from (fy|q[1-4]|\w+ \d{4})/i.test(hay));
+      say('Competitors holding the same approval', false, 'Unknown');
+      break;
+    case 'product':
+      say('Commercial impact', hasValue);
+      say('Revenue start and scale', /revenue|order|customer/i.test(hay));
+      say('Pricing / margin', /pric|margin/i.test(hay));
       break;
     default:
       // zzz776: a product launch or a licence has no "event value" — what is

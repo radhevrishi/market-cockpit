@@ -79,9 +79,9 @@ function Summary({ view }: { view: ResearchView }) {
   const s = view.summary;
   const cards: Array<{ n: number; l: string; color?: string; title: string }> = [
     { n: s.scanned, l: 'Gainers scanned', title: 'Names on this session’s board.' },
-    { n: s.confirmed, l: 'Confirmed events', color: C.green, title: 'Verified events (material or small).' },
-    { n: s.potential, l: 'Potential', color: C.amber, title: 'Something exists but is not verified.' },
-    { n: s.negative, l: 'Negative / denied', color: C.red, title: 'Negative, contrary or company-denied.' },
+    { n: s.confirmed, l: 'Verified events', color: C.green, title: 'Event verified from the filing AND its size judged (material or small). Verified ≠ a confirmed catalyst for the move.' },
+    { n: s.potential, l: 'Impact unknown / unverified', color: C.amber, title: 'Either the event is filed but its size / materiality is not established, or the source itself is not verified.' },
+    { n: s.negative, l: 'Negative evidence', color: C.red, title: 'Genuine negative filings (tax demands, departures, cancellations) or a company denial — kept even though the stock rose.' },
     { n: s.noCatalyst, l: 'No clear catalyst', title: 'Checked: no credible event found.' },
     { n: s.queue, l: 'Research queue', color: C.cyan, title: 'Names that deserve research time today.' },
     { n: s.portfolioMatches, l: 'Portfolio matches', color: C.cyan, title: 'Names in or related to your book.' },

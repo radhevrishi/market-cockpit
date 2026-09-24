@@ -286,13 +286,13 @@ export default function PortfolioCatalystsPage() {
         const shown = showAllTop ? ranked : ranked.slice(0, 15);
         const tv = (sym: string) => sym.toUpperCase().replace(/-(BE|SM|ST|BZ|E1)$/i, '');
         const top = ranked.slice(0, 15).filter((r) => r.market !== 'US').map((r) => tv(r.symbol));
-        const GC: Record<string, string> = { Demand: C.green, Capacity: C.cyan, Volume: C.cyan, 'Capex earning': C.cyan, Customers: C.amber, Approvals: C.amber, 'Margin mechanism': C.dim, 'Balance sheet': C.dim };
+        const GC: Record<string, string> = { Demand: C.green, Capacity: C.cyan, Volume: C.cyan, 'Capex earning': C.cyan, 'Capex commissioned': C.dim, Customers: C.amber, Approvals: C.amber, 'Margin mechanism': C.dim, 'Balance sheet': C.dim };
         const fmt = (n: number | null, unit: string) => n == null ? '—' : `+${n}${unit}`;
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 Research priority — {ranked.length} intact theses ranked by evidenced catalyst</span>
-              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning / volume > named contract > customer remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). Which theses deserve research next — not a buy list, no price used.'}</span>
+              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning (revenue or margin contribution disclosed) / volume > named contract > commissioned capex (not yet proven earning) > customer remark; a hard figure outranks a management remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). Which theses deserve research next — not a buy list, no price used.'}</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -324,7 +324,7 @@ export default function PortfolioCatalystsPage() {
                         <td style={{ padding: '5px 6px' }}>
                           {cr.drivers.slice(0, 3).map((d) => (
                             <div key={d.group} style={{ lineHeight: 1.35 }} title={d.text}>
-                              <span style={{ fontSize: 11, fontWeight: 800, color: GC[d.group] || C.dim, marginRight: 5 }}>{d.group.toUpperCase()}{d.quantified ? '' : ' · remark'}</span>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: GC[d.group] || C.dim, marginRight: 5 }}>{d.group.toUpperCase()}{d.quantified ? ' · hard figure' : ' · management remark'}</span>
                               <span style={{ color: C.dim }}>{d.text.length > 110 ? `${d.text.slice(0, 109)}…` : d.text}</span>
                             </div>
                           ))}

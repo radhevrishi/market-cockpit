@@ -833,7 +833,8 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
       assert.ok(v.coverage.confirmed <= v.coverage.applicable);
       // zzz772: a contradicted variable is reported under `contradicted`, never
       // `missing`; the two together are what is not confirmed.
-      assert.equal(v.coverage.missing.length + (v.coverage.contradicted?.length ?? 0), v.coverage.applicable - v.coverage.confirmed);
+      // zzz777: …and `historical` (earlier-period adverse readings still open).
+      assert.equal(v.coverage.missing.length + (v.coverage.contradicted?.length ?? 0) + (v.coverage.historical?.length ?? 0), v.coverage.applicable - v.coverage.confirmed);
       for (const c of v.coverage.contradicted ?? []) assert.ok(!v.coverage.missing.includes(c), `${c} is contradicted, not missing`);
       for (const m of v.coverage.missing) assert.ok(!OUTPUT_LABELS.includes(m), `${m} is output, not core mechanism`);
     }
@@ -850,7 +851,7 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     assert.equal(v.evidence, 'INCOMPLETE');
     assert.match(v.evidenceWhy, /capacity utilisation \(not disclosed\).*Unknown is not neutral evidence/);
     // zzz772: coverage also carries `contradicted` (empty here).
-    assert.deepEqual(v.coverage, { confirmed: 0, applicable: 4, missing: ['Capacity utilisation', 'Volume', 'Capacity added', 'Installed capacity'], contradicted: [] });
+    assert.deepEqual(v.coverage, { confirmed: 0, applicable: 4, missing: ['Capacity utilisation', 'Volume', 'Capacity added', 'Installed capacity'], contradicted: [], historical: [] });
   });
 
   test('a fired condition is answer 1 only: WEAKENING carries the fired text; BROKEN says the break is met', () => {
@@ -1118,10 +1119,15 @@ describe('zzz772 · status engine', () => {
       W('earnings_growth', 'improving', { delta: '+409.1%', source: 'grader' }), W('margin', 'improving', { delta: '+8.0pp', source: 'grader' }),
       W('cash_conversion', 'deteriorating', { after: '0.34× (last FY)', source: 'grader' })] });
     const cov = a.verdict!.coverage;
-    assert.equal(a.verdict!.evidence, 'CONTRADICTED');
+    // zzz777: UPDATED — last FY's 0.34× is HISTORICAL UNRESOLVED, not a
+    // current-period contradiction; it is still never listed as missing.
+    assert.notEqual(a.verdict!.evidence, 'CONTRADICTED');
     assert.ok(!cov.missing.includes('Cash conversion'), cov.missing.join(', '));
-    assert.deepEqual(cov.contradicted, ['Cash conversion']);
-    assert.equal(cov.missing.length + cov.contradicted!.length, cov.applicable - cov.confirmed);
+    assert.deepEqual(cov.contradicted, []);
+    assert.deepEqual(cov.historical, ['Cash conversion']);
+    assert.equal(cov.missing.length + cov.contradicted!.length + cov.historical!.length, cov.applicable - cov.confirmed);
+    assert.equal(a.coverage.output.contradicted + (a.coverage.output.historical ?? 0) >= 1, true);
+    assert.equal(a.coverage.output.historical, 1);
   });
 
   test('4 · a target is never a driver and never structurally confirmed', () => {

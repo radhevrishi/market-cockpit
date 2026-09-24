@@ -785,7 +785,11 @@ export function ThesisCard(p: ThesisCardProps) {
         // are filtered out of "missing" by name here as well.
         const contradicted: string[] = Array.isArray((v.coverage as any).contradicted) ? (v.coverage as any).contradicted.filter(Boolean) : [];
         const contraSet = new Set(contradicted.map((x) => String(x).trim().toLowerCase()));
-        const missing = (v.coverage.missing || []).filter((x) => !contraSet.has(String(x).trim().toLowerCase()));
+        // zzz777: an adverse earlier-period reading still open is historical
+        // unresolved — never printed as contradicted.
+        const histOpen: string[] = Array.isArray((v.coverage as any).historical) ? (v.coverage as any).historical.filter(Boolean) : [];
+        const histSet = new Set(histOpen.map((x) => String(x).trim().toLowerCase()));
+        const missing = (v.coverage.missing || []).filter((x) => !contraSet.has(String(x).trim().toLowerCase()) && !histSet.has(String(x).trim().toLowerCase()));
         const chip = (color: string, dashed: boolean, title: string, body: React.ReactNode, testid: string) => (
           <span data-testid={testid} title={title} style={{
             fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 4, lineHeight: 1.5, maxWidth: '100%',
@@ -799,8 +803,9 @@ export function ThesisCard(p: ThesisCardProps) {
               {/Watch — /.test(bt.text) && <span data-testid="verdict-watch" style={{ fontWeight: 600, color: ink(C.warn) }}> · watch (not mapped to this thesis, status unchanged): {bt.text.split(/Watch — [^:]*: /)[1]?.replace(/\.$/, '')}</span>}</>, 'verdict-break')}
             {chip(dirColor, v.direction === 'UNKNOWN', v.directionWhy, <>DIRECTION: <b>{DIRECTION_WORD[v.direction]}</b>{v.directionWhy ? <span style={{ fontWeight: 500 }}> — {v.directionWhy}</span> : null}</>, 'verdict-direction')}
             {chip(evColor, v.evidence === 'UNCHECKED' || v.evidence === 'INCOMPLETE', v.evidenceWhy,
-              <>EVIDENCE: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural)
+              <>{v.evidence === 'INCOMPLETE' ? 'EVIDENCE COMPLETENESS' : 'EVIDENCE'}: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural)
                 {contradicted.length ? <span data-testid="evidence-contradicted" style={{ fontWeight: 700, color: ink(C.down) }}> · contradicted: {contradicted.join(', ')}</span> : null}
+                {histOpen.length ? <span data-testid="evidence-historical" style={{ fontWeight: 700, color: ink(C.warn) }}> · historical unresolved: {histOpen.join(', ')}</span> : null}
                 {missing.length ? <span style={{ fontWeight: 500 }}> · missing: {missing.join(', ')}</span> : null}</>, 'verdict-evidence')}
           </div>
         );
@@ -995,7 +1000,7 @@ export function ThesisCard(p: ThesisCardProps) {
             ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
             ['FORWARD', a.coverage.forward, 'what management commits to next'],
           ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; unclear?: number; not_applicable?: number; core_variables?: number; total: number;
-            watch?: number; named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[] } }, string]>)
+            watch?: number; historical?: number; named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[] } }, string]>)
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
               <div key={name} title={hint}>
@@ -1007,6 +1012,7 @@ export function ThesisCard(p: ThesisCardProps) {
                 <b style={{ color: t.pending ? C.warn : C.flat }}>{t.pending} pending</b>
                 {' · '}
                 <b style={{ color: t.contradicted ? C.down : C.flat }}>{t.contradicted} contradicted</b>
+                {(t.historical || 0) > 0 && <span style={{ color: C.warn }} title="An adverse EARLIER-period reading still open — not a current-period contradiction."> · {t.historical} historical unresolved</span>}
                 {(t.unclear || 0) > 0 && <span style={{ color: C.flat }} title="Read, but not judgeable either way — never counted as contradicted."> · {t.unclear} unclear</span>}
                 {(t.stated || 0) > 0 && <span style={{ color: C.flat }}> · {t.stated} level only</span>}
                 {(t.flat || 0) > 0 && <span style={{ color: C.flat }}> · {t.flat} flat</span>}
@@ -1016,10 +1022,11 @@ export function ThesisCard(p: ThesisCardProps) {
                     "1 contradicted · of 4" named nothing; each non-confirmed
                     variable is listed with its figure. */}
                 {t.named && ([
+                  ['Historical unresolved', t.named.historical || [], C.warn],
                   ['Contradicted', t.named.contradicted, C.down], ['Pending', t.named.pending, C.warn],
                   ['Unclear', t.named.unclear, C.flat], ['Watch', t.named.watch, C.warn],
                 ] as Array<[string, string[], string]>).filter(([, xs]) => xs.length > 0).map(([w, xs, col]) => (
-                  <div key={w} data-testid={`tally-${name.toLowerCase()}-${w.toLowerCase()}`} style={{ paddingLeft: 78, fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
+                  <div key={w} data-testid={`tally-${name.toLowerCase()}-${w.toLowerCase().replace(/\s+/g, '-')}`} style={{ paddingLeft: 78, fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
                     <b style={{ color: ink(col) }}>{w}:</b> {xs.map(humanTokens).join(' · ')}
                   </div>
                 ))}
@@ -1254,12 +1261,12 @@ export function ThesisCard(p: ThesisCardProps) {
               ))}
             </div>
             {a.mechanismCheck.map((m) => {
-              const col = m.state === 'confirmed' ? C.green : m.state === 'contradicted' ? C.red : C.faint;
-              const mark = m.state === 'confirmed' ? '✓' : m.state === 'contradicted' ? '✕' : m.state === 'unclear' ? '?' : '○';
+              const col = m.state === 'confirmed' ? C.green : m.state === 'contradicted' ? C.red : (m.state as string) === 'historical' ? C.warn : C.faint;
+              const mark = m.state === 'confirmed' ? '✓' : m.state === 'contradicted' ? '✕' : m.state === 'unclear' ? '?' : (m.state as string) === 'historical' ? '◷' : '○';
               return (
                 <div key={m.link} style={{ fontSize: 13.5, color: C.dim, padding: '1px 0' }}>
                   <span style={{ color: col, fontWeight: 900, marginRight: 6 }}>{mark}</span>{m.link}
-                  <span style={{ color: C.faint, fontSize: 12.5 }}> · {m.state}</span>
+                  <span style={{ color: C.faint, fontSize: 12.5 }}> · {(m.state as string) === 'historical' ? 'historical unresolved (earlier period)' : m.state}</span>
                 </div>
               );
             })}
