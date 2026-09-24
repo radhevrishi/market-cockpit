@@ -29,7 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch, yahooReturns } from '@/lib/ai-gainers/screener-company';
 import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
-import { mergeAnnouncements, buildFinding, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
+import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
@@ -49,11 +49,19 @@ import { loadLedger } from '@/lib/thesis/evidence-store';
 // The move is only the discovery trigger: the test reads the filing behind
 // it plus the company's evidence ledger (when there is one). Price never
 // enters. Detections worth remembering go to the shared persistence memory.
-async function withPersistence(f: Finding, sink: PersistentCatalyst[]): Promise<Finding> {
+async function withPersistence(f: Finding, sink: PersistentCatalyst[], announcements?: AnnouncementLite[] | null): Promise<Finding> {
   if (!f || f.status !== 'catalyst' || !PERSIST_CATEGORIES.has(String(f.category || ''))) return f;
   try {
     const ledger = f.market === 'IN' ? await loadLedger(f.ticker).catch(() => null) : null;
-    const list = detectPersistentCatalysts({ ticker: f.ticker, ledger, finding: f, origin: 'gainers' });
+    // zzz781: the OTHER catalyst filings in the window — a second order from
+    // the same company is a repeat order, not a new catalyst.
+    const extraFindings = (announcements || []).filter((a) => a.url !== f.sourceUrl).map((a) => {
+      const c = classifyAnnouncement(a, f.market);
+      return c.kind === 'catalyst' && c.category && PERSIST_CATEGORIES.has(String(c.category))
+        ? { status: 'catalyst', category: c.category, stage: c.stage, valueStated: c.valueStated, headline: a.summary || a.subject, sourceDate: a.dateIso, sourceUrl: a.url, facts: null, modelRead: false }
+        : null;
+    }).filter(Boolean).slice(0, 8);
+    const list = detectPersistentCatalysts({ ticker: f.ticker, ledger, finding: f, extraFindings, origin: 'gainers' });
     const mine = list.filter((p) => p.evidence.some((e) => e.origin === 'gainer'));
     const best = mine[0] || null;
     for (const p of list) if (p.specialFocus || p.confidence === 'HIGH' || p.confidence === 'MEDIUM') sink.push(p);
@@ -464,7 +472,7 @@ async function research(req: NextRequest, body: any) {
         ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap, turnover,
         announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult, news,
       }), rulesVersion: RULES_VERSION };
-      st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink);
+      st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements);
       st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news }, WINDOW_DAYS, now);
       done++;
     } catch (e: any) {
@@ -566,7 +574,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
       }
       st.inputs[u.ticker] = inputs;
       const f = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
-      st.findings[u.ticker] = await withPersistence(f, persistSink);
+      st.findings[u.ticker] = await withPersistence(f, persistSink, inputs.announcements);
       rescored++;
     } catch { failed++; }
   }

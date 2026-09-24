@@ -156,4 +156,41 @@ describe('zzz780 persistent catalyst layer', () => {
     const txt = JSON.stringify(detect(l));
     assert.doesNotMatch(txt, /\b(buy|sell|price target|multibagger|winner|best stock|upside)\b/i);
   });
+
+  test('zzz781 — a filed commissioning fact is evidence; the added capacity then qualifies', () => {
+    const l = ledger({ 'Q1 FY27': [
+      fact('Q1 FY27', 'capacity', '9,600 MTPA', { before: '5,000 MTPA' }),
+      fact('Q1 FY27', 'capex_status', 'new block commissioned in June', { quote: 'the new block was commissioned in June and is in commercial production' }),
+    ] });
+    const cap = kind(detect(l), 'CAPACITY_RAMP');
+    assert.equal(cap.hardCount, 2);
+    assert.notEqual(cap.state, 'IDENTIFIED');
+    assert.ok(cap.specialFocus, cap.why.join(' | '));
+  });
+
+  test('zzz781 — a capacity target smaller than today (or another unit) is not the next milestone', () => {
+    const l = ledger({ 'Q1 FY27': [
+      fact('Q1 FY27', 'capacity', '5300 MTPA', { before: '2600 MTPA' }), fact('Q1 FY27', 'utilisation', '80%'),
+      fact('Q1 FY27', 'capacity_addition', '200 MTPA', { stmt: 'GUIDANCE' }),
+    ] });
+    assert.doesNotMatch(kind(detect(l), 'CAPACITY_RAMP').nextMilestone, /200 MTPA/);
+  });
+
+  test('zzz781 — Daily Gainers: a second order in the window is a repeat order', () => {
+    const f = { status: 'catalyst', category: 'order_win', stage: 'executed', valueStated: 400, sourceDate: '2026-09-20', sourceUrl: 'a', modelRead: false, headline: 'order of ₹400 crore', facts: null };
+    const g = { ...f, valueStated: 250, sourceUrl: 'b', sourceDate: '2026-09-10', headline: 'order of ₹250 crore' };
+    const one = kind(detectPersistentCatalysts({ ticker: 'T', finding: f, origin: 'gainers', today: '2026-09-24' }), 'ORDER_VISIBILITY');
+    const two = kind(detectPersistentCatalysts({ ticker: 'T', finding: f, extraFindings: [g], origin: 'gainers', today: '2026-09-24' }), 'ORDER_VISIBILITY');
+    assert.equal(one.hardCount, 1);
+    assert.equal(two.hardCount, 2);
+    assert.match(two.mechanism, /repeat orders/);
+  });
+
+  test('zzz781 — a near miss names exactly what would qualify it', () => {
+    const l = ledger({ 'Q1 FY27': [fact('Q1 FY27', 'capacity_addition', '39,600 MTPA'), fact('Q1 FY27', 'capex_status', 'plant commissioned')] });
+    const cap = kind(detect(l), 'CAPACITY_RAMP');
+    assert.equal(cap.specialFocus, false);
+    assert.ok(cap.toQualify.length >= 1 && cap.toQualify.length <= 2, cap.toQualify.join(' | '));
+    assert.ok(cap.toQualify.some((q: string) => /utilisation|installed base/.test(q)));
+  });
 });

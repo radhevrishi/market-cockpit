@@ -53,8 +53,10 @@ export function PersistentStrip({ pcs, onOpenFocus }: { pcs: PersistentCatalyst[
   );
 }
 
-export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump }: {
+export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrior, priorRunning }: {
   rows: FocusRow[]; ready: boolean;
+  /** zzz781: read the prior quarter (AI, on click) for near misses — one document set per name. */
+  onReadPrior?: (tickers: string[]) => void; priorRunning?: boolean;
   thesisLabel: (r: FocusRow) => string;
   onJump: (ticker: string) => void;
 }) {
@@ -111,6 +113,20 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump }: {
       .sort((a, b) => (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed')) || (Number(a.decayed) - Number(b.decayed)) || (rankOf(b.pc) - rankOf(a.pc)));
   }, [live, stored, rows]);
   const hiddenByUser = Object.values(stored).filter((s) => s.user?.state === 'dismissed' || s.user?.state === 'archived');
+  // zzz781 — NEAR MISSES: one or two pieces of evidence away. The research to do
+  // is named per name; reading the prior quarter often supplies the second figure.
+  const [showNear, setShowNear] = useState(false);
+  const near = useMemo(() => {
+    const inQ = new Set(entries.map((e) => e.pc.ticker));
+    const best = new Map<string, { pc: PersistentCatalyst; row: FocusRow }>();
+    for (const x of live.values()) {
+      if (!x.pc.nearMiss || inQ.has(x.pc.ticker)) continue;
+      const prev = best.get(x.pc.ticker);
+      if (!prev || rankOf(x.pc) > rankOf(prev.pc)) best.set(x.pc.ticker, x);
+    }
+    return [...best.values()].sort((a, b) => rankOf(b.pc) - rankOf(a.pc));
+  }, [live, entries]);
+  const priorable = near.filter((x) => (x.row.market || 'IN') !== 'US' && Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
   const shown = entries.filter((e) => !e.dismissed);
   const visible = showAll ? shown : shown.slice(0, 8);
 
@@ -198,9 +214,30 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump }: {
         })}
       </div>
       <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+        {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : `${near.length} near miss${near.length === 1 ? '' : 'es'} — one piece of evidence away`}</button>}
         {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8' : `Show all ${shown.length}`}</button>}
         {hiddenByUser.length > 0 && <button onClick={() => setShowHidden((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.faint }}>{showHidden ? 'Hide' : `${hiddenByUser.length} dismissed / archived`}</button>}
       </div>
+      {showNear && near.length > 0 && (
+        <div style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+          <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>
+            Near misses — a validated mechanism is missing one or two pieces of evidence. Not Special Focus; the line says exactly what would qualify it.
+            {onReadPrior && priorable.length > 0 && (
+              <button disabled={priorRunning} onClick={() => onReadPrior(priorable)} title="Reads each name's PRIOR quarter documents (one AI read per name, on this click only). Two periods give the before → after and the second figure most near misses lack."
+                style={{ marginLeft: 8, fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: priorRunning ? 'wait' : 'pointer', border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan }}>
+                {priorRunning ? 'Reading prior quarters…' : `✨ Read prior quarter for ${priorable.length} (uses AI)`}
+              </button>
+            )}
+          </div>
+          {near.map(({ pc }) => (
+            <div key={pc.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
+              <button onClick={() => onJump(pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{pc.ticker}</button>
+              <span style={{ color: C.faint }}> · {pc.label} · {STATE_WORD[pc.state]} · {pc.mechanism}</span>
+              <div style={{ color: C.amber }}>Needs: {pc.toQualify.join(' · ')}</div>
+            </div>
+          ))}
+        </div>
+      )}
       {showHidden && hiddenByUser.map((s) => (
         <div key={s.id} style={{ fontSize: 12.5, color: C.faint }}>{s.ticker} · {s.label} · {s.user?.state} {String(s.user?.at || '').slice(0, 10)} <button onClick={() => act(s.id, null)} style={{ all: 'unset', cursor: 'pointer', color: C.cyan, fontWeight: 800 }}>restore</button></div>
       ))}

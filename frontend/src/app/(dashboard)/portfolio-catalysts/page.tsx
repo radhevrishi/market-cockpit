@@ -280,6 +280,7 @@ export default function PortfolioCatalystsPage() {
           persistent MECHANISM with filed evidence and runway. Separate from the
           thesis status and from Research Priority below — never merged. */}
       <SpecialFocusPanel rows={inSource as any} ready={!evidenceLoading && !loading}
+        onReadPrior={(t: string[]) => readPriorPeriods(t)} priorRunning={!!priorBatch?.running}
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
           if (set) return `${set} (set by you)`;

@@ -94,6 +94,10 @@ export interface PersistentCatalyst {
   origins: Array<'portfolio' | 'gainers'>;
   specialFocus: boolean;
   why: string[];                  // why it is (or is not) Special Focus — every line evidence-backed
+  /** What evidence would qualify it — the research to do next. (zzz781) */
+  toQualify: string[];
+  /** Not Special Focus yet, but one or two pieces of evidence away. */
+  nearMiss: boolean;
 }
 
 // ── Metric → mechanism kind ────────────────────────────────────────────────
@@ -106,9 +110,13 @@ const KIND_OF: Record<string, PersistKind> = {
   product_mix: 'MIX_PRICING', margin_driver: 'MIX_PRICING', price: 'MIX_PRICING',
 };
 const TEMPORARY = /inventory (gain|benefit|valuation)|one[- ]off|one[- ]time|exceptional|base effect|raw material (price )?(fall|decline|softening|moderation)|commodity (price )?(fall|decline|softening)|moderation in [a-z]+ prices|forex gain|write[- ]?back|reversal/i;
-const CAPACITY_UNIT = /\b(mtpa|ktpa|tpa|tpd|tpm|mtpd|tons?|tonnes?|mt\b|kl\b|kilo ?lit|klpd|kl\/?d|mw|gw|kw|units?|lines?|sq\.? ?ft|square feet|beds|boutiques|stores|looms|spindles|vessels|vlgcs?|reactors?|furnaces?|kg|litres?|pieces|pcs|sets|mva)\b/i;
+const CAPACITY_UNIT = /(?<![a-z])(mtpa|ktpa|tpa|tpd|tpm|mtpd|tons?|tonnes?|mt\b|kl\b|kilo ?lit|klpd|kl\/?d|mw|gw|kw|units?|lines?|sq\.? ?ft|square feet|beds|boutiques|stores|looms|spindles|vessels|vlgcs?|reactors?|furnaces?|kg|litres?|pieces|pcs|sets|mva)\b/i;
 const MONEY = /₹|\binr\b|\brs\.?\s?\d|\bcrores?\b|\bcr\b|\bmn\b|million|billion|\busd\b|\$/i;
 const PCT = /(\d+(?:\.\d+)?)\s*%/;
+/** A currency marker — "37 million sq ft" is not money. */
+const CUR = /₹|\binr\b|\brs\.?|\bcrores?\b|\bcr\b|\busd\b|\$/i;
+const LIFECYCLE_METRIC = /^(capex_status|commissioning|new_plant)$/;
+const LIFECYCLE_DONE = /commissioned|commercial production|commenced (commercial )?(production|operations)|started (commercial )?production|operational|production (started|commenced)|now running|went live/i;
 
 const iso = (s: string | null | undefined): string | null => (s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null);
 const clip = (s: string, n = 140) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -155,6 +163,9 @@ export function itemsFromLedger(ledger: any): PersistItem[] {
       const cls: EvidenceClass = stmt === 'TARGET' || stmt === 'GUIDANCE' || f?.evidence_type === 'forward' ? 'FORWARD'
         // Capex SPENDING is the announced / spent stage — never a mechanism figure.
         : metric === 'capex' ? 'REMARK'
+        // A filed, dated lifecycle fact ("plant commissioned", "commercial
+        // production started") is hard evidence even without a number.
+        : stmt === 'FACT' && LIFECYCLE_METRIC.test(metric) && LIFECYCLE_DONE.test(`${after} ${f?.source_quote || ''}`.slice(0, 400)) && !/under construction|expected|will be|to be commissioned|planned/i.test(after) ? 'HARD'
         : stmt === 'FACT' && hasFig ? 'HARD' : 'REMARK';
       out.push({
         metric, kind, cls,
@@ -192,10 +203,18 @@ export function itemsFromAssessment(a: any, period: string | null, date: string 
     const kind = KIND_OF[d.key];
     // The ledger already carries capacity / order / volume figures with their
     // sources; the assessment adds what the ledger holds as prose.
-    if (!kind || kind === 'ORDER_VISIBILITY') continue;
-    if (kind === 'CAPACITY_RAMP' && !['volume', 'utilisation', 'capex_earning', 'commissioning', 'capex_status'].includes(d.key)) continue;
-    const hasFig = /\d/.test(d.text) && (MONEY.test(d.text) || PCT.test(d.text) || CAPACITY_UNIT.test(d.text));
-    out.push({ metric: d.key, kind, cls: hasFig ? 'HARD' : 'REMARK', text: d.text, before: null, after: d.text, numeric: null, numericBefore: null,
+    if (!kind) continue;
+    // The assessment's drivers are quality-filtered ACTUAL readings from the
+    // documents read (the ledger's events as well as its facts); a figure in
+    // them — "capacity 5,000 → 9,600 MTPA", "order book ₹140 → ₹225 Cr" — is
+    // filed evidence. The dedup below merges it with the same ledger fact.
+    const body = d.text.replace(/^[a-z /]+:\s*/i, '');
+    const ba = /^(.+?)\s*→\s*(.+?)(?:\s*\([+-]?[\d.]+%\))?$/.exec(body);
+    const before = ba ? ba[1].replace(/^[a-z ]+\s(?=\d)/i, '').trim() : null;
+    const after = ba ? ba[2].trim() : body;
+    const hasFig = /\d/.test(d.text) && (MONEY.test(d.text) || PCT.test(d.text) || CAPACITY_UNIT.test(d.text) || /\d(\.\d+)?\s*x\b/i.test(d.text));
+    if ((d.key === 'capacity' || d.key === 'capacity_addition') && !CAPACITY_UNIT.test(d.text) && !/\d(\.\d+)?\s*x\b|doubl/i.test(d.text)) continue;
+    out.push({ metric: d.key, kind, cls: hasFig ? 'HARD' : 'REMARK', text: d.text, before, after, numeric: scaledNumber(after), numericBefore: before ? scaledNumber(before) : null,
       period, date, sources: [{ name: 'documents read this period', url: null, date, quote: null }], origin: 'assessment' });
   }
   return out;
@@ -265,6 +284,7 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     if (i.metric === 'capacity') return i.numericBefore != null && i.numeric != null && i.numeric > i.numericBefore;
     if (i.metric === 'volume') return volGrowth(i) || (i.numericBefore != null && i.numeric != null && i.numeric > i.numericBefore * 1.05);
     if (i.metric === 'book_to_bill') return /\d\s*x\b/i.test(i.after || '');
+    if (LIFECYCLE_METRIC.test(i.metric)) return LIFECYCLE_DONE.test(i.text) && !/under construction|expected|will be|to be commissioned|planned/i.test(i.text);
     return true;
   };
   const mech = items.filter(isMech);
@@ -340,7 +360,13 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     // already is (a 35% "target" under 65% actual utilisation is mislabelled).
     const f = forward.find((i) => /commission|phase|capacity|utili/i.test(`${i.metric} ${i.text}`)
       && !(i.metric === 'utilisation' && utilNow != null && (pctMax(i.after) ?? 101) <= utilNow)
-      && !(i.metric === 'utilisation' && !PCT.test(i.after || '')));
+      && !(i.metric === 'utilisation' && !PCT.test(i.after || ''))
+      // A capacity target must be bigger than today's capacity, in the same unit (HSCL "200 MTPA" under 5,300 MTPA).
+      && !((i.metric === 'capacity' || i.metric === 'capacity_addition') && i.numeric != null && (() => {
+        const base = add || capNow;
+        if (!base || base.numeric == null) return false;
+        return unitKey(i.after) !== unitKey(base.after) || i.numeric <= base.numeric;
+      })()));
     nextMilestone = f ? `${clip(f.text, 150)} (management ${/target/i.test(f.text) || f.metric === 'utilisation' ? 'target' : 'guidance'}, ${f.date || f.period || 'undated'} — not a result)`
       : !commissioned && (add || addOnly) ? 'Commissioning of the added capacity'
         : utilNow == null ? 'First disclosed utilisation figure for the new capacity'
@@ -348,10 +374,10 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     confirmWith = 'utilisation rising on the new base, volume growth, and a disclosed revenue / EBITDA contribution';
     invalidateIf = 'utilisation falls, volume declines, or the new capacity stays idle / is delayed';
   } else if (kind === 'ORDER_VISIBILITY') {
-    const ob = series(items, 'order_book').filter((i) => MONEY.test(i.after || ''));
+    const ob = series(items, 'order_book').filter((i) => CUR.test(i.after || ''));
     const btb = items.find((i) => i.metric === 'book_to_bill' && i.cls === 'HARD');
     const btbX = btb ? Number((/(\d+(?:\.\d+)?)\s*x/i.exec(btb.after || '') || [])[1]) : NaN;
-    const sameMoney = (i: PersistItem) => MONEY.test(i.before || '') && MONEY.test(i.after || '');
+    const sameMoney = (i: PersistItem) => CUR.test(i.before || '') && CUR.test(i.after || '');
     const obUp = items.find((i) => i.metric === 'order_book' && i.cls === 'HARD' && sameMoney(i) && i.numericBefore != null && i.numeric != null && i.numeric > i.numericBefore);
     const obDown = items.find((i) => i.metric === 'order_book' && i.cls === 'HARD' && sameMoney(i) && i.numericBefore != null && i.numeric != null && i.numeric < i.numericBefore * 0.97)
       || (ob.length >= 2 && ob[ob.length - 1].numeric! < ob[0].numeric! * 0.97 ? ob[ob.length - 1] : null);
@@ -444,10 +470,29 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     firstEvidenceDate: dated[0] || null, latestEvidenceDate: latest, freshness: ageDays <= 200 ? 'CURRENT' : 'HISTORICAL',
     periods, hardCount: mech.length, distinctMetrics: metrics.size, temporarySignals: temporary,
     origins: [...new Set([...ctx.origins, ...(items.some((i) => i.origin === 'gainer') ? ['gainers' as const] : [])])],
-    specialFocus: false, why: [],
+    specialFocus: false, why: [], toQualify: [], nearMiss: false,
   };
   const sf = specialFocusGate(pc, ctx.thesisStatus);
   pc.specialFocus = sf.ok; pc.why = sf.why;
+  if (!pc.specialFocus) {
+    const q: string[] = [];
+    const where = pc.periods.length <= 1 ? ' — usually in the prior or next quarter\'s documents' : '';
+    if (pc.hardCount < 2) q.push(`a second filed mechanism figure (${kind === 'ORDER_VISIBILITY' ? 'order book, order intake or book-to-bill' : kind === 'CUSTOMER_RAMP' ? 'order value or supply volume' : 'utilisation, volume or commissioning'})${where}`);
+    if (kind === 'CAPACITY_RAMP' && pc.state === 'IDENTIFIED') q.push('commissioning / production evidence for the added capacity');
+    if (kind === 'CUSTOMER_RAMP' && pc.state === 'IDENTIFIED') q.push('a commercial order after the qualification');
+    if (!pc.runway.ok) q.push(kind === 'CAPACITY_RAMP' ? 'utilisation on the new base, or the installed base in the same unit as the addition'
+      : kind === 'ORDER_VISIBILITY' ? 'order book growth over two readings, book-to-bill, or order book against revenue' : 'evidence of continuing volume');
+    if (pc.freshness === 'HISTORICAL') q.push('a current-period read');
+    if (pc.temporarySignals.length) q.push('the same gain repeating without the one-off');
+    if (!q.length) q.push(String(pc.why[pc.why.length - 1] || '').replace(/^Not Special Focus:\s*/, ''));
+    pc.toQualify = [...new Set(q)].filter(Boolean);
+    // A near miss is a VALIDATED-or-better mechanism (or a medium-evidence one)
+    // missing one or two named pieces — not every early mention.
+    pc.nearMiss = ctx.thesisStatus !== 'BROKEN' && kind !== 'MIX_PRICING' && pc.confidence !== 'TEMPORARY_UNCERTAIN'
+      && pc.hardCount >= 1 && pc.freshness === 'CURRENT' && !['STALLING', 'WEAKENING', 'MATURE'].includes(pc.state)
+      && (pc.confidence === 'MEDIUM' || pc.confidence === 'HIGH' || (kind !== 'GEOGRAPHY' && ['VALIDATED', 'RAMPING', 'SCALING'].includes(pc.state)))
+      && pc.toQualify.length <= 2;
+  }
   return pc;
 }
 
@@ -480,6 +525,9 @@ export interface DetectInput {
   /** Latest FILED quarterly revenue (₹ Cr) — scales an order book into
    *  years of revenue. Never price. */
   quarterRevenueCr?: number | null;
+  /** Other catalyst filings in the gainers window (pre-classified server-side,
+   *  Finding-shaped) — a second order is a repeat order, not a new catalyst. */
+  extraFindings?: any[] | null;
   origin: 'portfolio' | 'gainers';
   today?: string;
 }
@@ -492,6 +540,7 @@ export function detectPersistentCatalysts(inp: DetectInput): PersistentCatalyst[
     ...(inp.ledger ? itemsFromLedger(inp.ledger) : []),
     ...(inp.assessment ? itemsFromAssessment(inp.assessment, latestPeriod, latestDate) : []),
     ...(inp.finding ? itemsFromFinding(inp.finding) : []),
+    ...((inp.extraFindings || []).flatMap((f) => itemsFromFinding(f))),
   ]);
   const temporary = [
     ...(inp.ledger ? temporarySignalsFromLedger(inp.ledger) : []),
