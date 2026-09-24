@@ -133,6 +133,8 @@ export interface ScoreComponents {
 }
 
 export interface Finding {
+  /** zzz780: persistence test of this event (+ the ledger, when the company has one). Never price. */
+  persistence?: import('@/lib/catalyst/persistence').PersistSummary | null;
   ticker: string;
   company: string | null;
   market: 'IN' | 'US';

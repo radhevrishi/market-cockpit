@@ -154,6 +154,8 @@ export interface ResearchItem {
   /** EVENT → DRIVER → REVENUE → MARGIN → EPS/FCF → VALUATION; unsupported steps say "TBD" / "Not disclosed". */
   transmissionChain: string[];
   persistence: Persistence;
+  /** zzz780: persistent-catalyst test of the event (never price). */
+  persistentCatalyst?: import('@/lib/catalyst/persistence').PersistSummary | null;
   expectationGap: { level: GapLevel; text: string; direction?: 'EXPECTATION_HEAVY' | 'UNDER_REFLECTED' | 'ALIGNED' | null };
   /** Named unknowns: "Order margin: Not disclosed", "Revenue timing: Not disclosed". */
   unknowns: string[];
@@ -1242,6 +1244,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     priority: 0, priorityReasons: [], scoreDetails: null,
     eventLabel: label || type, action: isContext ? 'Monitor' : actionOf(cls, portfolio.relevance), move: mv, findingStatus: status, notes, ageDays,
     catalystFor, ...displayNameOf(ticker, company), scanNote,
+    persistentCatalyst: f?.persistence ?? null,
     news: f?.news ? { narrative: f.news.narrative ? { label: f.news.narrative.label, days: f.news.narrative.days, firstDate: f.news.narrative.firstDate, lastDate: f.news.narrative.lastDate, lead: f.news.narrative.lead } : null, items: f.news.items.slice(0, 3).map((x) => ({ title: x.title, url: x.url, date: x.date, source: x.source })) } : null,
   };
   const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;

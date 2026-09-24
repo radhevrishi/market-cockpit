@@ -32,6 +32,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/ai-gainers/research',
   '/api/v1/india/ai-summary',
   '/api/v1/haiku/',
+  '/api/v1/special-focus',       // zzz780 — research memory
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */

@@ -41,6 +41,25 @@ import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
 import { yahooChart } from '@/lib/us-prices';
 import { fetchBseAnnouncementsLite } from '@/lib/thesis/evidence-discovery';
 import { buildNewsContext, type NewsContext } from '@/lib/ai-gainers/news-context';
+import { detectPersistentCatalysts, summarizePersistence, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
+import { upsertDetections } from '@/lib/catalyst/persistence-store';
+import { loadLedger } from '@/lib/thesis/evidence-store';
+
+// ── zzz780: DAILY GAINER → EVENT → EVIDENCE → PERSISTENCE TEST ───────────
+// The move is only the discovery trigger: the test reads the filing behind
+// it plus the company's evidence ledger (when there is one). Price never
+// enters. Detections worth remembering go to the shared persistence memory.
+async function withPersistence(f: Finding, sink: PersistentCatalyst[]): Promise<Finding> {
+  if (!f || f.status !== 'catalyst' || !PERSIST_CATEGORIES.has(String(f.category || ''))) return f;
+  try {
+    const ledger = f.market === 'IN' ? await loadLedger(f.ticker).catch(() => null) : null;
+    const list = detectPersistentCatalysts({ ticker: f.ticker, ledger, finding: f, origin: 'gainers' });
+    const mine = list.filter((p) => p.evidence.some((e) => e.origin === 'gainer'));
+    const best = mine[0] || null;
+    for (const p of list) if (p.specialFocus || p.confidence === 'HIGH' || p.confidence === 'MEDIUM') sink.push(p);
+    return { ...f, persistence: best ? summarizePersistence(best, !!ledger) : null };
+  } catch { return f; }
+}
 
 /** Press coverage for one gainer, cached for the day. Secondary evidence
  *  only: it explains where to look, it never scores. A failure is an empty
@@ -356,6 +375,7 @@ async function research(req: NextRequest, body: any) {
   // count is KEPT: re-used reads come from the 30-day cache and cost nothing,
   // and the daily ceiling still bounds any new read. (zzz768)
   if (body?.reprocess === true) { st.findings = {}; st.inputs = {}; }
+  const persistSink: PersistentCatalyst[] = [];   // zzz780
   const todo = st.universe
     .filter((u) => !st.findings[u.ticker] || st.findings[u.ticker].status === 'unresearched' || (st.findings[u.ticker].status === 'source_failed' && body?.retry_failed))
     .sort((a, b) => (b.movePct ?? -Infinity) - (a.movePct ?? -Infinity));
@@ -444,6 +464,7 @@ async function research(req: NextRequest, body: any) {
         ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap, turnover,
         announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult, news,
       }), rulesVersion: RULES_VERSION };
+      st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink);
       st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news }, WINDOW_DAYS, now);
       done++;
     } catch (e: any) {
@@ -465,6 +486,7 @@ async function research(req: NextRequest, body: any) {
   await Promise.all(workers);
   // Always persist at the end — also when only the universe or moves changed.
   await save();
+  if (persistSink.length) await upsertDetections(persistSink, 'gainers').catch(() => null);
 
   return NextResponse.json({
     ok: true, market, date, session: market === 'IN' ? indiaSession(now) : null,
@@ -500,6 +522,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
   const holdings = await loadHoldings(origin);
   const stale = new Set(staleRuleTickers(st.findings, st.universe.map((u) => u.ticker)));
   let rescored = 0, failed = 0;
+  const persistSink: PersistentCatalyst[] = [];   // zzz780
   for (const u of st.universe) {
     if (!stale.has(u.ticker)) continue;
     if (Date.now() - t0 > budget) break;
@@ -543,10 +566,11 @@ async function rescoreOnly(req: NextRequest, body: any) {
       }
       st.inputs[u.ticker] = inputs;
       const f = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
-      st.findings[u.ticker] = f;
+      st.findings[u.ticker] = await withPersistence(f, persistSink);
       rescored++;
     } catch { failed++; }
   }
+  if (persistSink.length) await upsertDetections(persistSink, 'gainers').catch(() => null);
   if (rescored) {
     st.updated_at = new Date().toISOString();
     stampRules(st);

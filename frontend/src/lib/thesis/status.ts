@@ -380,6 +380,9 @@ export interface ThesisAssessment {
    *  earning, customers, approvals). Never price, never an instruction.
    *  Null unless the thesis is STRENGTHENING or ON TRACK. */
   catalystRank?: CatalystRank | null;
+  /** zzz780: the mechanism drivers the documents evidence (quality-filtered),
+   *  for every status — the persistence layer reads these. */
+  mechanismEvidence?: Array<{ key: string; text: string }>;
   thesis: Thesis;
   /** Every variable the thesis rests on, disclosed or not. */
   checked: CheckedVariable[];
@@ -2325,7 +2328,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       why: `${outBits || 'output improved'}; ${drivers.length} evidenced catalyst group${drivers.length === 1 ? '' : 's'} (${drivers.map((d) => d.group).join(', ') || 'none'})` };
   })();
   return {
-    verdict, catalystRank,
+    verdict, catalystRank, mechanismEvidence: [...mechEvidence].map(([key, text]) => ({ key: key as string, text })),
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
     historicalContext, currentPeriod: curPeriod,
     logicChain, coreMechanismGaps: coreMechanismGaps.map((c) => c.label),

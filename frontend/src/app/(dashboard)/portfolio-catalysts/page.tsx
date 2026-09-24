@@ -34,6 +34,7 @@ import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { useMemo, useState } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
+import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/special-focus-panel';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
@@ -113,6 +114,9 @@ export default function PortfolioCatalystsPage() {
       return a.symbol.localeCompare(b.symbol);
     });
   }, [sized, filter, onlyRead, source]);
+
+  // zzz780 — persistence test per holding, from its ledger + assessment only.
+  const persistBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, detectForRow(r as any)] as const)), [list]);
 
   // COUNTS COME FROM THE LEDGER, not from a transient counter. A name has
   // evidence when its persisted ledger holds a period — that is what
@@ -271,6 +275,18 @@ export default function PortfolioCatalystsPage() {
           </div>
         );
       })()}
+
+      {/* ── 🔥 SPECIAL FOCUS. (zzz780) A cross-cutting research layer: a
+          persistent MECHANISM with filed evidence and runway. Separate from the
+          thesis status and from Research Priority below — never merged. */}
+      <SpecialFocusPanel rows={inSource as any} ready={!evidenceLoading && !loading}
+        thesisLabel={(r: any) => {
+          const set = thesisTypes[String(r.symbol).toUpperCase()];
+          if (set) return `${set} (set by you)`;
+          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional)` : `${r.pattern.pattern} (auto)`;
+          return 'Not set';
+        }}
+        onJump={(t: string) => { setFilter(null); setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />
 
       {/* ── TOP CATALYSTS. (zzz776) The intact theses ranked by how strong the
           EVIDENCED catalyst is — output growth plus the mechanism drivers the
@@ -554,6 +570,7 @@ export default function PortfolioCatalystsPage() {
       })()}
       {list.map((r) => (
         <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
+        {!evidenceLoading && <PersistentStrip pcs={persistBySymbol.get(r.symbol) || []} onOpenFocus={() => document.getElementById('special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
         <ThesisCard
           thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
           onThesisType={(t) => setThesisType(r.symbol, t)}

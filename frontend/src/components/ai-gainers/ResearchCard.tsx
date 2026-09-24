@@ -153,6 +153,21 @@ export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; ra
           {txt(it.portfolio.note, '')}
         </div>
       )}
+      {/* zzz780 — PERSISTENCE TEST. The move only triggered it; the filing
+          and the company's evidence ledger decide it. Never price. */}
+      {it.persistentCatalyst && (it.persistentCatalyst.confidence === 'HIGH' || it.persistentCatalyst.confidence === 'MEDIUM' || it.persistentCatalyst.specialFocus) && (
+        <div data-testid="persistent-catalyst" style={{ fontSize: 13, color: C.dim, border: `1px solid ${C.amber}`, borderRadius: 6, padding: '6px 9px', lineHeight: 1.5 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+            <b style={{ color: C.amber }}>🔥 {it.persistentCatalyst.specialFocus ? 'Special Focus · persistent catalyst' : 'Persistent catalyst candidate'}</b>
+            <span style={{ fontWeight: 800, color: C.text }}>{it.persistentCatalyst.label}</span>
+            <span style={{ ...label }}>{it.persistentCatalyst.confidence === 'HIGH' ? 'high persistence evidence' : it.persistentCatalyst.confidence === 'MEDIUM' ? 'medium persistence evidence' : 'early'} · {it.persistentCatalyst.state.toLowerCase()}{it.persistentCatalyst.ledgerBacked ? ' · with the evidence ledger' : ' · this filing only'}</span>
+          </div>
+          <div>{it.persistentCatalyst.mechanism}</div>
+          <div style={{ color: C.faint }}>Runway: {it.persistentCatalyst.runway}</div>
+          {it.persistentCatalyst.nextMilestone && <div style={{ color: C.faint }}>Next milestone: {it.persistentCatalyst.nextMilestone}</div>}
+          <a href="/portfolio-catalysts#special-focus" style={{ fontSize: 12, fontWeight: 800, color: C.amber }}>Open Special Focus →</a>
+        </div>
+      )}
       {reasons.length > 0 && (
         <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.5 }}>
           <span style={{ ...label, marginRight: 6 }}>WHY RESEARCH PRIORITY #{rank}</span>{reasons.join(' · ')}

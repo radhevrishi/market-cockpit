@@ -269,6 +269,9 @@ export function ResearchTriage(props: ResearchTriageProps) {
                     <CatalystForBadge it={it} />
                     <SourceBadge it={it} />
                     <BandChip it={it} />
+                    {it.persistentCatalyst && (it.persistentCatalyst.specialFocus || it.persistentCatalyst.confidence === 'HIGH' || it.persistentCatalyst.confidence === 'MEDIUM') && (
+                      <Pill color={C.amber} title={`${it.persistentCatalyst.label}: ${it.persistentCatalyst.mechanism}. Runway: ${it.persistentCatalyst.runway}`}>🔥 {it.persistentCatalyst.specialFocus ? 'SPECIAL FOCUS' : 'PERSISTENT?'}</Pill>
+                    )}
                   </span>
                   <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                 </div>
