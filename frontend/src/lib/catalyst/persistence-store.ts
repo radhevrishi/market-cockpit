@@ -15,6 +15,8 @@
 
 import { kvGet, kvSet } from '@/lib/kv';
 import type { PersistentCatalyst, PersistState, PersistConfidence } from './persistence';
+import type { CatalystRecord } from '@/lib/ai-gainers/structured-facts';
+import { buildCatalystRecords, factsForFinding, toStoredRecord } from '@/lib/ai-gainers/catalyst-timeline';
 
 export const PERSIST_KEY = 'persist:v1:all';
 export type UserFocusState = 'confirmed' | 'watch' | 'dismissed' | 'archived' | 'reviewed';
@@ -128,4 +130,73 @@ export function focusStatus(rec: StoredCatalyst): { inQueue: boolean; decayed: b
     return { inQueue: true, decayed: true, note: why };
   }
   return { inQueue: false, decayed: false, note: null };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CATALYST TIMELINE MEMORY                                         (zzz785 C)
+//
+// One record per UNDERLYING catalyst (`TICKER:kind:anchor`, catalystIdOf) —
+// state IDENTIFIED → DOCUMENTED → EXECUTING → CONFIRMED → WEAKENING →
+// DISPROVED with previousState, latestEvidence, nextMilestone, invalidation
+// and its de-duplicated sources, oldest first. Stored so a LATER day's gainer
+// sees the state an earlier day reached (the ladder never slides back without
+// contrary evidence). Separate from `persist:v1:all` (mechanism memory for
+// Special Focus) — the two are linked by ticker, never merged.
+//
+// KV: ONE blob `catalyst:v1:records` = { version: 1, records: { [id]: CatalystRecord } }.
+// One read + one write per sweep. No TTL (memory, not cache); bounded at
+// MAX_RECORDS by evicting the oldest `lastSeen`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+export const CATALYST_KEY = 'catalyst:v1:records';
+const MAX_RECORDS = 4000;
+export interface CatalystBlob { version: 1; records: Record<string, CatalystRecord> }
+
+export async function loadCatalystRecords(): Promise<Record<string, CatalystRecord>> {
+  const b = await kvGet<CatalystBlob>(CATALYST_KEY).catch(() => null);
+  return b && b.records && typeof b.records === 'object' ? b.records : {};
+}
+
+/** Pure: today's findings merged into the stored records. Returns the new
+ *  record map and how many records changed (state, sources or milestone). */
+export function mergeCatalystFindings(prior: Record<string, CatalystRecord>, findings: Record<string, any>, today: string | null): { records: Record<string, CatalystRecord>; changed: number } {
+  const records: Record<string, CatalystRecord> = { ...prior };
+  let changed = 0;
+  for (const f of Object.values(findings || {})) {
+    if (!f || !f.ticker) continue;
+    const facts = factsForFinding(f);
+    if (!facts.length) continue;
+    const views = buildCatalystRecords(String(f.ticker), f.market === 'US' ? 'US' : 'IN', facts, { prior: records, today });
+    for (const v of views) {
+      const next = toStoredRecord(v);
+      const old = records[next.id];
+      const same = old && old.state === next.state && old.sources.length === next.sources.length && old.nextMilestone === next.nextMilestone && old.latestEvidence === next.latestEvidence;
+      if (!same) changed++;
+      records[next.id] = same ? { ...old, lastSeen: next.lastSeen } : next;
+    }
+  }
+  const ids = Object.keys(records);
+  if (ids.length > MAX_RECORDS) {
+    ids.sort((a, b) => String(records[a].lastSeen).localeCompare(String(records[b].lastSeen)));
+    for (const id of ids.slice(0, ids.length - MAX_RECORDS)) delete records[id];
+  }
+  return { records, changed };
+}
+
+/** Server-side, once per research sweep: read the stored records, merge the
+ *  day's findings, write back only when something changed. Best-effort. */
+export async function rememberGainerCatalysts(findings: Record<string, any>, today: string | null): Promise<{ changed: number; records: Record<string, CatalystRecord> }> {
+  const prior = await loadCatalystRecords();
+  const { records, changed } = mergeCatalystFindings(prior, findings, today);
+  if (changed) await kvSet(CATALYST_KEY, { version: 1, records } as CatalystBlob).catch(() => null);
+  return { changed, records };
+}
+
+/** Records for a set of tickers (what a research view needs). */
+export function catalystRecordsFor(all: Record<string, CatalystRecord>, tickers: string[]): Record<string, CatalystRecord> {
+  const on = new Set(tickers.map((t) => String(t).toUpperCase()));
+  const out: Record<string, CatalystRecord> = {};
+  for (const [id, r] of Object.entries(all || {})) if (r && on.has(String(r.ticker).toUpperCase())) out[id] = r;
+  return out;
 }

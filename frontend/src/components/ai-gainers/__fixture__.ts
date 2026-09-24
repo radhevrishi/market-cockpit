@@ -44,6 +44,23 @@ const PACE = mk({
   priority: 86, priorityReasons: ['Fresh event (1 day)', 'Material vs revenue', 'Verified document', 'New business line'],
   catalystFor: 'THIS_MOVE', ageDays: 1,
   scoreDetails: { freshness: 100, materiality: 90, transmission: 70, persistence: 80, sourceMult: 1, pricedIn: 0.3 },
+  // zzz785 demo: a two-filing thread with press merged, a persistence test and breadth.
+  timeline: [
+    { date: '2026-06-14', title: 'Demo: first BESS order from the same utility', kind: 'EXCHANGE_FILING', kindWord: 'Exchange filing', access: 'DOCUMENT_READ', url: null, eventKind: 'order', status: 'official', catalystId: 'PACEDIGITK:order:demo-utility' },
+    { date: '2026-09-22', title: 'Letter of Award for ₹488 Cr BESS project', kind: 'EXCHANGE_FILING', kindWord: 'Exchange filing', access: 'DOCUMENT_READ', url: 'https://www.bseindia.com/', eventKind: 'order', status: 'official', catalystId: 'PACEDIGITK:order:demo-utility' },
+    { date: '2026-09-22', title: 'Demo press: Pace Digitek bags BESS order', kind: 'PRESS', kindWord: 'Press', access: 'SUMMARY_ONLY', url: null, eventKind: 'order', status: 'secondary · confirmed by filing', catalystId: 'PACEDIGITK:order:demo-utility' },
+  ],
+  catalysts: [{ id: 'PACEDIGITK:order:demo-utility', kind: 'order', kindWord: 'Order', title: 'Order — Demo Utility', state: 'EXECUTING', stateWord: 'Executing — follow-up evidence on file', previousState: 'DOCUMENTED',
+    latestEvidence: '2026-09-22 · Exchange filing: Letter of Award for ₹488 Cr BESS project', nextMilestone: 'First execution or billing update against this order (next results or order-book disclosure)',
+    invalidation: 'Order cancelled, cut or delayed, or no revenue from it by the end of the stated execution period.', polarity: 'positive', verification: 'Official filing on file · press merged into it',
+    materialityText: '₹488 Cr ÷ ₹4,120 Cr market cap = 11.8%', firstSeen: '2026-06-14', lastSeen: '2026-09-22', duplicatesMerged: 1, documents: 3 }],
+  persistenceTest: { mechanism: 'Order of ₹488 Cr adds to the order book → revenue as it is executed.', runway: 'Execution period 18 months (as disclosed)', evidence: 'Follow-up official evidence on file (2 dated filings).',
+    repeatability: '2 filings about the same customer / programme — repeat business.', duration: '18 months', milestone: 'First execution or billing update against this order (next results or order-book disclosure)',
+    invalidation: 'Order cancelled, cut or delayed, or no revenue from it by the end of the stated execution period.', grade: 'HIGH',
+    why: 'Filed mechanism with a stated runway and repeat business on file, so the effect can carry across several periods.',
+    potential: 'Could last years (by type of event)', evidenceSupported: 'Commercial order on file — covers one execution period.', expectedDuration: '18 months (as disclosed)' },
+  evidenceBreadth: { documents: 3, sourceKinds: 2, eventKinds: 1, text: '3 documents · 2 source kinds · 1 event kind' },
+  verification: 'Official filing on file · press merged into it',
 });
 
 const PEARL = mk({

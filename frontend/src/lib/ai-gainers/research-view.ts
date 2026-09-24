@@ -23,6 +23,9 @@
 
 import type { Finding } from './catalyst-research';
 import { presentErrorLines } from './research-present';
+import type { CatalystRecord, EventKind, StructuredFacts } from './structured-facts';
+import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
+import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
 
 /** The six states every gainer ends in (spec §4), plus data states. */
 export type EventClass =
@@ -201,7 +204,44 @@ export interface ResearchItem {
   displayCode?: string | null;
   /** For NO_CATALYST rows: what was actually scanned, so "no catalyst" is never read as "nothing happened". */
   scanNote?: string | null;
+  // ── zzz785 C — timeline / dedup / persistence (all optional) ──
+  /** The catalyst records behind this card (primary first): one per UNDERLYING
+   *  catalyst, repeated headlines / press / filings merged, with its state. */
+  catalysts?: CatalystCard[];
+  /** The primary catalyst's thread timeline (related filings, oldest → newest). */
+  timeline?: TimelineEntry[];
+  /** Explicit persistence test (mechanism, runway, evidence, repeatability,
+   *  disclosed duration, milestone, invalidation → grade + why). */
+  persistenceTest?: PersistenceTestView | null;
+  /** Three distinct gap labels: No catalyst / Evidence incomplete / Unclassified. */
+  evidenceGap?: { code: EvidenceGap; label: string; text: string } | null;
+  /** Independent evidence dimensions — never a raw item count. */
+  evidenceBreadth?: EvidenceBreadth | null;
+  /** Economics unknown: stays visible, labelled, never silently sorted away. */
+  economicsUnknown?: { label: string; missing: string[] } | null;
+  /** 'Official filing' / 'Secondary · verification required' / … */
+  verification?: string | null;
+  /** Links to the thesis ledger and Special Focus — separate views, linked by ticker. */
+  links?: { thesis: string | null; specialFocus: string | null; note: string } | null;
 }
+
+/** One catalyst record as a card shows it. */
+export interface CatalystCard {
+  id: string; kind: EventKind; kindWord: string; title: string;
+  state: CatalystRecord['state']; stateWord: string; previousState: CatalystRecord['previousState'];
+  latestEvidence: string | null; nextMilestone: string | null; invalidation: string | null;
+  polarity: 'positive' | 'negative' | 'neutral'; verification: string;
+  /** Size against market cap when an amount is stated; else "amount not stated". */
+  materialityText: string | null;
+  firstSeen: string; lastSeen: string; duplicatesMerged: number; documents: number;
+}
+
+export const GAP_LABEL: Record<EvidenceGap, { label: string; text: string }> = {
+  NO_CATALYST: { label: 'No catalyst', text: 'Filings in the window were checked; none explains the move.' },
+  EVIDENCE_INCOMPLETE: { label: 'Evidence incomplete', text: 'An event was found, but its documents were not fully read — the size and terms are not established yet.' },
+  UNCLASSIFIED: { label: 'Unclassified', text: 'A filing exists but its subject says nothing classifiable — open it before concluding anything.' },
+};
+export const UNKNOWN_NEEDS_READING = 'Unknown — needs reading';
 
 export interface ResearchView {
   session: {
@@ -236,6 +276,9 @@ export interface ResearchView {
   /** zzz771: items whose only event is older than the move window (catalystFor === 'CONTEXT'),
    *  ranked by their own priority. Rendered collapsed under "Older filings — context, not the catalyst". */
   context?: ResearchItem[];
+  /** zzz785: live events whose economics are Unknown — every one, ranked, labelled
+   *  "Unknown — needs reading" (never dropped by the queue / watch caps). */
+  needsReading?: ResearchItem[];
 }
 
 export interface ResearchViewInput {
@@ -257,6 +300,9 @@ export interface ResearchViewInput {
   /** Optional ISO instant used to age a filed result that carries only a
    *  date. Never read from the clock: the builder stays deterministic. */
   now?: string | null;
+  /** zzz785: catalyst records stored on earlier days (persistence-store
+   *  loadCatalystRecords), keyed by id — a later gainer sees the prior state. */
+  priorCatalysts?: Record<string, CatalystRecord> | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -567,20 +613,38 @@ export function allotteesOf(text: string): string[] {
   return out.slice(0, 4);
 }
 
-interface FundraiseRead { cls: EventClass; label: string; mat: Materiality; allottees: string[]; distress: boolean; resale: boolean; named: boolean }
+interface FundraiseRead { cls: EventClass; label: string; mat: Materiality; allottees: string[]; distress: boolean; resale: boolean; named: boolean; missing: string[] }
 
-function fundraisingOf(hay: string, stage: Stage, value: number | null, mcap: number | null, market: 'IN' | 'US', verifiedValue: boolean, usRegistration: boolean): FundraiseRead {
+/** zzz785: a raise's materiality is Unknown until amount, issue price,
+ *  allottees AND dilution are known — this names the missing ones. */
+export function fundraiseMissing(hay: string, value: number | null, named: boolean, sf: StructuredFacts | null): string[] {
+  const e = sf?.economics;
+  const miss: string[] = [];
+  if (value == null && e?.valueNative == null) miss.push('amount');
+  if (e?.issuePrice == null && !/(?:at|price of|issue price|@)\s*(?:₹|rs\.?|inr|\$)\s*[\d,.]+|(?:₹|rs\.?|inr|\$)\s*[\d,.]+\s*(?:per|each|a) (?:equity )?(?:share|warrant|unit)/i.test(hay)) miss.push('issue price');
+  if (!named && !(e?.allottees && e.allottees.length)) miss.push('allottees');
+  if (e?.dilutionPct == null && !/\d+(?:\.\d+)?\s*%\s*(?:dilution|of (?:the )?(?:post[- ]issue|paid[- ]up|expanded|share capital|equity))/i.test(hay)) miss.push('dilution');
+  return miss;
+}
+
+function fundraisingOf(hay: string, stage: Stage, value: number | null, mcap: number | null, market: 'IN' | 'US', verifiedValue: boolean, usRegistration: boolean, sf: StructuredFacts | null = null): FundraiseRead {
   const resale = usRegistration && RX_RESALE.test(hay);
   const distress = RX_DISTRESS.test(hay);
   const allottees = allotteesOf(hay);
   const named = allottees.length > 0;
-  if (resale) return { cls: 'NO_CATALYST', label: 'Resale registration (supply overhang) — not a new raise', mat: { label: 'UNKNOWN', ratios: [], explanation: 'No new proceeds: existing or future stock registered for sale — nothing to size against market cap.' }, allottees, distress, resale, named };
-  const mat = valueMateriality(value, mcap, null, market, 'fundraise', verifiedValue, false);
-  if (mat.ratios.length) mat.explanation = mat.explanation.replace(/^(Large|Meaningful|Small) relative to market cap \(no revenue figure on the row\)/, '$1 issue relative to market cap');
+  if (resale) return { cls: 'NO_CATALYST', label: 'Resale registration (supply overhang) — not a new raise', mat: { label: 'UNKNOWN', ratios: [], explanation: 'No new proceeds: existing or future stock registered for sale — nothing to size against market cap. A resale overhang does not by itself mean the price must fall.' }, allottees, distress, resale, named, missing: [] };
+  const mat0 = valueMateriality(value ?? sf?.economics.valueNative ?? null, mcap, null, market, 'fundraise', verifiedValue, false);
+  if (mat0.ratios.length) mat0.explanation = mat0.explanation.replace(/^(Large|Meaningful|Small) relative to market cap \(no revenue figure on the row\)/, '$1 issue relative to market cap');
+  const missing = fundraiseMissing(hay, value, named, sf);
+  // The issue ÷ market cap ratio is kept as SCALE; the label says Unknown
+  // while any of amount / price / allottees / dilution is missing. (zzz785)
+  const mat: Materiality = missing.length
+    ? { label: 'UNKNOWN', ratios: mat0.ratios, explanation: `Materiality: Unknown — missing: ${missing.join(', ')}.${mat0.ratios.length ? ` Scale only: ${mat0.ratios[0].text}.` : ''}` }
+    : mat0;
   const label = `Fundraising — ${named ? allottees.join(', ') : 'allottees not stated'}`;
-  if (distress) return { cls: 'NEGATIVE', label: `${label} (distress markers)`, mat, allottees, distress, resale, named };
-  const cls: EventClass = stage === 'EXECUTED' && mat.label === 'SMALL' ? 'CONFIRMED_LOW_MATERIALITY' : 'POTENTIAL_UNVERIFIED';
-  return { cls, label, mat, allottees, distress, resale, named };
+  if (distress) return { cls: 'NEGATIVE', label: `${label} (distress markers)`, mat, allottees, distress, resale, named, missing };
+  const cls: EventClass = stage === 'EXECUTED' && mat0.label === 'SMALL' ? 'CONFIRMED_LOW_MATERIALITY' : 'POTENTIAL_UNVERIFIED';
+  return { cls, label, mat, allottees, distress, resale, named, missing };
 }
 
 function earningsMateriality(e: EarningsMini | null, f: FiledRow | null, market: 'IN' | 'US'): Materiality {
@@ -600,18 +664,21 @@ function earningsMateriality(e: EarningsMini | null, f: FiledRow | null, market:
 const NEXT: Record<string, string[]> = {
   // zzz782: research questions per EVENT TYPE — what the owner needs to know
   // next for that kind of event, not one generic list.
-  order: ['What is the order value, and what % of FY revenue is this order?', 'Over what period is revenue recognised, and when does revenue start?', 'What margin does it carry versus the company average?', 'What is the total order book after this order (order book ÷ revenue)?', 'Is capacity in place to execute it, or is new capex needed?', 'Is it repeatable (framework, repeat customer) or one-off?', 'How concentrated is revenue on this client (client concentration)?', 'What working capital or advances does it need?'],
+  // zzz785: specific, checkable questions — each names what to look for and where.
+  order: ['Order value stated? What % of last full-year revenue is it?', 'Execution period and when billing starts — stated in the filing?', 'Customer named? A repeat customer (earlier orders in the catalyst timeline)?', 'Order book after this order ÷ trailing revenue — from the latest investor presentation', 'Margin on this order versus the company average — ask at the next concall', 'Is capacity in place to execute it, or is new capex needed?', 'Advance received / payment milestones (working capital need)?', 'Client concentration: share of revenue from this customer?'],
   order_recurring: ['Is the stated annual value recurring for the full programme life — how many years does the programme run?', 'Are these fixed contracts, or initial awards that scale up or down with the customer\'s build rate?', 'What % of FY revenue does the annual value add?', 'What margin do the programmes carry versus the company average?', 'What capacity is needed, and is it already in place?', 'When does production start, and when does it reach the full annual run-rate?', 'Are further programmes being qualified with the same customer or new ones?', 'What working capital or advances does it need?'],
   enabling: ['Chain: MoU / LoI → definitive agreement → approvals → binding order → supply start → revenue — which step is next?', 'What has to happen before this becomes a binding order (definitive agreement, approvals)?', 'Is a value, volume or price disclosed anywhere?', 'Who is the counterparty and how firm is its commitment?', 'By when is conversion to an order expected?'],
   enabling_realestate: ['Chain: MoU / JDA → definitive agreement → approvals → execution → launch → bookings → collections → revenue → profit — which step is next?', 'What is the company\'s own share of revenue or profit (the project GDV is not the company\'s revenue)?', 'Which approvals are needed before a definitive agreement or launch, and by when?', 'When is the project launch expected?', 'What bookings and collections are expected in the first year after launch?', 'Who is the land owner / partner, and how firm is the commitment?'],
-  capacity: ['How much capex was invested, and how was it funded?', 'When is (or was) the capacity commissioned?', 'What is current utilisation of the existing capacity?', 'How much incremental capacity does it add (before → after)?', 'Is demand secured (orders, offtake) for the added capacity?', 'What utilisation is expected on the new capacity, and by when?', 'What revenue and operating profit can it contribute at full ramp?', 'How long is the ramp-up to full utilisation?'],
-  qualification: ['What stage is it — sample, pilot, approved vendor or commercial supply?', 'Which customer, and for which product?', 'Is there a commercial order yet, and of what size?', 'When do commercial supplies start?', 'Is it repeatable — does the qualification cover future orders from the same buyer?', 'How many customers has the company now qualified with?', 'Is capacity in place to serve it?'],
-  acquisition: ['What price was paid (EV/EBITDA, EV/sales)?', 'What are the target\'s revenue and EBITDA?', 'How is it funded — cash, debt or new shares?', 'What is the integration plan, and what could delay it?', 'When does it start contributing to consolidated revenue and profit?', 'What is the strategic rationale — capability, customers, geography?', 'Is the contribution recurring, or a one-off gain?', 'How much dilution, if any?'],
+  capacity: ['Capacity before → after, in units — stated?', 'Capex amount and how it is funded (debt / internal accruals / raise)?', 'Commissioning date — already done, or expected when?', 'Current utilisation of the existing capacity (last concall / annual report)?', 'Demand for the new capacity: orders, offtake or a named customer?', 'Revenue at full utilisation (asset turn) — stated or guided?', 'How long is the ramp to full utilisation?', 'Approvals still pending (environment, customer audit)?'],
+  qualification: ['Which customer and which product / programme — named in the filing?', 'Stage: sample, pilot, approved vendor or commercial supply?', 'Is there a commercial purchase order yet — value and quantity?', 'When do commercial supplies start?', 'Does it cover future orders (programme life) or one lot?', 'How many customers is the company now qualified with?', 'Is capacity in place to serve it?'],
+  acquisition: ['What price was paid, and at what valuation (EV / sales, EV / EBITDA)?', 'Target\'s last-year revenue and profit — stated?', 'How is it funded — cash, debt or new shares (dilution if shares)?', 'Stake acquired, completion date and conditions still pending?', 'When does it start adding to consolidated revenue and profit?', 'Why this target: capability, customers or geography?', 'Integration risks: key people, customer overlap, approvals?', 'Is the contribution recurring, or a one-off gain?'],
   earnings: ['Did management raise, hold or cut guidance?', 'What is the order book / pipeline after this quarter?', 'Does CFO track PAT (cash conversion)?', 'Which drivers explain the change — volume, price, mix or one-offs?', 'Is the margin change repeatable next quarter?'],
   approval: ['What products or markets does it open, and how large are they?', 'When do commercial supplies start?', 'Which competitors already hold the same approval?', 'What revenue has management attached to it?'],
   customer: ['How large is the customer\'s annual spend with the company?', 'What margin and payment terms apply?', 'When does supply start, and at what run-rate?', 'Does it raise customer concentration?'],
-  product: ['Which market does it target, and how large is it?', 'How is it priced (pricing)?', 'When is (or was) the launch, and is it commercially available?', 'What adoption so far — named users or orders?', 'When does revenue start, and at what scale?', 'What gross margin does the product carry?', 'Is revenue repeatable (subscriptions, repeat orders) or one-time?'],
-  fundraising: ['At what price and discount versus the market?', 'Who are the allottees (promoter, institutions, public)?', 'What is the stated use of proceeds?', 'How much dilution per share?'],
+  product: ['Target market and its size — stated by the company?', 'Launched and commercially available, or announced only?', 'Named customers or orders so far?', 'Pricing and expected gross margin?', 'When does revenue start, and at what scale?', 'Repeat revenue (consumables, subscriptions) or a one-time sale?', 'Approvals or certifications still needed?'],
+  fundraising: ['Amount raised — stated?', 'Issue price and discount / premium to the market — stated?', 'Allottees named (promoter, fund, strategic investor, public)?', 'Dilution: new shares ÷ existing shares — stated, or computable from stated share counts?', 'Use of proceeds — capex, debt repayment, acquisition or working capital?', 'Lock-in on the allotted shares?', 'Warrants: conversion price, timeline and upfront amount paid?'],
+  strategic: ['Who is the investor — an industry (strategic) or a financial holder?', 'Stake size and price — in an official filing (SAST / 13D / exchange disclosure)?', 'Is the stake confirmed by an official filing, or press only?', 'Any board seat, supply or technology agreement with the investor?', 'Primary shares (money to the company) or bought from existing holders?'],
+  resale: ['How many shares are registered for resale versus shares outstanding?', 'Who are the selling holders, and are any shares locked up?', 'At what price did the holders get the shares (incentive to sell)?', 'Form 4 / 144 filings — are holders actually selling?', 'A resale overhang does not by itself mean the price must fall — check volume against sales.'],
   buyback: ['Buyback size versus market cap and free float?', 'Price versus the current market?', 'Tender or open market?', 'Is the promoter participating?'],
   guidance: ['What exactly changed versus prior guidance?', 'What drives the new guidance?', 'How has management tracked against past guidance?'],
   management: ['Who joined or left, and from where?', 'Planned succession or abrupt?', 'Does it affect execution of stated plans?'],
@@ -632,8 +699,10 @@ function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Findin
   if (cls === 'LISTING') return 'listing';
   if (cls === 'MARKET_MOVE_ONLY') return 'band';
   if (type === 'Denial' || clarification) return 'denial';
-  if (cls === 'NO_CATALYST') return type === 'Fundraising' ? 'fundraising' : /not classifiable/i.test(String(finding?.headline || '')) ? 'unclassified' : 'none';
+  const hay0 = `${finding?.headline || ''} ${finding?.evidenceQuote || ''} ${(finding?.notes || []).join(' ')}`;
+  if (cls === 'NO_CATALYST') return type === 'Fundraising' ? (RX_RESALE.test(hay0) ? 'resale' : 'fundraising') : /not classifiable/i.test(String(finding?.headline || '')) ? 'unclassified' : 'none';
   if (type === 'Fundraising') return 'fundraising';
+  if (finding?.category === 'strategic_investor') return 'strategic';
   if (cls === 'NEGATIVE' && type !== 'Earnings') return 'negative';
   const hayK = `${finding?.headline || ''} ${finding?.evidenceQuote || ''}`;
   if ((type === 'Order win' || type === 'Contract' || type === 'Partnership' || type === 'JV') && (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR'))
@@ -1030,7 +1099,7 @@ function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality,
   // zzz771: a clarification is the company confirming there is nothing filed
   // behind the move — company-confirmed absence, not a negative event.
   if (clarification) return 'The company told the exchange it has no undisclosed information — company-confirmed absence of a filed catalyst; only liquidity, sector or technical checks remain.';
-  if (fr?.resale) return 'A resale / shelf registration releases existing stock for sale — a supply overhang with no new proceeds; it does not explain the move.';
+  if (fr?.resale) return 'A resale / shelf registration releases existing stock for sale — a supply overhang with no new proceeds; it does not explain the move. A resale overhang does not by itself mean the price must fall.';
   if (cls === 'NO_CATALYST') return key === 'unclassified' ? 'A filing exists but its subject says nothing classifiable — open it before concluding there is no catalyst.' : 'No filing explains the move; only liquidity, sector or technical checks remain.';
   if (type === 'Denial') return 'The company contradicted a specific report while the stock moved — negative evidence for that story, not a catalyst.';
   if (type === 'Fundraising') {
@@ -1076,7 +1145,7 @@ function pricingOfFinding(f: Finding | null): ResearchItem['pricing'] {
 
 /** zzz775: answer each research question from what the filing states. */
 export function answerQuestions(qs: string[], ctx: { facts: Record<string, string> | null; read: boolean; value: number | null; marketCap: number | null; market: 'IN' | 'US'; revenue: number | null; headline: string; quote: string | null }): string[] {
-  const f = ctx.facts || {};
+  const f: Record<string, string> = ctx.facts && !Array.isArray(ctx.facts) ? ctx.facts : {};
   const pctOf = (v: number, base: number) => Math.round((v / base) * 1000) / 10;
   const sizeAns = (): string | null => {
     if (ctx.value == null) return f.value ? `${f.value} (as stated)` : null;
@@ -1087,11 +1156,11 @@ export function answerQuestions(qs: string[], ctx: { facts: Record<string, strin
   };
   const pick = (q: string): string | null => {
     const l = q.toLowerCase();
-    if (/% of fy revenue|price was paid|capex was invested|what exactly changed|issue size|how much.*invest/.test(l)) return sizeAns() || f.price_terms || null;
-    if (/over what period|when does revenue start|when do commercial|revenue timing|by when|conversion to an order/.test(l)) return [f.execution_period, f.revenue_start].filter(Boolean).join(' · ') || null;
+    if (/% of fy revenue|% of last full-year revenue|price was paid|capex was invested|capex amount|amount raised|what exactly changed|issue size|how much.*invest/.test(l)) return sizeAns() || f.price_terms || null;
+    if (/over what period|execution period|billing starts|when does revenue start|when do commercial|revenue timing|by when|conversion to an order|commissioning date/.test(l)) return [f.execution_period, f.revenue_start].filter(Boolean).join(' · ') || null;
     if (/margin|pricing/.test(l)) return f.margin || null;
     if (/funded|funding/.test(l)) return f.funding || null;
-    if (/counterparty|who is the|customer|repeat customer|which competitors/.test(l)) return f.counterparty || null;
+    if (/counterparty|who is the|customer|repeat customer|which competitors|allottees named/.test(l)) return f.counterparty || null;
     if (/approval|binding|definitive agreement|conditions/.test(l)) return f.conditions || null;
     if (/utilisation|capacity/.test(l)) return f.capacity || null;
     if (/target's revenue|ebitda|dilution/.test(l)) return f.price_terms || null;
@@ -1127,6 +1196,9 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   // release, no model) is as verified as a model-read quote.
   const verifiedDoc = !!(f && (f.modelRead || f.docExtract) && quote);
   const revenue = filed?.ttmRevenue ? { v: filed.ttmRevenue, basis: 'ttm_revenue' as const } : filed?.annualRevenue ? { v: filed.annualRevenue, basis: 'annual_revenue' as const } : null;
+  // zzz785: workstream A/B structured facts, when the finding carries them.
+  const sfacts = structuredFactsOf(f);
+  const sfFund = sfacts.filter((x) => x.event.kind === 'fundraising').slice(-1)[0] || null;
 
   // ── which event does this name carry? ──
   const earningsLead = !!e && (!f || status === 'none' || status === 'source_failed' || status === 'routine_only' || status === 'unresearched' || (status === 'catalyst' && f.category === 'quarterly_result'));
@@ -1178,7 +1250,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     type = 'Fundraising'; dilution = true;
     conf = verifiedDoc ? 'VERIFIED_DOCUMENT' : f!.sourceTier === 'primary' ? 'VERIFIED_FILING' : f!.sourceTier === 'secondary' ? 'SECONDARY_SUMMARY' : 'UNVERIFIED';
     stage = stageOf(type, f!.stage, evHay);
-    fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, true);
+    fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, true, sfFund);
     cls = fr.cls; label = fr.label; mat = fr.mat;
     if (fr.resale) scanNote = `Only a resale / shelf registration in the last ${windowDays} days — ${notScanned}`;
   } else if (status === 'negative') {
@@ -1218,7 +1290,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
       // zzz771: preferential / QIP / warrants / rights / private placement is
       // a potential catalyst with a dilution flag; NEGATIVE only on distress.
       dilution = true;
-      fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, false);
+      fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, false, sfFund);
       cls = fr.cls; label = early ? `${fr.label} (${stage.toLowerCase()}, not allotted)` : fr.label; mat = fr.mat;
     }
     else if (type === 'Management change' && /resign|cessation|steps? down|stepped down|departure/i.test(evHay)) { cls = 'NEGATIVE'; label = 'Management departure'; }
@@ -1266,6 +1338,24 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     } else if (!headline) headline = 'Not researched yet';
   }
   if (!headline) headline = label || type;
+
+  // zzz785 (BETA): a positive event that only press — or an unread document —
+  // carries is POTENTIAL · verification required, never "no catalyst".
+  let keyOverride: string | null = null;
+  const posFacts = sfacts.filter((x) => POSITIVE_KIND_TYPE[x.event.kind]);
+  if ((cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY') && !clarification && !fr?.resale && posFacts.length && status !== 'source_failed' && !listing) {
+    const x = posFacts[posFacts.length - 1];
+    const officialRead = (x.source.kind === 'EXCHANGE_FILING' || x.source.kind === 'SEC_FILING' || x.source.kind === 'SUBSIDIARY_FILING' || x.source.kind === 'COMPANY_IR') && x.source.access === 'DOCUMENT_READ';
+    cls = 'POTENTIAL_UNVERIFIED'; type = POSITIVE_KIND_TYPE[x.event.kind]!;
+    conf = officialRead ? 'VERIFIED_FILING' : 'SECONDARY_SUMMARY';
+    label = officialRead ? `${KIND_WORD[x.event.kind]} — potential (on file, size not established)` : `${KIND_WORD[x.event.kind]} — Potential · verification required`;
+    headline = clean(x.source.title) || label;
+    sourceUrl = x.source.url || sourceUrl; filedDate = x.source.date || filedDate; ageDays = ageFrom(x.source.date, input.now) ?? ageDays;
+    stage = x.event.stage === 'PROPOSED' || x.event.stage === 'ANNOUNCED' ? 'PROPOSED' : x.event.stage === 'AWARDED' ? 'AWARDED' : x.event.stage === 'SIGNED' ? 'SIGNED' : 'UNKNOWN';
+    scanNote = null; routine = false;
+    if (x.economics.valueNative != null) { value = x.economics.valueNative; mat = valueMateriality(value, marketCap, revenue, market, x.event.kind === 'order' ? 'order' : x.event.kind === 'acquisition' ? 'acquisition' : 'generic', officialRead, false); }
+    if (x.event.kind === 'stake_by_strategic') keyOverride = 'strategic';
+  }
 
   // zzz771: can this event be THIS session's catalyst? Only classes that
   // carry a dated event get an answer; no-catalyst / listing / unavailable
@@ -1329,12 +1419,12 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     const m = /((?:inr|₹|rs\.?)\s*[\d,.]+(?:\s*[-–]\s*[\d,.]+)?\s*(?:crores?|cr\b|lakh crore|million|billion|bn|mn))[^.;]{0,30}/i.exec(String(headline0 || ''));
     whatChanged = `Headline scale${m ? `: ${m[0].trim()}` : ''} — project / potential scale, not the company's revenue or share; company financial impact not established`;
   }
-  const key = nextKey(type, cls, stage, f, clarification);
+  const key = keyOverride || nextKey(type, cls, stage, f, clarification);
   // zzz775: a research question the filing already answers is shown WITH its
   // answer; one the model-read filing is silent on says so. Only a filing
   // that was not read keeps the bare question.
   const researchNext = answerQuestions((NEXT[key] || NEXT.generic).slice(0, 8), {
-    facts: f?.facts || null, read: verifiedDoc, value, marketCap, market,
+    facts: legacyFactMapOf(f), read: verifiedDoc, value, marketCap, market,
     revenue: revenue ? revenue.v : null, headline: headline0, quote,
   });
   // A clarification's unknowns are a no-catalyst row's (cause of the move), not a negative event's impact. (zzz771)
@@ -1361,10 +1451,97 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     persistentCatalyst: f?.persistence ?? null,
     news: f?.news ? { narrative: f.news.narrative ? { label: f.news.narrative.label, days: f.news.narrative.days, firstDate: f.news.narrative.firstDate, lastDate: f.news.narrative.lastDate, lead: f.news.narrative.lead } : null, items: f.news.items.slice(0, 3).map((x) => ({ title: x.title, url: x.url, date: x.date, source: x.source })) } : null,
   };
+  // ── zzz785: catalyst records, timeline, persistence test, gaps, links ──
+  Object.assign(item, catalystLayer(item, f, { ticker, market, cls, key, stage, evHay, pers, persEv, mat, fr, conf, verifiedDoc, marketCap, revenue, input, unknowns }));
   const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
   const p = priorityOf(item, { routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
+  // zzz785: unknown economics are said, not silently ranked low.
+  if (item.economicsUnknown) item.priorityReasons.push(`${UNKNOWN_NEEDS_READING}${item.economicsUnknown.missing.length ? ` (${item.economicsUnknown.missing.join(', ')})` : ''}`);
   return item;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz785 C — the catalyst layer on one item: records (dedup by catalyst id,
+// press merged into the filing), the thread timeline, the persistence test,
+// the three gap labels, evidence breadth, unknown-economics label, links.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const POSITIVE_KIND_TYPE: Partial<Record<EventKind, EventType>> = {
+  order: 'Order win', capacity: 'Capacity expansion', qualification: 'Regulatory approval', acquisition: 'Acquisition',
+  new_product: 'New product', partnership: 'Partnership', stake_by_strategic: 'Acquisition',
+};
+
+function catalystLayer(item: ResearchItem, f: Finding | null, c: {
+  ticker: string; market: 'IN' | 'US'; cls: EventClass; key: string; stage: Stage; evHay: string; pers: Persistence;
+  persEv: { level: PersistEvidenceLevel; text: string }; mat: Materiality; fr: FundraiseRead | null; conf: SourceConfidence; verifiedDoc: boolean;
+  marketCap: number | null; revenue: { v: number; basis: 'ttm_revenue' | 'annual_revenue' } | null; input: ResearchViewInput; unknowns: string[];
+}): Partial<ResearchItem> {
+  const out: Partial<ResearchItem> = {};
+  const T = up(c.ticker);
+  const eventClass = c.cls === 'CONFIRMED_MATERIAL' || c.cls === 'CONFIRMED_LOW_MATERIALITY' || c.cls === 'POTENTIAL_UNVERIFIED' || c.cls === 'NEGATIVE';
+  const today = c.input.now ? String(c.input.now).slice(0, 10) : null;
+  const prior = c.input.priorCatalysts || null;
+  const views: CatalystView[] = f ? buildCatalystRecords(T, c.market, factsForFinding(f), { prior, today }) : [];
+  // Stored records for this company that today's evidence did not touch.
+  if (prior) {
+    const have = new Set(views.map((v) => v.id));
+    for (const r of Object.values(prior)) if (r && up(r.ticker) === T && !have.has(r.id)) views.push(storedView(r));
+  }
+  let primary: CatalystView | null = null;
+  if (views.length && eventClass) {
+    primary = (f?.sourceUrl ? views.find((v) => v.sources.some((s) => s.url === f.sourceUrl)) : null)
+      || views.find((v) => (c.cls === 'NEGATIVE') === (v.polarity === 'negative') && v.facts.length)
+      || views.find((v) => v.facts.length) || views[0];
+  }
+  const sizeText = (v: CatalystView): string | null => {
+    const x = v.facts[v.facts.length - 1];
+    const amt = x?.economics.valueNative ?? (v.polarity === 'negative' ? negativeAmountCr(`${x?.source.title || ''} ${(x?.quotes || []).join(' ')}`) : null);
+    if (amt == null || !(amt > 0)) return v.polarity === 'negative' ? 'Amount not stated — size against market cap unknown' : null;
+    if (!c.marketCap || !(c.marketCap > 0)) return `${money(amt, c.market)} stated; market cap not available`;
+    const p = (amt / c.marketCap) * 100;
+    return `${money(amt, c.market)} ÷ ${money(c.marketCap, c.market)} market cap = ${p < 0.01 ? '<0.01' : p < 1 ? (Math.round(p * 100) / 100).toString() : r1(p)}%`;
+  };
+  const card = (v: CatalystView): CatalystCard => ({
+    id: v.id, kind: v.kind, kindWord: KIND_WORD[v.kind], title: clean(v.title), state: v.state, stateWord: STATE_WORD[v.state], previousState: v.previousState,
+    latestEvidence: v.latestEvidence ? clean(v.latestEvidence) : null, nextMilestone: v.nextMilestone, invalidation: v.invalidation,
+    polarity: v.polarity, verification: v.verification, materialityText: sizeText(v),
+    firstSeen: v.firstSeen, lastSeen: v.lastSeen, duplicatesMerged: v.duplicatesMerged, documents: v.sources.length,
+  });
+  if (views.length && eventClass) {
+    const ordered = primary ? [primary, ...views.filter((v) => v !== primary)] : views;
+    out.catalysts = ordered.map(card);
+    if (primary) out.timeline = threadTimeline(views, primary).map((t) => ({ ...t, title: clean(t.title) }));
+  }
+  // Persistence test — reconciled with persistenceOf / persistenceEvidenceOf.
+  if (eventClass && c.cls !== 'NEGATIVE' || (c.cls === 'NEGATIVE' && primary)) {
+    out.persistenceTest = persistenceTestOf({
+      kind: primary?.kind ?? (c.fr ? 'fundraising' : null), facts: primary?.facts || [], record: primary,
+      potential: c.pers, evidenceLevel: c.persEv.level, evidenceText: c.persEv.text, hay: c.evHay, market: c.market,
+    });
+  }
+  // Three distinct gap labels.
+  const given = evidenceGapOf(f);
+  const code: EvidenceGap | null = given && !(given === 'NO_CATALYST' && eventClass)
+    ? given
+    : c.cls === 'NO_CATALYST' && !c.fr?.resale ? (c.key === 'unclassified' ? 'UNCLASSIFIED' : 'NO_CATALYST')
+      : c.cls === 'POTENTIAL_UNVERIFIED' && c.mat.label === 'UNKNOWN' && !c.verifiedDoc ? 'EVIDENCE_INCOMPLETE' : null;
+  out.evidenceGap = code ? { code, ...GAP_LABEL[code] } : null;
+  out.evidenceBreadth = evidenceBreadthOf(f, views);
+  if ((c.cls === 'CONFIRMED_MATERIAL' || c.cls === 'CONFIRMED_LOW_MATERIALITY' || c.cls === 'POTENTIAL_UNVERIFIED') && c.mat.label === 'UNKNOWN') {
+    const missing = c.fr?.missing?.length ? c.fr.missing
+      : c.unknowns.filter((u) => !/^Consensus/i.test(u) && /Not disclosed|Unknown|Not yet/i.test(u)).map((u) => u.split(':')[0].toLowerCase()).slice(0, 4);
+    out.economicsUnknown = { label: UNKNOWN_NEEDS_READING, missing };
+  } else out.economicsUnknown = null;
+  out.verification = !eventClass ? null
+    : c.conf === 'SECONDARY_SUMMARY' || c.conf === 'UNVERIFIED' ? (primary && primary.sources.some((s) => s.kind !== 'PRESS') ? primary.verification : 'Secondary · verification required')
+      : primary ? primary.verification : 'Official filing';
+  const rel = item.portfolio?.relevance;
+  const pc = item.persistentCatalyst;
+  const thesis = rel === 'HOLDING' || rel === 'WATCHLIST' ? `/portfolio-catalysts#pc-${encodeURIComponent(T)}` : null;
+  const sf = pc && (pc.specialFocus || pc.kind === 'PROJECT_PIPELINE' || pc.confidence === 'HIGH' || pc.confidence === 'MEDIUM') ? '/portfolio-catalysts#special-focus' : null;
+  out.links = thesis || sf ? { thesis, specialFocus: sf, note: 'Separate views, linked by ticker: this card is today\'s event; the thesis ledger holds why you own it; Special Focus remembers persistent mechanisms.' } : null;
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1418,6 +1595,8 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const noCatalyst = live.filter((i) => i.eventClass === 'NO_CATALYST' || i.eventClass === 'MARKET_MOVE_ONLY');
   const dataQuality = items.filter((i) => i.eventClass === 'LISTING' || i.eventClass === 'DATA_UNAVAILABLE');
   const portfolio = items.filter((i) => i.portfolio.relevance === 'HOLDING' || i.portfolio.relevance === 'WATCHLIST');
+  // zzz785: every live event with unknown economics, ranked — never dropped by the caps above.
+  const needsReading = eligible.filter((i) => !!i.economicsUnknown);
 
   const universe = tickers.map((ticker) => ({ ticker }));
   const lines = presentErrorLines(input.errors || [], universe, 60);
@@ -1459,6 +1638,6 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
       lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
       context: context.length,
     },
-    top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context,
+    top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context, needsReading,
   };
 }

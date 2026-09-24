@@ -124,7 +124,10 @@ export function FactLine({ it }: { it: ResearchItem }) {
       {it.persistenceEvidence && it.persistenceEvidence.level !== 'NONE' && (
         <Fact k="PERSISTENCE EVIDENCE" v={PERSIST_EV_WORD[it.persistenceEvidence.level]} color={it.persistenceEvidence.level === 'STRONG' ? C.green : it.persistenceEvidence.level === 'EVIDENCE' ? C.cyan : it.persistenceEvidence.level === 'NOT_PERSISTENT' ? C.faint : C.amber} title={it.persistenceEvidence.text} />
       )}
-      {it.pricing
+      {/* zzz785: a pricing assessment only when the event's economics are known. */}
+      {it.pricing && ml === 'UNKNOWN'
+        ? <Fact k="PRICED" v="NOT ASSESSED" color={C.faint} title="The event's size is unknown, so the price reaction is not compared with anything. Price is context only." />
+        : it.pricing
         ? <Fact k="PRICED" v={it.pricing.label} color={it.pricing.state === 'REACTION_SMALL_VS_SIZE' ? C.green : it.pricing.state === 'REACTION_EXCEEDS_SIZE' || it.pricing.state === 'RAN_UP_BEFORE_FILING' ? C.amber : undefined} title={it.pricing.text} />
         : <Fact k="PRICED" v={gap.label} color={gap.color} title={txt(it.expectationGap?.text, 'Expectation gap unknown')} />}
     </div>
@@ -188,5 +191,24 @@ export function SectionHead({ title, count, sub, right }: { title: string; count
       {sub && <span style={{ fontSize: 12, color: C.faint }}>{sub}</span>}
       {right && <span style={{ marginLeft: 'auto' }}>{right}</span>}
     </div>
+  );
+}
+
+/** zzz785: the plain-English status chips a card adds — verification,
+ *  evidence gap, unknown economics, catalyst state, persistence grade. */
+const GRADE_COLOR: Record<string, string> = { HIGH: C.green, MEDIUM: C.cyan, EARLY: C.amber, TEMPORARY: C.faint };
+const STATE_COLOR: Record<string, string> = { IDENTIFIED: C.amber, DOCUMENTED: C.cyan, EXECUTING: C.cyan, CONFIRMED: C.green, WEAKENING: C.amber, DISPROVED: C.red };
+export function CatalystChips({ it }: { it: ResearchItem }) {
+  const primary = it.catalysts?.[0];
+  const pt = it.persistenceTest;
+  return (
+    <>
+      {it.verification && /verification required/i.test(it.verification) && <Pill color={C.amber} title="Only a secondary source (press / summary) says this. It becomes evidence when an official filing confirms it.">SECONDARY · VERIFICATION REQUIRED</Pill>}
+      {it.evidenceGap && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
+      {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'The size of this event is not stated.'}>{it.economicsUnknown.label.toUpperCase()}</Pill>}
+      {primary && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${primary.stateWord}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}
+      {pt && <Pill color={GRADE_COLOR[pt.grade] || C.faint} title={pt.why}>PERSISTENCE: {pt.grade}</Pill>}
+      {it.persistentCatalyst && it.persistentCatalyst.specialFocus && <Pill color={C.amber} title={it.persistentCatalyst.mechanism}>🔥 SPECIAL FOCUS</Pill>}
+    </>
   );
 }

@@ -179,6 +179,22 @@ RULES THAT OVERRIDE EVERYTHING ELSE:
  *  before spending a model call on any of them. */
 const NOISE = /(board meeting|agm|annual general|voting result|scrutiniz|newspaper|registrar|share transfer|trading window|postal ballot|duplicate share|investor (meet|presentation) schedul|compliance certificate|reconciliation of share|loss of share)/i;
 
+/** zzz785 — an exchange subject that names no event: the body must be read to
+ *  know what was filed ("General Updates", "Press Release", "Disclosure under
+ *  Regulation 30", "Updates on Acquisition", "Clarification"). */
+export const GENERIC_SUBJECT = /general updates?|press release|media release|(^|-)\s*updates?\b|updates? on|others?\s*$|disclosure (of (event or )?information )?under regulation 30|intimation under regulation 30|disclosure of information under regulation 30|intimation pursuant to|regulation 30 of (the )?sebi|clarification|update to earlier disclo|restructuring/i;
+export function isGenericSubject(subject: string | null | undefined): boolean {
+  return GENERIC_SUBJECT.test(String(subject || ''));
+}
+
+/** zzz785 — the exchange's own id for a filing's attachment (BSE's Pname
+ *  uuid, the NSE file name), so a document is keyed issuer + date + id. */
+export function docSeqOf(url: string): string | null {
+  const u = String(url || '');
+  const m = /Pname=([0-9a-f-]{16,})/i.exec(u) || /\/(?:AttachLive|AttachHis)\/([0-9a-f-]{16,})/i.exec(u) || /\/([^/?#]+)\.pdf(?:$|[?#])/i.exec(u);
+  return m ? m[1].toLowerCase() : null;
+}
+
 export function worthReading(a: AnnouncementItem): boolean {
   const hay = `${a.subject || ''} ${decodeURIComponent(String(a.attachment_url || ''))}`;
   return !NOISE.test(hay);

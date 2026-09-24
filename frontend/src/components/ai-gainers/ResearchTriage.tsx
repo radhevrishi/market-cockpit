@@ -156,6 +156,8 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       <span style={{ fontWeight: 800, color: moveColor(it.move1d) }}>{pct(it.move1d)}</span>
       <span style={{ color: C.dim, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', flex: '1 1 220px' }} title={it.headline}>{txt(it.headline, 'No meaningful filing')}</span>
       {it.eventClass === 'NO_CATALYST' && it.flags?.denial && <StatusPill it={it} />}
+      {/* zzz785: No catalyst / Evidence incomplete / Unclassified are three different answers. */}
+      {it.evidenceGap && !(it.eventClass === 'NO_CATALYST' && it.flags?.denial) && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
       <CatalystForBadge it={it} />
       {extra}
       {onOpen && <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button>}
@@ -255,6 +257,22 @@ export function ResearchTriage(props: ResearchTriageProps) {
           </section>
 
           <Book items={view.portfolio || []} onOpen={onOpen} />
+
+          {/* zzz785: unknown economics are never sorted away silently — every one is listed, ranked, labelled. */}
+          {(view.needsReading || []).length > 0 && (
+            <section aria-label="Unknown — needs reading" data-testid="needs-reading" style={box}>
+              <SectionHead title="UNKNOWN — NEEDS READING" count={view.needsReading!.length} sub="Events whose size is not established yet. Unknown is not negative: each needs its document read." />
+              {view.needsReading!.map((it) => (
+                <div key={it.ticker} style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 9px', alignItems: 'baseline', padding: '4px 0', borderTop: `1px solid ${C.border}`, fontSize: 13, minWidth: 0 }}>
+                  <Name it={it} max={150} />
+                  <Move it={it} />
+                  <span style={{ color: C.text, flex: '1 1 240px', minWidth: 0 }}>{txt(it.headline, 'Headline not available')}</span>
+                  <span style={{ color: C.faint, fontSize: 12 }}>{it.economicsUnknown?.missing.length ? `missing: ${it.economicsUnknown.missing.join(', ')}` : 'size not stated'}</span>
+                  <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
+                </div>
+              ))}
+            </section>
+          )}
 
           {(view.watch || []).length > 0 && (
             <section aria-label="Watch / investigate" style={box}>

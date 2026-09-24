@@ -330,6 +330,9 @@ export const EDGAR_SKIP_FORMS = /^(3|4|5|144)(\/A)?$/;
  *  ALSO filed under one of these on the same day is a business combination. */
 const MERGER_COMPANION = /^(DEFA14A|425|SC TO-C|SC 14D9-C|DEFM14A|PREM14A)$/;
 export const MERGER_MARKER = 'also filed as merger communication';
+/** zzz785: written into a 13G/13D subject by edgar-research after the
+ *  ownership report was READ and names an operating company as holder. */
+export const STRATEGIC_STAKE_MARKER = 'strategic holder stake';
 
 function phrase(p: UsPhase): string {
   return p === 'pre_market' ? 'before the open' : p === 'regular' ? 'during the session' : p === 'after_hours' ? 'after the close' : 'on a non-trading day';
@@ -499,7 +502,7 @@ export function classifyUsFiling(a: Pick<AnnouncementLite, 'subject'>): UsClass 
     const resaleWords = /resale|selling (stock|share)holders?|secondary offering by/i.test(subj);
     if (form === 'D' || form === 'D/A') return neg('dilution', 'Form D — exempt (private) securities offering: a new raise');
     if (form === '424B3' || /^(S-3|F-3)/.test(form) || (/^(S-1|F-1)/.test(form) && resaleWords)) {
-      return neg('dilution', `${form} — resale / shelf registration: supply overhang, not a new raise`);
+      return neg('dilution', `${form} — resale / shelf registration: supply overhang (shares may be sold; this does not by itself mean the price must fall), not a new raise`);
     }
     return neg('dilution', `${form} — prospectus for a securities offering: new supply, dilution`);
   }
@@ -508,6 +511,11 @@ export function classifyUsFiling(a: Pick<AnnouncementLite, 'subject'>): UsClass 
   if (/^[345](\/A)?$/.test(form)) return routine(`Form ${form} — insider ownership report`);
   if (/^(SC 13D|SCHEDULE 13D)$/.test(form)) return cat('strategic_investor');
   if (/^(SC 13D|SCHEDULE 13D)\/A$/.test(form)) return routine('13D amendment — a holder\'s stake changed; direction not stated in the form type');
+  // zzz785: a 13G / 13D whose DOCUMENT names an operating company as the
+  // holder (Amazon's 5.3% of BETA) is a potential catalyst, not paperwork.
+  // The marker is written by edgar-research only after the ownership report
+  // itself was read — never from the form type.
+  if (/^(SC 13[DG]|SCHEDULE 13[DG])(\/A)?$/.test(form) && String(a.subject || '').includes(STRATEGIC_STAKE_MARKER)) return cat('strategic_investor', 'enabling');
   if (/^(SC 13G|SCHEDULE 13G)(\/A)?$/.test(form)) return routine('13G — passive 5% holder');
   if (/^(SC TO-T|SC TO-T\/A|SC 14D9|SC 14D9\/A)$/.test(form)) return cat('open_offer');
   if (/^(SC TO-I|SC TO-I\/A)$/.test(form)) return cat('buyback');
@@ -520,7 +528,9 @@ export function classifyUsFiling(a: Pick<AnnouncementLite, 'subject'>): UsClass 
   if (form === '6-K' || form === '6-K/A') return unclassified;
   if (/^8-K(\/A)?$/.test(form)) {
     const it = new Set(usItemsOf(a.subject));
-    if (it.has('3.02')) return neg('dilution', 'Item 3.02 — unregistered sale of equity (dilution)');
+    // zzz785: the item is a routing hint — the reason says what to open for,
+    // not a conclusion about size (shares, price and buyers come from the text).
+    if (it.has('3.02')) return neg('dilution', 'Item 3.02 — unregistered sale of equity reported (dilution; shares, price and buyers are in the filing text, not the item)');
     if (it.has('3.01')) return neg(null, 'Item 3.01 — delisting notice / listing-rule deficiency');
     if (it.has('4.02')) return neg(null, 'Item 4.02 — prior financial statements can no longer be relied on');
     if (it.has('4.01')) return neg('auditor_resignation', 'Item 4.01 — change of auditor');
@@ -586,10 +596,15 @@ function toM(n: string, unit: string): number | null {
 }
 
 /** Sentences of a filing's text, without the SEC cover-page noise. */
+export function filingSentences(text: string): string[] { return sentencesOf(text); }
 function sentencesOf(text: string): string[] {
   return String(text || '').slice(0, 40_000)
     .replace(/\s+/g, ' ')
-    .split(/(?<=[.!?])\s+(?=[A-Z“"($])/)
+    // zzz785: "Jane Q. Smith", "U.S. Army", "Mr. Crisafulli" are not sentence
+    // ends; "Inc. (the “Company”)" / "Inc. (NASDAQ: X)" is not a new sentence; a cover-page check
+    // box (☐) ends the cover and starts Item 1.01.
+    // A release's dateline dash ("…, September 21, 2026 – Priority …") ends the headline block.
+    .split(/\s*[☐☒]\s+|(?<=\b\d{4}(?:\s*\([^)]{1,40}\))?)\s+[-–—]{1,2}\s+(?=[A-Z])|(?<=(?<!\b(?:[A-Z]|Mr|Ms|Mrs|Dr|Jr|Sr|No|St))[.!?])\s+(?=[A-Z“"$])/)
     .map((s) => s.trim())
     .filter((s) => s.length >= 40 && s.length <= 700)
     .filter((s) => !/securities and exchange commission|check the appropriate box|commission file number|pursuant to section 13 or 15\(d\)|emerging growth company|forward-looking statements?|safe harbor|incorporated by reference|signature|exhibit (no\.|number)/i.test(s));
@@ -622,4 +637,54 @@ export function extractUsPressRelease(text: string): UsPressReleaseFacts {
     if (!out.facts.conditions && CLOSING.test(s)) out.facts.conditions = s.slice(0, 220);
   }
   return out;
+}
+
+// ── 7. FALLBACK LISTINGS → THE SUBMISSIONS SHAPE                  (zzz785) ──
+//
+// When data.sec.gov/submissions refuses or times out, the same filing list
+// can be rebuilt from EDGAR full-text search or the www.sec.gov company Atom
+// feed. Both are mapped into the submissions JSON shape so
+// announcementsFromSubmissions stays the ONE mapping (and its tests hold).
+
+type SubRow = { form: string; filingDate: string; accessionNumber: string; primaryDocument: string; items: string; primaryDocDescription: string; acceptanceDateTime: string };
+
+function toSubmissions(rows: SubRow[]): any {
+  const k = <K extends keyof SubRow>(key: K) => rows.map((r) => r[key]);
+  return { filings: { recent: { form: k('form'), filingDate: k('filingDate'), accessionNumber: k('accessionNumber'), primaryDocument: k('primaryDocument'), items: k('items'), primaryDocDescription: k('primaryDocDescription'), acceptanceDateTime: k('acceptanceDateTime') } } };
+}
+
+/** efts.sec.gov/LATEST/search-index JSON → submissions shape. One row per
+ *  accession (an exhibit hit is folded into its filing). */
+export function submissionsFromFullText(json: any): any {
+  const hits: any[] = json?.hits?.hits || [];
+  const byAcc = new Map<string, SubRow & { primaryHit: boolean }>();
+  for (const h of hits) {
+    const src = h?._source || {};
+    const acc = String(src.adsh || String(h?._id || '').split(':')[0] || '');
+    const doc = String(h?._id || '').split(':')[1] || '';
+    const form = String(src.form || src.root_forms?.[0] || '').toUpperCase();
+    const date = String(src.file_date || '');
+    if (!acc || !form || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const primaryHit = String(src.file_type || '').toUpperCase() === form;
+    const row = { form, filingDate: date, accessionNumber: acc, primaryDocument: primaryHit ? doc : '', items: Array.isArray(src.items) ? src.items.join(',') : String(src.items || ''), primaryDocDescription: String(src.file_description || ''), acceptanceDateTime: '', primaryHit };
+    const prev = byAcc.get(acc);
+    if (!prev || (!prev.primaryHit && primaryHit)) byAcc.set(acc, row);
+  }
+  return toSubmissions(Array.from(byAcc.values()).sort((a, b) => b.filingDate.localeCompare(a.filingDate)));
+}
+
+/** www.sec.gov/cgi-bin/browse-edgar?…&output=atom → submissions shape. */
+export function submissionsFromAtom(xml: string): any {
+  const rows: SubRow[] = [];
+  for (const m of String(xml || '').matchAll(/<entry>[\s\S]*?<\/entry>/gi)) {
+    const e = m[0];
+    const tag = (t: string) => (new RegExp(`<${t}>([\\s\\S]*?)<\\/${t}>`, 'i').exec(e)?.[1] || '').trim();
+    const form = (tag('filing-type') || (/<category[^>]*term="([^"]+)"/i.exec(e)?.[1] || '')).toUpperCase();
+    const acc = tag('accession-number') || tag('accession-nunber');
+    const date = tag('filing-date');
+    if (!form || !acc || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const items = Array.from(tag('items-desc').matchAll(/\d\.\d\d/g)).map((x) => x[0]).join(',');
+    rows.push({ form, filingDate: date, accessionNumber: acc, primaryDocument: '', items, primaryDocDescription: tag('form-name'), acceptanceDateTime: tag('updated') });
+  }
+  return toSubmissions(rows);
 }

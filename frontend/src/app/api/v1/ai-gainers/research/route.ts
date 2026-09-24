@@ -27,9 +27,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
-import { fetchCompanyResearch, yahooReturns } from '@/lib/ai-gainers/screener-company';
-import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, type EdgarResearch } from '@/lib/ai-gainers/edgar-research';
-import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
+import { fetchCompanyResearch, yahooReturns, fetchNseAnnouncementsLite } from '@/lib/ai-gainers/screener-company';
+import { chooseDocuments, readIndiaDocuments, relatedFilings, INDIA_HISTORY_BUDGET, type DocRead, type IndiaFacts } from '@/lib/ai-gainers/india-extract';
+import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, usFindingEvidence, type EdgarResearch, type UsDocReadResult } from '@/lib/ai-gainers/edgar-research';
+import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, ageDaysOf, filedAfterClose, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
@@ -42,7 +43,7 @@ import { yahooChart } from '@/lib/us-prices';
 import { fetchBseAnnouncementsLite } from '@/lib/thesis/evidence-discovery';
 import { buildNewsContext, type NewsContext } from '@/lib/ai-gainers/news-context';
 import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFinding, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { upsertDetections } from '@/lib/catalyst/persistence-store';
+import { upsertDetections, loadCatalystRecords, rememberGainerCatalysts, catalystRecordsFor } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
 
 // ── zzz780: DAILY GAINER → EVENT → EVIDENCE → PERSISTENCE TEST ───────────
@@ -96,6 +97,44 @@ async function newsFor(market: 'IN' | 'US', ticker: string, name: string | null,
     try { await kvSet(key, ctx, 12 * 3600); } catch { /* optional */ }
     return ctx;
   } catch { return null; }
+}
+
+// ── zzz785: INDIA — READ THE FILED DOCUMENTS, NOT ONLY THE SUBJECT ─────────
+// Up to three documents per name (the top candidate, generic / unclassified
+// subjects, the other substantive filings), each read once and cached by
+// issuer + date + sequence id; then, when the event names a counterparty,
+// programme or subsidiary, up to two OLDER related filings from a 365-day
+// BSE list so the catalyst can be threaded into a timeline. Deterministic
+// text extraction — no model call.
+const kvAdapter = { get: (k: string) => kvGet<any>(k), set: (k: string, v: any, ttl: number) => kvSet(k, v, ttl) };
+const pdfText = async (url: string) => { const ext = await extractPdfText(url, { timeoutMs: 12_000 }); return ext?.text || ''; };
+
+async function indiaDocuments(ticker: string, announcements: AnnouncementLite[], opts: { now: Date; sessionCloseIso: string | null; marketCap: number | null; returns: Returns | null; bseCode: string | null; companyName: string | null; msLeft: number }): Promise<DocRead[]> {
+  if (opts.msLeft < 8_000) return [];
+  const t0 = Date.now();
+  const inWindow = announcements
+    .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, opts.now) }))
+    .filter((a) => (a.ageDays == null || a.ageDays <= WINDOW_DAYS) && !filedAfterClose(a.dateIso, opts.sessionCloseIso))
+    .map((a) => classifyAnnouncement(a, 'IN'));
+  const top = pickReadCandidate(announcements, 'IN', { marketCap: opts.marketCap, returns: opts.returns, windowDays: WINDOW_DAYS, now: opts.now, sessionCloseIso: opts.sessionCloseIso });
+  const picks = chooseDocuments(inWindow, top?.url ?? null);
+  const docs = await withDeadline(readIndiaDocuments(ticker, picks, pdfText, { ctx: { marketCapCr: opts.marketCap }, kv: kvAdapter, deadlineMs: Math.min(20_000, opts.msLeft - 6_000) }), Math.min(25_000, opts.msLeft - 4_000), [] as DocRead[]);
+  // Related history: only for events that name who / what (an order, a plant, a deal) or cite an earlier disclosure.
+  const current = docs.flatMap((d) => d.facts as IndiaFacts[]).filter((f) => f.polarity !== 'negative' && (f.continues || ['order', 'capacity', 'qualification', 'acquisition', 'partnership'].includes(f.event.kind)));
+  const left = opts.msLeft - (Date.now() - t0);
+  if (current.length && left > 14_000) {
+    const wide = await withDeadline(fetchBseAnnouncementsLite(ticker, opts.bseCode, 365), 12_000, { items: [], code: null, error: 'BSE timed out' });
+    const inUrls = new Set(announcements.map((a) => a.url));
+    const cutoff = opts.now.getTime() - WINDOW_DAYS * 86_400_000;
+    const older = wide.items.filter((b) => b.dateIso && Date.parse(b.dateIso) < cutoff && !inUrls.has(b.url));
+    const rel = relatedFilings(current, older, { excludeUrls: inUrls, issuerName: opts.companyName, max: INDIA_HISTORY_BUDGET });
+    if (rel.length && opts.msLeft - (Date.now() - t0) > 8_000) {
+      const hist = await withDeadline(readIndiaDocuments(ticker, rel, pdfText, { relation: 'history', kv: kvAdapter, deadlineMs: 8_000 }), 10_000, [] as DocRead[]);
+      const hashes = new Set(docs.map((d) => d.hash).filter(Boolean));
+      for (const h of hist) if (h.access === 'DOCUMENT_READ' && !hashes.has(h.hash)) docs.push(h);
+    }
+  }
+  return docs;
 }
 
 export const dynamic = 'force-dynamic';
@@ -196,12 +235,12 @@ function edgarNote(er: Pick<EdgarResearch, 'failure' | 'cik' | 'insiderForms' | 
  *  read was made. A form-classified filing gets a verbatim document read; an
  *  item only a reader can classify gets the release's lead as its summary
  *  (written into the announcement, so a re-score reads it too). */
-async function usDocFallback(announcements: AnnouncementLite[], cand: ReturnType<typeof pickReadCandidate>, ms: number): Promise<{ read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null; facts?: Record<string, string> | null; source?: 'model' | 'document_extract' } | null; announcements: AnnouncementLite[] }> {
-  if (!cand || ms < 3_000) return { read: null, announcements };
-  const r = await withDeadline(readUsFilingDocument(cand, Math.min(8_000, ms)), ms, null);
-  if (!r) return { read: null, announcements };
+async function usDocFallback(announcements: AnnouncementLite[], cand: ReturnType<typeof pickReadCandidate>, ms: number, ticker?: string): Promise<{ read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null; facts?: Record<string, string> | null; source?: 'model' | 'document_extract' } | null; announcements: AnnouncementLite[]; doc: UsDocReadResult | null }> {
+  if (!cand || ms < 3_000) return { read: null, announcements, doc: null };
+  const r = await withDeadline(readUsFilingDocument(cand, Math.min(8_000, ms), { ticker: ticker ?? null }), ms, null);
+  if (!r) return { read: null, announcements, doc: null };
   if (r.summary) announcements = announcements.map((a) => (a.url === cand.url && !a.summary ? { ...a, summary: r.summary } : a));
-  return { read: r.read, announcements };
+  return { read: r.read, announcements, doc: r };
 }
 
 /** Small/mid caps only on the India side: a large cap registered before the
@@ -323,7 +362,7 @@ async function cachedFiledResults(market: 'IN' | 'US', date: string): Promise<{ 
 
 async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, session: ReturnType<typeof indiaSession> | null): Promise<ResearchView | null> {
   try {
-    const [book, filed] = await Promise.all([loadBook(), cachedFiledResults(market, date)]);
+    const [book, filed, prior] = await Promise.all([loadBook(), cachedFiledResults(market, date), loadCatalystRecords().catch(() => ({}))]);
     const status = market === 'IN'
       ? (session && session.date !== date ? 'previous_session' : session?.state === 'open' ? 'live' : session?.state === 'closed' ? 'closed' : 'last_completed')
       : 'weekly_export';
@@ -336,6 +375,8 @@ async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, ses
       watchlist: book.watch,
       errors: st.errors,
       now: st.updated_at,
+      // zzz785 — earlier days' catalyst states (timeline + previous state).
+      priorCatalysts: catalystRecordsFor(prior as any, st.universe.map((u) => u.ticker)),
       session: {
         date, scanAt: st.updated_at || null, status, cached: true,
         // A stored day that is not the current session is never labelled today.
@@ -436,6 +477,11 @@ async function research(req: NextRequest, body: any) {
       let announcements: AnnouncementLite[] = [];
       let marketCap = u.marketCap, turnover: number | null = null, returns = null as any, sources: string[] = [], sourceFailed = false, fullName: string | null = null;
       let usNote: string | null = null;
+      let secondaryUnavailable: string | null = null;
+      let docs: DocRead[] = [];
+      let bseCode: string | null = null;
+      let usListing: EdgarResearch | null = null;   // zzz785
+      let usDoc: UsDocReadResult | null = null;
       if (market === 'IN') {
         const cr = await fetchCompanyResearch(u.ticker, now);
         // zzz773: BSE's full filing list for the window, beside screener's
@@ -444,6 +490,19 @@ async function research(req: NextRequest, body: any) {
         announcements = mergeAnnouncements(cr.announcements, bse.items.map((b) => ({ subject: b.subject, summary: b.summary, url: b.url, dateIso: b.dateIso, ageDays: null })) as AnnouncementLite[]);
         if (bse.items.length || (bse.code && !bse.error)) cr.sources.push('BSE corporate announcements');
         else if (bse.error) cr.errors.push(bse.error);
+        // zzz785: screener.in and BSE both silent → NSE's own list for the symbol.
+        if (!announcements.length && (cr.secondaryUnavailable || bse.error)) {
+          const nse = await withDeadline(fetchNseAnnouncementsLite(u.ticker, WINDOW_DAYS + 1, now), 13_000, { items: [], error: 'NSE timed out' });
+          if (nse.items.length) { announcements = mergeAnnouncements(announcements, nse.items); cr.sources.push('NSE corporate announcements'); }
+          else if (nse.error) cr.errors.push(nse.error);
+        }
+        // Screener is secondary: with an exchange list in hand its failure is
+        // "secondary source unavailable", never "source unavailable".
+        if (cr.secondaryUnavailable && cr.sources.some((x) => /BSE|NSE/.test(x))) {
+          secondaryUnavailable = cr.secondaryUnavailable;
+          cr.errors = cr.errors.filter((e) => !/^company page/.test(e));
+          cr.errors.unshift('secondary source unavailable (company page) — exchange filings were read directly');
+        }
         marketCap = cr.marketCapCr ?? u.marketCap;
         if (isLargeCap(marketCap)) {
           // The screen's cap was missing or stale; the company page says large.
@@ -453,13 +512,15 @@ async function research(req: NextRequest, body: any) {
         }
         returns = cr.returns;
         fullName = cr.companyName ?? null;
+        bseCode = cr.bseCode ?? bse.code ?? null;
         sources = cr.sources;
         sourceFailed = !cr.sources.length;
         const px = cr.lastClose ?? cr.price;
         turnover = u.volume != null && px != null ? (u.volume * px) / 1e7 : null;   // ₹ Cr
         if (cr.errors.length) st.errors.push(`${u.ticker}: ${cr.errors.join('; ')}`);
       } else {
-        const er = await fetchEdgarResearch(u.ticker, WINDOW_DAYS, now, { timeoutMs: Math.max(2_000, Math.min(10_000, usLeft() / 3)) });
+        const er = await fetchEdgarResearch(u.ticker, WINDOW_DAYS, now, { timeoutMs: Math.max(2_000, Math.min(10_000, usLeft() / 3)), pressFallback: true, company: u.company });
+        usListing = er;
         announcements = er.announcements;
         sources = er.sources;
         sourceFailed = !er.sources.length;
@@ -480,6 +541,7 @@ async function research(req: NextRequest, body: any) {
       }
 
       const news = market === 'US' && usLeft() < 15_000 ? null : await newsFor(market, u.ticker, fullName || u.company, date, now);
+      if (market === 'IN') docs = await indiaDocuments(u.ticker, announcements, { now, sessionCloseIso, marketCap, returns, bseCode, companyName: fullName || u.company, msLeft: budget - (Date.now() - t0) });
 
       // Model-read the best catalyst candidate when the budget allows: a
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
@@ -504,17 +566,22 @@ async function research(req: NextRequest, body: any) {
       // US, no model read: read the press release's own words (free). (zzz782)
       let docTried = false;
       if (market === 'US' && cand && !read && usLeft() > 14_000) {
-        const fb = await usDocFallback(announcements, cand, Math.min(10_000, usLeft() - 10_000));
-        announcements = fb.announcements; read = fb.read; docTried = true;
+        const fb = await usDocFallback(announcements, cand, Math.min(10_000, usLeft() - 10_000), u.ticker);
+        announcements = fb.announcements; read = fb.read; docTried = true; usDoc = fb.doc;
       }
+      // zzz785 (US): ownership reports, the 8-K body + exhibits and any press /
+      // IR items become the finding's structured facts and one ref per document.
+      const usEv = market === 'US' ? usFindingEvidence({ listing: usListing, doc: usDoc, issuer: u.ticker }) : null;
 
       st.findings[u.ticker] = { ...buildFinding({
         ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap, turnover,
         announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult, news,
+        docs, secondaryUnavailable,
+        extraFacts: usEv?.extraFacts ?? null, extraRefs: usEv?.extraRefs ?? null,
       }), rulesVersion: RULES_VERSION };
       if (usNote) st.findings[u.ticker] = { ...st.findings[u.ticker], notes: [...st.findings[u.ticker].notes, usNote] };
       st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements);
-      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}) }, WINDOW_DAYS, now);
+      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}) }, WINDOW_DAYS, now);
       done++;
     } catch (e: any) {
       st.errors.push(`${u.ticker}: ${String(e?.message || e)}`);
@@ -536,6 +603,7 @@ async function research(req: NextRequest, body: any) {
   // Always persist at the end — also when only the universe or moves changed.
   await save();
   if (persistSink.length) await upsertDetections(persistSink, 'gainers').catch(() => null);
+  await rememberGainerCatalysts(st.findings, date).catch(() => null);
 
   return NextResponse.json({
     ok: true, market, date, session: market === 'IN' ? indiaSession(now) : null,
@@ -591,7 +659,8 @@ async function rescoreOnly(req: NextRequest, body: any) {
           if (!er.sources.length) { failed++; continue; }
           const returns: Returns | null = u.perf ? { m1: u.perf.m1 ?? null, m3: u.perf.m3 ?? null, m6: u.perf.m6 ?? null, y1: u.perf.y1 ?? null, history: 999 } : null;
           const usNote = edgarNote(er, WINDOW_DAYS);
-          inputs = compactInputs({ announcements: er.announcements, returns, marketCap: u.marketCap, turnover: u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null, sources: er.sources, sourceFailed: false, fetchedAt: now.toISOString(), ...(usNote ? { usNote } : {}) }, WINDOW_DAYS, now);
+          const ev = usFindingEvidence({ listing: er, issuer: u.ticker });
+          inputs = compactInputs({ announcements: er.announcements, returns, marketCap: u.marketCap, turnover: u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null, sources: er.sources, sourceFailed: false, fetchedAt: now.toISOString(), ...(usNote ? { usNote } : {}), ...(ev.extraFacts.length || ev.extraRefs.length ? { extraFacts: ev.extraFacts, extraRefs: ev.extraRefs } : {}) }, WINDOW_DAYS, now);
         }
       }
       // The read for the filing the CURRENT rules choose: the stored one if
@@ -610,9 +679,13 @@ async function rescoreOnly(req: NextRequest, body: any) {
       // zzz782 (US): no read of the chosen filing — read its press release's
       // own words (free, no model), once; the result is stored with the inputs.
       if (market === 'US' && cand && !read && !inputs.docTried && Date.now() - t0 < budget - 12_000) {
-        const fb = await usDocFallback(inputs.announcements, cand, Math.min(9_000, budget - (Date.now() - t0) - 10_000));
+        const fb = await usDocFallback(inputs.announcements, cand, Math.min(9_000, budget - (Date.now() - t0) - 10_000), u.ticker);
         inputs = { ...inputs, announcements: fb.announcements, docTried: true };
         read = fb.read;
+        if (fb.doc?.facts?.length || fb.doc?.sources?.length) {
+          const ev = usFindingEvidence({ doc: fb.doc, prior: { facts: inputs.extraFacts, refs: inputs.extraRefs }, issuer: u.ticker });
+          inputs = { ...inputs, extraFacts: ev.extraFacts, extraRefs: ev.extraRefs };
+        }
       }
       inputs = { ...inputs, read };
       // zzz782 (US): a first pass that skipped the daily chart (the function
@@ -638,6 +711,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
     } catch { failed++; }
   }
   if (persistSink.length) await upsertDetections(persistSink, 'gainers').catch(() => null);
+  await rememberGainerCatalysts(st.findings, date).catch(() => null);
   if (rescored) {
     st.updated_at = new Date().toISOString();
     stampRules(st);

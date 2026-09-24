@@ -43,8 +43,17 @@ import { classifyUsFiling, fmtUsdM, usPlainSubject } from './us-gainers';
  *  zzz771: clarification vs true denial split, fundraising no longer negative
  *  by default, US resale/shelf registrations told apart from a new raise. */
 import type { NewsContext } from './news-context';
+import { pressFacts } from './news-context';
+import type { StructuredFacts, SourceRef } from './structured-facts';
+import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead, type IndiaFacts } from './india-extract';
+import { isGenericSubject, docSeqOf } from './announcement-reader';
 
-export const RULES_VERSION = '2026-09-24.zzz782';
+export const RULES_VERSION = '2026-09-24.zzz785';
+// zzz785: India filings are read from the attached document (deterministic
+// extraction, no model): generic / unclassified subjects are classified from
+// the body; a soft negative (tax notice, exchange fine) no longer hides a
+// positive event filed in the same window; structured facts, source refs,
+// evidence gap and evidence breadth are attached to every finding.
 // zzz782: US 8-K subjects in plain words; 1D from the daily closes; the
 // press release read without a model (document_extract).
 
@@ -188,6 +197,21 @@ export interface Finding {
   /** zzz782: the quote and figures were extracted VERBATIM from the filed
    *  document (US press release) without a model. */
   docExtract?: boolean;
+  /** zzz785: every event found in the documents read for this name — positive
+   *  AND negative, current AND older related filings — in the shared contract
+   *  (structured-facts.ts). India entries are IndiaFacts (polarity, headline,
+   *  attribution, relation, continues). Named `structuredFacts` because `facts`
+   *  already carries the model reader's flat map. */
+  structuredFacts?: StructuredFacts[];
+  /** zzz785: every source consulted, with how it was accessed. Named
+   *  `sourceRefs` because `sources` already carries the source names. */
+  sourceRefs?: SourceRef[];
+  /** zzz785: NO_CATALYST = read, nothing relevant; EVIDENCE_INCOMPLETE =
+   *  something relevant but its document unread; UNCLASSIFIED = a filing
+   *  exists and could not be classified even after reading it. */
+  evidenceGap?: 'NO_CATALYST' | 'EVIDENCE_INCOMPLETE' | 'UNCLASSIFIED' | null;
+  /** zzz785: independent dimensions, not a raw item count. */
+  evidenceBreadth?: { documents: number; sourceKinds: number; eventKinds: number };
 }
 
 // ── denial vs clarification (zzz771) ──────────────────────────────────────
@@ -208,13 +232,16 @@ export function denialKindOf(text: string): NonNullable<Finding['denialKind']> {
 }
 
 /** zzz775: a tax demand / notice / appellate order — never an order win. */
-export const isTaxMatter = (hay: string): boolean =>
+// zzz785: "₹153.76 Cr exclusive of GST" is an order's value, not a tax matter.
+const stripTaxQualifiers = (h: string) => h.replace(/\b(exclusive|inclusive) of (applicable )?(gst|taxes|tax|duties)\b|\b(excluding|including|plus|\+)\s*(applicable )?gst\b|\bincl\.? taxes\b/gi, ' ');
+export const isTaxMatter = (hay0: string): boolean => { const hay = stripTaxQualifiers(hay0); return isTaxMatterRaw(hay); };
+const isTaxMatterRaw = (hay: string): boolean =>
   /\b(gst|cgst|sgst|igst|goods and services tax|income[- ]tax|service tax|customs duty|excise|tax demand|demand notice|show[- ]cause|\bscn\b|assessment order|itat|cestat|appellate (authority|tribunal)|commissioner \(appeals\)|tax (order|notice|authorit)|penalty order|dgg?i)\b/i.test(hay)
   && /\b(order|notice|demand|penalt|appeal|hearing|assessment|levied|imposed|confirmed)\w*/i.test(hay);
-const taxFavourable = (hay: string): boolean => /\b(quashed|dropped (entirely|fully)|set aside|in (our|its|the company'?s) favou?r|allowed the appeal|deleted the (demand|addition)|no (tax )?demand)\b/i.test(hay) && !/confirmed|upheld|levied|imposed/i.test(hay);
+export const taxFavourable = (hay: string): boolean => /\b(quashed|dropped (entirely|fully)|set aside|in (our|its|the company'?s) favou?r|allowed the appeal|deleted the (demand|addition)|no (tax )?demand)\b/i.test(hay) && !/confirmed|upheld|levied|imposed/i.test(hay);
 /** zzz775: a developer's gross development value, a "potential" or an
  *  "up to unlock" figure is not the company's revenue or consideration. */
-export const isPotentialValue = (hay: string): boolean => /\bgdv\b|gross development value|revenue potential|top ?line potential|sales potential|peak (revenue|sales) potential|may unlock|potential (revenue|value|topline)|market (size|opportunity) of/i.test(hay);
+export const isPotentialValue = (hay: string): boolean => /(business|revenue|annual) potential|\bgdv\b|gross development value|revenue potential|top ?line potential|sales potential|peak (revenue|sales) potential|may unlock|potential (revenue|value|topline)|market (size|opportunity) of/i.test(hay);
 
 // ── 1. CLASSIFY A FILING BY ITS SUBJECT (+ the source's summary) ──────────
 
@@ -646,18 +673,108 @@ export interface SweepInput {
    *  filed-results rows). A recent listing that has one is NOT a listing
    *  artifact only: the result is the context, the listing a caveat. (zzz769) */
   filedResult?: boolean;
+  /** zzz785 (IN): documents opened for this name (the top candidate, generic /
+   *  unclassified subjects, other substantive filings, older related ones). */
+  docs?: DocRead[] | null;
+  /** zzz785: a secondary source failed while the primary exchange source
+   *  answered — e.g. "screener.in company page". Never "source unavailable". */
+  secondaryUnavailable?: string | null;
+  /** zzz785: structured facts / source refs another producer (US) built for
+   *  this name; merged into the finding as they are. */
+  extraFacts?: StructuredFacts[] | null;
+  extraRefs?: SourceRef[] | null;
+}
+
+// ── zzz785: THE DOCUMENT DECIDES WHAT A GENERIC FILING IS ─────────────────
+
+/** Documents by filing URL (a document read under two URLs answers both). */
+function docIndex(docs: DocRead[] | null | undefined): Map<string, DocRead> {
+  const m = new Map<string, DocRead>();
+  for (const d of docs || []) { if (d.relation === 'history') continue; m.set(d.url, d); for (const u of d.sameAs || []) m.set(u, d); }
+  return m;
+}
+const readDoc = (idx: Map<string, DocRead>, url: string | null | undefined): DocRead | null => { const d = url ? idx.get(url) : undefined; return d && d.access === 'DOCUMENT_READ' ? d : null; };
+
+/** A subject-classified filing, corrected by its document when one was read:
+ *  an unclassified / generic-subject filing takes the body's event; a
+ *  summary's figure the document does not state (or states only as a
+ *  "potential") is dropped. */
+export function applyDocument(a: ClassifiedAnnouncement, d: DocRead | null, market: 'IN' | 'US'): ClassifiedAnnouncement & { docNote?: string } {
+  if (!d || market !== 'IN') return a;
+  const f = d.facts[0] as IndiaFacts | undefined;
+  // A generic subject says nothing; the document says what was filed, whatever
+  // the aggregator's summary suggested (ZIMLAB "Updates on Acquisition" was a
+  // new subsidiary; VIKRAN's "Disclosure under Regulation 30" was a tax win).
+  const generic = a.kind === 'unclassified' || (isGenericSubject(a.subject) && a.kind !== 'denial' && a.kind !== 'exchange_query' && !/results filing/.test(a.routineReason || '') && (!!f || !!d.routineReason));
+  if (generic) {
+    if (!f) return d.routineReason ? { ...a, kind: 'routine', valueStated: null, routineReason: `document read — ${d.routineReason.replace(/^routine:\s*/, '')}` } : a;
+    const cat = catalystTypeOf(f);
+    const v = factValueCr(f);
+    const summary = a.summary || f.headline;
+    if (f.polarity === 'negative') return { ...a, summary, kind: 'negative', category: f.event.kind === 'tax_litigation' ? 'tax_litigation' : (cat && cat !== 'new_geography' ? cat : null), valueStated: v, routineReason: f.event.kind === 'governance' ? 'exchange fine (document read)' : /^Promoter share sale/.test(f.headline) ? 'promoter share sale (supply)' : a.routineReason };
+    if (f.event.kind === 'tax_litigation') return { ...a, summary, kind: 'routine', valueStated: null, routineReason: 'tax matter decided in the company\'s favour (document read)' };
+    if (!cat) return a;
+    const dropped = a.valueStated != null && v == null
+      ? (f.statedPotentialNative != null && Math.abs(f.statedPotentialNative - a.valueStated) <= Math.max(0.01, a.valueStated * 0.01)
+        ? `The document calls ${fmtMoney(a.valueStated, market)} an annual business POTENTIAL at expected production rates, not a firm order value — materiality is not measured from it.`
+        : `The summary's figure (${fmtMoney(a.valueStated, market)}) is not stated as this event's value in the document.`)
+      : undefined;
+    return { ...a, summary, kind: 'catalyst', category: cat, stage: docStage(f) ?? 'executed', valueStated: v, ...(dropped ? { docNote: dropped } : {}) };
+  }
+  if (a.kind !== 'catalyst' || !f) return a;
+  // The document's stage refines the subject's: a board approving a plant
+  // has built nothing (KABRAEXTRU's ₹500 Cr battery plan).
+  const ds = docStage(f);
+  if (ds && ds !== a.stage && f.polarity !== 'negative') a = { ...a, stage: ds };
+  const v = factValueCr(f);
+  if (a.valueStated != null && f.statedPotentialNative != null && Math.abs(f.statedPotentialNative - a.valueStated) <= Math.max(0.01, a.valueStated * 0.01) && v == null) {
+    return { ...a, valueStated: null, docNote: `The document calls ${fmtMoney(a.valueStated, market)} an annual business POTENTIAL at expected production rates, not a firm order value — materiality is not measured from it.` };
+  }
+  if (a.valueStated == null && v != null) return { ...a, valueStated: v };
+  if (a.valueStated != null && d.valuesSeen.length && !d.valuesSeen.some((x) => Math.abs(x - a.valueStated!) <= Math.max(0.01, a.valueStated! * 0.01))) {
+    return { ...a, valueStated: v, docNote: `The summary's figure (${fmtMoney(a.valueStated, market)}) is not stated in the document${v != null ? `; the document states ${fmtMoney(v, market)}` : ''}.` };
+  }
+  return a;
+}
+
+/** The sweep's stage from a read event: proposed / approved-but-unbuilt is
+ *  enabling (scheduled when a completion date is stated); awarded, signed,
+ *  commissioned or completed is executed. */
+function docStage(f: IndiaFacts): Stage | null {
+  const st = f.event.stage;
+  if (f.event.kind === 'other') return 'enabling';
+  if (st === 'PROPOSED') return 'enabling';
+  if (st === 'APPROVED' && (f.event.kind === 'capacity' || f.event.kind === 'fundraising')) return f.time.expectedCompletion ? 'scheduled' : 'enabling';
+  if (st === 'ANNOUNCED' && f.event.kind !== 'order') return 'enabling';
+  return st ? 'executed' : null;
+}
+
+/** A tax notice or an exchange fine is bad news that does not cancel an order
+ *  or a plant filed beside it; an auditor quitting or a SEBI order does. */
+function softNegative(a: ClassifiedAnnouncement): boolean {
+  return a.category === 'tax_litigation' || /exchange fine|promoter share sale/.test(a.routineReason || '') || isTaxMatter(`${a.subject} ${a.summary || ''}`);
+}
+
+function classifyWindow(inp: SweepInput) {
+  const idx = docIndex(inp.docs);
+  const all = inp.announcements
+    .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, inp.now) }))
+    .filter((a) => a.ageDays == null || a.ageDays <= inp.windowDays)
+    .map((a) => applyDocument(classifyAnnouncement(a, inp.market), readDoc(idx, a.url), inp.market));
+  return { idx, all };
 }
 
 export function buildFinding(inp0: SweepInput): Finding {
   // zzz782: US 8-K subjects stored in the old item-title form read the same
   // as new ones (plain words, item codes as a tag).
   const inp: SweepInput = inp0.market === 'US' ? { ...inp0, announcements: inp0.announcements.map((a) => ({ ...a, subject: usPlainSubject(a.subject) })) } : inp0;
+  return decorateFinding(buildFindingCore(inp), inp);
+}
+
+function buildFindingCore(inp: SweepInput): Finding {
   const now = inp.now.toISOString();
-  const docExtract = inp.read?.source === 'document_extract';
-  const allInWindow = inp.announcements
-    .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, inp.now) }))
-    .filter((a) => a.ageDays == null || a.ageDays <= inp.windowDays)
-    .map((a) => classifyAnnouncement(a, inp.market));
+  const { idx: docs, all: allInWindow } = classifyWindow(inp);
+  const docExtract0 = inp.read?.source === 'document_extract';
   const afterClose = allInWindow.filter((a) => filedAfterClose(a.dateIso, inp.sessionCloseIso));
   const inWindow = allInWindow.filter((a) => !filedAfterClose(a.dateIso, inp.sessionCloseIso));
   const band = bandPrint(inp.movePct, inp.turnover, inp.market);
@@ -669,7 +786,7 @@ export function buildFinding(inp0: SweepInput): Finding {
     ageDays: null, valueStated: null, valuePctMcap: null, net: null, components: null, verdict: null,
     returns: inp.returns ? { ...(inp.returns.d1 != null ? { d1: inp.returns.d1, d1Date: inp.returns.d1Date ?? null } : d1FromTail(inp.returns.tail)), w1: inp.returns.w1 ?? w1FromTail(inp.returns.tail), m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
     routine: inWindow.filter((a) => a.kind === 'routine').map((a) => a.subject).slice(0, 6),
-    filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read && !docExtract,
+    filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read && !docExtract0,
     researchedAt: now, sources: inp.sources, news: inp.news ?? null,
   };
   if (band.band) base.notes.push(`Closed at the ${band.level}% band${inp.turnover != null ? ` (avg daily value ~${fmtMoney(inp.turnover, inp.market)}, 1-week average)` : ''} — a band print measures the band, not demand.`);
@@ -714,7 +831,14 @@ export function buildFinding(inp0: SweepInput): Finding {
   // flag on that catalyst, not a replacement for it. On its own it is the
   // finding. (zzz766)
   const dilution = inp.market === 'US' ? inWindow.find((a) => a.kind === 'negative' && a.category === 'dilution') : undefined;
-  const negative = inWindow.find((a) => a.kind === 'negative' && !(a === dilution && hasCatalyst));
+  let negative = inWindow.find((a) => a.kind === 'negative' && !(a === dilution && hasCatalyst));
+  // zzz785 (IN): a tax notice or an exchange fine beside an order is filed
+  // news of both kinds — the positive event leads, the negative is a note and
+  // stays in the structured facts. VIKRAN: a ₹5.34 Cr GST notice hid a
+  // ₹153.76 Cr POWERGRID order filed the same day.
+  const alsoNegative = inp.market === 'IN' && negative && hasCatalyst && inWindow.filter((a) => a.kind === 'negative').every(softNegative)
+    ? inWindow.filter((a) => a.kind === 'negative') : [];
+  if (alsoNegative.length) negative = undefined;
   if (negative && inp.market === 'US') {
     // zzz771: a resale / shelf registration releases existing stock for sale
     // (a supply overhang) and raises nothing new; it is not the move's
@@ -725,7 +849,13 @@ export function buildFinding(inp0: SweepInput): Finding {
       : 'A negative filing in the window. The move is not explained by it.';
     return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.routineReason || negative.subject, 300), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, valueStated: negative.category === 'dilution' && !resale ? negative.valueStated : null, notes: [...base.notes, note] };
   }
-  if (negative) return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.summary || negative.subject, 300), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, 'The only substantive in-window filing is negative. The move is not explained by it.'] };
+  if (negative) {
+    const nd = readDoc(docs, negative.url);
+    const nf = nd?.facts.find((f) => f.polarity === 'negative') as IndiaFacts | undefined;
+    return { ...base, status: 'negative', category: negative.category, headline: shorten(nf?.headline || negative.summary || negative.subject, 300), evidenceQuote: nf?.quotes[0] ?? null, sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays,
+      valueStated: nf ? factValueCr(nf) : null, valuePctMcap: nf && factValueCr(nf) != null && inp.marketCap ? Math.round((factValueCr(nf)! / inp.marketCap) * 10000) / 100 : null,
+      notes: [...base.notes, hasCatalyst ? 'A serious negative filing in the window; the positive filings beside it are listed in the structured facts but do not outweigh it.' : 'The only substantive in-window filing is negative. The move is not explained by it.'] };
+  }
   const query = inWindow.find((a) => a.kind === 'exchange_query');
 
   // The candidate: the freshest catalyst-kind filing, executed before
@@ -761,12 +891,21 @@ export function buildFinding(inp0: SweepInput): Finding {
     if (resultLead) base.notes.unshift('A results filing is scored by the graded funnel (revenue, PAT, tier), not by this sweep.');
     if (!inWindow.length) return { ...base, status: 'none', headline: resultLead + (afterClose.length ? `No filing before the session closed (${afterClose.length} filed after it)` : `No filing in the last ${inp.windowDays} days`), notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
     const uncl = inWindow.filter((a) => a.kind === 'unclassified');
+    const unclRead = uncl.filter((a) => readDoc(docs, a.url));
     const headline = uncl.length
-      ? `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window; ${uncl.length} not classifiable from the subject (${uncl.slice(0, 2).map((a) => short(a.summary || a.subject)).join('; ')})`
+      ? `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window; ${uncl.length} ${unclRead.length === uncl.length ? 'could not be classified even after reading the document' : 'not classifiable from the subject'} (${uncl.slice(0, 2).map((a) => short(a.summary || a.subject)).join('; ')})`
       : `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window, all routine (${base.routine.slice(0, 2).map(short).join('; ')})`;
-    return { ...base, status: 'routine_only', headline: resultLead + headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, ageDays: (uncl[0] || inWindow[0]).ageDays, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? ['An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern.'] : [])] };
+    return { ...base, status: 'routine_only', headline: resultLead + headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, ageDays: (uncl[0] || inWindow[0]).ageDays, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? [unclRead.length === uncl.length ? 'The document was read and names no event this sweep recognises — open it before calling it nothing.' : 'An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern; its document was not read yet.'] : [])] };
   }
   let c = cands[0];
+  // zzz785 (IN): no model read, but the document was read — its verbatim
+  // sentence and stated figure verify the candidate the same way.
+  const cDoc = readDoc(docs, c.url);
+  if (!inp.read && inp.market === 'IN' && cDoc) {
+    const f = cDoc.facts.find((x) => x.quotes.length && x.polarity !== 'negative') as IndiaFacts | undefined;
+    if (f) inp = { ...inp, read: { url: c.url, headline: f.headline, quote: f.quotes[0], category: (c.category || catalystTypeOf(f) || 'none_identified') as CatalystType, valueStated: c.valueStated ?? factValueCr(f), facts: flatFacts(f), source: 'document_extract' } };
+  }
+  const docExtract = inp.read?.source === 'document_extract';
   const verified = !!inp.read && inp.read.url === c.url;
   if (verified && inp.read) {
     if (inp.market === 'US' && isNegCat(inp.read.category)) {
@@ -815,7 +954,11 @@ export function buildFinding(inp0: SweepInput): Finding {
   if (c.category === 'quarterly_result' && !verified) notes.push('Results filed — the filing is the dated event; whether the numbers were good was not read here.');
   if (dilution) notes.push(`⚠ Offering filed in the window (${shorten(dilution.subject, 60)}, ${fmtDate(dilution.dateIso)}) — supply into the move.`);
   if (scored.valuePctMcap != null && inp.movePct != null && scored.valuePctMcap < 2 && Math.abs(inp.movePct) >= 8) notes.push(`Item is ${scored.valuePctMcap}% of market cap against a ${fmtPct(inp.movePct)} move — look for the real driver.`);
-  if (verified && docExtract) notes.push('Read without a model: the quote and any figure are sentences copied verbatim from the filed document (press release); the category comes from the SEC form / item code, not from a reading of the text.');
+  if (verified && docExtract) notes.push(inp.market === 'IN'
+    ? 'Read without a model: the quote and any figure are copied verbatim from the filed exchange document; anything the document does not state is left unknown.'
+    : 'Read without a model: the quote and any figure are sentences copied verbatim from the filed document (press release); the category comes from the SEC form / item code, not from a reading of the text.');
+  if ((c as any).docNote) notes.push((c as any).docNote);
+  for (const n of alsoNegative) notes.push(`Also filed in the window (negative, does not cancel the event above): ${shorten(n.summary || n.subject, 160)} (${fmtDate(n.dateIso)}).`);
   if (verified && docExtract && c.category === 'quarterly_result') notes.push('Results filed — the revenue sentence is quoted as filed; whether the result was good is not judged here.');
   if (!verified) notes.push(scored.components.evidence === 'SUMMARY_ONLY'
     ? 'SUMMARY ONLY: the document was not model-read; the headline and any figure come from the source\'s summary, so materiality is counted at 60%.'
@@ -829,6 +972,83 @@ export function buildFinding(inp0: SweepInput): Finding {
     notes, facts: verified && inp.read ? (inp.read.facts ?? null) : null,
     ...(verified && docExtract ? { docExtract: true } : {}),
   };
+}
+
+/** zzz785: a fact trimmed for storage — the day's state is one KV value. */
+function compactFact<T extends StructuredFacts>(f: T): T {
+  return { ...f, quotes: f.quotes.slice(0, 2).map((q) => q.slice(0, 260)), unknowns: f.unknowns.slice(0, 5), source: { ...f.source, title: String(f.source.title || '').slice(0, 140) } };
+}
+
+/** zzz785: structured facts, source refs, evidence gap and breadth — built
+ *  from what the sweep read; never from price. */
+function decorateFinding(f: Finding, inp: SweepInput): Finding {
+  const { idx, all } = classifyWindow(inp);
+  const inWindow = all.filter((a) => !filedAfterClose(a.dateIso, inp.sessionCloseIso));
+  const issuer = inp.ticker;
+  // Facts: every event in every document read (current and related history), deduplicated by document hash + kind.
+  const seen = new Set<string>();
+  const facts: StructuredFacts[] = [];
+  for (const d of inp.docs || []) {
+    if (d.access !== 'DOCUMENT_READ') continue;
+    for (const x of d.facts) {
+      const k = `${x.source.hash || d.hash || d.url}|${x.event.kind}`;
+      if (seen.has(k)) continue;
+      seen.add(k); facts.push(compactFact(x));
+    }
+  }
+  for (const x of inp.extraFacts || []) facts.push(x);
+  // Source refs: every in-window filing with how it was accessed.
+  const refs: SourceRef[] = [];
+  const refSeen = new Set<string>();
+  const pushRef = (r: SourceRef) => { const k = r.hash || r.url || r.title; if (refSeen.has(k)) return; refSeen.add(k); refs.push(r); };
+  const folderOf = (u: string | null | undefined) => (u && /sec\.gov\/Archives\//i.test(u) ? u.replace(/[^/]*$/, '').toLowerCase() : null);
+  const usOpened = new Set(inp.market === 'US' ? (inp.extraRefs || []).filter((r) => r.access === 'DOCUMENT_READ').map((r) => folderOf(r.url)).filter(Boolean) as string[] : []);
+  const opened = (u: string | null | undefined) => !!readDoc(idx, u) || (!!folderOf(u) && usOpened.has(folderOf(u)!));
+  for (const a of inWindow) {
+    if (usOpened.size && opened(a.url)) continue;   // the document refs below stand for this filing (one ref per document)
+    const d = readDoc(idx, a.url);
+    if (!d && a.kind === 'routine') continue;   // paperwork is counted in \`routine\`, not listed as a source
+    const attributed = d?.facts.some((x) => x.source.kind === 'SUBSIDIARY_FILING');
+    pushRef({ kind: inp.market === 'US' ? 'SEC_FILING' : attributed ? 'SUBSIDIARY_FILING' : 'EXCHANGE_FILING', access: d ? 'DOCUMENT_READ' : 'SUMMARY_ONLY', issuer, date: a.dateIso, accession: docSeqOf(a.url), url: a.url, title: String(a.subject || '').slice(0, 140), hash: d?.hash ?? null });
+  }
+  for (const d of inp.docs || []) if (d.relation === 'history' && d.access === 'DOCUMENT_READ') {
+    pushRef({ kind: d.facts.some((x) => x.source.kind === 'SUBSIDIARY_FILING') ? 'SUBSIDIARY_FILING' : 'EXCHANGE_FILING', access: 'DOCUMENT_READ', issuer, date: d.date, accession: d.seq, url: d.url, title: `Earlier related filing: ${String(d.title || '').slice(0, 120)}`, hash: d.hash });
+  }
+  for (const r of inp.extraRefs || []) pushRef(r);
+  if (inp.secondaryUnavailable) pushRef({ kind: 'EXCHANGE_FILING', access: 'SECONDARY_UNAVAILABLE', issuer, date: null, url: null, title: `Secondary source unavailable: ${inp.secondaryUnavailable}` });
+  // Press: secondary, verification required; confirmed-by an official filing of the same event.
+  let news = f.news ?? null;
+  if (news && news.items?.length) {
+    const p = pressFacts(news, issuer, facts);
+    news = p.news;
+    for (const x of p.facts) facts.push(x);
+    for (const r of p.refs.slice(0, 4)) pushRef(r);
+  }
+  const breadth = evidenceBreadthOf(facts, refs);
+  // Evidence gap — three different states, never merged.
+  const uncl = inWindow.filter((a) => a.kind === 'unclassified');
+  const substantiveRead = (url: string | null) => opened(url) || !!(url && inp.read && inp.read.url === url);
+  let gap: Finding['evidenceGap'] = null;
+  if (f.status === 'none') gap = 'NO_CATALYST';
+  else if (f.status === 'routine_only') gap = !uncl.length ? 'NO_CATALYST' : uncl.every((a) => opened(a.url)) ? 'UNCLASSIFIED' : 'EVIDENCE_INCOMPLETE';
+  else if (f.status === 'catalyst' || f.status === 'negative') gap = f.evidenceQuote || substantiveRead(f.sourceUrl) ? null : 'EVIDENCE_INCOMPLETE';
+  // US: a reported event nobody has confirmed (press / an unread stake) is unknown, not "no catalyst".
+  if (inp.market === 'US' && gap === 'NO_CATALYST' && facts.some((x) => x.verificationRequired && !['results', 'governance', 'other', 'debt'].includes(x.event.kind))) gap = 'EVIDENCE_INCOMPLETE';
+  const notes = [...f.notes];
+  if (inp.market === 'IN') {
+    const read = (inp.docs || []).filter((d) => d.access === 'DOCUMENT_READ');
+    const failed = (inp.docs || []).filter((d) => d.access !== 'DOCUMENT_READ');
+    if (read.length) notes.push(`Documents read: ${read.length} (${read.filter((d) => d.relation !== 'history').length} in the window${read.some((d) => d.relation === 'history') ? `, ${read.filter((d) => d.relation === 'history').length} earlier related` : ''}).${failed.length ? ` ${failed.length} could not be opened.` : ''}`);
+    else if (failed.length) notes.push(`${failed.length} document${failed.length === 1 ? '' : 's'} could not be opened — the finding rests on the filing summaries.`);
+    for (const x of facts as IndiaFacts[]) {
+      if (x.fundMateriality && x.fundMateriality.state === 'UNKNOWN' && x.relation !== 'history') notes.push(`Fundraise materiality: Unknown — not stated in the document: ${x.fundMateriality.missing.join(', ')}.`);
+      if (x.attribution && x.relation !== 'history' && f.status === 'catalyst' && x.source.url === f.sourceUrl) notes.push(`Carried out by the subsidiary ${x.attribution.entity}; counted for the listed parent ${issuer}.`);
+    }
+    const hist = (facts as IndiaFacts[]).filter((x) => x.relation === 'history');
+    if (hist.length) notes.push(`Continues earlier filings: ${hist.slice(0, 3).map((x) => `${fmtDate(x.source.date)} — ${shorten(x.headline || x.event.kind, 110)}`).join('; ')}.`);
+    if (inp.secondaryUnavailable) notes.push(`Secondary source unavailable (${inp.secondaryUnavailable}); the exchange filings were read directly.`);
+  }
+  return { ...f, notes: Array.from(new Set(notes)), news, structuredFacts: facts.slice(0, 10), sourceRefs: refs.slice(0, 12), evidenceGap: gap, evidenceBreadth: breadth };
 }
 
 /** zzz773: screener.in's five newest filings plus BSE's complete list for the
@@ -901,6 +1121,12 @@ export interface StoredSweepInputs {
   usNote?: string | null;
   /** zzz782 (US): the free press-release read was already attempted. */
   docTried?: boolean;
+  /** zzz785 (IN): the documents read — kept compact (see compactDocs). */
+  docs?: DocRead[] | null;
+  secondaryUnavailable?: string | null;
+  /** zzz785 (US): facts / refs read from SEC documents and press, already compact. */
+  extraFacts?: StructuredFacts[] | null;
+  extraRefs?: SourceRef[] | null;
 }
 
 /** Keeps only what a finding can use (the window, a bounded summary): the
@@ -911,7 +1137,9 @@ export function compactInputs(inp: Omit<StoredSweepInputs, 'announcements'> & { 
     .filter((a) => a.ageDays == null || a.ageDays <= windowDays)
     .slice(0, 25)
     .map((a) => ({ subject: String(a.subject || '').slice(0, 300), summary: a.summary ? String(a.summary).slice(0, 400) : null, url: a.url, dateIso: a.dateIso, ageDays: a.ageDays }));
-  return { ...inp, announcements };
+  // zzz785: documents keep their facts (trimmed) — a re-score re-reads nothing.
+  const docs = inp.docs ? inp.docs.slice(0, 6).map((d) => ({ ...d, title: String(d.title || '').slice(0, 160), valuesSeen: d.valuesSeen.slice(0, 12), facts: d.facts.slice(0, 2).map((f) => ({ ...compactFact(f), quotes: f.quotes.slice(0, 1).map((q) => q.slice(0, 260)), unknowns: f.unknowns.slice(0, 3) })) })) : inp.docs;
+  return { ...inp, announcements, ...(docs !== undefined ? { docs } : {}) };
 }
 
 /** The filing a sweep would model-read — the same candidate the finding
@@ -930,6 +1158,7 @@ export function rescoreFromInputs(inp: StoredSweepInputs, meta: { ticker: string
   const f = buildFinding({
     ticker: meta.ticker, company: meta.company, market: meta.market, movePct: meta.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
     announcements: inp.announcements, returns: inp.returns, holding: meta.holding, sources: inp.sources, sourceFailed: inp.sourceFailed, news: inp.news ?? null,
+    docs: inp.docs ?? null, secondaryUnavailable: inp.secondaryUnavailable ?? null, extraFacts: inp.extraFacts ?? null, extraRefs: inp.extraRefs ?? null,
     windowDays: meta.windowDays, now: Number.isFinite(now.getTime()) ? now : new Date(), read, sessionCloseIso: meta.sessionCloseIso, filedResult: meta.filedResult,
   });
   return { ...f, rulesVersion: RULES_VERSION };

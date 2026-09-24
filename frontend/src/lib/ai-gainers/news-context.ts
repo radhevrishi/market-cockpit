@@ -15,6 +15,10 @@
 // news line is where to look, not evidence of what happened.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import type { StructuredFacts, SourceRef, EventKind } from './structured-facts';
+import { emptyEconomics, emptyTime } from './structured-facts';
+import { moneyCr } from './india-extract';
+
 export interface NewsLite { title: string; url: string; published_at: string; source?: string }
 
 export type NewsTheme =
@@ -31,7 +35,7 @@ export const THEME_LABEL: Record<NewsTheme, string> = {
 };
 
 const RULES: Array<[NewsTheme, RegExp]> = [
-  ['negative', /\b(raid|probe|fraud|default|downgrad|resign(s|ed)? as (ceo|md|cfo)|penalty|show[- ]cause|insolven|plunge|slump|crash|tumble|sebi (bans|order))/i],
+  ['negative', /\b(gst|tax) (demand|notice|order)|demand notice|show[- ]cause notice|\b(raid|probe|fraud|default|downgrad|resign(s|ed)? as (ceo|md|cfo)|penalty|show[- ]cause|insolven|plunge|slump|crash|tumble|sebi (bans|order))/i],
   ['block_deal', /\bblock deal|bulk deal|change(s)? hands|offload|stake sale|sells? stake|buys? [\d.,]+ (lakh|crore|million)? ?shares/i],
   ['lockup', /lock[- ]?in|lock[- ]?up|anchor (investors?|lock)|shares? unlock/i],
   ['broker_view', /\b(initiat\w+ coverage|target price|price target|\btarget (of )?₹|\bbuy rating|overweight|brokerage|motilal|jefferies|hsbc|kotak inst|nomura|jm financial|nuvama|axis securities|icici securities)/i],
@@ -69,7 +73,11 @@ export function nameTokens(ticker: string, company: string | null): string[] {
 }
 
 export interface NewsContext {
-  items: Array<{ title: string; url: string; date: string; source: string; themes: NewsTheme[] }>;
+  items: Array<{ title: string; url: string; date: string; source: string; themes: NewsTheme[];
+    /** zzz785: always true — press is secondary until an official filing confirms it. */
+    secondary?: boolean;
+    /** zzz785: the official filing that states the same event, when one was read. */
+    confirmedBy?: { url: string | null; date: string | null; title: string } | null }>;
   themes: Array<{ theme: NewsTheme; label: string; count: number; firstDate: string; lastDate: string }>;
   /** A theme covered on ≥2 different days within the window — a story that keeps running. */
   narrative: { theme: NewsTheme; label: string; count: number; days: number; firstDate: string; lastDate: string; lead: string } | null;
@@ -129,4 +137,64 @@ export function buildNewsContext(raw: NewsLite[], opts: { ticker: string; compan
 export function companyNameFromPage(html: string): string | null {
   const m = /<title>\s*([^<|]+?)\s+share price/i.exec(html) || /<h1[^>]*>\s*([^<]+?)\s*<\/h1>/i.exec(html);
   return m ? m[1].replace(/&amp;/g, '&').trim() : null;
+}
+
+// ── zzz785: PRESS AS STRUCTURED FACTS — SECONDARY, VERIFICATION REQUIRED ────
+
+const THEME_KIND: Partial<Record<NewsTheme, EventKind>> = {
+  order_win: 'order', fundraise: 'fundraising', capacity: 'capacity', acquisition: 'acquisition', regulatory: 'qualification',
+  results: 'results', guidance: 'guidance', rating: 'other', promoter: 'stake_by_strategic',
+};
+
+export interface PressFacts extends StructuredFacts {
+  polarity: 'positive' | 'negative' | 'neutral';
+  headline: string;
+  secondary: true;
+  confirmedBy: { url: string | null; date: string | null; title: string } | null;
+}
+
+const tok = (s: string | null | undefined) => new Set(String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 5 && !/^(limited|india|indian|order|orders|crore|leading|private|company)$/.test(w)));
+const days = (a: string | null | undefined, b: string | null | undefined) => (a && b ? Math.abs(Date.parse(String(a).slice(0, 10)) - Date.parse(String(b).slice(0, 10))) / 86_400_000 : Infinity);
+
+/** Each dated headline that names an event, as a SECONDARY fact. When a read
+ *  official filing states the same event (same kind and the same value,
+ *  counterparty or date ±3 days), the press item is marked confirmed-by it. */
+export function pressFacts(news: NewsContext, issuer: string, official: StructuredFacts[]): { facts: PressFacts[]; refs: SourceRef[]; news: NewsContext } {
+  const out: PressFacts[] = [];
+  const refs: SourceRef[] = [];
+  const offs = official.filter((f) => f.source.kind !== 'PRESS');
+  const items = news.items.map((it) => {
+    const negTax = it.themes.includes('negative') && /\b(gst|tax|demand|show[- ]cause)\b/i.test(it.title);
+    const theme = it.themes.find((t) => THEME_KIND[t]) || (negTax ? 'negative' : null);
+    const newSub = /\bincorporat\w*[^.]{0,40}subsidiary|subsidiary[^.]{0,40}incorporat/i.test(it.title);
+    const kind: EventKind | null = negTax ? 'tax_litigation' : newSub ? 'other' : theme === 'negative' ? 'regulatory_negative' : theme ? THEME_KIND[theme]! : null;
+    const value = moneyCr(it.title);
+    let confirmedBy: PressFacts['confirmedBy'] = null;
+    if (kind) {
+      const mine = tok(it.title);
+      const hit = offs.find((f) => {
+        if (f.event.kind !== kind) return false;
+        const fv = f.economics.valueNative ?? f.economics.considerationNative ?? f.economics.capex;
+        if (value != null && fv != null) return Math.abs(value - fv) <= Math.max(0.05, fv * 0.02);
+        const cp = tok(`${f.event.counterparty || ''} ${f.event.product || ''}`);
+        if (Array.from(cp).some((w) => mine.has(w))) return true;
+        return days(f.source.date, it.date) <= 3;
+      });
+      if (hit) confirmedBy = { url: hit.source.url ?? null, date: hit.source.date, title: hit.source.title };
+    }
+    const src: SourceRef = { kind: 'PRESS', access: 'SUMMARY_ONLY', issuer, date: it.date, url: it.url, title: `${it.title}${it.source ? ` — ${it.source}` : ''}`.slice(0, 160) };
+    refs.push(src);
+    if (kind && out.length < 6) {
+      const economics = emptyEconomics();
+      if (value != null) { economics.valueNative = value; economics.currency = 'INR_CR'; }
+      out.push({
+        source: src, event: { kind, counterparty: null, product: null, geography: null, stage: null }, economics, time: emptyTime(),
+        quotes: [], unknowns: ['Press report — not verified against an official filing.', ...(confirmedBy ? [] : ['No official filing read that states the same event.'])],
+        verificationRequired: true, polarity: kind === 'tax_litigation' || kind === 'regulatory_negative' ? 'negative' : ['order', 'capacity', 'qualification', 'acquisition', 'partnership', 'stake_by_strategic'].includes(kind) ? 'positive' : 'neutral',
+        headline: it.title, secondary: true, confirmedBy,
+      });
+    }
+    return { ...it, secondary: true, confirmedBy };
+  });
+  return { facts: out, refs, news: { ...news, items } };
 }

@@ -4609,7 +4609,13 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
   test('research-view.ts stays client-safe: no server-only imports', () => {
     const src = readFileSync(join(__dirname, '..', 'ai-gainers', 'research-view.ts'), 'utf8');
     const imports = Array.from(src.matchAll(/^import .* from '([^']+)';/gm)).map((m) => m[1]);
-    assert.deepEqual(imports.sort(), ['./catalyst-research', './research-present']);
+    // zzz785: + the pure timeline / persistence-test / contract modules, themselves client-safe.
+    assert.deepEqual(imports.sort(), ['./catalyst-research', './catalyst-timeline', './persistence-test', './research-present', './structured-facts']);
+    for (const m of ['catalyst-timeline', 'persistence-test', 'structured-facts']) {
+      const t = readFileSync(join(__dirname, '..', 'ai-gainers', `${m}.ts`), 'utf8');
+      assert.ok(Array.from(t.matchAll(/from '([^']+)'/g)).every((x) => x[1].startsWith('./')), `${m} imports only local pure modules`);
+      assert.ok(!/Date\.now\(\)|new Date\(\)/.test(t), `${m} never reads the clock`);
+    }
     assert.ok(/^import type \{ Finding \} from '\.\/catalyst-research';/m.test(src), 'catalyst-research is a type-only import');
     assert.ok(!/Date\.now\(\)|new Date\(\)/.test(src), 'the builder never reads the clock');
   });
@@ -5231,7 +5237,8 @@ describe('zzz771 AG-1 — fundraising is a flagged potential catalyst, not negat
     const r = find(v, 'ROSSFUND');
     assert.equal(r.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(r.eventType, 'Fundraising'); assert.equal(r.flags.dilution, true);
     assert.equal(r.eventLabel, 'Fundraising — SBI Mutual Fund');
-    assert.equal(r.materiality.label, 'MODERATE'); assert.equal(r.materiality.ratios[0].basis, 'market_cap');
+    // zzz785: materiality is Unknown until amount, price, allottees AND dilution are known; the issue ÷ market cap ratio stays as scale.
+    assert.equal(r.materiality.label, 'UNKNOWN'); assert.match(r.materiality.explanation, /missing: .*dilution/); assert.equal(r.materiality.ratios[0].basis, 'market_cap');
     assert.equal(r.materiality.ratios[0].text, '₹45 Cr ÷ ₹500 Cr market cap = 9%');
     assert.equal(r.transmission, 'WEAK');
     assert.equal(r.scoreDetails!.penalty_dilution, 0.75); assert.ok(r.priorityReasons.includes('Penalty: dilution (named allottee)'));
@@ -5249,7 +5256,7 @@ describe('zzz771 AG-1 — fundraising is a flagged potential catalyst, not negat
     inp.findings.FINANCE = { ...inp.findings.FINANCE, stage: 'enabling', headline: 'Board to consider a proposal for preferential issue of equity shares to Vantage Capital Partners' } as any;
     const x = buildView771(inp);
     const r = find(x, 'ROSSFUND');
-    assert.equal(r.eventClass, 'CONFIRMED_LOW_MATERIALITY'); assert.equal(r.materiality.label, 'SMALL'); assert.equal(r.stage, 'EXECUTED');
+    assert.equal(r.eventClass, 'CONFIRMED_LOW_MATERIALITY'); assert.equal(r.materiality.label, 'UNKNOWN'); assert.equal(r.materiality.ratios[0].pct, 1); assert.equal(r.stage, 'EXECUTED');   // zzz785: dilution not stated → Unknown label
     const f = find(x, 'FINANCE');
     assert.equal(f.eventClass, 'POTENTIAL_UNVERIFIED'); assert.match(f.eventLabel || '', /^Fundraising — Vantage Capital Partners \((enabling|proposed), not allotted\)$/);
   });
@@ -5336,8 +5343,8 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION is current (zzz782) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
-    assert.match(RULES771, /zzz782$/);
+  test('RULES_VERSION is current (zzz785) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    assert.match(RULES771, /zzz785$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 

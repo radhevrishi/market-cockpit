@@ -27,6 +27,7 @@ import type { AnnouncementLite, Returns } from './catalyst-research';
 import { returnsFromSeries } from './catalyst-research';
 import { companyNameFromPage } from './news-context';
 import { yahooChart } from '@/lib/us-prices';
+import { fetchCorporateAnnouncements } from '@/lib/nse';
 
 export function parseCompanyId(html: string): string | null {
   const m = /data-company-id="(\d+)"/.exec(html) || /\/company\/(\d+)\/chart/.exec(html) || /\/announcements\/recent\/(\d+)\//.exec(html);
@@ -95,6 +96,10 @@ export interface CompanyResearch {
   prevClose: number | null;
   sources: string[];
   errors: string[];
+  /** zzz785: screener.in (a secondary aggregator) failed after one retry.
+   *  The caller reads the exchanges directly; this is "secondary source
+   *  unavailable", never "source unavailable". */
+  secondaryUnavailable?: string | null;
 }
 
 /** zzz776: Yahoo daily closes → returns, for a re-score whose stored inputs
@@ -132,8 +137,16 @@ async function yahooFallback(out: CompanyResearch, sym: string): Promise<void> {
 export async function fetchCompanyResearch(ticker: string, now = new Date()): Promise<CompanyResearch> {
   const sym = screenerSymbol(ticker);
   const out: CompanyResearch = { ticker, companyId: null, marketCapCr: null, price: null, pe: null, announcements: [], returns: null, lastClose: null, prevClose: null, sources: [], errors: [] };
-  const page = await fetchScreenerHtml(`https://www.screener.in/company/${encodeURIComponent(sym)}/`);
-  if (!page.html) { out.errors.push(`company page: ${page.error || 'unreachable'}`); await yahooFallback(out, sym); out.sources = out.sources.filter((x) => !/^price history/.test(x)); return out; }
+  let page = await fetchScreenerHtml(`https://www.screener.in/company/${encodeURIComponent(sym)}/`);
+  // zzz785: one retry with a short backoff — screener.in drops ~1 request in
+  // 2 through the proxy chain, and the second try usually answers.
+  if (!page.html) {
+    await new Promise((r) => setTimeout(r, 1_200));
+    const again = await fetchScreenerHtml(`https://www.screener.in/company/${encodeURIComponent(sym)}/`);
+    if (again.html) page = again;
+  }
+  if (!page.html) {
+    out.secondaryUnavailable = `screener.in company page (${String(page.error || 'unreachable').split(/[.;\n]/)[0].slice(0, 80)})`; out.errors.push(`company page: ${page.error || 'unreachable'}`); await yahooFallback(out, sym); out.sources = out.sources.filter((x) => !/^price history/.test(x)); return out; }
   out.sources.push('screener.in company page');
   out.companyId = parseCompanyId(page.html);
   out.companyName = companyNameFromPage(page.html);
@@ -157,4 +170,43 @@ export async function fetchCompanyResearch(ticker: string, now = new Date()): Pr
   }
   await yahooFallback(out, sym);
   return out;
+}
+
+// ── zzz785: NSE's own announcement list — the fallback when screener.in and
+// BSE both fail. Public, per symbol, through the shared resilient NSE fetch.
+
+const NSE_MON: Record<string, string> = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+/** "24-Sep-2026 17:52:39" (IST) → ISO with the +05:30 zone. */
+export function nseDateIso(raw: string | null | undefined): string | null {
+  const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(String(raw || '').trim());
+  if (!m) return null;
+  const mo = NSE_MON[m[2].toLowerCase()];
+  if (!mo) return null;
+  return `${m[3]}-${mo}-${m[1].padStart(2, '0')}T${m[4] || '00'}:${m[5] || '00'}:${m[6] || '00'}+05:30`;
+}
+
+/** NSE rows → AnnouncementLite. Pure (tested with a captured payload shape). */
+export function parseNseAnnouncements(rows: any[], days: number, now = new Date()): AnnouncementLite[] {
+  const cutoff = now.getTime() - days * 86_400_000;
+  const out: AnnouncementLite[] = [];
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const subject = String(r?.desc || r?.subject || '').trim();
+    const dateIso = nseDateIso(r?.an_dt || r?.sort_date || r?.dt);
+    const url = String(r?.attchmntFile || '').trim();
+    if (!subject || !url) continue;
+    if (dateIso && Date.parse(dateIso) < cutoff) continue;
+    const text = String(r?.attchmntText || '').replace(/\s+/g, ' ').trim();
+    out.push({ subject, summary: text && text.toLowerCase() !== subject.toLowerCase() ? text.slice(0, 600) : null, url, dateIso, ageDays: dateIso ? Math.max(0, Math.floor((now.getTime() - Date.parse(dateIso)) / 86_400_000)) : null });
+  }
+  return out;
+}
+
+export async function fetchNseAnnouncementsLite(ticker: string, days = 22, now = new Date()): Promise<{ items: AnnouncementLite[]; error: string | null }> {
+  if (/^\d{6}$/.test(ticker)) return { items: [], error: 'BSE-only scrip — not on NSE' };
+  try {
+    const j = await Promise.race([fetchCorporateAnnouncements(ticker), new Promise<null>((r) => setTimeout(() => r(null), 12_000))]);
+    const rows = Array.isArray(j) ? j : Array.isArray((j as any)?.data) ? (j as any).data : null;
+    if (!rows) return { items: [], error: 'NSE announcements unavailable' };
+    return { items: parseNseAnnouncements(rows, days, now), error: null };
+  } catch (e: any) { return { items: [], error: `NSE: ${String(e?.message || e).slice(0, 80)}` }; }
 }
