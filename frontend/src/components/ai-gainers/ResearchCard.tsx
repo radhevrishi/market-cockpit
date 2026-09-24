@@ -21,12 +21,14 @@ export function WhatChanged({ it, noLabel }: { it: ResearchItem; noLabel?: boole
         <span style={{ color: C.text, fontWeight: 800 }}>{txt(it.after, 'After: not disclosed')}</span>
       </span>
     )
-    : <span style={{ color: it.whatChanged ? C.text : C.faint, fontWeight: it.whatChanged ? 700 : 500 }}>{txt(it.whatChanged, 'Financial impact not established from the filing')}</span>;
+    // zzz789: WHAT CHANGED is the stated fact; the impact is its own line (never "financial impact not established" here).
+    : <span style={{ color: it.whatChanged ? C.text : C.faint, fontWeight: it.whatChanged ? 700 : 500 }}>{txt(it.whatChanged, 'No change stated in a filing')}</span>;
   return (
     <div style={{ background: C.bg2, borderRadius: 6, padding: '7px 10px', fontSize: 14, lineHeight: 1.5 }}>
       {!noLabel && <span style={{ ...label, marginRight: 8 }}>WHAT CHANGED</span>}
       {body}
       {hasBA && it.whatChanged && <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>{it.whatChanged}</div>}
+      {it.impact && <div data-testid="impact" style={{ fontSize: 12.5, color: C.dim, marginTop: 3 }}><span style={{ ...label, marginRight: 6 }}>IMPACT</span>{it.impact}</div>}
     </div>
   );
 }
@@ -68,19 +70,16 @@ export function EarningsStrip({ e }: { e: EarningsMini }) {
   );
 }
 
+/** zzz789: the rank is explained in WORDS — the structured dimensions and any
+ *  penalty — never as a visible 0–100 number. */
 export function ScoreDetails({ it }: { it: ResearchItem }) {
-  const entries = Object.entries(it.scoreDetails || {}).filter(([, v]) => typeof v === 'number' && Number.isFinite(v));
+  const reasons = (it.priorityReasons || []).filter(Boolean);
   return (
     <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${C.border}`, fontSize: 12, color: C.dim }}>
-      <div style={{ ...label, marginBottom: 3 }}>RESEARCH PRIORITY {Number.isFinite(it.priority) ? Math.round(it.priority) : '—'}/100 · HOW IT WAS BUILT</div>
-      {entries.length === 0
-        ? <div style={{ color: C.faint }}>No component scores recorded.</div>
-        : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 14px' }}>
-            {entries.map(([k, v]) => <span key={k}><span style={{ color: C.faint }}>{k}</span> <b style={{ color: C.text }}>{Math.abs(v) < 10 && !Number.isInteger(v) ? v.toFixed(2) : Math.round(v)}</b></span>)}
-          </div>
-        )}
-      <div style={{ color: C.faint, marginTop: 3 }}>Priority is research value, never the size of the move.</div>
+      <div style={{ ...label, marginBottom: 3 }}>HOW THE RANK WAS BUILT</div>
+      <div style={{ color: C.text }}>{txt(it.whyRank, 'No rank dimensions recorded.')}</div>
+      {reasons.length > 0 && <div style={{ color: C.faint, marginTop: 3 }}>{reasons.join(' · ')}</div>}
+      <div style={{ color: C.faint, marginTop: 3 }}>Rank is research value — evidence, mechanism, persistence, materiality and researchability — never the size of the move, and never the number of missing fields.</div>
     </div>
   );
 }
@@ -100,6 +99,17 @@ const row: React.CSSProperties = { fontSize: 13, lineHeight: 1.5, color: C.dim }
 const kv = (k: string, v: React.ReactNode) => (
   <div style={row}><span style={{ ...label, marginRight: 6 }}>{k}</span><span style={{ color: C.text }}>{v}</span></div>
 );
+
+/** zzz789: the SAME event surfaced in other sections — referenced, never a second card. */
+export function AlsoIn({ it, here }: { it: ResearchItem; here?: string }) {
+  const other = (it.surfacedIn || []).filter((s) => s !== here);
+  if (!other.length) return null;
+  return (
+    <div data-testid="also-in" style={{ fontSize: 12, color: C.faint }} title={`Same event (${it.canonicalId || it.ticker}) — one record, referenced from each view.`}>
+      <span style={{ ...label, marginRight: 6 }}>SAME EVENT · ALSO IN</span>{other.join(' · ')}
+    </div>
+  );
+}
 
 function AlsoOnFile({ it }: { it: ResearchItem }) {
   const others = (it.catalysts || []).slice(1).filter((c) => c.polarity !== 'neutral' || c.kind === 'resale_registration');
@@ -249,14 +259,14 @@ function SourceDetails({ it, rank }: { it: ResearchItem; rank: number }) {
       {it.filedDate && kv('FILED', it.filedDate.slice(0, 10))}
       {it.verification && kv('VERIFICATION', it.verification)}
       {(it.catalysts || []).map((c) => <div key={c.id} style={{ ...row, color: C.faint }}>{c.kindWord}: {c.documents} document{c.documents === 1 ? '' : 's'}{c.duplicatesMerged ? `, ${c.duplicatesMerged} repeat${c.duplicatesMerged === 1 ? '' : 's'} merged` : ''} · first seen {txt(c.firstSeen, 'Unknown')}</div>)}
-      {reasons.length > 0 && <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.5 }}><span style={{ ...label, marginRight: 6 }}>WHY RESEARCH PRIORITY #{rank}</span>{reasons.join(' · ')}</div>}
+      {reasons.length > 0 && <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.5 }}><span style={{ ...label, marginRight: 6 }}>PRIORITY NOTES</span>{reasons.join(' · ')}</div>}
     </div>
   );
 }
 
 /** `older`: rendered inside the "Older filings" section — carries the OLDER
  *  CONTEXT badge so the card is never mistaken for this move's catalyst. (zzz771) */
-export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; rank: number; onOpen: (it: ResearchItem) => void; older?: boolean }) {
+export function ResearchCard({ it, rank, onOpen, older, section }: { it: ResearchItem; rank: number; onOpen: (it: ResearchItem) => void; older?: boolean; section?: string }) {
   const [score, setScore] = useState(false);
   const [open, setOpen] = useState<Set<SectionKey>>(() => new Set());
   const toggle = (k: SectionKey) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -301,6 +311,13 @@ export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; ra
       <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text }}>
         <span style={{ ...label, marginRight: 6 }}>WHY RESEARCH</span>{txt(it.whyResearch, 'Not established')}
       </div>
+      {/* zzz789: why this rank, in words — no score number. */}
+      {it.whyRank && (
+        <div data-testid="why-rank" style={{ fontSize: 12, lineHeight: 1.45, color: C.dim }}>
+          <span style={{ ...label, marginRight: 6 }}>WHY #{rank}:</span>{it.whyRank}
+        </div>
+      )}
+      <AlsoIn it={it} here={section} />
       <AlsoOnFile it={it} />
       {it.news?.narrative && (
         <div style={{ fontSize: 12, color: C.dim }}>

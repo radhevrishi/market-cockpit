@@ -40,9 +40,12 @@ const NONE_STATED = new RegExp([
 ].join('|'), 'i');
 
 /** Pure: does this text state that there were none? */
+/** zzz790: "no stated delays", "none disclosed", "not mentioned" report the
+ *  READER's silence, not the company's statement — never an explicit none. */
+export const SILENCE_WORDING = /\bno\b[^.;]{0,40}?\b(?:disclosed|mentioned|cited|specified)\b|\b(?:no|not|none)\s+(?:stated|mentioned|disclosed|reported|found|cited|specified)\b|\bno mention\b|\bnot (?:been )?(?:stated|mentioned|disclosed)\b|\bnone (?:were |was )?(?:disclosed|found|mentioned)\b/i;
 export function explicitNoneStated(text: string | null | undefined): boolean {
   const t = String(text ?? '').trim();
-  return !!t && NONE_STATED.test(t);
+  return !!t && NONE_STATED.test(t) && !SILENCE_WORDING.test(t);
 }
 
 export interface SilentCheckRow {

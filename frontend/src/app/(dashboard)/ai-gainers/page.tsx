@@ -358,6 +358,9 @@ export default function AiGainersPage() {
         filedResults: rows,
         holdings,
         errors: research?.errors || [],
+        // zzz789: the same scan instant the server builder uses (research route: now = st.updated_at),
+        // so the client fallback ages filings exactly like India / US / Your Book on the server.
+        now: (research as any)?.updated_at || data.generated_at || null,
         session: session || undefined,
       });
       return { view, error: null };

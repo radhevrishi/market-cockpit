@@ -175,9 +175,13 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'My Book',
     icon: <Briefcase className="w-5 h-5" />,
     items: [
-      { href: '/portfolio',     label: 'Portfolio',        icon: <Briefcase className="w-4 h-4" /> },
+      { href: '/portfolio',     label: 'Portfolio (India)', icon: <Briefcase className="w-4 h-4" /> },
+      // zzz790 — the US book: its own KV document, cash per currency, bench.
+      { href: '/us-portfolio-book', label: 'US Portfolio Book', icon: <Globe className="w-4 h-4" /> },
       // zzz708 — what CHANGED in the book, as opposed to what it is worth.
-      { href: '/portfolio-catalysts', label: 'Portfolio Catalysts', icon: <Zap className="w-4 h-4" /> },
+      { href: '/portfolio-catalysts', label: 'Portfolio Catalysts (India)', icon: <Zap className="w-4 h-4" /> },
+      // zzz790 — the same thesis engine over SEC filings (10-Q / 10-K / 8-K).
+      { href: '/us-portfolio-catalysts', label: 'US Portfolio Catalysts', icon: <Globe className="w-4 h-4" /> },
       // zzz715 — the exit side of the same engine: which theses deteriorated,
       // and on what evidence. No price reason is allowed on that screen.
       { href: '/exit-radar', label: 'Exit Radar', icon: <Shield className="w-4 h-4" /> },

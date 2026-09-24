@@ -41,7 +41,7 @@ import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-
 import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
 import { yahooChart } from '@/lib/us-prices';
 import { fetchBseAnnouncementsLite } from '@/lib/thesis/evidence-discovery';
-import { buildNewsContext, type NewsContext } from '@/lib/ai-gainers/news-context';
+import { buildNewsContext, newsQueryFor, type NewsContext } from '@/lib/ai-gainers/news-context';
 import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFinding, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { upsertDetections, loadCatalystRecords, rememberGainerCatalysts, catalystRecordsFor } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
@@ -90,7 +90,10 @@ async function newsFor(market: 'IN' | 'US', ticker: string, name: string | null,
   const raw0 = String(name || '').trim();
   const abbreviated = /\.$/.test(raw0);
   const clean = raw0.replace(/\s+\S+\.$/, abbreviated ? '' : '$&').replace(/\b(ltd|limited|inc|corp|corporation|plc|holdings)\b\.?,?/gi, '').replace(/[.,]+$/, '').replace(/\s+/g, ' ').trim();
-  const q = clean.length >= 4 ? `"${clean}"${abbreviated ? (market === 'IN' ? ' share' : ' stock') : ''} when:45d` : `${ticker} ${market === 'IN' ? 'share' : 'stock'} when:45d`;
+  // zzz789: one shared rule — a one-word name is searched with a stock word
+  // ("Arvind" alone returns Arvind Kejriwal), and every headline must pass
+  // the entity-identity check in buildNewsContext.
+  const q = newsQueryFor(ticker, name, market);
   try {
     const raw = await Promise.race([fetchGoogleNewsRSS(q), new Promise<[]>((r) => setTimeout(() => r([]), 7_000))]);
     const ctx = buildNewsContext(raw, { ticker, company: clean || name, now, query: q });

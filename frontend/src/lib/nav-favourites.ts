@@ -32,6 +32,8 @@ const SEED: readonly string[] = [
   '/us-conviction-beats',
   '/concall-intel',
   '/portfolio-catalysts',
+  '/us-portfolio-catalysts',
+  '/us-portfolio-book',
   '/exit-radar',
   '/ai-gainers',
   '/concall-intel?tab=radar',
@@ -50,7 +52,9 @@ const SEED: readonly string[] = [
 // later release cannot quietly put it back. Nothing is ever removed from his
 // list by this, only added, and only on its first ever appearance.
 const OFFERED_KEY = 'mc.navFavourites.offered.v1';
-const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-gainers', '/concall-intel?tab=radar'];
+const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-gainers', '/concall-intel?tab=radar',
+  // zzz790 — the US book and its catalysts, offered once like every new tab.
+  '/us-portfolio-book', '/us-portfolio-catalysts'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];

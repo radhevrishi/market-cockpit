@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { StructuredFacts, SourceRef, EventKind } from './structured-facts';
-import { emptyEconomics, emptyTime } from './structured-facts';
+import { emptyEconomics, emptyTime, favourableLegalOutcome } from './structured-facts';
 import { moneyCr } from './india-extract';
 
 export interface NewsLite { title: string; url: string; published_at: string; source?: string }
@@ -24,7 +24,10 @@ export interface NewsLite { title: string; url: string; published_at: string; so
 export type NewsTheme =
   | 'order_win' | 'results' | 'guidance' | 'block_deal' | 'lockup' | 'ipo_listing' | 'broker_view'
   | 'fundraise' | 'rating' | 'capacity' | 'acquisition' | 'promoter' | 'dividend_action'
-  | 'circuit_momentum' | 'sector_theme' | 'regulatory' | 'management' | 'negative';
+  | 'circuit_momentum' | 'sector_theme' | 'regulatory' | 'management' | 'negative'
+  // zzz789: a fund / institution buying or selling shares (13F-style
+  // "XYZ Capital acquires new stake in …") — an ownership change, never M&A.
+  | 'institutional_holding';
 
 export const THEME_LABEL: Record<NewsTheme, string> = {
   order_win: 'Order / contract', results: 'Results', guidance: 'Guidance / outlook', block_deal: 'Block / bulk deal',
@@ -32,7 +35,18 @@ export const THEME_LABEL: Record<NewsTheme, string> = {
   rating: 'Credit rating', capacity: 'Capacity / plant', acquisition: 'M&A', promoter: 'Promoter / stake',
   dividend_action: 'Dividend / corporate action', circuit_momentum: 'Circuit / momentum', sector_theme: 'Sector theme',
   regulatory: 'Approval / regulatory', management: 'Management', negative: 'Negative',
+  institutional_holding: 'Institutional holding change',
 };
+
+/** zzz789: a fund / institution changing its holding — checked before the M&A
+ *  and block-deal rules so "XYZ Capital acquires new stake in Kosmos" is an
+ *  ownership change, never an acquisition story (KOS). */
+const RX_INSTITUTIONAL = /\b(?:acquires?|acquired|buys?|bought|purchases?|purchased|takes?|took|initiates?|initiated|opens?|opened|establishes|raises?|raised|boosts?|boosted|increases?|increased|adds? to|trims?|trimmed|cuts?|reduces?|reduced|lowers?|lowered|sells?|sold|exits?|decreases?|decreased)\s+(?:a\s+|its\s+|their\s+)?(?:new\s+|additional\s+|\$?[\d.,]+\s*(?:k|m|million|mn)?\s+)?(?:stake|position|holdings?|shares?)\s+(?:in|of)\b|\b(?:shares?|stake|position|holdings?)\s+(?:bought|sold|purchased|acquired|trimmed|raised|lowered|increased|decreased|boosted|reduced)\s+by\b|\b13f\b|\bholdings? (?:raised|lowered|trimmed|boosted|increased|decreased)\b/i;
+/** "Shares Bought by Vanguard", "Stake Raised by Invesco" — the passive holding-report form. */
+const RX_INST_PASSIVE = /\b(?:shares?|stake|position|holdings?)\s+(?:bought|sold|purchased|acquired|trimmed|raised|lowered|increased|decreased|boosted|reduced|cut|added)\s+by\b/i;
+const RX_FUND_WORDS = /\b(capital|advisors?|advisers?|asset management|investment management|management|partners|wealth|fund|funds|llc|l\.l\.c|lp|investments?|securities|bank|trust|group|financial|retirement|pension|holdings? (?:inc|llc))\b/i;
+/** M&A needs an M&A word, not "stake in". */
+const RX_MNA = /\b(merger|merge with|amalgamat\w*|takeover|take over|buyout|acquisition of (?!(?:a |new |additional )?(?:stake|shares|position))|to acquire (?!(?:a |new |additional )?(?:stake|shares|position))|agrees? to (?:buy|acquire)|deal to (?:buy|acquire)|open offer|tender offer|demerger|business combination)\b/i;
 
 const RULES: Array<[NewsTheme, RegExp]> = [
   ['negative', /\b(gst|tax) (demand|notice|order)|demand notice|show[- ]cause notice|\b(raid|probe|fraud|default|downgrad|resign(s|ed)? as (ceo|md|cfo)|penalty|show[- ]cause|insolven|plunge|slump|crash|tumble|sebi (bans|order))/i],
@@ -59,9 +73,80 @@ const RULES: Array<[NewsTheme, RegExp]> = [
 const JUNK = /latest shareholding|share price (today|live)|stock price (today|live)|session: finishes|level watch|technical (analysis|view)|stocks? to (watch|buy)|top (gainers|losers)|shares? of .* trade|market (live|update|wrap)|sensex|nifty (ends|closes|opens)|intraday|tracxn|marketscreener|investing\.com|moneycontrol quote|stock analysis|peer context/i;
 
 export function themesOf(title: string): NewsTheme[] {
+  // zzz789: an institutional holding change is its own theme — never M&A,
+  // never a block deal (KOS "institutional share purchase" filed under M&A).
+  if (!RX_MNA.test(title) && (RX_INST_PASSIVE.test(title) || (RX_INSTITUTIONAL.test(title) && RX_FUND_WORDS.test(title)))) return ['institutional_holding'];
   const out: NewsTheme[] = [];
   for (const [t, rx] of RULES) if (rx.test(title)) out.push(t);
+  // "stake in" alone is not an acquisition story.
+  if (out.includes('acquisition') && !RX_MNA.test(title) && !/\b(acquir\w+|acquisition)\b/i.test(title)) out.splice(out.indexOf('acquisition'), 1);
+  // zzz789: a favourable legal outcome (appeal allowed, demand reduced / quashed)
+  // is resolved, never a negative story (PRIORITY).
+  if (out.includes('negative') && favourableLegalOutcome(title)) { out.splice(out.indexOf('negative'), 1); if (!out.includes('regulatory')) out.push('regulatory'); }
   return out;
+}
+
+// ── zzz789: ENTITY IDENTITY ────────────────────────────────────────────────
+// A headline is about THIS company only on strong identity: the full company
+// name (two or more significant words together), a single-word name WITH a
+// corporate suffix or stock context ("Arvind Ltd", "Arvind shares"), or the
+// ticker in exchange form ("NSE: ARVIND", "(NASDAQ: KOS)", "$KOS"). A bare
+// first name / surname token is not identity: "Arvind Kejriwal" is a person,
+// not Arvind Ltd.
+const CORP_SUFFIX = /^(ltd|limited|inc|incorporated|corp|corporation|plc|llc|pvt|private|co|company|group|holdings|industries|enterprises)\b\.?/i;
+const STOCK_CONTEXT = /^(?:ltd\b|limited\b|inc\b|corp\b|plc\b|shares?\b|stock\b|share price\b|scrip\b|q[1-4]\b|results?\b|board\b|arm\b|unit\b|subsidiary\b|'s\s+(?:q[1-4]|shares?|stock|board|results?|profit|revenue|order|plant|arm|unit)\b)/i;
+const EVENT_WORD = /^(?:block|bulk|deal|deals|order|orders|shares?|stock|q[1-4]|results?|bags|bagged|wins?|won|secures?|stake|board|ipo|plant|profit|net|revenue|rating|target|signs|acquires|launches|posts|reports|surges?|jumps?|rall(?:y|ies)|falls?|hits?|gains?|soars?|slumps?|zooms?|commissions|announces|receives|allots|arm|unit|subsidiary|dividend|bonus|buyback|capex|expansion|approval|q[1-4]fy\d*|fy\d+)$/i;
+const PERSON_CONTEXT = /\b(?:cm|chief minister|minister|mla|mp|aap|bjp|congress|politic\w*|election|leader|actor|actress|director of the film|cricketer|singer|kejriwal|gandhi|modi|arrest\w*|bail|jail)\b/i;
+const escRx = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const STOP_NAME = new Set(['ltd', 'limited', 'india', 'the', 'and', 'of', 'co', 'company', 'corporation', 'corp', 'inc', 'plc', 'llc', 'private', 'pvt', 'holdings', 'group']);
+/** The company's name without the corporate suffix, as words. */
+export function baseNameWords(company: string | null): string[] {
+  return String(company || '').replace(/&amp;/g, '&').replace(/\([^)]*\)/g, ' ').replace(/[^A-Za-z0-9&' ]/g, ' ').split(/\s+/).filter(Boolean)
+    .filter((w, i, a) => !(STOP_NAME.has(w.toLowerCase()) && (i === a.length - 1 || i === a.length - 2 && STOP_NAME.has(a[a.length - 1].toLowerCase()))));
+}
+export function entityMatch(title: string, ticker: string, company: string | null): { ok: boolean; why: string } {
+  const t = String(title || '');
+  const T = String(ticker || '').toUpperCase();
+  // 1. exchange-form ticker
+  if (T && !/^\d+$/.test(T) && new RegExp(`(?:\\b(?:NSE|BSE|NYSE|NASDAQ|Nasdaq|NYSEAMERICAN|NYSE American|AMEX|OTC)\\s*[:\\-]\\s*${escRx(T)}\\b|\\$${escRx(T)}\\b|\\(${escRx(T)}\\))`).test(t)) return { ok: true, why: 'ticker (exchange form)' };
+  const words = baseNameWords(company).filter((w) => w !== '&');
+  // 2. full name: the first two significant words together
+  if (words.length >= 2) {
+    const [a, b] = words;
+    const rx = new RegExp(`\\b${escRx(a)}\\s+(?:&\\s+)?${escRx(b)}\\b`, 'i');
+    if (rx.test(t)) return { ok: true, why: 'company name' };
+  }
+  // 3. a distinctive all-caps ticker (4+ letters, not a word of the name) as a token
+  if (T.length >= 4 && !/^\d+$/.test(T) && !words.some((w) => w.toUpperCase() === T) && new RegExp(`\\b${escRx(T)}\\b`).test(t)) return { ok: true, why: 'ticker' };
+  // 4. the first name word alone: only with a suffix / stock or event context,
+  //    never followed by a capitalised non-company word (a person's surname:
+  //    "Arvind Kejriwal", "Raymond James") and never in a political / personal context.
+  const first = words[0];
+  if (first && first.length >= 3) {
+    const rx = new RegExp(`\\b${escRx(first)}\\b`, 'gi');
+    for (const m of Array.from(t.matchAll(rx))) {
+      const after = t.slice((m.index || 0) + m[0].length).replace(/^\s+/, '');
+      if (CORP_SUFFIX.test(after) || STOCK_CONTEXT.test(after)) return { ok: true, why: 'company name + suffix / stock context' };
+      const next = /^([A-Za-z][\w'’-]*)/.exec(after)?.[1] || '';
+      const before = t.slice(0, m.index || 0).trim().split(/\s+/).pop() || '';
+      const personLike = (/^[A-Z]/.test(next) && !EVENT_WORD.test(next) && !words.slice(1).some((w) => w.toLowerCase() === next.toLowerCase()))
+        || (/^[A-Z][a-z]+$/.test(before) && !/^(?:The|A|An|How|Why|What|When|Will|Can|Is|Are|Should|After|Before|As|On|In|At|For|From|With)$/.test(before) && m.index !== 0);
+      if (!personLike && !PERSON_CONTEXT.test(t)) return { ok: true, why: 'company name (distinctive word, no person / other-entity context)' };
+    }
+  }
+  return { ok: false, why: first ? `"${first}" alone is not the company (could be a person or another entity)` : 'no identity' };
+}
+
+/** zzz789: the press search phrase. A one-word name ("Arvind") searched alone
+ *  returns people and places; it is searched with a stock word instead. */
+export function newsQueryFor(ticker: string, name: string | null, market: 'IN' | 'US'): string {
+  const raw0 = String(name || '').trim();
+  // "Jay Bharat Maru." is a clipped name; "Kosmos Energy Ltd." is a suffix, not an abbreviation.
+  const abbreviated = /\.$/.test(raw0) && !/\b(ltd|inc|corp|co|plc|llc)\.$/i.test(raw0);
+  const clean = raw0.replace(/\s+\S+\.$/, abbreviated ? '' : '$&').replace(/\b(ltd|limited|inc|corp|corporation|plc|holdings)\b\.?,?/gi, '').replace(/[.,]+$/, '').replace(/\s+/g, ' ').trim();
+  const oneWord = clean.split(' ').filter(Boolean).length === 1;
+  const stockWord = market === 'IN' ? 'share' : 'stock';
+  return clean.length >= 4 ? `"${clean}"${abbreviated || oneWord ? ` ${stockWord}` : ''} when:45d` : `${ticker} ${stockWord} when:45d`;
 }
 
 /** Tokens that must appear in a headline for it to be about THIS company. */
@@ -104,6 +189,8 @@ export function buildNewsContext(raw: NewsLite[], opts: { ticker: string; compan
     const low = title.toLowerCase();
     if (JUNK.test(n.title)) continue;
     if (toks.length && !toks.some((k) => low.includes(k))) continue;
+    // zzz789: strong entity identity — never a bare first name / surname (ARVIND ≠ Arvind Kejriwal).
+    if (!entityMatch(title, opts.ticker, opts.company).ok) continue;
     const key = low.replace(/[^a-z0-9]/g, '').slice(0, 70);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -126,7 +213,8 @@ export function buildNewsContext(raw: NewsLite[], opts: { ticker: string; compan
   // Momentum commentary is not a story in itself; a sector word alone is not
   // company news. Either can still be the narrative when nothing else recurs.
   const weak = new Set<NewsTheme>(['circuit_momentum', 'sector_theme', 'management', 'dividend_action']);
-  const cands = Array.from(by.entries()).filter(([, e]) => e.dates.size >= 2)
+  // zzz789: routine institutional holding reports are never a running story.
+  const cands = Array.from(by.entries()).filter(([th, e]) => e.dates.size >= 2 && th !== 'institutional_holding')
     .sort(([ta, a], [tb, b]) => Number(weak.has(ta)) - Number(weak.has(tb)) || b.dates.size - a.dates.size || b.last.localeCompare(a.last) || b.n - a.n);
   const top = cands[0];
   const narrative = top ? { theme: top[0], label: THEME_LABEL[top[0]], count: top[1].n, days: top[1].dates.size, firstDate: top[1].first, lastDate: top[1].last, lead: top[1].lead } : null;
@@ -164,7 +252,7 @@ export function pressFacts(news: NewsContext, issuer: string, official: Structur
   const refs: SourceRef[] = [];
   const offs = official.filter((f) => f.source.kind !== 'PRESS');
   const items = news.items.map((it) => {
-    const negTax = it.themes.includes('negative') && /\b(gst|tax|demand|show[- ]cause)\b/i.test(it.title);
+    const negTax = it.themes.includes('negative') && /\b(gst|tax|demand|show[- ]cause)\b/i.test(it.title) && !favourableLegalOutcome(it.title);
     const theme = it.themes.find((t) => THEME_KIND[t]) || (negTax ? 'negative' : null);
     const newSub = /\bincorporat\w*[^.]{0,40}subsidiary|subsidiary[^.]{0,40}incorporat/i.test(it.title);
     const kind: EventKind | null = negTax ? 'tax_litigation' : newSub ? 'strategic_expansion' : theme === 'negative' ? 'regulatory_negative' : theme ? THEME_KIND[theme]! : null;

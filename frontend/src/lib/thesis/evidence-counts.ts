@@ -141,7 +141,7 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
   const line = `${total} total${hiddenLargeCap ? ` − ${hiddenLargeCap} large caps hidden` : ''} = ${shown} shown = ${book} book + ${bench} bench`
     + ` · ${evaluated} evaluated${notAssessed ? ` + ${notAssessed} not yet assessed` : ''}`
     + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit)`
-    + ` · ${exportable} exportable (NSE)${exportableUs ? ` + ${exportableUs} US in constructive statuses` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`;
+    + ` · ${exportable} eligible for research export (NSE)${exportableUs ? ` + ${exportableUs} US eligible` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`;
   return { total, hiddenLargeCap, shown, book, bench, evaluated, notAssessed, byStatus, statusSum, thesisNotSet: byStatus.THESIS_NOT_SET || 0,
     provisional, exportable, exportableUs, excluded, excludedN, line };
 }
@@ -158,5 +158,57 @@ export function researchPriorityEligible(status: string | null | undefined): boo
   return !!status && (RESEARCH_PRIORITY_STATUSES as readonly string[]).includes(status);
 }
 export function researchPriorityTitle(n: number): string {
-  return `Research priority — ${n} eligible ${n === 1 ? 'thesis' : 'theses'} ranked by evidenced catalyst`;
+  // zzz790: says what it is for — CONFIRMATION REQUIRED is never counted here.
+  return `Research priority — ${n} eligible ${n === 1 ? 'thesis' : 'theses'} ranked by evidenced catalyst — research allocation only, not a buy list, no price used`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE RESEARCH EXPORT, IN FACTS.                                      (zzz790)
+// "87 in constructive statuses" was a judgement word over a mechanical rule.
+// The rule is stated as it is: the export takes STRENGTHENING, ON TRACK,
+// CONFIRMATION REQUIRED and RUNNING AHEAD OF PLAN (confirmation-required IS
+// included, and the line says so); every other status is excluded and named.
+// exportable (NSE) + US in these statuses + excluded = analysed.
+// ═══════════════════════════════════════════════════════════════════════════
+export const RESEARCH_EXPORT_STATUSES = ['STRENGTHENING', 'ON_TRACK', 'CONFIRMATION_REQUIRED', 'POSITIVE_EXPECTATION_GAP'] as const;
+export interface ExportCounts { analysed: number; eligible: number; eligibleNse: number; eligibleUs: number; excluded: Array<[string, number]>; excludedN: number; line: string }
+export function exportCounts(rows: UniverseRow[], label: (status: string) => string = (s) => s): ExportCounts {
+  const analysed = rows.filter((r) => r.assessment?.status).length;
+  const keep = (s: string | null | undefined) => !!s && (RESEARCH_EXPORT_STATUSES as readonly string[]).includes(s);
+  const el = rows.filter((r) => keep(r.assessment?.status));
+  const eligibleUs = el.filter((r) => r.market === 'US').length;
+  const eligibleNse = el.length - eligibleUs;
+  const ex: Record<string, number> = {};
+  for (const r of rows) { const s = r.assessment?.status; if (s && !keep(s)) ex[s] = (ex[s] || 0) + 1; }
+  const excluded = Object.entries(ex);
+  const excludedN = excluded.reduce((t, [, n]) => t + n, 0);
+  const line = `${analysed} analysed · ${el.length} eligible for research export (strengthening, on track, confirmation required, running ahead of plan — confirmation required is included)`
+    + `${excludedN ? ` · ${excludedN} excluded (${excluded.map(([s, n]) => `${n} ${label(s).toLowerCase()}`).join(', ')})` : ''}`
+    + `${eligibleUs ? ` · ${eligibleUs} of the ${el.length} are US names (not on an NSE list)` : ''}`
+    + ` · ${el.length} + ${excludedN} = ${analysed}`;
+  return { analysed, eligible: el.length, eligibleNse, eligibleUs, excluded, excludedN, line };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVIDENCE CONTROL — ONE DEFINITION FOR THE HEADER AND THE BUTTON.    (zzz790)
+// "118 of 119 have evidence read · 1 remaining" beside "Read evidence for 2
+// that need it" used two definitions. Both now come from here: UNREAD = no
+// persisted period on the ledger (the header's own test); REQUIRES UPDATE =
+// evidence on file but a newer document is known, it is stale, or the last
+// retrieval failed / the source was unavailable. attention = unread + update.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface AttentionRow extends CountableRow { symbol?: string; freshness?: { state?: string; evidence_state?: CompanyEvidenceState } | null }
+export function evidenceAttention(rows: AttentionRow[], now?: Date | string): { unread: string[]; update: string[]; total: number; line: string } {
+  const unread: string[] = [], update: string[] = [];
+  for (const r of rows) {
+    const l = r.ledger || null;
+    const has = !!(l?.latest_period && l.periods?.[l.latest_period]);
+    const es = rowEvidenceState(r, now);
+    if (!has) unread.push(String(r.symbol || ''));
+    else if (r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
+      || es === 'NEW_EVIDENCE_AVAILABLE' || es === 'STALE' || es === 'RETRIEVAL_FAILED' || es === 'SOURCE_UNAVAILABLE') update.push(String(r.symbol || ''));
+  }
+  const total = unread.length + update.length;
+  const line = total ? `${total} need${total === 1 ? 's' : ''} attention — ${unread.length} unread, ${update.length} require${update.length === 1 ? 's' : ''} update` : 'All evidence current';
+  return { unread, update, total, line };
 }

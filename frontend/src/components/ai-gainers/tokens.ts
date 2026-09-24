@@ -118,7 +118,7 @@ export const PERSIST_META: Record<Persistence, { label: string; hover: string }>
   DAYS: { label: 'DAYS', hover: 'Effect likely lasts days (sentiment, one-off).' },
   QUARTER: { label: 'A QUARTER', hover: 'Effect likely lasts about a quarter.' },
   YEARS: { label: 'YEARS', hover: 'Structural — effect can persist for years.' },
-  UNKNOWN: { label: 'UNKNOWN', hover: 'Persistence could not be established.' },
+  UNKNOWN: { label: 'NOT ESTABLISHED', hover: 'No term, programme, execution period or economics in the documents set a duration. The event type alone never does.' },
 };
 
 export const GAP_META: Record<GapLevel, { label: string; color: string }> = {

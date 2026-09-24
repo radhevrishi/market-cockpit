@@ -17,7 +17,7 @@ import React, { useCallback, useState } from 'react';
 import type { ResearchItem, ResearchView } from '@/lib/ai-gainers/research-view';
 import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill } from './Badges';
 import { EventDrawer } from './EventDrawer';
-import { ResearchCard } from './ResearchCard';
+import { AlsoIn, ResearchCard } from './ResearchCard';
 import { C, CLASS_META, MATERIAL_COLOR, istClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
 
 export interface ResearchTriageProps {
@@ -200,7 +200,7 @@ function Book({ items, onOpen }: { items: ResearchItem[]; onOpen: (it: ResearchI
                   <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{txt(it.displayTicker, '') || it.ticker}</button>
                 </td>
                 <td style={{ ...td, color: moveColor(it.move1d), fontWeight: 800 }}>{pct(it.move1d)}</td>
-                <td style={{ ...td, minWidth: 220 }}><div style={{ color: C.text }}>{txt(it.headline, 'No event')}</div><div style={{ marginTop: 3 }}><StatusPill it={it} /></div></td>
+                <td style={{ ...td, minWidth: 220 }}><div style={{ color: C.text }}>{txt(it.headline, 'No event')}</div><div style={{ marginTop: 3 }}><StatusPill it={it} /></div><AlsoIn it={it} here="Your book" /></td>
                 <td style={td}>{txt(it.portfolio?.thesisVariable, 'Not mapped')}</td>
                 <td style={{ ...td, color: MATERIAL_COLOR[it.materiality?.label || 'UNKNOWN'], fontWeight: 800 }} title={it.materiality?.explanation}>{it.materiality?.label || 'UNKNOWN'}</td>
                 <td style={{ ...td, minWidth: 200 }}>{(it.researchNext || []).slice(0, 2).map((q, i) => <div key={i}>→ {q}</div>)}{!(it.researchNext || []).length && <span style={{ color: C.faint }}>—</span>}</td>
@@ -228,6 +228,10 @@ export function ResearchTriage(props: ResearchTriageProps) {
   const partial = view.partialFailures || [];
   const context = view.context || [];   // zzz771: absent on older cached views → section hidden
   const empty = (view.summary?.scanned || 0) === 0;
+  // zzz789: a needs-reading event already shown in the queue / watch is referenced, not listed twice.
+  const shownAbove = new Set([...(view.queue || []), ...(view.watch || [])].map((i) => i.ticker));
+  const needsOnly = (view.needsReading || []).filter((i) => !shownAbove.has(i.ticker));
+  const needsElsewhere = (view.needsReading || []).filter((i) => shownAbove.has(i.ticker));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
@@ -251,7 +255,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 560px), 1fr))', gap: 10 }}>
-                {view.queue.map((it, i) => <ResearchCard key={it.ticker} it={it} rank={i + 1} onOpen={onOpen} />)}
+                {view.queue.map((it, i) => <ResearchCard key={it.ticker} it={it} rank={i + 1} onOpen={onOpen} section="Research queue" />)}
               </div>
             )}
           </section>
@@ -259,10 +263,16 @@ export function ResearchTriage(props: ResearchTriageProps) {
           <Book items={view.portfolio || []} onOpen={onOpen} />
 
           {/* zzz785: unknown economics are never sorted away silently — every one is listed, ranked, labelled. */}
+          {/* zzz789: one canonical event per card — a name already shown in the queue / watch is REFERENCED here, not repeated. */}
           {(view.needsReading || []).length > 0 && (
             <section aria-label="Unknown — needs reading" data-testid="needs-reading" style={box}>
-              <SectionHead title="UNKNOWN — NEEDS READING" count={view.needsReading!.length} sub="Events whose size is not established yet. Unknown is not negative: each needs its document read." />
-              {view.needsReading!.map((it) => (
+              <SectionHead title="UNKNOWN — NEEDS READING" count={needsOnly.length} sub="Events whose size is not established yet. Unknown is not negative: each needs its document read." />
+              {needsElsewhere.length > 0 && (
+                <div data-testid="needs-reading-refs" style={{ fontSize: 12, color: C.faint, padding: '2px 0 4px' }}>
+                  Same events, shown above (not repeated): {needsElsewhere.map((it, i) => <span key={it.ticker}>{i ? ' · ' : ''}<button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 800, color: C.dim }}>{txt(it.displayTicker, '') || it.ticker}</button> ({(it.surfacedIn || []).filter((x) => x !== 'Unknown — needs reading' && x !== 'Your book').join(', ')})</span>)}
+                </div>
+              )}
+              {needsOnly.map((it) => (
                 <div key={it.ticker} style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 9px', alignItems: 'baseline', padding: '4px 0', borderTop: `1px solid ${C.border}`, fontSize: 13, minWidth: 0 }}>
                   <Name it={it} max={150} />
                   <Move it={it} />
@@ -290,7 +300,9 @@ export function ResearchTriage(props: ResearchTriageProps) {
                     {it.persistentCatalyst && (it.persistentCatalyst.specialFocus || it.persistentCatalyst.confidence === 'HIGH' || it.persistentCatalyst.confidence === 'MEDIUM') && (
                       <Pill color={C.amber} title={`${it.persistentCatalyst.label}: ${it.persistentCatalyst.mechanism}. Runway: ${it.persistentCatalyst.runway}`}>🔥 {it.persistentCatalyst.specialFocus ? 'SPECIAL FOCUS' : 'PERSISTENT?'}</Pill>
                     )}
+                    {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'Size not stated'}>NEEDS READING</Pill>}
                   </span>
+                  <div style={{ flexBasis: '100%' }}><AlsoIn it={it} here="Watch / investigate" /></div>
                   <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                 </div>
               ))}

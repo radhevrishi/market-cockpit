@@ -38,7 +38,7 @@ import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/s
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
-import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
+import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -90,7 +90,8 @@ export default function PortfolioCatalystsPage() {
 
   // zzz784: one set of header numbers from the same arrays; a row without an
   // assessment is "not yet assessed", never counted into NO MATERIAL CHANGE.
-  const CONSTRUCTIVE = ['STRENGTHENING', 'ON_TRACK', 'CONFIRMATION_REQUIRED', 'POSITIVE_EXPECTATION_GAP'];
+  // zzz790: the research-export rule, from one definition.
+  const CONSTRUCTIVE: string[] = [...RESEARCH_EXPORT_STATUSES];
   const uc = useMemo(() => universeCounts(all as any, sized as any, CONSTRUCTIVE), [all, sized]);
   const ucView = useMemo(() => universeCounts(sized as any, inSource as any, CONSTRUCTIVE), [sized, inSource]);
   const counts = ucView.byStatus;
@@ -128,8 +129,10 @@ export default function PortfolioCatalystsPage() {
   const ec = useMemo(() => evidenceCounts(inSource), [inSource]);
   const readCount = ec.evidence_read;
   const docsRead = ec.documents_read;
-  const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
-    || (['NEW_EVIDENCE_AVAILABLE', 'STALE', 'RETRIEVAL_FAILED', 'SOURCE_UNAVAILABLE'] as Array<string | undefined>).includes(r.freshness?.evidence_state));
+  // zzz790: ONE definition of "needs attention" for the header and the button
+  // (unread = no persisted period; requires update = newer / stale / failed).
+  const attention = evidenceAttention(inSource as any);
+  const attentionInList = evidenceAttention(list as any);
   // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
   // stored read predates the headline prompt (india-ai-summary-v9), so a
   // re-read can fill it. A v9 read that still shows ⊘ is a filing that does
@@ -276,13 +279,8 @@ export default function PortfolioCatalystsPage() {
         if (evidenceLoading) return null;
         const usLeft = inSource.filter((r) => r.market === 'US' && KEEP.some(([k]) => r.assessment?.status === k)).length;
         if (!all.length) return null;
-        // zzz782: reconcile the export with the analysed count, by status.
-        const analysed = inSource.filter((r) => r.assessment).length;
-        const excluded = ORDER.filter((s) => !KEEP.some(([k]) => k === s))
-          .map((s) => [s, inSource.filter((r) => r.assessment?.status === s).length] as const)
-          .filter(([, n]) => n > 0);
-        const exclN = excluded.reduce((t, [, n]) => t + n, 0);
-        const exportable = analysed - exclN;
+        // zzz790: the export reconciled with the analysed count, in facts.
+        const xc = exportCounts(inSource as any, (s) => STATUS_META[s as ThesisStatus]?.label || s);
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', background: C.bg }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, marginBottom: 6 }}>
@@ -290,7 +288,7 @@ export default function PortfolioCatalystsPage() {
               {usLeft > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: C.faint }}> · {usLeft} US name{usLeft === 1 ? '' : 's'} in these statuses not included (NSE list)</span>}
             </div>
             <div style={{ fontSize: 12.5, color: C.dim, marginBottom: 6 }}>
-              {analysed} analysed · {exportable} in constructive statuses{exclN > 0 ? ` · ${exclN} not in the constructive export (${excluded.map(([s, n]) => `${n} ${STATUS_META[s].label.toLowerCase()}`).join(', ')})` : ''}{usLeft > 0 ? ` · ${usLeft} of the ${exportable} are US names (not on an NSE list)` : ''}.
+              {xc.line}.
             </div>
             <TickerExportToolbar tickers={all} groups={groups} exchange="NSE" filenameHint="portfolio-catalysts-constructive" compact />
           </div>
@@ -389,7 +387,7 @@ export default function PortfolioCatalystsPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>
           {list.length} of {inSource.length} shown · {ec.held} held · {ec.bench} bench ·{' '}
-          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {inSource.length - readCount} remaining · {docsRead} documents read</>}
+          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {attention.line} · {docsRead} documents read</>}
           {!evidenceLoading && ec.incomplete > 0 && <> · {ec.incomplete} evidence incomplete</>}
           {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
           {!evidenceLoading && ec.stale > 0 && <> · {ec.stale} stale</>}
@@ -408,7 +406,7 @@ export default function PortfolioCatalystsPage() {
             style={{
               fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>&#10024; {needRead.length ? `Read evidence for ${needRead.filter((r) => list.includes(r)).length} that need it` : 'All evidence current'}</button>
+            }}>&#10024; {attentionInList.total ? `Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update)` : 'All evidence current'}</button>
         ) : (
           <>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>

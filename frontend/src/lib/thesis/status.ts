@@ -251,7 +251,8 @@ function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pendi
     pending: pend.length,
     contradicted: contra.length,
     stated: live.filter((c) => c.verdict === 'stated').length + flats.filter((c) => c.readings === 1).length,
-    flat: flats.filter((c) => c.readings == null || c.readings === 2).length,
+    // zzz790: three or more readings is still a flat reading — every row lands in one bucket.
+    flat: flats.filter((c) => c.readings == null || c.readings >= 2).length,
     silent: flats.filter((c) => c.readings === 0).length,
     unclear: unclearRows.length, not_applicable: na, core_variables: vs.length - na,
     total: vs.length,
@@ -487,6 +488,10 @@ export interface ThesisAssessment {
    *  with the engine's explicit decision on whether it remains an active
    *  thesis condition. The card prints these apart from the current period. */
   historicalContext?: HistoricalItem[];
+  /** zzz790 — how current the evidence behind this status is: the current
+   *  quarter, the prior quarter, stale, or a newer document known but unread.
+   *  Old evidence is shown only as historical context. */
+  evidenceFreshness?: EvidenceFreshness;
   /** The period the current evidence describes ("Q1 FY27"). (zzz773) */
   currentPeriod?: string | null;
   /** ── THE THESIS LOGIC CHAIN, FROM EVIDENCE ONLY.               (zzz770)
@@ -672,6 +677,8 @@ export interface AssessInput {
    *  more than two quarters behind the second, the drivers on file describe
    *  a business as it was, and cannot confirm the mechanism today. (zzz769) */
   evidencePeriod?: string | null;
+  /** zzz790: a newer document than the evidence on file is known and not yet read. */
+  newerEvidenceUnread?: boolean | null;
   expectedPeriod?: string | null;
   /** Sector / industry / the company's own descriptive text, used ONLY to mark
    *  physical-capacity variables NOT_APPLICABLE for a services, software or
@@ -687,6 +694,21 @@ export interface AssessInput {
 
 /** Whole quarters between two period labels ("Q4 FY24" → "Q1 FY27" = 9), or
  *  null when either cannot be read. (zzz769) */
+export type EvidenceFreshnessState = 'CURRENT_QUARTER' | 'PRIOR_QUARTER' | 'STALE' | 'NEWER_UNREAD' | 'NO_EVIDENCE';
+export interface EvidenceFreshness { state: EvidenceFreshnessState; label: string; period: string | null; expected: string | null; quartersBehind: number | null }
+export const NEWER_UNREAD_WORD = 'NEWER EVIDENCE AVAILABLE — NOT YET READ';
+/** Pure (zzz790): the freshness of the evidence a status rests on. A newer
+ *  document known and unread outranks the quarter arithmetic — the card must
+ *  say it before anything else about the evidence. */
+export function evidenceFreshnessOf(evidence: string | null | undefined, expected: string | null | undefined, newerUnread?: boolean | null): EvidenceFreshness {
+  const q = quartersBehind(evidence, expected);
+  const base = { period: evidence || null, expected: expected || null, quartersBehind: q };
+  if (!evidence) return { ...base, state: 'NO_EVIDENCE', label: 'NO EVIDENCE READ' };
+  if (newerUnread) return { ...base, state: 'NEWER_UNREAD', label: NEWER_UNREAD_WORD };
+  if (q == null || q <= 0) return { ...base, state: 'CURRENT_QUARTER', label: `CURRENT QUARTER (${evidence})` };
+  if (q === 1) return { ...base, state: 'PRIOR_QUARTER', label: `PRIOR QUARTER (${evidence}; ${expected} due)` };
+  return { ...base, state: 'STALE', label: `STALE — ${evidence}, ${q} quarters behind ${expected}; historical context only` };
+}
 export function quartersBehind(evidence: string | null | undefined, expected: string | null | undefined): number | null {
   const a = periodEnd(evidence), b = periodEnd(expected);
   if (!a || !b) return null;
@@ -854,6 +876,8 @@ export function conditionText(key: VarKey, raw: string, row?: { after?: string |
   }
   return `Earnings turn into a loss, or decline materially (${EARNINGS_MATERIAL_PCT}% or more year on year).`;
 }
+/** zzz790: statuses a provisional (auto nearest-fit) thesis may never carry. */
+export const PROVISIONAL_BLOCKED: ReadonlySet<ThesisStatus> = new Set<ThesisStatus>(['ON_TRACK', 'STRENGTHENING', 'WEAKENING', 'BROKEN', 'POSITIVE_EXPECTATION_GAP', 'NEGATIVE_EXPECTATION_GAP']);
 const lcFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 /** "Unchanged" needs a comparison. A risk variable (silence passes) may be
  *  silent or denied ("no customer losses") — that is the check passing, not
@@ -962,6 +986,35 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       if (keep) for (const h of live.filter((v) => v !== keep)) variables.splice(variables.indexOf(h), 1);
     }
   }
+  // ── A ONE-OFF DISCLOSED ANYWHERE ON THE CARD IS DISCLOSED.        (zzz790)
+  // WENDT's margin-driver text reads "One-time expenses of Rs.1.77 crore…"
+  // while its One-offs row read NOT DISCLOSED. One-offs are detected from
+  // every variable's stated text (the words the documents gave, never the
+  // engine's own sentences), so the row and the text cannot disagree. A
+  // clause found this way is DISCLOSED (level only, 'stated'): it never
+  // passes the forensic check and never breaks the thesis on its own.
+  if (!variables.some((v) => v.key === 'one_offs') && thesis.variables.some((tv) => tv.key === 'one_offs')) {
+    const clauses: Array<{ text: string; from: string }> = [];
+    for (const v of input.variables || []) {
+      if (v.key === 'one_offs') continue;
+      for (const t of [v.after, (v as any).quote]) {
+        for (const c of String(t ?? '').split(/;\s+|(?<=\.)\s+(?=[A-Z])/)) {
+          const cl = c.replace(/\s+/g, ' ').trim();
+          if (cl && ONE_OFF_CLAUSE.test(cl) && !explicitNoneStated(cl) && !clauses.some((x) => x.text === cl)) clauses.push({ text: cl, from: VAR_LABEL[v.key] || v.label });
+        }
+      }
+    }
+    if (clauses.length) {
+      const first = clauses[0];
+      variables.push({
+        key: 'one_offs' as VarKey, label: VAR_LABEL.one_offs || 'One-offs', kind: 'fact',
+        before: null, after: first.text.slice(0, 140), delta: null, verdict: 'stated' as VarVerdict,
+        evidence: `DISCLOSED in the ${first.from.toLowerCase()} text read: "${first.text.slice(0, 160)}". A disclosed one-off — shown, not structural; not counted as passed and not a break on its own.`,
+        source: 'filing',
+      } as StructuralVar);
+      if (!oneOffClauses.length) oneOffClauses.push(...clauses.map((c) => c.text));
+    }
+  }
   const found = byKey(variables);
   const comps = input.comparisons || {};
   // ── ONE-OFFS STAY VISIBLE, WHATEVER THE STATUS.                    (zzz784)
@@ -993,14 +1046,15 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       const cr = croreOf(oo.after);
       if (cr != null) seen.push(cr);
       const sh = /(\d+(?:\.\d+)?)% of reported profit/.exec(String(oo.evidence || ''));
-      line(`${oo.after}${item ? ` (“${item.slice(0, 90)}”)` : ''}`, cr, !/^\s*[−-]/.test(String(oo.evidence || '')), sh ? Number(sh[1]) / 100 : null,
+      line(`${oo.after}${item ? ` (“${item.slice(0, 90)}”)` : ''}`, cr, !/^\s*[−-]/.test(String(oo.evidence || '')) && !/expense|cost|charge|\bloss|impair|write[- ]?(?:off|down)/i.test(String(oo.after)), sh ? Number(sh[1]) / 100 : null,
         /exceeds the reported profit/i.test(String(oo.unjudged || oo.evidence || '')));
     }
     for (const c of oneOffClauses) {
       const cr = croreOf(c);
       if (cr != null && seen.some((x) => Math.abs(x - cr) < 0.6)) continue;
       if (cr != null) seen.push(cr);
-      line(`${c.replace(/\s+/g, ' ').trim().slice(0, 140)} (stated as a margin driver — set aside)`, cr, true, null, false);
+      // zzz790: an expense / cost / charge is an item, not a benefit.
+      line(`${c.replace(/\s+/g, ' ').trim().slice(0, 140)} (stated as a margin driver — set aside)`, cr, !/expense|cost|charge|loss|impair|write[- ]?(?:off|down)/i.test(c), null, false);
     }
     return out;
   })();
@@ -1081,7 +1135,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           + 'and it is recorded here rather than counted as a pass.'
         : silencePasses
         // zzz788: silence is UNKNOWN — not a pass, not a failure.
-        ? `The documents read say nothing about ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()} — ${SILENT_PHRASE}. It is not counted as passed and not counted against the thesis; only a statement from the company that there were none clears it.`
+        ? `The documents read say nothing about ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()} — ${SILENT_PHRASE}. Unknown, not negative: the documents reviewed did not disclose this variable. It is not counted as passed and not counted against the thesis; only a statement from the company that there were none clears it.`
         : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed
           ? 'This company has no graded or screener row on file, and none of the documents read prints the figure on its results page. A results filing that states it — or a graded row — will fill this; a transcript alone will not.'
           : input.evidenceReviewed
@@ -1896,6 +1950,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `The evidence on file is ${input.evidencePeriod} — too old to confirm this quarter's mechanism; read the latest filing. `
       + `${input.expectedPeriod} is the latest period due, ${staleBy} quarters later. What the ${input.evidencePeriod} evidence showed: ${because}`;
   }
+  const evidenceFreshness = evidenceFreshnessOf(input.evidencePeriod, input.expectedPeriod, input.newerEvidenceUnread);
 
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -2193,7 +2248,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     verdict.directionWhy = 'financial output moved inside its materiality lines and nothing thesis-critical moved';
   } else if (status === 'CONFIRMATION_REQUIRED') {
     // ── CONFIRMATION REQUIRED NAMES THE ONE THING THAT RESOLVES IT. ──
-    const resolve = staleEvidence
+    const resolve = staleEvidence && input.newerEvidenceUnread
+      ? `reading the newer document already found (${NEWER_UNREAD_WORD}) — the evidence on file is ${input.evidencePeriod}, shown as historical context only`
+      : staleEvidence
       ? `reading the ${input.expectedPeriod} filing — the evidence on file is ${input.evidencePeriod}`
       : !input.evidenceReviewed
         ? `reading the ${curAdj} filing, concall or presentation — no document has been read`
@@ -2232,6 +2289,33 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     }
   }
 
+
+  // ── A NEAREST-FIT THESIS IS PROVISIONAL.                (zzz777 → zzz790)
+  // An auto nearest-fit type was chosen by the engine, not by the owner. It
+  // must not manufacture a thesis and then a verdict from it — neither a
+  // thesis-break nor an affirmative one. zzz790 (hard rule): a provisional
+  // thesis never reads INTACT — ON TRACK, STRENGTHENING, WEAKENING, BROKEN,
+  // RUNNING AHEAD or RUNNING BEHIND; each of those becomes CONFIRMATION
+  // REQUIRED (the existing state) until the owner confirms the type. The
+  // evidence itself is untouched. Applied before the action / logic chain /
+  // headline so every line of the card reads the provisional status.
+  if (input.patternFit === 'nearest' && PROVISIONAL_BLOCKED.has(status)) {
+    const was = status;
+    status = 'CONFIRMATION_REQUIRED';
+    // A deterioration is still named (never hidden); an affirmative reading is
+    // not spelled out as a status the card does not carry.
+    const negative = was === 'WEAKENING' || was === 'BROKEN' || was === 'NEGATIVE_EXPECTATION_GAP';
+    because = negative
+      ? `Provisional thesis — the type is an automatic nearest fit (${thesis.name}), not one you confirmed. Under it this would read ${STATUS_META[was].label}: ${lcFirst(because).replace(/\s+$/, '')} `
+        + `Resolves with: confirm or change the thesis type with the picker — confirmed, the reading stands as ${STATUS_META[was].label}.`
+      : `Provisional thesis — the type is an automatic nearest fit (${thesis.name}), not one you confirmed, so no affirmative verdict is given. The evidence read under that type: ${lcFirst(because).replace(/^thesis intact — on track:\s*|^thesis strengthening:\s*/i, '').replace(/\s+$/, '')} `
+        + 'Resolves with: confirm or change the thesis type with the picker — the status is then judged against the confirmed type.';
+    verdict.direction = 'UNKNOWN';
+    verdict.directionWhy = 'provisional thesis (automatic nearest fit) — a direction is measured against a confirmed thesis';
+  } else if (input.patternFit === 'nearest' && !/^Provisional thesis/.test(because)) {
+    // zzz782: every nearest-fit reading says it is provisional.
+    because = `Provisional thesis (automatic nearest fit: ${thesis.name} — confirm or change it with the picker). ${because}`;
+  }
 
   // ── A CARD MUST NOT CONTRADICT ITSELF IN TWO LINES.              (zzz761)
   //
@@ -2378,6 +2462,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       link: c.label,
       state: (structurallyEvidenced(c) && !staleEvidence ? 'confirmed'
         : c.state === 'UNCLEAR' ? 'unclear'
+          // zzz790: a disclosed level (SFL "one-offs −6 · exceptional item")
+          // was read — it is not "unchecked"; it is not judgeable either way.
+          : c.verdict === 'stated' || (c.key === 'one_offs' && !c.silence && !!c.after && !checkPasses(c)) ? 'unclear'
           : c.verdict === 'deteriorating' ? (c.historical?.active ? 'historical' : 'contradicted') : 'unchecked') as 'confirmed' | 'contradicted' | 'unchecked' | 'unclear' | 'historical',
     }));
   if (status === 'STRENGTHENING' && !staleEvidence) {
@@ -2477,21 +2564,6 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     if (kind === 'unclear') return `${name} — ${c.stateReason || c.unjudged || 'validation required'}${fig ? `: ${fig}` : ''}`;
     return `${name} — ${c.historical ? `${curNot} (${c.historical.period}: ${c.historical.value} · historical)` : c.state === 'NOT_SEARCHED' ? 'not searched' : c.state === 'SOURCE_UNAVAILABLE' ? 'source unavailable' : 'not disclosed'}`;
   };
-  // ── A NEAREST-FIT THESIS IS PROVISIONAL.                          (zzz777)
-  // An auto nearest-fit type was chosen by the engine, not by the owner. It
-  // must not manufacture a thesis and then a thesis-break from it: until the
-  // owner confirms the type, a WEAKENING / BROKEN reading asks for that
-  // confirmation instead.
-  if ((status === 'WEAKENING' || status === 'BROKEN') && input.patternFit === 'nearest') {
-    const was = status;
-    status = 'CONFIRMATION_REQUIRED';
-    because = `Provisional thesis — the type is an automatic nearest fit (${thesis.name}), not one you confirmed. Under it this would read ${was === 'BROKEN' ? 'BROKEN' : 'WEAKENING'}: ${lcFirst(because)} `
-      + `Resolves with: confirm or change the thesis type with the picker — confirmed, the reading stands as ${was === 'BROKEN' ? 'BROKEN' : 'WEAKENING'}.`;
-  } else if (input.patternFit === 'nearest' && !/^Provisional thesis/.test(because)) {
-    // zzz782: every nearest-fit reading says it is provisional, not only the
-    // negative ones — a positive reading on an unconfirmed type is provisional too.
-    because = `Provisional thesis (automatic nearest fit: ${thesis.name} — confirm or change it with the picker). ${because}`;
-  }
   // ── CATALYST RANK — which intact theses carry the strongest evidenced
   // catalyst. (zzz776) Output growth is capped so a base-effect quarter
   // cannot outrank a real order book; each mechanism group counts once;
@@ -2585,7 +2657,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     verdict: wcDeep(verdict), catalystRank, mechanismEvidence: [...mechEvidence].map(([key, text]) => ({ key: key as string, text })),
     structuralStates, evidenceItems: { structural: evStructural, supporting: evSupporting },
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
-    historicalContext, currentPeriod: curPeriod,
+    historicalContext, currentPeriod: curPeriod, evidenceFreshness,
     logicChain, coreMechanismGaps: coreMechanismGaps.map((c) => c.label),
     mechanismCheck, mechanismVerdict: wcFix(mechanismVerdict), dimensions,
     structural: {

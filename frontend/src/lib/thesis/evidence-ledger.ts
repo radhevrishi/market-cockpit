@@ -1502,7 +1502,8 @@ export function freshnessLine(f: Partial<FreshnessView> & { state: FreshnessStat
   if (f.evidence_state === 'NOT_SEARCHED') return { label: 'NOT SEARCHED', text: join(exp), tone: 'muted' };
   switch (staleness) {
     case 'CURRENT': return { label: 'CURRENT', text: join(last, f.latest_source_date && `source dated ${f.latest_source_date}`), tone: 'ok' };
-    case 'UPDATE_AVAILABLE': return { label: '↻ Update available', text: join(last, 'newer document seen, not yet read'), tone: 'warn' };
+    // zzz790: the owner's words for it.
+    case 'UPDATE_AVAILABLE': return { label: 'NEWER EVIDENCE AVAILABLE — NOT YET READ', text: join(last, 'newer document seen, not yet read — the evidence on file is historical context until it is read'), tone: 'warn' };
     case 'STALE_NO_NEWER_FILING': return { label: 'STALE', text: join(last, exp, f.checked_since_due === false ? 'not searched since it fell due' : 'No newer filing found'), tone: 'warn' };
     case 'SOURCE_UNAVAILABLE': return { label: 'SOURCE UNAVAILABLE', text: join(last, exp, 'the sources could not be reached — not a disclosure gap'), tone: 'alarm' };
     default: return { label: 'NEVER READ', text: join(exp), tone: 'muted' };

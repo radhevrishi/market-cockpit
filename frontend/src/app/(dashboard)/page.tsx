@@ -5912,6 +5912,8 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   // appended to a saved drag order automatically (see the merge below), so a
   // new tab now reaches a rail that has already been arranged.
   { href: '/portfolio-catalysts', label: '⚡ Portfolio Catalysts', color: '#22D3EE' },
+  // zzz790 — the US twins, next to their India siblings.
+  { href: '/us-portfolio-catalysts', label: '🇺🇸 US Portfolio Catalysts', color: '#22D3EE' },
   { href: '/exit-radar', label: '🚨 Exit Radar', color: '#EF4444' },
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz721 — the radar is the discovery half of the same engine Portfolio
@@ -5927,6 +5929,7 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/movers', label: '📈 Movers', color: '#10B981' },
   { href: '/multibagger', label: '🚀 Multibagger', color: '#10B981' },
   { href: '/portfolio', label: '💼 My Book', color: '#22D3EE' },
+  { href: '/us-portfolio-book', label: '🇺🇸 US Portfolio Book', color: '#22D3EE' },
   { href: '/news', label: '📰 News Feed', color: '#60A5FA' },
   { href: '/fundamentals?scope=portfolio', label: '🔬 Portfolio Fundamentals', color: '#f59e0b' },
   { href: '/multibagger?tab=technicals-usa', label: '📈 USA Technicals', color: '#22D3EE' },

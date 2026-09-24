@@ -330,10 +330,13 @@ export function itemsFromLedger(ledger: any): PersistItem[] {
         // A filed, dated lifecycle fact ("plant commissioned", "commercial
         // production started") is hard evidence even without a number.
         : stmt === 'FACT' && LIFECYCLE_METRIC.test(metric) && LIFECYCLE_DONE.test(`${after} ${f?.source_quote || ''}`.slice(0, 400)) && !/under construction|expected|will be|to be commissioned|planned/i.test(after) ? 'HARD'
-        : stmt === 'FACT' && hasFig ? 'HARD' : 'REMARK';
+        // zzz790: a figure read off a chart at LOW confidence is a remark,
+        // never hard evidence (SPECTRUM "Solar Rooftop: 3.3 MW (Completed 1.3…)").
+        : stmt === 'FACT' && hasFig && !(f?.evidence_quality === 'chart' || f?.confidence === 'LOW') ? 'HARD' : 'REMARK';
       out.push({
         metric, kind, cls,
-        text: `${String(f?.metric_label || metric)}: ${before ? `${before} → ` : ''}${after}`,
+        // zzz790: a target / plan says so in its own text — never "Capacity added" as if achieved.
+        text: `${String(f?.metric_label || metric)}${cls === 'FORWARD' ? ' (planned / target — not achieved)' : ''}: ${before ? `${before} → ` : ''}${after}`,
         before, after, numeric: scaledNumber(after), numericBefore: before ? scaledNumber(before) : null,
         period, date: iso(f?.source_date) || iso(f?.effective_date),
         sources: [{ name: String(f?.source_name || 'filing'), url: f?.source_url || null, date: iso(f?.source_date), quote: f?.source_quote ? clip(String(f.source_quote), 260) : null }],
@@ -427,7 +430,10 @@ function dedupe(items: PersistItem[]): PersistItem[] {
   const byKey = new Map<string, PersistItem>();
   // Three significant figures (zzz788): "₹2,598 Cr" and "≈₹2,600 Cr" are one
   // figure; ₹2,550 Cr and ₹2,640 Cr in two quarters are two readings.
-  const norm = (n: number | null) => (n == null ? null : Math.round(n / Math.pow(10, Math.max(0, Math.floor(Math.log10(Math.abs(n) || 1)) - 2))));
+  // zzz790: three significant figures at EVERY scale — SPECTRUM's filed
+  // 3.3 MW and planned 3.0 MW rounded to one key and merged into "capacity
+  // added 3.0 MW · HARD" (a target read as achieved).
+  const norm = (n: number | null) => (n == null ? null : n === 0 ? 0 : Math.round(n / Math.pow(10, Math.floor(Math.log10(Math.abs(n))) - 2)));
   for (const it of items) {
     const n = norm(it.numeric);
     const key = n != null ? `${it.metric}|${n}|${it.numericBefore != null ? norm(it.numericBefore) : ''}` : `${it.metric}|${it.text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60)}`;
@@ -438,7 +444,9 @@ function dedupe(items: PersistItem[]): PersistItem[] {
     // zzz788: the LATEST disclosure of the figure is the one printed (the card
     // reads the latest period); a target never replaces a filed value.
     const newer = it.cls !== 'FORWARD' && laterThan(it, prev);
-    if (rank(it.cls) > rank(prev.cls)) { prev.cls = it.cls; prev.text = it.text; }
+    // zzz790: a stronger class brings its OWN figure — never a HARD label on
+    // a forward row's value.
+    if (rank(it.cls) > rank(prev.cls)) { prev.cls = it.cls; prev.text = it.text; prev.after = it.after; prev.numeric = it.numeric; prev.before = it.before; prev.numericBefore = it.numericBefore; prev.period = it.period ?? prev.period; }
     if (newer) { prev.text = it.text; prev.after = it.after; prev.numeric = it.numeric; prev.period = it.period ?? prev.period; if (it.before) { prev.before = it.before; prev.numericBefore = it.numericBefore; } }
     if (it.before && !prev.before) { prev.before = it.before; prev.numericBefore = it.numericBefore; prev.text = it.text; }
     for (const s of it.sources) if (!prev.sources.some((x) => x.name === s.name && x.date === s.date)) prev.sources.push(s);

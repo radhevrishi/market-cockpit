@@ -187,6 +187,8 @@ async function postStatus(row: BookRow): Promise<void> {
  *  survives every later re-classification. */
 const THESIS_OVERRIDES: Record<string, AbfgPattern | null> = {};
 
+/** zzz790: the page's own row builder, for the QA harness (same path as a bench row with no ledger). */
+export function assessBookRow(row0: BookRow): BookRow { return assess(row0); }
 function assess(row0: BookRow): BookRow {
   const ov = THESIS_OVERRIDES[String(row0.symbol || '').toUpperCase()];
   const row: BookRow = ov ? { ...row0, pattern: manualPattern(ov) } : row0;
@@ -251,6 +253,8 @@ function assess(row0: BookRow): BookRow {
       hasGraderRow: !!row.graded,
       // Evidence two years old must not confirm today's mechanism. (zzz769)
       evidencePeriod: row.ledger?.latest_period || row.reportingPeriod || null,
+      // zzz790: a newer document known and not yet read.
+      newerEvidenceUnread: row.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || (row.freshness as any)?.evidence_state === 'NEW_EVIDENCE_AVAILABLE',
       expectedPeriod: latestExpectedPeriod().period,
     })),
     capex,

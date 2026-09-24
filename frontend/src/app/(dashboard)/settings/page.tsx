@@ -413,6 +413,8 @@ function StatusBadgeWithBackend({ status, isLoading, label }: { status: 'present
 
 function ApiKeysSection() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'present' | 'not_configured' | 'offline' | 'checking'>('checking');
+  // zzz790 — which model is live and what it cost this month (owner only; no key material).
+  const [aiModel, setAiModel] = useState<{ provider: string; model: string; month_usd: number; month_calls: number; monthly_cap_usd: number | null } | null>(null);
   const [avKeyStatus, setAvKeyStatus] = useState<'present' | 'not_configured' | 'offline' | 'checking'>('checking');
   const [isLoadingHealth, setIsLoadingHealth] = useState(false);
 
@@ -446,7 +448,7 @@ function ApiKeysSection() {
     // zzz783: the model key lives in Railway (OpenAI now). Ask this app's own
     // wrapper, not the legacy backend's /health, whether a model is configured.
     fetch('/api/v1/haiku/health', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (j && typeof j.hasApiKey === 'boolean') setApiKeyStatus(j.hasApiKey ? 'present' : 'not_configured'); })
+      .then((j) => { if (j && typeof j.hasApiKey === 'boolean') setApiKeyStatus(j.hasApiKey ? 'present' : 'not_configured'); if (j?.model) setAiModel(j.model); })
       .catch(() => null);
   }, []);
 
@@ -481,6 +483,11 @@ function ApiKeysSection() {
           </button>
         </div>
       </Row>
+      {aiModel && (
+        <Row label="AI usage this month" description="Metered by the app for every AI call. AI runs only when you click (reads, OCR, guidance) — the ranking logic itself uses no AI.">
+          <span className="text-xs text-[#8899AA]">{aiModel.provider} · {aiModel.model} · {aiModel.month_calls} calls · ${aiModel.month_usd.toFixed(4)}{aiModel.monthly_cap_usd ? ` of $${aiModel.monthly_cap_usd} cap` : ''}</span>
+        </Row>
+      )}
       <Row label="Alpha Vantage key" description="Enhanced fundamental data (optional)">
         <StatusBadgeWithBackend status={avKeyStatus} isLoading={isLoadingHealth} />
       </Row>

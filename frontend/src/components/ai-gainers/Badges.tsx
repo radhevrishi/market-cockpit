@@ -108,7 +108,7 @@ export function Fact({ k, v, color, title }: { k: string; v: React.ReactNode; co
 const PERSIST_EV_WORD: Record<string, string> = {
   STRONG: 'STRONG', EVIDENCE: 'MEDIUM', EARLY: 'EARLY', UNPROVEN: 'UNPROVEN', NOT_PERSISTENT: 'NOT PERSISTENT', NONE: '—',
 };
-const POT_WORD: Record<string, string> = { YEARS: 'MULTI-YEAR', QUARTER: 'ONE PERIOD', DAYS: 'DAYS', UNKNOWN: 'UNKNOWN' };
+const POT_WORD: Record<string, string> = { YEARS: 'MULTI-YEAR', QUARTER: 'ONE PERIOD', DAYS: 'DAYS', UNKNOWN: 'NOT ESTABLISHED' };
 
 export function FactLine({ it }: { it: ResearchItem }) {
   const st = STAGE_META[it.stage] || STAGE_META.UNKNOWN;
@@ -214,7 +214,8 @@ export function CatalystChips({ it }: { it: ResearchItem }) {
       {it.evidenceGap && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
       {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'The size of this event is not stated.'}>{it.economicsUnknown.label.toUpperCase()}</Pill>}
       {primary && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${primary.stateWord}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}
-      {pt && <Pill color={GRADE_COLOR[pt.grade] || C.faint} title={pt.why}>PERSISTENCE: {pt.grade}</Pill>}
+      {/* zzz789: EARLY reads as Early / unproven — never a verdict, never negative. */}
+      {pt && <Pill color={GRADE_COLOR[pt.grade] || C.faint} title={pt.why}>PERSISTENCE: {pt.grade === 'EARLY' ? 'EARLY / UNPROVEN' : pt.grade}</Pill>}
       {it.persistentCatalyst && it.persistentCatalyst.specialFocus && <Pill color={C.amber} title={it.persistentCatalyst.mechanism}>🔥 SPECIAL FOCUS</Pill>}
     </>
   );

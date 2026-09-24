@@ -163,8 +163,9 @@ describe('zzz788 · 2 — near-miss count and list reconcile', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 describe('zzz788 · 3 — Research priority says "eligible"', () => {
   test('"71 eligible theses" — strengthening / on-track only', () => {
-    assert.equal(researchPriorityTitle(71), 'Research priority — 71 eligible theses ranked by evidenced catalyst');
-    assert.equal(researchPriorityTitle(1), 'Research priority — 1 eligible thesis ranked by evidenced catalyst');
+    // zzz790: the title also says what the list is for (research allocation, not a buy list, no price).
+    assert.equal(researchPriorityTitle(71), 'Research priority — 71 eligible theses ranked by evidenced catalyst — research allocation only, not a buy list, no price used');
+    assert.equal(researchPriorityTitle(1), 'Research priority — 1 eligible thesis ranked by evidenced catalyst — research allocation only, not a buy list, no price used');
     assert.ok(researchPriorityEligible('STRENGTHENING') && researchPriorityEligible('ON_TRACK'));
     for (const s of ['NEUTRAL', 'CONFIRMATION_REQUIRED', 'WEAKENING', 'THESIS_NOT_SET', null]) assert.equal(researchPriorityEligible(s as any), false, String(s));
     const page = readFileSync(join(ROOT, 'src/app/(dashboard)/portfolio-catalysts/page.tsx'), 'utf8');

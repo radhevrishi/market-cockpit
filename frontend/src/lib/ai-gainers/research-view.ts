@@ -23,7 +23,7 @@
 
 import type { Finding } from './catalyst-research';
 import { presentErrorLines } from './research-present';
-import { contractTermYears, isStrategicStakeKind, type CatalystRecord, type EventKind, type StructuredFacts } from './structured-facts';
+import { contractTermYears, debtActionOf, isStrategicStakeKind, type CatalystRecord, type EventKind, type StructuredFacts } from './structured-facts';
 import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
 import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
 
@@ -192,6 +192,17 @@ export interface ResearchItem {
   researchNext: string[];
   /** The one-sentence reason this deserves research time (spec §41). */
   whyResearch: string;
+  /** zzz789: the event's IMPACT — kept apart from WHAT CHANGED (the stated fact).
+   *  "Not established — margin, execution period still open". Null when not an event. */
+  impact?: string | null;
+  /** zzz789: plain "Why #N" line — the structured rank dimensions in words
+   *  ("verified event + identifiable mechanism + multi-period runway +
+   *  unresolved economic significance"). No number is shown. */
+  whyRank?: string;
+  /** zzz789: the ONE canonical event id behind this card, and every section it
+   *  is surfaced in (the same event, referenced — never a second card). */
+  canonicalId?: string;
+  surfacedIn?: string[];
   portfolio: { relevance: PortfolioRelevance; thesisVariable: string | null; note: string | null };
   earnings: EarningsMini | null;
   flags: { band: number | null; listing: boolean; dilution: boolean; denial: boolean; turnover: number | null };
@@ -755,6 +766,199 @@ const NEXT: Record<string, string[]> = {
   generic: ['What exactly changed, with numbers?', 'How does it reach revenue or margin?', 'Is it repeatable?'],
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz789 — EVENT-SPECIFIC LABELS AND ORDERED RESEARCH CHECKLISTS.
+// A stated figure is labelled for what it IS (MILKYMIST ₹40 Cr is capex, not
+// an "order value"). Research Next is an ordered checklist per event kind;
+// a step the documents already answer is marked answered WITH the fact and is
+// never re-asked. Unknown is not negative.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEBT_INSTRUMENT = (h: string): string => (/\bncds?\b|non[- ]convertible debentures?/i.test(h) ? 'NCDs' : /debentures?/i.test(h) ? 'debentures' : /\bbonds?\b/i.test(h) ? 'bonds' : /\bnotes?\b/i.test(h) ? 'notes' : /term loan/i.test(h) ? 'term loan' : /\bloans?\b/i.test(h) ? 'loan' : /facilit/i.test(h) ? 'facility' : 'debt');
+
+/** What a stated figure is, by event type: short noun + lower-case label. */
+export function valueLabelOf(type: EventType, hay: string): { short: string; label: string } {
+  switch (type) {
+    case 'Order win': case 'Customer win': return { short: 'Order', label: 'order value' };
+    case 'Contract': return /\b(services?|master services|supply|service level|outsourcing|maintenance)\s+(agreement|contract)\b/i.test(hay) && !/purchase order|work order|letter of award|\bloa\b/i.test(hay) ? { short: 'Contract', label: 'contract value' } : { short: 'Order', label: 'order value' };
+    case 'Order cancellation': return { short: 'Order cancelled', label: 'cancelled order value' };
+    case 'Capacity expansion': case 'Production ramp': return { short: 'Capex', label: 'capex' };
+    case 'Acquisition': return { short: 'Purchase consideration', label: 'purchase consideration' };
+    case 'Merger': return { short: 'Deal consideration', label: 'deal consideration' };
+    case 'Divestment': return { short: 'Sale consideration', label: 'sale consideration' };
+    case 'JV': case 'Partnership': return /\binvest/i.test(hay) ? { short: 'Investment', label: 'investment' } : { short: 'Stated value', label: 'stated value' };
+    case 'Fundraising': return { short: 'Issue size', label: 'issue size' };
+    case 'Debt / refinancing': { const a = debtActionOf(hay) || 'raised'; return { short: `Amount ${a}`, label: `amount ${a}` }; }
+    case 'Strategic investment': case 'Promoter buying': return { short: 'Stake value', label: 'stake value' };
+    case 'Buyback': case 'Capital allocation': return /dividend/i.test(hay) ? { short: 'Payout', label: 'payout' } : { short: 'Buyback size', label: 'buyback size' };
+    case 'Strategic expansion': return { short: 'Investment', label: 'investment' };
+    case 'Regulatory approval': case 'New product': return /\b(capex|capital expenditure|invest\w*|plant|facility|capacity)\b/i.test(hay) ? { short: 'Capex', label: 'capex' } : { short: 'Stated value', label: 'stated value' };
+    case 'Litigation / regulatory': return { short: 'Amount demanded', label: 'amount demanded' };
+    default: return { short: 'Stated value', label: 'stated value' };
+  }
+}
+
+interface CheckCtx {
+  facts: StructuredFacts[]; legacy: Record<string, string>; hay: string; read: boolean;
+  value: number | null; valueVerified: boolean; statedPotential: number | null; market: 'IN' | 'US';
+  revenue: number | null; marketCap: number | null; contractYears: number | null; officialFilings: number; type: EventType;
+  /** Secondary-only (press / unverified): nothing is marked answered — press is not a verified fact. */
+  secondary?: boolean;
+}
+type Ans = (c: CheckCtx) => string | null;
+interface Step { label: string; q: string; ans?: Ans }
+const firstFact = <T,>(c: CheckCtx, f: (x: StructuredFacts) => T | null | undefined): T | null => { for (const x of [...c.facts].reverse()) { const v = f(x); if (v != null && v !== '') return v as T; } return null; };
+const grab = (rx: RegExp, max = 80): Ans => (c) => { const m = rx.exec(c.hay); return m ? m[0].replace(/\s+/g, ' ').trim().slice(0, max) : null; };
+const pctOf = (v: number, base: number) => Math.round((v / base) * 1000) / 10;
+const A = {
+  size: ((c) => {
+    // A stated "potential" is not an answer: the step stays open (RAYMOND ~₹33 Cr a year).
+    if (c.value == null) return c.statedPotential != null ? null : (c.legacy.value ? `${c.legacy.value} (as stated)` : null);
+    if (!c.valueVerified) return `${moneyExact(c.value, c.market)} stated · document verification pending (no % computed)`;
+    const parts = [moneyExact(c.value, c.market)];
+    if (c.revenue) parts.push(`≈ ${pctOf(c.value, c.revenue)}% of TTM revenue`);
+    else if (c.marketCap) parts.push(`≈ ${pctOf(c.value, c.marketCap)}% of market cap`);
+    return parts.join(' · ');
+  }) as Ans,
+  margin: ((c) => c.legacy.margin || grab(/\b\d+(?:\.\d+)?\s*%\s*(?:ebitda |operating |gross |pat )?margin\b|\bmargin of \d+(?:\.\d+)?\s*%/i)(c)) as Ans,
+  period: ((c) => firstFact(c, (x) => x.time.executionPeriod) || c.legacy.execution_period || (c.contractYears != null ? `${c.contractYears}-year term (contract runway, as stated)` : null)
+    || grab(/\b(?:execut\w*|complet\w*|deliver\w*|suppl\w*)\s+(?:with)?(?:in|over)\s+(?:a period of\s+)?\d{1,3}\s*months?/i)(c)) as Ans,
+  customer: ((c) => firstFact(c, (x) => x.event.counterparty) || c.legacy.counterparty || null) as Ans,
+  workingCapital: ((c) => c.legacy.working_capital || grab(/\b(?:mobili[sz]ation )?advance (?:of|payment|received)[^.;]{0,50}|\bpayment terms?[^.;]{0,50}|milestone[- ]based payments?[^.;]{0,40}/i)(c)) as Ans,
+  repeat: ((c) => (c.officialFilings >= 2 ? `${c.officialFilings} official filings on this catalyst` : grab(/\brepeat order[^.;]{0,50}/i)(c))) as Ans,
+  capex: ((c) => { const v = firstFact(c, (x) => x.economics.capex); if (v != null) return `${moneyExact(v, c.market)} (as stated)`; return (c.type === 'Capacity expansion' || c.type === 'Production ramp' || /capex|invest/i.test(c.hay)) ? A.size(c) : null; }) as Ans,
+  commissioning: ((c) => firstFact(c, (x) => (x.event.stage === 'COMMISSIONED' ? 'commissioned (as stated)' : x.time.expectedCompletion ? `expected ${x.time.expectedCompletion} (as stated)` : null))
+    || grab(/\b(?:has been |was |successfully )?commissioned\b[^.;]{0,40}|\bcommenced commercial (?:production|operations)[^.;]{0,30}|\bfirst power\b[^.;]{0,40}/i)(c)) as Ans,
+  utilisation: grab(/\butili[sz]ation[^.;]{0,30}?\d+(?:\.\d+)?\s*%|\d+(?:\.\d+)?\s*%\s*utili[sz]ation/i),
+  demand: ((c) => (DEMAND_WORDS.test(c.hay) ? grab(DEMAND_WORDS, 60)(c) : null)) as Ans,
+  revenue: grab(/\brevenue (?:of|from|contribution of)\s*(?:about |approximately |~)?(?:₹|rs\.?|inr|\$|usd)\s*[\d,.]+\s*(?:crores?|cr\b|lakhs?|million|mn\b|billion|bn\b)?/i),
+  ebitda: grab(/\bebitda (?:of|margin of)\s*(?:about |~)?(?:(?:₹|rs\.?|inr|\$|usd)\s*[\d,.]+\s*(?:crores?|cr\b|million|mn\b|billion)?|\d+(?:\.\d+)?\s*%)/i),
+  price: ((c) => { const v = firstFact(c, (x) => x.economics.considerationNative); return v != null ? `${moneyExact(v, c.market)} (as stated)` : A.size(c); }) as Ans,
+  targetEcon: ((c) => { const r = firstFact(c, (x) => x.economics.targetRevenueNative), p = firstFact(c, (x) => x.economics.targetProfitNative); const bits = [r != null ? `revenue ${moneyExact(r, c.market)}` : null, p != null ? `EBITDA / profit ${moneyExact(p, c.market)}` : null].filter(Boolean); return bits.length ? bits.join(', ') : grab(/\b(?:revenue|turnover|ebitda)\s+of\s+(?:₹|rs\.?|inr|\$|usd)\s*[\d,.]+\s*(?:crores?|cr\b|million|mn\b|billion|bn\b)?/i)(c); }) as Ans,
+  funding: ((c) => c.legacy.funding || firstFact(c, (x) => ((x as any).terms || []).find((t: any) => /financ|fund/i.test(t.label))?.value) || grab(/\b(?:funded|financed) (?:through|by|from|with)[^.;]{0,60}|\binternal accruals\b|\ball[- ]cash\b[^.;]{0,30}/i)(c)) as Ans,
+  contribution: grab(/\b(?:earnings[- ]accretive|accretive to (?:eps|earnings)|eps[- ]accretive)[^.;]{0,40}/i),
+  stake: ((c) => { const v = firstFact(c, (x) => x.economics.stakePct); return v != null ? `${v}%` : grab(/\b\d+(?:\.\d+)?\s*%\s*(?:stake|of the (?:paid[- ]up|share capital|equity))/i)(c); }) as Ans,
+  issuePrice: ((c) => { const v = firstFact(c, (x) => x.economics.issuePrice); return v != null ? `${c.market === 'US' ? '$' : '₹'}${v} per share (as stated)` : grab(/(?:issue price|at a price) of\s*(?:₹|rs\.?|inr|\$)\s*[\d,.]+/i)(c); }) as Ans,
+  dilution: ((c) => { const v = firstFact(c, (x) => x.economics.dilutionPct); return v != null ? `${v}% (as stated)` : null; }) as Ans,
+  proceeds: grab(/\buse of proceeds[^.;]{0,60}|\bproceeds (?:will be |shall be )?used (?:for|to)[^.;]{0,60}|\bto fund\b[^.;]{0,50}/i),
+  rate: ((c) => firstFact(c, (x) => ((x as any).terms || []).find((t: any) => /rate/i.test(t.label))?.value) || grab(/\b\d+(?:\.\d+)?\s?%\s*(?:senior |secured |unsecured |convertible )*(?:notes|debentures|ncds?|bonds|coupon)|\binterest (?:rate )?of \d+(?:\.\d+)?\s?%/i)(c)) as Ans,
+  maturity: ((c) => firstFact(c, (x) => ((x as any).terms || []).find((t: any) => /maturity/i.test(t.label))?.value) || grab(/\bdue (?:in )?\d{4}\b|\bmatur\w* (?:on |in )?[A-Z]?[a-z]* ?\d{0,2},? ?\d{4}/i)(c)) as Ans,
+  interestSaved: grab(/\b(?:interest (?:cost |expense )?sav\w*|reduce (?:its )?interest (?:cost|expense))[^.;]{0,50}/i),
+  leverage: grab(/\b(?:net debt|leverage|debt[- ]to[- ]equity)[^.;]{0,50}\d[^.;]{0,20}/i),
+  qualifiedCap: ((c) => firstFact(c, (x) => x.economics.capacityAfter) || grab(/~?\s*\d[\d,.]*\s*(?:million|mn|lakh)?\s*(?:bl\b|bulk lit(?:re|er)s?|tpa|mtpa|ktpa|mw|mwh|units|tonnes|pieces)(?:\s*(?:per annum|a year|p\.a\.))?/i)(c)) as Ans,
+  commercialOrder: grab(/\bpurchase order[^.;]{0,50}|\bcommercial (?:order|supply|supplies)[^.;]{0,40}|\bsupply order[^.;]{0,40}/i),
+  production: grab(/\bcommercial (?:production|supplies) (?:start|commenc)\w*[^.;]{0,40}|\bproduction (?:starts|will start|commences)[^.;]{0,40}|\bfrom (?:fy|q[1-4])\s?\d{2,4}[^.;]{0,20}/i),
+  buyer: ((c) => firstFact(c, (x) => x.event.counterparty) || c.legacy.counterparty || null) as Ans,
+  swap: grab(/\b(?:swap ratio|share exchange ratio|exchange ratio)[^.;]{0,50}|\b\d+\s+(?:equity )?shares? (?:of|in) [^.;]{0,40}for (?:every )?\d+/i),
+  ownership: grab(/\b(?:post[- ](?:merger|scheme|issue)|promoter) (?:shareholding|holding)[^.;]{0,40}\d[^.;]{0,10}%?/i),
+  synergy: grab(/\bsynerg\w*[^.;]{0,60}/i),
+  launch: grab(/\b(?:launched|commercially available|available (?:in|across|from))[^.;]{0,50}/i),
+  pricing: grab(/\bpriced at[^.;]{0,40}|\bprice of (?:₹|rs\.?|\$)\s*[\d,.]+[^.;]{0,20}/i),
+  setup: grab(/\b(?:incorporated|registered|licen[cs]e (?:granted|received)|commenced operations)[^.;]{0,60}/i),
+  investment: ((c) => A.size(c) || grab(/\binvest\w*\s+(?:of\s+)?(?:up to\s+)?(?:₹|rs\.?|inr|\$|usd)\s*[\d,.]+\s*(?:crores?|cr\b|million|mn\b|billion)?/i)(c)) as Ans,
+  rationale: grab(/\b(?:rationale|strategic (?:rationale|fit)|to (?:strengthen|expand|access|enter))[^.;]{0,60}/i),
+  governance: grab(/\b(?:board seat|nominee director|right to nominate|supply agreement|technology agreement|commercial agreement)[^.;]{0,40}/i),
+};
+
+const ORDER_STEPS = (repeatQ: string, what = 'Order value'): Step[] => [
+  { label: what, q: `is the ${what.toLowerCase()} stated, and what % of last full-year revenue is it?`, ans: A.size },
+  { label: 'Margin', q: 'margin on this order versus the company average — ask at the next concall', ans: A.margin },
+  { label: 'Execution period', q: 'over what period is it executed, and when does billing start?', ans: A.period },
+  { label: 'Customer', q: 'is the customer named — a repeat customer (earlier orders in the catalyst timeline)?', ans: A.customer },
+  { label: 'Working capital', q: 'advance received / payment milestones — what working capital does it need?', ans: A.workingCapital },
+  { label: 'Repeatability', q: repeatQ, ans: A.repeat },
+];
+const CHECKLISTS: Record<string, Step[]> = {
+  order: ORDER_STEPS('repeat orders from this customer or programme — any on file, or is this a one-off?'),
+  customer: ORDER_STEPS('repeat orders from this customer — any on file, or is this a one-off?'),
+  contract_term: ORDER_STEPS('is the revenue recurring across the stated term (fees each year), or billed on milestones — and what are the renewal terms?', 'Contract value'),
+  order_recurring: ORDER_STEPS('is the stated annual value recurring for the full programme life — fixed contracts, or initial awards that scale with the customer\'s build rate?'),
+  acquisition: [
+    { label: 'Purchase price', q: 'what price was paid, and at what valuation (EV / sales, EV / EBITDA)?', ans: A.price },
+    { label: 'Target revenue / EBITDA', q: 'the target\'s last-year revenue and EBITDA — stated?', ans: A.targetEcon },
+    { label: 'Funding', q: 'how is it funded — cash, debt or new shares (dilution if shares)?', ans: A.funding },
+    { label: 'Contribution', q: 'when does it start adding to consolidated revenue and profit, and is it accretive?', ans: A.contribution },
+    { label: 'Integration', q: 'integration risks — key people, customer overlap, approvals still pending?' },
+  ],
+  capacity: [
+    { label: 'Capex', q: 'capex amount and how it is funded (debt / internal accruals / raise)?', ans: A.capex },
+    { label: 'Commissioning', q: 'commissioned already, or expected when?', ans: A.commissioning },
+    { label: 'Utilisation', q: 'current utilisation of the existing and the new capacity (last concall / annual report)?', ans: A.utilisation },
+    { label: 'Demand / offtake', q: 'orders, offtake or a named customer for the new capacity?', ans: A.demand },
+    { label: 'Revenue', q: 'revenue at full utilisation (asset turn) — stated or guided?', ans: A.revenue },
+    { label: 'EBITDA', q: 'EBITDA / margin expected from the new capacity?', ans: A.ebitda },
+  ],
+  product: [
+    { label: 'Customers', q: 'named customers or orders so far?', ans: A.customer },
+    { label: 'Commercial availability', q: 'launched and commercially available, or announced only?', ans: A.launch },
+    { label: 'Pricing', q: 'pricing and expected gross margin?', ans: A.pricing },
+    { label: 'Revenue', q: 'when does revenue start, and at what scale?', ans: A.revenue },
+    { label: 'Repeatability', q: 'repeat revenue (consumables, subscriptions) or a one-time sale?' },
+  ],
+  strategic_expansion: [
+    { label: 'Investment', q: 'investment committed and how it is funded?', ans: A.investment },
+    { label: 'Regulatory / commercial setup', q: 'approvals, licences and commercial set-up needed in the new market?', ans: A.setup },
+    { label: 'Customers', q: 'what will the new entity / geography sell, and to whom — any customer, partner or distributor named?', ans: A.customer },
+    { label: 'Revenue', q: 'when is the first revenue, order or licence expected?', ans: A.revenue },
+  ],
+  approval: [
+    { label: 'Qualified capacity', q: 'what products, markets or volume does the approval cover?', ans: A.qualifiedCap },
+    { label: 'Customer', q: 'which customer or market will purchase under it?', ans: A.customer },
+    { label: 'Commercial order', q: 'is there a commercial purchase order yet — value and quantity?', ans: A.commercialOrder },
+    { label: 'Production', q: 'when do commercial supplies / production start, and at what run-rate?', ans: A.production },
+  ],
+  qualification: [
+    { label: 'Qualified capacity', q: 'which product / programme is qualified, and for what volume?', ans: A.qualifiedCap },
+    { label: 'Customer', q: 'which customer and which programme — named in the filing?', ans: A.customer },
+    { label: 'Commercial order', q: 'is there a commercial purchase order yet — value and quantity?', ans: A.commercialOrder },
+    { label: 'Production', q: 'when do commercial supplies start, and at what run-rate?', ans: A.production },
+  ],
+  licence_capacity: [
+    { label: 'Qualified capacity', q: 'what volume does the licence / capacity cover?', ans: A.qualifiedCap },
+    // zzz787 kept: the demand question — a licence is capability, not demand (ABDL).
+    { label: 'Customer', q: 'Demand: orders, offtake agreements or named customers for the licensed / installed volume?', ans: A.demand },
+    { label: 'Commercial order', q: 'is there a commercial order yet — value and quantity?', ans: A.commercialOrder },
+    { label: 'Production', q: 'when does commercial production start, and what utilisation / revenue at full volume?', ans: A.production },
+  ],
+  strategic: [
+    { label: 'Buyer', q: 'who is the investor — an industry (strategic) or a financial holder?', ans: A.buyer },
+    { label: 'Stake', q: 'stake size — confirmed in an official filing (SAST / 13D / exchange disclosure), or press only?', ans: A.stake },
+    { label: 'Price', q: 'price paid — primary shares (money to the company) or bought from existing holders?', ans: A.issuePrice },
+    { label: 'Rationale', q: 'why this investor — capability, customers or capital?', ans: A.rationale },
+    { label: 'Governance / strategic relationship', q: 'any board seat, supply or technology agreement with the investor?', ans: A.governance },
+  ],
+  debt: [
+    { label: 'Amount', q: 'amount redeemed / raised — stated?', ans: A.size },
+    { label: 'Rate', q: 'interest rate on the debt redeemed or raised?', ans: A.rate },
+    { label: 'Maturity', q: 'maturity of the debt redeemed or raised?', ans: A.maturity },
+    { label: 'Cash-flow effect', q: 'interest saved (or added) a year — stated?', ans: A.interestSaved },
+    { label: 'Leverage', q: 'net debt / leverage after it?', ans: A.leverage },
+  ],
+  fundraising: [
+    { label: 'Size', q: 'amount raised — stated?', ans: A.size },
+    { label: 'Price', q: 'issue price and discount / premium to the market — stated?', ans: A.issuePrice },
+    { label: 'Dilution', q: 'new shares ÷ existing shares — stated, or computable from stated share counts?', ans: A.dilution },
+    { label: 'Use of proceeds', q: 'capex, debt repayment, acquisition or working capital?', ans: A.proceeds },
+    { label: 'Funding gap', q: 'does it fully fund the plan, or is more money needed (warrants, debt)?' },
+  ],
+  merger: [
+    { label: 'Consideration', q: 'swap ratio / consideration — stated?', ans: A.swap },
+    { label: 'Ownership', q: 'promoter and minority holding after the scheme — dilution per share?', ans: A.ownership },
+    { label: 'Financial contribution', q: 'combined revenue and profit — stated?', ans: A.targetEcon },
+    { label: 'Synergies / integration', q: 'why merge — synergies, simplification or a change in promoter holding; approvals and effective date?', ans: A.synergy },
+  ],
+};
+
+/** zzz789: the ordered checklist for an event kind, answered steps marked. Null → the key has no checklist. */
+export function researchChecklist(key: string, c: CheckCtx): string[] | null {
+  const steps = CHECKLISTS[key];
+  if (!steps) return null;
+  return steps.map((st, i) => {
+    const a = st.ans && !c.secondary ? st.ans(c) : null;
+    return a ? `${i + 1}. ${st.label}: ✓ ${a}${c.read ? ' (per the filing)' : ' (as stated in the filing summary; document not read yet)'}` : `${i + 1}. ${st.label}: ${st.q}`;
+  });
+}
+
 function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Finding | null, clarification = false): string {
   if (cls === 'DATA_UNAVAILABLE') return 'unavailable';
   if (cls === 'LISTING') return 'listing';
@@ -792,6 +996,7 @@ function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Findin
     case 'Management change': return 'management';
     case 'Rating action': return 'rating';
     case 'Pricing': return 'pricing';
+    case 'Debt / refinancing': return 'debt';
     default: return 'generic';
   }
 }
@@ -857,6 +1062,11 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       say('Issue price / discount', /price|premium|discount/i.test(hay));
       say('Use of proceeds', /use of proceeds|to fund|for (capex|expansion|acquisition)/i.test(hay));
       say('Dilution', false, 'Unknown');
+      break;
+    case 'debt':
+      say('Amount', hasValue);
+      say('Interest saved / cash-flow effect', /interest (cost |expense )?sav|reduce (its )?interest/i.test(hay));
+      say('Leverage after it', /net debt|leverage|debt[- ]to[- ]equity/i.test(hay));
       break;
     case 'none': case 'band': case 'unclassified':
       u.push('Cause of the move: Unknown');
@@ -925,20 +1135,6 @@ function transmissionOf(type: EventType, cls: EventClass, stage: Stage, mat: Mat
   }
 }
 
-function persistenceByType(type: EventType, cls: EventClass, hay: string): Persistence {
-  if (cls === 'MARKET_MOVE_ONLY') return 'DAYS';
-  if (cls === 'NO_CATALYST' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return 'UNKNOWN';
-  switch (type) {
-    case 'Order win': case 'Contract': case 'Customer win':
-      return /multi-?year|\b\d+\s*years?\b|annual|framework|long[- ]term|rate contract/i.test(hay) ? 'YEARS' : 'QUARTER';
-    case 'Capacity expansion': case 'Production ramp': case 'Acquisition': case 'Merger': case 'Regulatory approval': case 'JV': case 'New product': case 'Pricing': case 'Strategic expansion': return 'YEARS';
-    case 'Earnings': case 'Guidance': return 'QUARTER';
-    case 'Divestment': case 'Buyback': case 'Capital allocation': case 'Promoter buying': case 'Strategic investment': case 'Rating action': case 'Denial': return 'DAYS';
-    case 'Order cancellation': case 'Accident / disruption': return /permanent|closure|terminat/i.test(hay) ? 'YEARS' : 'QUARTER';
-    default: return 'UNKNOWN';
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // zzz787 — FOUR DURATION CONCEPTS, KEPT APART.
 //   1. Contractual duration      only when a contract term / execution period is STATED
@@ -965,18 +1161,35 @@ export interface PotentialDuration {
   basis: 'FACTS' | 'TYPE' | 'NONE';
 }
 
-const TYPE_POT_WORD: Record<Persistence, string> = { YEARS: 'Could last years', QUARTER: 'About a quarter / one execution period', DAYS: 'Days — a one-time event', UNKNOWN: 'Unknown' };
+const TYPE_POT_WORD: Record<Persistence, string> = { YEARS: 'Could last years', QUARTER: 'About a quarter / one execution period', DAYS: 'Days — a one-time event', UNKNOWN: 'Not established' };
 
 /** The text every fact about this catalyst states (titles, quotes, milestones, periods). */
 function factText(facts: StructuredFacts[]): string {
   return facts.map((x) => [x.source.title, ...x.quotes, ...(x.time?.milestones || []), x.time?.executionPeriod || '', x.event.product || '', (x as any).statedPotentialNative != null ? 'annual business potential' : ''].join(' ')).join(' ');
 }
 
-/** zzz787: POTENTIAL economic duration from the FACTS; the event type only as
- *  a labelled fallback. Never evidence, never an input to the evidence grade. */
-export function potentialDurationOf(type: EventType, cls: EventClass, hay: string, facts: StructuredFacts[] = []): PotentialDuration {
+/** zzz787: POTENTIAL economic duration from the FACTS.
+ *  zzz789: the event TYPE alone never sets a duration any more (CRML / CDNA:
+ *  "an acquisition → years"). A duration needs a stated term, programme,
+ *  execution period, plant / licensed capacity in an official document, or —
+ *  for a deal — the target's stated revenue / profit. A secondary-only event
+ *  (FRVO "first power" in the press) is potential wording only, verification
+ *  required. Otherwise: "Not established". Never evidence, never price. */
+const SECONDARY_NEEDS: Partial<Record<EventType, string>> = {
+  'Capacity expansion': 'plant operation, utilisation, offtake / revenue and economics', 'Production ramp': 'plant operation, utilisation, offtake / revenue and economics',
+  'Order win': 'the order, its value and execution', 'Contract': 'the contract, its value and term', 'Customer win': 'the customer, its orders and value',
+  'Acquisition': 'the deal terms and the target\'s revenue / profit', 'Merger': 'the scheme terms and combined economics',
+  'Strategic investment': 'the stake in an official filing and any commercial link', 'Regulatory approval': 'the approval, the customer and a commercial order',
+  'New product': 'customers, pricing and revenue', 'Strategic expansion': 'investment, customers and revenue in the new geography',
+};
+export const NOT_ESTABLISHED = 'Not established';
+export function potentialDurationOf(type: EventType, cls: EventClass, hay: string, facts: StructuredFacts[] = [], opts: { secondaryOnly?: boolean } = {}): PotentialDuration {
   if (cls === 'MARKET_MOVE_ONLY') return { value: 'DAYS', text: 'Days — a price-band / technical move', basis: 'NONE' };
   if (cls === 'NO_CATALYST' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return { value: 'UNKNOWN', text: 'Unknown — no event', basis: 'NONE' };
+  if (opts.secondaryOnly && cls !== 'NEGATIVE') {
+    const need = SECONDARY_NEEDS[type] || 'the event and its economics';
+    return { value: 'UNKNOWN', text: `${NOT_ESTABLISHED} — secondary source only. A multi-period effect is only a potential until ${need} are verified in an official filing (verification required).`, basis: 'NONE' };
+  }
   const ft = `${hay} ${factText(facts)}`;
   const orderLike = type === 'Order win' || type === 'Contract' || type === 'Customer win';
   if (cls !== 'NEGATIVE' && !CAPITAL_ALLOCATION_TYPES.has(type) && type !== 'Fundraising') {
@@ -990,9 +1203,17 @@ export function potentialDurationOf(type: EventType, cls: EventClass, hay: strin
     if (orderLike && Number.isFinite(months) && months > 0) return months >= 12
       ? { value: 'YEARS', text: `One execution period — ${months} months as stated`, basis: 'FACTS' }
       : { value: 'QUARTER', text: `One execution period — ${months} months as stated`, basis: 'FACTS' };
+    // zzz789: a deal adds something lasting only when the TARGET's economics are stated.
+    if (type === 'Acquisition' || type === 'Merger') {
+      const tgt = facts.some((x) => x.source.kind !== 'PRESS' && x.source.access === 'DOCUMENT_READ' && (x.economics.targetRevenueNative != null || x.economics.targetProfitNative != null))
+        || /\b(?:target|acquired (?:company|business|entity)|it|which)\b[^.]{0,60}\b(?:revenue|turnover|sales|ebitda|profit)\b[^.]{0,30}(?:₹|rs\.?|inr|\$|usd)\s*[\d,]/i.test(ft)
+        || /\b(?:revenue|turnover|ebitda)\s+of\s+(?:₹|rs\.?|inr|\$|usd)\s*[\d,]/i.test(ft);
+      if (tgt) return { value: 'YEARS', text: 'Multi-year — the acquired business\'s revenue / profit is stated; it contributes from completion (if it holds)', basis: 'FACTS' };
+      return { value: 'UNKNOWN', text: `${NOT_ESTABLISHED} — the documents state no target revenue / profit, so how long the deal adds anything is unknown`, basis: 'NONE' };
+    }
   }
-  const v = persistenceByType(type, cls, hay);
-  return { value: v, text: `${TYPE_POT_WORD[v]} (by type of event only)`, basis: v === 'UNKNOWN' ? 'NONE' : 'TYPE' };
+  if (type === 'Earnings') return { value: 'QUARTER', text: 'One reported quarter — it repeats only if the next quarter does', basis: 'FACTS' };
+  return { value: 'UNKNOWN', text: `${NOT_ESTABLISHED} — no term, programme, execution period or economics in the documents set a duration`, basis: 'NONE' };
 }
 
 /** zzz787: distinct official evidence PERIODS behind the operating facts — two
@@ -1020,7 +1241,18 @@ export interface PersistEvidenceCtx {
   officialPeriods?: number;
   /** contractTermYears() of the filing text. */
   contractYears?: number | null;
+  /** zzz789: the economics are quantified in a READ official document (a firm
+   *  value, capex, consideration or target revenue — never a stated potential).
+   *  Omitted → a stated money / volume figure in the text counts. */
+  quantified?: boolean;
+  /** zzz789: distinct dated official filings on this catalyst (repeat filings in one period). */
+  officialFilings?: number;
 }
+/** zzz789 GENERAL RULE: a grade above Early needs QUANTIFIED economics AND
+ *  repeat / continuation evidence in official documents. A contract term, a
+ *  programme or an "annual" word is a claim about the future — the contractual
+ *  runway is shown on its own line, never as persistence evidence (RNIT,
+ *  RAYMOND). */
 export function persistenceEvidenceOf(type: EventType, cls: EventClass, stage: Stage, key: string, hay: string,
   pc: { confidence: string; specialFocus: boolean; label: string; kind?: string; periods?: number } | null | undefined,
   ctx: PersistEvidenceCtx = {}): { level: PersistEvidenceLevel; text: string } {
@@ -1033,8 +1265,12 @@ export function persistenceEvidenceOf(type: EventType, cls: EventClass, stage: S
   if (CAPITAL_ALLOCATION_TYPES.has(type) || type === 'Fundraising' || type === 'Rating action' || type === 'Management change' || type === 'Divestment' || type === 'Denial')
     return type === 'Strategic investment'
       ? { level: 'UNPROVEN', text: 'A strategic holder\'s stake — a capital-allocation signal; any commercial link to the business is not on file.' }
-      : { level: 'NOT_PERSISTENT', text: 'Capital allocation / financing — not an operating catalyst.' };
+      // zzz789: not an operating mechanism — but not shown to be one-off either: unproven, never "not persistent".
+      : { level: 'UNPROVEN', text: 'Capital allocation / financing — not an operating mechanism; whether its effect lasts is not established.' };
+  if (type === 'Debt / refinancing') return { level: 'UNPROVEN', text: 'Debt redeemed / raised — the lasting effect on interest cost, cash flow and leverage is not established yet.' };
   const periods = ctx.officialPeriods ?? 0;
+  const filings = Math.max(ctx.officialFilings ?? 0, periods);
+  const quantified = ctx.quantified ?? /(?:₹|rs\.?|inr|\$|usd)\s*[\d,]+(?:\.\d+)?|\b\d[\d,.]*\s*(?:crores?|cr\b|lakhs?|million|mn\b|billion|mtpa|ktpa|tpa|tpd|mw|mwh|gw|units|pieces|tonnes|bl\b)|\butili[sz]ation\s*(?:of|at|rose to|stood at|is|was)?\s*\d+(?:\.\d+)?\s*%|\d+(?:\.\d+)?\s*%\s*utili[sz]ation/i.test(hay);
   if (pc && pc.kind !== 'PROJECT_PIPELINE' && (pc.specialFocus || pc.confidence === 'HIGH'))
     return (pc.periods ?? 0) >= 2 || periods >= 2
       ? { level: 'STRONG', text: `Filed mechanism evidence across ${Math.max(pc.periods ?? 0, periods)} evidence periods (${pc.label}).` }
@@ -1042,34 +1278,38 @@ export function persistenceEvidenceOf(type: EventType, cls: EventClass, stage: S
   if (pc && pc.kind !== 'PROJECT_PIPELINE' && pc.confidence === 'MEDIUM') return { level: 'EVIDENCE', text: `Mechanism evidence on file (${pc.label}), not yet across periods.` };
   if (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR') return { level: 'UNPROVEN', text: 'Enabling step — nothing booked yet; tracked until a definitive step is filed.' };
   const operating = type !== 'Earnings' && type !== 'Guidance' && type !== 'Pricing';
-  if (operating && periods >= 2) return { level: 'STRONG', text: `${periods} independent official evidence periods on file for this catalyst.` };
+  if (operating && periods >= 2) return quantified
+    ? { level: 'STRONG', text: `${periods} independent official evidence periods on file for this catalyst, with quantified economics.` }
+    : { level: 'EARLY', text: `${periods} official filings in separate periods, but the economics are not quantified — early until value / billing is stated.` };
   const demand = DEMAND_WORDS.test(hay);
   switch (type) {
     case 'New product':
       return /\b(orders?|revenue|sales|customers? (signed|onboarded)|subscribers?)\b/i.test(hay) && /\d/.test(hay)
-        ? { level: 'EVIDENCE', text: 'Commercial traction stated with the launch — one period.' }
+        ? { level: 'EARLY', text: 'Commercial traction stated with the launch — one period; persistence needs repeat orders / revenue in a later filing.' }
         : { level: 'UNPROVEN', text: 'Long-term possible, unproven — no orders or revenue on file yet.' };
     case 'Regulatory approval':
-      if (/purchase order|commercial (order|supply|supplies)|supply order/i.test(hay) || (key === 'licence_capacity' && demand)) return { level: 'EVIDENCE', text: 'Approval with a commercial order on file.' };
+      if (/purchase order|commercial (order|supply|supplies)|supply order/i.test(hay) || (key === 'licence_capacity' && demand))
+        return quantified ? { level: 'EVIDENCE', text: 'Approval with a quantified commercial order on file.' } : { level: 'EARLY', text: 'Approval with a commercial order mentioned — its value is not quantified yet.' };
       if (key === 'licence_capacity' || CAPACITY_WORDS.test(hay)) return { level: 'UNPROVEN', text: 'Licence / capacity to produce — regulatory and production capability, not demand. Demand evidence absent: commercial persistence unproven.' };
       return { level: 'EARLY', text: key === 'qualification' ? 'Qualification — early; no commercial order on file yet.' : 'Licence / approval — opens a market; no commercial order on file yet.' };
     case 'Order win': case 'Contract': case 'Customer win': {
       const yrs = ctx.contractYears ?? contractTermYears(hay);
-      if (yrs != null) return { level: 'EVIDENCE', text: `One contract on file with a stated ${yrs}-year term — medium: revenue visibility not yet quantified; strong needs repeat orders, renewals or billing across periods.` };
-      return PROGRAMME_WORDS.test(hay)
-        ? { level: 'EVIDENCE', text: 'Programme / recurring business stated in one filing period — medium until a later period repeats it (confirm it is fixed, not an initial award).' }
-        : { level: 'EVIDENCE', text: 'Commercial order on file — covers one execution period.' };
+      if (quantified && filings >= 2) return { level: 'EVIDENCE', text: `Quantified order with ${filings} official filings on the same catalyst — medium (one period); strong needs a second period.` };
+      if (yrs != null) return { level: 'EARLY', text: `Contract runway ${yrs} year${yrs === 1 ? '' : 's'} (as stated) is contractual, not persistence evidence — value, billing, renewal and customer economics are not on file. Early / unproven.` };
+      if (PROGRAMME_WORDS.test(hay)) return { level: 'EARLY', text: 'Programme / recurring business is stated in one filing — a claim, not evidence: the firm value, programme duration and build rate are not established. Early / unproven.' };
+      return { level: 'EARLY', text: `One order on file${quantified ? '' : ' (value not quantified in a read document)'} — covers one execution period; persistence needs repeat orders or billing across periods.` };
     }
     case 'Capacity expansion': case 'Production ramp':
-      return demand
-        ? { level: 'EVIDENCE', text: 'Capacity with demand / utilisation evidence — one period so far.' }
-        : stage === 'EXECUTED' || stage === 'OPERATIONAL' || /commission|operational|commercial production|started production|production (start|commenc)/i.test(hay)
-          ? { level: 'UNPROVEN', text: 'Capacity commissioned — demand (orders, offtake, utilisation, revenue) not evidenced: commercial persistence unproven.' }
-          : { level: 'UNPROVEN', text: 'Capacity planned — nothing commissioned, no demand evidenced: commercial persistence unproven.' };
+      if (demand) return quantified
+        ? { level: 'EVIDENCE', text: 'Capacity with quantified demand / utilisation evidence — one period so far.' }
+        : { level: 'EARLY', text: 'Demand / utilisation is mentioned but not quantified — early.' };
+      return stage === 'EXECUTED' || stage === 'OPERATIONAL' || /commission|operational|commercial production|started production|production (start|commenc)/i.test(hay)
+        ? { level: 'UNPROVEN', text: 'Capacity commissioned — demand (orders, offtake, utilisation, revenue) not evidenced: commercial persistence unproven.' }
+        : { level: 'UNPROVEN', text: 'Capacity planned — nothing commissioned, no demand evidenced: commercial persistence unproven.' };
     case 'Acquisition': case 'JV': case 'Merger':
-      return stage === 'EXECUTED' && /revenue|ebitda|turnover/i.test(hay)
-        ? { level: 'EVIDENCE', text: 'Completed, with the target\'s economics stated.' }
-        : { level: 'EARLY', text: 'Deal signed — target economics and integration not yet evidenced.' };
+      return stage === 'EXECUTED' && /\b(revenue|ebitda|turnover)\b[^.]{0,40}\d/i.test(hay)
+        ? { level: 'EVIDENCE', text: 'Completed, with the target\'s revenue / profit stated — an existing business with a track record.' }
+        : { level: 'EARLY', text: 'Deal on file — target economics and integration not yet evidenced.' };
     case 'Strategic expansion': return { level: 'UNPROVEN', text: 'A new subsidiary / geography — no revenue, orders or investment on file yet.' };
     case 'Earnings': return { level: 'EARLY', text: 'One quarter\'s result — persistence needs the next quarter.' };
     case 'Guidance': return { level: 'EARLY', text: 'Management guidance — a target, not evidence.' };
@@ -1188,12 +1428,53 @@ const freshF = (age: number | null) => (age == null ? 0.6 : age <= 1 ? 1 : age <
 const gapF = (g: ResearchItem['expectationGap']) => (g.direction === 'UNDER_REFLECTED' ? (g.level === 'LARGE' ? 1 : 0.9)
   : g.direction === 'ALIGNED' ? 0.75 : g.direction === 'EXPECTATION_HEAVY' ? (g.level === 'LARGE' ? 0.4 : 0.55) : 0.7);
 
-function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: string | null; staleEarnings: boolean; veryStale: boolean; namedAllottee: boolean; clarification: boolean }): { score: number; reasons: string[]; details: Record<string, number> } {
+/** zzz789 — THE RANK DIMENSIONS, small structured rules (never a count of
+ *  missing fields, never price):
+ *    evidence strength        verified document / filing / secondary / none
+ *    economic mechanism       quantified mechanism / identifiable / none
+ *    potential persistence    multi-period (facts) / one period / not established
+ *    materiality potential    material / unresolved (unknown) / small
+ *    researchability          a live event with a document to read, or not
+ *  Their product (with freshness, the expectation gap and the existing
+ *  penalties) orders the queue. Only the words are shown ("Why #N"). */
+export interface RankDims { evidence: 0 | 1 | 2 | 3; mechanism: 0 | 1 | 2; persistence: 0 | 1 | 2; materiality: 0 | 1 | 2; researchable: boolean; words: string[] }
+const OPERATING_TYPES = new Set<EventType>(['Earnings', 'Order win', 'Contract', 'Customer win', 'Capacity expansion', 'Production ramp', 'New product', 'Acquisition', 'Merger', 'JV', 'Partnership', 'Regulatory approval', 'Pricing', 'Strategic expansion', 'Guidance', 'Order cancellation', 'Accident / disruption', 'Divestment']);
+export function rankDimsOf(it: ResearchItem, quantified: boolean): RankDims {
+  const cls = it.eventClass;
+  const event = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || cls === 'NEGATIVE';
+  const evidence: RankDims['evidence'] = !event ? 0 : it.sourceConfidence === 'VERIFIED_DOCUMENT' ? 3 : it.sourceConfidence === 'VERIFIED_FILING' ? 2 : it.sourceConfidence === 'SECONDARY_SUMMARY' ? 1 : 0;
+  const identifiable = event && (OPERATING_TYPES.has(it.eventType) || it.eventType === 'Debt / refinancing' || it.eventType === 'Fundraising');
+  const econ = quantified || (it.eventType === 'Earnings' && !!it.earnings && (it.earnings.revenueYoY != null || it.earnings.patYoY != null));
+  const mechanism: RankDims['mechanism'] = !identifiable ? 0 : econ ? 2 : 1;
+  const pd = it.potentialDuration;
+  const persistence: RankDims['persistence'] = !event ? 0 : it.persistenceEvidence?.level === 'STRONG' || (pd?.basis === 'FACTS' && pd.value === 'YEARS') ? 2 : pd?.basis === 'FACTS' && pd.value === 'QUARTER' ? 1 : 0;
+  const ml = it.materiality.label;
+  const materiality: RankDims['materiality'] = !event ? 0 : ml === 'SIGNIFICANT' || ml === 'MODERATE' ? 2 : ml === 'UNKNOWN' ? 1 : 0;
+  const researchable = event && it.catalystFor !== 'CONTEXT' && !!(it.sourceUrl || (it.catalysts && it.catalysts.length) || it.earnings);
+  const words: string[] = [];
+  words.push(evidence === 3 ? 'verified event (document read)' : evidence === 2 ? 'verified event (official filing)' : evidence === 1 ? 'secondary source — verification required' : event ? 'source not verified' : 'no event on file');
+  if (event) {
+    words.push(mechanism === 2 ? 'quantified economic mechanism' : mechanism === 1 ? 'identifiable mechanism' : 'no operating mechanism');
+    words.push(persistence === 2 ? 'multi-period runway' : persistence === 1 ? 'one execution period' : 'runway not established');
+    words.push(materiality === 2 ? `material vs size (${it.materiality.ratios[0]?.pct ?? '—'}%)` : materiality === 1 ? 'unresolved economic significance' : 'small vs company size');
+    words.push(researchable ? 'documents to read now' : it.catalystFor === 'CONTEXT' ? 'older context' : 'little to research');
+  }
+  return { evidence, mechanism, persistence, materiality, researchable, words };
+}
+const F_MECH = [0.6, 0.85, 1] as const;
+const F_PDIM = [0.75, 0.85, 1] as const;
+
+function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: string | null; staleEarnings: boolean; veryStale: boolean; namedAllottee: boolean; clarification: boolean; quantified?: boolean }): { score: number; reasons: string[]; details: Record<string, number>; dims: RankDims } {
+  const dims = rankDimsOf(it, !!ctx.quantified);
   const d: Record<string, number> = {
     eventQuality: F_CLASS[it.eventClass], materiality: F_MAT[it.materiality.label], transmission: F_TRANS[it.transmission],
     // zzz787: a potential duration from the event TYPE alone is wording, never a
     // ranking input — only a potential the filing's own facts support counts.
-    evidence: F_EVID[it.sourceConfidence], freshness: freshF(it.ageDays ?? null), expectationGap: gapF(it.expectationGap), persistence: it.potentialDuration && it.potentialDuration.basis !== 'FACTS' ? F_PERS.UNKNOWN : F_PERS[it.persistence],
+    // zzz789: persistence is the potential-persistence DIMENSION (facts only),
+    // plus the mechanism and researchability dimensions. A missing field is
+    // never a ranking input by itself.
+    evidence: F_EVID[it.sourceConfidence], freshness: freshF(it.ageDays ?? null), persistence: F_PDIM[dims.persistence],
+    mechanism: F_MECH[dims.mechanism], researchability: dims.researchable ? 1 : 0.85,
   };
   const reasons: string[] = [];
   const cls = it.eventClass;
@@ -1220,7 +1501,6 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: str
   if (it.transmission === 'DIRECT') reasons.push('Direct P&L transmission');
   if (it.transmission === 'NONE') reasons.push('No transmission to earnings');
   if (it.ageDays != null && it.ageDays <= 3 && cls !== 'NO_CATALYST') reasons.push(`Fresh (${it.ageDays === 0 ? 'today' : `${it.ageDays}d`})`);
-  if (it.expectationGap.direction === 'UNDER_REFLECTED') reasons.push('Move small against the fundamental change');
   if (it.persistence === 'YEARS' && (!it.potentialDuration || it.potentialDuration.basis === 'FACTS')) reasons.push('Multi-year potential stated in the filing (not evidence)');
   let pen = 1;
   const penal = (k: string, f: number, why: string) => { d[`penalty_${k}`] = f; pen *= f; reasons.push(why); };
@@ -1232,12 +1512,10 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: str
   if (it.flags.denial && cls === 'NEGATIVE') penal('denial', 0.5, 'Penalty: company denial');
   if (it.flags.denial && ctx.clarification) reasons.push('Company-confirmed: no undisclosed information');
   if (it.eventClass === 'CONFIRMED_LOW_MATERIALITY') penal('lowMateriality', 0.8, 'Penalty: too small to explain the move');
-  // zzz773: a trailing return is not a pricing assessment. Penalise only a
-  // DEFINED comparison: the reaction since the filing against its size, a run
-  // before the filing, or a move far larger than the fundamental change.
-  if (ctx.pricingState === 'REACTION_EXCEEDS_SIZE') penal('pricing', 0.8, 'Penalty: reaction since the filing exceeds the event\'s size');
-  else if (ctx.pricingState === 'RAN_UP_BEFORE_FILING') penal('pricing', 0.85, 'Penalty: stock ran up before the filing');
-  else if (it.expectationGap.direction === 'EXPECTATION_HEAVY' && it.expectationGap.level === 'LARGE') penal('pricing', 0.8, 'Penalty: move far larger than the fundamental change');
+  // zzz789: PRICE IS NEVER A RANKING INPUT. The expectation gap (move vs
+  // fundamental change) and the pricing assessment stay on the card as
+  // context ("MOVE VS CHANGE", "PRICED"); they no longer scale the rank.
+  void ctx.pricingState; void gapF;
   // A no-catalyst row is UNVERIFIED because nothing was found to verify; it
   // is not an unverified source and is not penalised as one. (zzz771)
   const noEvent = cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY';
@@ -1250,12 +1528,12 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: str
   // reason says why it is not in the queue.
   if (it.catalystFor === 'CONTEXT') reasons.push(`Context, not this move's catalyst (${it.ageDays}d)`);
   else if (it.catalystFor === 'RECENT' && it.ageDays != null) reasons.push(`Recent (${it.ageDays}d) — delayed reaction possible`);
-  const product = d.eventQuality * d.materiality * d.transmission * d.evidence * d.freshness * d.expectationGap * d.persistence;
+  const product = d.eventQuality * d.materiality * d.transmission * d.evidence * d.freshness * d.persistence * d.mechanism * d.researchability;
   d.product = Math.round(product * 10000) / 10000;
   d.penaltyMultiplier = Math.round(pen * 1000) / 1000;
   const score = Math.max(0, Math.min(100, Math.round(100 * Math.pow(product, 0.6) * pen)));
   d.priority = score;
-  return { score, reasons, details: d };
+  return { score, reasons, details: d, dims };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1300,7 +1578,30 @@ function portfolioOf(ticker: string, type: EventType, cls: EventClass, e: Earnin
 
 interface BoardRow { ticker: string; company: string | null; move_pct: number | null; market_cap?: number | null; perf?: any; turnover?: number | null }
 
-function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality, key: string, gap: ResearchItem['expectationGap'], e: EarningsMini | null, fr: FundraiseRead | null = null, clarification = false): string {
+/** zzz789 — the open question for THIS kind of event, in plain words (never
+ *  the generic "size not disclosed" when the real unknown is something else). */
+function openWhy(key: string, type: EventType, o: { open: string[]; secondary: boolean; value: number | null; valueVerified: boolean; hay: string }): string {
+  const lc = (xs: string[]) => xs.map((x) => x.toLowerCase());
+  const miss = (want: string[]) => { const m = lc(o.open).filter((x) => want.some((w) => x.startsWith(w))); return m.length ? ` (not yet stated: ${m.join(', ')})` : ''; };
+  const pre = o.secondary ? 'Only a secondary source so far — confirm it in an official filing. ' : '';
+  switch (key) {
+    case 'order': case 'customer': case 'order_recurring':
+      return pre + (o.value == null
+        ? `Order on file, but its value is not disclosed — establish value, margin and execution period before judging it${miss(['margin', 'execution', 'customer'])}.`
+        : !o.valueVerified ? 'Order value is stated but not yet verified in the document — confirm it, then margin and execution period.'
+          : `Order sized in the filing — what is open is margin, execution and repeatability${miss(['margin', 'execution', 'working', 'repeat'])}.`);
+    case 'capacity': return `${pre}Capex / capacity on file — the open question is utilisation: will orders or offtake fill it, and what revenue and EBITDA follow${miss(['utilisation', 'demand', 'revenue', 'ebitda'])}?`;
+    case 'acquisition': return `${pre}Acquisition on file — what matters is the target's economics: price paid, revenue / EBITDA and funding${miss(['purchase', 'target', 'funding'])}.`;
+    case 'approval': case 'qualification': return `${pre}Approval on file — the open question is demand: which customer buys under it, and is there a commercial order${miss(['customer', 'commercial', 'production'])}?`;
+    case 'product': return `${pre}New product on file — the open question is customers: is it commercially available, at what price, and who has ordered${miss(['customers', 'commercial', 'pricing'])}?`;
+    case 'debt': { const a = debtActionOf(o.hay) || 'raised / redeemed'; return `${pre}Debt ${a} — the open question is the balance-sheet effect: interest saved, maturity and leverage after it${miss(['rate', 'maturity', 'cash', 'leverage'])}.`; }
+    case 'strategic_expansion': return `${pre}A new subsidiary / geography — an enabling step; the open questions are the investment, the set-up and the first customers${miss(['investment', 'regulatory', 'customers'])}.`;
+    default: return `${pre}${type} on file — its economic effect is not established yet${o.open.length ? ` (open: ${lc(o.open).slice(0, 3).join(', ')})` : ''}.`;
+  }
+}
+
+function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality, key: string, gap: ResearchItem['expectationGap'], e: EarningsMini | null, fr: FundraiseRead | null = null, clarification = false,
+  o: { open: string[]; secondary: boolean; value: number | null; valueVerified: boolean; hay: string } = { open: [], secondary: false, value: null, valueVerified: false, hay: '' }): string {
   if (cls === 'DATA_UNAVAILABLE') return 'Sources could not be reached — this is missing data, not an absence of news.';
   if (cls === 'LISTING') return 'Recent listing — no comparable prior close, so the move is excluded from comparison.';
   if (cls === 'MARKET_MOVE_ONLY') return 'Band print on thin turnover — the move measures the price band, not demand.';
@@ -1324,15 +1625,20 @@ function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality,
   if (key === 'strategic_expansion') return 'A new subsidiary / geography — an enabling step; nothing is sold there yet.';
   if (key === 'licence_capacity') return 'A licence / capacity to produce — capability, not demand. Commercial persistence is unproven until orders, offtake, utilisation or revenue are on file.';
   if (key === 'contract_term' && cls !== 'NEGATIVE') return 'A contract with a stated term — a runway, not proven revenue; its value and billing are not yet quantified.';
+  // zzz789: debt — the open question is the balance-sheet effect, whatever its size.
+  if (key === 'debt' && cls !== 'NEGATIVE') return openWhy(key, type, o);
   if (cls === 'NEGATIVE') return type === 'Earnings' ? 'Results weakened; the move is not explained by fundamentals.' : type === 'Accident / disruption' ? 'Operational disruption — size the lost output and the insurance cover.' : 'Negative development in the window — check whether it changes the thesis.';
   if (key === 'enabling') return `${stage === 'PROPOSED' ? 'A proposal' : 'An enabling step (LoI / MoU / board approval)'}, not an executed order — nothing is booked yet.`;
   if (cls === 'CONFIRMED_LOW_MATERIALITY') return type === 'Earnings' ? 'Real result, but the change is modest — unlikely to explain the move alone.' : 'Real event, but too small relative to company scale to explain the move.';
-  if (cls === 'POTENTIAL_UNVERIFIED') return mat.label === 'UNKNOWN' ? 'Event on file but its size is not disclosed — establish the value before judging it.' : 'Reported in a summary only — verify it in the filing before spending time on it.';
+  // zzz789: event-aware — the open question for THIS kind of event (ABDL → demand, acquisition → target economics, capex → utilisation, debt → balance sheet).
+  if (cls === 'POTENTIAL_UNVERIFIED') return mat.label === 'UNKNOWN' || o.secondary ? openWhy(key, type, o) : 'Reported in a summary only — verify it in the filing before spending time on it.';
   const under = gap.direction === 'UNDER_REFLECTED' ? ' and the move looks small against it' : gap.direction === 'EXPECTATION_HEAVY' ? ', though the move already runs ahead of it' : '';
+  const openTxt = (want: string[]) => { const m = o.open.map((x) => x.toLowerCase()).filter((x) => want.some((w) => x.startsWith(w))); return m.length ? ` (not yet stated: ${m.join(', ')})` : ''; };
   switch (key) {
-    case 'order': case 'customer': return `Large order relative to company scale${under}, but execution and margin economics remain unknown.`;
-    case 'capacity': return `Verified capacity change${under}; utilisation and demand for the new capacity are not yet disclosed.`;
-    case 'acquisition': return `Acquisition sized against the company${under}; price, funding and target economics decide whether it adds value.`;
+    case 'order': case 'customer': return `Large order relative to company scale${under}, but execution and margin economics remain unknown${openTxt(['margin', 'execution', 'working', 'repeat'])}.`;
+    case 'capacity': return `Verified capacity change${under}; the open question is utilisation — demand, revenue and EBITDA for the new capacity are not yet disclosed${openTxt(['utilisation', 'demand', 'revenue', 'ebitda'])}.`;
+    // zzz789: the open question for a deal is the TARGET's economics.
+    case 'acquisition': return `Acquisition sized against the company${under} — what matters is the target's economics: revenue / EBITDA, funding and contribution${openTxt(['target', 'funding', 'contribution'])}.`;
     case 'earnings': return `Reported growth large enough to move earnings power${under}; check whether it repeats and whether cash follows profit${e?.stale ? ' (result is older context, not this move\'s trigger)' : ''}.`;
     case 'approval': return 'Approval opens a market; the revenue it books is not yet disclosed.';
     default: return `Confirmed event with a stated economic size${under}; the path to earnings still needs checking.`;
@@ -1449,6 +1755,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const notScanned = 'news, broker actions and sector moves are not scanned';
   let scanNote: string | null = null;
   let clarification = false;
+  let favourableOutcome = false;
   let fr: FundraiseRead | null = null;
 
   if (status === 'source_failed' && !e) {
@@ -1545,7 +1852,9 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     const unclassified = /not classifiable/i.test(headline0);
     cls = bandLevel != null && !unclassified ? 'MARKET_MOVE_ONLY' : 'NO_CATALYST';
     type = /debt financing/i.test(headline0) ? 'Debt / refinancing' : cls === 'MARKET_MOVE_ONLY' ? 'Market/technical move' : 'No identified catalyst';
-    label = unclassified ? 'Unclassified filing — open it' : /debt financing/i.test(headline0) ? 'Debt financing (not a catalyst)' : 'Routine filings only';
+    // zzz789: a favourable tax / legal outcome (appeal allowed, demand reduced) is resolved — said so, never negative.
+    favourableOutcome = notes.some((n) => /in the company'?s favour|favourable (regulatory|tax|legal)/i.test(n)) || /favourable regulatory \/ legal outcome/i.test(notes.join(' '));
+    label = unclassified ? 'Unclassified filing — open it' : favourableOutcome ? 'Favourable tax / legal outcome — resolved (not negative)' : /debt financing/i.test(headline0) ? 'Debt financing (not a catalyst)' : 'Routine filings only';
     // zzz771: nothing here was verified as an event — the confidence is
     // UNVERIFIED, and the note says what WAS scanned so "no catalyst" is
     // never read as "nothing happened".
@@ -1605,13 +1914,21 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const famHay = `${evHay} ${factText(famFacts)}`;
   const orderLikeT = type === 'Order win' || type === 'Contract' || type === 'Customer win';
   const contractYears = orderLikeT && cls !== 'NEGATIVE' ? contractTermYears(famHay) : null;
-  const potRaw = potentialDurationOf(type, cls, evHay, famFacts);
+  const secondaryOnly = (conf === 'SECONDARY_SUMMARY' || conf === 'UNVERIFIED') && !famFacts.some((x) => x.source.kind !== 'PRESS' && x.source.access === 'DOCUMENT_READ');
+  const potRaw = potentialDurationOf(type, cls, evHay, famFacts, { secondaryOnly });
+  // zzz789: economics QUANTIFIED in a read official document — a firm value /
+  // capex / consideration / target revenue (a stated "potential" never counts).
+  const officialFilings = new Set(famFacts.filter((x) => x.source.kind !== 'PRESS' && x.source.date).map((x) => String(x.source.date).slice(0, 10))).size;
+  const quantified = (value != null && isVerifiedValue(value))
+    || famFacts.some((x) => x.source.kind !== 'PRESS' && x.source.access === 'DOCUMENT_READ' && [x.economics.valueNative, x.economics.considerationNative, x.economics.capex, x.economics.targetRevenueNative, x.economics.targetProfitNative].some((n) => n != null))
+    || (!!cap && verifiedDoc)
+    || (verifiedDoc && /\butili[sz]ation[^.]{0,20}?\d+(?:\.\d+)?\s*%|\d+(?:\.\d+)?\s*%\s*utili[sz]ation/i.test(evHay));
   // zzz787: the thread's facts can say what the headline does not — a programme
   // (RAYMOND "fighter aircraft programme", "multi-programme … annually") or a term.
   const refineKey = (k: string): string => (k === 'order' && contractTermYears(famHay) != null && !PROGRAMME_WORDS.test(famHay) ? 'contract_term' : k === 'order' && PROGRAMME_WORDS.test(famHay) ? 'order_recurring' : k);
   const key0 = refineKey(keyOverride || nextKey(type, cls, stage, f, clarification));
   const pcSum = (f as any)?.persistence ?? null;
-  const persEv = persistenceEvidenceOf(type, cls, stage, key0, famHay, pcSum, { officialPeriods: officialEvidencePeriods(famFacts), contractYears });
+  const persEv = persistenceEvidenceOf(type, cls, stage, key0, famHay, pcSum, { officialPeriods: officialEvidencePeriods(famFacts), contractYears, quantified, officialFilings });
   const guard = guardPotential(potRaw, persEv, contractYears);
   const pers: Persistence = guard.pot.value;
   // zzz782: a tax / penalty demand that is a rounding error against the
@@ -1651,7 +1968,8 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     if (filed.salesCurr != null || filed.patCurr != null) after = [filed.salesCurr != null ? `Revenue ${money(filed.salesCurr, market)}` : null, filed.patCurr != null ? `PAT ${money(filed.patCurr, market)}` : null].filter(Boolean).join(', ') + ' (this quarter)';
   } else if (value != null && (cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || type === 'Order cancellation')) {
     const earlyW = stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR';
-    const noun = type === 'Order cancellation' ? 'Order cancelled' : type === 'Acquisition' ? 'Acquisition' : type === 'Buyback' ? 'Buyback' : type === 'Fundraising' ? 'Issue size' : type === 'Capacity expansion' ? 'Capex' : 'Order';
+    // zzz789: the figure is labelled for what it IS — capex, consideration, issue size, amount redeemed … (MILKYMIST ₹40 Cr is capex, not an order value).
+    const vl = valueLabelOf(type, evHay);
     const ratioTxt = mat.ratios[0] ? ` = ${mat.ratios[0].pct}% of ${mat.ratios[0].basis === 'market_cap' ? 'market cap' : 'revenue'}` : '';
     // zzz787: a figure the read document has not confirmed is STATED only —
     // never "= X% of market cap" beside "not verified".
@@ -1659,8 +1977,10 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     whatChanged = earlyW
       ? `${label || type}: ${moneyExact(value, market)} stated, nothing booked yet (${stage})${ratioTxt && !pendingV ? ` — scale${ratioTxt}` : pendingV ? ' — document verification pending' : ''}`
       : pendingV
-        ? `Stated ${noun === 'Issue size' ? 'issue size' : noun === 'Capex' ? 'capex' : noun === 'Order cancelled' ? 'cancelled order value' : `${noun.toLowerCase()} value`}: ${moneyExact(value, market)} · Source: filing metadata/summary · Document verification: pending`
-        : `${noun} ${mat.ratios[0] ? mat.ratios[0].text : moneyExact(value, market)} (document-verified)`;
+        ? `Stated ${vl.label}: ${moneyExact(value, market)} · Source: filing metadata/summary · Document verification: pending`
+        // zzz789: debt — the verified FACT ("$25M notes redeemed"); its impact is a separate unknown (KOS).
+        : type === 'Debt / refinancing' ? `${moneyExact(value, market)} ${DEBT_INSTRUMENT(evHay)} ${debtActionOf(evHay) || 'raised'} (document-verified)`
+          : `${vl.short} ${mat.ratios[0] ? mat.ratios[0].text : moneyExact(value, market)} (document-verified)`;
   }
 
   // zzz776: a GDV / "may unlock" figure is headline SCALE, not the company's
@@ -1675,10 +1995,36 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   // zzz775: a research question the filing already answers is shown WITH its
   // answer; one the model-read filing is silent on says so. Only a filing
   // that was not read keeps the bare question.
-  const researchNext = answerQuestions((NEXT[key] || NEXT.generic).slice(0, 8), {
+  // zzz789: an ORDERED checklist per event kind (order / acquisition / capex /
+  // product / expansion / licence / stake / debt / fundraising / merger); a
+  // step the documents already answer is marked ✓ with the fact, never re-asked.
+  const eventish = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED';
+  const checkCtx: CheckCtx = {
+    facts: famFacts, legacy: legacyFactMapOf(f) || {}, hay: `${hay} ${factText(famFacts)}`, read: verifiedDoc || famFacts.some((x) => x.source.kind !== 'PRESS' && x.source.access === 'DOCUMENT_READ'),
+    value, valueVerified: value != null && isVerifiedValue(value), statedPotential: (famFacts.map((x) => (x as any).statedPotentialNative).find((v) => typeof v === 'number') as number | undefined) ?? null,
+    market, revenue: revenue ? revenue.v : null, marketCap, contractYears, officialFilings, type, secondary: secondaryOnly,
+  };
+  const checklist = eventish && !clarification ? researchChecklist(key, checkCtx) : null;
+  const researchNext = checklist || answerQuestions((NEXT[key] || NEXT.generic).slice(0, 8), {
     facts: legacyFactMapOf(f), read: verifiedDoc, value, marketCap, market,
     revenue: revenue ? revenue.v : null, headline: headline0, quote,
   });
+  // zzz789: what is still open, in the checklist's own order (drives IMPACT and WHY RESEARCH).
+  const openSteps = (checklist || []).filter((l) => !/: ✓ /.test(l)).map((l) => l.replace(/^\d+\. /, '').split(':')[0]);
+  // zzz789: WHAT CHANGED is the stated FACT; the IMPACT is a separate unknown (KOS).
+  const datedEvent = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || cls === 'NEGATIVE';
+  if (!whatChanged && datedEvent && (quote || headline0)) {
+    // The stated fact, not the headline again: the read quote, or the event's stated particulars.
+    const stake = famFacts.map((x) => x.economics.stakePct).find((v) => v != null) ?? (/\b(\d+(?:\.\d+)?)\s*%\s*(?:stake|of the (?:paid[- ]up|share capital|equity))/i.exec(evHay)?.[1] ?? null);
+    const who = famFacts.map((x) => x.event.counterparty).find(Boolean) || legacyFactMapOf(f)?.counterparty || null;
+    const bits = [stake != null ? `${stake}% stake` : null, who, contractYears != null ? `${contractYears}-year term` : null, famFacts.map((x) => x.economics.capacityAfter).find(Boolean) || null].filter(Boolean);
+    whatChanged = quote && verifiedDoc ? `As filed: “${quote.length > 220 ? `${quote.slice(0, 217)}…` : quote}”`
+      : `${label || type}${bits.length ? ` — ${bits.join(' · ')}` : ''} (as stated in the filing)`;
+  }
+  const impact: string | null = !datedEvent ? null
+    : type === 'Earnings' ? null
+      : openSteps.length ? `Not established — ${openSteps.slice(0, 4).map((x) => x.toLowerCase()).join(', ')} still open`
+        : checklist ? 'The documents state the main economics — see Research next' : mat.label !== 'UNKNOWN' ? null : 'Not established from the documents';
   // A clarification's unknowns are a no-catalyst row's (cause of the move), not a negative event's impact. (zzz771)
   const unknowns = unknownsFor(clarification ? 'none' : key, hay, value != null, e);
   const portfolio = portfolioOf(ticker, type, cls, e, { ...sets, vars: input.thesisVariables, findingHeld: !!f?.holding });
@@ -1694,7 +2040,8 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     sourceConfidence: conf, sourceUrl, quote, materiality: mat, transmission: trans,
     transmissionChain: chainOf(type, trans, stage, { headline: clean(headline), value, market, mat, e, f: filed, cap }),
     persistence: pers, persistenceEvidence: persEv, potentialDuration: guard.pot, immaterialNegative, expectationGap: gap, unknowns, researchNext, pricing: pricingOfFinding(f),
-    whyResearch: whyOf(cls, type, stage, mat, key, gap, e, fr, clarification),
+    whyResearch: whyOf(cls, type, stage, mat, key, gap, e, fr, clarification, { open: openSteps, secondary: secondaryOnly, value, valueVerified: value != null && isVerifiedValue(value), hay: evHay }),
+    impact,
     portfolio, earnings,
     flags: { band: bandLevel, listing, dilution, denial, turnover: num(f?.turnover) ?? num(b?.turnover) },
     priority: 0, priorityReasons: [], scoreDetails: null,
@@ -1703,13 +2050,17 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     persistentCatalyst: f?.persistence ?? null,
     news: f?.news ? { narrative: f.news.narrative ? { label: f.news.narrative.label, days: f.news.narrative.days, firstDate: f.news.narrative.firstDate, lastDate: f.news.narrative.lastDate, lead: f.news.narrative.lead } : null, items: f.news.items.slice(0, 3).map((x) => ({ title: x.title, url: x.url, date: x.date, source: x.source })) } : null,
   };
+  // zzz789: a favourable legal outcome is resolved — said so, never negative, never "nothing happened".
+  if (favourableOutcome) item.whyResearch = 'A favourable tax / legal outcome (appeal allowed / demand reduced) is on file — a resolved matter, not negative evidence; it does not by itself explain the move.';
   // ── zzz785: catalyst records, timeline, persistence test, gaps, links ──
-  Object.assign(item, catalystLayer(item, f, { ticker, market, cls, key, stage, evHay, pers, persEv, mat, fr, conf, verifiedDoc, marketCap, revenue, input, unknowns, potentialText: guard.pot.text }));
+  Object.assign(item, catalystLayer(item, f, { ticker, market, cls, key, stage, evHay, pers, persEv, mat, fr, conf, verifiedDoc, marketCap, revenue, input, unknowns, potentialText: guard.pot.text, quantified }));
   // zzz787: the four duration concepts, kept apart, derived from the facts.
   item.durations = durationsOf(item, { key, famFacts, famHay, contractYears, guardNote: guard.note, valueVerified: isVerifiedValue(value), value });
   const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
-  const p = priorityOf(item, { routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification });
+  const p = priorityOf(item, { routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification, quantified });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
+  const penaltyWords = Object.keys(p.details).filter((k) => k.startsWith('penalty_')).map((k) => ({ dilution: 'dilution flag', denial: 'company denial', lowMateriality: 'too small to explain the move', pricing: 'move already ahead of the change', unverified: 'unverified source', listing: 'listing artifact', routine: 'routine filings only', technical: 'technical move only', staleResult: 'older result' } as Record<string, string>)[k.slice(8)] || k.slice(8));
+  item.whyRank = [...p.dims.words, ...penaltyWords.map((w) => `penalty: ${w}`)].join(' + ');
   // zzz785: unknown economics are said, not silently ranked low.
   if (item.economicsUnknown) item.priorityReasons.push(`${UNKNOWN_NEEDS_READING}${item.economicsUnknown.missing.length ? ` (${item.economicsUnknown.missing.join(', ')})` : ''}`);
   return item;
@@ -1727,6 +2078,8 @@ const FAMILY_OF: Partial<Record<EventType, EventKind[]>> = {
   'Capacity expansion': ['capacity'], 'Production ramp': ['capacity'], 'Regulatory approval': ['qualification', 'order', 'capacity'],
   'Acquisition': ['acquisition'], 'Merger': ['merger', 'acquisition'], 'New product': ['new_product'], 'Partnership': ['partnership'], 'JV': ['partnership'],
   'Strategic expansion': ['strategic_expansion'], 'Strategic investment': ['stake_by_strategic', 'strategic_investment'], 'Promoter buying': ['promoter_buying'],
+  // zzz789: debt and fundraising read their own facts for the checklist.
+  'Debt / refinancing': ['debt'], 'Fundraising': ['fundraising'],
 };
 
 /** zzz787 — the four duration concepts on one card, never merged:
@@ -1814,8 +2167,10 @@ function durationsOf(it: ResearchItem, c: { key: string; famFacts: StructuredFac
   let capacity: DurationView['capacity'] = null;
   if (capLike) {
     const demand = DEMAND_WORDS.test(c.famHay);
-    capacity = { potential: 'multi-year', demand: demand ? 'present' : 'absent', commercial: demand ? 'supported' : 'unproven',
-      text: `Capacity potential: multi-year · Demand evidence: ${demand ? 'present (orders / offtake / utilisation / revenue on file)' : 'absent'} · Commercial persistence: ${demand ? 'supported in one period' : 'unproven'}` };
+    // zzz789: a secondary-only capacity event (FRVO "first power") carries no multi-year potential until verified.
+    const capPot = pot.value === 'YEARS' ? 'multi-year' : 'not established (verification required)';
+    capacity = { potential: capPot, demand: demand ? 'present' : 'absent', commercial: demand ? 'supported' : 'unproven',
+      text: `Capacity potential: ${capPot} · Demand evidence: ${demand ? 'present (orders / offtake / utilisation / revenue on file)' : 'absent'} · Commercial persistence: ${demand ? 'supported in one period' : 'unproven'}` };
     if (!demand) missing.push('demand evidence (orders, offtake, utilisation or revenue)');
   }
   return {
@@ -1839,7 +2194,7 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
   ticker: string; market: 'IN' | 'US'; cls: EventClass; key: string; stage: Stage; evHay: string; pers: Persistence;
   persEv: { level: PersistEvidenceLevel; text: string }; mat: Materiality; fr: FundraiseRead | null; conf: SourceConfidence; verifiedDoc: boolean;
   marketCap: number | null; revenue: { v: number; basis: 'ttm_revenue' | 'annual_revenue' } | null; input: ResearchViewInput; unknowns: string[];
-  potentialText?: string | null;
+  potentialText?: string | null; quantified?: boolean;
 }): Partial<ResearchItem> {
   const out: Partial<ResearchItem> = {};
   const T = up(c.ticker);
@@ -1869,7 +2224,7 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
     return `${moneyExact(amt, c.market)} ÷ ${money(c.marketCap, c.market)} market cap = ${p < 0.01 ? '<0.01' : p < 1 ? (Math.round(p * 100) / 100).toString() : r1(p)}%`;
   };
   const card = (v: CatalystView): CatalystCard => ({
-    id: v.id, kind: v.kind, kindWord: KIND_WORD[v.kind], title: clean(v.title), state: v.state, stateWord: STATE_WORD[v.state], previousState: v.previousState,
+    id: v.id, kind: v.kind, kindWord: v.polarity === 'positive' && (v.kind === 'tax_litigation' || v.kind === 'regulatory_negative') ? 'Tax / legal outcome (favourable — resolved)' : KIND_WORD[v.kind], title: clean(v.title), state: v.state, stateWord: STATE_WORD[v.state], previousState: v.previousState,
     latestEvidence: v.latestEvidence ? clean(v.latestEvidence) : null, nextMilestone: v.nextMilestone, invalidation: v.invalidation,
     polarity: v.polarity, verification: v.verification, materialityText: sizeText(v),
     firstSeen: v.firstSeen, lastSeen: v.lastSeen, duplicatesMerged: v.duplicatesMerged, documents: v.sources.length,
@@ -1884,6 +2239,7 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
     out.persistenceTest = persistenceTestOf({
       kind: primary?.kind ?? (c.fr ? 'fundraising' : null), facts: primary?.facts || [], record: primary,
       potential: c.pers, potentialText: c.potentialText ?? null, evidenceLevel: c.persEv.level, evidenceText: c.persEv.text, hay: c.evHay, market: c.market,
+      quantified: c.quantified,
     });
   }
   // Three distinct gap labels.
@@ -1971,6 +2327,19 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const portfolio = items.filter((i) => i.portfolio.relevance === 'HOLDING' || i.portfolio.relevance === 'WATCHLIST');
   // zzz785: every live event with unknown economics, ranked — never dropped by the caps above.
   const needsReading = eligible.filter((i) => !!i.economicsUnknown);
+  // zzz789 — ONE canonical event per card. A name surfaced in several sections
+  // (GNA: Watch AND Unknown — needs reading) is the SAME item object, carrying
+  // its canonical event id and every section it appears in; the page renders
+  // one card / row and says "also in: …" — never a second item, never a
+  // double count.
+  const surf = new Map<string, string[]>();
+  const mark = (list: ResearchItem[], name: string) => { for (const i of list) surf.set(i.ticker, [...(surf.get(i.ticker) || []), name]); };
+  mark(queue, 'Research queue'); mark(watch, 'Watch / investigate'); mark(needsReading, 'Unknown — needs reading');
+  mark(items.filter((i) => i.portfolio.relevance === 'HOLDING' || i.portfolio.relevance === 'WATCHLIST'), 'Your book');
+  for (const i of items) {
+    i.canonicalId = i.links?.catalystId || i.catalysts?.[0]?.id || `${i.ticker}:${i.eventType}`;
+    i.surfacedIn = surf.get(i.ticker) || [];
+  }
 
   const universe = tickers.map((ticker) => ({ ticker }));
   const lines = presentErrorLines(input.errors || [], universe, 60);

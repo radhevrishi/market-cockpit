@@ -547,14 +547,25 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledg
   const lifecycle = capexLifecycle(ledger);
   const reached = lifecycle.reduce<CapexStage | null>((m, e) => (!m || ord(e.stage) > ord(m) ? e.stage : m), null);
   const lifecycleProjects = capexProjects(summary, ledger, vars);
-  const earning0 = capexEarning(vars, reached, lifecycleProjects, summary);
+  const earning00 = capexEarning(vars, reached, lifecycleProjects, summary);
   const build = capexBuild(lifecycleProjects);
+  // zzz790 — ONE PROGRAMME CANNOT BE "NOT STARTED" AND COMMISSIONED.
+  // TI / HSCL / SANSERA read "Capex earning: NOT STARTED · Revenue
+  // contribution: none yet — not commissioned" beside a project the build
+  // state calls commissioned. A built project with no revenue attributed is
+  // BUILT — NOT YET EARNING (commissioned ≠ earning); the per-project build
+  // states say which one is built and which are not.
+  const earning0: CapexEarning = earning00.state === 'NOT_STARTED' && build?.anyOperating
+    ? { ...earning00, state: 'SPENT_NOT_EARNING', label: 'BUILT — NOT YET EARNING',
+      lines: earning00.lines.map((l) => /^Revenue contribution: none yet — not commissioned/.test(l)
+        ? l.replace('none yet — not commissioned', 'not attributed in the documents read (built project included)') : l) }
+    : earning00;
   // The earning block carries the SAME build answer as the narrative: with
   // several projects in different states it names each, and its label says
   // "MIXED" rather than one project's state for all. (zzz784)
   const earning: CapexEarning = { ...earning0,
     operational: build ? build.text : null,
-    economic: earning0.state === 'NOT_STARTED' && build?.anyOperating ? 'not yet earning — no revenue attributed to any project (the built one included)' : ECONOMIC_WORD[earning0.state],
+    economic: earning00.state === 'NOT_STARTED' && build?.anyOperating ? 'not yet earning — no revenue attributed to any project (the built one included)' : ECONOMIC_WORD[earning0.state],
     label: build?.mixed && (earning0.state === 'NOT_STARTED' || earning0.state === 'SPENT_NOT_EARNING')
       ? `MIXED — ${build.projects.filter((x) => isOperatingBuild(x.build)).length} built, ${build.projects.filter((x) => !isOperatingBuild(x.build)).length} not yet built · NOT YET EARNING`
       : earning0.state === 'SPENT_NOT_EARNING' && build && build.anyOperating && !earning0.spent ? 'BUILT — NOT YET EARNING'

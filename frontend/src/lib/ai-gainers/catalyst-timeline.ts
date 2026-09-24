@@ -382,7 +382,9 @@ export function buildCatalystRecords(ticker: string, market: 'IN' | 'US', facts:
       id, ticker: T, market, kind, title: titleOf(kind, list), state, previousState,
       latestEvidence, nextMilestone, invalidation: INVALIDATION[kind] || 'A later filing that contradicts it.',
       sources, firstSeen, lastSeen, timeline,
-      polarity: polarityOfKind(kind),
+      // zzz789: a tax / legal matter whose every fact is a FAVOURABLE outcome (appeal allowed, demand
+      // reduced / quashed) is resolved — positive, never listed as negative (PRIORITY).
+      polarity: NEGATIVE_KINDS.has(kind) && list.length > 0 && list.every((x) => (x as any).polarity === 'positive') ? 'positive' : polarityOfKind(kind),
       verification: anyOfficial ? (sources.some((s) => !isOfficial(s)) ? 'Official filing on file · press merged into it' : 'Official filing on file') : 'Secondary · verification required',
       facts: [...list].sort((a, b) => dateCmp(a.source.date, b.source.date)), duplicatesMerged: dup,
     });

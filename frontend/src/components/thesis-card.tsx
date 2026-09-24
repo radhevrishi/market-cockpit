@@ -347,6 +347,13 @@ type RowLike = {
 export function chipValue(c: RowLike): string {
   return humanTokens(chipValueRaw(c));
 }
+/** zzz790: an UNCLEAR row whose reason is history (VADILALIND's 270,000 →
+ *  380,000 L/day "over past few years", with installed capacity unchanged)
+ *  says HISTORICAL — never "validation required", never capacity added now. */
+export function unclearWords(c: { stateReason?: string | null; unjudged?: string | null }, after: string): string {
+  const why = String(c.stateReason || c.unjudged || '');
+  return /^history\b/i.test(why) ? `historical — not current-period evidence: ${after}` : `unclear — validation required: ${after}`;
+}
 function chipValueRaw(c: RowLike): string {
   const after = stripTag(c.after);
   const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupee(c.plan.value)}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
@@ -357,7 +364,7 @@ function chipValueRaw(c: RowLike): string {
     const d = (deltaText(c as TreatInput) || '').replace(/\s*\(?\bQoQ\b\)?\s*$/i, '').trim();
     return `${level ? `${level} · ` : ''}QoQ only${d ? ` (${d} QoQ)` : ''} — seasonal, not judged${planTxt}`;
   }
-  if (c.state === 'UNCLEAR' && after) return `unclear — validation required: ${after}`;
+  if (c.state === 'UNCLEAR' && after) return unclearWords(c, after);
   // The time-series reading, when the variables layer supplied one, is the
   // whole statement: current → previous → Δ → direction → basis. (zzz771)
   // A management statement keeps its tag on the row whichever path prints it. (zzz784)
@@ -1502,7 +1509,7 @@ export function ThesisCard(p: ThesisCardProps) {
                       ? `capex earning: ${p.capex.earning.label} — ${p.capex.earning.lines.join(' · ')}`
                       : isQoqOnly(c as any) ? chipValue(c as any)
                       : c.state === 'UNCLEAR' && (c.after || c.before)
-                        ? `unclear — validation required: ${stripTag(c.after || c.before)}`
+                        ? unclearWords(c, stripTag(c.after || c.before))
                         : stateLine(c)}
                   </div>
                 ))}

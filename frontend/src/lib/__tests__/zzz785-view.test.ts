@@ -171,7 +171,9 @@ describe('zzz785 · fundraising — materiality Unknown until amount / price / a
       facts: [fact('fundraising', src({ title: 'Allotment' }), { value: 50, issuePrice: 125, dilutionPct: 6.2, allottees: ['Alpha Growth Fund'] })] as any }) }), 'KABRA');
     assert.notEqual(it.materiality.label, 'UNKNOWN');
     assert.equal(it.economicsUnknown, null);
-    assert.equal(it.persistenceTest!.grade, 'TEMPORARY');
+    // zzz789 (intentional change): TEMPORARY only on evidence of a one-off / finite effect; a raise persists
+    // through its use of proceeds, which is not established → EARLY.
+    assert.equal(it.persistenceTest!.grade, 'EARLY');
   });
 });
 
@@ -234,13 +236,17 @@ describe('zzz785 · persistence test — small explicit rules', () => {
     assert.equal(t.grade, 'HIGH'); assert.equal(t.duration, '24 months'); assert.equal(t.expectedDuration, '24 months (as disclosed)');
     assert.match(t.mechanism!, /Order from Acme of ₹140 Cr/);
   });
-  test('MEDIUM: one filing with a stated period; EARLY: press only; TEMPORARY: fundraising', () => {
+  test('EARLY: one filing with a stated period (zzz789); EARLY: press only; EARLY: fundraising (zzz789)', () => {
+    // zzz789 (intentional change): a stated period with no quantified value and no repeat filing is a runway,
+    // not evidence → EARLY (was MEDIUM). MEDIUM needs quantified economics AND repeat / continuation evidence.
     const m = run([fact('order', src({ url: 'a', title: 'Order from Acme' }), { counterparty: 'Acme', period: '18 months' })]);
-    assert.equal(m.grade, 'MEDIUM'); assert.equal(m.repeatability, null);
+    assert.equal(m.grade, 'EARLY'); assert.equal(m.repeatability, null);
+    const q = run([fact('order', src({ date: '2026-09-01', url: 'a', title: 'Order from Acme' }), { counterparty: 'Acme', value: 50 }), fact('order', src({ date: '2026-09-20', url: 'b', title: 'Repeat order from Acme' }), { counterparty: 'Acme', value: 60 })]);
+    assert.equal(q.grade, 'MEDIUM', q.why);
     const e = run([fact('order', src({ kind: 'PRESS', access: 'SUMMARY_ONLY', title: 'Acme order reported' }), { counterparty: 'Acme' })]);
     assert.equal(e.grade, 'EARLY'); assert.match(e.why, /official filing/);
     const f = run([fact('fundraising', src({ title: 'QIP' }))], { evidenceLevel: 'NOT_PERSISTENT' });
-    assert.equal(f.grade, 'TEMPORARY');
+    assert.equal(f.grade, 'EARLY');
   });
   test('duration is never invented: no disclosed period → "Not disclosed"; potential and evidence kept separate', () => {
     const t = run([fact('order', src({ url: 'a', title: 'Order from Acme' }), { counterparty: 'Acme' })], { potential: 'YEARS' });

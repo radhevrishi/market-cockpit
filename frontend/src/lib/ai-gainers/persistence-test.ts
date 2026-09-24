@@ -42,6 +42,10 @@ export interface PersistenceTestInput {
   /** Headline + quote text of the finding (legacy path), for disclosed-period words. */
   hay: string;
   market: 'IN' | 'US';
+  /** zzz789: the event's economics are QUANTIFIED in a read official document
+   *  (a firm value / capex / consideration / target revenue — never a stated
+   *  "potential"). Omitted → read from the record's official DOCUMENT_READ facts. */
+  quantified?: boolean;
 }
 
 const POTENTIAL_WORD: Record<PersistenceTestInput['potential'], string> = {
@@ -102,28 +106,47 @@ export function persistenceTestOf(inp: PersistenceTestInput): PersistenceTestVie
   const milestone = rec?.nextMilestone || null;
   const invalidation = rec?.invalidation || null;
 
-  // ── four rules, in order ──
+  // ── zzz789: explicit rules, in order ──
+  // Event type alone never sets the grade. TEMPORARY needs EVIDENCE of a
+  // one-off / finite effect; anything above EARLY needs QUANTIFIED economics
+  // AND repeat / continuation evidence in official documents. A contract term,
+  // a programme or an "annual" word is a claim about the future — shown as the
+  // runway / repeatability line, never as persistence evidence by itself.
   let grade: PersistenceGrade; let why: string;
   const weak = rec?.state === 'WEAKENING' || rec?.state === 'DISPROVED';
-  if ((kind && NON_OPERATING_KINDS.has(kind)) || inp.evidenceLevel === 'NOT_PERSISTENT' || rec?.state === 'DISPROVED' || (!mechanism && inp.potential === 'DAYS')) {
+  const allText = `${inp.hay} ${facts.map((x) => `${x.source.title} ${x.quotes.join(' ')}`).join(' ')}`;
+  const statedOneOff = /\bone[- ](?:off|time)\b|\bnon[- ]recurring\b|\bexceptional item\b|\bsingle (?:payment|instalment)\b/i.test(allText);
+  const finiteDemand = (kind === 'tax_litigation' || kind === 'regulatory_negative') && facts.some((x) => x.economics.valueNative != null || /\b(demand|penalt\w*|fine)\b[^.]{0,40}(₹|rs\.?|inr|\$)\s*[\d,]/i.test(`${x.source.title} ${x.quotes.join(' ')}`));
+  const quantified = inp.quantified ?? facts.some((x) => isOfficial(x.source) && x.source.access === 'DOCUMENT_READ'
+    && [x.economics.valueNative, x.economics.considerationNative, x.economics.capex, x.economics.targetRevenueNative, x.economics.targetProfitNative].some((v) => v != null));
+  const continuation = followUps >= 2 || inp.evidenceLevel === 'STRONG';
+  if (rec?.state === 'DISPROVED' || kind === 'resale_registration' || finiteDemand || (statedOneOff && !(mechanism && continuation))) {
     grade = 'TEMPORARY';
     why = rec?.state === 'DISPROVED' ? 'The catalyst was cancelled or denied in a later filing, so nothing persists.'
       : kind === 'resale_registration' ? 'A resale registration moves existing stock; it is not a business change, so nothing persists.'
-        : kind === 'fundraising' ? 'Money raised is a one-time financing event; it persists only through what the money is spent on.'
-          : kind === 'tax_litigation' || kind === 'regulatory_negative' ? 'A one-off demand or action; it matters again only if similar demands recur.'
-            : 'Not an operating mechanism, so there is nothing that repeats period after period.';
-  } else if (!weak && mechanism && official && (runway || duration) && repeatability && (rec!.state === 'EXECUTING' || rec!.state === 'CONFIRMED' || inp.evidenceLevel === 'STRONG')) {
+        : finiteDemand ? 'A stated, finite demand or penalty — a one-off amount; it matters again only if similar demands recur.'
+          : 'The filing itself calls it one-off / non-recurring.';
+  } else if ((kind && NON_OPERATING_KINDS.has(kind)) || inp.evidenceLevel === 'NOT_PERSISTENT' || (!mechanism && inp.potential === 'DAYS')) {
+    grade = 'EARLY';
+    why = kind === 'debt' ? 'Debt redeemed / raised — whether it lastingly changes interest cost, cash flow or leverage is not established yet (not shown to be one-off either).'
+      : kind === 'fundraising' ? 'Money raised persists only through what it is spent on — the use of proceeds and its returns are not established yet.'
+        : kind === 'promoter_buying' || kind === 'capital_allocation' ? 'An ownership / capital-allocation change — no operating mechanism is established, and it is not shown to be one-off either.'
+          : kind === 'tax_litigation' || kind === 'regulatory_negative' ? 'A regulatory / legal matter with no stated amount — its effect is not established.'
+            : 'No operating mechanism is established yet — and nothing on file shows the effect is one-off. Early / unproven.';
+  } else if (!weak && mechanism && official && quantified && continuation && (runway || duration) && (rec!.state === 'EXECUTING' || rec!.state === 'CONFIRMED' || inp.evidenceLevel === 'STRONG')) {
     grade = 'HIGH';
-    why = 'Filed mechanism with a stated runway and repeat business on file, so the effect can carry across several periods.';
-  } else if (!weak && mechanism && official && (runway || repeatability || inp.evidenceLevel === 'STRONG' || inp.evidenceLevel === 'EVIDENCE')) {
+    why = 'Quantified economics in official filings, a stated runway and repeat / continuation evidence on file, so the effect can carry across several periods.';
+  } else if (!weak && mechanism && official && quantified && continuation) {
     grade = 'MEDIUM';
-    why = runway ? 'Filed with a stated runway, but repeat business is not on file yet.' : 'Filed evidence exists, but no execution period is disclosed.';
+    why = runway ? 'Quantified and repeated in official filings, but the runway is not yet executing.' : 'Quantified and repeated in official filings, but no execution period is disclosed.';
   } else {
     grade = 'EARLY';
     why = weak ? 'A later filing shows a delay or cut, so persistence is back to unproven.'
       : !official ? 'Only secondary sources so far — an official filing is needed before anything is proven.'
         : !mechanism ? 'The route from this event to revenue is not described in the filing.'
-          : 'Filed, but no runway, execution period or repeat business is disclosed yet.';
+          : !quantified && runway ? `${runway} is a runway, not evidence — the value, billing and repeat business are not on file yet. Early / unproven.`
+            : !quantified ? 'The economics (value, margin, revenue) are not quantified in an official document yet. Early / unproven.'
+              : 'Quantified once — persistence needs repeat orders, renewals or billing in a later official filing. Early / unproven.';
   }
   return {
     mechanism, runway, evidence, repeatability, duration, milestone, invalidation, grade, why,

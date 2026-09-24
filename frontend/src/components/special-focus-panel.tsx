@@ -128,7 +128,7 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
   return (
     <div id="special-focus" style={{ border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 12px', background: C.bg, scrollMarginTop: 70 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>🔥 Special Focus — {shown.length} persistent catalyst{shown.length === 1 ? '' : 's'}</span>
+        <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>🔥 Special Focus — {shown.length} persistent catalyst{shown.length === 1 ? '' : 's'}{visible.length < shown.length ? ` · showing top ${visible.length}` : ''}</span>
         <span style={{ fontSize: 12.5, color: C.faint }}>
           Where to spend extra research time: a business mechanism (capacity ramp, order book, customer ramp) with filed evidence and runway for several periods.
           Research allocation only — not a buy list, no price used. Output growth alone never qualifies; a target is a milestone, not evidence.

@@ -36,6 +36,7 @@ import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf, periodOr
 import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn, stripPeriodTokens, movePeriodOut, completionDate, periodEnd, forwardSentence, volumeContext } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
+import { SILENCE_WORDING } from './silent-check';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
 import {
   factTypeOf, metricGroupOf, validateReading, validateCashConversion, lineageOf, normalizeValue,
@@ -491,8 +492,19 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       const amountOnly = key === 'capex' || key === 'capex_status' || (key === 'working_capital' && !inverted);
       // "The Pune facility is under commissioning" is not commissioned. (zzz768)
       const notYet = key === 'commissioning' && /\b(under commissioning|to be commissioned|yet to (be )?commission|will be commissioned|expected to (be )?commission)/i.test(`${a.after || ''} ${a.evidence_text}`);
+      // zzz790 — A LEVEL IS NOT A TREND. "Order book … already stands at
+      // INR5,143 crores, and we have received additional orders" (MTARTECH)
+      // and "Phase I … is now contributing" (NGLFINE) read ▲ because the
+      // sentence held an up-word somewhere. With no earlier figure, a level
+      // phrase ("stands at", "as on") or a value with no figure at all is a
+      // level unless the sentence moves THIS figure ("grew to", "from X to").
+      const movesFigure = /\bfrom\b[^.;]{0,60}\bto\b|\b(?:grew|grown|increased|rose|risen|doubled|tripled|expanded|improved|added|augmented|enhanced)\b(?:\s+[\w%.,'-]+){0,8}?\s+(?:to|by)\b/i.test(a.evidence_text);
+      const levelOnly = !a.before && !flatStated && (
+        (!hasFigure(a.after) && /^(?:capacity|capacity_addition|order_book|order_intake|utilisation|volume)$/.test(key))
+        || (/\b(?:stands?|stood|is|was)\s+at\b|\bas (?:on|of)\b|\bat a level of\b/i.test(a.evidence_text) && !movesFigure));
       const verdict0: VarVerdict = denied ? 'flat'
         : notYet ? 'stated'
+        : levelOnly && (dir === 'up' || dir === 'down') ? 'stated'
         : amountOnly && mayJudge && !flatStated && (dir === 'up' || dir === 'down') ? 'stated'
         : !mayJudge ? 'stated'
         : flatStated ? 'flat'
@@ -1439,6 +1451,13 @@ export function extractVariables(
     if (!after && !opts.before && !opts.delta) return;
     // "No customer losses" is not a customer loss. The company was asked
     // and said none: checked, flat, and worth showing as such.
+    // zzz790: "no stated delays" is the reader reporting silence, not the
+    // company saying there were none — shown as read, never a passed check.
+    if (verdict === 'deteriorating' && isDenial(after) && SILENCE_WORDING.test(String(after))) {
+      push({ key, label: VAR_LABEL[key], before: null, after, delta: null, verdict: 'stated',
+        evidence: `No ${VAR_LABEL[key].toLowerCase()} is stated in the documents read — ${after} (silence, not a company statement that there was none: unknown, not negative)`, source: 'filing', kind: opts.kind ?? 'fact' });
+      return;
+    }
     if (verdict === 'deteriorating' && isDenial(after)) {
       push({ key, label: VAR_LABEL[key], before: null, after, delta: null, verdict: 'flat',
         evidence: `Company states no ${VAR_LABEL[key].toLowerCase()} — ${after}`, source: 'filing', kind: opts.kind ?? 'fact' });

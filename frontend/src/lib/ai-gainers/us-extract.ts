@@ -14,7 +14,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  emptyEconomics, emptyTime, catalystIdOf,
+  emptyEconomics, emptyTime, catalystIdOf, favourableLegalOutcome, debtActionOf,
   type EventFacts, type EventKind, type SourceRef, type StructuredFacts,
 } from './structured-facts';
 import { filingSentences, fmtUsdM, usFormOf } from './us-gainers';
@@ -379,7 +379,7 @@ function extractCommercial(text: string, source: SourceRef): UsStructuredFacts |
 
 const REG_NEG_RX = /\b(halt(ed|s)?|paus(e|ed|es|ing)|suspend(ed|s)?|moratorium|revok(ed|es)|denied|rejected|withdrew|withdrawn)\b[^.]{0,100}\b(permits?|approvals?|licen[cs]es?|applications?|clearances?)\b|\b(complete response letter|warning letter|clinical hold|import alert|delist(ed|ing) notice)\b/i;
 function extractRegulatoryNegative(text: string, source: SourceRef): UsStructuredFacts | null {
-  const s = filingSentences(text).find((x) => REG_NEG_RX.test(x) && factual(x) && /\b(on [A-Z][a-z]+ \d{1,2}, \d{4}|announced|directed|issued|received|today)\b/i.test(x));
+  const s = filingSentences(text).find((x) => REG_NEG_RX.test(x) && !favourableLegalOutcome(x) && factual(x) && /\b(on [A-Z][a-z]+ \d{1,2}, \d{4}|announced|directed|issued|received|today)\b/i.test(x));
   if (!s) return null;
   const f = blank(source, 'regulatory_negative');
   f.event.stage = 'ANNOUNCED';
@@ -390,19 +390,22 @@ function extractRegulatoryNegative(text: string, source: SourceRef): UsStructure
   return f;
 }
 
-const DEBT_RX = /\b(credit agreement|credit facility|term loan|revolving (credit )?(facility|loan)|delayed[- ]draw|senior (secured )?notes|convertible (senior )?notes|notes due \d{4}|indenture|loan agreement|loan and security agreement|note purchase agreement|aggregate principal amount|equipment financ\w+)\b/i;
+const DEBT_RX = /\b(credit agreement|credit facility|term loan|revolving (credit )?(facility|loan)|delayed[- ]draw|senior (secured )?notes|convertible (senior )?notes|notes due \d{4}|indenture|loan agreement|loan and security agreement|note purchase agreement|aggregate principal amount|equipment financ\w+|redemption of (?:its |the )?[^.]{0,40}notes|redeem(?:ed|s)?\b[^.]{0,60}\bnotes)\b/i;
 function extractDebt(text: string, source: SourceRef): UsStructuredFacts | null {
   const ss = filingSentences(text);
-  const lead = ss.find((s) => DEBT_RX.test(s) && /\b(entered into|issued|closed|borrow|provid|priced|sold|amend)\w*/i.test(s)) || ss.find((s) => DEBT_RX.test(s));
+  const lead = ss.find((s) => DEBT_RX.test(s) && /\b(entered into|issued|closed|borrow|provid|priced|sold|amend|redeem|repa|prepa|refinanc|repurchas)\w*/i.test(s)) || ss.find((s) => DEBT_RX.test(s));
   if (!lead) return null;
   const f = blank(source, 'debt');
   f.event.stage = stageOf(lead);
   const lender = new RegExp(String.raw`\bwith\s+(?:the lenders? (?:party thereto|from time to time party thereto)(?:,| and)\s+)?${NAME}(?:,? as (?:administrative )?agent|, as lender)`).exec(lead) || new RegExp(String.raw`\b(?:lenders?|provided by|from)\s+${NAME}`).exec(lead);
   f.event.counterparty = cleanName(lender?.[1]);
   addQuote(f, lead, text);
+  const action = debtActionOf(lead);
+  if (action) addTerm(f, 'Action', action);
   for (const s of [lead, ...ss.filter((x) => x !== lead && (DEBT_RX.test(x) || /\b(bear\w*|interest|matur\w*|due \d{4}|SOFR)\b/i.test(x)))].slice(0, 12)) {
     if (f.economics.valueNative == null && f.stated.facilityUpToM == null) {
       const pa = /(?:aggregate principal amount|(?:facility|facilities|notes|term loan|loan|commitments?)(?: in an aggregate (?:principal )?amount)?) of (up to )?(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(billion|million)?/i.exec(s)
+        || /(up to )?(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(billion|million)\s+(?:in\s+)?aggregate principal amount/i.exec(s)
         || /(up to )?(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(billion|million)\s+(?:(?:senior|secured|unsecured|convertible|first[- ]lien|second[- ]lien|term|revolving|delayed[- ]draw)\s+){0,3}(notes|term loan|loan|credit facility|facility|revolv)/i.exec(s);
       if (pa) {
         const v = moneyToM(pa[2], pa[3]);
@@ -797,7 +800,9 @@ export function describeUsFact(f: UsStructuredFacts | StructuredFacts): { state:
   } else if (k === 'fundraising') {
     line = `Equity sale${e.sharesIssued ? ` of ${e.sharesIssued.toLocaleString('en-US')} shares` : ''}${e.issuePrice != null ? ` at $${e.issuePrice}` : ''}${e.allottees.length ? ` to ${e.allottees.join(', ')}` : ''}${e.dilutionPct != null ? ` (${e.dilutionPct}% of shares outstanding)` : ''}.`;
   } else if (k === 'debt') {
-    line = `Debt${cp ? ` with ${cp}` : ''}${e.valueNative != null ? ` — ${fmtUsdM(e.valueNative)}` : (f as UsStructuredFacts).stated?.facilityUpToM ? ` — facility up to ${fmtUsdM((f as UsStructuredFacts).stated.facilityUpToM)}` : ''}${term(/rate/i) ? `, ${term(/rate/i)}` : ''}${term(/maturity/i) ? `, matures ${term(/maturity/i)}` : ''} — financing, not an operating event.`;
+    const act = term(/^Action$/);
+    if (act && act !== 'raised' && e.valueNative != null) line = `${fmtUsdM(e.valueNative)} of debt ${act}${term(/rate/i) ? ` (${term(/rate/i)})` : ''}${term(/maturity/i) ? `, due ${term(/maturity/i)}` : ''} — financing, not an operating event.`;
+    else line = `Debt${cp ? ` with ${cp}` : ''}${e.valueNative != null ? ` — ${fmtUsdM(e.valueNative)}` : (f as UsStructuredFacts).stated?.facilityUpToM ? ` — facility up to ${fmtUsdM((f as UsStructuredFacts).stated.facilityUpToM)}` : ''}${term(/rate/i) ? `, ${term(/rate/i)}` : ''}${term(/maturity/i) ? `, matures ${term(/maturity/i)}` : ''} — financing, not an operating event.`;
   } else if (k === 'regulatory_negative') {
     line = `Regulatory setback${cp ? ` (${cp})` : ''}: ${f.quotes[0] ? f.quotes[0].slice(0, 160) : 'stated in the filing'}.`;
   } else if (k === 'governance') {

@@ -2436,7 +2436,8 @@ describe('zzz765 reporting-period freshness, retrieval failure, OCR', () => {
     assert.equal(f.staleness, 'UPDATE_AVAILABLE');
     assert.equal(f.state, 'NEW_EVIDENCE_AVAILABLE');
     assert.equal(f.new_evidence_available, true);
-    assert.equal(freshnessLine(f)!.label, '↻ Update available');
+    // zzz790: the owner's wording for a newer document known and not yet read.
+    assert.equal(freshnessLine(f)!.label, 'NEWER EVIDENCE AVAILABLE — NOT YET READ');
   });
 
   test('the expected period on file → CURRENT; a stale ledger never searched says so', () => {
@@ -4447,7 +4448,10 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
   test('acquisition completed: EXECUTED, MODERATE vs market cap, NEAR_TERM, multi-year', () => {
     const a = it('ACQ');
     assert.equal(a.eventType, 'Acquisition'); assert.equal(a.stage, 'EXECUTED'); assert.equal(a.eventClass, 'CONFIRMED_MATERIAL');
-    assert.equal(a.materiality.label, 'MODERATE'); assert.equal(a.transmission, 'NEAR_TERM'); assert.equal(a.persistence, 'YEARS');
+    // zzz789 (intentional change): an acquisition's duration comes only from the target's stated economics —
+    // this filing states the consideration, not the target's revenue / profit → Not established (was YEARS by type).
+    assert.equal(a.materiality.label, 'MODERATE'); assert.equal(a.transmission, 'NEAR_TERM'); assert.equal(a.persistence, 'UNKNOWN');
+    assert.match(a.potentialDuration!.text, /^Not established/);
     assert.ok(a.researchNext.some((q) => /funded/.test(q)));
   });
 
@@ -5359,8 +5363,9 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION is current (zzz787) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
-    assert.match(RULES771, /zzz787$/);
+  test('RULES_VERSION is current (zzz789) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    // zzz789 (intentional change): rules version bumped for favourable legal outcomes.
+    assert.match(RULES771, /zzz789$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 

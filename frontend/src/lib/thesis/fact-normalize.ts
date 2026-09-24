@@ -468,6 +468,11 @@ export function forwardSentence(after: string | null | undefined, text: string |
   const s0 = t.lastIndexOf('. ', at);
   const e0 = t.indexOf('. ', at);
   const sentence = t.slice(s0 < 0 ? 0 : s0 + 2, e0 < 0 ? t.length : e0);
+  // zzz790: SPECTRUM "Our 1.34 MW … installation at Jalgaon is operational, and
+  // a further 3.0 MW is planned … to 4.34 MW". The figure's OWN clause says it
+  // is in place; the plan in the next clause is a different figure.
+  const own = t.slice(at).split(/,\s+|;\s+|\s+and\s+(?:a\s+)?(?:further|another|additional)\b/)[0];
+  if (/\b(?:is|are)\s+(?:now\s+|already\s+|fully\s+)?(?:operational|in operation|running|installed|commissioned|in place)\b/i.test(own)) return false;
   return /\bwill\b|\bshall\b|\bexpecting\b|\bupcoming\b|\bto increase\b|\bto (?:be )?(?:add|added|expand|commission\w*|reach)\b|\bproposed\b|\bplann(?:ed|ing)\b|\bexpected to\b|\bgoing to\b|\bwould\b|\bwith the commissioning of\b|\bupon (?:full )?commissioning\b|\bpost[- ]commissioning\b|\bonce (?:commissioned|complete)/i.test(sentence)
     && !/\b(?:has|have|had|was|were)\s+(?:been\s+)?(?:added|commissioned|increased|expanded)\b|\bnow stands\b|\bcompleted\b/i.test(sentence);
 }

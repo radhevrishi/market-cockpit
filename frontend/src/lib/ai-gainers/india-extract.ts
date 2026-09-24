@@ -20,7 +20,7 @@
 
 import { createHash } from 'crypto';
 import {
-  emptyEconomics, emptyTime,
+  emptyEconomics, emptyTime, favourableLegalOutcome,
   type StructuredFacts, type SourceRef, type SourceKind, type SourceAccess, type EventKind, type EventFacts,
 } from './structured-facts';
 import { quoteIsInDocument, docSeqOf, isGenericSubject } from './announcement-reader';
@@ -219,7 +219,7 @@ function eventSentences(text: string): string {
 function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: Polarity; sub?: 'subsidiary' | 'fine' | 'favourable' | 'merger' | 'promoter_sale' } {
   const text = eventSentences(text0);
   if (RX.taxProceeding.test(text) && (RX.taxWord.test(text) || /\bitat\b|appellate tribunal/i.test(text))) {
-    return RX.taxFavourable.test(text) ? { kind: 'tax_litigation', polarity: 'positive', sub: 'favourable' } : { kind: 'tax_litigation', polarity: 'negative' };
+    return RX.taxFavourable.test(text) || favourableLegalOutcome(text) ? { kind: 'tax_litigation', polarity: 'positive', sub: 'favourable' } : { kind: 'tax_litigation', polarity: 'negative' };
   }
   if (RX.governanceFine.test(text)) return { kind: 'governance', polarity: 'negative', sub: 'fine' };
   if (RX.promoterSale.test(text)) return { kind: 'other', polarity: 'negative', sub: 'promoter_sale' };

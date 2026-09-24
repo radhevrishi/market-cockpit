@@ -11,6 +11,7 @@
 //   { ok, hasApiKey, budget: { date, callsCount, estimatedCostUsd, dailyCapUsd, remainingUsd }, probe? }
 
 import { NextResponse } from 'next/server';
+import { SITE_COOKIE, expectedToken, safeEqual } from '@/lib/site-auth';
 import { classifyCatalyst, getHaikuBudget } from '@/lib/anthropic-classifier';
 import { anthropicMessages, readSpend, monthlyCapUsd, modelConfigured, modelKeyName, provider, openaiModel } from '@/lib/anthropic-meter';
 
@@ -41,6 +42,17 @@ export const maxDuration = 15;
 // outsider nothing they could use: whether a key is configured at all, and
 // what the budget looks like. A debug aid should not outlive the debugging.
 // ═══════════════════════════════════════════════════════════════════════════
+// zzz790 — the logged-in owner may see which provider/model is live and this
+// month's metered spend (no key material is ever returned).
+async function isOwner(req: Request): Promise<boolean> {
+  try {
+    const want = await expectedToken();
+    const m = (req.headers.get('cookie') || '').match(new RegExp(`(?:^|;\\s*)${SITE_COOKIE}=([^;]+)`));
+    const got = m ? decodeURIComponent(m[1]) : '';
+    return !!want && !!got && safeEqual(want, got);
+  } catch { return false; }
+}
+
 function isAuthorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET || '';
   // No secret configured means the diagnostic stays SHUT, not open. A missing
@@ -54,7 +66,7 @@ function isAuthorized(req: Request): boolean {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const authed = isAuthorized(req);
+  const authed = isAuthorized(req) || await isOwner(req);
   const probe = url.searchParams.get('probe') === '1' && authed;
 
   const hasApiKey = modelConfigured();

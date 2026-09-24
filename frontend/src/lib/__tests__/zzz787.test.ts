@@ -141,8 +141,11 @@ describe('zzz787 · RNIT — five-year services agreement', () => {
     const d = it.durations!;
     assert.equal(d.contractual, 'Contract runway: 5 years (as stated). Economic contribution still unquantified.');
     assert.equal(d.revenueVisibility, 'Revenue visibility not yet quantified');
-    assert.equal(d.evidence.word, 'Medium');
-    assert.equal(it.persistenceEvidence!.level, 'EVIDENCE');
+    // zzz789 (intentional change): a 5-year term is a CONTRACTUAL RUNWAY (shown above), not medium
+    // persistence — Early / unproven until value, billing, renewal and customer economics are on file.
+    assert.equal(d.evidence.word, 'Early');
+    assert.equal(it.persistenceEvidence!.level, 'EARLY');
+    assert.equal(it.persistenceTest!.grade, 'EARLY');
     assert.match(d.currentEvidence || '', /^One contract/);
     assert.deepEqual(d.nextEvidence, ['order value', 'recurring revenue', 'renewal', 'execution']);
     assert.equal(it.potentialDuration!.basis, 'FACTS');
@@ -181,8 +184,11 @@ describe('zzz787 · RAYMOND — multi-year programme potential, Medium evidence,
     assert.equal(it.persistence, 'YEARS');
     assert.equal(it.potentialDuration!.basis, 'FACTS');
     assert.match(it.potentialDuration!.text, /Multi-year programme/);
-    assert.equal(it.persistenceEvidence!.level, 'EVIDENCE');
-    assert.equal(it.durations!.evidence.word, 'Medium');
+    // zzz789 (intentional change): the ₹33 Cr is a stated POTENTIAL and the programme is claimed in one
+    // filing — Early / unproven until programme duration, order value / build rate and revenue visibility are established.
+    assert.equal(it.persistenceEvidence!.level, 'EARLY');
+    assert.equal(it.durations!.evidence.word, 'Early');
+    assert.equal(it.persistenceTest!.grade, 'EARLY');
     const pair: [string, string] = [it.persistence, it.persistenceEvidence!.level];
     assert.ok(!(pair[0] === 'QUARTER' && pair[1] === 'STRONG'), 'never "a quarter" beside "strong"');
     assert.match(it.durations!.catalystState || '', /^Identified → validating/);
@@ -190,12 +196,13 @@ describe('zzz787 · RAYMOND — multi-year programme potential, Medium evidence,
     for (const m of [/disclosed annual value/, /programme duration/, /production-rate linkage/]) assert.match(miss, m);
     assert.match(it.durations!.revenueVisibility || '', /POTENTIAL, not a firm value/);
     const card = strip(renderToStaticMarkup(React.createElement(ResearchCard, { it, rank: 1, onOpen: () => {} })));
-    assert.ok(card.includes('POTENTIAL ECONOMIC DURATION') && card.includes('MULTI-YEAR') && card.includes('PERSISTENCE EVIDENCE') && card.includes('MEDIUM'), card);
+    assert.ok(card.includes('POTENTIAL ECONOMIC DURATION') && card.includes('MULTI-YEAR') && card.includes('PERSISTENCE EVIDENCE') && card.includes('EARLY'), card);
     assert.ok(!card.includes('A QUARTER'));
   });
   test('Strong only with ≥2 independent official evidence periods', () => {
     const hay = 'multi-programme orders worth about ₹33 crore annually';
-    assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', hay, null, { officialPeriods: 1 }).level, 'EVIDENCE');
+    // zzz789 (intentional change): one period of a programme claim is EARLY (was EVIDENCE).
+    assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', hay, null, { officialPeriods: 1 }).level, 'EARLY');
     assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', hay, null, { officialPeriods: 2 }).level, 'STRONG');
     // A ledger mechanism marked HIGH but filed in one period is Medium, not Strong.
     assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_MATERIAL', 'AWARDED', 'order', 'order', { confidence: 'HIGH', specialFocus: true, label: 'Order book', periods: 1 }).level, 'EVIDENCE');
@@ -226,12 +233,15 @@ describe('zzz787 · ABDL — ~4.4 million BL licence: capacity potential multi-y
     assert.match(it.persistenceEvidence!.text, /not demand/);
     assert.equal(it.persistence, 'YEARS');
     assert.match(it.whyResearch, /capability, not demand/);
-    assert.ok(it.researchNext.some((q) => /^Demand: orders, offtake/.test(q)));
+    // zzz789 (intentional change): Research Next is an ordered, numbered checklist; the demand step is kept.
+    assert.ok(it.researchNext.some((q) => /^2\. Customer: Demand: orders, offtake/.test(q)), it.researchNext.join(' | '));
     assert.ok(it.durations!.missing.some((m) => /demand evidence/.test(m)));
   });
   test('generic rule: capacity / commissioning / licence with demand evidence is supported; without it, unproven', () => {
     assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_MATERIAL', 'OPERATIONAL', 'capacity', 'plant commissioned at 3 MN BL per year', null).level, 'UNPROVEN');
-    assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_MATERIAL', 'OPERATIONAL', 'capacity', 'plant commissioned; offtake agreement signed with the customer', null).level, 'EVIDENCE');
+    // zzz789 (intentional change): demand evidence must be QUANTIFIED to lift persistence above Early.
+    assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_MATERIAL', 'OPERATIONAL', 'capacity', 'plant commissioned; offtake agreement signed with the customer', null).level, 'EARLY');
+    assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_MATERIAL', 'OPERATIONAL', 'capacity', 'plant commissioned; offtake agreement for 40,000 tonnes signed with the customer', null).level, 'EVIDENCE');
     assert.equal(persistenceEvidenceOf('Regulatory approval', 'CONFIRMED_MATERIAL', 'EXECUTED', 'licence_capacity', 'licence to manufacture 4.4 million BL per annum; received an order from the Commissioner', null).level, 'UNPROVEN', 'an order FROM the regulator is not demand');
   });
 });
@@ -272,8 +282,11 @@ describe('zzz787 · taxonomy — strategic expansion (ZIMLAB), strategic investm
     const it = item(view({ GNA: find('GNA', [ann], null) }), 'GNA');
     assert.equal(it.eventType, 'Promoter buying');
     assert.equal(it.eventLabel, 'Promoter stake purchase (insider buying)');
-    assert.equal(it.persistenceEvidence!.level, 'NOT_PERSISTENT');
-    assert.equal(it.persistenceTest!.grade, 'TEMPORARY');
+    // zzz789 (intentional change): capital allocation is not an operating mechanism, but it is not shown
+    // to be one-off either — UNPROVEN, never "not persistent" (unknown ≠ negative).
+    assert.equal(it.persistenceEvidence!.level, 'UNPROVEN');
+    // zzz789 (intentional change): TEMPORARY only on evidence of a one-off / finite effect → EARLY.
+    assert.equal(it.persistenceTest!.grade, 'EARLY');
     assert.ok(it.researchNext.some((q) => /Promoter holding before and after/.test(q)));
     const doc = 'To BSE Limited. Sub: Disclosure under Regulation 29(1). '.repeat(3) + 'We wish to inform you that the promoter of the Company, GNA Holdings Private Limited, has acquired 5,00,000 equity shares representing 1.16% of the paid-up share capital of the Company through open market purchase on September 20, 2026.';
     const x = extractIndiaFacts({ text: doc, issuer: 'GNA', date: '2026-09-22', url: 'u', title: 't' }).facts[0];
@@ -459,7 +472,9 @@ describe('zzz787 · kept: PRTH multi-year potential with early evidence; price i
   const us = (f: Finding, move: number) => buildResearchView({ market: 'US', findings: { PRTH: { ...f, movePct: move } as Finding }, board: [{ ticker: 'PRTH', company: 'Priority Technology', move_pct: move, market_cap: 643 }], filedResults: [], holdings: [], now: NOW_ISO });
   test('PRTH: potential multi-year (labelled, not evidence); evidence early; the stated value is document-verified', () => {
     const it = item(us(prth, 31) as any, 'PRTH');
-    assert.equal(it.persistence, 'YEARS');
+    // zzz789 (intentional change): no target revenue / profit in the quote → duration Not established (was YEARS by type).
+    assert.equal(it.persistence, 'UNKNOWN');
+    assert.match(it.potentialDuration!.text, /^Not established/);
     assert.match(it.durations!.potential.note, /NOT evidence/);
     assert.equal(it.persistenceEvidence!.level, 'EARLY');
     assert.equal(it.materiality.verification, 'DOCUMENT_VERIFIED');

@@ -9,10 +9,14 @@ import { isReserveTonnage } from '../thesis/status';
 test('new product = long-term possible but UNPROVEN; qualification = EARLY; order = EVIDENCE; one-period programme = EVIDENCE (medium), STRONG only across two periods', () => {
   assert.equal(persistenceEvidenceOf('New product', 'POTENTIAL_UNVERIFIED', 'EXECUTED', 'product', 'ESDS launched SWARAJ Sethu, a DevSecOps platform', null).level, 'UNPROVEN');
   assert.equal(persistenceEvidenceOf('Regulatory approval', 'POTENTIAL_UNVERIFIED', 'EXECUTED', 'qualification', 'Qualified with a global OEM', null).level, 'EARLY');
-  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order', 'Received order worth Rs 22 crore to execute over three months', null).level, 'EVIDENCE');
+  // zzz789 (intentional change): one order is EARLY — above Early needs quantified economics AND
+  // repeat / continuation evidence in official filings (one order covers one execution period).
+  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order', 'Received order worth Rs 22 crore to execute over three months', null).level, 'EARLY');
+  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order', 'Received order worth Rs 22 crore to execute over three months', null, { officialFilings: 2 }).level, 'EVIDENCE');
   // zzz787 (intentional change): a programme stated in ONE filing period is medium (EVIDENCE), not STRONG;
   // STRONG needs ≥2 independent official evidence periods.
-  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', 'multi-programme orders worth about ₹33 crore annually', null).level, 'EVIDENCE');
+  // zzz789 (intentional change): a programme stated in ONE filing is a claim, not evidence → EARLY.
+  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', 'multi-programme orders worth about ₹33 crore annually', null).level, 'EARLY');
   assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', 'multi-programme orders worth about ₹33 crore annually', null, { officialPeriods: 2 }).level, 'STRONG');
   // zzz787 (intentional change): commissioning without demand evidence = commercial persistence UNPROVEN (was EARLY);
   // commissioning + utilisation / orders in one period = EVIDENCE (medium, was STRONG).

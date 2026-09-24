@@ -71,6 +71,33 @@ export function contractTermYears(text: string | null | undefined): number | nul
   return null;
 }
 
+/** zzz789 — a FAVOURABLE regulatory / legal outcome: an appeal allowed (fully
+ *  or partly), a demand reduced / quashed / set aside / deleted / dropped, or
+ *  relief granted. It is a resolved (or improving) matter — never negative
+ *  evidence (PRIORITY: an appeal that REDUCED a tax demand was listed under
+ *  NEGATIVE EVIDENCE). Shared by the India + US classifiers and the press
+ *  reader. A dismissed appeal or an upheld demand with no reduction is not
+ *  favourable. */
+const FAV_OUTCOME = /\b(?:(?:partly|partially|fully)\s+)?allowed the (?:company'?s |its )?appeal|appeals? (?:has been |have been |was |were |is )?(?:partly |partially |fully )?allowed|(?:reduc\w+|scal\w+ down|brought down|lower\w*)\s+(?:the |its |a )?(?:tax |gst |penalty |total )?(?:demand|penalty|liability|assessment|addition)|(?:demand|penalty|liability|addition)s?\s+(?:\w+\s+){0,6}?(?:has been |have been |was |were |is |stands )?(?:reduced|quashed|set aside|deleted|dropped|withdrawn|annulled|vacated|waived)|\b(?:quash\w*|set aside|deleted|dropped|annulled|vacated|waived)\s+(?:the\s+)?(?:[^;]{0,40}?\s)?(?:demand|penalty|order|addition|proceedings|notice|assessment|fine)|relief (?:has been |was )?granted|granted (?:full |partial )?relief|in favou?r of the company|in (?:the |its |our )?company'?s favou?r|decided in (?:its|our|the company'?s) favou?r|ruled in favou?r/i;
+const UNFAV_OUTCOME = /appeals? (?:has been |was |were )?(?:dismissed|rejected)|(?:dismissed|rejected) the (?:company'?s |its )?appeal|upheld the (?:demand|penalty|order|assessment)|confirmed the demand/i;
+const REDUCED = /reduc\w+|quash\w*|set aside|deleted|dropped|waived|partly allowed|partially allowed/i;
+export function favourableLegalOutcome(text: string | null | undefined): boolean {
+  const t = String(text || '');
+  if (!FAV_OUTCOME.test(t)) return false;
+  return !(UNFAV_OUTCOME.test(t) && !REDUCED.test(t));
+}
+
+/** zzz789: what was done with the debt, as stated — redeemed / repaid / raised … */
+export function debtActionOf(s: string): 'redeemed' | 'repaid' | 'prepaid' | 'refinanced' | 'repurchased' | 'raised' | null {
+  if (/\bredeem(?:ed|s|ing)?\b|\bredemption\b/i.test(s)) return 'redeemed';
+  if (/\brefinanc/i.test(s)) return 'refinanced';
+  if (/\bprepa(?:id|y|yment)\b/i.test(s)) return 'prepaid';
+  if (/\brepa(?:id|y|yment)\b/i.test(s)) return 'repaid';
+  if (/\brepurchas/i.test(s)) return 'repurchased';
+  if (/\b(issued|priced|closed|entered into|borrow\w*|sold|raised)\b/i.test(s)) return 'raised';
+  return null;
+}
+
 export interface EventFacts {
   kind: EventKind;
   counterparty: string | null;      // customer / target / investor / allottee

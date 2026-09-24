@@ -85,10 +85,15 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
         <H>WHAT CHANGED</H>
         {it.earnings ? <P>{txt(it.whatChanged, 'See earnings detail below')}</P> : <WhatChanged it={it} noLabel />}
 
+        {it.impact && (<><H>IMPACT</H><P dim>{it.impact}</P></>)}
+
         <H>WHY IT MATTERS</H>
         <P>{txt(it.whyResearch, 'Not established')}</P>
+        {it.whyRank && <P dim>Rank basis: {it.whyRank}</P>}
 
-        <H>ECONOMIC TRANSMISSION · {(TRANSMIT_META[it.transmission] || TRANSMIT_META.NONE).label} · PERSISTS {(PERSIST_META[it.persistence] || PERSIST_META.UNKNOWN).label}</H>
+        {/* zzz789: the potential duration is shown as its sentence — "Not established" unless the documents set one. */}
+        <H>ECONOMIC TRANSMISSION · {(TRANSMIT_META[it.transmission] || TRANSMIT_META.NONE).label} · POTENTIAL DURATION: {(PERSIST_META[it.persistence] || PERSIST_META.UNKNOWN).label}</H>
+        {it.potentialDuration?.text && <P dim>{it.potentialDuration.text} — potential only, not evidence.</P>}
         <TransmissionChain chain={it.transmissionChain || []} />
 
         <H>MATERIALITY</H>

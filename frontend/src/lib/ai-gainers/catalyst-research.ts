@@ -45,10 +45,11 @@ import { classifyUsFiling, fmtUsdM, usPlainSubject } from './us-gainers';
 import type { NewsContext } from './news-context';
 import { pressFacts } from './news-context';
 import type { StructuredFacts, SourceRef } from './structured-facts';
+import { favourableLegalOutcome } from './structured-facts';
 import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead, type IndiaFacts } from './india-extract';
 import { isGenericSubject, docSeqOf } from './announcement-reader';
 
-export const RULES_VERSION = '2026-09-24.zzz787';
+export const RULES_VERSION = '2026-09-24.zzz789';
 // zzz787: no materiality % from an unverified (summary / subject) figure;
 // promoter buying and new subsidiaries are their own event types (not
 // acquisitions); SAST promoter purchases are no longer paperwork.
@@ -241,7 +242,9 @@ export const isTaxMatter = (hay0: string): boolean => { const hay = stripTaxQual
 const isTaxMatterRaw = (hay: string): boolean =>
   /\b(gst|cgst|sgst|igst|goods and services tax|income[- ]tax|service tax|customs duty|excise|tax demand|demand notice|show[- ]cause|\bscn\b|assessment order|itat|cestat|appellate (authority|tribunal)|commissioner \(appeals\)|tax (order|notice|authorit)|penalty order|dgg?i)\b/i.test(hay)
   && /\b(order|notice|demand|penalt|appeal|hearing|assessment|levied|imposed|confirmed)\w*/i.test(hay);
-export const taxFavourable = (hay: string): boolean => /\b(quashed|dropped (entirely|fully)|set aside|in (our|its|the company'?s) favou?r|allowed the appeal|deleted the (demand|addition)|no (tax )?demand)\b/i.test(hay) && !/confirmed|upheld|levied|imposed/i.test(hay);
+// zzz789: + the shared favourable-outcome rule — an appeal that REDUCED a demand
+// (PRIORITY) is a resolved / improving matter, never negative evidence.
+export const taxFavourable = (hay: string): boolean => (/\b(quashed|dropped (entirely|fully)|set aside|in (our|its|the company'?s) favou?r|allowed the appeal|deleted the (demand|addition)|no (tax )?demand)\b/i.test(hay) && !/confirmed|upheld|levied|imposed/i.test(hay)) || favourableLegalOutcome(hay);
 /** zzz775: a developer's gross development value, a "potential" or an
  *  "up to unlock" figure is not the company's revenue or consideration. */
 export const isPotentialValue = (hay: string): boolean => /(business|revenue|annual) potential|\bgdv\b|gross development value|revenue potential|top ?line potential|sales potential|peak (revenue|sales) potential|may unlock|potential (revenue|value|topline)|market (size|opportunity) of/i.test(hay);
@@ -375,6 +378,12 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
     return { ...base, kind: 'routine', valueStated: null, routineReason: 'fractional-entitlement settlement under a scheme' };
   }
   // zzz775: TAX IS NOT AN ORDER. "GST order received" matched the order rule.
+  // zzz789: a favourable legal / regulatory outcome (appeal allowed, demand
+  // reduced / quashed, relief granted) is resolved — never negative evidence,
+  // on either market, whatever "penalty" / "demand" words it carries.
+  if (!isTaxMatter(hay) && favourableLegalOutcome(hay) && /\b(appeal|tribunal|court|penalt\w*|demand|assessment|order|notice|regulator\w*|sebi|commission|authority|litigation|lawsuit|proceedings?)\b/i.test(hay)) {
+    return { ...base, kind: 'routine', valueStated: null, routineReason: 'favourable regulatory / legal outcome — resolved, not negative' };
+  }
   if (isTaxMatter(hay)) {
     return taxFavourable(hay)
       ? { ...base, kind: 'routine', valueStated: null, routineReason: 'tax matter decided in the company\'s favour' }
@@ -916,11 +925,15 @@ function buildFindingCore(inp: SweepInput): Finding {
     if (resultLead) base.notes.unshift('A results filing is scored by the graded funnel (revenue, PAT, tier), not by this sweep.');
     if (!inWindow.length) return { ...base, status: 'none', headline: resultLead + (afterClose.length ? `No filing before the session closed (${afterClose.length} filed after it)` : `No filing in the last ${inp.windowDays} days`), notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : [])] };
     const uncl = inWindow.filter((a) => a.kind === 'unclassified');
+    // zzz789: a favourable legal / tax outcome is named as such (PRIORITY), never hidden as "routine".
+    const fav = inWindow.filter((a) => a.kind === 'routine' && /favour|favourable/i.test(a.routineReason || ''));
     const unclRead = uncl.filter((a) => readDoc(docs, a.url));
     const headline = uncl.length
       ? `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window; ${uncl.length} ${unclRead.length === uncl.length ? 'could not be classified even after reading the document' : 'not classifiable from the subject'} (${uncl.slice(0, 2).map((a) => short(a.summary || a.subject)).join('; ')})`
-      : `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window, all routine (${base.routine.slice(0, 2).map(short).join('; ')})`;
-    return { ...base, status: 'routine_only', headline: resultLead + headline, sourceUrl: (uncl[0] || inWindow[0]).url, sourceDate: (uncl[0] || inWindow[0]).dateIso, ageDays: (uncl[0] || inWindow[0]).ageDays, sourceTier: 'primary', notes: [...base.notes, ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? [unclRead.length === uncl.length ? 'The document was read and names no event this sweep recognises — open it before calling it nothing.' : 'An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern; its document was not read yet.'] : [])] };
+      : fav.length ? `Favourable tax / legal outcome — ${short(fav[0].summary || fav[0].subject)}`
+        : `${inWindow.length} filing${inWindow.length === 1 ? '' : 's'} in window, all routine (${base.routine.slice(0, 2).map(short).join('; ')})`;
+    const lead0 = uncl[0] || fav[0] || inWindow[0];
+    return { ...base, status: 'routine_only', headline: resultLead + headline, sourceUrl: lead0.url, sourceDate: lead0.dateIso, ageDays: lead0.ageDays, sourceTier: 'primary', notes: [...base.notes, ...(fav.length ? ['A favourable tax / legal outcome (appeal allowed / demand reduced or set aside) — resolved, not negative evidence.'] : []), ...(query ? [`Exchange query on ${fmtDate(query.dateIso)} — reply pending.`] : []), ...(uncl.length ? [unclRead.length === uncl.length ? 'The document was read and names no event this sweep recognises — open it before calling it nothing.' : 'An unclassified filing is worth opening: the subject line was generic and the summary matched no event pattern; its document was not read yet.'] : [])] };
   }
   let c = cands[0];
   // zzz785 (IN): no model read, but the document was read — its verbatim

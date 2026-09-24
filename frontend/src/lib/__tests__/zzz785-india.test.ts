@@ -30,7 +30,8 @@ const docsFrom = async (issuer: string, map: Record<string, string>, anns: Annou
 const find = (ticker: string, anns: AnnouncementLite[], docs: DocRead[] | null, extra: Partial<Parameters<typeof buildFinding>[0]> = {}) =>
   buildFinding({ ticker, company: ticker, market: 'IN', movePct: 6, marketCap: 2000, turnover: 40, announcements: anns, returns: null, holding: false, sources: ['BSE corporate announcements'], sourceFailed: false, windowDays: 21, now: NOW, sessionCloseIso: '2026-09-24T15:30:00+05:30', docs, ...extra });
 
-test('rules version bumped (zzz787 supersedes zzz785)', () => { assert.equal(RULES_VERSION, '2026-09-24.zzz787'); });
+// zzz789 (intentional change): favourable legal outcomes (appeal allowed / demand reduced) re-classify stored findings.
+test('rules version bumped (zzz789 supersedes zzz785 / zzz787)', () => { assert.equal(RULES_VERSION, '2026-09-24.zzz789'); });
 
 describe('money and tax words in a PDF text layer (the ₹ sign is usually lost)', () => {
   test('crore / full-rupee / lakh forms; counts are not money', () => {
