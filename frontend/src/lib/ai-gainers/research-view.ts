@@ -282,6 +282,8 @@ export interface ResearchView {
 }
 
 export interface ResearchViewInput {
+  /** zzz786 — US board window: live 1-day scan ('1D', default) or weekly export ('1W'). India is always '1D'. */
+  moveWindow?: '1D' | '1W';
   market: 'IN' | 'US';
   findings: Record<string, Finding>;
   /** Today's scanned board (ticker, company, move, market cap, perf …). */
@@ -1177,9 +1179,10 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const market = input.market;
   const perf = (b?.perf && typeof b.perf === 'object') ? b.perf : {};
   const moveRaw = num(f?.movePct) ?? num(b?.move_pct);
-  const mv = { pct: moveRaw == null ? null : r1(moveRaw), window: (market === 'US' ? '1W' : '1D') as '1D' | '1W' };
+  const usWeekly = market === 'US' && input.moveWindow === '1W';
+  const mv = { pct: moveRaw == null ? null : r1(moveRaw), window: (usWeekly ? '1W' : '1D') as '1D' | '1W' };
   const returns = {
-    w1: market === 'US' ? mv.pct : num(f?.returns?.w1) != null ? r1(f!.returns!.w1 as number) : num(perf.w1 ?? perf.week),
+    w1: usWeekly ? mv.pct : num(f?.returns?.w1) != null ? r1(f!.returns!.w1 as number) : num(perf.w1 ?? perf.week),
     m1: num(f?.returns?.m1) != null ? r1(f!.returns!.m1 as number) : num(perf.m1) != null ? r1(num(perf.m1)!) : null,
     m3: num(f?.returns?.m3) != null ? r1(f!.returns!.m3 as number) : num(perf.m3) != null ? r1(num(perf.m3)!) : null,
   };
@@ -1437,7 +1440,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const item: ResearchItem = {
     // zzz782: the US export carries 1W only; the 1D is the last daily bar
     // against the close before it, from the dated closes the sweep fetched.
-    ticker, company, market, move1d: market === 'US' ? (num((f?.returns as any)?.d1) != null ? r1(num((f?.returns as any)?.d1)!) : null) : mv.pct, returns, marketCap,
+    ticker, company, market, move1d: usWeekly ? (num((f?.returns as any)?.d1) != null ? r1(num((f?.returns as any)?.d1)!) : null) : mv.pct, returns, marketCap,
     eventClass: cls, eventType: type, headline: clean(shownHeadline), whatChanged, before, after, filedDate, stage,
     sourceConfidence: conf, sourceUrl, quote, materiality: mat, transmission: trans,
     transmissionChain: chainOf(type, trans, stage, { headline: clean(headline), value, market, mat, e, f: filed, cap }),
@@ -1625,7 +1628,7 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const s0 = input.session || { date: null, scanAt: null, status: 'unknown', cached: false };
   const session: ResearchView['session'] = { ...s0 };
   if (session.note == null) {
-    session.note = market === 'US'
+    session.note = market === 'US' && input.moveWindow === '1W'
       ? 'US moves are 1-week performance from the export, not a one-day move.'
       : session.isToday === false ? `Moves are from the last completed session${session.date ? ` (${session.date})` : ''}, not today.` : null;
   }

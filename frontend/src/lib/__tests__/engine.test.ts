@@ -4585,7 +4585,8 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
   });
 
   test('US shares the model: an offering is Fundraising with dilution; a 10-Q is Earnings; the move is 1-week', () => {
-    const u = buildView770(fxUS770());
+    // zzz786: this case is the weekly-export FALLBACK; the live US board is 1-day.
+    const u = buildView770({ ...fxUS770(), moveWindow: '1W' } as any);
     const us = [...u.queue, ...u.watch, ...u.negative, ...u.noCatalyst, ...(u.context || [])];
     const o = us.find((i) => i.ticker === 'OFFR')!;
     // zzz771: a priced 424B5 takedown is a NEW raise — a potential catalyst flagged for dilution, not NEGATIVE by default.
@@ -5966,6 +5967,7 @@ describe('zzz782 US gainers — plain 8-K subjects, 1D, press release, EDGAR not
     assert.equal(f.returns?.d1, 5); assert.equal(f.returns?.d1Date, '2026-09-23');
     // The view shows it as the US 1D; without a daily series it stays "—" (null), never the 1W.
     const inp = fxUS782();
+    (inp as any).moveWindow = '1W';   // zzz786: weekly-export fallback case
     inp.findings.TENQ = { ...inp.findings.TENQ, returns: { d1: 4.26, d1Date: '2026-09-23', w1: null, m1: null, m3: null, m6: null, y1: null, history: 999 } } as any;
     const v = view782(inp);
     const all = [...v.queue, ...v.watch, ...v.negative, ...v.noCatalyst, ...(v.context || [])];

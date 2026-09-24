@@ -85,7 +85,7 @@ export interface UsExportRow {
   ticker: string; company: string; exchange: string;
   movePct: number | null; relVol: number | null; gapPct: number | null;
   volume: number | null; price: number | null; marketCap: number | null;   // $ M
-  perf: { m1: number | null; m3: number | null; m6: number | null; y1: number | null };
+  perf: { w1?: number | null; m1: number | null; m3: number | null; m6: number | null; y1: number | null };
 }
 
 /** One TradingView record → a row. The move is the 1-WEEK column and ONLY

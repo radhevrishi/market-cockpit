@@ -77,6 +77,9 @@ interface Payload {
     as_of?: { label: string; stale: boolean; intraday: boolean; synced_et: string; session: string } | null;
     sync_note?: string | null;
     excluded?: Array<{ ticker: string; exchange: string; reason: string; kind: string }>;
+    // zzz786 — '1D' live scan of today's US gainers, '1W' only when falling back to the weekly export
+    move_window?: '1D' | '1W';
+    live?: boolean;
   };
   scanned?: Array<{ ticker: string; company: string | null; move_pct: number | null;
     volume_ratio: number | null; matched: boolean; volume?: number | null; price?: number | null; market_cap?: number | null }>;
@@ -176,6 +179,8 @@ export default function AiGainersPage() {
   // the filings already fetched and the model reads already cached. The
   // server's `rescoreOnly` path cannot make a model read, add a name or
   // touch the day's read count, so it is safe on page open.
+  // zzz786 — which window the US board's move is (today's live 1D, or the weekly fallback).
+  const moveWindowRef = useRef<'1D' | '1W'>('1D');
   const autoRescore = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number) => {
     if (sweepGenRef.current === gen) return;
     sweepGenRef.current = gen;
@@ -187,7 +192,7 @@ export default function AiGainersPage() {
         try {
           r = await fetch('/api/v1/ai-gainers/research', {
             method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
-            body: JSON.stringify({ market: m, rescoreOnly: true, rows: boardRows(scanned), budget_ms: 40_000 }),
+            body: JSON.stringify({ market: m, rescoreOnly: true, rows: boardRows(scanned), budget_ms: 40_000, move_window: moveWindowRef.current }),
             signal: AbortSignal.timeout(75_000),
           });
         } catch (e) { throw new Error(describeFetchError(e, 'The re-score')); }
@@ -225,7 +230,7 @@ export default function AiGainersPage() {
           try {
             r = await fetch('/api/v1/ai-gainers/research', {
               method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
-              body: JSON.stringify({ market: m, rows: first && i === 0 ? rows : [], budget_ms: 40_000, ...(first && i === 0 && reprocess ? { reprocess: true } : {}), ...(retry ? { retry_failed: true } : {}) }),
+              body: JSON.stringify({ market: m, rows: first && i === 0 ? rows : [], budget_ms: 40_000, move_window: moveWindowRef.current, ...(first && i === 0 && reprocess ? { reprocess: true } : {}), ...(retry ? { retry_failed: true } : {}) }),
               signal: AbortSignal.timeout(75_000),
             });
           } catch (e) { throw new Error(describeFetchError(e, 'The research service')); }
@@ -269,6 +274,7 @@ export default function AiGainersPage() {
       if (!res.ok || !res.json) throw new Error(res.error || 'The gainers scan did not answer.');
       if (genRef.current !== gen) return;
       const j = res.json;
+      moveWindowRef.current = j?.market === 'US' && j?.source_list?.move_window === '1W' ? '1W' : '1D';
       setData(j);
       // What is already researched for this session shows immediately; the
       // sweep then fills the rest. A "Rescan" does not re-research.
@@ -326,13 +332,15 @@ export default function AiGainersPage() {
     const s = data.session || research?.session || null;
     const asOf = data.source_list?.as_of || null;
     const live = s ? s.isToday && s.state === 'open' : !!(asOf && asOf.intraday && !asOf.stale);
+    // zzz786 — US after the 16:00 ET close: the live scan is TODAY's final move, not an old session.
+    const usTodayFinal = !s && !!asOf && !asOf.intraday && (asOf as any).phase === 'after_hours';
     return {
-      date: s?.date || research?.date || null,
+      date: s?.date || (market === 'US' && asOf?.session) || research?.date || null,
       scanAt: data.generated_at || null,
-      status: live ? 'Live' : 'Last completed session',
+      status: live ? 'Live' : usTodayFinal ? 'Today — final' : 'Last completed session',
       cached: !!data.served_from_cache,
     };
-  }, [data, research]);
+  }, [data, research, market]);
 
   const built = useMemo((): { view: ResearchView | null; error: string | null } => {
     if (demo) return { view: demo, error: null };
@@ -343,6 +351,7 @@ export default function AiGainersPage() {
         .filter(([, f]) => !boardSet || boardSet.has(String(f.ticker).toUpperCase()))) as any;
       const holdings = Object.values(research?.findings || {}).filter((f) => f.holding).map((f) => String(f.ticker).toUpperCase());
       const view = buildResearchView({
+        moveWindow: data.source_list?.move_window === '1W' ? '1W' : '1D',
         market,
         findings,
         board: (data.scanned || []).map((g) => ({ ticker: g.ticker, company: g.company, move_pct: g.move_pct, market_cap: g.market_cap ?? null, perf: (g as any).perf ?? null, turnover: (g as any).turnover ?? null })),
@@ -476,8 +485,9 @@ export default function AiGainersPage() {
   ) : null;
 
   const asOf = data?.source_list?.as_of;
+  const usWeekly = market === 'US' && data?.source_list?.move_window === '1W';
   const sessionNote = market === 'US' && asOf
-    ? `${asOf.stale ? '⚠ ' : ''}${asOf.label} — the US move is the 1-week export column.`
+    ? `${asOf.stale ? '⚠ ' : ''}${asOf.label}${usWeekly ? ' — the US move is the 1-week export column (live scan unavailable).' : ''}`
     : market === 'IN' && data?.session && data.session.state === 'open' ? 'Moves are intraday and will change until 15:30 IST.' : null;
 
   return (
@@ -641,7 +651,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
   const td: React.CSSProperties = { fontSize: 13, color: C.dim, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' };
   const turnoverLabel = market === 'IN' ? 'Avg value/day (1W)' : 'Traded';
   // The US move is the 1-WEEK export column; calling it "1d" was false. (zzz766)
-  const mv = market === 'US' ? '1W' : '1D';
+  const mv = market === 'US' && (research as any)?.view?.session?.status === 'weekly_export' ? '1W' : '1D';
   const Wrap = ({ children }: { children: React.ReactNode }) => <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>{children}</table></div>;
   const Name = ({ f }: { f: Finding }) => (
     <span><TickerLink ticker={f.ticker} market={market} />{f.holding && <span title="In your book" style={{ marginLeft: 5, fontSize: 12, fontWeight: 800, color: C.cyan }}>📗</span>}
@@ -816,7 +826,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
         )}
         <div style={{ fontSize: 12, color: C.faint }}>
           Every name is swept against its exchange filings of the last 21 days and a year of price history; a name with nothing is an explicit <i>none</i>, never a silence.
-          {market === 'IN' ? ' Sources: BSE\'s complete announcement list for the window, plus screener.in\'s five newest with their summaries; dated press coverage is shown beside each finding as secondary context and never scores. A name is SOURCE UNAVAILABLE only when every filing source failed.' : ' Source: SEC EDGAR submissions, classified by form and 8-K item. Offerings (424B, S-1/S-3, Item 3.02, Form D) are flagged as dilution, never as a catalyst; Item 2.02/10-Q are results; Item 1.01/7.01/8.01 are read before they are called anything. Forms 3/4/144 are excluded. Universe: US-listed small/mid caps ($50M–$10B); the move is the 1-week export column.'}
+          {market === 'IN' ? ' Sources: BSE\'s complete announcement list for the window, plus screener.in\'s five newest with their summaries; dated press coverage is shown beside each finding as secondary context and never scores. A name is SOURCE UNAVAILABLE only when every filing source failed.' : ' Source: SEC EDGAR submissions, classified by form and 8-K item. Offerings (424B, S-1/S-3, Item 3.02, Form D) are flagged as dilution, never as a catalyst; Item 2.02/10-Q are results; Item 1.01/7.01/8.01 are read before they are called anything. Forms 3/4/144 are excluded. Universe: today\'s US-listed small/mid-cap gainers ($300M–$10B), read live; the move is today\'s % change.'}
         </div>
       </div>
 
@@ -954,10 +964,14 @@ function ScannedLevel({ data }: { data: Payload }) {
             <div style={{ marginTop: 3, lineHeight: 1.6 }}>{sl.excluded.map((e) => <div key={`${e.ticker}:${e.exchange}:${e.kind}`}><b style={{ color: C.dim }}>{e.ticker}</b> <span>({e.exchange || '—'})</span> — {e.reason}</div>)}</div>
           </details>
         )}
-        {data.market === 'US' && (
+        {data.market === 'US' && sl?.move_window === '1W' && (
           <div style={{ fontSize: 12, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
-            &ldquo;Daily&rdquo; in this tab&rsquo;s name is the cadence of the review, not the window of the move: the
-            US screen is a <b>weekly</b> performance export. India reads a genuine 1-day-return screen, live.
+            The live US scan could not be read, so this is the older <b>weekly</b> performance export — not today&rsquo;s moves.
+          </div>
+        )}
+        {data.market === 'US' && sl?.move_window !== '1W' && (
+          <div style={{ fontSize: 12, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
+            Today&rsquo;s US gainers, read live from TradingView when the page loads: US-listed common stock, $300M–$10B market cap, up at least 4% on the day, sorted by today&rsquo;s move.
           </div>
         )}
       </div>
@@ -967,7 +981,7 @@ function ScannedLevel({ data }: { data: Payload }) {
             gap: 8, padding: '6px 14px', borderBottom: `1px solid ${C.border}`,
             fontSize: 12, fontWeight: 800, letterSpacing: 0.3, color: C.faint }}>
             <span>TICKER</span><span>COMPANY</span>
-            <span style={{ textAlign: 'right' }}>{isIN ? '1D MOVE' : '1W MOVE'}</span>
+            <span style={{ textAlign: 'right' }}>{isIN || sl?.move_window !== '1W' ? '1D MOVE' : '1W MOVE'}</span>
             {isIN
               ? <><span style={{ textAlign: 'right' }}>MCAP</span><span style={{ textAlign: 'right' }}>PRICE</span></>
               : <span style={{ textAlign: 'right' }}>REL VOL</span>}

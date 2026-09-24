@@ -36,7 +36,7 @@ import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/scr
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { readBookState } from '@/lib/book-store';
-import { etToday, capTierUs } from '@/lib/ai-gainers/us-gainers';
+import { etToday, capTierUs, usPhaseAt, lastCompletedNyseSession } from '@/lib/ai-gainers/us-gainers';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
 import { yahooChart } from '@/lib/us-prices';
@@ -159,6 +159,8 @@ interface ResearchState {
    *  US out-of-scope caps) — persisted, so the page does not count them as
    *  board names awaiting research forever. (zzz769) */
   excluded?: string[];
+  /** zzz786 — US board window: '1D' live scan (default) or '1W' export fallback. */
+  moveWindow?: '1D' | '1W';
   started_at: string;
   updated_at: string;
   model_reads: number;
@@ -353,7 +355,7 @@ async function loadBook(): Promise<{ held: string[]; watch: string[] }> {
 async function cachedFiledResults(market: 'IN' | 'US', date: string): Promise<{ rows: any[]; generatedAt: string | null }> {
   for (const limit of [15, 10, 25]) {
     try {
-      const hit: any = await kvGet(market === 'IN' ? `ai-gainers:v3:IN:${date}:${limit}` : `ai-gainers:v3:US:${limit}`);
+      const hit: any = await kvGet(market === 'IN' ? `ai-gainers:v3:IN:${date}:${limit}` : `ai-gainers:v4:US:${date}:${usPhaseAt(new Date()) === 'regular' ? 'open' : usPhaseAt(new Date())}:${limit}`);
       if (hit && hit.ok) return { rows: Array.isArray(hit.filed_results) ? hit.filed_results : [], generatedAt: hit.generated_at || null };
     } catch { /* next */ }
   }
@@ -365,8 +367,14 @@ async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, ses
     const [book, filed, prior] = await Promise.all([loadBook(), cachedFiledResults(market, date), loadCatalystRecords().catch(() => ({}))]);
     const status = market === 'IN'
       ? (session && session.date !== date ? 'previous_session' : session?.state === 'open' ? 'live' : session?.state === 'closed' ? 'closed' : 'last_completed')
-      : 'weekly_export';
+      : st.moveWindow === '1W' ? 'weekly_export' : usPhaseAt(new Date()) === 'regular' ? 'live' : 'last_completed';
+    const usLive = market === 'US' && status === 'live';
+    const usPh = usPhaseAt(new Date());
+    // The session whose moves the live scan shows: today once the US market has
+    // opened, otherwise the last completed session (never labelled today).
+    const usSess = usLive || usPh === 'after_hours' ? etToday() : lastCompletedNyseSession(new Date());
     return buildResearchView({
+      moveWindow: market === 'US' ? (st.moveWindow || '1D') : '1D',
       market,
       findings: presentFindings(st.findings),
       board: st.universe.map((u) => ({ ticker: u.ticker, company: u.company, move_pct: u.movePct, market_cap: u.marketCap, perf: u.perf })),
@@ -378,10 +386,11 @@ async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, ses
       // zzz785 — earlier days' catalyst states (timeline + previous state).
       priorCatalysts: catalystRecordsFor(prior as any, st.universe.map((u) => u.ticker)),
       session: {
-        date, scanAt: st.updated_at || null, status, cached: true,
+        date: market === 'US' && st.moveWindow !== '1W' ? usSess : date, scanAt: st.updated_at || null, status: market === 'US' && usPh === 'after_hours' && st.moveWindow !== '1W' ? 'today_final' : status, cached: true,
         // A stored day that is not the current session is never labelled today.
-        label: market === 'IN' ? (session && session.date === date ? session.label : `Session ${date} (stored)`) : `US week to ${date}`,
-        isToday: market === 'IN' ? (session ? session.isToday && session.date === date : null) : null,
+        label: market === 'IN' ? (session && session.date === date ? session.label : `Session ${date} (stored)`)
+          : st.moveWindow === '1W' ? `US week to ${date}` : usLive ? `US session ${usSess} — live` : usPh === 'after_hours' ? `US session ${usSess} — today, final` : `US session ${usSess} — last completed session`,
+        isToday: market === 'IN' ? (session ? session.isToday && session.date === date : null) : st.moveWindow === '1W' ? null : usLive || usPh === 'after_hours',
       },
     });
   } catch { return null; }
@@ -405,6 +414,7 @@ async function research(req: NextRequest, body: any) {
   const date = String(body?.date || todayFor(market));
   const budget = Math.max(5_000, Math.min(48_000, Number(body?.budget_ms) || DEFAULT_BUDGET_MS));
   const rows: any[] = Array.isArray(body?.rows) ? body.rows : [];
+  const moveWindow: '1D' | '1W' | null = body?.move_window === '1W' ? '1W' : body?.move_window === '1D' ? '1D' : null;
 
   const now = new Date();
   const nowIso = now.toISOString();
@@ -412,6 +422,7 @@ async function research(req: NextRequest, body: any) {
   const { st, excluded } = smallMidOnly(loaded);
   st.inputs = st.inputs || {};
   st.excluded = st.excluded || [];
+  if (market === 'US' && moveWindow && rows.length) st.moveWindow = moveWindow;
   const exclude = (t: string) => { if (!excluded.includes(t)) excluded.push(t); if (!st.excluded!.includes(t)) st.excluded!.push(t); };
   const sessionCloseIso = market === 'IN' ? indiaSessionCloseIso(date) : null;
 

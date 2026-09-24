@@ -37,9 +37,10 @@ import { readAnnouncementCached, worthReading, type AnnouncementItem } from '@/l
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { compactFiledRow } from '@/lib/ai-gainers/research-view';
 import {
-  parseCsv, usRowFromRecord, screenUsGainers, describeExclusions, describeUsExportAsOf,
+  parseCsv, usRowFromRecord, screenUsGainers, describeExclusions, describeUsExportAsOf, usPhaseAt, etToday,
   type UsExclusion, type UsExportAsOf,
 } from '@/lib/ai-gainers/us-gainers';
+import { fetchUsLiveGainers } from '@/lib/ai-gainers/us-live-gainers';
 import {
   type GainerEvent, type Market, type EventSource,
   sourceTierOf, researchPriority, buildResearchQueue,
@@ -103,7 +104,29 @@ interface GainerRow {
  *   · it is a committed CSV refreshed by the sync workflow, so it is exactly
  *     as fresh as the last sync — which is now printed, not assumed.
  */
-async function readUsGainers(): Promise<{ rows: GainerRow[]; file: string; syncedAt: string | null; rawRows: number; excluded: UsExclusion[]; asOf: UsExportAsOf | null; syncNote: string | null }> {
+type UsGainersRead = { rows: GainerRow[]; file: string; syncedAt: string | null; rawRows: number; excluded: UsExclusion[]; asOf: UsExportAsOf | null; syncNote: string | null; moveWindow: '1D' | '1W'; live: boolean };
+
+// ── TODAY'S US GAINERS, LIVE.                                        (zzz786)
+// The committed CSV is synced on an IST schedule — always before the US open —
+// so with the US market open the page showed the previous session's list. The
+// board is now read live from TradingView's scanner (today's % change, US
+// small/mid caps). The CSV below is only the fallback when the live read fails.
+async function readUsGainers(): Promise<UsGainersRead> {
+  const live = await fetchUsLiveGainers();
+  if (!live.error && live.rows.length) {
+    const { kept, excluded } = screenUsGainers(live.rows);
+    const rows: GainerRow[] = kept.map((r) => ({
+      ticker: r.ticker, company: r.company, movePct: r.movePct, relVol: r.relVol, gapPct: r.gapPct,
+      volume: r.volume, price: r.price, marketCap: r.marketCap, perf: r.perf,
+      capTier: r.capTier, flags: r.flags, exchange: r.exchange,
+    }));
+    return { rows, file: 'TradingView live scan (US, today)', syncedAt: live.asOf.synced_at, rawRows: live.rows.length, excluded, asOf: live.asOf, syncNote: null, moveWindow: '1D', live: true };
+  }
+  const fb = await readUsGainersCsv();
+  return { ...fb, syncNote: [`The live US scan could not be read (${live.error || 'no rows returned'}), so the older weekly export is shown instead.`, fb.syncNote].filter(Boolean).join(' ') };
+}
+
+async function readUsGainersCsv(): Promise<UsGainersRead> {
   const full = path.join(TV_DIR, US_GAINERS_FILE);
   // ── WHEN WAS TRADINGVIEW ACTUALLY READ?                        (zzz766)
   // The file's mtime is the moment the container was BUILT, not the moment
@@ -134,9 +157,9 @@ async function readUsGainers(): Promise<{ rows: GainerRow[]; file: string; synce
       volume: r.volume, price: r.price, marketCap: r.marketCap, perf: r.perf,
       capTier: r.capTier, flags: r.flags, exchange: r.exchange,
     }));
-    return { rows, file: US_GAINERS_FILE, syncedAt, rawRows: all.length, excluded, asOf, syncNote };
+    return { rows, file: US_GAINERS_FILE, syncedAt, rawRows: all.length, excluded, asOf, syncNote, moveWindow: '1W', live: false };
   } catch {
-    return { rows: [], file: US_GAINERS_FILE, syncedAt, rawRows: 0, excluded: [], asOf, syncNote };
+    return { rows: [], file: US_GAINERS_FILE, syncedAt, rawRows: 0, excluded: [], asOf, syncNote, moveWindow: '1W', live: false };
   }
 }
 
@@ -361,7 +384,10 @@ async function scan(req: NextRequest) {
   // served as the new session's board. US is v3: its universe is screened to
   // US-listed small/mid caps, so a v2 payload is wrong. (zzz766)
   const session = market === 'IN' ? indiaSession() : null;
-  const scanKey = market === 'IN' ? `ai-gainers:v3:IN:${session!.date}:${limit}` : `ai-gainers:v3:US:${limit}`;
+  // US (zzz786): keyed by ET day + phase, so a list cached before the open is
+  // never served once the market opens.
+  const usKeyPhase = market === 'US' ? (usPhaseAt(new Date()) === 'regular' ? 'open' : usPhaseAt(new Date())) : '';
+  const scanKey = market === 'IN' ? `ai-gainers:v3:IN:${session!.date}:${limit}` : `ai-gainers:v4:US:${etToday()}:${usKeyPhase}:${limit}`;
   if (!fresh) {
     try {
       const hit: any = await kvGet(scanKey);
@@ -381,7 +407,7 @@ async function scan(req: NextRequest) {
   // up 20% is the thing this pipeline refuses to treat as information.
   const [gainersRes, indiaRes, gradedRes] = await Promise.all([
     market === 'US' ? readUsGainers()
-      : Promise.resolve({ rows: [] as GainerRow[], file: '', syncedAt: null as string | null, rawRows: 0, excluded: [] as UsExclusion[], asOf: null as UsExportAsOf | null, syncNote: null as string | null }),
+      : Promise.resolve({ rows: [] as GainerRow[], file: '', syncedAt: null as string | null, rawRows: 0, excluded: [] as UsExclusion[], asOf: null as UsExportAsOf | null, syncNote: null as string | null, moveWindow: '1D' as '1D' | '1W', live: false }),
     market === 'IN' ? fetchIndiaGainers()
       : Promise.resolve(null),
     readGraded(origin, market as Market),
@@ -612,7 +638,7 @@ async function scan(req: NextRequest) {
   const notes: string[] = [];
   notes.push(`Graded results were read from ${gradedRes.from} — ${gradedRes.rows.length} rows before de-duplication; `
     + (gainersListRead
-      ? `${gainers.filter((g) => gradedBy.has(g.ticker)).length} of ${market === 'US' ? 'this week\u2019s' : 'today\'s'} ${gainers.length} gainers have a filed result behind them.`
+      ? `${gainers.filter((g) => gradedBy.has(g.ticker)).length} of ${market === 'US' && gainersRes.moveWindow === '1W' ? 'this week\u2019s' : 'today\'s'} ${gainers.length} gainers have a filed result behind them.`
       : 'with no gainers list to scan, the graded bench itself was ranked.'));
   if (gradedRes.pending > 0) {
     notes.push(`${gradedRes.pending} of the days in the window are not graded yet — the engine was asked for them and has started, but nothing is computed on this page's clock. Rescan in a minute and they will be here.`);
@@ -622,14 +648,14 @@ async function scan(req: NextRequest) {
   }
   if (market === 'US' && !gainers.length) {
     notes.push(gainersRes.rawRows
-      ? `The TradingView export had ${gainersRes.rawRows} rows but none is a US-listed small/mid-cap gainer, so only filed results were scanned.`
+      ? `The ${gainersRes.live ? 'live US scan' : 'TradingView export'} had ${gainersRes.rawRows} rows but none is a US-listed small/mid-cap gainer, so only filed results were scanned.`
       : 'The TradingView gainers export could not be read, so only filed results were scanned. The list is a committed CSV refreshed by the sync workflow.');
   }
   if (market === 'US') {
     const ex = describeExclusions(gainersRes.excluded, gainersRes.rawRows, gainers.length);
     if (ex) notes.push(ex);
     if (gainersRes.syncNote) notes.push(gainersRes.syncNote);
-    if (gainersRes.asOf) notes.push(gainersRes.asOf.label + ' The move is the 1-WEEK performance column, not a one-day move.');
+    if (gainersRes.asOf) notes.push(gainersRes.asOf.label + (gainersRes.moveWindow === '1W' ? ' The move is the 1-WEEK performance column, not a one-day move.' : ' The move is the 1-day % change.'));
   }
   if (market === 'IN') {
     if (indiaRes?.error) {
@@ -716,7 +742,9 @@ async function scan(req: NextRequest) {
       file: gainersRes.file || null,
       url: null,
       synced_at: gainersRes.syncedAt,
-      window: '1-week performance (TradingView weekly gainers export)',
+      window: gainersRes.moveWindow === '1D' ? `1-day % change — ${gainersRes.asOf?.session || 'today'} (live TradingView scan)` : '1-week performance (TradingView weekly gainers export)',
+      move_window: gainersRes.moveWindow,
+      live: gainersRes.live,
       rows: gainers.length,
       total_reported: gainersRes.rawRows,
       as_of: gainersRes.asOf,
@@ -771,6 +799,6 @@ async function scan(req: NextRequest) {
       penalties: priority.penalties,
     })),
   };
-  try { await kvSet(scanKey, response, 20 * 60); } catch { /* uncached is still correct */ }
+  try { await kvSet(scanKey, response, market === 'US' && usKeyPhase === 'open' ? 5 * 60 : 20 * 60); } catch { /* uncached is still correct */ }
   return NextResponse.json(response);
 }
