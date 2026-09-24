@@ -123,6 +123,8 @@ export function displayNameOf(ticker: string, company: string | null): { display
 }
 
 export interface ResearchItem {
+  /** Press coverage for the name — secondary, never scored. (zzz773) */
+  news?: { narrative: { label: string; days: number; firstDate: string; lastDate: string; lead: string } | null; items: Array<{ title: string; url: string; date: string; source: string }> } | null;
   ticker: string;
   company: string | null;
   market: 'IN' | 'US';
@@ -215,7 +217,10 @@ export interface ResearchView {
   noCatalyst: ResearchItem[];
   /** Recent listings and other data-quality exclusions. */
   dataQuality: ResearchItem[];
-  sourceFailures: Array<{ ticker: string; text: string; full: string }>;
+  sourceFailures: Array<{ ticker: string; text: string; full: string; news?: ResearchItem['news'] }>;
+  /** Filings WERE checked; only a secondary input (price history) failed.
+   *  Kept apart so "not checked" means exactly that. (zzz773) */
+  partialFailures?: Array<{ ticker: string; text: string; full: string }>;
   portfolio: ResearchItem[];
   /** zzz771: items whose only event is older than the move window (catalystFor === 'CONTEXT'),
    *  ranked by their own priority. Rendered collapsed under "Older filings — context, not the catalyst". */
@@ -776,14 +781,12 @@ function gapOf(cls: EventClass, move: { pct: number | null; window: '1D' | '1W' 
   if (!fc) return { level: 'UNKNOWN', text: `${moveTxt}; fundamental change Not disclosed — gap cannot be measured.`, direction: null };
   const mv = Math.max(move.pct ?? -Infinity, returns.m1 ?? -Infinity);
   if (!Number.isFinite(mv)) return { level: 'UNKNOWN', text: `Move Not disclosed; ${fc.text}.`, direction: null };
-  if (mv <= 0) {
-    return fc.pct >= 5
-      ? { level: 'LARGE', text: `${moveTxt}; ${fc.text} → the change does not appear priced (stock not up).`, direction: 'UNDER_REFLECTED' }
-      : { level: 'SMALL', text: `${moveTxt}; ${fc.text} → small change, small move.`, direction: 'ALIGNED' };
-  }
+  // zzz773: a stock that is not up is the market's RESPONSE, never proof the
+  // change is unpriced. With no positive move there is nothing to compare.
+  if (mv <= 0) return { level: 'UNKNOWN', text: `${moveTxt}; ${fc.text} → the market has not rewarded the change. That is a response, not evidence it is unpriced.`, direction: null };
   const r = fc.pct / Math.max(mv, 1);
-  if (r >= 3) return { level: 'LARGE', text: `${moveTxt}; ${fc.text} → change may be under-reflected.`, direction: 'UNDER_REFLECTED' };
-  if (r >= 1.5) return { level: 'MODERATE', text: `${moveTxt}; ${fc.text} → change may be partly under-reflected.`, direction: 'UNDER_REFLECTED' };
+  if (r >= 3) return { level: 'LARGE', text: `${moveTxt}; ${fc.text} → the move is small against the change (ratio ${r.toFixed(1)}×).`, direction: 'UNDER_REFLECTED' };
+  if (r >= 1.5) return { level: 'MODERATE', text: `${moveTxt}; ${fc.text} → the move is modest against the change (ratio ${r.toFixed(1)}×).`, direction: 'UNDER_REFLECTED' };
   if (r >= 0.5) return { level: 'SMALL', text: `${moveTxt}; ${fc.text} → move and change broadly in proportion.`, direction: 'ALIGNED' };
   if (r >= 0.2) return { level: 'MODERATE', text: `${moveTxt}; ${fc.text} → expectation-heavy.`, direction: 'EXPECTATION_HEAVY' };
   return { level: 'LARGE', text: `${moveTxt}; ${fc.text} → expectation-heavy: the move is far larger than the change.`, direction: 'EXPECTATION_HEAVY' };
@@ -804,7 +807,7 @@ const freshF = (age: number | null) => (age == null ? 0.6 : age <= 1 ? 1 : age <
 const gapF = (g: ResearchItem['expectationGap']) => (g.direction === 'UNDER_REFLECTED' ? (g.level === 'LARGE' ? 1 : 0.9)
   : g.direction === 'ALIGNED' ? 0.75 : g.direction === 'EXPECTATION_HEAVY' ? (g.level === 'LARGE' ? 0.4 : 0.55) : 0.7);
 
-function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number | null; staleEarnings: boolean; veryStale: boolean; namedAllottee: boolean; clarification: boolean }): { score: number; reasons: string[]; details: Record<string, number> } {
+function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: string | null; staleEarnings: boolean; veryStale: boolean; namedAllottee: boolean; clarification: boolean }): { score: number; reasons: string[]; details: Record<string, number> } {
   const d: Record<string, number> = {
     eventQuality: F_CLASS[it.eventClass], materiality: F_MAT[it.materiality.label], transmission: F_TRANS[it.transmission],
     evidence: F_EVID[it.sourceConfidence], freshness: freshF(it.ageDays ?? null), expectationGap: gapF(it.expectationGap), persistence: F_PERS[it.persistence],
@@ -834,7 +837,7 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number 
   if (it.transmission === 'DIRECT') reasons.push('Direct P&L transmission');
   if (it.transmission === 'NONE') reasons.push('No transmission to earnings');
   if (it.ageDays != null && it.ageDays <= 3 && cls !== 'NO_CATALYST') reasons.push(`Fresh (${it.ageDays === 0 ? 'today' : `${it.ageDays}d`})`);
-  if (it.expectationGap.direction === 'UNDER_REFLECTED') reasons.push('Change may be under-reflected in price');
+  if (it.expectationGap.direction === 'UNDER_REFLECTED') reasons.push('Move small against the fundamental change');
   if (it.persistence === 'YEARS') reasons.push('Multi-year persistence');
   let pen = 1;
   const penal = (k: string, f: number, why: string) => { d[`penalty_${k}`] = f; pen *= f; reasons.push(why); };
@@ -846,9 +849,12 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number 
   if (it.flags.denial && cls === 'NEGATIVE') penal('denial', 0.5, 'Penalty: company denial');
   if (it.flags.denial && ctx.clarification) reasons.push('Company-confirmed: no undisclosed information');
   if (it.eventClass === 'CONFIRMED_LOW_MATERIALITY') penal('lowMateriality', 0.8, 'Penalty: too small to explain the move');
-  if ((ctx.pricedIn ?? 0) >= 80 || (it.expectationGap.direction === 'EXPECTATION_HEAVY' && it.expectationGap.level === 'LARGE') || (it.returns.m1 ?? 0) >= 50) {
-    penal('pricedIn', 0.8, `Penalty: largely priced${it.returns.m1 != null ? ` (1M ${pctS(it.returns.m1)})` : ''}`);
-  }
+  // zzz773: a trailing return is not a pricing assessment. Penalise only a
+  // DEFINED comparison: the reaction since the filing against its size, a run
+  // before the filing, or a move far larger than the fundamental change.
+  if (ctx.pricingState === 'REACTION_EXCEEDS_SIZE') penal('pricing', 0.8, 'Penalty: reaction since the filing exceeds the event\'s size');
+  else if (ctx.pricingState === 'RAN_UP_BEFORE_FILING') penal('pricing', 0.85, 'Penalty: stock ran up before the filing');
+  else if (it.expectationGap.direction === 'EXPECTATION_HEAVY' && it.expectationGap.level === 'LARGE') penal('pricing', 0.8, 'Penalty: move far larger than the fundamental change');
   // A no-catalyst row is UNVERIFIED because nothing was found to verify; it
   // is not an unverified source and is not penalised as one. (zzz771)
   const noEvent = cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY';
@@ -1160,9 +1166,10 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     priority: 0, priorityReasons: [], scoreDetails: null,
     eventLabel: label || type, action: isContext ? 'Monitor' : actionOf(cls, portfolio.relevance), move: mv, findingStatus: status, notes, ageDays,
     catalystFor, ...displayNameOf(ticker, company), scanNote,
+    news: f?.news ? { narrative: f.news.narrative ? { label: f.news.narrative.label, days: f.news.narrative.days, firstDate: f.news.narrative.firstDate, lastDate: f.news.narrative.lastDate, lead: f.news.narrative.lead } : null, items: f.news.items.slice(0, 3).map((x) => ({ title: x.title, url: x.url, date: x.date, source: x.source })) } : null,
   };
   const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
-  const p = priorityOf(item, { routine, pricedIn: num(f?.components?.pricedIn), staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification });
+  const p = priorityOf(item, { routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
   return item;
 }
@@ -1219,15 +1226,27 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const portfolio = items.filter((i) => i.portfolio.relevance === 'HOLDING' || i.portfolio.relevance === 'WATCHLIST');
 
   const universe = tickers.map((ticker) => ({ ticker }));
-  const lines = presentErrorLines(input.errors || [], universe, 20);
-  const sourceFailures: ResearchView['sourceFailures'] = lines.map((l) => ({ ticker: l.ticker || '', text: l.short, full: l.full }));
-  const have = new Set(sourceFailures.map((s) => s.ticker));
+  const lines = presentErrorLines(input.errors || [], universe, 60);
+  // zzz773: the error log is cumulative across calls. A name whose filings
+  // were read (any status but source_failed) was CHECKED, whatever an earlier
+  // call logged; only its missing price history is a partial failure, and
+  // only while the price history is still missing.
+  const byTicker = new Map(items.map((i) => [i.ticker, i] as const));
+  const lastLine = new Map<string, { short: string; full: string }>();
+  for (const l of lines) if (l.ticker) lastLine.set(l.ticker, { short: l.short, full: l.full });
+  const sourceFailures: ResearchView['sourceFailures'] = [];
+  const partialFailures: NonNullable<ResearchView['partialFailures']> = [];
   for (const i of items) {
-    if (i.eventClass === 'DATA_UNAVAILABLE' && !have.has(i.ticker)) {
-      sourceFailures.push({ ticker: i.ticker, text: `${i.ticker}: filing source unavailable — not "no catalyst"`, full: (i.notes || []).join(' ') || 'The filing source could not be reached.' });
-    }
+    if (i.eventClass !== 'DATA_UNAVAILABLE') continue;
+    const l = lastLine.get(i.ticker);
+    sourceFailures.push({ ticker: i.ticker, text: l?.short || `${i.ticker}: filing source unavailable — not "no catalyst"`, full: l?.full || (i.notes || []).join(' ') || 'The filing source could not be reached.', news: i.news ?? null });
   }
-
+  for (const [t, l] of Array.from(lastLine.entries())) {
+    const it = byTicker.get(t);
+    if (!it || it.eventClass === 'DATA_UNAVAILABLE') continue;
+    const noPrice = it.returns.m1 == null && it.returns.m3 == null;
+    if (noPrice && /chart|price/i.test(l.full)) partialFailures.push({ ticker: t, text: `${t}: filings checked; price history unavailable — market response not measured`, full: l.full });
+  }
   // Class counts over the LIVE items; context is counted once, under noCatalyst. (zzz771)
   const count = (c: EventClass) => live.filter((i) => i.eventClass === c).length;
   const s0 = input.session || { date: null, scanAt: null, status: 'unknown', cached: false };
@@ -1246,6 +1265,6 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
       lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
       context: context.length,
     },
-    top3, queue, watch, negative, noCatalyst, dataQuality, sourceFailures, portfolio, context,
+    top3, queue, watch, negative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context,
   };
 }

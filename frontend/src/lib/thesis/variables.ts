@@ -39,7 +39,7 @@ import { parseOneOff, oneOffLine } from './one-offs';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
 import {
   factTypeOf, metricGroupOf, validateReading, validateCashConversion, lineageOf, normalizeValue,
-  comparability, samePeriodPair, scopeOf, hasQuantity, isCommentaryOnly, RECURRING_METRICS, EVENT_METRICS,
+  comparability, capacityMismatch, isCapacityFigure, samePeriodPair, scopeOf, hasQuantity, isCommentaryOnly, RECURRING_METRICS, EVENT_METRICS,
   PRIOR_NOT_DISCLOSED, FACT_TYPE_LABEL,
   type FactType, type MetricGroup, type Validation, type Lineage, type NormalizedValue, type FactScope,
 } from './fact-model';
@@ -502,7 +502,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       // ── SUSPICIOUS IS NOT BAD; IT IS UNREAD.                        (zzz770)
       // DEEPAKNTR "170-odd percent" utilisation with no stated denominator is
       // a validation question, counted neither confirmed nor contradicted.
-      const validation = validateReading(key, a.after, a.evidence_text);
+      const validation = validateReading(key, a.after, a.evidence_text, a.unit);
       const unclear = validation.state === 'UNCLEAR';
       const verdict: VarVerdict = unclear ? 'stated' : verdict0;
       const statement: StructuralVar['statement'] = isFact ? 'ACTUAL' : potential ? 'MANAGEMENT_STATEMENT' : a.value_type === 'MANAGEMENT_CLAIM' ? 'MANAGEMENT_STATEMENT' : a.value_type === 'GUIDANCE' ? 'GUIDANCE' : a.value_type === 'TARGET' ? 'TARGET' : 'MANAGEMENT_STATEMENT';
@@ -625,6 +625,29 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       normalized: normalizeValue(h.after, h.unit),
       scope: scopeOf(h.evidence_text, h.after),
     });
+  }
+  // ── INSTALLED vs ADDED: LIKE FOR LIKE, OR NOT AT ALL.              (zzz773)
+  // LLOYDSENT "Installed capacity 55 MT" beside "Capacity added 150,000 MTPA";
+  // SOTL "2,061 kWp" of rooftop power beside "~3,000 MTPA" of ester output.
+  // Where the two do not share a measure and a scope, neither is read as a
+  // progression of the other and neither may confirm the capacity thesis.
+  const inst = out.find((v) => v.key === 'capacity' && v.statement !== 'HISTORICAL' && isCapacityFigure(v.after));
+  const add = out.find((v) => v.key === 'capacity_addition' && v.statement !== 'HISTORICAL' && isCapacityFigure(v.after));
+  if (inst && add) {
+    const why = capacityMismatch({ value: String(inst.after), quote: inst.quote }, { value: String(add.after), quote: add.quote });
+    if (why) {
+      for (const [row, other] of [[inst, add], [add, inst]] as const) {
+        row.evidence = `${row.evidence} ⓘ ${why} (${other.key === 'capacity' ? 'installed' : 'added'}: ${other.after}).`;
+        // A row whose own before → after is one measure and one scope keeps
+        // its move (AARTIPHARM 5,000 → 9,600+ MTPA of one product); only a
+        // bare level, read against the other figure, is not judgeable.
+        const ownMove = !!row.before && !!row.after && isCapacityFigure(row.before)
+          && !capacityMismatch({ value: String(row.before), quote: row.quote }, { value: String(row.after), quote: row.quote });
+        if (ownMove) continue;
+        if (row.verdict === 'improving' || row.verdict === 'deteriorating' || row.verdict === 'flat') row.verdict = 'stated';
+        if (row.verdict !== 'unknown') row.unjudged = row.unjudged || why;
+      }
+    }
   }
   return out;
 }
@@ -1517,10 +1540,13 @@ export function extractVariables(
   push_('debt', str(fin.debt), 'unknown', `Debt: ${str(fin.debt)}.`);
   const roce = n(graded?.roce) ?? n(graded?.roce_pct);
   if (roce != null) {
+    // The screener's ROCE is LAST FULL YEAR's, like its cash ratio: said on
+    // the row so the status engine keeps it out of the current period. (zzz773)
+    const roceAnnual = ['screener', 'screener-live'].includes(String(graded?.source || ''));
     push({
-      key: 'roce', label: VAR_LABEL.roce, before: null, after: `${roce.toFixed(1)}%`, delta: null,
+      key: 'roce', label: VAR_LABEL.roce, before: null, after: `${roce.toFixed(1)}%${roceAnnual ? ' (last FY)' : ''}`, delta: null,
       verdict: roce >= 18 ? 'improving' : roce >= 12 ? 'flat' : 'deteriorating',
-      evidence: `Return on capital employed ${roce.toFixed(1)}%.`, source: 'grader', kind: 'fact',
+      evidence: `Return on capital employed ${roce.toFixed(1)}%${roceAnnual ? ' (last full year, screener figure — not this quarter\'s)' : ''}.`, source: 'grader', kind: 'fact',
     });
   }
 
@@ -2165,6 +2191,17 @@ export function changeClassOf(v: StructuralVar): ChangeClass | null {
   return null;
 }
 
+/** A comparable earlier value exists and differs. (zzz773) */
+function isRealChange(v: StructuralVar, cls: ChangeClass): boolean {
+  if (cls === 'GUIDANCE_CHANGE') return true;
+  if (cls !== 'PERIOD_CHANGE' || v.unjudged) return false;
+  const r = v.reading;
+  if (r && r.previous && (r.direction === 'UP' || r.direction === 'DOWN') && !r.not_comparable_reason) return true;
+  const c = v.comparison;
+  if (c && c.previous && c.basis !== 'NONE' && (c.change_type === 'INCREASED' || c.change_type === 'DECREASED')) return true;
+  return !!(v.before && v.after && v.delta && !/^(?:flat|unchanged|0(?:\.0+)?\s*(?:%|pp)?)$/i.test(v.delta.trim()));
+}
+
 export function rowChangeLines(vars: StructuralVar[], period: string | null): ClassifiedChangeLine[] {
   const rank = (v: StructuralVar) => v.statement === 'GUIDANCE' || v.statement === 'TARGET' ? 4
     : v.statement === 'MANAGEMENT_STATEMENT' ? 3
@@ -2194,7 +2231,15 @@ export function rowChangeLines(vars: StructuralVar[], period: string | null): Cl
       })(),
       metric: v.key, period: period || v.asOf || '', source: v.sourceLabel || '',
       change_class: cls,
-    }));
+      // ── A CHANGE NEEDS A COMPARABLE EARLIER VALUE THAT DIFFERS.     (zzz773)
+      // "Capacity added: 150,000 MTPA · previous: not disclosed (first
+      // reading)" is evidence found, not a change.
+      kind: isRealChange(v, cls) ? 'change' as const : 'evidence' as const,
+    }))
+    .map((l) => {
+      const v = vars.find((x) => x.key === l.metric && x.source === 'filing');
+      return v?.unjudged && !l.text.includes(v.unjudged) ? { ...l, text: `${l.text} — ${v.unjudged}` } : l;
+    });
 }
 
 /** Historical context, kept OUT of WHAT CHANGED and labelled as what it is:

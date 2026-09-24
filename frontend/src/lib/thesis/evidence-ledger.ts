@@ -41,8 +41,8 @@ import { judgeEventQuality, verifiedDirection, betterReading, bestEventPerVariab
 // board (fact-model) and the same type correction (fact-normalize). Both
 // modules import `scaledNumber` from here; the cycle is safe because every
 // use on both sides is inside a function, never at module load.
-import { comparability, deltaText, normalizeValue, validateReading, factTypeOf, samePeriodPair, type FactType } from './fact-model';
-import { normalizeEvent, datesIn } from './fact-normalize';
+import { comparability, capacityMismatch, deltaText, normalizeValue, validateReading, factTypeOf, samePeriodPair, type FactType } from './fact-model';
+import { normalizeEvent, datesIn, forwardAround, approvalPlan } from './fact-normalize';
 
 // ── SCHEMA VERSION 2 (zzz770). Every field added in v2 is OPTIONAL, so a v1
 // ledger read from KV still type-checks and renders; `migrateLedger` fills the
@@ -1027,7 +1027,7 @@ export function deriveVariableSnapshots(ledger: CompanyLedger, period: string, n
     const a = actuals.get(key);
     if (!a) { out[key] = EMPTY_SNAPSHOT(absent, at); continue; }
     const value = String(a.after ?? a.before ?? '').trim();
-    const validation = validateReading(key, value, a.evidence_text);
+    const validation = validateReading(key, value, a.evidence_text, a.unit);
     const norm = normalizeValue(value, a.unit);
     const factType: FactType = factTypeOf({ valueType: 'ACTUAL', key, value, text: a.evidence_text, source: a.source, retyped: (a as any).retyped_because });
     const snap: VariableSnapshot = {
@@ -1511,7 +1511,11 @@ export function freshnessLine(f: Partial<FreshnessView> & { state: FreshnessStat
 
 // ── what changed ───────────────────────────────────────────────────────────
 
-export interface ChangeLine { sign: '+' | '-' | '·'; text: string; metric: VarKey; period: string; source: string }
+export interface ChangeLine { sign: '+' | '-' | '·'; text: string; metric: VarKey; period: string; source: string;
+  /** 'change' only when a comparable previous value exists and differs;
+   *  everything else is 'evidence' — found this period, not a change. The
+   *  card prints the two under different headings. (zzz773) */
+  kind?: 'change' | 'evidence' }
 
 /** Pure: compare the latest period's facts with the previous period's. When
  *  there is no previous period, the latest period's own before→after moves
@@ -1557,10 +1561,17 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
       // Two periods, two figures — a delta only when they measure the same
       // thing. MOREPEN's "314 kiloliters → 200 KLD (−36%)" compared a tank
       // volume with a daily throughput. Different units: two levels, no arrow.
-      const comparable = sameUnit(p.value, f.value, p.unit, f.unit);
+      // Capacity also needs the same measure AND scope (zzz773): 55 MT of
+      // mining throughput is not an earlier reading of 150,000 MTPA.
+      const capWhy = (k === 'capacity' || k === 'capacity_addition')
+        ? capacityMismatch({ value: p.value, unit: p.unit, quote: p.source_quote }, { value: f.value, unit: f.unit, quote: f.source_quote }) : null;
+      const comparable = sameUnit(p.value, f.value, p.unit, f.unit) && !capWhy;
       const d = comparable ? deltaOf(p.value, f.value, f.unit) : null;
       const sign: ChangeLine['sign'] = !comparable ? '·' : d ? (d.startsWith('-') ? '-' : '+') : '·';
-      lines.push({ sign, text: comparable ? `${label} ${p.value} → ${f.value}${d ? ` (${d})` : ''}` : `${label} ${f.value} (earlier period stated ${p.value} — different unit, not compared)`, metric: k, period: to, source: f.source_name });
+      lines.push({ sign, text: comparable ? `${label} ${p.value} → ${f.value}${d ? ` (${d})` : ''}`
+        : capWhy ? `${label} ${f.value} (earlier period stated ${p.value} — ${capWhy})`
+          : `${label} ${f.value} (earlier period stated ${p.value} — different unit, not compared)`,
+        metric: k, period: to, source: f.source_name, kind: comparable && d ? 'change' : 'evidence' });
     } else if (!p) {
       const bn0 = scaledNumber(f.before_value), an0 = scaledNumber(f.after_value);
       const arith: ChangeLine['sign'] | null = bn0 != null && an0 != null && bn0 !== an0 ? (an0 > bn0 ? '+' : '-') : null;
@@ -1588,7 +1599,11 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
       const text = f.before_value && f.after_value && !restated
         ? `${label} ${f.before_value} → ${f.after_value}${shownDelta ? ` (${shownDelta})` : ''}`
         : `${label} ${f.value}`;
-      lines.push({ sign, text, metric: k, period: to, source: f.source_name });
+      // A before → after stated in the document is a change only when the
+      // two figures share a unit and the sentence is not a plan. (zzz773)
+      const inTextChange = !!(f.before_value && f.after_value && !restated && computed)
+        && !forwardAround(f.source_quote || '', f.after_value) && !approvalPlan(f.source_quote, f.after_value);
+      lines.push({ sign: inTextChange ? sign : '·', text, metric: k, period: to, source: f.source_name, kind: inTextChange ? 'change' : 'evidence' });
     }
   }
   // New forward statements are worth a line too, marked as such. One line
@@ -1605,7 +1620,7 @@ export function whatChanged(ledger: CompanyLedger): { lines: ChangeLine[]; from:
     // A value that does not fit its variable is not a statement either.
     if (judgeEventQuality({ variable: f.metric_name, before: f.before_value, after: f.after_value, unit: f.unit, evidence_text: f.source_quote }) === 'unit_mismatch') continue;
     if (lines.length >= 12) break;
-    lines.push({ sign: '·', text: `${VAR_LABEL[f.metric_name] || f.metric_name}: ${f.fact_or_management_statement.toLowerCase().replace('_', ' ')} ${f.value}`, metric: f.metric_name, period: to, source: f.source_name });
+    lines.push({ sign: '·', text: `${VAR_LABEL[f.metric_name] || f.metric_name}: ${f.fact_or_management_statement.toLowerCase().replace('_', ' ')} ${f.value}`, metric: f.metric_name, period: to, source: f.source_name, kind: 'evidence' });
   }
   // Deteriorations first, then improvements, then statements.
   const order = { '-': 0, '+': 1, '·': 2 };

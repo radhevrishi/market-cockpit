@@ -433,7 +433,82 @@ export function beforeAfterText(prev: Comparable | null, cur: Comparable): { tex
 
 export type ValidationFlag =
   | 'UTILISATION_ABOVE_100' | 'NEGATIVE_RATIO_SIGN_UNCLEAR' | 'DENOMINATOR_MISMATCH'
-  | 'UNIT_MISMATCH' | 'IMPOSSIBLE_VALUE' | 'AMBIGUOUS_VALUE';
+  | 'UNIT_MISMATCH' | 'IMPOSSIBLE_VALUE' | 'AMBIGUOUS_VALUE' | 'UNIT_MISSING' | 'NO_COUNTERPARTY';
+
+// ── AN AMOUNT WITH NO UNIT IS NOT A NUMBER THE CARD CAN USE.        (zzz773)
+// MOREPENLAB's "Capex: 57012.81 (Unaudited)" is a statement-table cell: lakh,
+// crore or thousand is not in the value, so it is UNCLEAR — the amount was
+// extracted and its unit was not. Nothing is guessed.
+const AMOUNT_VARS = new Set<string>(['capex', 'capex_status', 'order_book', 'order_intake', 'revenue_visibility', 'fcf', 'debt',
+  'capacity', 'capacity_addition', 'exports']);
+/** True when a value is a bare figure: digits (and at most a parenthetical
+ *  word like "(Unaudited)") with no currency, magnitude or unit. */
+const AUDIT_TAG = /\(?\b(?:un)?audited\b\)?|\(?\b(?:provisional|restated|reviewed)\b\)?/gi;
+export function unitMissing(value: string | null | undefined, unit?: string | null): boolean {
+  // "(Unaudited)" in the unit slot is an audit tag, not a unit (MOREPENLAB).
+  if (String(unit ?? '').replace(AUDIT_TAG, '').trim()) return false;
+  const v = String(value ?? '').replace(AUDIT_TAG, ' ').trim();
+  return /^[~≈]?\s*-?\d[\d,]*(?:\.\d+)?$/.test(v) && /\d{3,}/.test(v.replace(/,/g, ''));
+}
+// ── A DATE RANGE IS NOT A CUSTOMER.                                  (zzz773)
+// MOREPENLAB's "New customer: 20th October 2026 to 19th October 2029 (both
+// days inclusive)" was a director's re-appointment term. A new-customer
+// reading that names no counterparty — only dates, or a person's office —
+// is a contract period with no counterparty: UNCLEAR, never a confirmation.
+const DATE_WORDS = /\b(\d{1,2}(?:st|nd|rd|th)?|st|nd|rd|th|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?|(?:19|20)\d{2}|to|from|till|until|and|both|days?|inclusive|w\.?e\.?f\.?|with effect|effective|period|of|the|for|a|term|years?|months?|FY\s?'?\d{2,4})\b|[()\-–,.:/]/gi;
+const PERSON_OFFICE = /\b(?:Mr|Ms|Mrs|Dr|Shri|Smt)\.?\s+[A-Z]|\bDIN\b|\b(?:managing director|whole[- ]time director|independent director|chairman|chairperson|chief executive|CEO|CFO|company secretary|auditor|re-?appoint\w*)\b/i;
+export function noCounterparty(value: string | null | undefined): 'dates' | 'person' | 'none' | null {
+  const v = String(value ?? '').trim();
+  if (!v) return null;
+  if (PERSON_OFFICE.test(v)) return 'person';
+  // HSCL: "Strategic investments/partnerships noted …; no named customer
+  // contracts disclosed" counted as a new-customer driver.
+  // "up 200% year-on-year", "2,500 crores with EV constituting over 15%" —
+  // an amount or a growth rate, filed as a customer, naming none.
+  if (/^\s*(?:(?:up|down|grew|rose|increased|declined)\s+(?:by\s+)?)?(?:₹|INR|Rs\.?|USD|\$)?\s*[\d,.]+\s*(?:%|x|×|crores?|cr\b|lakhs?|mn\b|million|bn\b|billion)/i.test(v)) return 'none';
+  if (/\bno (?:named |new |specific )?customers?\b|\bno (?:named )?customer contracts?\b|\bcustomers? (?:were |was )?not (?:named|disclosed)\b/i.test(v)) return 'none';
+  const rest = v.replace(DATE_WORDS, ' ').replace(/\s+/g, '').trim();
+  return rest.length === 0 && /\d/.test(v) ? 'dates' : null;
+}
+
+// ── CAPACITY FIGURES ARE COMPARED ONLY LIKE FOR LIKE.                (zzz773)
+// LLOYDSENT "Installed capacity 55 MT" beside "Capacity added 150,000 MTPA";
+// SOTL "2,061 kWp" (rooftop power) beside "~3,000 MTPA" (ester production);
+// HSCL "2,50,000 MTPA" carbon black beside a 2,600 → 5,300 MTPA anthraquinone
+// project. A delta or a progression needs company → segment / product →
+// plant / project → unit → period to match. This says why two figures do not.
+const POWER_UNIT = /\d[\d,.]*\+?\s*(?:k|m|g)?w(?:p|h)?\b|\d[\d,.]*\+?\s*(?:kva|mva)\b/i;
+const PRODUCTION_UNIT = /\d[\d,.]*\+?\s*(?:lakh|million|mn|k|thousand)?\s*(?:m?t(?:pa|pd|ph)?|ktpa|mtpa|tpa|tonnes?|tons?|metric tons?|kt|mnt|kl|kld|klpd|litres?|liters?|mmscmd?|units?|pieces|pcs|sets|bales|spindles|looms|sq\.?\s?ft|kg)\b/i;
+/** A capacity FIGURE: a number with a production or power unit. "Phase1
+ *  Q3FY27" and "April 2026" are not. (zzz773) */
+export const isCapacityFigure = (v: string | null | undefined): boolean => POWER_UNIT.test(String(v ?? '')) || PRODUCTION_UNIT.test(String(v ?? ''));
+const PRODUCT_WORDS = /\b(carbon black|anthraquinone|carbazole|cnt|carbon nano ?tubes?|anode|cathode|lfp|pellet|dri|sponge iron|ester|lubricants?|rooftop|solar|wind|coal tar|pitch|api|formulations?|steel|cement|clinker|gold|iron ore|pipeline|slurry|packaging|film|recycl\w*)\b/gi;
+const measureKind = (v: string, u?: string | null): 'power' | 'production' | null => {
+  const t = `${v} ${u || ''}`;
+  const pw = POWER_UNIT.test(t), pr = PRODUCTION_UNIT.test(t);
+  // "355 MVA (534,000 tpa)" states both: no kind can be told apart.
+  if (pw && pr) return null;
+  return pw ? 'power' : pr ? 'production' : null;
+};
+const productsOf = (t: string): string[] => Array.from(new Set(Array.from(String(t || '').matchAll(PRODUCT_WORDS)).map((m) => m[1].toLowerCase().replace(/s$/, ''))));
+export interface CapacityPair { value: string; unit?: string | null; quote?: string | null }
+/** Null when two capacity figures describe the same measure and scope; the
+ *  printable reason otherwise. Never computes a delta. */
+export function capacityMismatch(a: CapacityPair, b: CapacityPair): string | null {
+  const ka = measureKind(a.value, a.unit), kb = measureKind(b.value, b.unit);
+  if (ka && kb && ka !== kb) return `Not comparable — ${ka} capacity vs ${kb} capacity (${a.value} vs ${b.value}); no delta calculated`;
+  const c = comparability({ key: 'capacity', value: a.value, unit: a.unit, quote: a.quote, period: null }, { key: 'capacity', value: b.value, unit: b.unit, quote: b.quote, period: null });
+  if (!c.comparable && c.reason && !/no number/.test(c.reason)) {
+    return /plant|project|phase|segment|product|scope/.test(c.reason)
+      ? `Separate scope — ${a.value} and ${b.value} describe ${c.reason}; no delta calculated`
+      : `UNCLEAR — unit/scope mismatch: ${a.value} vs ${b.value}, no delta calculated`;
+  }
+  const pa = productsOf(`${a.value} ${valueClause(String(a.quote || ''), a.value)}`), pb = productsOf(`${b.value} ${valueClause(String(b.quote || ''), b.value)}`);
+  if (pa.length && pb.length && !pa.some((x) => pb.includes(x))) {
+    return `Separate scope — ${a.value} (${pa.join(', ')}) and ${b.value} (${pb.join(', ')}) are different segments / projects; no delta calculated`;
+  }
+  return null;
+}
 
 // ── TWO FIGURES JOINED BY "OR" ARE NOT ONE READING.                  (zzz771)
 //
@@ -472,7 +547,7 @@ function percents(s: string): number[] {
 }
 
 /** Suspicious or ambiguous values become a validation state, not a verdict. */
-export function validateReading(key: VarKey | string, value: string | null | undefined, text?: string | null): Validation {
+export function validateReading(key: VarKey | string, value: string | null | undefined, text?: string | null, unit?: string | null): Validation {
   const v = String(value ?? '');
   if (!v.trim()) return OK;
   // Before any range test: "30% or 25%" has two figures and no answer. (zzz771)
@@ -489,6 +564,18 @@ export function validateReading(key: VarKey | string, value: string | null | und
       return { state: 'UNCLEAR', flags: ['UTILISATION_ABOVE_100'], metric_definition: null,
         reason: `validation required — utilisation of ${Math.max(...ps)}% exceeds 100% and the source states no definition or denominator` };
     }
+  }
+  if (AMOUNT_VARS.has(String(key)) && unitMissing(v, unit)) {
+    return { state: 'UNCLEAR', flags: ['UNIT_MISSING'], metric_definition: null,
+      reason: `UNCLEAR — amount extracted but unit unavailable (${v.trim()})` };
+  }
+  if (key === 'new_customer') {
+    const nc = noCounterparty(v);
+    if (nc) return { state: 'UNCLEAR', flags: ['NO_COUNTERPARTY'], metric_definition: null,
+      reason: nc === 'person'
+        ? 'UNCLEAR — names a person or office, not a customer; not a new-customer confirmation'
+        : nc === 'none' ? 'UNCLEAR — no customer is named (an amount, a growth rate or "no named customer"); not a new-customer confirmation'
+        : 'UNCLEAR — contract period with no counterparty named; not a new-customer confirmation' };
   }
   if (key === 'capacity' || key === 'capacity_addition') {
     const n = scaledNumber(v);

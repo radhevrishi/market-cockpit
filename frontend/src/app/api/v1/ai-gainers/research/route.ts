@@ -37,6 +37,29 @@ import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { readBookState } from '@/lib/book-store';
 import { etToday, capTierUs } from '@/lib/ai-gainers/us-gainers';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
+import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
+import { buildNewsContext, type NewsContext } from '@/lib/ai-gainers/news-context';
+
+/** Press coverage for one gainer, cached for the day. Secondary evidence
+ *  only: it explains where to look, it never scores. A failure is an empty
+ *  context, never an error on the finding. (zzz773) */
+async function newsFor(market: 'IN' | 'US', ticker: string, name: string | null, date: string, now: Date): Promise<NewsContext | null> {
+  const key = `ag-news:v1:${market}:${ticker}:${date}`;
+  try { const hit = await kvGet<NewsContext>(key); if (hit && Array.isArray(hit.items)) return hit; } catch { /* cache is optional */ }
+  // A screen abbreviation ("Jay Bharat Maru.") loses its clipped last word;
+  // the full page title ("Kavveri Defence & Wireless Technologies Ltd") is
+  // searched as an exact phrase.
+  const raw0 = String(name || '').trim();
+  const abbreviated = /\.$/.test(raw0);
+  const clean = raw0.replace(/\s+\S+\.$/, abbreviated ? '' : '$&').replace(/\b(ltd|limited|inc|corp|corporation|plc|holdings)\b\.?,?/gi, '').replace(/[.,]+$/, '').replace(/\s+/g, ' ').trim();
+  const q = clean.length >= 4 ? `"${clean}"${abbreviated ? (market === 'IN' ? ' share' : ' stock') : ''} when:45d` : `${ticker} ${market === 'IN' ? 'share' : 'stock'} when:45d`;
+  try {
+    const raw = await Promise.race([fetchGoogleNewsRSS(q), new Promise<[]>((r) => setTimeout(() => r([]), 7_000))]);
+    const ctx = buildNewsContext(raw, { ticker, company: clean || name, now, query: q });
+    try { await kvSet(key, ctx, 12 * 3600); } catch { /* optional */ }
+    return ctx;
+  } catch { return null; }
+}
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -349,7 +372,7 @@ async function research(req: NextRequest, body: any) {
     if (market === 'US' && usLeft() < 8_000) break;
     try {
       let announcements: AnnouncementLite[] = [];
-      let marketCap = u.marketCap, turnover: number | null = null, returns = null as any, sources: string[] = [], sourceFailed = false;
+      let marketCap = u.marketCap, turnover: number | null = null, returns = null as any, sources: string[] = [], sourceFailed = false, fullName: string | null = null;
       if (market === 'IN') {
         const cr = await fetchCompanyResearch(u.ticker, now);
         announcements = cr.announcements;
@@ -361,6 +384,7 @@ async function research(req: NextRequest, body: any) {
           continue;
         }
         returns = cr.returns;
+        fullName = cr.companyName ?? null;
         sources = cr.sources;
         sourceFailed = !cr.sources.length;
         const px = cr.lastClose ?? cr.price;
@@ -375,6 +399,8 @@ async function research(req: NextRequest, body: any) {
         turnover = u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null;  // $ M
         if (er.errors.length) st.errors.push(`${u.ticker}: ${er.errors.join('; ')}`);
       }
+
+      const news = await newsFor(market, u.ticker, fullName || u.company, date, now);
 
       // Model-read the best catalyst candidate when the budget allows: a
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
@@ -399,9 +425,9 @@ async function research(req: NextRequest, body: any) {
 
       st.findings[u.ticker] = { ...buildFinding({
         ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap, turnover,
-        announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult,
+        announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult, news,
       }), rulesVersion: RULES_VERSION };
-      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read }, WINDOW_DAYS, now);
+      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news }, WINDOW_DAYS, now);
       done++;
     } catch (e: any) {
       st.errors.push(`${u.ticker}: ${String(e?.message || e)}`);

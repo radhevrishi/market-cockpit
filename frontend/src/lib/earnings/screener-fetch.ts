@@ -114,6 +114,24 @@ Promise<{ html: string | null; outcome: string; ageMs?: number | null; cache?: s
   }
 }
 
+/** zzz773: screener.in answers a burst with 429 / a short throttle page, and
+ *  21 of 43 gainers were reported "source failed" from exactly that. A
+ *  transient refusal is retried on the same hop with backoff (0.8s, then
+ *  2s, jittered) before the chain moves on. A timeout is NOT retried — it
+ *  would spend the caller's time budget twice. */
+const TRANSIENT = /^HTTP (408|425|429|500|502|503|504|520|521|522|524)\b|too short to be a page|ECONNRESET|socket hang up|fetch failed/i;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function tryWithRetry(hop: ProxyHop, url: string, timeoutMs: number, attempts: HtmlFetch['attempts']) {
+  const waits = [800, 2000];
+  let r = await tryFetch(hop, url, timeoutMs);
+  for (let k = 0; !r.html && k < waits.length && TRANSIENT.test(r.outcome); k++) {
+    attempts.push({ hop, outcome: `${r.outcome} — retrying in ${(waits[k] / 1000).toFixed(1)}s` });
+    await sleep(waits[k] + Math.floor(Math.random() * 400));
+    r = await tryFetch(hop, url, timeoutMs);
+  }
+  return r;
+}
+
 /**
  * Fetch a screener.in page through whichever hop will answer.
  *
@@ -134,7 +152,7 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 20_000): Promis
   const attempts: HtmlFetch['attempts'] = [];
 
   if (PROXY) {
-    const r = await tryFetch('proxy', `${PROXY}${encodeURIComponent(url)}`, timeoutMs);
+    const r = await tryWithRetry('proxy', `${PROXY}${encodeURIComponent(url)}`, timeoutMs, attempts);
     attempts.push({ hop: 'proxy', outcome: r.outcome });
     if (r.html) return { html: r.html, via: 'proxy', attempts, error: null, ageMs: r.ageMs ?? null, cache: r.cache ?? null };
   } else {
@@ -144,7 +162,7 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 20_000): Promis
   // Skipped only when the configured proxy IS this one, so the same hop is
   // never tried twice and reported as two independent failures.
   if (!PROXY.startsWith(FALLBACK_PROXY.split('?')[0])) {
-    const m = await tryFetch('mc-proxy', `${FALLBACK_PROXY}${encodeURIComponent(url)}`, timeoutMs);
+    const m = await tryWithRetry('mc-proxy', `${FALLBACK_PROXY}${encodeURIComponent(url)}`, timeoutMs, attempts);
     attempts.push({ hop: 'mc-proxy', outcome: m.outcome });
     if (m.html) return { html: m.html, via: 'mc-proxy', attempts, error: null, ageMs: m.ageMs ?? null, cache: m.cache ?? null };
   }

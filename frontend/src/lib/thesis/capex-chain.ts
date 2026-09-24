@@ -37,7 +37,8 @@
 import { said, type StructuralVar, type VarKey } from './variables';
 import type { CompanyLedger } from './evidence-ledger';
 import { periodOrdinal } from './evidence-ledger';
-import { normalizeEvent } from './fact-normalize';
+import { normalizeEvent, hasQuantity } from './fact-normalize';
+import { capacityMismatch, isCapacityFigure } from './fact-model';
 
 export type CapexState =
   | 'none'
@@ -667,6 +668,10 @@ export interface CapexProject {
   /** One line, lifecycle order, only what is on file: "Capex ₹480+ Crore →
    *  commercial production January 2025 → … → margin contribution pending". */
   line: string;
+  /** Two capacity figures in one chain that are not the same measure or
+   *  scope: "UNCLEAR — unit/scope mismatch: 55 MT vs 150,000 MTPA, no delta
+   *  calculated". The later step is not read as this capacity's. (zzz773) */
+  mismatch?: string | null;
 }
 
 const STOP = new Set(['facility', 'facilities', 'plant', 'plants', 'capacity', 'expansion', 'programme', 'program', 'project',
@@ -884,6 +889,20 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
         else set('REVENUE_CONTRIBUTION', 'target', whenOf(rf) ? `from ${whenOf(rf)!.replace(/^(?:from|in|during|by) /i, '')}` : short(rf, 70), null);
       }
     }
+    // ── ONE CHAIN, ONE MEASURE.                                       (zzz773)
+    // LLOYDSENT chained "capacity added 150,000 MTPA → commissioned 55Mnt":
+    // two figures, two measures, two assets. A commissioning figure that is
+    // not the same measure and scope as the capacity it follows is not that
+    // capacity's commissioning: the step is not claimed, and the line says why.
+    let mismatch: string | null = null;
+    {
+      const cap = steps.get('CAPACITY_CREATED'), com = steps.get('COMMISSIONED');
+      const capV = cap?.value ? cap.value.replace(/\s*\(management statement\)$/, '') : null;
+      if (capV && com?.value && hasQuantity(capV) && isCapacityFigure(capV) && isCapacityFigure(com.value)) {
+        mismatch = capacityMismatch({ value: com.value, quote: com.quote }, { value: capV, quote: cap!.quote });
+        if (mismatch) steps.delete('COMMISSIONED');
+      }
+    }
     // IMPLIED: a later ACTUAL step proves an earlier one happened even when
     // the documents never said so — marked as such, never as disclosed.
     const lastActual = LIFECYCLE_STEPS.reduce((m, st, i) => (steps.get(st)?.state === 'actual' ? i : m), -1);
@@ -912,7 +931,8 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
     if (rev.state === 'pending') parts.push('revenue contribution pending');
     else if (rev.state === 'target') parts.push('earning pending');
     else if (mar.state === 'pending') parts.push('margin contribution pending');
-    const line = parts.join(' → ').replace(/^./, (c) => c.toUpperCase());
+    const line0 = parts.join(' → ').replace(/^./, (c) => c.toUpperCase());
+    const line = mismatch ? `${line0} · ${mismatch}` : line0;
 
     const locMatch = /\b(?:at|in)\s+([A-Z][a-z]+(?:,\s*[A-Z][a-z]+)?)\b/.exec(name === OTHER ? '' : name);
     out.push({
@@ -935,6 +955,7 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
       source_ids: Array.from(new Set(ordered.flatMap((x) => x.sourceIds))),
       steps: ordered,
       line,
+      mismatch,
     });
   }
   return out;

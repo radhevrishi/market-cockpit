@@ -129,6 +129,11 @@ export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; ra
       <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text }}>
         <span style={{ ...label, marginRight: 6 }}>WHY RESEARCH</span>{txt(it.whyResearch, 'Not established')}
       </div>
+      {it.news?.narrative && (
+        <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>
+          <span style={{ ...label, marginRight: 6 }}>RUNNING STORY</span>{it.news.narrative.label} · covered on {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) · press, unverified — “{it.news.narrative.lead}”
+        </div>
+      )}
       {unknowns.length > 0 && (
         <div style={{ fontSize: 13, lineHeight: 1.5, color: C.dim }} title={unknowns.join('\n')}>
           <span style={{ ...label, marginRight: 6 }}>KEY UNKNOWN</span>{unknowns[0]}

@@ -100,7 +100,7 @@ export function valueClause(text: string, value: string | null | undefined): str
   return i >= 0 ? parts[i] : s;
 }
 
-const FORWARD = /\b(expect(?:s|ed|ing)?|anticipat\w*|will|shall|going to|plan(?:s|ned|ning)?|to be (?:commissioned|completed|added|operational)|upcoming|soon|next (?:couple|few|two|three|year|quarter)|in the coming|by (?:the )?(?:end|FY|Q[1-4]|20\d\d)|target(?:s|ed|ing)?|aim(?:s|ing)?|would|at peak|optimum|potential|pipeline|roadmap|on track to|(?:are|is|we're) (?:expanding|adding|setting up|building|doubling|tripling))\b/i;
+const FORWARD = /\b(expect(?:s|ed|ing)?|anticipat\w*|will|shall|going to|plan(?:s|ned|ning)?|to be (?:commissioned|completed|added|operational)|upcoming|soon|next (?:couple|few|two|three|year|quarter)|in the coming|by (?:the )?(?:end|FY|Q[1-4]|20\d\d)|target(?:s|ed|ing)?|aim(?:s|ing)?|would|at peak|optimum|potential|pipeline|roadmap|on track to|(?:are|is|we're) (?:expanding|adding|setting up|building|doubling|tripling)|set to (?:commission|start|begin|commence)|(?:is|are) to be|to (?:enhance|expand|augment|increase|raise|double|scale up) (?:the |its |our )?(?:[\w-]+(?:'s|’s)? )?capacit\w*)\b/i;
 const NOT_FORWARD = /\b(than expected|as expected|was expected|were expected|had planned|as planned)\b/gi;
 const CURRENT_MARK = /\b(this (?:particular )?quarter|during the quarter|in the quarter|current(?:ly)?|today|as of now|as on date|as of date|at present|in hand|in Q[1-4]|stood at|stands? at|now stand|achieved|recorded|reported|are live|is live)\b/i;
 
@@ -258,6 +258,11 @@ export function hedgedAround(text: string | null | undefined, value: string | nu
   return HEDGE.test(cut >= 0 ? before.slice(cut + 1) : before);
 }
 
+/** "The Board has approved … to enhance the project's capacity" — a plan. (zzz773) */
+export function approvalPlan(text: string | null | undefined, value: string | null | undefined): boolean {
+  return /\bapprov(?:ed|al)\b[^;]{0,140}?\bto (?:enhance|expand|augment|increase|raise|add|double|set up|build)\b/i.test(valueSentence(String(text || ''), value));
+}
+
 export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | null): NormalizedEvent {
   const out: NormalizedEvent = { ...e };
   const clause = valueClause(e.evidence_text, e.after ?? e.before);
@@ -267,7 +272,17 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
   const start0 = periodStart(reportingPeriod);
   const ownDates = datesIn(String(e.after ?? e.before ?? ''));
   const pastDated = !!start0 && ownDates.length > 0 && ownDates.every((d) => d.end < start0);
-  if (e.value_type === 'ACTUAL' && !pastDated && forwardAround(e.evidence_text, e.after ?? e.before)) {
+  // ── AN APPROVAL IS A PLAN.                                         (zzz773)
+  // HSCL "the Board has approved an additional capex of Rs. 128 Crores to
+  // enhance the project's capacity from 2600 MTPA to 5300 MTPA" printed as
+  // "Capacity added 2,600 → 5,300 MTPA +103.8%". Nothing was added: the
+  // board approved spending to add it.
+  const approvedPlan = approvalPlan(e.evidence_text, e.after ?? e.before);
+  if (e.value_type === 'ACTUAL' && !pastDated && approvedPlan) {
+    out.value_type = 'GUIDANCE';
+    out.original_value_type = e.value_type;
+    out.retyped_because = 'an approval to add capacity is a plan, not capacity added';
+  } else if (e.value_type === 'ACTUAL' && !pastDated && forwardAround(e.evidence_text, e.after ?? e.before)) {
     out.value_type = 'GUIDANCE';
     out.original_value_type = e.value_type;
     out.retyped_because = 'the sentence states it as expected or planned, not achieved';

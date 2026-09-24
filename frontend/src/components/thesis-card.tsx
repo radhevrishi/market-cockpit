@@ -27,11 +27,12 @@ import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
 import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, LIFECYCLE_LABEL, type CapexChain, type CapexEarning, type CapexEarningState } from '@/lib/thesis/capex-chain';
 import type { VarVerdict, VariableReading, ReadingPoint, PeriodClass } from '@/lib/thesis/variables';
 import type { ThesisVerdict } from '@/lib/thesis/status';
-import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, EVIDENCE_STATE_META, evidenceStateLine, type VarGroup } from '@/lib/thesis/taxonomy';
+import { VAR_GROUP, VAR_LABEL, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, EVIDENCE_STATE_META, evidenceStateLine, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
 import { freshnessLine } from '@/lib/thesis/evidence-ledger';
 import { BASIS_LABEL } from '@/lib/thesis/comparison';
+import { validateReading } from '@/lib/thesis/fact-model';
 
 // ── THE PALETTE.                                                   (zzz723)
 //
@@ -473,6 +474,28 @@ function CapexEarningBlock({ e, inline }: { e: CapexEarning; inline: boolean }) 
   );
 }
 
+/** Every earlier-period figure on the assessment, with the engine's decision:
+ *  the historical items it separated out, plus historical context a filing
+ *  row carries beside its current value. (zzz773) */
+export function historyItems(a: ThesisAssessment, reportingPeriod?: string | null): Array<{ label: string; period: string; value: string; active: boolean; decision: string; current: string | null }> {
+  const cur = a.currentPeriod || reportingPeriod || 'this period';
+  const out: Array<{ label: string; period: string; value: string; active: boolean; decision: string; current: string | null }> = [];
+  for (const h of a.historicalContext || []) {
+    const row = a.checked.find((c) => c.key === h.key);
+    const lc = /^[A-Z]{2,}\b/.test(h.label) ? h.label : h.label.toLowerCase();
+    const current = row && row.verdict === 'unknown' ? `${cur} ${lc}: NOT DISCLOSED`
+      : row && !h.active && row.verdict !== 'unknown' ? `${cur}: ${row.delta || row.after || 'stated'}` : h.active ? `${cur} ${lc}: NOT DISCLOSED` : null;
+    out.push({ label: h.label, period: h.period, value: h.value, active: h.active, decision: h.decision, current });
+  }
+  for (const c of a.checked) {
+    for (const x of (Array.isArray(c.context) ? c.context : []) as Array<{ value: string; asOf: string }>) {
+      out.push({ label: c.label, period: x.asOf, value: x.value, active: false, current: c.after ? `${cur}: ${c.after}` : null,
+        decision: `Context only — dated ${x.asOf}, before ${cur}; shown beside the row and never compared as ${cur}'s figure.` });
+    }
+  }
+  return out;
+}
+
 export function ThesisCard(p: ThesisCardProps) {
   const [open, setOpen] = useState(!!p.defaultOpen);
   const a = p.assessment;
@@ -641,33 +664,59 @@ export function ThesisCard(p: ThesisCardProps) {
         );
       })()}
 
-      {/* ── WHAT CHANGED — generated from persisted facts, never from a
-          summary. Deteriorations first. (zzz740) */}
-      {p.changed && p.changed.length > 0 && (
-        <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg }}>
-          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 3 }}>
-            WHAT CHANGED{p.changedFrom ? ` · ${p.changedFrom} → ${p.reportingPeriod}` : p.reportingPeriod ? ` · ${p.reportingPeriod} (first read)` : ''}
-          </div>
-          {p.changed.map((c, i) => {
-            // The time-series reading, when the variables layer supplied
-            // one, replaces the free-text value: current → previous → Δ →
-            // direction, with any non-current point labelled. (zzz771)
-            const row = a?.checked.find((x) => x.key === c.metric) as any;
-            const rd: VariableReading | null = row?.reading || null;
-            // A QoQ-only row prints its level and labelled seasonal delta,
-            // not the reading's "unclear" text. (zzz772)
-            const rt = row && isQoqOnly(row) ? { text: chipValue(row), tags: [] as string[], displaced: false }
-              : rd && rd.display ? readingText(rd) : null;
-            return (
-              <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
-                <span style={{ fontWeight: 900, color: c.sign === '+' ? C.up : c.sign === '-' ? C.down : C.faint }}>{c.sign}</span>{' '}
-                <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{rt ? `${row.label}: ${rt.text}` : humanTokens(c.text)}</span>
-                {rt && rt.tags.map((t) => <ClassTag key={t} word={t} />)}
+      {/* ── WHAT CHANGED vs EVIDENCE FOUND.                         (zzz773)
+          "WHAT CHANGED · Q1 FY27 (first read)" printed "Capacity added:
+          150,000 MTPA · previous: not disclosed (first reading)" — nothing
+          had changed, because nothing comparable existed before. A line is
+          a CHANGE only when a comparable previous value exists and differs;
+          everything else is EVIDENCE FOUND for the period. Deteriorations
+          first. (zzz740) */}
+      {p.changed && p.changed.length > 0 && (() => {
+        const isChange = (c: ChangeLine) => (c.kind ? c.kind === 'change' : !!p.changedFrom && c.sign !== '·');
+        const moves = p.changed.filter(isChange);
+        const found = p.changed.filter((c) => !isChange(c));
+        const lineOf = (c: ChangeLine, i: number) => {
+          // The time-series reading, when the variables layer supplied
+          // one, replaces the free-text value: current → previous → Δ →
+          // direction, with any non-current point labelled. (zzz771)
+          const row = a?.checked.find((x) => x.key === c.metric) as any;
+          const rd: VariableReading | null = row?.reading || null;
+          // A QoQ-only row prints its level and labelled seasonal delta,
+          // not the reading's "unclear" text. (zzz772)
+          const rt = row && isQoqOnly(row) ? { text: chipValue(row), tags: [] as string[], displaced: false }
+            : rd && rd.display ? readingText(rd) : null;
+          const lbl = VAR_LABEL[c.metric] || '';
+          const bare = c.text.startsWith(lbl) ? c.text.slice(lbl.length).replace(/^:?\s*(?:actual|management claim|guidance|target)?\s*/i, '') : c.text;
+          const val = validateReading(c.metric, bare);
+          const sign = isChange(c) ? c.sign : '·';
+          return (
+            <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
+              <span style={{ fontWeight: 900, color: sign === '+' ? C.up : sign === '-' ? C.down : C.faint }}>{sign}</span>{' '}
+              <span style={{ color: sign === '·' ? C.dim : C.text }}>{rt ? `${row.label}: ${rt.text}` : humanTokens(c.text)}</span>
+              {rt && rt.tags.map((t) => <ClassTag key={t} word={t} />)}
+              {val.state === 'UNCLEAR' && <span style={{ color: C.warn, fontSize: 12 }}> · {val.reason}</span>}
+              {rt && row?.unjudged && !/historical/.test(String(row.unjudged)) && <span style={{ color: C.warn, fontSize: 12 }}> · {humanTokens(String(row.unjudged))}</span>}
+            </div>
+          );
+        };
+        const head = (t: string) => <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 3 }}>{t}</div>;
+        return (
+          <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg }}>
+            {moves.length > 0 && (
+              <div data-testid="what-changed">
+                {head(`WHAT CHANGED${p.changedFrom ? ` · ${p.changedFrom} → ${p.reportingPeriod}` : p.reportingPeriod ? ` · ${p.reportingPeriod} vs the prior figure stated in the document` : ''}`)}
+                {moves.map(lineOf)}
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
+            {found.length > 0 && (
+              <div data-testid="evidence-found" style={{ marginTop: moves.length ? 6 : 0 }}>
+                {head(`EVIDENCE FOUND${p.reportingPeriod ? ` · ${p.reportingPeriod}` : ''} — ${p.changedFrom ? 'no comparable earlier value, or unchanged' : 'no comparable prior value on file; not a change'}`)}
+                {found.map(lineOf)}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* The one-line verdict is always visible; the evidence expands. */}
       {a && (
@@ -706,7 +755,9 @@ export function ThesisCard(p: ThesisCardProps) {
         );
         return (
           <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
-            {chip(btColor, false, bt.text, <>BREAK TRIGGER: <b>{!bt.fired ? 'none fired' : warnOnly ? `none — financial warning only: ${bt.conditions.join('; ') || bt.text}` : `fired: ${bt.conditions.join('; ') || bt.text}`}</b></>, 'verdict-break')}
+            {chip(btColor, false, bt.text, <>BREAK TRIGGER: <b>{!bt.fired ? 'none fired' : warnOnly ? `none — financial warning only: ${bt.conditions.join('; ') || bt.text}` : `fired: ${bt.conditions.join('; ') || bt.text}`}</b>
+              {/* zzz773: a condition on a variable not mapped to this thesis is WATCH — named, not fired. */}
+              {/Watch — /.test(bt.text) && <span data-testid="verdict-watch" style={{ fontWeight: 600, color: ink(C.warn) }}> · watch (not mapped to this thesis, status unchanged): {bt.text.split(/Watch — [^:]*: /)[1]?.replace(/\.$/, '')}</span>}</>, 'verdict-break')}
             {chip(dirColor, v.direction === 'UNKNOWN', v.directionWhy, <>DIRECTION: <b>{DIRECTION_WORD[v.direction]}</b>{v.directionWhy ? <span style={{ fontWeight: 500 }}> — {v.directionWhy}</span> : null}</>, 'verdict-direction')}
             {chip(evColor, v.evidence === 'UNCHECKED' || v.evidence === 'INCOMPLETE', v.evidenceWhy,
               <>EVIDENCE: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural)
@@ -722,6 +773,11 @@ export function ThesisCard(p: ThesisCardProps) {
           So the financial group is one row among several rather than the
           whole card, and a hollow ○ is a variable nobody looked at — never a
           variable that was checked and did not move. */}
+      {a && (
+        <div data-testid="current-period-head" style={{ marginTop: 8, fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.dim }}>
+          {(a.currentPeriod || p.reportingPeriod || 'CURRENT PERIOD').toUpperCase()} — CURRENT-PERIOD EVIDENCE
+        </div>
+      )}
       {a && (() => {
         const byGroup = new Map<VarGroup, typeof a.checked>();
         for (const c of a.checked) {
@@ -829,6 +885,8 @@ export function ThesisCard(p: ThesisCardProps) {
                           {!un && (tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
                             && <span style={{ fontSize: 11 }}> · {tWord}</span>}
                           {tags.map((t) => <ClassTag key={t} word={t} />)}
+                          {(c as any).historical?.active && <ClassTag word={`${(c as any).historical.period} · HISTORICAL / UNRESOLVED`} />}
+                          {(c as any).watch && <ClassTag word="WATCH" />}
                         </span>
                       );
                     })}
@@ -862,6 +920,28 @@ export function ThesisCard(p: ThesisCardProps) {
         </div>
       )}
 
+      {/* ── HISTORICAL CONTEXT, APART FROM THE CURRENT PERIOD.    (zzz773)
+          "Cash conversion -7.62× (last FY)" sat on the board as if it were
+          Q1 FY27's reading and moved Q1 FY27's status. Every earlier-period
+          figure is printed here instead, each with the status engine's own
+          decision on whether it remains an active thesis condition. */}
+      {a && historyItems(a, p.reportingPeriod).length > 0 && (
+        <div data-testid="historical-context" style={{ marginTop: 7, fontSize: 13, lineHeight: 1.55, padding: '6px 9px', borderRadius: 6,
+          border: `1px dashed ${C.faint}`, background: 'transparent' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>
+            HISTORICAL CONTEXT — earlier periods, not {a.currentPeriod || p.reportingPeriod || 'current-period'} evidence
+          </div>
+          {historyItems(a, p.reportingPeriod).map((h, i) => (
+            <div key={i} data-testid="historical-item" data-active={h.active ? 'true' : 'false'} style={{ color: C.dim }} title={h.decision}>
+              <span style={{ color: C.text }}>{h.label} — {h.period}: <b>{humanTokens(rupee(h.value))}</b> · historical</span>
+              {h.current && <span style={{ color: C.faint }}> · {h.current}</span>}
+              <span style={{ color: h.active ? ink(C.warn) : C.faint, fontWeight: h.active ? 700 : 500 }}> · {h.active ? 'active thesis condition — historical / unresolved' : 'context only — not an active thesis condition'}</span>
+              <div style={{ fontSize: 12, color: C.faint, paddingLeft: 10 }}>{h.decision}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ── THE EVIDENCE MATRIX, THREE POPULATIONS.              (zzz738)
           "4 confirmed · 1 pending" counted revenue, margin, earnings and
           cash conversion as confirmations while every mechanism variable
@@ -874,7 +954,8 @@ export function ThesisCard(p: ThesisCardProps) {
             ['MECHANISM', a.coverage.mechanism, 'the WHY — capacity, utilisation, orders, capex, customers, one-offs, cash'],
             ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
             ['FORWARD', a.coverage.forward, 'what management commits to next'],
-          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; unclear?: number; not_applicable?: number; core_variables?: number; total: number }, string]>)
+          ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; unclear?: number; not_applicable?: number; core_variables?: number; total: number;
+            watch?: number; named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[] } }, string]>)
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
               <div key={name} title={hint}>
@@ -890,6 +971,18 @@ export function ThesisCard(p: ThesisCardProps) {
                 {(t.stated || 0) > 0 && <span style={{ color: C.flat }}> · {t.stated} level only</span>}
                 {(t.flat || 0) > 0 && <span style={{ color: C.flat }}> · {t.flat} flat</span>}
                 {(t.not_applicable || 0) > 0 && <span style={{ color: C.faint }} title="Cannot apply to this business — never counted as pending."> · {t.not_applicable} n/a</span>}
+                {(t.watch || 0) > 0 && <span style={{ color: C.warn }} title="Moved the wrong way, but not mapped to this thesis type — context, never status-changing."> · {t.watch} watch</span>}
+                {/* ── EVERY COUNT NAMES ITS VARIABLES.                    (zzz773)
+                    "1 contradicted · of 4" named nothing; each non-confirmed
+                    variable is listed with its figure. */}
+                {t.named && ([
+                  ['Contradicted', t.named.contradicted, C.down], ['Pending', t.named.pending, C.warn],
+                  ['Unclear', t.named.unclear, C.flat], ['Watch', t.named.watch, C.warn],
+                ] as Array<[string, string[], string]>).filter(([, xs]) => xs.length > 0).map(([w, xs, col]) => (
+                  <div key={w} data-testid={`tally-${name.toLowerCase()}-${w.toLowerCase()}`} style={{ paddingLeft: 78, fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
+                    <b style={{ color: ink(col) }}>{w}:</b> {xs.map(humanTokens).join(' · ')}
+                  </div>
+                ))}
               </div>
             ))}
           {a.coverage.missingCore.length > 0 && (
@@ -921,7 +1014,7 @@ export function ThesisCard(p: ThesisCardProps) {
       {a && open && (
         <>
           {/* ── WHAT CHANGED — facts only. ─────────────────────────────── */}
-          <Section label={`WHAT CHANGED${p.reportingPeriod ? ` · ${p.reportingPeriod}` : ''} · ${changed.length} variable${changed.length === 1 ? '' : 's'} read from the evidence`}>
+          <Section label={`${a.currentPeriod || p.reportingPeriod || 'CURRENT PERIOD'} — CURRENT-PERIOD EVIDENCE · ${changed.length} variable${changed.length === 1 ? '' : 's'} read from the evidence`}>
             {changed.length === 0 && (
               <div style={{ fontSize: 13.5, color: C.dim }}>
                 Nothing structural was disclosed. That is silence, not bad news.
@@ -959,6 +1052,8 @@ export function ThesisCard(p: ThesisCardProps) {
                           <b>{chipValue(cc)}</b>
                           {(tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {treatmentWord(tr, cc, chipValue(cc))}</span>}
                           {rdTags.map((t) => <ClassTag key={t} word={t} />)}
+                          {cc.historical?.active && <ClassTag word={`${cc.historical.period} · HISTORICAL / UNRESOLVED`} />}
+                          {cc.watch && <ClassTag word="WATCH — not mapped to this thesis" />}
                           {cc.comparison?.change_type === 'UNCHANGED' && cc.comparison?.basis === 'WITHIN_DOCUMENT' && tr !== 'UNCHANGED' && <b style={{ color: C.flat }}> · FLAT</b>}
                           <span style={{ display: 'block', fontSize: 12, color: C.dim, marginTop: 1 }}>
                             {tag && <b style={{ color: tag.color, letterSpacing: 0.3 }}>{tag.word}</b>}
@@ -1396,7 +1491,9 @@ export function ThesisCard(p: ThesisCardProps) {
                     {' '}· read {pr.extracted_at.slice(0, 10)}{pr.updated_at !== pr.extracted_at ? `, updated ${pr.updated_at.slice(0, 10)}` : ''}
                     <div style={{ color: C.faint, paddingLeft: 10 }}>
                       {pr.events.slice(0, 8).map((e, i) => (
-                        <div key={i} title={e.evidence_text}>{e.variable.replace(/_/g, ' ')} · {e.value_type.toLowerCase().replace('_', ' ')}{e.before ? ` ${e.before} →` : ''} {e.after || ''}{e.unit && !/%/.test(String(e.after || '')) ? ` ${e.unit}` : ''}{e.period ? ` (${e.period})` : ''} — {e.source}</div>
+                        <div key={i} title={e.evidence_text}>{e.variable.replace(/_/g, ' ')} · {e.value_type.toLowerCase().replace('_', ' ')}{e.before ? ` ${e.before} →` : ''} {e.after || ''}{e.unit && !/%/.test(String(e.after || '')) ? ` ${e.unit}` : ''}{e.period ? ` (${e.period})` : ''} — {e.source}
+                          {/* zzz773: a unit-less amount or a counterparty-less "customer" is UNCLEAR, with its source kept. */}
+                          {(() => { const v = validateReading(e.variable, e.after, e.evidence_text, e.unit); return v.state === 'UNCLEAR' ? <span style={{ color: C.warn }}> · {v.reason}</span> : null; })()}</div>
                       ))}
                       {pr.events.length > 8 && <div>… {pr.events.length - 8} more events</div>}
                     </div>

@@ -160,6 +160,7 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       {extra}
       {onOpen && <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button>}
       {it.eventClass === 'NO_CATALYST' && it.scanNote && <div style={{ flexBasis: '100%' }}><ScanNote it={it} /></div>}
+      {it.news?.narrative && <div style={{ flexBasis: '100%', fontSize: 12, color: C.dim }}>Press (unverified): <b style={{ color: C.text }}>{it.news.narrative.label}</b> story over {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) — “{it.news.narrative.lead}”</div>}
     </div>
   );
 }
@@ -222,6 +223,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
   const dq = (view.dataQuality || []).filter((it) => !isBand(it));
   const listings = dq.filter((it) => it.eventClass === 'LISTING' || it.flags?.listing);
   const fails = view.sourceFailures || [];
+  const partial = view.partialFailures || [];
   const context = view.context || [];   // zzz771: absent on older cached views → section hidden
   const empty = (view.summary?.scanned || 0) === 0;
 
@@ -323,11 +325,21 @@ export function ResearchTriage(props: ResearchTriageProps) {
           )}
 
           {fails.length > 0 && (
-            <Collapsible testid="source-failures" title={`⚠ DATA-SOURCE FAILURES`} count={fails.length} color={C.amber} sub="DATA UNAVAILABLE ≠ NO DATA FOUND — these names were not checked.">
+            <Collapsible testid="source-failures" title={`⚠ DATA-SOURCE FAILURES`} count={fails.length} color={C.amber} sub="DATA UNAVAILABLE ≠ NO DATA FOUND — the filing source did not answer for these names, so their filings were not checked. The research retries them automatically once; the press line is secondary context, not a finding.">
               {fails.map((f, i) => (
-                <div key={`${f.ticker}:${i}`} title={f.full || f.text} style={{ fontSize: 12, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <b style={{ color: C.text }}>{f.ticker}</b> · {txt(f.text, 'source unavailable')}
+                <div key={`${f.ticker}:${i}`} style={{ fontSize: 12, color: C.dim, padding: '4px 0', borderTop: `1px solid ${C.border}` }}>
+                  <div title={f.full || f.text} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><b style={{ color: C.text }}>{f.ticker}</b> · {txt(f.text, 'source unavailable')}</div>
+                  {f.news?.narrative
+                    ? <div style={{ color: C.dim, marginTop: 2 }}>Press (unverified): <b style={{ color: C.text }}>{f.news.narrative.label}</b> story, {f.news.narrative.days} days ({f.news.narrative.firstDate} → {f.news.narrative.lastDate}) — “{f.news.narrative.lead}”</div>
+                    : f.news?.items?.[0] ? <div style={{ color: C.dim, marginTop: 2 }}>Press (unverified): {f.news.items[0].date} — <a href={f.news.items[0].url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }}>{f.news.items[0].title}</a></div> : null}
                 </div>
+              ))}
+            </Collapsible>
+          )}
+          {partial.length > 0 && (
+            <Collapsible testid="partial-failures" title="PARTIAL DATA — price history missing" count={partial.length} sub="Filings WERE checked for these names; only the price history failed, so the market response and pricing assessment are not measured.">
+              {partial.map((f, i) => (
+                <div key={`${f.ticker}:${i}`} title={f.full} style={{ fontSize: 12, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>{f.text}</div>
               ))}
             </Collapsible>
           )}

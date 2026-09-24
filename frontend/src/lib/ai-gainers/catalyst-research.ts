@@ -42,7 +42,9 @@ import { classifyUsFiling, fmtUsdM } from './us-gainers';
  *  cached — never a new model read. (zzz769)
  *  zzz771: clarification vs true denial split, fundraising no longer negative
  *  by default, US resale/shelf registrations told apart from a new raise. */
-export const RULES_VERSION = '2026-09-23.zzz771';
+import type { NewsContext } from './news-context';
+
+export const RULES_VERSION = '2026-09-24.zzz773';
 
 export type ResearchStatus =
   | 'catalyst'          // a dated, sourced event survived the reject gates
@@ -78,7 +80,55 @@ export interface ClassifiedAnnouncement extends AnnouncementLite {
   routineReason: string | null;
 }
 
-export interface Returns { m1: number | null; m3: number | null; m6: number | null; y1: number | null; history: number }
+export interface Returns {
+  m1: number | null; m3: number | null; m6: number | null; y1: number | null; history: number;
+  /** zzz772: the last ~140 dated closes, so the reaction to a DATED event can
+   *  be measured against the close before it. Absent on inputs stored before
+   *  zzz772 — the pricing assessment then says INSUFFICIENT EVIDENCE. */
+  tail?: Array<[string, number]>;
+}
+
+/** ── zzz772: EVIDENCE, MARKET RESPONSE AND PRICING, KEPT APART. ─────────────
+ *  The old score read "stock up 1M → priced, stock down → not priced". The
+ *  owner's rule: a price move is evidence about the market's response, never
+ *  proof of whether a catalyst is priced. Pricing is assessed only against a
+ *  defined comparison — the reaction since the close before the filing versus
+ *  the event's size — and says INSUFFICIENT EVIDENCE whenever that cannot be
+ *  built. */
+export type EvidenceState = 'DOCUMENT_VERIFIED' | 'SUMMARY_ONLY' | 'UNVERIFIED' | 'SOURCE_UNAVAILABLE' | 'NO_RELEVANT_FILING';
+export type PricingState = 'INSUFFICIENT_EVIDENCE' | 'RAN_UP_BEFORE_FILING' | 'REACTION_SMALL_VS_SIZE' | 'REACTION_IN_LINE' | 'REACTION_EXCEEDS_SIZE' | 'FELL_AFTER_FILING';
+export interface MarketResponse {
+  d1: number | null; m1: number | null; m3: number | null;
+  /** % from the last close BEFORE the filing date to the latest close. */
+  sinceFiling: number | null;
+  /** % over the 20 sessions that ended at the close before the filing. */
+  preFiling20: number | null;
+  sessionsSinceFiling: number | null;
+}
+export interface Pricing { state: PricingState; text: string; adj: number }
+export interface ScoreComponents {
+  freshness: number;
+  /** Materiality after the evidence-confidence haircut — the value the NET uses. */
+  materiality: number;
+  materialityRaw?: number;
+  /** 1.0 when the value was read in the document; 0.6 for a summary-only value. */
+  materialityConfidence?: number;
+  transmission: number;
+  persistence: number;
+  sourceMult: number;
+  /** Kept for stored findings: (1 − pricingAdj) × 100. */
+  pricedIn: number;
+  pricingAdj?: number;
+  /** (0.30F + 0.30M + 0.25T + 0.15P), before the multipliers. */
+  base?: number;
+  /** base × source × pricing, before any cap — the number a reader can recompute. */
+  netUncapped?: number;
+  /** Every cap applied, in words, with its level. */
+  caps?: string[];
+  evidence?: EvidenceState;
+  pricing?: Pricing;
+  response?: MarketResponse;
+}
 
 export interface Finding {
   ticker: string;
@@ -99,7 +149,7 @@ export interface Finding {
   valueStated: number | null;
   valuePctMcap: number | null;
   net: number | null;
-  components: { freshness: number; materiality: number; transmission: number; persistence: number; sourceMult: number; pricedIn: number } | null;
+  components: ScoreComponents | null;
   verdict: Verdict | null;
   returns: Returns | null;
   bandPrint: boolean;
@@ -121,6 +171,8 @@ export interface Finding {
    *  or story and is negative evidence. Absent on findings built before
    *  zzz771 (the view then reads the headline). */
   denialKind?: 'clarification' | 'denial';
+  /** Dated press coverage — secondary, never the catalyst, never a number in NET. (zzz773) */
+  news?: NewsContext | null;
 }
 
 // ── denial vs clarification (zzz771) ──────────────────────────────────────
@@ -338,7 +390,8 @@ export function returnsFromSeries(series: Array<[string, number]>): Returns {
   const back = (n: number) => (v.length > n && last ? ((last / v[v.length - 1 - n]) - 1) * 100 : null);
   // A year of trading is ~247–252 sessions; a series of 247 points IS a year.
   const y1 = v.length >= 240 ? back(Math.min(247, v.length - 1)) : null;
-  return { m1: back(21), m3: back(63), m6: back(126), y1, history: v.length };
+  const tail = series.filter(([, c]) => Number.isFinite(c) && c > 0).slice(-90).map(([d, c]) => [String(d).slice(0, 10), c] as [string, number]);
+  return { m1: back(21), m3: back(63), m6: back(126), y1, history: v.length, tail };
 }
 
 /** Indian exchanges band small caps at 2/5/10/20%. A close within 0.15pp of a
@@ -387,39 +440,106 @@ const PERSISTENCE: Record<string, number> = {
   demerger: 40, divestiture: 40, fundraising: 40, buyback: 40, promoter_purchase: 40, rating_action: 40,
 };
 
-export function pricedInOf(r: Returns | null): number {
-  if (!r) return 15;
-  const w = (v: number | null, k: number) => (v == null ? 0 : v * k);
-  const denom = [r.m1, r.m3, r.m6, r.y1].filter((x) => x != null).length ? 1 : 0;
-  if (!denom) return 15;
-  const blended = w(r.m1, 0.40) + w(r.m3, 0.35) + w(r.m6, 0.15) + w(r.y1, 0.10);
-  return blended >= 100 ? 100 : blended >= 50 ? 80 : blended >= 25 ? 60 : blended >= 10 ? 35 : blended >= 0 ? 15 : 0;
+/** ── MARKET RESPONSE (zzz773) ─────────────────────────────────────────────
+ *  What the price did around the DATED filing, measured from the last close
+ *  before the filing date. Evidence about the market's response — never, on
+ *  its own, proof of whether the catalyst is priced. */
+export function marketResponseOf(r: Returns | null, filingIso: string | null | undefined, movePct: number | null = null): MarketResponse {
+  const out: MarketResponse = { d1: movePct, m1: r?.m1 ?? null, m3: r?.m3 ?? null, sinceFiling: null, preFiling20: null, sessionsSinceFiling: null };
+  const tail = r?.tail;
+  const day = filingIso ? String(filingIso).slice(0, 10) : '';
+  if (!tail || tail.length < 2 || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return out;
+  // The filing can move the close of the day it was filed, so the reference
+  // is the last close strictly BEFORE the filing date.
+  let i = -1;
+  for (let k = tail.length - 1; k >= 0; k--) if (tail[k][0] < day) { i = k; break; }
+  if (i < 0) return out;                                    // filing older than the series
+  const pre = tail[i][1], last = tail[tail.length - 1][1];
+  out.sinceFiling = Math.round(((last / pre) - 1) * 1000) / 10;
+  out.sessionsSinceFiling = tail.length - 1 - i;
+  if (i >= 20) out.preFiling20 = Math.round(((pre / tail[i - 20][1]) - 1) * 1000) / 10;
+  return out;
 }
 
-export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: number | null; returns: Returns | null; sourceTier: Finding['sourceTier']; verifiedQuote: boolean }): { net: number; components: NonNullable<Finding['components']>; verdict: Verdict; valuePctMcap: number | null } {
+/** ── PRICING ASSESSMENT (zzz773) ───────────────────────────────────────────
+ *  Only a DEFINED comparison is allowed: the reaction since the close before
+ *  the filing against the event's size (value ÷ market cap), plus the run in
+ *  the 20 sessions before it. Anything short of that is INSUFFICIENT
+ *  EVIDENCE — never "down means not priced, up means priced". The adjustment
+ *  is the only price input to NET, and it is printed. */
+export function pricingOf(resp: MarketResponse, sizePct: number | null, stage: Stage | null): Pricing {
+  const s = (v: number | null) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`);
+  if (resp.sinceFiling == null) return { state: 'INSUFFICIENT_EVIDENCE', adj: 1, text: 'No dated price series around the filing — the reaction to it cannot be measured.' };
+  if (resp.preFiling20 != null && resp.preFiling20 >= 25) {
+    return { state: 'RAN_UP_BEFORE_FILING', adj: 0.75, text: `Ran ${s(resp.preFiling20)} in the 20 sessions before the filing — part of the news may have been anticipated. ×0.75.` };
+  }
+  if (stage === 'enabling' || stage === 'scheduled') return { state: 'INSUFFICIENT_EVIDENCE', adj: 1, text: `${s(resp.sinceFiling)} since the filing, but a ${stage} event has no size to compare the reaction with.` };
+  if (sizePct == null) return { state: 'INSUFFICIENT_EVIDENCE', adj: 1, text: `${s(resp.sinceFiling)} since the close before the filing; no stated value, so the reaction cannot be compared with the event's size.` };
+  if (resp.sinceFiling <= -3) return { state: 'FELL_AFTER_FILING', adj: 1, text: `${s(resp.sinceFiling)} since the filing — the market has not rewarded it. A response, not proof it is unpriced.` };
+  const ratio = sizePct > 0 ? resp.sinceFiling / sizePct : Infinity;
+  if (ratio <= 0.5) return { state: 'REACTION_SMALL_VS_SIZE', adj: 1, text: `${s(resp.sinceFiling)} since the filing against an event worth ${sizePct.toFixed(1)}% of mcap — reaction small for its size.` };
+  if (ratio <= 2) return { state: 'REACTION_IN_LINE', adj: 0.85, text: `${s(resp.sinceFiling)} since the filing against an event worth ${sizePct.toFixed(1)}% of mcap — reaction in line with its size. ×0.85.` };
+  return { state: 'REACTION_EXCEEDS_SIZE', adj: 0.6, text: `${s(resp.sinceFiling)} since the filing against an event worth ${sizePct.toFixed(1)}% of mcap — the stock moved more than twice the event's size. ×0.60.` };
+}
+
+/** How the catalyst's content was established. */
+export function evidenceStateOf(c: ClassifiedAnnouncement, verifiedQuote: boolean): EvidenceState {
+  if (verifiedQuote) return 'DOCUMENT_VERIFIED';
+  if (c.summary && c.summary.trim().length >= 20) return 'SUMMARY_ONLY';
+  return 'UNVERIFIED';
+}
+/** A value read in the document is trusted in full; a summary's is not. */
+export const MATERIALITY_CONFIDENCE: Record<EvidenceState, number> = { DOCUMENT_VERIFIED: 1, SUMMARY_ONLY: 0.6, UNVERIFIED: 0.4, SOURCE_UNAVAILABLE: 0, NO_RELEVANT_FILING: 0 };
+const SOURCE_MULT: Record<Finding['sourceTier'], number> = { primary: 1, secondary: 0.75, tertiary: 0.4, unsourced: 0 };
+const r1 = (v: number) => Math.round(v * 10) / 10;
+
+/** NET = (0.30·F + 0.30·M + 0.25·T + 0.15·P) × source × pricing, then caps.
+ *  Every term is returned, so the displayed components reproduce the number.
+ *  M is materiality after the evidence-confidence haircut. */
+export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: number | null; returns: Returns | null; sourceTier: Finding['sourceTier']; verifiedQuote: boolean; movePct?: number | null }): { net: number; components: ScoreComponents; verdict: Verdict; valuePctMcap: number | null } {
   const freshness = FRESH(c.ageDays);
   const mat = materialityOf(c, opts.marketCap);
+  const evidence = evidenceStateOf(c, opts.verifiedQuote);
+  const conf = MATERIALITY_CONFIDENCE[evidence];
+  const materiality = r1(mat.score * conf);
   let transmission = TRANSMISSION[String(c.category || '')] ?? 40;
   if (c.stage === 'enabling') transmission = Math.min(transmission, 20);
   if (c.stage === 'scheduled') transmission = Math.min(transmission, 40);
   const persistence = PERSISTENCE[String(c.category || '')] ?? 40;
-  const sourceMult = opts.sourceTier === 'primary' ? (opts.verifiedQuote ? 1.0 : 0.85) : opts.sourceTier === 'secondary' ? 0.75 : opts.sourceTier === 'tertiary' ? 0.4 : 0;
-  const pricedIn = pricedInOf(opts.returns);
-  let net = (0.30 * freshness + 0.30 * mat.score + 0.25 * transmission + 0.15 * persistence) * sourceMult * (1 - pricedIn / 100);
+  const sourceMult = SOURCE_MULT[opts.sourceTier] ?? 0;
+  const response = marketResponseOf(opts.returns, c.dateIso, opts.movePct ?? null);
+  const pricing = pricingOf(response, mat.pct, c.stage);
+  const base = r1(0.30 * freshness + 0.30 * materiality + 0.25 * transmission + 0.15 * persistence);
+  const netUncapped = r1(base * sourceMult * pricing.adj);
+  let net = netUncapped;
+  const caps: string[] = [];
+  const cap = (lvl: number, why: string) => { if (net > lvl) { net = lvl; caps.push(`${why} → capped at ${lvl}`); } };
   let verdict: Verdict;
-  if (mat.gated) { net = Math.min(net, 17); verdict = 'THIN'; }
+  if (mat.gated) { cap(17, `item is ${mat.pct!.toFixed(2)}% of market cap (under 1%)`); verdict = 'THIN'; }
   else {
-    // An event with no stated value cannot be FIRE: "never let an unmeasured
-    // event pay the same as a measured 30%-of-mcap one." It can still be ROOM.
-    if (mat.pct == null && net >= 45) net = 44.9;
-    // An appointment or a resignation moves no revenue. INOD's new director
-    // scored 44 — "ROOM, not yet priced in" — on freshness alone. It is shown
-    // as a dated fact and capped at WEAK. (zzz767)
-    if (c.category === 'management_change') net = Math.min(net, 15);
+    // An unmeasured event can never pay what a measured 30%-of-mcap one does.
+    if (mat.pct == null) cap(44.9, 'no stated value');
+    // P1 ("research first") needs the document itself: a summary can point
+    // at a catalyst, it cannot establish one. (zzz773)
+    if (evidence !== 'DOCUMENT_VERIFIED') cap(44.9, `${evidence === 'SUMMARY_ONLY' ? 'summary-only' : 'unverified'} evidence cannot rank P1`);
+    // An appointment or a resignation moves no revenue. (zzz767)
+    if (c.category === 'management_change') cap(15, 'management change moves no revenue');
     verdict = net >= 45 ? 'FIRE' : net >= 30 ? 'ROOM' : net >= 18 ? 'PRICED' : net >= 8 ? 'WEAK' : 'NONE';
   }
-  return { net: Math.round(net * 10) / 10, components: { freshness, materiality: mat.score, transmission, persistence, sourceMult, pricedIn }, verdict, valuePctMcap: mat.pct == null ? null : Math.round(mat.pct * 100) / 100 };
+  const components: ScoreComponents = {
+    freshness, materiality, materialityRaw: mat.score, materialityConfidence: conf, transmission, persistence, sourceMult,
+    pricedIn: Math.round((1 - pricing.adj) * 100), pricingAdj: pricing.adj, base, netUncapped, caps, evidence, pricing, response,
+  };
+  return { net: r1(net), components, verdict, valuePctMcap: mat.pct == null ? null : Math.round(mat.pct * 100) / 100 };
 }
+
+/** Candidate order: NET, then the uncapped score — two capped items (a
+ *  valued order and an unvalued rating note both at 44.9) are told apart by
+ *  what they scored before the cap. */
+const rankKey = (x: { net: number; components: ScoreComponents }) => x.net + (x.components.netUncapped ?? 0) / 1000;
+
+/** The verdict from a NET (after any extra cap the builder applies). */
+export const verdictOfNet = (net: number, thin = false): Verdict => thin ? 'THIN' : net >= 45 ? 'FIRE' : net >= 30 ? 'ROOM' : net >= 18 ? 'PRICED' : net >= 8 ? 'WEAK' : 'NONE';
 
 // ── 4. FROM A SWEEP TO A FINDING ───────────────────────────────────────────
 
@@ -444,7 +564,7 @@ export function chooseCandidate(announcements: AnnouncementLite[], market: 'IN' 
     .filter((a) => !filedAfterClose(a.dateIso, opts.sessionCloseIso))
     .map((a) => classifyAnnouncement(a, market));
   const cands = inWindow.filter((a) => a.kind === 'catalyst' && a.category !== 'rating_action')
-    .map((a) => ({ a, s: scoreCatalyst(a, { marketCap: opts.marketCap, returns: opts.returns, sourceTier: 'primary', verifiedQuote: false }).net }))
+    .map((a) => ({ a, s: rankKey(scoreCatalyst(a, { marketCap: opts.marketCap, returns: opts.returns, sourceTier: 'primary', verifiedQuote: false })) }))
     .sort((x, y) => y.s - x.s);
   return cands.length ? cands[0].a : null;
 }
@@ -464,6 +584,8 @@ export interface SweepInput {
   sessionCloseIso?: string | null;
   /** A model-verified read of the chosen announcement, when one was made. */
   read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null } | null;
+  /** Press coverage read for this name (zzz773). */
+  news?: NewsContext | null;
   /** The graders hold a filed quarterly result behind this move (the scan's
    *  filed-results rows). A recent listing that has one is NOT a listing
    *  artifact only: the result is the context, the listing a caveat. (zzz769) */
@@ -485,17 +607,17 @@ export function buildFinding(inp: SweepInput): Finding {
     ticker: inp.ticker, company: inp.company, market: inp.market, movePct: inp.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
     status: 'none', category: null, stage: null, headline: null, evidenceQuote: null, sourceUrl: null, sourceDate: null, sourceTier: 'unsourced',
     ageDays: null, valueStated: null, valuePctMcap: null, net: null, components: null, verdict: null,
-    returns: inp.returns, bandPrint: band.band, bandLevel: band.level, listingDays,
+    returns: inp.returns ? { m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
     routine: inWindow.filter((a) => a.kind === 'routine').map((a) => a.subject).slice(0, 6),
     filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read,
-    researchedAt: now, sources: inp.sources,
+    researchedAt: now, sources: inp.sources, news: inp.news ?? null,
   };
   if (band.band) base.notes.push(`Closed at the ${band.level}% band${inp.turnover != null ? ` (avg daily value ~${fmtMoney(inp.turnover, inp.market)}, 1-week average)` : ''} — a band print measures the band, not demand.`);
   const lateSubstantive = afterClose.filter((a) => a.kind === 'catalyst' || a.kind === 'negative' || a.kind === 'denial');
   if (lateSubstantive.length) base.notes.push(`Filed after the session closed, so it cannot explain this move: ${lateSubstantive.slice(0, 2).map((a) => `${short(a.summary || a.subject)} (${fmtDate(a.dateIso)})`).join('; ')}.`);
-  if (inp.returns && inp.returns.m1 != null && inp.returns.m3 != null && inp.returns.m1 < 0 && inp.returns.m3 < 0) base.notes.push(`Down ${fmtPct(inp.returns.m1)} over 1M and ${fmtPct(inp.returns.m3)} over 3M — a one-day bounce in a falling stock, not a gainer.`);
+  if (inp.returns && inp.returns.m1 != null && inp.returns.m3 != null && inp.returns.m1 <= -5 && inp.returns.m3 <= -10) base.notes.push(`Trend context: ${fmtPct(inp.returns.m1)} over 1M and ${fmtPct(inp.returns.m3)} over 3M — today's move is inside a falling trend.`);
 
-  if (inp.sourceFailed && !inWindow.length) return { ...base, status: 'source_failed', notes: [...base.notes, 'The filing source could not be reached — this is not "nothing filed".'] };
+  if (inp.sourceFailed && !inWindow.length) return { ...base, status: 'source_failed', notes: [...base.notes, 'The filing source could not be reached — this is not "nothing filed".', ...(inp.news?.narrative ? [`Press coverage (secondary, unverified): ${inp.news.narrative.label.toLowerCase()} story running ${inp.news.narrative.firstDate} → ${inp.news.narrative.lastDate} — “${inp.news.narrative.lead}”.`] : [])] };
   // No price history at all (a name too new for the chart API) plus the
   // paperwork a fresh listing files — Reg 7 / Reg 8(2) / listing intimation
   // — is a recent listing until proven otherwise.
@@ -541,9 +663,9 @@ export function buildFinding(inp: SweepInput): Finding {
     const note = negative.category === 'dilution'
       ? (resale ? 'Resale / shelf registration: existing or future stock registered for sale — a supply overhang, not a new raise and not this move\'s catalyst.' : 'An offering is supply into the move: a new raise dilutes holders. Check pricing, size against market cap and named buyers.')
       : 'A negative filing in the window. The move is not explained by it.';
-    return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.routineReason || negative.subject, 140), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, valueStated: negative.category === 'dilution' && !resale ? negative.valueStated : null, notes: [...base.notes, note] };
+    return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.routineReason || negative.subject, 300), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, valueStated: negative.category === 'dilution' && !resale ? negative.valueStated : null, notes: [...base.notes, note] };
   }
-  if (negative) return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.summary || negative.subject), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, 'The only substantive in-window filing is negative. The move is not explained by it.'] };
+  if (negative) return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.summary || negative.subject, 300), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, 'The only substantive in-window filing is negative. The move is not explained by it.'] };
   const query = inWindow.find((a) => a.kind === 'exchange_query');
 
   // The candidate: the freshest catalyst-kind filing, executed before
@@ -553,7 +675,7 @@ export function buildFinding(inp: SweepInput): Finding {
   // same-day rating outlook change, and an executed item beats an enabling
   // one, because the score already says so.
   const cands = inWindow.filter((a) => a.kind === 'catalyst')
-    .map((a) => ({ a, s: scoreCatalyst(a, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: false }).net }))
+    .map((a) => ({ a, s: rankKey(scoreCatalyst(a, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: false })) }))
     .sort((x, y) => y.s - x.s)
     .map((x) => x.a);
   // A model read of a filing the form type could not classify (US 8-K Item
@@ -597,9 +719,9 @@ export function buildFinding(inp: SweepInput): Finding {
   if (c.category === 'fundraising' && RX.debtOnly.test(cHay) && !RX.equityWords.test(cHay)) {
     return { ...base, status: 'routine_only', headline: `Debt financing — ${shorten(c.summary || c.subject, 90)}`, sourceUrl: c.url, sourceDate: c.dateIso, ageDays: c.ageDays, sourceTier: 'primary', notes: [...base.notes, 'Borrowing is financing, not a catalyst.'] };
   }
-  const scored = scoreCatalyst(c, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: verified });
+  const scored = scoreCatalyst(c, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: verified, movePct: inp.movePct });
   // An offering into the move caps the verdict below FIRE (zzz766).
-  if (dilution && scored.verdict === 'FIRE') { scored.net = Math.min(scored.net, 44.9); scored.verdict = 'ROOM'; }
+  if (dilution && scored.net > 44.9) { scored.net = 44.9; scored.verdict = 'ROOM'; scored.components.caps = [...(scored.components.caps || []), 'offering filed into the move → capped at 44.9']; }
   const notes = [...base.notes];
   if (c.stage === 'enabling') notes.push('ENABLING, not executed: a board considering something has no size, no price and no counterparty yet.');
   if (c.stage === 'scheduled') notes.push('SCHEDULED, not executed: dated in the future. Nothing has been produced yet.');
@@ -612,11 +734,12 @@ export function buildFinding(inp: SweepInput): Finding {
   if (c.category === 'quarterly_result' && !verified) notes.push('Results filed — the filing is the dated event; whether the numbers were good was not read here.');
   if (dilution) notes.push(`⚠ Offering filed in the window (${shorten(dilution.subject, 60)}, ${fmtDate(dilution.dateIso)}) — supply into the move.`);
   if (scored.valuePctMcap != null && inp.movePct != null && scored.valuePctMcap < 2 && Math.abs(inp.movePct) >= 8) notes.push(`Item is ${scored.valuePctMcap}% of market cap against a ${fmtPct(inp.movePct)} move — look for the real driver.`);
-  if (scored.components.pricedIn >= 80) notes.push(`Largely priced: ${fmtPct(inp.returns?.m1 ?? null)} 1M / ${fmtPct(inp.returns?.m3 ?? null)} 3M.`);
-  if (!verified) notes.push('Headline from the filing subject and the source\'s summary; the document itself was not model-read — treat the figure as unverified.');
+  if (!verified) notes.push(scored.components.evidence === 'SUMMARY_ONLY'
+    ? 'SUMMARY ONLY: the document was not model-read; the headline and any figure come from the source\'s summary, so materiality is counted at 60%.'
+    : 'UNVERIFIED: only the filing subject line was available; materiality is counted at 40%.');
   return {
     ...base, status: 'catalyst', category: c.category, stage: c.stage,
-    headline: verified && inp.read ? inp.read.headline : shorten(c.summary || c.subject),
+    headline: verified && inp.read ? inp.read.headline : shorten(c.summary || c.subject, 400),
     evidenceQuote: verified && inp.read ? inp.read.quote : null,
     sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays,
     valueStated: c.valueStated, valuePctMcap: scored.valuePctMcap, net: scored.net, components: scored.components, verdict: scored.verdict,
@@ -639,7 +762,7 @@ export function shorten(s: string, max = 110): string {
   const t = s.replace(/\s+/g, ' ').replace(/^announcement under regulation 30 \(lodr\)-?/i, '').replace(/_/g, ' ').trim();
   return t.length > max ? t.slice(0, max - 1).replace(/\s\S*$/, '') + '…' : t;
 }
-const short = (s: string) => shorten(s, 40);
+const short = (s: string) => shorten(s, 80);
 export function fmtPct(v: number | null): string { return v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`; }
 export function fmtDate(iso: string | null): string { return iso ? iso.slice(0, 10) : 'undated'; }
 export function fmtMoney(v: number, market: 'IN' | 'US'): string { return market === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)} Cr` : fmtUsdM(v); }
@@ -671,6 +794,7 @@ export interface StoredSweepInputs {
   /** The instant the inputs were fetched: freshness is re-scored against it. */
   fetchedAt: string;
   read?: SweepInput['read'];
+  news?: NewsContext | null;
 }
 
 /** Keeps only what a finding can use (the window, a bounded summary): the
@@ -699,7 +823,7 @@ export function rescoreFromInputs(inp: StoredSweepInputs, meta: { ticker: string
   const now = new Date(inp.fetchedAt);
   const f = buildFinding({
     ticker: meta.ticker, company: meta.company, market: meta.market, movePct: meta.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
-    announcements: inp.announcements, returns: inp.returns, holding: meta.holding, sources: inp.sources, sourceFailed: inp.sourceFailed,
+    announcements: inp.announcements, returns: inp.returns, holding: meta.holding, sources: inp.sources, sourceFailed: inp.sourceFailed, news: inp.news ?? null,
     windowDays: meta.windowDays, now: Number.isFinite(now.getTime()) ? now : new Date(), read, sessionCloseIso: meta.sessionCloseIso, filedResult: meta.filedResult,
   });
   return { ...f, rulesVersion: RULES_VERSION };

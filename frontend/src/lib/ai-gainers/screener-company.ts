@@ -25,6 +25,7 @@ import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
 import { screenerSymbol } from '@/lib/earnings/screener-documents';
 import type { AnnouncementLite, Returns } from './catalyst-research';
 import { returnsFromSeries } from './catalyst-research';
+import { companyNameFromPage } from './news-context';
 
 export function parseCompanyId(html: string): string | null {
   const m = /data-company-id="(\d+)"/.exec(html) || /\/company\/(\d+)\/chart/.exec(html) || /\/announcements\/recent\/(\d+)\//.exec(html);
@@ -83,6 +84,8 @@ export interface CompanyResearch {
   marketCapCr: number | null;
   price: number | null;
   pe: number | null;
+  /** Full legal name from the page title — the press search uses it. */
+  companyName?: string | null;
   announcements: AnnouncementLite[];
   returns: Returns | null;
   lastClose: number | null;
@@ -98,6 +101,7 @@ export async function fetchCompanyResearch(ticker: string, now = new Date()): Pr
   if (!page.html) { out.errors.push(`company page: ${page.error || 'unreachable'}`); return out; }
   out.sources.push('screener.in company page');
   out.companyId = parseCompanyId(page.html);
+  out.companyName = companyNameFromPage(page.html);
   const tr = parseTopRatios(page.html);
   out.marketCapCr = tr.marketCapCr; out.price = tr.price; out.pe = tr.pe;
   out.announcements = parseAnnouncements(page.html, now);

@@ -210,26 +210,42 @@ export default function AiGainersPage() {
     }
   }, []);
 
-  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number, reprocess = false) => {
+  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number, reprocess = false, retryFailed = false) => {
     if (sweepGenRef.current === gen) return;          // this generation is already sweeping
     sweepGenRef.current = gen;
     setSweeping(true);
     try {
       const rows = boardRows(scanned);
-      for (let i = 0; i < 40 && genRef.current === gen; i++) {
-        let r: Response;
-        try {
-          r = await fetch('/api/v1/ai-gainers/research', {
-            method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
-            body: JSON.stringify({ market: m, rows: i === 0 ? rows : [], budget_ms: 40_000, ...(i === 0 && reprocess ? { reprocess: true } : {}) }),
-            signal: AbortSignal.timeout(75_000),
-          });
-        } catch (e) { throw new Error(describeFetchError(e, 'The research service')); }
-        const res = await readJsonResponse<ResearchPayload & { researched_now?: number }>(r, 'The research service');
-        if (!res.ok || !res.json) throw new Error(res.error || 'The research service did not answer.');
-        if (genRef.current !== gen) return;
-        setResearch(res.json);
-        if (!res.json.remaining || res.json.researched_now === 0) break;
+      const pass = async (retry: boolean, first: boolean): Promise<ResearchPayload | null> => {
+        let last: ResearchPayload | null = null;
+        // A retry of failed sources is bounded to two calls: a source still
+        // refusing after that is reported again, not hammered. (zzz773)
+        for (let i = 0; i < (retry ? 2 : 40) && genRef.current === gen; i++) {
+          let r: Response;
+          try {
+            r = await fetch('/api/v1/ai-gainers/research', {
+              method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
+              body: JSON.stringify({ market: m, rows: first && i === 0 ? rows : [], budget_ms: 40_000, ...(first && i === 0 && reprocess ? { reprocess: true } : {}), ...(retry ? { retry_failed: true } : {}) }),
+              signal: AbortSignal.timeout(75_000),
+            });
+          } catch (e) { throw new Error(describeFetchError(e, 'The research service')); }
+          const res = await readJsonResponse<ResearchPayload & { researched_now?: number }>(r, 'The research service');
+          if (!res.ok || !res.json) throw new Error(res.error || 'The research service did not answer.');
+          if (genRef.current !== gen) return null;
+          setResearch(res.json);
+          last = res.json;
+          const failedLeft = Object.values(res.json.findings || {}).some((f) => f.status === 'source_failed');
+          if (retry ? (res.json.researched_now === 0 || !failedLeft) : (!res.json.remaining || res.json.researched_now === 0)) break;
+        }
+        return last;
+      };
+      const out = await pass(retryFailed, true);
+      // A source that refused under the first burst usually answers a few
+      // seconds later: one automatic retry pass, so "source failed" is what
+      // is left after trying twice, not after one throttled request.
+      if (!retryFailed && out && genRef.current === gen && Object.values(out.findings || {}).some((f) => f.status === 'source_failed')) {
+        await new Promise((r) => setTimeout(r, 3_000));
+        await pass(true, false);
       }
     } catch (e: any) {
       if (genRef.current !== gen) return;
@@ -433,7 +449,8 @@ export default function AiGainersPage() {
           {techTab === 'sweep' && (
             <ResearchLevel research={research} sweeping={sweeping} market={market} board={boardSet} bcov={bcov} filedTickers={filedTickers} rescored={rescored}
               onResume={() => data && sweep(market, data.scanned || [], genRef.current)}
-              onRescore={() => data && sweep(market, data.scanned || [], genRef.current, true)} />
+              onRescore={() => data && sweep(market, data.scanned || [], genRef.current, true)}
+              onRetryFailed={() => data && sweep(market, data.scanned || [], genRef.current, false, true)} />
           )}
           {techTab === 'scanned' && <ScannedLevel data={data} />}
           {techTab === 'filed' && (
@@ -500,14 +517,28 @@ export default function AiGainersPage() {
 }
 
 // ── Catalyst research payload + view ─────────────────────────────── (zzz741)
+interface ScoreComponents {
+  freshness: number; materiality: number; materialityRaw?: number; materialityConfidence?: number;
+  transmission: number; persistence: number; sourceMult: number; pricedIn: number; pricingAdj?: number;
+  base?: number; netUncapped?: number; caps?: string[];
+  evidence?: 'DOCUMENT_VERIFIED' | 'SUMMARY_ONLY' | 'UNVERIFIED' | 'SOURCE_UNAVAILABLE' | 'NO_RELEVANT_FILING';
+  pricing?: { state: string; text: string; adj: number };
+  response?: { d1: number | null; m1: number | null; m3: number | null; sinceFiling: number | null; preFiling20: number | null; sessionsSinceFiling: number | null };
+}
 interface Finding {
   ticker: string; company: string | null; movePct: number | null; marketCap: number | null; turnover: number | null;
   status: string; category: string | null; stage: string | null; headline: string | null; evidenceQuote: string | null;
   sourceUrl: string | null; sourceDate: string | null; ageDays: number | null; valueStated: number | null; valuePctMcap: number | null;
-  net: number | null; components: { freshness: number; materiality: number; transmission: number; persistence: number; sourceMult: number; pricedIn: number } | null;
+  net: number | null; components: ScoreComponents | null;
   verdict: string | null; returns: { m1: number | null; m3: number | null; m6: number | null; y1: number | null; history: number } | null;
   bandPrint: boolean; bandLevel: number | null; listingDays: number | null; routine: string[]; filingsInWindow: number; windowDays: number;
   holding: boolean; notes: string[]; modelRead: boolean; sources: string[];
+  news?: {
+    items: Array<{ title: string; url: string; date: string; source: string; themes: string[] }>;
+    themes: Array<{ theme: string; label: string; count: number; firstDate: string; lastDate: string }>;
+    narrative: { theme: string; label: string; count: number; days: number; firstDate: string; lastDate: string; lead: string } | null;
+    windowDays: number; fetched: number; query: string;
+  } | null;
 }
 interface ResearchPayload {
   ok: boolean; coverage: { researched: number; total: number; pct: number; byStatus: Record<string, number> };
@@ -522,12 +553,36 @@ interface ResearchPayload {
 type BoardCov = ReturnType<typeof boardCoverage>;
 
 const VERDICT: Record<string, { label: string; color: string }> = {
-  // Labels describe the CATALYST against the price history — never an
-  // instruction to buy or sell. (zzz766: the old ROOM label read as price advice.)
-  FIRE: { label: '🔥 investigate', color: C.green }, ROOM: { label: '🟢 not yet priced in', color: C.green },
-  PRICED: { label: '🟡 largely priced', color: C.amber }, WEAK: { label: '🟠 weak', color: C.amber },
-  NONE: { label: '🔴 nothing exploitable', color: C.red }, THIN: { label: '⚪ thin (<1% of mcap)', color: C.faint },
+  // NET RESEARCH PRIORITY — how much of your research time the catalyst
+  // deserves. Never a pricing claim and never buy/sell. (zzz773: the old
+  // "not yet priced in" / "largely priced" labels asserted what only the
+  // pricing assessment may say.)
+  FIRE: { label: 'P1 · research first', color: C.green }, ROOM: { label: 'P2 · worth research', color: C.green },
+  PRICED: { label: 'P3 · lower priority', color: C.amber }, WEAK: { label: 'P4 · weak', color: C.amber },
+  NONE: { label: 'P5 · nothing to research', color: C.red }, THIN: { label: 'THIN · under 1% of mcap', color: C.faint },
 };
+const EVIDENCE: Record<string, { label: string; color: string; tip: string }> = {
+  DOCUMENT_VERIFIED: { label: 'DOCUMENT VERIFIED', color: C.green, tip: 'The filing was model-read and the quote was found verbatim in it. Materiality counted in full.' },
+  SUMMARY_ONLY: { label: 'SUMMARY ONLY', color: C.amber, tip: "Headline and figures come from the source's summary; the document was not read. Materiality counted at 60%." },
+  UNVERIFIED: { label: 'UNVERIFIED', color: C.red, tip: 'Only the filing subject line was available. Materiality counted at 40%.' },
+  SOURCE_UNAVAILABLE: { label: 'SOURCE FAILED', color: C.red, tip: 'The filing source could not be reached.' },
+};
+const PRICING: Record<string, { label: string; color: string }> = {
+  INSUFFICIENT_EVIDENCE: { label: 'INSUFFICIENT EVIDENCE', color: C.faint },
+  RAN_UP_BEFORE_FILING: { label: 'RAN UP BEFORE FILING', color: C.amber },
+  REACTION_SMALL_VS_SIZE: { label: 'REACTION SMALL VS SIZE', color: C.green },
+  REACTION_IN_LINE: { label: 'REACTION IN LINE', color: C.cyan },
+  REACTION_EXCEEDS_SIZE: { label: 'REACTION EXCEEDS SIZE', color: C.amber },
+  FELL_AFTER_FILING: { label: 'FELL AFTER FILING', color: C.dim },
+};
+const CAT_COLOR: Record<string, string> = {
+  order_win: '#22C55E', acquisition: '#A78BFA', merger: '#A78BFA', open_offer: '#A78BFA', demerger: '#A78BFA', divestiture: '#A78BFA',
+  production_ramp: '#38BDF8', capacity_expansion: '#38BDF8', new_product: '#38BDF8', new_customer: '#22C55E', joint_venture: '#A78BFA',
+  regulatory_approval: '#2DD4BF', product_qualification: '#2DD4BF', quarterly_result: '#FACC15', revenue_guidance_increase: '#FACC15',
+  fundraising: '#F59E0B', buyback: '#F59E0B', promoter_purchase: '#F59E0B', rating_action: '#94A3B8', management_change: '#94A3B8',
+};
+const sgn = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—');
+const pill = (color: string): React.CSSProperties => ({ display: 'inline-block', fontSize: 12, fontWeight: 800, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, border: `1px solid ${color}`, color, whiteSpace: 'nowrap' });
 
 function money(v: number | null | undefined, m: Mkt): string {
   if (v == null || !Number.isFinite(v)) return '—';
@@ -552,7 +607,7 @@ const etTime = (iso: string | null | undefined) => {
   return `${et} ET · ${istTime(iso)}`;
 };
 
-function ResearchLevel({ research, sweeping, market, onResume, onRescore, scoredOnly, board, bcov, filedTickers, rescored }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void; onRescore?: () => void; scoredOnly?: boolean; board?: Set<string> | null; bcov?: BoardCov | null; filedTickers?: Set<string>; rescored?: { n: number; failed: number } | null }) {
+function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetryFailed, scoredOnly, board, bcov, filedTickers, rescored }: { research: ResearchPayload | null; sweeping: boolean; market: Mkt; onResume: () => void; onRescore?: () => void; onRetryFailed?: () => void; scoredOnly?: boolean; board?: Set<string> | null; bcov?: BoardCov | null; filedTickers?: Set<string>; rescored?: { n: number; failed: number } | null }) {
   if (!research) return <div style={{ fontSize: 13, color: C.dim }}>{sweeping ? 'Researching…' : 'No catalyst research for this session yet. Click “▶ Research catalysts” above — it runs only when you click, because it uses AI reads.'}</div>;
   // Only names on the CURRENT board are listed and counted; names researched
   // from an earlier scan today are counted once, in a note. (zzz769)
@@ -561,46 +616,194 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, scored
   const pendingOnBoard = bcov ? bcov.missing.length : research.remaining;
   const errLines = research.errors || [];
   const errFull = research.error_details || [];
+  // ── zzz773: ONE exclusive status per name. The groups below partition the
+  // processed names, so they add up to the total; the band print is an
+  // overlay flag counted inside them, never a group of its own.
   const scored = all.filter((f) => f.status === 'catalyst').sort((a, b) => (b.net ?? -1) - (a.net ?? -1));
   const rejected = all.filter((f) => f.status === 'denied' || f.status === 'negative');
-  // A name already listed as denied/negative or as a listing artifact is not
-  // listed again as a band print (WEL, SUNDROP, Technocrats appeared twice). (zzz768)
-  const bands = all.filter((f) => f.bandPrint && f.status !== 'catalyst' && f.status !== 'denied' && f.status !== 'negative' && f.status !== 'listing_artifact').sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
   const listings = all.filter((f) => f.status === 'listing_artifact');
-  const unexplained = all.filter((f) => (f.status === 'none' || f.status === 'routine_only') && !f.bandPrint).sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  const failed = all.filter((f) => f.status === 'source_failed').sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  const noCat = all.filter((f) => f.status === 'none' || f.status === 'routine_only');
+  const bandsNoCat = noCat.filter((f) => f.bandPrint).sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  const unexplained = noCat.filter((f) => !f.bandPrint).sort((a, b) => (b.movePct ?? 0) - (a.movePct ?? 0));
+  const processed = scored.length + rejected.length + listings.length + failed.length + noCat.length;
+  const other = all.length - processed;          // unresearched / unknown status
+  const evid = (f: Finding) => f.components?.evidence || (f.modelRead ? 'DOCUMENT_VERIFIED' : 'SUMMARY_ONLY');
+  const nDoc = scored.filter((f) => evid(f) === 'DOCUMENT_VERIFIED').length;
+  const nSum = scored.filter((f) => evid(f) === 'SUMMARY_ONLY').length;
+  const nUnv = scored.length - nDoc - nSum;
+  const bandTotal = all.filter((f) => f.bandPrint).length;
+  const bandWhere = (['catalyst', 'denied', 'negative', 'listing_artifact', 'source_failed'] as const)
+    .map((st) => [st, all.filter((f) => f.bandPrint && f.status === st).length] as const).filter(([, n]) => n > 0);
   const UNEXPLAINED_SHOWN = 80;
-  const failed = all.filter((f) => f.status === 'source_failed');
   const holdings = all.filter((f) => f.holding);
   const th: React.CSSProperties = { fontSize: 12, fontWeight: 800, letterSpacing: 0.3, color: C.faint, textAlign: 'left', padding: '5px 8px', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' };
   const td: React.CSSProperties = { fontSize: 13, color: C.dim, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' };
   const turnoverLabel = market === 'IN' ? 'Avg value/day (1W)' : 'Traded';
   // The US move is the 1-WEEK export column; calling it "1d" was false. (zzz766)
-  const mv = market === 'US' ? '1W' : '1d';
+  const mv = market === 'US' ? '1W' : '1D';
   const Wrap = ({ children }: { children: React.ReactNode }) => <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>{children}</table></div>;
   const Name = ({ f }: { f: Finding }) => (
     <span><TickerLink ticker={f.ticker} market={market} />{f.holding && <span title="In your book" style={{ marginLeft: 5, fontSize: 12, fontWeight: 800, color: C.cyan }}>📗</span>}
       {f.company && <div style={{ fontSize: 12, color: C.faint }}>{f.company}</div>}</span>
   );
   const Src = ({ f }: { f: Finding }) => f.sourceUrl ? <a href={f.sourceUrl} target="_blank" rel="noopener noreferrer" title={f.sourceUrl} style={{ color: C.cyan, textDecoration: 'none', fontSize: 12, whiteSpace: 'nowrap' }}>↗ filing · {f.sourceDate ? f.sourceDate.slice(0, 10) : 'undated'}</a> : <span style={{ color: C.faint }}>—</span>;
-  const Section = ({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) => (
+  const Section = ({ title, sub, children, right }: { title: string; sub?: string; children: React.ReactNode; right?: React.ReactNode }) => (
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg, padding: '10px 12px' }}>
-      <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{title}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{title}</div>{right}
+      </div>
       {sub && <div style={{ fontSize: 12, color: C.faint, marginTop: 2, marginBottom: 6, lineHeight: 1.5 }}>{sub}</div>}
       {children}
     </div>
   );
+  const Tier = ({ n, label, color, children }: { n: number; label: string; color?: string; children?: React.ReactNode }) => (
+    <span style={{ whiteSpace: 'nowrap' }}><b style={{ color: color || C.text, fontSize: 13 }}>{n}</b> <span style={{ color: C.dim }}>{label}</span>{children}</span>
+  );
+  const retryBtn = onRetryFailed && failed.length > 0 && !sweeping ? (
+    <button onClick={onRetryFailed} title="Re-fetches only the names whose filing source failed, with backoff. No AI unless a newly reached filing is a catalyst." style={{ fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber, cursor: 'pointer' }}>↻ Retry {failed.length} failed source{failed.length === 1 ? '' : 's'}</button>
+  ) : null;
+
+  // Press coverage: secondary, dated, linked. It says where to look and which
+  // story keeps running; it never scores. (zzz773)
+  const News = ({ f, compact }: { f: Finding; compact?: boolean }) => {
+    const n = f.news;
+    if (!n) return null;
+    if (!n.items.length) return compact ? null : <div style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>Press: nothing company-specific in the last {n.windowDays} days.</div>;
+    const shown = n.items.slice(0, compact ? 2 : 4);
+    return (
+      <div style={{ marginTop: 8, border: `1px dashed ${C.border}`, borderRadius: 6, padding: '6px 8px' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.5, color: C.faint }}>PRESS · SECONDARY, UNVERIFIED</span>
+          {n.narrative && <span style={pill(C.violet)} title={`Covered on ${n.narrative.days} different days, ${n.narrative.firstDate} → ${n.narrative.lastDate}. A story that keeps running can keep a stock moving after the event.`}>RUNNING STORY: {n.narrative.label.toUpperCase()} · {n.narrative.days}d · {n.narrative.firstDate.slice(5)}→{n.narrative.lastDate.slice(5)}</span>}
+          {n.themes.filter((t) => t.theme !== n.narrative?.theme).slice(0, compact ? 2 : 4).map((t) => <span key={t.theme} style={pill(C.faint)}>{t.label} ×{t.count}</span>)}
+        </div>
+        {shown.map((it, k) => (
+          <div key={k} style={{ fontSize: 12, color: C.dim, marginTop: 3, lineHeight: 1.45 }}>
+            <span style={{ color: C.faint, fontVariantNumeric: 'tabular-nums' }}>{it.date}</span>{' '}
+            <a href={it.url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }}>{it.title}</a>
+            {it.source && <span style={{ color: C.faint }}> — {it.source}</span>}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const ScoredCard = ({ f, i }: { f: Finding; i: number }) => {
+    const v = VERDICT[f.verdict || 'NONE'] || VERDICT.NONE;
+    const c = f.components;
+    const ev = EVIDENCE[evid(f)] || EVIDENCE.UNVERIFIED;
+    const catColor = CAT_COLOR[String(f.category || '')] || C.violet;
+    const resp = c?.response;
+    const pr = c?.pricing;
+    const prm = PRICING[pr?.state || 'INSUFFICIENT_EVIDENCE'] || PRICING.INSUFFICIENT_EVIDENCE;
+    const conf = c?.materialityConfidence;
+    const cell: React.CSSProperties = { fontSize: 12, color: C.dim, padding: '2px 6px', whiteSpace: 'nowrap' };
+    const num: React.CSSProperties = { ...cell, color: C.text, fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+    return (
+      <div style={{ border: `1px solid ${C.border}`, borderLeft: `4px solid ${catColor}`, borderRadius: 8, padding: '10px 12px', background: C.bg2, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(250px, 320px)', gap: 14 }} className="mc-gainer-card">
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: C.faint, fontWeight: 800 }}>#{i + 1}</span>
+            <Name f={f} />
+            <span style={{ fontSize: 13, fontWeight: 800, color: (f.movePct ?? 0) >= 0 ? C.green : C.red }}>{pct(f.movePct)} <span style={{ fontSize: 12, color: C.faint, fontWeight: 600 }}>{mv}</span></span>
+            {f.bandPrint && <span style={pill(C.amber)} title="Closed at an exchange price band — the band limits the move, not demand.">{f.bandLevel}% BAND</span>}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.6, color: C.faint, marginTop: 8 }}>WHAT HAPPENED</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, lineHeight: 1.45, marginTop: 2, wordBreak: 'break-word' }}>{f.headline}</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7, alignItems: 'center' }}>
+            <span style={pill(catColor)}>{pretty(String(f.category || 'catalyst')).toUpperCase()}</span>
+            {f.stage && <span style={pill(f.stage === 'executed' ? C.green : C.amber)} title={f.stage === 'executed' ? 'Done, not proposed.' : f.stage === 'enabling' ? 'Proposed / board to consider — no size, price or counterparty yet.' : 'Dated in the future.'}>{f.stage.toUpperCase()}</span>}
+            <span style={pill(ev.color)} title={ev.tip}>{ev.label}</span>
+            {f.valueStated != null
+              ? <span style={pill(C.cyan)}>{money(f.valueStated, market)}{f.valuePctMcap != null ? ` · ${f.valuePctMcap.toFixed(1)}% of mcap` : ''}</span>
+              : <span style={pill(C.faint)}>NO VALUE STATED</span>}
+            <span style={{ fontSize: 12, color: C.faint }}>{f.ageDays != null ? (f.ageDays === 0 ? 'filed today' : `${f.ageDays}d ago`) : ''}</span>
+            <Src f={f} />
+          </div>
+          {f.evidenceQuote && (
+            <blockquote style={{ margin: '8px 0 0', padding: '6px 10px', borderLeft: `3px solid ${C.green}`, background: C.bg, fontSize: 13, color: C.dim, fontStyle: 'italic', lineHeight: 1.5, wordBreak: 'break-word' }}>
+              “{f.evidenceQuote}”<div style={{ fontSize: 12, fontStyle: 'normal', color: C.faint, marginTop: 3 }}>verbatim from the filing</div>
+            </blockquote>
+          )}
+          {f.notes.length > 0 && (
+            <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: C.amber, lineHeight: 1.55 }}>
+              {f.notes.map((n, k) => <li key={k}>{n}</li>)}
+            </ul>
+          )}
+          <News f={f} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.6, color: C.faint }}>NET RESEARCH PRIORITY</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: v.color }}>{v.label}</div>
+            </div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: C.text, fontVariantNumeric: 'tabular-nums' }}>{typeof f.net === 'number' ? f.net.toFixed(1) : '—'}</div>
+          </div>
+          {c && (
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}><tbody>
+              <tr><td style={cell}>Freshness ×0.30</td><td style={num}>{c.freshness}</td></tr>
+              <tr><td style={cell} title="Materiality = raw score × evidence confidence">Materiality ×0.30{conf != null && c.materialityRaw != null ? <span style={{ color: C.faint }}> ({c.materialityRaw} × {conf})</span> : null}</td><td style={num}>{c.materiality}</td></tr>
+              <tr><td style={cell}>Transmission ×0.25</td><td style={num}>{c.transmission}</td></tr>
+              <tr><td style={cell}>Persistence ×0.15</td><td style={num}>{c.persistence}</td></tr>
+              {c.base != null && <tr><td style={{ ...cell, borderTop: `1px solid ${C.border}` }}>= Base</td><td style={{ ...num, borderTop: `1px solid ${C.border}` }}>{c.base.toFixed(1)}</td></tr>}
+              <tr><td style={cell}>× Source factor</td><td style={num}>{c.sourceMult.toFixed(2)}</td></tr>
+              <tr><td style={cell}>× Pricing adjustment</td><td style={num}>{(c.pricingAdj ?? 1 - c.pricedIn / 100).toFixed(2)}</td></tr>
+              {c.netUncapped != null && <tr><td style={cell}>= Uncapped</td><td style={num}>{c.netUncapped.toFixed(1)}</td></tr>}
+              {(c.caps || []).map((cp, k) => <tr key={k}><td colSpan={2} style={{ ...cell, whiteSpace: 'normal', color: C.amber }}>Cap: {cp}</td></tr>)}
+              <tr><td style={{ ...cell, borderTop: `1px solid ${C.border}`, fontWeight: 800, color: C.text }}>= NET</td><td style={{ ...num, borderTop: `1px solid ${C.border}`, fontSize: 13 }}>{typeof f.net === 'number' ? f.net.toFixed(1) : '—'}</td></tr>
+            </tbody></table>
+          )}
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: '6px 8px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.6, color: C.faint }}>MARKET RESPONSE</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, marginTop: 3, fontSize: 12, color: C.dim }}>
+              <span>{mv} <b style={{ color: C.text }}>{sgn(resp?.d1 ?? f.movePct)}</b></span>
+              <span>1M <b style={{ color: C.text }}>{sgn(resp?.m1 ?? f.returns?.m1)}</b></span>
+              <span>3M <b style={{ color: C.text }}>{sgn(resp?.m3 ?? f.returns?.m3)}</b></span>
+            </div>
+            <div style={{ fontSize: 12, color: C.dim, marginTop: 3 }}>
+              Since the close before the filing: <b style={{ color: C.text }}>{sgn(resp?.sinceFiling)}</b>{resp?.sessionsSinceFiling != null ? ` (${resp.sessionsSinceFiling} session${resp.sessionsSinceFiling === 1 ? '' : 's'})` : ''}
+              {resp?.preFiling20 != null && <> · 20 sessions before it: <b style={{ color: C.text }}>{sgn(resp.preFiling20)}</b></>}
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: '6px 8px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.6, color: C.faint }}>PRICING ASSESSMENT</div>
+            <div style={{ marginTop: 3 }}><span style={pill(prm.color)}>{prm.label}</span></div>
+            <div style={{ fontSize: 12, color: C.dim, marginTop: 4, lineHeight: 1.45 }}>{pr?.text || 'Scored under older rules — re-score to assess the reaction to the filing.'}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <style>{'@media (max-width: 760px) { .mc-gainer-card { grid-template-columns: 1fr !important; } }'}</style>
       <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
         <b style={{ color: C.text }}>Catalyst coverage {cov.researched}/{cov.total} ({cov.pct}%)</b>
         {research.date && <span style={{ color: C.faint }}> · session {research.date}</span>}
-        {' '}· {scored.length} carry a catalyst · {rejected.length} denied/negative · {bands.length} band prints · {listings.length} listing artifacts · {unexplained.length} with no confirmed catalyst
-        {failed.length > 0 && <> · <span style={{ color: C.amber }}>{failed.length} source failed</span></>}
-        {research.model_reads != null && <> · {research.model_reads} documents model-read today</>}
-        {bcov && bcov.offBoard > 0 && <span style={{ color: C.faint }}> · {bcov.offBoard} name{bcov.offBoard === 1 ? '' : 's'} researched from an earlier scan today, no longer on this board, not listed</span>}
         {sweeping ? <span style={{ color: C.cyan }}> · researching…</span>
           : pendingOnBoard > 0 ? <button onClick={onResume} title="Reads the filings behind each move with the AI model. Runs only when you click." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>▶ Research · {pendingOnBoard} not yet researched (uses AI)</button>
             : onRescore && cov.total > 0 ? <button onClick={onRescore} title="Re-researches today's names from scratch with the current rules. Filings already model-read come from the cache; a filing the current rules newly choose may be model-read (within the daily ceiling). Stored findings under older rules are already re-scored automatically, without AI, when the page opens." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>↻ Re-score today with current rules</button> : null}
+        {/* The partition: every processed name in exactly one group. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', alignItems: 'baseline', marginTop: 6, padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg }}>
+          <Tier n={processed} label={`of ${all.length} processed →`} />
+          <Tier n={scored.length} label="catalyst confirmed" color={C.green}>
+            {scored.length > 0 && <span style={{ color: C.faint }}> ({nDoc} document-verified · {nSum} summary-only{nUnv ? ` · ${nUnv} unverified` : ''})</span>}
+          </Tier>
+          <Tier n={noCat.length} label="no catalyst" color={C.dim}>{bandsNoCat.length > 0 && <span style={{ color: C.faint }}> ({bandsNoCat.length} band / technical)</span>}</Tier>
+          <Tier n={rejected.length} label="denied / negative" color={C.amber} />
+          <Tier n={listings.length} label="listing" color={C.faint} />
+          <Tier n={failed.length} label="source unavailable" color={failed.length ? C.red : C.faint} />
+          {other > 0 && <Tier n={other} label="pending" color={C.cyan} />}
+          {retryBtn}
+        </div>
+        <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>
+          The groups are exclusive and add up to {processed}. Band prints are a flag, not a group: {bandTotal} name{bandTotal === 1 ? '' : 's'} closed at a price band{bandWhere.length ? ` (${bandWhere.map(([st, n]) => `${n} ${st === 'source_failed' ? 'source unavailable' : pretty(st)}`).join(', ')}${bandsNoCat.length ? `, ${bandsNoCat.length} no catalyst` : ''})` : ''}.
+          {research.model_reads != null && <> {research.model_reads} document{research.model_reads === 1 ? '' : 's'} model-read today.</>}
+          {bcov && bcov.offBoard > 0 && <> {bcov.offBoard} name{bcov.offBoard === 1 ? '' : 's'} researched from an earlier scan today are no longer on this board and not listed.</>}
+        </div>
         {rescored && !sweeping && <div style={{ fontSize: 12, color: C.faint }}>Re-scored with current rules (no AI used) — {rescored.n} stored finding{rescored.n === 1 ? '' : 's'} rebuilt from filings already fetched and reads already cached{rescored.failed ? `; ${rescored.failed} kept as stored because the source could not be reached` : ''}.</div>}
         {research.error && (
           <div role="alert" style={{ color: C.amber, marginTop: 4 }}>
@@ -625,36 +828,17 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, scored
       )}
 
       <Section title={`Scored — ${scored.length} name${scored.length === 1 ? '' : 's'} carry a catalyst`}
-        sub="NET = (0.30 freshness + 0.30 materiality + 0.25 transmission + 0.15 persistence) × source × (1 − priced-in). Materiality is value ÷ market cap where a value is stated; an item under 1% of market cap cannot rank above THIN. A stock that is down has not priced its catalyst.">
+        sub="Gainer → event → source status → classification → materiality → transmission → persistence → market response → pricing assessment → NET research priority. NET = (0.30·Freshness + 0.30·Materiality + 0.25·Transmission + 0.15·Persistence) × Source × Pricing, then the caps listed on the card — every number shown reproduces it. Materiality is value ÷ market cap where a value is stated, times the evidence confidence (document 1.0 · summary 0.6 · subject line 0.4); under 1% of market cap is THIN. Pricing is assessed only from the reaction since the close before the filing against the event's size — a falling stock is a response, not proof the news is unpriced.">
         {scored.length === 0 ? <div style={{ fontSize: 13, color: C.dim }}>No confirmed catalyst: nothing on the board carries a dated, sourced catalyst{cov.researched < cov.total ? ' yet' : ''}. An empty top of the table is a valid result.</div> : (
-          <Wrap><thead><tr><th style={th}>#</th><th style={th}>Name</th><th style={th}>{mv}</th><th style={th}>Catalyst (dated, sourced)</th><th style={th}>Stage</th><th style={th}>Size</th><th style={th}>Fresh</th><th style={th}>Trans</th><th style={th}>Priced</th><th style={th}>NET</th><th style={th}>Verdict</th></tr></thead>
-            <tbody>{scored.map((f, i) => {
-              const v = VERDICT[f.verdict || 'NONE'];
-              return (<tr key={f.ticker}>
-                <td style={td}>{i + 1}</td><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td>
-                <td style={{ ...td, minWidth: 260 }}>
-                  <span style={{ color: C.text }}>{f.headline}</span>
-                  <div style={{ fontSize: 12, color: C.faint }}>{pretty(String(f.category || ''))} · <Src f={f} />{f.modelRead ? ' · quote verified' : ' · summary only'}</div>
-                  {f.evidenceQuote && <div style={{ fontSize: 12, color: C.dim, fontStyle: 'italic', marginTop: 2 }}>“{f.evidenceQuote.slice(0, 220)}{f.evidenceQuote.length > 220 ? '…' : ''}”</div>}
-                  {f.notes.length > 0 && <div style={{ fontSize: 12, color: C.amber, marginTop: 2 }}>{f.notes.join(' ')}</div>}
-                </td>
-                <td style={td}>{f.stage || '—'}</td>
-                <td style={td}>{f.valueStated != null ? <>{money(f.valueStated, market)}{f.valuePctMcap != null && <div style={{ fontSize: 12, color: C.faint }}>{f.valuePctMcap.toFixed(1)}% of mcap</div>}</> : <span style={{ color: C.faint }}>no value stated</span>}</td>
-                <td style={td}>{f.components?.freshness ?? '—'}</td><td style={td}>{f.components?.transmission ?? '—'}</td>
-                <td style={td}>{f.components?.pricedIn ?? '—'}{f.returns && <div style={{ fontSize: 12, color: C.faint }}>{pct(f.returns.m1)} 1M · {pct(f.returns.m3)} 3M</div>}</td>
-                <td style={{ ...td, fontWeight: 800, color: C.text }}>{typeof f.net === 'number' ? f.net.toFixed(1) : '—'}</td>
-                <td style={{ ...td, color: v.color, fontWeight: 700, whiteSpace: 'nowrap' }}>{v.label}</td>
-              </tr>);
-            })}</tbody></Wrap>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{scored.map((f, i) => <ScoredCard key={f.ticker} f={f} i={i} />)}</div>
         )}
       </Section>
 
-      {!scoredOnly && (rejected.length > 0 || bands.length > 0 || listings.length > 0) && (
-        <Section title="Denied, negative, or moving on nothing" sub="Rejected catalysts are findings, not omissions. A company formally denying a catalyst while the stock moves is more actionable than most confirmed ones.">
+      {!scoredOnly && (rejected.length > 0 || listings.length > 0) && (
+        <Section title={`Denied, negative or listing — ${rejected.length + listings.length}`} sub="Rejected catalysts are findings, not omissions. A company formally denying a catalyst while the stock moves is more actionable than most confirmed ones.">
           <Wrap><thead><tr><th style={th}>Name</th><th style={th}>{mv}</th><th style={th}>Finding</th><th style={th}>Source</th></tr></thead>
             <tbody>
-              {rejected.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={{ ...td, minWidth: 300 }}><b style={{ color: f.status === 'denied' ? C.amber : C.red }}>{f.status.toUpperCase()}.</b> <span style={{ color: C.text }}>{f.headline}</span>{f.notes.length > 0 && <div style={{ fontSize: 12, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}><Src f={f} /></td></tr>)}
-              {bands.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={{ ...td, minWidth: 300 }}><b style={{ color: C.amber }}>BAND PRINT {f.bandLevel}%.</b> {f.turnover != null ? `${money(f.turnover, market)} ${market === 'IN' ? 'avg/day (1W)' : 'traded'} · ` : ''}{f.marketCap != null ? `mcap ${money(f.marketCap, market)} · ` : ''}{f.headline}<div style={{ fontSize: 12, color: C.faint }}>{f.notes.filter((n) => !/band print/i.test(n)).join(' ')}</div></td><td style={td}><Src f={f} /></td></tr>)}
+              {rejected.map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}{f.bandPrint && <div><span style={pill(C.amber)}>{f.bandLevel}% BAND</span></div>}</td><td style={{ ...td, minWidth: 300 }}><b style={{ color: f.status === 'denied' ? C.amber : C.red }}>{f.status.toUpperCase()}.</b> <span style={{ color: C.text }}>{f.headline}</span>{f.notes.length > 0 && <div style={{ fontSize: 12, color: C.faint }}>{f.notes.join(' ')}</div>}<News f={f} compact /></td><td style={td}><Src f={f} /></td></tr>)}
               {listings.map((f) => {
                 // A recent listing with a filed result behind it: the result is
                 // the context (research queue), the listing is a caveat on it —
@@ -668,17 +852,26 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, scored
         </Section>
       )}
 
-      {!scoredOnly && unexplained.length > 0 && (
-        <Section title={`No confirmed catalyst — ${unexplained.length} move${unexplained.length === 1 ? '' : 's'}`} sub="Name, move, and what the filings actually show for the window. Nothing here is a catalyst; an unclassified filing is worth opening yourself.">
+      {!scoredOnly && noCat.length > 0 && (
+        <Section title={`No confirmed catalyst — ${noCat.length} move${noCat.length === 1 ? '' : 's'}`} sub="Filings were read and none is a catalyst. Name, move, and what the filings actually show for the window; band prints are marked. An unclassified filing is worth opening yourself.">
           <Wrap><thead><tr><th style={th}>Name</th><th style={th}>{mv}</th><th style={th}>Mcap</th><th style={th}>{turnoverLabel}</th><th style={th}>Filings in window</th><th style={th}>1M / 3M</th></tr></thead>
-            <tbody>{unexplained.slice(0, UNEXPLAINED_SHOWN).map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={td}>{money(f.marketCap, market)}</td><td style={td}>{money(f.turnover, market)}</td><td style={{ ...td, minWidth: 260 }}>{f.filingsInWindow === 0 ? <span>{f.headline || `no filing in ${f.windowDays} days`}</span> : <span>{f.headline}</span>}{f.sourceUrl && <> · <Src f={f} /></>}{f.notes.length > 0 && <div style={{ fontSize: 12, color: C.faint }}>{f.notes.join(' ')}</div>}</td><td style={td}>{f.returns ? `${pct(f.returns.m1)} / ${pct(f.returns.m3)}` : '—'}</td></tr>)}</tbody></Wrap>
-          {unexplained.length > UNEXPLAINED_SHOWN && <div style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>+{unexplained.length - UNEXPLAINED_SHOWN} more not shown (smallest moves).</div>}
+            <tbody>{[...bandsNoCat, ...unexplained].slice(0, UNEXPLAINED_SHOWN).map((f) => <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}{f.bandPrint && <div><span style={pill(C.amber)} title="Closed at an exchange price band — the band limits the move, not demand.">{f.bandLevel}% BAND</span></div>}</td><td style={td}>{money(f.marketCap, market)}</td><td style={td}>{money(f.turnover, market)}</td><td style={{ ...td, minWidth: 260 }}>{f.filingsInWindow === 0 ? <span>{f.headline || `no filing in ${f.windowDays} days`}</span> : <span>{f.headline}</span>}{f.sourceUrl && <> · <Src f={f} /></>}{f.notes.filter((n) => !/^Closed at the \d+% band/.test(n)).length > 0 && <div style={{ fontSize: 12, color: C.faint }}>{f.notes.filter((n) => !/^Closed at the \d+% band/.test(n)).join(' ')}</div>}<News f={f} compact /></td><td style={td}>{f.returns ? `${pct(f.returns.m1)} / ${pct(f.returns.m3)}` : '—'}</td></tr>)}</tbody></Wrap>
+          {noCat.length > UNEXPLAINED_SHOWN && <div style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>+{noCat.length - UNEXPLAINED_SHOWN} more not shown (smallest moves).</div>}
         </Section>
       )}
 
       {!scoredOnly && failed.length > 0 && (
-        <Section title={`Source failed — ${failed.length}`} sub="The filing source could not be reached for these. That is not 'nothing filed'.">
-          <div style={{ fontSize: 13, color: C.dim }}>{failed.map((f) => f.ticker).join(' · ')}</div>
+        <Section title={`Source unavailable — ${failed.length}`} right={retryBtn}
+          sub="SOURCE_UNAVAILABLE: the filing source did not answer for these, so whether anything was filed is unknown. Never read as “no catalyst”.">
+          <Wrap><thead><tr><th style={th}>Name</th><th style={th}>{mv}</th><th style={th}>Mcap</th><th style={th}>What the press says meanwhile</th></tr></thead>
+            <tbody>{failed.map((f) => (
+              <tr key={f.ticker}>
+                <td style={td}><Name f={f} /></td>
+                <td style={td}>{pct(f.movePct)}{f.bandPrint && <div><span style={pill(C.amber)}>{f.bandLevel}% BAND</span></div>}</td>
+                <td style={td}>{money(f.marketCap, market)}</td>
+                <td style={{ ...td, minWidth: 300 }}>{f.news ? <News f={f} compact /> : <span style={{ color: C.faint }}>Not read yet — press is fetched on the next research or retry pass.</span>}</td>
+              </tr>
+            ))}</tbody></Wrap>
         </Section>
       )}
       {!scoredOnly && errLines.length > 0 && (

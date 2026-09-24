@@ -52,7 +52,7 @@ import { varsFromEvents, isDenial, levelText, said } from '../thesis/variables';
 import { reportedInWindow, planRecentReads, isResultsFiling } from '../thesis/recent-reporters';
 import { parseCompanyId, parseTopRatios, parseAnnouncements, parseChart } from '../ai-gainers/screener-company';
 import {
-  classifyAnnouncement, buildFinding, returnsFromSeries, bandPrint, pricedInOf, scoreCatalyst, parseStatedValue, coverage,
+  classifyAnnouncement, buildFinding, returnsFromSeries, bandPrint, pricingOf, marketResponseOf, scoreCatalyst, parseStatedValue, coverage,
 } from '../ai-gainers/catalyst-research';
 
 const fx = (n: string) => readFileSync(join(__dirname, 'fixtures', n), 'utf8');
@@ -928,7 +928,7 @@ describe('structural evidence extraction', () => {
       { key: 'order_book', label: 'Order book', before: null, after: 'INR1,310 crores', delta: null, verdict: 'stated', evidence: '', source: 'filing' },
     ] as any });
     for (const t of [a.coverage.output, a.coverage.mechanism, a.coverage.forward]) {
-      assert.equal(t.confirmed + t.pending + t.contradicted + t.stated + t.flat, t.total);
+      assert.equal(t.confirmed + t.pending + t.contradicted + t.stated + t.flat + (t.watch || 0), t.total);
     }
     // A stated core variable is disclosed: it must not be listed as missing.
     assert.ok(!a.coverage.missingCore.includes('Order book'));
@@ -1217,7 +1217,7 @@ describe('catalyst research — the brief\'s method as code', () => {
     const r = returnsFromSeries(series);
     assert.equal(r.history, 247);
     assert.ok(r.y1 != null && r.y1 > 100, 'a year of closes yields a 1Y return');
-    assert.equal(pricedInOf(r), 60);
+    assert.ok(r.tail && r.tail.length === 90, "the last 90 dated closes travel with the returns");
     assert.deepEqual(bandPrint(20.0, 5.5, 'IN'), { band: true, level: 20 });
     assert.deepEqual(bandPrint(19.99, 2.1, 'IN'), { band: true, level: 20 });
     assert.deepEqual(bandPrint(4.99, 110, 'IN'), { band: false, level: null }, 'a 5% move on ₹110 Cr is not a band print');
@@ -1229,7 +1229,14 @@ describe('catalyst research — the brief\'s method as code', () => {
     const f = buildFinding({ ticker: 'KMEW', company: 'Knowledge Marine', market: 'IN', movePct: 4.1, marketCap: 7298, turnover: 12, announcements: anns, returns: returnsFromSeries(series), holding: false, sources: ['screener.in'], sourceFailed: false, windowDays: 21, now });
     assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'order_win');
     assert.equal(f.valueStated, 279.33); assert.equal(f.valuePctMcap, 3.83);
-    assert.equal(f.verdict, 'PRICED', 'up 23% 3M / 127% 1Y — largely priced');
+    // zzz773: a 1Y run is not a pricing assessment. The reaction since the
+    // filing (−0.2% on a 3.8%-of-mcap order) is small; the summary-only
+    // evidence halves nothing but materiality, and caps the rank below P1.
+    assert.equal(f.verdict, 'ROOM');
+    assert.equal(f.components!.evidence, 'SUMMARY_ONLY');
+    assert.equal(f.components!.materialityConfidence, 0.6);
+    assert.equal(f.components!.pricing!.state, 'REACTION_SMALL_VS_SIZE');
+    assert.ok(f.components!.caps!.some((c) => /summary-only/.test(c)));
     assert.ok(f.notes.some((n) => /not model-read/.test(n)));
   });
 
@@ -1239,10 +1246,49 @@ describe('catalyst research — the brief\'s method as code', () => {
     assert.equal(s.verdict, 'THIN'); assert.ok(s.net <= 17);
   });
 
-  test('a 100%-priced catalyst scores zero even when primary and fresh', () => {
+  test('zzz773: NET is reproducible from the displayed components', () => {
     const c = classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Acquisition', 'Acquisition of control worth ₹1,500 crore', 1));
-    const s = scoreCatalyst(c, { marketCap: 5000, returns: { m1: 109, m3: 150, m6: 200, y1: 300, history: 247 }, sourceTier: 'primary', verifiedQuote: true });
-    assert.equal(s.net, 0); assert.equal(s.verdict, 'NONE');
+    for (const verified of [true, false]) {
+      const s = scoreCatalyst(c, { marketCap: 5000, returns: { m1: 109, m3: 150, m6: 200, y1: 300, history: 247 }, sourceTier: 'primary', verifiedQuote: verified });
+      const k = s.components;
+      const base = Math.round((0.30 * k.freshness + 0.30 * k.materiality + 0.25 * k.transmission + 0.15 * k.persistence) * 10) / 10;
+      assert.equal(k.base, base);
+      assert.equal(k.netUncapped, Math.round(base * k.sourceMult * k.pricingAdj! * 10) / 10);
+      assert.equal(k.materiality, Math.round(k.materialityRaw! * k.materialityConfidence! * 10) / 10);
+      // Every gap between the uncapped number and NET is a listed cap.
+      if (s.net < k.netUncapped!) assert.ok(k.caps!.length > 0);
+      else assert.equal(s.net, k.netUncapped);
+    }
+  });
+
+  test('zzz773: a trailing return is never a pricing assessment — up 109% 1M with no dated series is INSUFFICIENT EVIDENCE', () => {
+    const c = classifyAnnouncement(ann('Announcement under Regulation 30 (LODR)-Acquisition', 'Acquisition of control worth ₹1,500 crore', 1));
+    const up = scoreCatalyst(c, { marketCap: 5000, returns: { m1: 109, m3: 150, m6: 200, y1: 300, history: 247 }, sourceTier: 'primary', verifiedQuote: true });
+    const down = scoreCatalyst(c, { marketCap: 5000, returns: { m1: -30, m3: -40, m6: -50, y1: -60, history: 247 }, sourceTier: 'primary', verifiedQuote: true });
+    assert.equal(up.components.pricing!.state, 'INSUFFICIENT_EVIDENCE');
+    assert.equal(down.components.pricing!.state, 'INSUFFICIENT_EVIDENCE');
+    assert.equal(up.net, down.net, 'stock up vs stock down does not change the score without a defined comparison');
+  });
+
+  test('zzz773: pricing compares the reaction since the close before the filing with the event size', () => {
+    const tail = (pre: number, post: number, run = 0): Array<[string, number]> => {
+      const out: Array<[string, number]> = [];
+      for (let i = 0; i < 25; i++) out.push([`2026-08-${String(i + 1).padStart(2, '0')}`, 100 * (1 + (run / 100) * (i / 24))]);
+      out[24][1] = pre;
+      out.push(['2026-09-02', post]);
+      return out;
+    };
+    const resp = (pre: number, post: number, run = 0) => marketResponseOf({ m1: null, m3: null, m6: null, y1: null, history: 26, tail: tail(pre, post, run) }, '2026-09-01T10:00:00+05:30');
+    assert.equal(resp(100, 102).sinceFiling, 2);
+    assert.equal(pricingOf(resp(100, 102), 10, 'executed').state, 'REACTION_SMALL_VS_SIZE');
+    assert.equal(pricingOf(resp(100, 115), 10, 'executed').state, 'REACTION_IN_LINE');
+    assert.equal(pricingOf(resp(100, 140), 10, 'executed').state, 'REACTION_EXCEEDS_SIZE');
+    assert.equal(pricingOf(resp(100, 90), 10, 'executed').state, 'FELL_AFTER_FILING');
+    assert.equal(pricingOf(resp(100, 90), 10, 'executed').adj, 1, 'a fall is a response, not a bonus');
+    assert.equal(pricingOf(resp(100, 102), null, 'executed').state, 'INSUFFICIENT_EVIDENCE', 'no value, no comparison');
+    assert.equal(pricingOf(resp(100, 102), 10, 'enabling').state, 'INSUFFICIENT_EVIDENCE');
+    assert.equal(pricingOf(resp(150, 151, 50), 10, 'executed').state, 'RAN_UP_BEFORE_FILING');
+    assert.ok(!/not priced|priced in/i.test(pricingOf(resp(100, 90), 10, 'executed').text));
   });
 
   test('reject-first: a denial after the last catalyst is the finding; a catalyst filed after the denial is not', () => {
@@ -2032,7 +2078,12 @@ describe('zzz763 — mis-filed charts, loss bases, immaterial one-offs, recent r
     assert.equal(vars.filter((v) => v.key === 'operating_leverage').length, 0, 'no leverage ratio on a loss base');
     const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: true, variables: vars as any });
     assert.notEqual(a.status, 'WEAKENING');
-    assert.match(a.because, /not read either way/);
+    // zzz773: last FY's ratio is history — carried as historical context,
+    // decided "context only", never read as this period's figure.
+    const h = a.historicalContext!.find((x) => x.key === 'cash_conversion')!;
+    assert.equal(h.active, false);
+    assert.match(h.decision, /^Context only/);
+    assert.equal(a.checked.find((c) => c.key === 'cash_conversion')!.state, 'NOT_DISCLOSED');
   });
 
   test('LUMAXTECH — PAT growth is quoted before EPS growth; a ₹3 Cr one-off on ₹99 Cr PAT is immaterial', () => {
@@ -4356,7 +4407,7 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     assert.equal(b.materiality.ratios[0].basis, 'ttm_revenue');
     assert.equal(b.materiality.ratios[0].text, '₹488 Cr ÷ ₹1,020 Cr TTM revenue = 47.8%');
     assert.equal(b.expectationGap.direction, 'UNDER_REFLECTED');
-    assert.match(b.expectationGap.text, /order = 47\.8% of revenue → change may be under-reflected/);
+    assert.match(b.expectationGap.text, /order = 47\.8% of revenue → the move is small against the change/);
     assert.ok(b.transmissionChain.length === 6 && /^EVENT/.test(b.transmissionChain[0]) && /^VALUATION/.test(b.transmissionChain[5]));
     assert.ok(b.unknowns.includes('Order margin: Not disclosed'));
     assert.ok(b.researchNext.length >= 3 && b.researchNext.length <= 5);
@@ -5276,9 +5327,9 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION ends in zzz771 so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
-    assert.match(RULES771, /zzz771$/);
-    assert.equal(fx771().findings.BIGORD.rulesVersion, RULES771);
+  test('RULES_VERSION is current (zzz773) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    assert.match(RULES771, /zzz773$/);
+    assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 
   test('deterministic, clock-free, and no trade words in any new text', () => {
@@ -5745,5 +5796,41 @@ describe('zzz772 capex earning — "has begun contributing" is revenue, a foreca
     const long = 'for quarter 1, we might have spent around INR30 crores -INR35 crores only capex, but overall INR80 crores which is capitalized';
     assert.equal(spent772(long), 'INR30 crores -INR35 crores; INR80 crores');
     assert.equal(spent772('INR 1,722 cr'), 'INR 1,722 cr');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe('zzz773 gainers — press context, exclusive counts, source failures', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const nc = require('../ai-gainers/news-context') as typeof import('../ai-gainers/news-context');
+  const now = new Date('2026-09-24T09:00:00Z');
+  const raw = [
+    { title: 'Sedemac Mechatronics shares worth ₹1,469 crore change hands in block deal - CNBC TV18', url: 'u1', published_at: '2026-09-24T03:30:00Z' },
+    { title: 'Sedemac block deal: up to 10% on offer at a ₹3,000 floor price - Mint', url: 'u2', published_at: '2026-09-23T15:00:00Z' },
+    { title: 'SEDEMAC - 2026 Latest Shareholding - tracxn.com', url: 'u3', published_at: '2026-09-20T01:00:00Z' },
+    { title: 'Kavveri Defence Shares fall 8% today - X', url: 'u4', published_at: '2026-09-11T01:00:00Z' },
+    { title: 'Sedemac Mechatronics Surpasses 1 Million Sales - Sahi', url: 'u5', published_at: '2026-06-01T01:00:00Z' },
+  ];
+  test('a theme covered on two days is a running story; spam, other companies and old items are dropped', () => {
+    const c = nc.buildNewsContext(raw, { ticker: 'SEDEMAC', company: 'Sedemac Mechatronics', now });
+    assert.equal(c.items.length, 2);
+    assert.equal(c.narrative?.theme, 'block_deal');
+    assert.equal(c.narrative?.days, 2);
+    assert.equal(c.items[0].source, 'CNBC TV18');
+  });
+  test('the company name does not theme its own headline (Kavveri Defence is not defence-sector news)', () => {
+    const c = nc.buildNewsContext([raw[3]], { ticker: 'KAVDEFENCE', company: 'Kavveri Defence & Wireless Technologies', now });
+    assert.deepEqual(c.items[0].themes.includes('sector_theme'), false);
+  });
+  test('company name comes from the screener page title', () => {
+    assert.equal(nc.companyNameFromPage('<title>Mazda Ltd share price | About Mazda</title>'), 'Mazda Ltd');
+  });
+  test('the page shows exclusive groups, a press block and a retry button; no "stock down = not priced" text', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'ai-gainers', 'page.tsx'), 'utf8');
+    assert.ok(/groups are exclusive and add up to/.test(src));
+    assert.ok(/PRESS · SECONDARY, UNVERIFIED/.test(src));
+    assert.ok(/retry_failed: true/.test(src));
+    assert.ok(!/A stock that is down has not priced/.test(src));
+    assert.ok(!/label: '[^']*(not yet priced in|largely priced)/.test(src));
   });
 });

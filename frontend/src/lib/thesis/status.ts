@@ -67,7 +67,8 @@ import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { periodEnd } from './fact-normalize';
 import { scaledNumber } from './evidence-ledger';
 import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason,
-  type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile } from './taxonomy';
+  type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile,
+  THESIS_STATUS_VARS, HISTORICAL_PERSISTENT } from './taxonomy';
 
 /** A variable the grader can fill without a document is OUTPUT. (zzz738) */
 const isOutput = (k: VarKey): boolean => VAR_DIMENSION[k] === 'financial' || GRADER_AVAILABLE.has(k);
@@ -172,23 +173,69 @@ export interface Tally {
   unclear: number; not_applicable: number; core_variables: number; total: number;
   /** Risk variables that passed by silence: documents read, nothing found, no reading. (zzz771) */
   silent: number;
+  /** Deteriorations in variables NOT mapped to this thesis type: context,
+   *  never contradicted and never status-changing. (zzz773) */
+  watch?: number;
+  /** Every contradicted, pending, unclear and watch variable BY NAME, with
+   *  its figure — "3 confirmed · 1 contradicted" named nothing. (zzz773) */
+  named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[] };
 }
-function tally(vs: Array<{ verdict: string; state?: EvidenceState; readings?: 0 | 1 | 2 }>): Tally {
+type TallyRow = { verdict: string; state?: EvidenceState; readings?: 0 | 1 | 2; watch?: boolean; label?: string; key?: VarKey;
+  after?: string | null; before?: string | null; delta?: string | null; stateReason?: string | null; historical?: HistoricalItem | null };
+function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch') => string): Tally {
   const na = vs.filter((c) => c.state === 'NOT_APPLICABLE').length;
-  const unclear = vs.filter((c) => c.state === 'UNCLEAR').length;
+  const unclearRows = vs.filter((c) => c.state === 'UNCLEAR');
   const live = vs.filter((c) => c.state !== 'NOT_APPLICABLE' && c.state !== 'UNCLEAR');
   const flats = live.filter((c) => c.verdict === 'flat');
+  const contra = live.filter((c) => c.verdict === 'deteriorating' && !c.watch);
+  const watch = live.filter((c) => c.verdict === 'deteriorating' && c.watch);
+  const pend = live.filter((c) => c.verdict === 'unknown');
+  const f = fmt || ((c: TallyRow) => String(c.label || c.key || ''));
   return {
     confirmed: live.filter((c) => c.verdict === 'improving').length,
-    pending: live.filter((c) => c.verdict === 'unknown').length,
-    contradicted: live.filter((c) => c.verdict === 'deteriorating').length,
+    pending: pend.length,
+    contradicted: contra.length,
     stated: live.filter((c) => c.verdict === 'stated').length + flats.filter((c) => c.readings === 1).length,
     flat: flats.filter((c) => c.readings == null || c.readings === 2).length,
     silent: flats.filter((c) => c.readings === 0).length,
-    unclear, not_applicable: na, core_variables: vs.length - na,
+    unclear: unclearRows.length, not_applicable: na, core_variables: vs.length - na,
     total: vs.length,
+    watch: watch.length,
+    named: {
+      contradicted: contra.map((c) => f(c, 'contradicted')),
+      pending: pend.map((c) => f(c, 'pending')),
+      unclear: unclearRows.map((c) => f(c, 'unclear')),
+      watch: watch.map((c) => f(c, 'watch')),
+    },
   };
 }
+
+/** ── A FIGURE FROM AN EARLIER PERIOD, AND WHAT THE ENGINE DECIDED.  (zzz773)
+ *  `active` is the status engine's explicit decision: true only where the
+ *  item is a thesis-critical persistent condition of THIS thesis type that
+ *  the historical reading leaves unresolved. */
+export interface HistoricalItem {
+  key: VarKey; label: string;
+  /** The period the figure describes: "FY26", "31 Mar 2025". */
+  period: string;
+  value: string;
+  active: boolean;
+  /** One sentence: why it is or is not still an active thesis condition. */
+  decision: string;
+  source: string | null;
+}
+/** "Q1 FY27" → "FY26": the last full year before the quarter being read.
+ *  A Q4 read is ambiguous (the year may already include it), so it stays
+ *  "last FY". (zzz773) */
+export function lastFyLabel(period: string | null | undefined): string {
+  const m = /Q\s?([1-4])\s*FY\s?'?(\d{2})/i.exec(String(period || ''));
+  if (!m || m[1] === '4') return 'last FY';
+  return `FY${String(Number(m[2]) - 1).padStart(2, '0')}`;
+}
+/** A row whose figure describes an earlier period: the screener's last-FY
+ *  ratio, or a filing figure dated before this reporting period. (zzz773) */
+export const isHistoricalRow = (v: { statement?: string | null; after?: string | null }): boolean =>
+  v.statement === 'HISTORICAL' || /\(last FY\)\s*$/i.test(String(v.after ?? ''));
 
 /** How many readings stand behind a row: 0 = no row at all (silence), 1 = a
  *  single figure or statement, 2 = a comparison (before → after, a stated
@@ -265,6 +312,15 @@ export interface CheckedVariable {
    *  enough to count. The card prints "within materiality", never
    *  "unchanged" or "flat". Always filled by assessThesis. (zzz772) */
   withinMateriality?: boolean;
+  /** A deterioration in a variable NOT mapped to this thesis type: shown as
+   *  WATCH, never contradicted, never status-changing. (zzz773) */
+  watch?: boolean;
+  /** The ledger condition that deterioration would have fired, kept as
+   *  context rather than as a fired break condition. (zzz773) */
+  watchCondition?: string | null;
+  /** The earlier-period figure behind this row, and the engine's decision on
+   *  whether it remains an active thesis condition. (zzz773) */
+  historical?: HistoricalItem | null;
 }
 
 /** ── zzz771 CONTRACT (PC-2 fills, PC-3 renders) ───────────────────────────
@@ -320,6 +376,14 @@ export interface ThesisAssessment {
    *  not, on its own, evidence that an unclassified thesis is weakening
    *  when no document has been read. (zzz738) */
   financialWarning: Array<{ label: string; value: string; note?: string }>;
+  /** ── CURRENT PERIOD vs HISTORY.                                  (zzz773)
+   *  Every figure on file that describes an EARLIER period (last FY's cash
+   *  conversion and ROCE, a working-capital figure dated before the quarter),
+   *  with the engine's explicit decision on whether it remains an active
+   *  thesis condition. The card prints these apart from the current period. */
+  historicalContext?: HistoricalItem[];
+  /** The period the current evidence describes ("Q1 FY27"). (zzz773) */
+  currentPeriod?: string | null;
   /** ── THE THESIS LOGIC CHAIN, FROM EVIDENCE ONLY.               (zzz770)
    *  OBSERVATION → CAUSE → STRUCTURAL / TEMPORARY → THESIS IMPACT → FORWARD.
    *  A step the evidence does not establish says "not established". */
@@ -657,7 +721,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const rawFound = byKey(input.variables || []);
   const earnBases = earningsExceedRevenue(rawFound.revenue_growth, rawFound.earnings_growth);
   const immaterialKeys = new Set<VarKey>();
-  const variables: StructuralVar[] = (input.variables || []).map((v) => {
+  const variables0: StructuralVar[] = (input.variables || []).map((v) => {
     if (v.key === 'earnings_growth' && earnBases && !v.unjudged) {
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: EARNINGS_EXCEED_REVENUE };
     }
@@ -667,6 +731,53 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     }
     return v;
   });
+  // ── HISTORY IS NOT THIS QUARTER'S EVIDENCE.                        (zzz773)
+  // "Cash conversion −7.62× (last FY)" drove a Q1 FY27 "THESIS WEAKENING".
+  // A figure that describes an earlier period is taken OUT of the current
+  // period: the current slot reads NOT DISCLOSED and the figure is shown as
+  // history. The one exception is a thesis-critical PERSISTENT condition of
+  // this thesis type (cash conversion for F, cash and returns for G) whose
+  // historical reading is adverse: it stays an ACTIVE condition, labelled
+  // "historical / unresolved", until a current-period figure resolves it.
+  const curPeriod = input.evidencePeriod || null;
+  const curName = curPeriod || 'the current period';
+  const lcl = (l: string) => (/^[A-Z]{2,}\b/.test(l) ? l : l.toLowerCase());
+  const persistentKeys = HISTORICAL_PERSISTENT[thesis.pattern] || new Set<VarKey>();
+  const historicalByKey = new Map<VarKey, HistoricalItem>();
+  const historicalContext: HistoricalItem[] = [];
+  const variables: StructuralVar[] = [];
+  for (const v of variables0) {
+    if (!isHistoricalRow(v)) { variables.push(v); continue; }
+    const lastFy = /\(last FY\)\s*$/i.test(String(v.after ?? ''));
+    const period = lastFy ? lastFyLabel(curPeriod) : String(v.asOf || 'an earlier period');
+    const value = [v.before, String(v.after ?? '').replace(/\s*\(last FY\)\s*$/i, '')].filter(Boolean).join(' → ') || '—';
+    const label = VAR_LABEL[v.key] || v.label;
+    const onLedger = thesis.variables.some((tv) => tv.key === v.key);
+    const persistent = onLedger && persistentKeys.has(v.key) && v.statement !== 'HISTORICAL';
+    // A ratio whose sign cannot be read (negative, or already unjudged) is not
+    // a failed condition: it is unreadable history. (zzz770 / zzz773)
+    const unreadable = !!v.unjudged || v.verdict === 'stated' || (v.key === 'cash_conversion' && isNegativeRatio(v.after));
+    const active = persistent && v.verdict === 'deteriorating' && !unreadable;
+    const decision = active
+      ? `ACTIVE THESIS CONDITION — historical / unresolved: ${lcl(label)} is a persistent condition of the ${thesis.name} thesis, and the ${period} reading (${value}) fails it. It stays open until a ${curName} figure resolves it; it is not a ${curName} deterioration.`
+      : persistent
+        ? `Not an active condition — the ${period} reading (${value}) ${unreadable ? 'cannot be read either way' : 'does not fail the test'}; it is history and can neither confirm nor contradict ${curName}.`
+        : `Context only — ${lcl(label)} is not a persistent condition of the ${thesis.name} thesis, so the ${period} figure does not change the ${curName} status.`;
+    const item: HistoricalItem = { key: v.key, label, period, value, active, decision, source: v.sourceLabel || (v.source === 'grader' ? 'screener (annual)' : null) };
+    historicalContext.push(item);
+    // One historical item per variable on the row itself; a live row keeps
+    // its own value, the history sits beside it.
+    if (!historicalByKey.has(v.key)) historicalByKey.set(v.key, item);
+    if (active) variables.push(v);
+  }
+  // A historical row never shadows a current one for the same variable.
+  for (const k of [...historicalByKey.keys()]) {
+    const live = variables.filter((v) => v.key === k);
+    if (live.length > 1) {
+      const keep = live.find((v) => !isHistoricalRow(v));
+      if (keep) for (const h of live.filter((v) => v !== keep)) variables.splice(variables.indexOf(h), 1);
+    }
+  }
   const found = byKey(variables);
   const comps = input.comparisons || {};
 
@@ -734,7 +845,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       quote: v?.quote ?? null,
       context: v?.context ?? null,
       retyped: v?.retyped ?? null,
-      evidence: v?.evidence || (notApplicable
+      historical: historicalByKey.get(tv.key) ?? null,
+      evidence: v?.evidence || (!v && historicalByKey.has(tv.key)
+        ? `${curName} ${lcl(VAR_LABEL[tv.key] || tv.key)}: NOT DISCLOSED. The ${historicalByKey.get(tv.key)!.period} figure `
+          + `(${historicalByKey.get(tv.key)!.value}) is shown as historical context, not as ${curName} evidence. ${historicalByKey.get(tv.key)!.decision}`
+        : notApplicable
         ? 'Not applicable: this is a services / software / financial business, so there is no physical capacity or plant to fill. Never counted as pending.'
         : stoppedDisclosing
         ? `${comparison!.previous?.raw} in ${comparison!.previous_period}, and not disclosed in ${comparison!.current_period}. `
@@ -770,7 +885,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       c.stateReason = c.unjudged ?? null;
     } else {
       c.state = stateOfAbsence(c.absence, !!input.retrievalFailed);
-      c.stateReason = c.state === 'NOT_APPLICABLE' ? 'services / software / financial business — no physical capacity to fill'
+      c.stateReason = c.historical ? `${curName}: not disclosed — the ${c.historical.period} figure ${c.historical.value} is historical context`
+        : c.state === 'NOT_APPLICABLE' ? 'services / software / financial business — no physical capacity to fill'
         : c.absence === 'no_grader_row' ? 'no graded or screener row on file, and no document read prints it'
           : c.comparison?.change_type === 'NOT_DISCLOSED' && c.comparison.previous
             ? `was ${c.comparison.previous.raw} in ${c.comparison.previous_period}; not disclosed since` : null;
@@ -804,6 +920,12 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // core variable to have MOVED in a direction the evidence supports.
   const coreJudged = coreDisclosed.filter((c) => c.verdict !== 'stated');
   const coreLevelOnly = coreDisclosed.filter((c) => c.verdict === 'stated');
+  // The status ladder's core gate: a core cash ratio that is only HISTORY on
+  // a thesis where cash is not critical neither blocks nor fills the gate — it
+  // was last FY's figure, and cash does not move this thesis. (zzz773)
+  const coreG = core.filter((c) => !(c.key === 'cash_conversion' && !cashCritical && c.historical && c.verdict === 'unknown'));
+  const coreGD = coreG.filter((c) => c.verdict !== 'unknown');
+  const coreGJ = coreGD.filter((c) => c.verdict !== 'stated');
 
   // ── WHICH DETERIORATIONS ARE ALLOWED TO MOVE THE STATUS.       (zzz738)
   //
@@ -815,11 +937,31 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // that says "weakening" on a thesis nobody has stated is a verdict without
   // a subject. Once a document has been read, the ledger has been examined
   // and the same deterioration may set the status.
-  const requiredDims = new Set(thesis.requiresConfirmationIn);
+  // ── ONLY VARIABLES MAPPED TO THIS THESIS TYPE.                    (zzz773)
+  // The dimension test let every thesis's "financial" dimension carry any
+  // earnings or margin move: TI, JINDRILL, CLEANMAX, EXICOM and LLOYDSENT —
+  // none with a classified thesis — read WEAKENING on a generic output rule.
+  // Now a variable moves the status only when THESIS_STATUS_VARS maps it to
+  // this thesis type; anything else is WATCH (context, never status-changing).
+  const statusVars = THESIS_STATUS_VARS[thesis.pattern] || THESIS_STATUS_VARS.UNCLASSIFIED;
   const mayMoveStatus = (c: { key: VarKey }) =>
-    requiredDims.has(VAR_DIMENSION[c.key])
+    statusVars.has(c.key)
     && (c.key !== 'cash_conversion' || cashCritical)
     && (input.evidenceReviewed === true || thesis.pattern !== 'UNCLASSIFIED');
+  // A condition on a variable that cannot move the status did not "fire":
+  // it is a watch item, with the condition kept for context.
+  for (const c of checked) {
+    if (c.verdict === 'deteriorating' && !mayMoveStatus(c)) {
+      c.watch = true;
+      c.watchCondition = c.invalidation;
+      c.invalidation = null;
+    }
+  }
+  /** "earnings growth -55.8%", or for a historical active condition
+   *  "cash conversion FY26: 0.34× (historical / unresolved)". */
+  const downText = (c: CheckedVariable): string => c.historical?.active
+    ? `${lcl(VAR_LABEL[c.key] || c.label)} ${c.historical.period}: ${c.historical.value} (historical / unresolved — ${curName} not disclosed)`
+    : `${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim();
   const coreDown = coreDisclosed.filter((c) => c.verdict === 'deteriorating' && mayMoveStatus(c));
   const supportDown = checked.filter((c) => c.weight === 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
   // ── CASH IS CORE ONLY WHERE THE LEDGER SAYS SO.                 (zzz765c)
@@ -837,7 +979,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     .map((c) => ({ label: c.label, value: c.delta || c.after || 'deteriorating',
       note: c.key === 'cash_conversion' && !cashCritical
         ? `cash conversion is not thesis-critical for ${thesis.pattern === 'UNCLASSIFIED' ? 'a holding with no classified strategy' : `strategy ${thesis.pattern}`} — shown as a warning, status unchanged`
-        : 'not part of this thesis\'s required evidence — shown as a warning, status unchanged' }));
+        : `WATCH — not mapped to the ${thesis.name} thesis, so context only; status unchanged` }));
   const guidanceDown = checked.some((c) => c.key === 'guidance' && c.verdict === 'deteriorating');
 
   const weighted = checked.reduce((a, c) => a + SIGN[c.verdict] * c.weight, 0);
@@ -876,7 +1018,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // clearing, and it counts as cleared, never as improving.
   const structuralKeys = new Set<VarKey>(STRATEGY_STRUCTURAL[thesis.pattern] || []);
   const structuralVars = applicable.filter((c) => structuralKeys.has(c.key)
-    && !isFinancialOutput(c.key, c.source));
+    && !isFinancialOutput(c.key, c.source)
+    // Last FY's cash ratio on a thesis where cash is not critical: history,
+    // neither confirmed nor pending in this period's ratio. (zzz773)
+    && !(c.key === 'cash_conversion' && !cashCritical && c.historical && c.verdict === 'unknown'));
   // The silence pass is SILENCE: a one-off that WAS disclosed (MOREPENLAB's
   // ₹25.83 Cr exceptional item) is not a cleared forensic check. (zzz770)
   //
@@ -1060,6 +1205,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     c.state === 'UNCLEAR' && /sequential|\bQoQ\b/i.test(String(c.stateReason || c.unjudged || '')) ? `QoQ only — seasonal, not judged: ${c.after || c.before}`
       : c.state === 'UNCLEAR' ? `unclear — validation required: ${c.after || c.before}`
       : c.state === 'NOT_APPLICABLE' ? 'not applicable'
+      : c.verdict === 'unknown' && c.historical ? `${curName} not disclosed — ${c.historical.period}: ${c.historical.value} is historical context only`
       : c.verdict === 'unknown' ? (c.state === 'NOT_SEARCHED' ? 'not searched' : 'not disclosed')
       : c.kind === 'claim' && c.statement !== 'TARGET' && c.statement !== 'GUIDANCE' && !isForwardRow({ after: c.after }) ? `management statement, not a filed figure: ${c.after || c.before}`
       : isForwardRow(c) ? `target only: ${c.after || c.before}`
@@ -1096,6 +1242,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     return pick ? `${label}: ${pick.length > 90 ? `${pick.slice(0, 89)}…` : pick}` : `${label} (stated in the filing)`;
   };
 
+  const weakeningDown = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
   // ── THE STATUS LADDER, most severe first. ──────────────────────────────
   let status: ThesisStatus;
   let because: string;
@@ -1137,25 +1284,37 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `Plan: ${input.promiseGap.plan} · Actual: ${input.promiseGap.actual}`
       + `${input.promiseGap.variance ? ` · Variance: ${input.promiseGap.variance}` : ''}. `
       + input.promiseGap.detail;
-  } else if (coreDown.length >= 1 || supportDown.length >= 2 || supportDown.some(isMaterialDown)) {
+  } else if ((coreDown.length >= 1 || supportDown.length >= 2 || supportDown.some(isMaterialDown))
+      && weakeningDown.some((c) => !!c.invalidation)) {
+    // ── WEAKENING NAMES THE CONDITION THAT FIRED.                    (zzz773)
+    // "THESIS WEAKENING … No stated thesis-break condition has been met" said
+    // two things at once. WEAKENING now needs a mapped variable whose own
+    // ledger condition fired, and the sentence names it; a deterioration
+    // with no fired condition is a watch item under CONFIRMATION REQUIRED.
     status = 'WEAKENING';
-    const downAll = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
+    const downAll = weakeningDown;
     // ── SAY PRECISELY WHAT IS WEAKENING, AND WHAT IS NOT.          (zzz770)
     // MOREPENLAB: earnings +409%, margin up, no mechanism confirmed, cash
     // 0.34×. For a profit jump cash conversion IS the forensic test, so the
     // status stays WEAKENING — but the card must not read as thesis failure.
     const onlyCash = downAll.length > 0 && downAll.every((c) => c.key === 'cash_conversion');
     const cashRow = downAll.find((c) => c.key === 'cash_conversion');
+    const fired = downAll.filter((c) => !!c.invalidation);
+    const histOnly = downAll.length > 0 && downAll.every((c) => c.historical?.active);
     because = (onlyCash && outputImproved
       ? `Financial output improved (${outputSummary}), but the structural mechanism is not established `
         + `(${printedConfirmed.size} of ${printedKeys.size} structural variables confirmed) — this is not thesis failure. `
-        + `WEAKENING because cash conversion, thesis-critical for ${thesis.pattern === 'F' ? 'a profit jump (the forensic test)' : 'this strategy'}, reads ${cashRow!.after || cashRow!.delta}: `
-        + 'reported profit is not yet converting into operating cash. '
-      : `Thesis-critical mechanism deteriorating — `
-        + `${downAll.map((c) => `${c.label.toLowerCase()} ${c.delta || c.after || ''}`.trim()).join(', ')}. `)
+        + (cashRow!.historical?.active
+          ? `WEAKENING because cash conversion, thesis-critical for ${thesis.pattern === 'F' ? 'a profit jump (the forensic test)' : 'this strategy'}, is an unresolved historical condition: `
+            + `${cashRow!.historical.period}: ${cashRow!.historical.value} (historical / unresolved). ${curName} cash conversion: NOT DISCLOSED. `
+            + `This is not a ${curName} deterioration — the ${cashRow!.historical.period} reading stays open until a ${curName} figure resolves it. `
+          : `WEAKENING because cash conversion, thesis-critical for ${thesis.pattern === 'F' ? 'a profit jump (the forensic test)' : 'this strategy'}, reads ${cashRow!.after || cashRow!.delta}: `
+            + 'reported profit is not yet converting into operating cash. ')
+      : `${histOnly ? 'Thesis-critical condition unresolved (historical)' : 'Thesis-critical mechanism deteriorating'} — `
+        + `${downAll.map(downText).join(', ')}. `)
       + (coreTriggered.length
         ? `The condition "${coreTriggered[0].invalidation}" has fired once; a break needs it confirmed or a second core condition alongside it. `
-        : 'No stated thesis-break condition has been met. ')
+        : `The condition "${fired[0].invalidation}" has fired on a single reading; a break needs a core condition confirmed or a second one alongside it. `)
       + (coreTriggered.some((c) => c.key === 'cash_conversion')
         ? 'A single cash-conversion reading is a review prompt and never a break on its own. ' : '')
       + 'A weak quarter is not a broken thesis — this is a prompt to look, not to act.';
@@ -1192,8 +1351,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + `Structural driver${drivers.length > 1 ? 's' : ''} evidenced in the filings: ${drivers.slice(0, 4).map(driverText).join('; ')}.`
       + (thesis.pattern === 'F' ? ` Forensics: one-offs ${oneOffText}; cash conversion ${found.cash_conversion?.after || 'not deteriorating'}.` : '')
       + (stillToConfirm.length ? ` Still to confirm next quarter: ${stillToConfirm.join(', ')}.` : '');
-  } else if (input.evidenceReviewed && coreDisclosed.length < core.length
-      && core.every((c) => c.verdict !== 'unknown' || c.absence === 'not_disclosed')) {
+  } else if (input.evidenceReviewed && coreGD.length < coreG.length
+      && coreG.every((c) => c.verdict !== 'unknown' || c.absence === 'not_disclosed')) {
     // ── READ, AND THE COMPANY SAID NOTHING.                        (zzz757)
     //
     // Every core variable was either read or searched for and not found.
@@ -1202,20 +1361,23 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // the company's silence, not his. Silence cannot confirm a mechanism —
     // so this is CONFIRMATION REQUIRED, not a green verdict and not a
     // request to press the read button again.
-    const silent = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
+    const silentRows = coreG.filter((c) => c.verdict === 'unknown');
+    const silent = silentRows.map((c) => c.label.toLowerCase());
+    const hist = silentRows.filter((c) => c.historical);
     status = 'CONFIRMATION_REQUIRED';
     because = (outputImproved ? `${OUTPUT_ONLY_SENTENCE} ` : '')
       + `The documents were read and disclose nothing about ${silent.join(' or ')} — core to this thesis, so `
       + `${silent.length === 1 ? 'it is' : 'they are'} UNKNOWN. `
+      + (hist.length ? `${hist.map((c) => `${c.label} ${c.historical!.period}: ${c.historical!.value}`).join('; ')} ${hist.length === 1 ? 'is' : 'are'} historical context, not read either way as evidence for ${curName}. ` : '')
       + 'Unknown, not negative: silence is never counted against the thesis, and never confirms its mechanism either'
       + (drivers.length ? ` — the ${drivers.slice(0, 2).map(driverText).join('; ')} evidenced does not establish the same mechanism.` : '.');
-  } else if (coreDisclosed.length < core.length
-      && core.some((c) => c.absence === 'no_grader_row')) {
+  } else if (coreGD.length < coreG.length
+      && coreG.some((c) => c.absence === 'no_grader_row')) {
     // No graded row AND no results filing with the figure on its first page.
     // Since zzz762 the filing's headline block fills these; the remaining
     // cases are holdings whose documents read were transcripts and decks
     // only, or were read before the headline was asked for.
-    const gm = core.filter((c) => c.absence === 'no_grader_row').map((c) => c.label.toLowerCase());
+    const gm = coreG.filter((c) => c.absence === 'no_grader_row').map((c) => c.label.toLowerCase());
     status = 'EVIDENCE_INCOMPLETE';
     because = INCOMPLETE_BECAUSE + `${gm.join(' and ').replace(/^./, (x) => x.toUpperCase())} ${gm.length === 1 ? 'is' : 'are'} not on file: this company has no graded or screener row, `
       + 'and none of the documents read prints the figure on its results page. '
@@ -1250,20 +1412,20 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           + 'The filings are on file; the thesis variables are not in them.'
         : 'Nothing has been read for this holding — no graded result, no screener row, no filing. '
           + 'This is an unchecked holding, not a quiet one.');
-  } else if (coreDisclosed.length < core.length) {
+  } else if (coreGD.length < coreG.length) {
     // Nothing is deteriorating, and the thesis has not been fully checked. A
     // positive verdict is not available here, and neither is a comfortable
     // "no material change" — both would claim more than has been looked at.
-    const missing = core.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
+    const missing = coreG.filter((c) => c.verdict === 'unknown').map((c) => c.label.toLowerCase());
     status = 'EVIDENCE_INCOMPLETE';
-    because = INCOMPLETE_BECAUSE + `${coreDisclosed.length}/${core.length} core variables checked. `
+    because = INCOMPLETE_BECAUSE + `${coreGD.length}/${coreG.length} core variables checked. `
       + `Missing: ${missing.join(', ')}. `
       + (!disclosed.length && !input.evidenceReviewed
         ? 'Nothing has been read for this holding at all.'
         : input.evidenceReviewed
           ? 'No deterioration is visible in what was read. These remain open because no source so far has carried them.'
           : 'No deterioration is visible in the evidence reviewed so far; remaining thesis-critical variables have not yet been reviewed.');
-  } else if (coreJudged.length < core.length) {
+  } else if (coreGJ.length < coreG.length) {
     // Every core variable was disclosed, but at least one is a LEVEL with
     // no comparison basis. Better than unread — the figure is on the card
     // and next quarter turns it into a direction — and still not a
@@ -1356,8 +1518,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     status = 'CONFIRMATION_REQUIRED';
     because = (outputImproved ? `${OUTPUT_ONLY_SENTENCE} ` : '')
       + `${unestablished.map((d) => d.label.charAt(0).toUpperCase() + d.label.slice(1)).join(' and ')} `
-      + `${unestablished.length === 1 ? 'has' : 'have'} not been established. ${structuralLine}${notEstablished} `
-      + 'A good result is the OUTPUT of this thesis, not evidence that the mechanism behind it is intact.';
+      + `${unestablished.length === 1 ? 'has' : 'have'} not been established. ${structuralLine}${notEstablished}`
+      + (outputImproved ? ' A good result is the OUTPUT of this thesis, not evidence that the mechanism behind it is intact.' : '');
   } else if (anyMaterialDown) {
     // Only a SMALL move (a margin dip under the materiality line) reaches
     // here; a material one is WEAKENING above. The label's meaning holds:
@@ -1418,6 +1580,15 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       + `${input.expectedPeriod} is the latest period due, ${staleBy} quarters later. What the ${input.evidencePeriod} evidence showed: ${because}`;
   }
 
+  // ── WATCH: NAMED, AND SAID NOT TO MOVE THE STATUS.               (zzz773)
+  // A deterioration in a variable this thesis type does not rest on is never
+  // silent and never status-changing: the status line names it as WATCH.
+  const watchRows = checked.filter((c) => c.watch && c.verdict === 'deteriorating' && (c.weight >= 3 || c.key === 'cash_conversion'));
+  if (watchRows.length && status !== 'BROKEN') {
+    because = `${because.replace(/\s+$/, '')} Watch — context, not status-changing (not mapped to the ${thesis.name} thesis): `
+      + `${watchRows.map((c) => `${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim()).join(', ')}.`;
+  }
+
   // ═════════════════════════════════════════════════════════════════════════
   // THE VERDICT — THREE QUESTIONS, NEVER ONE LABEL.                  (zzz771)
   //
@@ -1446,14 +1617,18 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const critFired = firedRows.filter((c) => mayMoveStatus(c)).map((c) => c.invalidation as string);
     const warnFired = firedRows.filter((c) => !mayMoveStatus(c)).map((c) => c.invalidation as string);
     const q = (xs: string[], j: string) => xs.map((c) => `"${c}"`).join(j);
+    // A condition on an unmapped variable is watch, not a fired trigger. (zzz773)
+    const watchConds = checked.filter((c) => c.watch && c.watchCondition)
+      .map((c) => `${conditionText(c.key, c.watchCondition as string, c).replace(/\.\s*$/, '')} (${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim() + ')');
+    const watchTxt = watchConds.length ? ` Watch — not mapped to this thesis, cannot move the status: ${q(watchConds, '; ')}.` : '';
     const breakTrigger = {
       fired: fired.length > 0,
       conditions: fired,
-      text: !fired.length ? 'None fired'
+      text: !fired.length ? `None fired${watchTxt ? `.${watchTxt}` : ''}`
         : status === 'BROKEN' ? `Fired: ${q(critFired.length ? critFired : fired, ' AND ')} — thesis-break condition met.`
           : [critFired.length ? `Fired: ${q(critFired, '; ')} — ${critFired.length === 1 ? 'one condition' : 'conditions'} on a single reading; a break needs a second core condition or confirmation next quarter.` : '',
             warnFired.length ? `${critFired.length ? 'Also fired' : 'Fired'} (financial warning only — not thesis-critical for this strategy, cannot move toward a break): ${q(warnFired, '; ')}.` : '',
-          ].filter(Boolean).join(' '),
+          ].filter(Boolean).join(' ') + watchTxt,
     };
     const mechX = printedConfirmed.size, mechY = printedKeys.size;
     // ── MISSING ≠ CONTRADICTED.                                      (zzz772)
@@ -1462,7 +1637,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // wrong way was found; it is reported as contradicted, never as missing.
     const labelOf = (k: VarKey) => VAR_LABEL[k] || checked.find((c) => c.key === k)?.label || k;
     const openKeys = [...printedKeys].filter((k) => !printedConfirmed.has(k));
-    const contradictedKeys = openKeys.filter((k) => checked.some((c) => c.key === k && c.verdict === 'deteriorating'));
+    const contradictedKeys = openKeys.filter((k) => checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch));
     const missing = openKeys.filter((k) => !contradictedKeys.includes(k)).map(labelOf);
     const contradictedLabels = contradictedKeys.map(labelOf);
     const coreContradicted = coreDown.length > 0 || structuralDown;
@@ -1592,7 +1767,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     .map((tv) => {
       const c = checked.find((x) => x.key === tv.key)!;
       const st: 'ok' | 'watch' | 'fired' | 'unknown' =
-        c.verdict === 'deteriorating' ? 'fired'
+        c.verdict === 'deteriorating' ? (c.watch ? 'watch' : 'fired')
           : c.verdict === 'unknown' || c.verdict === 'stated' ? 'unknown'
             : c.verdict === 'flat' ? 'watch' : 'ok';
       return { condition: conditionText(tv.key, tv.invalidatedWhen, c), weight: tv.weight, status: st };
@@ -1784,9 +1959,21 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     return out;
   })();
 
+  /** "Earnings growth — -55.8% vs thesis expectation", "Cash conversion —
+   *  Q1 FY27 not disclosed (FY26: 0.51× historical)". (zzz773) */
+  const tallyName = (c0: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch'): string => {
+    const c = c0 as CheckedVariable;
+    const name = VAR_LABEL[c.key] || c.label;
+    const fig = c.historical?.active ? `${c.historical.period}: ${c.historical.value} (historical / unresolved)` : (c.delta || c.after || c.before || '');
+    if (kind === 'contradicted') return `${name} — ${fig} vs thesis expectation${c.invalidation ? ` ("${c.invalidation.replace(/\.$/, '')}")` : ''}`;
+    if (kind === 'watch') return `${name} — ${fig} (not mapped to the ${thesis.name} thesis — context, status unchanged)`;
+    if (kind === 'unclear') return `${name} — ${c.stateReason || c.unjudged || 'validation required'}${fig ? `: ${fig}` : ''}`;
+    return `${name} — ${c.historical ? `${curName} not disclosed (${c.historical.period}: ${c.historical.value} · historical)` : c.state === 'NOT_SEARCHED' ? 'not searched' : c.state === 'SOURCE_UNAVAILABLE' ? 'source unavailable' : 'not disclosed'}`;
+  };
   return {
     verdict,
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
+    historicalContext, currentPeriod: curPeriod,
     logicChain, coreMechanismGaps: coreMechanismGaps.map((c) => c.label),
     mechanismCheck, mechanismVerdict, dimensions,
     structural: {
@@ -1810,9 +1997,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       // earnings, leverage, AND cash conversion / ROCE. MECHANISM is what
       // only a document can supply. The dividing line is the data source,
       // because that is exactly the line the "4 confirmed" bug crossed.
-      output: tally(criticalAll.filter((c) => isOutput(c.key))),
-      mechanism: tally(criticalAll.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward')),
-      forward: tally(criticalAll.filter((c) => VAR_DIMENSION[c.key] === 'forward')),
+      output: tally(criticalAll.filter((c) => isOutput(c.key)), tallyName),
+      mechanism: tally(criticalAll.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward'), tallyName),
+      forward: tally(criticalAll.filter((c) => VAR_DIMENSION[c.key] === 'forward'), tallyName),
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
       levelOnlyCore: coreLevelOnly.filter((c) => !c.unjudged).map((c) => c.label),
       unjudgedCore: coreLevelOnly.filter((c) => c.unjudged).map((c) => `${c.label} — ${c.unjudged}`),
@@ -1845,7 +2032,7 @@ export function exitReasonOf(a: Pick<ThesisAssessment, 'status' | 'checked' | 't
   if (a.status === 'BROKEN') return a.triggered.length ? 'BREAK CONDITION MET' : 'THESIS INVALIDATION';
   if (a.status === 'NEGATIVE_EXPECTATION_GAP') return 'GUIDANCE FAILURE';
   if (a.status !== 'WEAKENING') return null;
-  const down = a.checked.filter((c) => c.verdict === 'deteriorating').sort((x, y) => y.weight - x.weight);
+  const down = a.checked.filter((c) => c.verdict === 'deteriorating' && !c.watch).sort((x, y) => y.weight - x.weight);
   if (down.some((c) => c.key === 'customer_loss')) return 'CUSTOMER LOSS';
   if (down.some((c) => c.key === 'guidance' || c.key === 'management_target' || c.key === 'promise_vs_actual')) return 'GUIDANCE FAILURE';
   if (down.some((c) => EXECUTION_KEYS.has(c.key))) return 'EXECUTION FAILURE';

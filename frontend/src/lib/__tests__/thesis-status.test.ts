@@ -241,11 +241,16 @@ describe('zzz765c · a single cash reading is a review, never a break', () => {
   // zzz770 (spec §4): cash is thesis-critical only for F/G, and a negative
   // grader ratio is UNCLEAR. TI (unclassified) is WEAKENING on its earnings,
   // not on cash; the cash figure is shown and counted neither way.
-  test('live TI (PAT −30%, CFO negative) stays WEAKENING — on earnings, not on cash', () => {
+  // zzz773: UPDATED — earnings is not mapped to an unclassified thesis, so
+  // PAT −30% is WATCH (named, not status-changing), and last FY's cash ratio
+  // is history: the current slot is NOT DISCLOSED.
+  test('live TI (PAT −30%, CFO negative) — earnings is WATCH, cash is history; never WEAKENING on either', () => {
     const a = liveAssess('TI', null);
-    assert.equal(a.status, 'WEAKENING');
-    assert.doesNotMatch(a.because, /cash conversion/i);
-    assert.equal(a.checked.find((c) => c.key === 'cash_conversion')!.state, 'UNCLEAR');
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.match(a.because, /Watch — context, not status-changing \(not mapped to the NO PATTERN ON FILE thesis\): earnings growth/);
+    const cash = a.checked.find((c) => c.key === 'cash_conversion')!;
+    assert.equal(cash.state, 'NOT_DISCLOSED');
+    assert.ok(cash.historical && !cash.historical.active);
   });
 
   test('TI with guidance cut on top still does not break — the cash reading is not a condition', () => {
@@ -261,8 +266,12 @@ describe('zzz765c · a single cash reading is a review, never a break', () => {
     const a = liveAssess('E2E', 'F');
     assert.ok(a.status !== 'WEAKENING' && a.status !== 'BROKEN', a.status);
     const cash = a.checked.find((c) => c.key === 'cash_conversion')!;
-    assert.equal(cash.state, 'UNCLEAR');
-    assert.match(String(cash.stateReason), /validation required/);
+    // zzz773: UPDATED — the ratio is last FY's: history, current NOT DISCLOSED,
+    // and an unreadable historical figure is not an active condition.
+    assert.equal(cash.state, 'NOT_DISCLOSED');
+    assert.match(String(cash.stateReason), /historical context/);
+    assert.equal(cash.historical!.active, false);
+    assert.match(cash.historical!.decision, /^Not an active condition — the last FY reading \(-7\.84×\) cannot be read either way/);
   });
 
   test('F · cash + a material one-off: only the one-off counts towards a break', () => {
@@ -528,12 +537,13 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     for (const pattern of ['F', 'G', null] as const) {
       const a = R({ pattern, variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'value-added mix' }), V('cash_conversion', 'deteriorating', { after: '-3.72× (last FY)', source: 'grader' })] });
       const cash = a.checked.find((c) => c.key === 'cash_conversion')!;
-      assert.equal(cash.state, 'UNCLEAR', String(pattern));
-      assert.match(String(cash.stateReason), /validation required/);
+      // zzz773: UPDATED — a last-FY ratio is history; its current slot is NOT DISCLOSED.
+      assert.equal(cash.state, 'NOT_DISCLOSED', String(pattern));
+      assert.equal(cash.historical!.value, '-3.72×');
+      assert.equal(cash.historical!.active, false);
       assert.notEqual(a.status, 'WEAKENING');
       assert.notEqual(a.status, 'BROKEN');
-      assert.equal(a.coverage.output.contradicted, 0, 'unclear is not contradicted');
-      assert.ok(a.coverage.output.unclear >= 1);
+      assert.equal(a.coverage.output.contradicted, 0, 'history is not contradicted');
       assert.ok(!a.financialWarning.some((w) => w.label === 'cash_conversion'), 'unclear is not a warning either');
     }
   });
@@ -542,7 +552,14 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.deepEqual(['A', 'B', 'F', 'G', 'UNCLASSIFIED'].map(cashIsThesisCritical), [false, false, true, true, false]);
     const cupid = R({ pattern: null, variables: [...GOOD_OUTPUT, V('cash_conversion', 'deteriorating', { after: '0.43× (last FY)', source: 'grader' })] });
     assert.notEqual(cupid.status, 'WEAKENING');
-    const w = cupid.financialWarning.find((x) => x.label === 'cash_conversion');
+    // zzz773: UPDATED — last FY's ratio is historical context, decided "context only".
+    const h = cupid.historicalContext!.find((x) => x.key === 'cash_conversion')!;
+    assert.equal(h.active, false);
+    assert.match(h.decision, /^Context only — cash conversion is not a persistent condition of the NO PATTERN ON FILE thesis/);
+    // A same-period weak ratio on an unclassified holding is still a warning.
+    const cur = R({ pattern: null, variables: [...GOOD_OUTPUT, V('cash_conversion', 'deteriorating', { after: '0.43×', source: 'grader' })] });
+    assert.notEqual(cur.status, 'WEAKENING');
+    const w = cur.financialWarning.find((x) => x.label === 'cash_conversion');
     assert.ok(w && /not thesis-critical/.test(String(w.note)));
   });
 
@@ -555,7 +572,10 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.equal(a.status, 'WEAKENING');
     assert.match(a.because, /^Financial output improved \(revenue \+34\.1% · earnings \+409\.1% · margin \+8\.0pp\), but the structural mechanism is not established/);
     assert.match(a.because, /this is not thesis failure/);
-    assert.match(a.because, /cash conversion, thesis-critical for a profit jump \(the forensic test\), reads 0\.59×/);
+    // zzz773: UPDATED — the F cash test is a persistent condition: active, labelled historical / unresolved.
+    assert.match(a.because, /cash conversion, thesis-critical for a profit jump \(the forensic test\), is an unresolved historical condition: last FY: 0\.59× \(historical \/ unresolved\)/);
+    assert.match(a.because, /the current period cash conversion: NOT DISCLOSED/);
+    assert.equal(a.checked.find((c) => c.key === 'cash_conversion')!.historical!.active, true);
     assert.equal(a.coverage.mechanism.confirmed, 0, 'output never counts as mechanism confirmation');
     assert.notEqual(exitReasonOf(a), null);
   });
@@ -790,7 +810,7 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
       assert.ok(v.directionWhy.length > 10);
       assert.ok(v.evidenceWhy.length > 10);
       assert.equal(v.breakTrigger.fired, v.breakTrigger.conditions.length > 0);
-      assert.ok(v.breakTrigger.fired ? v.breakTrigger.text.startsWith('Fired: ') : v.breakTrigger.text === 'None fired');
+      assert.ok(v.breakTrigger.fired ? v.breakTrigger.text.startsWith('Fired: ') : v.breakTrigger.text.startsWith('None fired'));
       assert.ok(v.coverage.confirmed <= v.coverage.applicable);
       // zzz772: a contradicted variable is reported under `contradicted`, never
       // `missing`; the two together are what is not confirmed.
@@ -960,18 +980,24 @@ describe('zzz771 PC-2 · break-trigger and evidence wording on real shapes', () 
       V('cash_conversion', 'deteriorating', { after: '0.43× (last FY)', source: 'grader' }),
     ] });
     const b = a.verdict!.breakTrigger;
-    assert.equal(b.fired, true);
-    assert.match(b.text, /^Fired \(financial warning only — not thesis-critical for this strategy, cannot move toward a break\): "Operating cash flow falls below reported profit for two quarters\."\.$/);
+    // zzz773: UPDATED — last FY's cash ratio is history, not a fired condition;
+    // for A it is context only.
+    assert.equal(b.fired, false);
     assert.doesNotMatch(b.text, /a break needs/);
     assert.notEqual(a.status, 'WEAKENING');
+    assert.equal(a.historicalContext!.find((h) => h.key === 'cash_conversion')!.active, false);
   });
 
-  test('live TI: WEAKENING on output while no core mechanism variable moved — evidence says where the deterioration is, never "Nothing contradicted"', () => {
+  // zzz773: UPDATED — unmapped output deterioration is WATCH: named in the
+  // status line and the break chip, never WEAKENING, never "fired".
+  test('live TI: output deterioration on an unclassified thesis is WATCH — named, not status-changing', () => {
     const a = liveAssess('TI', null);
-    assert.equal(a.status, 'WEAKENING');
-    assert.equal(a.verdict!.direction, 'WEAKENING');
-    assert.doesNotMatch(a.verdict!.evidenceWhy, /Nothing contradicted/);
-    assert.match(a.verdict!.evidenceWhy, /No core mechanism variable contradicted; the deterioration is in financial output: /);
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.equal(a.verdict!.breakTrigger.fired, false);
+    assert.match(a.verdict!.breakTrigger.text, /^None fired\. Watch — not mapped to this thesis, cannot move the status: /);
+    assert.doesNotMatch(a.because, /No stated thesis-break condition/);
+    assert.ok(a.coverage.output.watch! >= 1);
+    assert.ok(a.coverage.output.named!.watch.some((x) => /^Earnings growth — /.test(x)));
   });
 });
 
@@ -1032,10 +1058,11 @@ describe('zzz772 · status engine', () => {
     assert.doesNotMatch(ae.verdict!.directionWhy, /output did not improve/);
     assert.match(ae.verdict!.directionWhy, /^output improved/);
     // A material decline still fires — phrased as a material decline, not "turn negative".
-    const mat = R({ variables: [W('revenue_growth', 'improving', { delta: '+20%', source: 'grader' }),
+    // zzz773: earnings is mapped to F, so the material decline is exercised there.
+    const mat = R({ pattern: 'F', variables: [W('revenue_growth', 'improving', { delta: '+20%', source: 'grader' }),
       W('earnings_growth', 'deteriorating', { delta: '-30.3%', before: '249 Cr', after: '174 Cr', source: 'grader' })] });
     assert.equal(mat.verdict!.breakTrigger.fired, true);
-    assert.deepEqual(mat.verdict!.breakTrigger.conditions, ['Earnings decline materially — down 10% or more year on year.']);
+    assert.deepEqual(mat.verdict!.breakTrigger.conditions, ['The next quarter fails to confirm the profit level.']);
     noTurnNegative(mat);
     assert.equal(conditionText('earnings_growth' as any, 'Earnings turn negative.', { after: '-12 Cr', verdict: 'deteriorating' }), 'Earnings turn into a loss.');
     // The lines themselves: −5% revenue, −10% earnings, −3pp margin are material.
@@ -1057,10 +1084,12 @@ describe('zzz772 · status engine', () => {
       W('new_customer', 'improving', { after: 'two new aerospace customers onboarded' }),
       W('qualification', 'improving', { after: 'AS9100 audit cleared' }),
       W('margin_driver', 'improving', { after: 'favourable product mix' })] });
-    const m = a.because.match(/Structural evidence reviewed: (\d+)\/(\d+)/);
+    const m = a.because.match(/(\d+)\/(\d+)/);
     assert.ok(m, a.because);
     assert.deepEqual([Number(m![1]), Number(m![2])], [a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable]);
-    assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [3, 8]);
+    // zzz773: UPDATED 3/8 → 3/7 — last FY's cash ratio is history on an
+    // unclassified thesis: neither confirmed nor pending in this period's ratio.
+    assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [3, 7]);
   });
 
   test('3 · missing ≠ contradicted: a variable that moved the wrong way is listed as contradicted, never missing', () => {
@@ -1110,10 +1139,12 @@ describe('zzz772 · status engine', () => {
   test('6 · a not-established list never prints a bare "(flat)"', () => {
     // SFL / BHAGCHEM / AETHER: "cash conversion (flat)", "one-offs (flat)".
     const a = R({ variables: [W('revenue_growth', 'improving', { delta: '+27.2%', source: 'grader' }),
+      W('earnings_growth', 'improving', { delta: '+30.1%', source: 'grader' }),
       W('cash_conversion', 'flat', { after: '0.65× (last FY)', source: 'grader' })] });
     assert.doesNotMatch(a.because, /\(flat\)/);
     assert.doesNotMatch(a.verdict!.evidenceWhy, /\(flat\)/);
-    assert.match(a.because, /cash conversion \(single reading: 0\.65× \(last FY\)\)/);
+    // zzz773: UPDATED — last FY's ratio is history; the current slot is not disclosed.
+    assert.match(`${a.because} ${a.verdict!.evidenceWhy}`, /cash conversion \(the current period not disclosed — last FY: 0\.65× is historical context only\)/);
   });
 
   test('7 · evidence older than the expected period is INCOMPLETE, and the status line opens with it', () => {
@@ -1172,5 +1203,199 @@ describe('zzz772 integration · a fall the company calls marginal is within mate
   });
   test('a stated fall with a figure is still judged by its size', () => {
     assert.equal(selfDescribedMarginal({ before: '300 Cr', after: '280 Cr', evidence: 'marginally lower' }), false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz773 · the owner's Q1 FY27 audit — history vs current, mapped variables
+// only, like-for-like capacity, change vs evidence, unit-less facts, named
+// counts, and historical context decided by the engine.
+// ═══════════════════════════════════════════════════════════════════════════
+import { lastFyLabel, isHistoricalRow } from '../thesis/status';
+import { THESIS_STATUS_VARS, HISTORICAL_PERSISTENT } from '../thesis/taxonomy';
+import { capacityMismatch, validateReading, noCounterparty, unitMissing, isCapacityFigure } from '../thesis/fact-model';
+import { varsFromEvents, rowChangeLines } from '../thesis/variables';
+import { normalizeEvent } from '../thesis/fact-normalize';
+import * as React773 from 'react';
+import { renderToStaticMarkup as render773 } from 'react-dom/server';
+import { ThesisCard as Card773, historyItems } from '../../components/thesis-card';
+
+describe('zzz773 · owner audit (Q1 FY27)', () => {
+  const R = (x: Partial<Parameters<typeof assessThesis>[0]>) => assessThesis({ pattern: null, variables: [], evidenceReviewed: true, hasGraderRow: true, evidencePeriod: 'Q1 FY27', ...x } as any);
+  const W = (key: string, verdict: string, o: Record<string, unknown> = {}) => ({ ...V(key, verdict), label: key, ...o }) as any;
+  const OUT = [W('revenue_growth', 'improving', { delta: '+70.1%', after: '+70.1%', source: 'grader' }),
+    { ...W('margin', 'improving', { delta: '+9.0pp', source: 'grader' }), before: '7.0%', after: '16.0%' }];
+
+  // ── 1. HISTORY IS NOT THIS QUARTER ────────────────────────────────────
+  test('1 · last FY cash conversion never moves the Q1 FY27 status of a thesis where it is not persistent; shown as FY26 history, current NOT DISCLOSED', () => {
+    assert.equal(lastFyLabel('Q1 FY27'), 'FY26');
+    assert.equal(lastFyLabel('Q3 FY27'), 'FY26');
+    assert.equal(lastFyLabel('Q4 FY26'), 'last FY', 'a Q4 read is ambiguous');
+    assert.equal(isHistoricalRow({ after: '-7.62× (last FY)' }), true);
+    assert.equal(isHistoricalRow({ after: '0.62×' }), false);
+    for (const pattern of [null, 'A', 'B'] as const) {
+      const a = R({ pattern, variables: [...OUT, W('cash_conversion', 'deteriorating', { after: '-7.62× (last FY)', source: 'grader' })] });
+      assert.notEqual(a.status, 'WEAKENING', String(pattern));
+      assert.doesNotMatch(a.because, /Thesis-critical mechanism deteriorating/);
+      const cash = a.checked.find((c) => c.key === 'cash_conversion');
+      if (cash) {
+        assert.equal(cash.state, 'NOT_DISCLOSED');
+        assert.match(String(cash.stateReason), /^Q1 FY27: not disclosed — the FY26 figure -7\.62× is historical context$/);
+      }
+      const h = a.historicalContext!.find((x) => x.key === 'cash_conversion')!;
+      assert.deepEqual([h.period, h.value, h.active], ['FY26', '-7.62×', false]);
+    }
+  });
+
+  test('1 · F: cash conversion is a persistent condition — an adverse FY26 reading stays ACTIVE, labelled historical / unresolved, never a Q1 FY27 deterioration', () => {
+    assert.ok(HISTORICAL_PERSISTENT.F.has('cash_conversion'));
+    const a = R({ pattern: 'F', variables: [...OUT, W('earnings_growth', 'improving', { delta: '+409%', source: 'grader' }),
+      W('cash_conversion', 'deteriorating', { after: '0.34× (last FY)', source: 'grader' })] });
+    assert.equal(a.status, 'WEAKENING');
+    assert.match(a.because, /FY26: 0\.34× \(historical \/ unresolved\)\. Q1 FY27 cash conversion: NOT DISCLOSED\. This is not a Q1 FY27 deterioration/);
+    const h = a.historicalContext!.find((x) => x.key === 'cash_conversion')!;
+    assert.equal(h.active, true);
+    assert.match(h.decision, /^ACTIVE THESIS CONDITION — historical \/ unresolved/);
+    // A PASSING FY26 reading is history too: it cannot confirm Q1 FY27.
+    const ok = R({ pattern: 'F', variables: [...OUT, W('cash_conversion', 'improving', { after: '1.40× (last FY)', source: 'grader' })] });
+    assert.equal(ok.historicalContext![0].active, false);
+    assert.match(ok.historicalContext![0].decision, /^Not an active condition — the FY26 reading \(1\.40×\) does not fail the test/);
+    assert.ok(!ok.structural.confirmedLabels.some((l) => /cash/i.test(l)), 'history never confirms the current mechanism');
+  });
+
+  // ── 2. ONLY MAPPED VARIABLES MOVE THE STATUS ──────────────────────────
+  test('2 · unmapped deteriorations are WATCH: named, never fired, never WEAKENING, never "No stated thesis-break condition"', () => {
+    assert.ok(THESIS_STATUS_VARS.A.has('utilisation') && !THESIS_STATUS_VARS.A.has('earnings_growth') && !THESIS_STATUS_VARS.A.has('margin'));
+    assert.ok(THESIS_STATUS_VARS.B.has('order_book') && !THESIS_STATUS_VARS.B.has('margin'));
+    assert.ok(['earnings_growth', 'margin', 'cash_conversion'].every((k) => THESIS_STATUS_VARS.F.has(k as any)));
+    // LLOYDSENT: unclassified, earnings −55.8%.
+    const ll = R({ variables: [...OUT, W('earnings_growth', 'deteriorating', { before: '249 Cr', after: '110 Cr', delta: '-55.8%', source: 'grader' })] });
+    assert.equal(ll.status, 'CONFIRMATION_REQUIRED');
+    assert.match(ll.because, /Watch — context, not status-changing \(not mapped to the NO PATTERN ON FILE thesis\): earnings growth -55\.8%\./);
+    assert.equal(ll.verdict!.breakTrigger.fired, false);
+    assert.match(ll.verdict!.breakTrigger.text, /^None fired\. Watch — not mapped to this thesis, cannot move the status: "Earnings decline materially — down 10% or more year on year \(earnings growth -55\.8%\)"\.$/);
+    assert.equal(ll.checked.find((c) => c.key === 'earnings_growth')!.watch, true);
+    assert.equal(ll.invalidationConditions.find((c) => /Earnings decline/.test(c.condition))!.status, 'watch');
+    // JINDRILL / A: margin −6pp is not an operating-inflection variable.
+    const a = R({ pattern: 'A', variables: [...OUT.slice(0, 1), W('margin', 'deteriorating', { delta: '-6.0pp', source: 'grader' }),
+      W('earnings_growth', 'deteriorating', { delta: '-28.8%', source: 'grader' })] });
+    assert.notEqual(a.status, 'WEAKENING');
+    for (const t of [a.because, a.actionLine, a.verdict!.breakTrigger.text]) assert.doesNotMatch(t, /No stated thesis-break condition/);
+    // A mapped variable still weakens, and WEAKENING names its fired condition.
+    const u = R({ pattern: 'A', variables: [...OUT, W('utilisation', 'deteriorating', { before: '80%', after: '68%', delta: '-12pp' })] });
+    assert.equal(u.status, 'WEAKENING');
+    assert.match(u.because, /The condition "Utilisation fails to rise, or falls, despite the expected demand\." has fired/);
+    const f = R({ pattern: 'F', variables: [...OUT, W('earnings_growth', 'deteriorating', { before: '249 Cr', after: '110 Cr', delta: '-55.8%', source: 'grader' })] });
+    assert.equal(f.status, 'WEAKENING');
+    assert.doesNotMatch(f.because, /No stated thesis-break condition/);
+  });
+
+  // ── 3. CAPACITY: LIKE FOR LIKE ─────────────────────────────────────────
+  test('3 · capacity figures of different units or scopes are never a progression', () => {
+    assert.equal(capacityMismatch({ value: '55 MT' }, { value: '150,000 MTPA' }), 'UNCLEAR — unit/scope mismatch: 55 MT vs 150,000 MTPA, no delta calculated');
+    assert.match(String(capacityMismatch({ value: '2,061 kWp' }, { value: '~3,000 MTPA' })), /^Not comparable — power capacity vs production capacity \(2,061 kWp vs ~3,000 MTPA\)/);
+    assert.match(String(capacityMismatch({ value: '2,50,000 MTPA', quote: 'the overall capacity of Carbon Black of 2,50,000 MTPA' },
+      { value: '5,300 MTPA', quote: 'anthraquinone and carbazole with a total capacity of 5,300 MTPA' })), /^Separate scope — .*carbon black.*anthraquinone/);
+    assert.equal(capacityMismatch({ value: '2600 MTPA' }, { value: '5300 MTPA' }), null);
+    assert.equal(isCapacityFigure('Phase1 Q3FY27'), false);
+    assert.equal(isCapacityFigure('55Mnt'), true);
+    const ev = (variable: string, after: string, text: string) => ({ variable, value_type: 'ACTUAL', before: null, after, unit: null, period: null, direction: 'unknown', confidence: 'HIGH', source: 'Investor presentation Aug 2026', evidence_text: text });
+    const vars = varsFromEvents([
+      ev('capacity', '55 MT', 'Mining throughput capacity approved at 55 MT.'),
+      ev('capacity_addition', '150,000 MTPA', 'Taking combined structural steel capacity to 150,000 MTPA.'),
+    ] as any, 'Q1 FY27');
+    for (const k of ['capacity', 'capacity_addition']) {
+      const r = vars.find((v) => v.key === k)!;
+      assert.equal(r.unjudged, 'UNCLEAR — unit/scope mismatch: 55 MT vs 150,000 MTPA, no delta calculated', k);
+      assert.notEqual(r.verdict, 'improving');
+    }
+    // HSCL: a board approval to enhance capacity is a plan, not capacity added.
+    const hscl = normalizeEvent({ variable: 'capacity_addition', value_type: 'ACTUAL', before: '2600 MTPA', after: '5300 MTPA', unit: 'MTPA', period: null, direction: 'up', confidence: 'HIGH', source: 'Results',
+      evidence_text: "At its meeting held today, the Board has approved an additional capex of Rs. 128 Crores to enhance the project's capacity from 2600 MTPA to 5300 MTPA." } as any, 'Q1 FY27');
+    assert.equal(hscl.value_type, 'GUIDANCE');
+    // The capex chain never reads a different measure as this capacity's commissioning.
+    const ledger = { periods: { 'Q1 FY27': { events: [
+      { ...ev('capacity_addition', '150,000 MTPA', 'Taking combined capacity to 150,000 MTPA.'), id: 'x1' },
+      { ...ev('capacity_addition', '55Mnt', 'Environmental clearance for higher mining throughput of 55Mnt; ~85-km slurry pipeline commissioned.'), value_type: 'MANAGEMENT_CLAIM', id: 'x2' },
+    ] } } } as any;
+    const p = capexProjects(null, ledger, [])[0];
+    assert.match(p.line, /UNCLEAR — unit\/scope mismatch: 55Mnt vs 150,000 MTPA, no delta calculated$/);
+    assert.notEqual(p.steps.find((s) => s.step === 'COMMISSIONED')!.state, 'actual');
+  });
+
+  // ── 4. WHAT CHANGED vs EVIDENCE FOUND ─────────────────────────────────
+  test('4 · a first reading is EVIDENCE FOUND; only a comparable earlier value that differs is WHAT CHANGED', () => {
+    const base = { source: 'filing', sourceLabel: 'Investor presentation Aug 2026', statement: 'ACTUAL', kind: 'fact' };
+    const lines = rowChangeLines([
+      W('capacity_addition', 'stated', { ...base, label: 'Capacity added', after: '150,000 MTPA' }),
+      W('order_book', 'improving', { ...base, label: 'Order book', before: 'INR140 crores', after: 'INR225 crores', delta: '+60.7%' }),
+    ] as any, 'Q1 FY27');
+    const kind = (k: string) => lines.find((l) => l.metric === k)?.kind;
+    assert.equal(kind('capacity_addition'), 'evidence');
+    assert.equal(kind('order_book'), 'change');
+    (globalThis as any).React = React773;
+    const html = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', assessment: R({ variables: OUT }), reportingPeriod: 'Q1 FY27', changed: lines, changedFrom: null, defaultOpen: false }));
+    const text = html.replace(/<[^>]+>/g, ' ');
+    assert.ok(!/\(first read\)/.test(text), 'never "(first read)" under WHAT CHANGED');
+    assert.match(text, /EVIDENCE FOUND · Q1 FY27/);
+    assert.ok(text.indexOf('WHAT CHANGED') < text.indexOf('Order book') && text.indexOf('EVIDENCE FOUND') < text.indexOf('Capacity added'));
+  });
+
+  // ── 5. UNIT-LESS AMOUNTS AND COUNTERPARTY-LESS "CUSTOMERS" ────────────
+  test('5 · MOREPENLAB: a bare amount is UNCLEAR (unit unavailable); a date range or an appointment is not a new customer', () => {
+    assert.equal(unitMissing('57012.81 (Unaudited)'), true);
+    assert.equal(unitMissing('57012.81', 'INR lakh'), false);
+    assert.equal(unitMissing('57012.81', '(Unaudited)'), true, 'an audit tag in the unit slot is not a unit');
+    assert.equal(unitMissing('₹570 Cr'), false);
+    const cx = validateReading('capex', '57012.81 (Unaudited)');
+    assert.equal(cx.state, 'UNCLEAR');
+    assert.equal(cx.reason, 'UNCLEAR — amount extracted but unit unavailable (57012.81 (Unaudited))');
+    assert.equal(noCounterparty('20 th October 2026 to 19 th October 2029 (both days inclusive)'), 'dates');
+    assert.equal(noCounterparty('Mr. Sushil Suri (DIN: 00012028) as the Chairman & Managing Director'), 'person');
+    assert.equal(noCounterparty('up 200% year-on-year'), 'none');
+    assert.equal(noCounterparty('Multi-year supply agreement with Mahindra - Farm Tractor Division (May 2026).'), null);
+    assert.equal(noCounterparty('two new logos'), null);
+    const vars = varsFromEvents([{ variable: 'new_customer', value_type: 'MANAGEMENT_CLAIM', before: null, after: '20 th October 2026 to 19 th October 2029 (both days inclusive)', unit: null, period: null,
+      direction: 'up', confidence: 'HIGH', source: 'Board Meeting Outcome for For Q1 FY 27 Financial Results', evidence_text: 'Re-appointment for a term from 20 th October 2026 to 19 th October 2029 (both days inclusive).' }] as any, 'Q1 FY27');
+    const nc = vars.find((v) => v.key === 'new_customer')!;
+    assert.equal(nc.unjudged, 'UNCLEAR — contract period with no counterparty named; not a new-customer confirmation');
+    assert.notEqual(nc.verdict, 'improving');
+    assert.equal(nc.sourceLabel, 'Board Meeting Outcome for For Q1 FY 27 Financial Results', 'source preserved');
+  });
+
+  // ── 6. EVERY COUNT NAMES ITS VARIABLES ────────────────────────────────
+  test('6 · contradicted, pending and watch are named with their figures', () => {
+    const a = R({ pattern: 'F', variables: [...OUT, W('earnings_growth', 'deteriorating', { before: '249 Cr', after: '110 Cr', delta: '-55.8%', source: 'grader' })] });
+    const t = a.coverage.output;
+    assert.equal(t.contradicted, 1);
+    assert.deepEqual(t.named!.contradicted, ['Earnings growth — -55.8% vs thesis expectation ("The next quarter fails to confirm the profit level")']);
+    assert.ok(t.named!.pending.some((x) => /^Cash conversion — not disclosed$/.test(x)), t.named!.pending.join(' | '));
+    const u = R({ variables: [...OUT, W('earnings_growth', 'deteriorating', { delta: '-55.8%', source: 'grader' }), W('cash_conversion', 'flat', { after: '0.51× (last FY)', source: 'grader' })] });
+    assert.equal(u.coverage.output.contradicted, 0);
+    assert.deepEqual(u.coverage.output.named!.watch, ['Earnings growth — -55.8% (not mapped to the NO PATTERN ON FILE thesis — context, status unchanged)']);
+    assert.ok(u.coverage.output.named!.pending.includes('Cash conversion — Q1 FY27 not disclosed (FY26: 0.51× · historical)'));
+    for (const x of [a, u]) for (const tt of [x.coverage.output, x.coverage.mechanism, x.coverage.forward]) {
+      assert.equal(tt.named!.contradicted.length, tt.contradicted);
+      assert.equal(tt.named!.pending.length, tt.pending);
+    }
+  });
+
+  // ── 7. CURRENT PERIOD vs HISTORICAL CONTEXT ON THE CARD ───────────────
+  test('7 · the card prints current-period evidence apart from historical context, each historical item with the engine\'s decision', () => {
+    const a = R({ pattern: 'F', variables: [...OUT, W('cash_conversion', 'deteriorating', { after: '0.34× (last FY)', source: 'grader' }), W('roce', 'deteriorating', { after: '8.0% (last FY)', source: 'grader' })] });
+    const items = historyItems(a, 'Q1 FY27');
+    const cash = items.find((h) => h.label === 'Cash conversion')!;
+    assert.deepEqual([cash.period, cash.value, cash.active, cash.current], ['FY26', '0.34×', true, 'Q1 FY27 cash conversion: NOT DISCLOSED']);
+    const roce = items.find((h) => h.label === 'ROCE')!;
+    assert.equal(roce.active, false, 'ROCE is not a persistent condition of F');
+    assert.match(roce.decision, /^Context only — ROCE is not a persistent condition/);
+    (globalThis as any).React = React773;
+    const text = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', assessment: a, reportingPeriod: 'Q1 FY27', defaultOpen: true }))
+      .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    const cur = text.indexOf('Q1 FY27 — CURRENT-PERIOD EVIDENCE'), hist = text.indexOf('HISTORICAL CONTEXT — earlier periods, not Q1 FY27 evidence');
+    assert.ok(cur >= 0 && hist > cur, 'both sections, current first');
+    assert.match(text, /Cash conversion — FY26: 0\.34× · historical · Q1 FY27 cash conversion: NOT DISCLOSED · active thesis condition — historical \/ unresolved/);
+    assert.match(text, /ROCE — FY26: 8\.0% · historical · Q1 FY27 ROCE: NOT DISCLOSED · context only — not an active thesis condition/);
+    assert.ok(!/\b(BUY|SELL)\b/.test(text));
   });
 });

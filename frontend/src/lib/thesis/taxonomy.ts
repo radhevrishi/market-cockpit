@@ -309,6 +309,53 @@ export const SILENCE_IS_A_PASS: ReadonlySet<VarKey> = new Set<VarKey>([
   'capacity_bottleneck', 'supply_bottleneck',
 ]);
 
+/**
+ * ── ONLY THE THESIS'S OWN MECHANISM MAY MOVE ITS STATUS.            (zzz773)
+ *
+ * LLOYDSENT, JINDRILL, TI, CLEANMAX and EXICOM read "THESIS WEAKENING —
+ * thesis-critical mechanism deteriorating … No stated thesis-break condition
+ * has been met" on a generic rule: earnings down, margin down, any holding,
+ * any thesis. The owner's rule: a variable may change a thesis's status only
+ * when it is mapped to that thesis type. A deterioration anywhere else is
+ * context — shown as WATCH, never status-changing.
+ *
+ *   A · OPERATING INFLECTION  utilisation, volume, price / mix, operating
+ *                             leverage, capacity (and the capex that fills it)
+ *   B · DEMAND EXPLOSION      orders, order book, book-to-bill, customers,
+ *                             programme conversion into revenue
+ *   F · PROFIT JUMP           earnings, margin, cash conversion — and the
+ *                             forensic checks on them (one-offs, working capital)
+ *   G · SILENT QUALITY        the compounding itself: earnings, revenue,
+ *                             margin, cash, returns, balance sheet
+ *   UNCLASSIFIED              no thesis type on file: only the ledger's own
+ *                             base case (revenue direction) and an outright
+ *                             customer loss. Earnings and margin are watch.
+ */
+export const THESIS_STATUS_VARS: Readonly<Record<string, ReadonlySet<VarKey>>> = {
+  A: new Set<VarKey>(['utilisation', 'volume', 'price', 'mix', 'margin_driver', 'operating_leverage',
+    'capacity', 'capacity_addition', 'commissioning', 'capex_earning', 'capacity_bottleneck']),
+  B: new Set<VarKey>(['order_book', 'order_intake', 'book_to_bill', 'revenue_visibility', 'new_customer',
+    'customer_loss', 'customer_concentration', 'execution_delay', 'revenue_growth']),
+  F: new Set<VarKey>(['earnings_growth', 'margin', 'cash_conversion', 'one_offs', 'margin_driver', 'working_capital']),
+  G: new Set<VarKey>(['earnings_growth', 'revenue_growth', 'margin', 'cash_conversion', 'roce', 'debt', 'one_offs']),
+  UNCLASSIFIED: new Set<VarKey>(['revenue_growth', 'customer_loss']),
+};
+
+/**
+ * ── A LAST-YEAR FIGURE IS HISTORY, NOT THIS QUARTER'S EVIDENCE.     (zzz773)
+ *
+ * The screener's cash conversion and ROCE are LAST FULL YEAR's ratios. On a
+ * Q1 FY27 card "cash conversion −7.62× (last FY)" drove "THESIS WEAKENING —
+ * thesis-critical mechanism deteriorating". A historical figure is shown as
+ * history and does not change the current-period status — unless it is a
+ * thesis-critical PERSISTENT condition of that thesis type, and then it is
+ * labelled "historical / unresolved".
+ */
+export const HISTORICAL_PERSISTENT: Readonly<Record<string, ReadonlySet<VarKey>>> = {
+  F: new Set<VarKey>(['cash_conversion']),
+  G: new Set<VarKey>(['cash_conversion', 'roce']),
+};
+
 /** A variable's evidence can only ever be one of these three things, and the
  *  spec is explicit that they must never merge. */
 export type EvidenceKind =
