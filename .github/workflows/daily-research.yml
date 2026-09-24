@@ -1,0 +1,62 @@
+name: Daily Research (Gainers + Portfolio Catalysts)
+
+# zzz773 — the owner's daily clicks, on a schedule. Uses only public app
+# endpoints; model spend is bounded by the server's own daily ceilings.
+on:
+  schedule:
+    - cron: '50 10 * * 1-5'   # 16:20 IST Mon-Fri → India gainers after the close
+    - cron: '0 14 * * *'      # 19:30 IST daily   → portfolio: read holdings that reported
+    - cron: '30 21 * * 1-5'   # 17:30 ET Mon-Fri  → US gainers after the close
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which job'
+        required: true
+        default: gainers-in
+        type: choice
+        options: [gainers-in, gainers-us, portfolio]
+      reprocess:
+        description: 'Re-research the whole day from scratch (gainers only)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: daily-research-${{ github.event.schedule || github.event.inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Resolve job
+        id: job
+        run: |
+          case "${{ github.event.schedule }}" in
+            "50 10 * * 1-5") echo "name=gainers-in" >> "$GITHUB_OUTPUT" ;;
+            "0 14 * * *")    echo "name=portfolio"  >> "$GITHUB_OUTPUT" ;;
+            "30 21 * * 1-5") echo "name=gainers-us" >> "$GITHUB_OUTPUT" ;;
+            *)               echo "name=${{ github.event.inputs.job }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Run
+        id: main
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          REPROCESS: ${{ (github.event_name == 'schedule' || github.event.inputs.reprocess == 'true') && '1' || '' }}
+        run: node .github/scripts/daily-research.mjs "${{ steps.job.outputs.name }}"
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"; if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"daily-research-${{ steps.job.outputs.name }}\",\"phase\":\"end\",\"ok\":$OK}" -o /dev/null -w "heartbeat %{http_code}\n" || true
