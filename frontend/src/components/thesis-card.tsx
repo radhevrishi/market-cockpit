@@ -24,8 +24,9 @@
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
-import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, LIFECYCLE_LABEL, type CapexChain } from '@/lib/thesis/capex-chain';
-import type { VarVerdict } from '@/lib/thesis/variables';
+import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, LIFECYCLE_LABEL, type CapexChain, type CapexEarning, type CapexEarningState } from '@/lib/thesis/capex-chain';
+import type { VarVerdict, VariableReading, ReadingPoint, PeriodClass } from '@/lib/thesis/variables';
+import type { ThesisVerdict } from '@/lib/thesis/status';
 import { VAR_GROUP, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, EVIDENCE_STATE_META, evidenceStateLine, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
 import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
@@ -103,6 +104,100 @@ const VERDICT: Record<VarVerdict, { mark: string; color: string; word: string }>
   unknown: { mark: '○', color: C.absent, word: 'no value' },
 };
 
+// ── UNKNOWN ≠ FLAT ≠ CONFIRMED.                                     (zzz771)
+//
+// The owner's verdict: a variable nobody disclosed, a variable that was read
+// twice and did not move, and a variable that confirmed the thesis were
+// rendering close enough to be misread for one another ("—", "–", "▲" at the
+// same size and weight). Three treatments, each visually its own thing:
+//
+//   ? NOT DISCLOSED             grey, DASHED outline — an absence, not a finding
+//   → UNCHANGED (two readings)  neutral slate — checked, and it did not move
+//   ✓ CONFIRMED                 emerald — it moved the thesis's way
+//
+// A flat row with only ONE reading is not "unchanged" — nothing was compared —
+// and says "single reading" instead. UNCLEAR prints the value with a demand
+// for validation, never a dash.
+export const ROW_TREATMENT = {
+  NOT_DISCLOSED: { mark: '?', word: 'NOT DISCLOSED' },
+  NOT_SEARCHED: { mark: '○', word: 'NOT SEARCHED' },
+  UNCLEAR: { mark: '?', word: 'unclear — validation required' },
+  NOT_APPLICABLE: { mark: 'n/a', word: 'N/A' },
+  SOURCE_UNAVAILABLE: { mark: '⚠', word: 'SOURCE UNAVAILABLE' },
+  RETRIEVAL_FAILED: { mark: '⚠', word: 'RETRIEVAL FAILED' },
+  UNCHANGED: { mark: '→', word: 'UNCHANGED (two readings)' },
+  SINGLE: { mark: '–', word: 'single reading' },
+  SILENT: { mark: '–', word: 'none disclosed · check passes' },
+  CONFIRMED: { mark: '✓', word: 'CONFIRMED' },
+  CONTRADICTED: { mark: '✕', word: 'CONTRADICTED' },
+  STATED: { mark: '◐', word: 'level only' },
+} as const;
+export type RowTreatmentKey = keyof typeof ROW_TREATMENT;
+
+/** Which of the three treatments a row gets. Reads the evidence state first
+ *  (an UNCLEAR or NOT_DISCLOSED row is never judged by its verdict), then the
+ *  verdict, then whether two readings actually exist. */
+export function rowTreatment(c: { verdict: VarVerdict; state?: string | null; before?: string | null; after?: string | null; comparison?: any; reading?: VariableReading | null }): RowTreatmentKey {
+  const st = c.state || null;
+  if (st === 'UNCLEAR') return 'UNCLEAR';
+  if (c.verdict === 'unknown') {
+    if (st && st in ROW_TREATMENT && st !== 'FOUND') return st as RowTreatmentKey;
+    return 'NOT_SEARCHED';
+  }
+  if (c.verdict === 'improving') return 'CONFIRMED';
+  if (c.verdict === 'deteriorating') return 'CONTRADICTED';
+  if (c.verdict === 'stated') return 'STATED';
+  // flat: two readings → unchanged; one → single; none → silence passing.
+  const twoReadings = !!(c.reading?.current && c.reading?.previous)
+    || (!!c.before && !!c.after)
+    || !!(c.comparison?.previous && c.comparison?.basis !== 'NONE');
+  if (twoReadings) return 'UNCHANGED';
+  if (c.after || c.before) return 'SINGLE';
+  return 'SILENT';
+}
+
+// ── A READING SAYS WHAT PERIOD IT DESCRIBES.                        (zzz771)
+//
+// A historical figure, last year's, a target or a guidance number must never
+// sit in the "current" slot of a row: "◐ Guidance INR1,871 crores (FY26)" on
+// CASTROLIND read as this quarter's figure. Each such point gets a small
+// class label, and the current slot says "current: not disclosed" when the
+// only reading on file is one of those.
+const NON_CURRENT: ReadonlySet<PeriodClass> = new Set<PeriodClass>(['HISTORICAL', 'PREVIOUS_FY', 'MANAGEMENT_TARGET', 'GUIDANCE', 'THESIS_BASELINE']);
+export const PERIOD_CLASS_LABEL: Record<PeriodClass, string> = {
+  CURRENT_QUARTER: 'CURRENT', PREVIOUS_QUARTER: 'PREV QTR', PREVIOUS_FY: 'PREV FY', HISTORICAL: 'HISTORICAL',
+  MANAGEMENT_TARGET: 'TARGET', GUIDANCE: 'GUIDANCE', THESIS_BASELINE: 'BASELINE',
+};
+const pointText = (pt: ReadingPoint) => `${rupee(pt.value)}${pt.period ? ` (${pt.period})` : ''}`;
+/** The printable text of a reading plus the class tags to show beside it. */
+export function readingText(r: VariableReading): { text: string; tags: string[]; displaced: boolean } {
+  const tags: string[] = [];
+  for (const pt of [r.current, r.previous, r.baseline]) if (pt && NON_CURRENT.has(pt.period_class)) tags.push(PERIOD_CLASS_LABEL[pt.period_class]);
+  if (r.current && NON_CURRENT.has(r.current.period_class)) {
+    // The "current" point is not current. Say so, and print it under its
+    // own class rather than letting it occupy the slot.
+    const parts = [`current: not disclosed`, `${PERIOD_CLASS_LABEL[r.current.period_class].toLowerCase()} ${pointText(r.current)}`];
+    if (r.previous && !NON_CURRENT.has(r.previous.period_class)) parts.push(`previous ${pointText(r.previous)}`);
+    return { text: parts.join(' · '), tags: Array.from(new Set(tags)), displaced: true };
+  }
+  return { text: rupee(r.display || ''), tags: Array.from(new Set(tags)), displaced: false };
+}
+
+// ── THREE VERDICT DIMENSIONS, THREE COLOURS.                        (zzz771)
+//
+// "No thesis action triggered" answers "did a break trigger fire?"; it says
+// nothing about direction or about whether the mechanism was checked. The
+// three are printed as separate chips so one cannot be read as another.
+const DIRECTION_WORD: Record<ThesisVerdict['direction'], string> = { STRENGTHENING: 'strengthening', WEAKENING: 'weakening', UNCHANGED: 'unchanged', UNKNOWN: 'unknown' };
+const EVIDENCE_WORD: Record<ThesisVerdict['evidence'], string> = {
+  CONFIRMED: 'confirmed', PARTIALLY_CONFIRMED: 'partially confirmed', NOT_CONTRADICTED: 'not contradicted',
+  CONTRADICTED: 'contradicted', INCOMPLETE: 'incomplete', UNCHECKED: 'unchecked',
+};
+const EARNING_COLOR: Record<CapexEarningState, string> = {
+  EARNING: 'var(--mc-verdict-up, #34D399)', PARTIAL: 'var(--tc-accent, #22D3EE)', SPENT_NOT_EARNING: 'var(--mc-verdict-warn, #FBBF24)',
+  NOT_STARTED: 'var(--mc-verdict-flat, #94A3B8)', UNKNOWN: 'var(--mc-verdict-absent, #64748B)',
+};
+
 // ── WHAT A ROW IS, AND WHAT IT IS MEASURED AGAINST.                (zzz765)
 //
 // Every figure on the board now says three things: what KIND of statement it
@@ -128,12 +223,19 @@ type RowLike = {
   verdict: VarVerdict; before: string | null; after: string | null; delta: string | null;
   statement?: string | null; plan?: { value: string; type: string; gap: string | null } | null;
   asOf?: string | null; comparison?: any; unjudged?: string | null;
+  reading?: VariableReading | null; state?: string | null;
 };
 
 /** The compact value a chip shows — one figure, typed. */
 export function chipValue(c: RowLike): string {
   const after = stripTag(c.after);
   const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupee(c.plan.value)}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
+  // UNCLEAR is printed as a demand for validation with the value, never as a
+  // figure and never as a dash. (zzz771)
+  if (c.state === 'UNCLEAR' && after) return `unclear — validation required: ${after}`;
+  // The time-series reading, when the variables layer supplied one, is the
+  // whole statement: current → previous → Δ → direction → basis. (zzz771)
+  if (c.reading && c.reading.display) return readingText(c.reading).text;
   if (c.statement === 'GUIDANCE' || c.statement === 'TARGET') {
     // "maintained" / "raised" are the finding; print them as such.
     if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${c.statement.toLowerCase()} MAINTAINED`;
@@ -232,6 +334,43 @@ function Section({ label, color, children }: { label: string; color?: string; ch
         marginBottom: 4, borderBottom: `1px solid ${C.border}`, paddingBottom: 3,
       }}>{label}</div>
       {children}
+    </div>
+  );
+}
+
+/** Small period-class label beside a figure that is not this period's. */
+function ClassTag({ word }: { word: string }) {
+  return (
+    <span data-testid="period-class" style={{ marginLeft: 5, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4, padding: '0 4px', borderRadius: 2,
+      border: `1px solid ${C.faint}`, color: C.faint, verticalAlign: 'middle' }}>{word}</span>
+  );
+}
+
+/** "Capex earning: PARTIAL" and the chain lines beneath it. `inline` is the
+ *  board chip (lines joined with ·); the section prints one line per row. */
+function CapexEarningBlock({ e, inline }: { e: CapexEarning; inline: boolean }) {
+  const color = EARNING_COLOR[e.state];
+  const dashed = e.state === 'UNKNOWN';
+  const title = `Capex earning: ${e.label}\n${e.lines.join('\n')}${e.source ? `\nSource: ${e.source}` : ''}`;
+  if (inline) {
+    return (
+      <span data-testid="capex-earning" data-state={e.state} title={title} style={{
+        fontSize: 12, fontWeight: 600, padding: '1px 6px', borderRadius: 4, color: dashed ? C.absent : C.text, lineHeight: 1.5,
+        border: `1px ${dashed ? 'dashed' : 'solid'} ${dashed ? C.absent : `color-mix(in srgb, ${color} 55%, transparent)`}`,
+        background: dashed ? 'transparent' : `color-mix(in srgb, ${color} 10%, transparent)`,
+      }}>
+        Capex earning: <b style={{ color: ink(color) }}>{e.label}</b>
+        {e.lines.map((l, i) => <span key={i}> · {l}</span>)}
+      </span>
+    );
+  }
+  return (
+    <div data-testid="capex-earning" data-state={e.state} style={{ fontSize: 13.5, marginBottom: 5, color: C.text }}>
+      <b style={{ color: ink(color) }}>CAPEX EARNING: {e.label}</b>
+      {e.source && <span style={{ color: C.faint }}> — {e.source}</span>}
+      {e.lines.map((l, i) => (
+        <div key={i} style={{ fontSize: 13, color: dashed ? C.dim : C.text, paddingLeft: 10 }}>{l}</div>
+      ))}
     </div>
   );
 }
@@ -411,12 +550,21 @@ export function ThesisCard(p: ThesisCardProps) {
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginBottom: 3 }}>
             WHAT CHANGED{p.changedFrom ? ` · ${p.changedFrom} → ${p.reportingPeriod}` : p.reportingPeriod ? ` · ${p.reportingPeriod} (first read)` : ''}
           </div>
-          {p.changed.map((c, i) => (
-            <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
-              <span style={{ fontWeight: 900, color: c.sign === '+' ? C.up : c.sign === '-' ? C.down : C.faint }}>{c.sign}</span>{' '}
-              <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{c.text}</span>
-            </div>
-          ))}
+          {p.changed.map((c, i) => {
+            // The time-series reading, when the variables layer supplied
+            // one, replaces the free-text value: current → previous → Δ →
+            // direction, with any non-current point labelled. (zzz771)
+            const row = a?.checked.find((x) => x.key === c.metric) as any;
+            const rd: VariableReading | null = row?.reading || null;
+            const rt = rd && rd.display ? readingText(rd) : null;
+            return (
+              <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
+                <span style={{ fontWeight: 900, color: c.sign === '+' ? C.up : c.sign === '-' ? C.down : C.faint }}>{c.sign}</span>{' '}
+                <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{rt ? `${row.label}: ${rt.text}` : c.text}</span>
+                {rt && rt.tags.map((t) => <ClassTag key={t} word={t} />)}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -426,6 +574,36 @@ export function ThesisCard(p: ThesisCardProps) {
           <b style={{ color: ink(sm?.color) }}>{a.action}</b> — {a.actionLine.slice(a.action.length + 3)}
         </div>
       )}
+
+      {/* ── THREE VERDICT DIMENSIONS, NEVER ONE LABEL.            (zzz771)
+          Break trigger / direction / evidence, each its own chip and its own
+          colour. Rendered only when the status engine supplies the split;
+          the status line above stands alone otherwise. */}
+      {a && a.verdict && (() => {
+        const v = a.verdict;
+        const bt = v.breakTrigger;
+        // A condition on a variable this strategy does not rest on (cash for A)
+        // is a financial warning, not a break signal: amber, and said so. (zzz771)
+        const warnOnly = bt.fired && /financial warning only/i.test(bt.text) && !/^Fired: /.test(bt.text);
+        const btColor = warnOnly ? C.warn : bt.fired ? C.alarm : C.up;
+        const dirColor = v.direction === 'STRENGTHENING' ? C.up : v.direction === 'WEAKENING' ? C.down : v.direction === 'UNCHANGED' ? C.flat : C.absent;
+        const evColor = v.evidence === 'CONFIRMED' ? C.up : v.evidence === 'PARTIALLY_CONFIRMED' ? C.cyan : v.evidence === 'CONTRADICTED' ? C.down
+          : v.evidence === 'NOT_CONTRADICTED' ? C.flat : C.absent;
+        const chip = (color: string, dashed: boolean, title: string, body: React.ReactNode, testid: string) => (
+          <span data-testid={testid} title={title} style={{
+            fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 4, lineHeight: 1.5, maxWidth: '100%',
+            border: `1px ${dashed ? 'dashed' : 'solid'} ${color}`, background: dashed ? 'transparent' : `color-mix(in srgb, ${color} 12%, transparent)`, color: ink(color),
+          }}>{body}</span>
+        );
+        return (
+          <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
+            {chip(btColor, false, bt.text, <>BREAK TRIGGER: <b>{!bt.fired ? 'none fired' : warnOnly ? `none — financial warning only: ${bt.conditions.join('; ') || bt.text}` : `fired: ${bt.conditions.join('; ') || bt.text}`}</b></>, 'verdict-break')}
+            {chip(dirColor, v.direction === 'UNKNOWN', v.directionWhy, <>DIRECTION: <b>{DIRECTION_WORD[v.direction]}</b>{v.directionWhy ? <span style={{ fontWeight: 500 }}> — {v.directionWhy}</span> : null}</>, 'verdict-direction')}
+            {chip(evColor, v.evidence === 'UNCHECKED' || v.evidence === 'INCOMPLETE', v.evidenceWhy,
+              <>EVIDENCE: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural){v.coverage.missing.length ? <span style={{ fontWeight: 500 }}> · missing: {v.coverage.missing.join(', ')}</span> : null}</>, 'verdict-evidence')}
+          </div>
+        );
+      })()}
 
       {/* ── THE VARIABLE BOARD, GROUPED, ALWAYS VISIBLE.         (zzz720)
           Revenue and margin tell you WHAT happened; capacity, utilisation,
@@ -439,6 +617,17 @@ export function ThesisCard(p: ThesisCardProps) {
           const g = VAR_GROUP[c.key] || 'financial';
           if (!byGroup.has(g)) byGroup.set(g, [] as any);
           (byGroup.get(g) as any).push(c);
+        }
+        // A thesis whose ledger does not list capex_earning still owns the
+        // question when a capital programme is on file: the row is added to
+        // the CAPEX group from the chain so the answer is never off the
+        // board. Nothing is added where there is no capex at all. (zzz771)
+        const ce = p.capex?.earning;
+        if (ce && !a.checked.some((c) => c.key === 'capex_earning') && (p.capex!.state !== 'none' || ce.state !== 'UNKNOWN')) {
+          const g = VAR_GROUP['capex_earning'] || 'capex';
+          if (!byGroup.has(g)) byGroup.set(g, [] as any);
+          (byGroup.get(g) as any).push({ key: 'capex_earning', label: 'Capex earning', weight: 2, verdict: ce.state === 'UNKNOWN' ? 'unknown' : 'stated',
+            before: null, after: null, delta: null, evidence: ce.lines.join(' · '), invalidation: null, absence: null, state: ce.state === 'UNKNOWN' ? 'NOT_DISCLOSED' : 'FOUND', stateReason: null, why: '' });
         }
         return (
           <div style={{ marginTop: 8 }}>
@@ -454,11 +643,21 @@ export function ThesisCard(p: ThesisCardProps) {
                   <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1 }}>
                     {items.map((c) => {
                       const v = VERDICT[c.verdict];
+                      // ── "CAPEX EARNING YET?" IS THE STRUCTURED BLOCK. (zzz771)
+                      // State label plus spent / revenue / utilisation /
+                      // margin, from the chain — never "— Capex earning".
+                      if (c.key === 'capex_earning' && p.capex?.earning) {
+                        return <CapexEarningBlock key={c.key} e={p.capex.earning} inline />;
+                      }
                       const lifecycle = c.key === 'capex_earning' && capexLine;
                       const un = c.verdict === 'unknown' && !lifecycle;
                       const ab = un ? (c.absence ? ABSENCE_MARK[c.absence] : ABSENCE_MARK.not_read) : null;
                       const isCore = c.weight >= 4;
                       const unclear = (c as any).state === 'UNCLEAR';
+                      const tr = rowTreatment(c as any);
+                      const T = ROW_TREATMENT[tr];
+                      const rd: VariableReading | null = (c as any).reading || null;
+                      const tags = rd && rd.display ? readingText(rd).tags : [];
                       if (lifecycle) {
                         return (
                           <span key={c.key} title={`Capex lifecycle, from the documents read:\n${(p.capex?.lifecycleProjects || []).map((x) => `${x.name}: ${x.line}`).join('\n')}`}
@@ -469,29 +668,29 @@ export function ThesisCard(p: ThesisCardProps) {
                         );
                       }
                       // Absence is never coloured and never competes with a
-                      // finding; a CORE absence is the one exception and gets
-                      // a dotted outline rather than a colour, so it reads as
-                      // "missing" rather than as "bad". (zzz723)
+                      // finding; it gets a DASHED grey outline and a "?" so it
+                      // reads as "missing" rather than as "bad" — and never
+                      // as "unchanged". (zzz723, zzz771)
+                      const absentLike = un || unclear;
                       return (
-                        <span key={c.key}
+                        <span key={c.key} data-testid={`row-${c.key}`} data-treatment={tr}
                           title={un
                             ? `${c.label} — ${stateLine(c as any)}. ${ab!.hint}${isCore ? '\n\nCORE to this thesis.' : ''}`
                             : unclear
                               ? `${c.label} — ${stateLine(c as any)}. Counted neither as confirmed nor as contradicted.\n\n${c.evidence}`
-                              : `${c.label} — ${v.word}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
+                              : `${c.label} — ${T.word}${T.word !== v.word ? ` · ${v.word}` : ''}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
                           style={{
                             fontSize: 12, fontWeight: isCore ? 800 : 600,
                             padding: '1px 6px', borderRadius: 4,
-                            border: un
-                              ? `1px ${isCore ? 'dashed' : 'solid'} ${isCore ? C.absent : 'transparent'}`
+                            border: absentLike
+                              ? `1px dashed ${C.absent}`
                               : `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
-                            color: un ? C.absent : v.color,
-                            background: un ? 'transparent' : `color-mix(in srgb, ${v.color} 12%, transparent)`,
+                            color: absentLike ? C.absent : v.color,
+                            background: absentLike ? 'transparent' : `color-mix(in srgb, ${v.color} 12%, transparent)`,
                           }}>
-                          <span style={{ opacity: 1 }}>{un ? ab!.mark : unclear ? '?' : v.mark}</span>
+                          <span style={{ opacity: 1 }}>{un ? (tr === 'NOT_DISCLOSED' ? '?' : ab!.mark) : T.mark}</span>
                           {' '}{c.label}
-                          {un && <span style={{ fontSize: 11 }}> · {EVIDENCE_STATE_META[((c as any).state || 'NOT_SEARCHED') as keyof typeof EVIDENCE_STATE_META].short}</span>}
-                          {unclear && <span style={{ fontSize: 11 }}> · unclear</span>}
+                          {un && <span style={{ fontSize: 11 }}> · {T.word}</span>}
                           {/* ── BEFORE → NOW, NOT JUST THE DELTA.        (zzz761)
                               This row printed `delta || after`, so every
                               variable that HAD both sides showed only the
@@ -509,6 +708,13 @@ export function ThesisCard(p: ThesisCardProps) {
                           {!un && (c.before || c.after || c.delta) ? (
                             <> <b>{chipValue(c as any)}</b></>
                           ) : ''}
+                          {/* The treatment word AFTER the value: "0.83× · single
+                              reading", "→ UNCHANGED (two readings)". Confirmed
+                              and contradicted are said by the mark and colour;
+                              unclear is said by the value text itself. (zzz771) */}
+                          {!un && (tr === 'UNCHANGED' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
+                            && <span style={{ fontSize: 11 }}> · {T.word}</span>}
+                          {tags.map((t) => <ClassTag key={t} word={t} />)}
                         </span>
                       );
                     })}
@@ -609,9 +815,24 @@ export function ThesisCard(p: ThesisCardProps) {
             )}
             {changed.map((c) => {
               const v = VERDICT[c.verdict];
+              const tr = rowTreatment(c as any);
+              const T = ROW_TREATMENT[tr];
+              const rdTags = (c as any).reading?.display ? readingText((c as any).reading).tags : [];
+              // The structured "capex earning yet?" answer replaces the free
+              // sentence on this row too. (zzz771)
+              if (c.key === 'capex_earning' && p.capex?.earning) {
+                return (
+                  <div key={c.key} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
+                    <span style={{ color: ink(EARNING_COLOR[p.capex.earning.state]), fontSize: 13.5, fontWeight: 900, width: 12 }}>{T.mark}</span>
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text, minWidth: 132 }}>{c.label}</span>
+                    <span style={{ flex: 1 }}><CapexEarningBlock e={p.capex.earning} inline={false} /></span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: C.faint }}>W{c.weight}</span>
+                  </div>
+                );
+              }
               return (
-                <div key={c.key} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
-                  <span style={{ color: v.color, fontSize: 13.5, fontWeight: 900, width: 12 }}>{v.mark}</span>
+                <div key={c.key} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0' }} data-treatment={tr}>
+                  <span style={{ color: tr === 'UNCLEAR' ? C.absent : v.color, fontSize: 13.5, fontWeight: 900, width: 12 }}>{T.mark}</span>
                   <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text, minWidth: 132 }}>{c.label}</span>
                   <span style={{ fontSize: 13.5, color: C.text, minWidth: 190 }}>
                     {(() => {
@@ -622,7 +843,9 @@ export function ThesisCard(p: ThesisCardProps) {
                       return (
                         <>
                           <b>{chipValue(cc)}</b>
-                          {cc.comparison?.change_type === 'UNCHANGED' && cc.comparison?.basis === 'WITHIN_DOCUMENT' && <b style={{ color: C.flat }}> · FLAT</b>}
+                          {(tr === 'UNCHANGED' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {T.word}</span>}
+                          {rdTags.map((t) => <ClassTag key={t} word={t} />)}
+                          {cc.comparison?.change_type === 'UNCHANGED' && cc.comparison?.basis === 'WITHIN_DOCUMENT' && tr !== 'UNCHANGED' && <b style={{ color: C.flat }}> · FLAT</b>}
                           <span style={{ display: 'block', fontSize: 12, color: C.dim, marginTop: 1 }}>
                             {tag && <b style={{ color: tag.color, letterSpacing: 0.3 }}>{tag.word}</b>}
                             {cc.asOf && <span>{tag ? ' · ' : ''}{cc.statement === 'HISTORICAL' ? 'dated ' : ''}{cc.asOf}</span>}
@@ -864,14 +1087,8 @@ export function ThesisCard(p: ThesisCardProps) {
                     })}
                   </div>
                 )}
-                {p.capex!.earning && (
-                  <div style={{ fontSize: 13.5, marginBottom: 4, color: C.text }}>
-                    <b style={{ color: p.capex!.earning.state === 'revenue' ? C.up : p.capex!.earning.state === 'not_yet' ? C.warn : C.flat }}>
-                      CAPEX EARNING · {p.capex!.earning.state === 'revenue' ? '▲' : p.capex!.earning.state === 'not_yet' ? '○' : '◐'}
-                    </b>{' '}{p.capex!.earning.line}
-                    {p.capex!.earning.source && <span style={{ color: C.faint }}> — {p.capex!.earning.source}</span>}
-                  </div>
-                )}
+                {/* ── "CAPEX EARNING YET?" — the structured answer. (zzz771) */}
+                {p.capex!.earning && <CapexEarningBlock e={p.capex!.earning} inline={false} />}
                 {(p.capex!.lifecycle || []).length > 0 && !(p.capex!.lifecycleProjects || []).length && (
                   <div style={{ fontSize: 12.5, color: C.dim, marginBottom: 4 }}>
                     {(p.capex!.lifecycle || []).map((e) => (
@@ -961,7 +1178,11 @@ export function ThesisCard(p: ThesisCardProps) {
                   <div key={c.key} style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
                     <b style={{ color: c.weight >= 3 ? C.text : C.dim }}>{c.label}</b>
                     {c.weight >= 4 && <span style={{ fontSize: 11, fontWeight: 800, color: C.faint }}> CORE</span>}
-                    {' — '}{c.key === 'capex_earning' && capexLine ? `see the capex lifecycle below` : stateLine(c)}
+                    {' — '}{c.key === 'capex_earning' && p.capex?.earning
+                      ? `capex earning: ${p.capex.earning.label} — ${p.capex.earning.lines.join(' · ')}`
+                      : c.state === 'UNCLEAR' && (c.after || c.before)
+                        ? `unclear — validation required: ${stripTag(c.after || c.before)}`
+                        : stateLine(c)}
                   </div>
                 ))}
             </Section>

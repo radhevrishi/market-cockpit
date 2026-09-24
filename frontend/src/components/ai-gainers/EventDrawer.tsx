@@ -4,7 +4,7 @@
 
 import React, { useEffect } from 'react';
 import type { ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, FlagChips, Move, Name, RelevanceBadge, SourceBadge, StatusPill, TriagePill } from './Badges';
+import { Btn, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill } from './Badges';
 import { EarningsStrip, ScoreDetails, WhatChanged } from './ResearchCard';
 import { C, GAP_META, MATERIAL_COLOR, PERSIST_META, SOURCE_META, STAGE_META, TRANSMIT_META, money, pct, txt } from './tokens';
 
@@ -68,7 +68,10 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
           <Btn onClick={onClose} title="Close (Esc)">✕ CLOSE</Btn>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-          <StatusPill it={it} /><TriagePill it={it} /><SourceBadge it={it} /><RelevanceBadge it={it} /><FlagChips it={it} />
+          {/* zzz771: the drawer carries the same badges as the card, so the
+              "older context" / "this move" reading never changes on open. */}
+          {it.catalystFor === 'CONTEXT' && <OlderContextBadge it={it} />}
+          <StatusPill it={it} /><CatalystForBadge it={it} /><TriagePill it={it} /><SourceBadge it={it} /><RelevanceBadge it={it} /><FlagChips it={it} />
         </div>
 
         <H>EVENT</H>
@@ -77,6 +80,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
 
         <H>WHAT HAPPENED</H>
         <P>{txt(it.headline, 'Not available')}</P>
+        {it.eventClass === 'NO_CATALYST' && <ScanNote it={it} />}
 
         <H>WHAT CHANGED</H>
         {it.earnings ? <P>{txt(it.whatChanged, 'See earnings detail below')}</P> : <WhatChanged it={it} noLabel />}
@@ -124,7 +128,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
           <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.dim }}>Evidence / Technical details</summary>
           <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6, marginTop: 6, wordBreak: 'break-word' }}>
             <div>Source URL: {it.sourceUrl ? <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.cyan }}>{it.sourceUrl}</a> : 'none'}</div>
-            <div>Source confidence: {it.sourceConfidence} · class {it.eventClass} · market {it.market}</div>
+            <div>Source confidence: {it.sourceConfidence} · class {it.eventClass} · market {it.market}{it.catalystFor ? ` · catalyst for: ${it.catalystFor}` : ''}{typeof it.ageDays === 'number' ? ` · age ${it.ageDays}d` : ''}</div>
             <div>Flags: band {it.flags?.band ?? 'none'} · listing {it.flags?.listing ? 'yes' : 'no'} · dilution {it.flags?.dilution ? 'yes' : 'no'} · denial {it.flags?.denial ? 'yes' : 'no'} · turnover {it.flags?.turnover != null ? money(it.flags.turnover, it.market) : 'n/a'}</div>
             {(it.priorityReasons || []).length > 0 && <div>Priority reasons: {it.priorityReasons.join(' · ')}</div>}
             <ScoreDetails it={it} />

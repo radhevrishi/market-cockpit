@@ -775,7 +775,25 @@ describe('structural evidence extraction', () => {
       { key: 'margin', label: 'Operating margin', before: null, after: '+3pp', delta: '+3pp', verdict: 'improving', evidence: '', source: 'grader' },
       { key: 'earnings_growth', label: 'Earnings growth', before: null, after: '+33.2%', delta: '+33.2%', verdict: 'improving', evidence: '', source: 'grader' },
     ] as any });
-    assert.equal(a.status, 'STRENGTHENING');
+    // zzz771: four grader ratios and no filing mechanism is output, not a
+    // confirmed thesis — a cash ratio says profit converted, not WHY the
+    // business improved. Green needs an operating mechanism (next test).
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.notEqual(a.verdict?.direction, 'STRENGTHENING');
+  });
+
+  test('zzz771 · green IS reachable when the operating mechanism itself moved', () => {
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: true, variables: [
+      { key: 'revenue_growth', label: 'Revenue growth', before: null, after: '+27.2%', delta: '+27.2%', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'cash_conversion', label: 'Cash conversion', before: '0.9×', after: '1.2×', delta: null, verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'margin', label: 'Operating margin', before: null, after: '+3pp', delta: '+3pp', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'earnings_growth', label: 'Earnings growth', before: null, after: '+33.2%', delta: '+33.2%', verdict: 'improving', evidence: '', source: 'grader' },
+      { key: 'utilisation', label: 'Capacity utilisation', before: '65%', after: '80%', delta: '+15pp', verdict: 'improving', evidence: 'Utilisation rose from 65% to 80%.', source: 'filing' },
+      { key: 'volume', label: 'Volume', before: null, after: '+22%', delta: '+22%', verdict: 'improving', evidence: 'Volumes grew 22% year on year.', source: 'filing' },
+      { key: 'margin_driver', label: 'Margin driver', before: null, after: 'operating leverage from higher utilisation and a richer product mix', delta: null, verdict: 'improving', evidence: 'Margin expansion was driven by operating leverage and product mix.', source: 'filing' },
+    ] as any });
+    assert.equal(a.status, 'STRENGTHENING', a.because);
+    assert.equal(a.verdict?.evidence, 'CONFIRMED');
   });
 
   test('a mis-filed actual is dropped, not shown as a level — REDINGTON capacity in rupees', () => {
@@ -2235,7 +2253,12 @@ describe('zzz765 prior-quarter backfill', () => {
     assert.deepEqual(Object.keys(l.periods).sort(), ['Q1 FY27', 'Q4 FY26']);
     assert.equal(l.latest_period, 'Q1 FY27');
     assert.equal(l.latest_document_date, '2026-07-01');
-    assert.deepEqual(l.periods['Q1 FY27'], base.periods['Q1 FY27'], 'the current period is untouched');
+    // zzz771: the evidence of the current period is untouched; only its
+    // derived variable snapshot gains the backfilled previous value.
+    const { variables: vNew, ...restNew } = l.periods['Q1 FY27'];
+    const { variables: _vOld, ...restOld } = base.periods['Q1 FY27'];
+    assert.deepEqual(restNew, restOld, 'the current period is untouched');
+    assert.equal(vNew!.utilisation.previous_period, 'Q4 FY26');
     assert.equal(l.last_evidence_read_at, base.last_evidence_read_at, 'a backfill is not a read of the current evidence');
     const u = buildComparisons(l).utilisation!;
     assert.equal(u.current!.raw, '80%');
@@ -4021,7 +4044,8 @@ describe('zzz770 PC-B — fact model regression cases', () => {
       EV('working_capital', 'ACTUAL', null, '59 days', 'Net working capital days were 59 days for the quarter under review.', 'Investor presentation Aug 2026'),
     ] }, cmp, { period: 'Q1 FY27' });
     const wc = vars.find((v) => v.key === 'working_capital')!;
-    assert.equal(rvt770(wc), '59 days (Q4 FY26) → 59 days · unchanged');
+    // zzz771: quantitative rows print the time-series reading format.
+    assert.equal(rvt770(wc), '59 days (Q1 FY27) vs 59 days (Q4 FY26) · unchanged · → QoQ');
     assert.equal(wc.corroboration?.length, 1);
     assert.equal(wc.conflict ?? null, null);
     assert.equal(cc770(wc), 'PERIOD_CHANGE');
@@ -4088,7 +4112,8 @@ describe('zzz770 PC-B — fact model regression cases', () => {
     const vars = ev770(null, { events: [EV('utilisation', 'ACTUAL', null, '74%', util('74%')), target] }, null, { period: 'Q1 FY27' });
     const u = vars.find((v) => v.key === 'utilisation')!;
     assert.equal(u.after, '74%');
-    assert.equal(u.display, 'Actual: 74% · prior comparable value not disclosed · Target: 80% plus · gap -6pp');
+    // zzz771: reading format — the target stays in its own labelled slot.
+    assert.equal(u.display, 'Actual: 74% (Q1 FY27) · previous: not disclosed (first reading) · Target: 80% plus · gap -6pp');
   });
 
   test('AARTIPHARM: with a prior actual on file, 70% → 74% · +4pp beside the target', () => {
@@ -4096,7 +4121,8 @@ describe('zzz770 PC-B — fact model regression cases', () => {
     const vars = ev770(null, { events: [EV('utilisation', 'ACTUAL', null, '74%', util('74%')),
       EV('utilisation', 'TARGET', null, '80% plus', 'We can reach 80% plus capacity utilization by FY \'28 as the incremental capacity ramps up.')] }, bc770(led), { period: 'Q1 FY27' });
     const u = vars.find((v) => v.key === 'utilisation')!;
-    assert.equal(rvt770(u), 'Actual: 70% (Q4 FY26) → 74% · +4pp · Target: 80% plus · gap -6pp');
+    // zzz771: reading format; pp only for a percent (no relative %).
+    assert.equal(rvt770(u), 'Actual: 74% (Q1 FY27) vs 70% (Q4 FY26) · +4pp · ▲ QoQ · Target: 80% plus · gap -6pp');
     assert.equal(u.verdict, 'improving');
     assert.equal(cc770(u), 'PERIOD_CHANGE');
   });
@@ -4306,18 +4332,21 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
   const v = buildView770(fx770());
   const all = (x: View770): Item770[] => {
     const m = new Map<string, Item770>();
-    for (const i of [...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst, ...x.dataQuality, ...x.portfolio]) m.set(i.ticker, i);
+    // zzz771: an older event lives in `context`, not in a ranked section.
+    for (const i of [...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst, ...x.dataQuality, ...x.portfolio, ...(x.context || [])]) m.set(i.ticker, i);
     return Array.from(m.values());
   };
   const items = all(v);
   const it = (t: string) => { const i = items.find((x) => x.ticker === t); assert.ok(i, `${t} missing from every section`); return i!; };
   const queued = new Set(v.queue.map((i) => i.ticker));
+  // zzz771 added fixtures (TRUEDENY, ROSSFUND, DISTRESS, RECENTRES, 544501): 30 names on the board.
+  const N = Object.keys(fx770().findings).length;
 
   test('every fixture lands in exactly one class, and every name on the board is accounted for', () => {
-    assert.equal(items.length, 25);
-    assert.equal(v.summary.scanned, 25);
+    assert.equal(items.length, N);
+    assert.equal(v.summary.scanned, N);
     const s = v.summary;
-    assert.equal(s.confirmed + s.potential + s.negative + s.noCatalyst + s.dataUnavailable + (s.listings || 0), 25);
+    assert.equal(s.confirmed + s.potential + s.negative + s.noCatalyst + s.dataUnavailable + (s.listings || 0), N);
   });
 
   test('large order / small company: CONFIRMED_MATERIAL, Order win, AWARDED, verified, SIGNIFICANT vs TTM revenue, DIRECT', () => {
@@ -4377,11 +4406,14 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     assert.equal(st.earnings!.stale, true);
     for (const t of ['BIGORD', 'ACQ', 'CAPX', 'EARNBEAT']) assert.ok(it(t).priority > st.priority, `${t} ${it(t).priority} > STALEEARN ${st.priority}`);
     assert.ok(st.priorityReasons.some((r) => /context, not this move/.test(r)));
+    // zzz771: it is CONTEXT — out of the queue, in view.context.
+    assert.equal(st.catalystFor, 'CONTEXT'); assert.ok(!queued.has('STALEEARN')); assert.ok((v.context || []).some((i) => i.ticker === 'STALEEARN'));
   });
 
   test('false positives: financing, routine filing, MoU as order, board approval as executed, small order as material, listing as gainer', () => {
     const f = it('FINANCE');
-    assert.equal(f.eventClass, 'NEGATIVE'); assert.equal(f.eventType, 'Fundraising'); assert.equal(f.flags.dilution, true); assert.equal(f.transmission, 'NONE');
+    // zzz771: a raise is a potential catalyst with a dilution flag (NEGATIVE only on distress); transmission WEAK, not NONE.
+    assert.equal(f.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(f.eventType, 'Fundraising'); assert.equal(f.flags.dilution, true); assert.equal(f.transmission, 'WEAK');
     assert.equal(it('ROUTINE').eventClass, 'NO_CATALYST');
     const mou = it('MOUCO');
     assert.notEqual(mou.eventType, 'Order win'); assert.equal(mou.stage, 'ENABLING'); assert.equal(mou.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(mou.materiality.label, 'UNKNOWN');
@@ -4390,7 +4422,9 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     assert.notEqual(it('SMALLORD').eventClass, 'CONFIRMED_MATERIAL');
     const l = it('LISTED');
     assert.equal(l.eventClass, 'LISTING'); assert.ok(!queued.has('LISTED')); assert.ok(v.dataQuality.some((i) => i.ticker === 'LISTED'));
-    for (const t of ['FINANCE', 'ROUTINE', 'LISTED', 'DENY', 'NOCAT', 'BAND']) assert.ok(!queued.has(t) && !v.top3.some((i) => i.ticker === t), `${t} must not be queued`);
+    // zzz771: FINANCE (no named allottee) may sit in the queue/watch as a potential catalyst, but never in the top 3.
+    for (const t of ['ROUTINE', 'LISTED', 'DENY', 'NOCAT', 'BAND']) assert.ok(!queued.has(t) && !v.top3.some((i) => i.ticker === t), `${t} must not be queued`);
+    assert.ok(!v.top3.some((i) => i.ticker === 'FINANCE'));
   });
 
   test('JSWINFRA LoI is ENABLING and never an order win; PACEDIGITK LoA is AWARDED', () => {
@@ -4408,8 +4442,11 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
   });
 
   test('negatives: denial and accident are NEGATIVE with the right type and flags', () => {
+    // zzz771: DENY is a price-movement CLARIFICATION ("no undisclosed information") —
+    // company-confirmed absence of a catalyst → NO_CATALYST with flags.denial; the
+    // true denial case is TRUEDENY (asserted in the zzz771 block).
     const d = it('DENY');
-    assert.equal(d.eventClass, 'NEGATIVE'); assert.equal(d.eventType, 'Denial'); assert.equal(d.flags.denial, true); assert.equal(d.transmission, 'NONE');
+    assert.equal(d.eventClass, 'NO_CATALYST'); assert.equal(d.eventType, 'No identified catalyst'); assert.equal(d.flags.denial, true); assert.equal(d.transmission, 'NONE');
     const a = it('ACCIDENT');
     assert.equal(a.eventClass, 'NEGATIVE'); assert.equal(a.eventType, 'Accident / disruption');
     assert.equal(a.action, 'Negative evidence');
@@ -4487,11 +4524,12 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     assert.ok(it('BROKER').headline.includes('buy rating'));
   });
 
-  test('US shares the model: an offering is NEGATIVE financing with dilution; a 10-Q is Earnings; the move is 1-week', () => {
+  test('US shares the model: an offering is Fundraising with dilution; a 10-Q is Earnings; the move is 1-week', () => {
     const u = buildView770(fxUS770());
-    const us = [...u.queue, ...u.watch, ...u.negative];
+    const us = [...u.queue, ...u.watch, ...u.negative, ...u.noCatalyst, ...(u.context || [])];
     const o = us.find((i) => i.ticker === 'OFFR')!;
-    assert.equal(o.eventClass, 'NEGATIVE'); assert.equal(o.eventType, 'Fundraising'); assert.equal(o.flags.dilution, true);
+    // zzz771: a priced 424B5 takedown is a NEW raise — a potential catalyst flagged for dilution, not NEGATIVE by default.
+    assert.equal(o.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(o.eventType, 'Fundraising'); assert.equal(o.flags.dilution, true);
     assert.equal(o.move1d, null); assert.equal(o.move!.window, '1W'); assert.equal(o.returns.w1, 35);
     const q = us.find((i) => i.ticker === 'TENQ')!;
     assert.equal(q.eventType, 'Earnings'); assert.notEqual(q.eventClass, 'NEGATIVE');
@@ -4570,5 +4608,813 @@ describe('zzz770 · a bank facility is financing, never capex or working capital
     assert.equal(valueFitsVariable({ variable: 'working_capital', before: null, after: '₹9,900.00 Lakhs', unit: '₹', evidence_text: 'The Company repaid in full the secured working capital facilities availed from Kotak Mahindra Bank Limited, aggregating to ₹9,900.00 Lakhs.' }), false);
     assert.equal(valueFitsVariable({ variable: 'capex', before: null, after: '₹480 Crore', unit: '₹', evidence_text: 'Capex of ₹480 crore was spent on the Jammu plant.' }), true);
     assert.equal(valueFitsVariable({ variable: 'working_capital', before: '159 days', after: '132 days', unit: 'days', evidence_text: 'Working capital days improved from 159 days to 132 days.' }), true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz771 PC-1 · every thesis variable is a time series: per company, per
+// period, per variable snapshot; a frozen thesis baseline; readings printed
+// "{cur} ({period}) vs {prev} ({prevPeriod}) · Δ · ▲ basis".
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  emptyLedger as empty771, mergePeriod as merge771, factsFromEvents as facts771,
+  reportingPeriodForDocuments as rp771, documentId as docId771, migrateLedger as migrate771,
+  deriveVariableSnapshots as derive771, ALL_VAR_KEYS as KEYS771,
+} from '../thesis/evidence-ledger';
+import { validateReading as validate771, isAmbiguousValue as ambiguous771 } from '../thesis/fact-model';
+import { extractVariables as extract771, rowValueText as rvt771 } from '../thesis/variables';
+
+describe('zzz771 · variable snapshots, baseline and time-series readings', () => {
+  const now = '2026-10-25T10:00:00.000Z';
+  const doc = (url: string, date: string, outcome = 'read'): any =>
+    ({ id: docId771(url), url, label: `Concall transcript ${date}`, kind: 'transcript', source: 'screener.in company page', period: null, date_iso: date, outcome, chars: 40000, pages: 20 });
+  const ev = (variable: string, value_type: string, before: string | null, after: string, text: string, src: string): any =>
+    ({ variable, value_type, before, after, unit: null, period: null, direction: 'up', evidence_text: text, source: src, confidence: 'HIGH' });
+  const period = (t: string, docs: any[], events: any[], runId: string, at = now) => {
+    const rp = rp771(docs, docs[0]?.date_iso);
+    const { facts, events: evs } = facts771(t, rp.period, events, docs, at);
+    const read = docs.filter((d) => d.outcome === 'read').length;
+    return {
+      period: { reporting_period: rp.period, period_end_date: rp.period_end, latest_document_date: rp.latest_document_date,
+        documents: docs, documents_found: docs.length, documents_read: read, documents_failed: 0, documents_skipped: docs.length - read,
+        facts, events: evs, summary: { events }, status: null, status_because: null, tallies: null,
+        discovery_state: 'EVIDENCE_FOUND', discovery_attempts: [], run_id: runId, prompt_version: 'v8', model: 'm', extracted_at: at, updated_at: at } as any,
+      run: { run_id: runId, reporting_period: rp.period, started_at: at, finished_at: at, outcome: 'COMPLETED', error: null,
+        documents_found: docs.length, documents_read: read, facts_extracted: facts.length, events_extracted: evs.length, model: 'm', prompt_version: 'v8' } as any,
+    };
+  };
+  const q1Doc = doc('https://x/q1.pdf', '2026-07-24');   // → Q1 FY27
+  const q2Doc = doc('https://x/q2.pdf', '2026-10-20');   // → Q2 FY27
+  const S1 = 'Concall transcript 2026-07-24', S2 = 'Concall transcript 2026-10-20';
+  const q1 = () => period('ACME', [q1Doc], [
+    ev('utilisation', 'ACTUAL', null, '70%', 'Capacity utilisation for the quarter was 70% across the plants.', S1),
+    ev('order_book', 'ACTUAL', null, '₹80 Cr', 'The closing order book stood at ₹80 Cr at the end of the quarter.', S1),
+    ev('working_capital', 'ACTUAL', null, '73 days', 'Net working capital stood at 73 days at the end of the quarter.', S1),
+  ], 'r1', '2026-07-25T10:00:00.000Z');
+  const q2 = () => period('ACME', [q2Doc], [
+    ev('utilisation', 'ACTUAL', null, '80%', 'Capacity utilisation for the quarter was 80% across the plants.', S2),
+    ev('order_book', 'ACTUAL', null, '₹107 Cr', 'The closing order book stood at ₹107 Cr at the end of the quarter.', S2),
+    ev('working_capital', 'ACTUAL', null, '42 days', 'Net working capital stood at 42 days at the end of the quarter.', S2),
+  ], 'r2');
+  const both = () => { const a = q1(), b = q2(); return merge771(merge771(empty771('ACME', 'IN', now), a.period, a.run), b.period, b.run); };
+
+  test('Q1 then Q2 merged: both snapshots kept, Q2.previous = Q1 with Δ; Q1 unchanged', () => {
+    const a = q1();
+    const one = merge771(empty771('ACME', 'IN', now), a.period, a.run);
+    const q1Before = JSON.parse(JSON.stringify(one.periods['Q1 FY27'].variables));
+    const l = both();
+    assert.deepEqual(Object.keys(l.periods).sort(), ['Q1 FY27', 'Q2 FY27']);
+    const v1 = l.periods['Q1 FY27'].variables!, v2 = l.periods['Q2 FY27'].variables!;
+    assert.equal(Object.keys(v2).length, KEYS771.length, 'every VarKey has a snapshot');
+    assert.deepEqual(v1, q1Before, 'a later period never overwrites an earlier snapshot');
+    assert.equal(v1.utilisation.state, 'FOUND');
+    assert.equal(v1.utilisation.value, '70%');
+    assert.equal(v1.utilisation.not_comparable_reason, 'first reading');
+    assert.equal(v2.utilisation.previous_period, 'Q1 FY27');
+    assert.equal(v2.utilisation.previous_value, '70%');
+    assert.equal(v2.utilisation.delta_abs, '+10pp');
+    assert.equal(v2.utilisation.delta_pct, null, 'a percent moves in points only');
+    assert.equal(v2.utilisation.direction, 'UP');
+    assert.equal(v2.order_book.delta_abs, '+₹27 Cr');
+    assert.equal(v2.order_book.delta_pct, '+33.8%');
+    assert.equal(v2.working_capital.delta_abs, '−31 days');
+    assert.equal(v2.working_capital.direction, 'DOWN');
+  });
+
+  test('thesis baseline = the first snapshot, frozen after later merges (and a backfill)', () => {
+    const a = q1();
+    const one = merge771(empty771('ACME', 'IN', now), a.period, a.run);
+    assert.equal(one.thesis_baseline!.period, 'Q1 FY27');
+    const base0 = JSON.parse(JSON.stringify(one.thesis_baseline));
+    const b = q2();
+    const two = merge771(one, b.period, b.run);
+    assert.deepEqual(two.thesis_baseline, base0, 'a later merge must not change the baseline');
+    const q4 = period('ACME', [doc('https://x/q4.pdf', '2026-05-20')], [
+      ev('utilisation', 'ACTUAL', null, '60%', 'Capacity utilisation for the quarter was 60% across the plants.', 'Concall transcript 2026-05-20')], 'r0');
+    const three = merge771(two, q4.period, q4.run);
+    assert.deepEqual(three.thesis_baseline, base0, 'an earlier backfill must not change the baseline either');
+    assert.equal(three.periods['Q1 FY27'].variables!.utilisation.previous_period, 'Q4 FY26', 'but the backfill does give Q1 its previous');
+  });
+
+  test('NOT_DISCLOSED is recorded for a read period with no fact; NOT_SEARCHED for an unread one', () => {
+    const l = both();
+    assert.equal(l.periods['Q1 FY27'].variables!.capacity.state, 'NOT_DISCLOSED');
+    assert.equal(l.periods['Q1 FY27'].variables!.capacity.value, null);
+    const u = period('ACME', [doc('https://x/unread.pdf', '2026-07-24', 'not_selected')], [], 'r9');
+    const lu = merge771(empty771('ACME', 'IN', now), u.period, u.run);
+    const v = lu.periods['Q1 FY27'].variables!;
+    assert.equal(v.utilisation.state, 'NOT_SEARCHED');
+    assert.equal(v.capacity.state, 'NOT_SEARCHED');
+  });
+
+  test('unit change → NOT_COMPARABLE "unit changed"; no delta', () => {
+    const a = period('ACME', [q1Doc], [ev('capacity', 'ACTUAL', null, '314 kiloliters', 'Installed capacity was 314 kiloliters at the site.', S1)], 'r1');
+    const b = period('ACME', [q2Doc], [ev('capacity', 'ACTUAL', null, '200 KLD', 'Installed capacity now stands at 200 KLD.', S2)], 'r2');
+    const l = merge771(merge771(empty771('ACME', 'IN', now), a.period, a.run), b.period, b.run);
+    const s = l.periods['Q2 FY27'].variables!.capacity;
+    assert.equal(s.direction, 'NOT_COMPARABLE');
+    assert.equal(s.not_comparable_reason, 'unit changed');
+    assert.equal(s.delta_abs, null);
+  });
+
+  test('the same figure dated to one period in two ledger periods → "same period", never a change', () => {
+    const text = 'Out of the IPO proceeds, 82.88 crore was deployed in April 2026.';
+    const a = period('ACME', [doc('https://x/q4.pdf', '2026-05-20')], [ev('capex', 'ACTUAL', null, '82.88 crore deployed in April 2026', text, 'Concall transcript 2026-05-20')], 'r1');
+    const b = period('ACME', [q1Doc], [ev('capex', 'ACTUAL', null, '82.88 crore deployed in April 2026', text, S1)], 'r2');
+    const l = merge771(merge771(empty771('ACME', 'IN', now), a.period, a.run), b.period, b.run);
+    const s = l.periods['Q1 FY27'].variables!.capex;
+    assert.equal(s.direction, 'NOT_COMPARABLE');
+    assert.equal(s.not_comparable_reason, 'same period');
+  });
+
+  test('an in-text before→after with no earlier period → basis in_text', () => {
+    const a = period('ACME', [q1Doc], [ev('utilisation', 'ACTUAL', '70%', '80%', 'Capacity utilisation improved from 70% to 80% during the quarter.', S1)], 'r1');
+    const l = merge771(empty771('ACME', 'IN', now), a.period, a.run);
+    const s = l.periods['Q1 FY27'].variables!.utilisation;
+    assert.equal(s.previous_period, null);
+    assert.equal(s.previous_value, '70%');
+    assert.equal(s.delta_abs, '+10pp');
+    const vars = extract771(null, a.period.summary, null, { period: 'Q1 FY27', ledger: l });
+    const u = vars.find((v) => v.key === 'utilisation')!;
+    assert.equal(u.reading!.comparison_basis, 'in_text');
+    assert.match(u.reading!.display, /^80% \(Q1 FY27\) vs 70% .* · \+10pp · ▲ in_text$/);
+  });
+
+  test('guidance is never a previous value: Q1 guidance 90%, Q2 actual 80% → no previous', () => {
+    const a = period('ACME', [q1Doc], [ev('utilisation', 'GUIDANCE', null, '90%', 'We expect capacity utilisation to reach 90% by FY28.', S1)], 'r1');
+    const b = period('ACME', [q2Doc], [ev('utilisation', 'ACTUAL', null, '80%', 'Capacity utilisation for the quarter was 80% across the plants.', S2)], 'r2');
+    const l = merge771(merge771(empty771('ACME', 'IN', now), a.period, a.run), b.period, b.run);
+    assert.equal(l.periods['Q1 FY27'].variables!.utilisation.state, 'NOT_DISCLOSED', 'a guidance-only period has no actual');
+    assert.equal(l.periods['Q1 FY27'].variables!.utilisation.value, null);
+    const s = l.periods['Q2 FY27'].variables!.utilisation;
+    assert.equal(s.previous_value, null);
+    assert.equal(s.not_comparable_reason, 'not disclosed in Q1 FY27');
+    const vars = extract771(null, b.period.summary, null, { period: 'Q2 FY27', ledger: l });
+    assert.equal(vars.find((v) => v.key === 'utilisation')!.reading!.display, '80% (Q2 FY27) · previous: not disclosed in Q1 FY27');
+  });
+
+  test('"30% or 25%" is UNCLEAR — validation, snapshot and display', () => {
+    const val = validate771('utilisation', '30% or 25%', 'annualised about 30% or 25%');
+    assert.equal(val.state, 'UNCLEAR');
+    assert.deepEqual(val.flags, ['AMBIGUOUS_VALUE']);
+    assert.equal(ambiguous771('30 to 35%'), false, 'a range is one reading');
+    assert.equal(ambiguous771('80% or more'), false, 'a hedge is one reading');
+    const a = period('ACME', [q1Doc], [ev('utilisation', 'ACTUAL', null, '30% or 25%', 'The Jammu facility utilisation is about 30% or 25% on an annualised basis.', S1)], 'r1');
+    const l = merge771(empty771('ACME', 'IN', now), a.period, a.run);
+    assert.equal(l.periods['Q1 FY27'].variables!.utilisation.state, 'UNCLEAR');
+    const vars = extract771(null, a.period.summary, null, { period: 'Q1 FY27', ledger: l });
+    const u = vars.find((v) => v.key === 'utilisation')!;
+    assert.equal(u.reading!.display, 'unclear — validation required: 30% or 25%');
+    assert.equal(rvt771(u), 'unclear — validation required: 30% or 25%');
+  });
+
+  test('display strings match the owner\'s format (percent, money, days, first reading)', () => {
+    const l = both();
+    const vars = extract771(null, q2().period.summary, null, { period: 'Q2 FY27', ledger: l });
+    const d = (k: string) => vars.find((v) => v.key === k)!.reading!.display;
+    assert.equal(d('utilisation'), '80% (Q2 FY27) vs 70% (Q1 FY27) · +10pp · ▲ QoQ');
+    assert.equal(d('order_book'), '₹107 Cr (Q2 FY27) vs ₹80 Cr (Q1 FY27) · +₹27 Cr · +33.8% · ▲ QoQ');
+    assert.equal(d('working_capital'), '42 days (Q2 FY27) vs 73 days (Q1 FY27) · −31 days · ▼ QoQ');
+    assert.equal(rvt771(vars.find((v) => v.key === 'utilisation')!), '80% (Q2 FY27) vs 70% (Q1 FY27) · +10pp · ▲ QoQ', 'the row prints the reading');
+    const one = (() => { const a = q1(); return merge771(empty771('ACME', 'IN', now), a.period, a.run); })();
+    const v1 = extract771(null, q1().period.summary, null, { period: 'Q1 FY27', ledger: one });
+    assert.equal(v1.find((v) => v.key === 'utilisation')!.reading!.display, '70% (Q1 FY27) · previous: not disclosed (first reading)');
+  });
+
+  test('a stored ledger without snapshots gets them on read (lossless migration), and deriving twice is identical', () => {
+    const l = both();
+    const stripped: any = JSON.parse(JSON.stringify(l));
+    delete stripped.thesis_baseline;
+    for (const p of Object.values<any>(stripped.periods)) delete p.variables;
+    const m = migrate771(stripped)!;
+    assert.ok(m.thesis_baseline);
+    assert.equal(m.periods['Q2 FY27'].variables!.utilisation.delta_abs, '+10pp');
+    assert.deepEqual(derive771(m, 'Q2 FY27', 'x'), derive771(m, 'Q2 FY27', 'x'));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz771 PC-3 · "Capex earning yet?" is a structured state; three verdict
+// dimensions; readings with period classes; Unknown ≠ Flat ≠ Confirmed.
+// ═══════════════════════════════════════════════════════════════════════════
+import { capexEarning as capexEarning771, buildCapexChain as chain771, capexProjects as projects771, CAPEX_EARNING_UNKNOWN_LINE as UNKNOWN_LINE771 } from '../thesis/capex-chain';
+import { assessThesis as assess771 } from '../thesis/status';
+import { extractVariables as ev771 } from '../thesis/variables';
+import { ThesisCard as Card771, chipValue as chip771, rowTreatment as treat771, readingText as rt771 } from '../../components/thesis-card';
+
+describe('zzz771 capex earning — five states, derived only from what the filing states', () => {
+  const V771 = (key: string, verdict: string, extra: any = {}) => ({ key, label: key, kind: 'fact', before: null, after: null, delta: null, verdict, evidence: '', source: 'filing', statement: 'ACTUAL', ...extra });
+
+  test('INNOVACAP shape → PARTIAL: ₹480+ crore, INR107 crores revenue, utilisation level only, margin pending', () => {
+    const summary = {
+      capex_projects: [{ name: 'Kathua, Jammu facility', type: 'greenfield', amount: 'Total Capital Investment 480+ crore', status: 'commissioned',
+        completion_period: 'commercialized in January 2025', revenue_from: 'already contributing; Q1 FY27 revenue INR107 crores' }],
+      utilisation: { current: 'Jammu annualised ~25% to 30%', prior: '', expected: 'Jammu optimum utilization 60-70%', basis: 'Kathua, Jammu plant' },
+    };
+    const vars = [
+      V771('capex_earning', 'improving', { after: 'Jammu capex (~INR480+ crore) is already contributing revenue (INR107 crores in Q1), but management states full margin contribution will come as utilization increases.' }),
+      V771('utilisation', 'stated', { after: '30% or 25%', plan: { value: '65% to 70%', type: 'TARGET', gap: null } }),
+    ] as any;
+    const c = chain771(summary, vars, { periods: {} } as any);
+    const e = c.earning;
+    assert.equal(e.state, 'PARTIAL');
+    assert.equal(e.label, 'PARTIAL');
+    assert.match(String(e.spent), /₹480\+ crore/i);
+    assert.match(String(e.revenueContribution), /^INR107 crores in Q1/);
+    assert.equal(e.utilisation!.to, '30% or 25%');
+    assert.equal(e.utilisation!.from, null);
+    assert.match(String(e.utilisation!.note), /level only; prior not disclosed/);
+    assert.match(String(e.utilisation!.note), /target 65% to 70%/);
+    assert.equal(e.marginContribution, 'pending');
+    assert.equal(c.state, 'starting_to_earn');
+    assert.deepEqual(e.lines.map((l) => l.split(':')[0]), ['Spent', 'Revenue contribution', 'Utilisation', 'Full margin contribution']);
+    assert.match(e.lines[2], /30% or 25% \(level only; prior not disclosed · target 65% to 70%\)/);
+    assert.match(e.lines[3], /^Full margin contribution: pending/);
+    for (const l of e.lines) assert.doesNotMatch(l, /undefined|NaN|\bnull\b/);
+  });
+
+  test('announced only → NOT_STARTED; a plan is never spent and never earning', () => {
+    const summary = { capex_projects: [{ name: 'Plant 9 defence facility', type: 'greenfield', amount: 'INR40 crores', status: 'announced', completion_period: 'FY28', revenue_from: 'not stated' }] };
+    const vars = [V771('capex', 'stated', { after: 'INR40 crores (guidance)', statement: 'GUIDANCE' })] as any;
+    const e = chain771(summary, vars, { periods: {} } as any).earning;
+    assert.equal(e.state, 'NOT_STARTED');
+    assert.match(e.label, /^NOT STARTED/);
+    assert.equal(e.revenueContribution, null);
+    assert.match(e.lines[0], /^Spent: not disclosed \(announced INR40 crores\)/);
+    assert.match(e.lines[1], /^Revenue contribution: none yet — not commissioned/);
+  });
+
+  test('commissioned, no revenue attribution → SPENT_NOT_EARNING; the utilisation on file is printed as a level', () => {
+    const ev = (variable: string, value_type: string, after: string, period: string | null, text: string, id: string) =>
+      ({ variable, value_type, before: null, after, unit: null, period, direction: 'up', confidence: 'HIGH', source: 'Concall transcript Aug 2026', evidence_text: text, id });
+    const ledger = { periods: { 'Q1 FY27': { events: [
+      ev('capex', 'ACTUAL', '₹120 cr', 'Q1 FY27', 'Capex of ₹120 cr was incurred on the new line during the year.', 'e1'),
+      ev('commissioning', 'ACTUAL', 'commissioned in June 2026', 'Q1 FY27', 'The new line was commissioned in June 2026.', 'e2'),
+    ] } } } as any;
+    const summary = { capex_projects: [{ name: 'New line', type: 'brownfield', amount: '₹120 cr', status: 'commissioned', completion_period: 'June 2026', revenue_from: 'not stated' }] };
+    const vars = [V771('utilisation', 'stated', { after: '55%' })] as any;
+    const e = chain771(summary, vars, ledger).earning;
+    assert.equal(e.state, 'SPENT_NOT_EARNING');
+    assert.equal(e.label, 'SPENT — NOT YET EARNING');
+    assert.match(String(e.spent), /₹120 cr/);
+    assert.match(e.lines[1], /^Revenue contribution: not attributed in the documents read/);
+    assert.match(e.lines[2], /^Utilisation: 55% \(level only; prior not disclosed\)/);
+    assert.equal(e.marginContribution, 'unknown');
+  });
+
+  test('revenue AND margin attributed → EARNING; ROCE is never borrowed from company-level FCF', () => {
+    const summary = { capex_projects: [{ name: 'Bheema Phase-1', type: 'greenfield', amount: '₹450 crore', status: 'commissioned', completion_period: 'commercialized March 2024', revenue_from: 'contributed revenue Rs.81.34 crore in FY26' }],
+      utilisation: { current: '~60%', prior: '~35%', expected: '', basis: 'Bheema' } };
+    const vars = [V771('capex_earning', 'improving', { after: 'Bheema Phase-1 capex (~Rs.450 crore) contributed revenue Rs.81.34 crore and EBITDA Rs.7.86 crore in FY26.' })] as any;
+    const c = chain771(summary, vars, { periods: {} } as any);
+    const e = c.earning;
+    assert.equal(e.state, 'EARNING');
+    assert.equal(e.marginContribution, 'disclosed');
+    assert.match(String(e.marginText), /EBITDA Rs\.7\.86 crore/);
+    assert.equal(e.utilisation!.from, '~35%');
+    assert.equal(e.utilisation!.to, '~60%');
+    assert.match(e.lines[2], /^Utilisation: ~35% → ~60%$/);
+    assert.equal(e.roceText, null);
+    assert.equal(c.state, 'earning');
+  });
+
+  test('nothing on file → UNKNOWN is a sentence, never a dash; no state is invented from a company-level utilisation figure', () => {
+    const e = chain771(null, [] as any, { periods: {} } as any).earning;
+    assert.equal(e.state, 'UNKNOWN');
+    assert.equal(e.label, 'UNKNOWN');
+    assert.equal(e.lines.length, 1);
+    assert.equal(e.lines[0], UNKNOWN_LINE771);
+    assert.notEqual(e.lines[0].trim(), '—');
+    assert.doesNotMatch(e.lines[0], /^[—–-]\s*$/);
+    // A utilisation figure alone (no capex) is still UNKNOWN for the capex question.
+    const e2 = capexEarning771([V771('utilisation', 'stated', { after: '80%' })] as any, null, [], null);
+    assert.equal(e2.state, 'UNKNOWN');
+  });
+
+  test('a capex_earning row that says "expected to start contributing from Mar 27" is NOT_STARTED, not PARTIAL', () => {
+    const summary = { capex_projects: [{ name: 'Jammu stainless steel plant', type: 'greenfield', amount: 'Rs 600 crore', status: 'under_construction', completion_period: "Mar '27", revenue_from: "Mar '27" }] };
+    const vars = [V771('capex_earning', 'stated', { after: "Jammu capex expected to start contributing revenue from Mar '27 as per management." })] as any;
+    const e = chain771(summary, vars, { periods: {} } as any).earning;
+    assert.equal(e.state, 'NOT_STARTED');
+    assert.equal(e.revenueContribution, null);
+  });
+});
+
+describe('zzz771 thesis card — verdict chips, readings, capex earning block, Unknown ≠ Flat ≠ Confirmed', () => {
+  (globalThis as any).React = ReactNS770;
+  const g = row('INNOVACAP') || row('KMEW');
+  const summary = {
+    capex_projects: [{ name: 'Kathua, Jammu facility', type: 'greenfield', amount: 'Total Capital Investment 480+ crore', status: 'commissioned',
+      completion_period: 'commercialized in January 2025', revenue_from: 'already contributing; Q1 FY27 revenue INR107 crores' }],
+    utilisation: { current: 'Jammu annualised ~25% to 30%', prior: '', expected: 'Jammu optimum utilization 60-70%', basis: 'Kathua, Jammu plant' },
+    capex_earning: 'Jammu capex (~INR480+ crore) is already contributing revenue (INR107 crores in Q1), but management states full margin contribution will come as utilization increases.',
+    order_book: { current: '', prior: '' },
+  };
+  const vars = ev771(g, summary);
+  const a: any = assess771({ pattern: 'A', variables: vars, evidenceReviewed: true, hasGraderRow: true } as any);
+  // Synthetic contracts the other agents fill: the three-way verdict and a reading.
+  a.verdict = {
+    breakTrigger: { fired: false, conditions: [], text: 'No stated thesis-break condition has been met.' },
+    direction: 'STRENGTHENING', directionWhy: 'revenue and margin both up on a disclosed utilisation ramp',
+    evidence: 'PARTIALLY_CONFIRMED', evidenceWhy: 'utilisation is a level only', coverage: { confirmed: 2, applicable: 3, missing: ['Capacity utilisation'] },
+  };
+  const rev = a.checked.find((c: any) => c.key === 'revenue_growth');
+  if (rev) rev.reading = { current: { value: '₹512 Cr', period: 'Q1 FY27', period_class: 'CURRENT_QUARTER', unit: '₹ Cr', numeric: 512, source: 'results' },
+    previous: { value: '₹383 Cr', period: 'Q1 FY26', period_class: 'PREVIOUS_QUARTER', unit: '₹ Cr', numeric: 383, source: 'results' }, baseline: null,
+    delta_abs: '+₹129 Cr', delta_pct: '+33.8%', direction: 'UP', comparison_basis: 'YoY', not_comparable_reason: null,
+    display: '₹512 Cr (Q1 FY27) vs ₹383 Cr (Q1 FY26) · +₹129 Cr · +33.8% · ▲ YoY' };
+  const guid = a.checked.find((c: any) => c.key === 'guidance' || c.key === 'margin');
+  if (guid) guid.reading = { current: { value: '20% growth', period: 'FY27', period_class: 'GUIDANCE', unit: null, numeric: null, source: 'concall' }, previous: null, baseline: null,
+    delta_abs: null, delta_pct: null, direction: 'NOT_COMPARABLE', comparison_basis: null, not_comparable_reason: 'first reading', display: '20% growth (FY27) · previous: not disclosed (first reading)' };
+  const nd = a.checked.find((c: any) => c.verdict === 'unknown' && c.state === 'NOT_DISCLOSED');
+  const chain = chain771(summary, vars, { periods: {} } as any);
+  const html = render770(ReactNS770.createElement(Card771 as any, { symbol: 'INNOVACAP', market: 'IN', assessment: a, capex: chain, defaultOpen: true, documentsRead: [{ label: 'Concall transcript Aug 2026', kind: 'transcript', source: 'nse', period: 'Q1 FY27', url: 'https://x' }] }));
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+  test('three verdict chips, each its own dimension', () => {
+    assert.match(html, /data-testid="verdict-break"/);
+    assert.match(html, /data-testid="verdict-direction"/);
+    assert.match(html, /data-testid="verdict-evidence"/);
+    assert.match(text, /BREAK TRIGGER: none fired/);
+    assert.match(text, /DIRECTION: strengthening — revenue and margin both up/);
+    assert.match(text, /EVIDENCE: partially confirmed \(2\/3 structural\)/);
+    assert.match(text, /missing: Capacity utilisation/);
+  });
+
+  test('the capex earning row prints the state and the chain lines — never a dash, never undefined', () => {
+    assert.match(html, /data-testid="capex-earning" data-state="PARTIAL"/);
+    assert.match(text, /Capex earning: PARTIAL · Spent: ₹480\+ crore[^·]*· Revenue contribution: INR107 crores in Q1[^·]*· Utilisation: [^·]*\(level only; prior not disclosed[^)]*\) · Full margin contribution: pending/i);
+    const block = (/Capex earning: PARTIAL.*?Full margin contribution: [^A-Z]*/.exec(text) || [''])[0];
+    assert.ok(block.length > 40);
+    assert.doesNotMatch(block, /undefined|NaN|\bnull\b|object Object/);
+    // An em dash as a separator ("pending — management states …") is fine;
+    // a dash standing in for a missing value is not.
+    assert.doesNotMatch(block, /Capex earning:\s*[—–-]\s|:\s*[—–-]\s*(·|$)/);
+    assert.doesNotMatch(text, /[–—] Capex earning/);
+  });
+
+  test('a reading prints its display string; a GUIDANCE point never occupies the current slot and carries a class label', () => {
+    if (rev) assert.match(text, /₹512 Cr \(Q1 FY27\) vs ₹383 Cr \(Q1 FY26\) · \+₹129 Cr · \+33\.8% · ▲ YoY/);
+    if (guid) {
+      assert.match(text, /current: not disclosed · guidance 20% growth \(FY27\)/);
+      assert.match(html, /data-testid="period-class"[^>]*>GUIDANCE</);
+    }
+    const r = rt771({ current: { value: '80%', period: 'FY26', period_class: 'PREVIOUS_FY', unit: '%', numeric: 80, source: null }, previous: null, baseline: null,
+      delta_abs: null, delta_pct: null, direction: 'NOT_COMPARABLE', comparison_basis: null, not_comparable_reason: 'first reading', display: '80% (FY26)' });
+    assert.equal(r.displaced, true);
+    assert.deepEqual(r.tags, ['PREV FY']);
+    assert.match(r.text, /^current: not disclosed · prev fy 80% \(FY26\)/);
+  });
+
+  test('NOT DISCLOSED renders as "? … NOT DISCLOSED", dashed, and never as unchanged / flat / confirmed', () => {
+    assert.ok(nd, 'fixture needs a NOT_DISCLOSED core row');
+    assert.match(html, new RegExp(`data-testid="row-${nd.key}" data-treatment="NOT_DISCLOSED"`));
+    const chipHtml = (new RegExp(`<span[^>]*data-testid="row-${nd.key}"[^>]*>.*?</span>\\s*</span>`).exec(html) || [''])[0];
+    assert.match(chipHtml, /border:1px dashed/);
+    assert.match(chipHtml.replace(/<[^>]+>/g, ' '), /^\s*\?\s+.*NOT DISCLOSED/);
+    assert.doesNotMatch(chipHtml, /UNCHANGED|unchanged|CONFIRMED|✓|→/);
+    assert.equal(treat771({ verdict: 'unknown', state: 'NOT_DISCLOSED' }), 'NOT_DISCLOSED');
+    assert.equal(treat771({ verdict: 'flat', before: '10%', after: '10%' }), 'UNCHANGED');
+    assert.equal(treat771({ verdict: 'flat', before: null, after: '10%' }), 'SINGLE');
+    assert.equal(treat771({ verdict: 'improving', before: '8%', after: '10%' }), 'CONFIRMED');
+    assert.equal(treat771({ verdict: 'flat', state: 'UNCLEAR', after: '30% or 25%' }), 'UNCLEAR');
+  });
+
+  test('UNCLEAR prints "unclear — validation required: value"; confirmed rows carry ✓', () => {
+    assert.equal(chip771({ verdict: 'stated', before: null, after: '30% or 25%', delta: null, state: 'UNCLEAR' }), 'unclear — validation required: 30% or 25%');
+    assert.match(text, /✓ Revenue growth/);
+    assert.doesNotMatch(text, /\bundefined\b|\bNaN\b|object Object/);
+  });
+
+  test('no price, CMP, LTP or target price anywhere on the card', () => {
+    assert.doesNotMatch(text, /\b(CMP|LTP|target price|share price)\b/i);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz771 AG-1 — attribution (catalystFor / context), clarification vs denial,
+// fundraising as a flagged potential catalyst, resale registrations, reason
+// texts, scan notes and scrip-code display. Appended block; the fixture cases
+// it reads live in fixtures/gainers-view.fixture.ts (TRUEDENY, ROSSFUND,
+// DISTRESS, RECENTRES, 544501; US: RESALE, OLDRES, WEEKOLD).
+// ═══════════════════════════════════════════════════════════════════════════
+import { buildResearchView as buildView771, catalystForOf as cfOf771, CATALYST_WINDOWS as WIN771, displayNameOf as dispOf771, allotteesOf as allot771, type ResearchView as View771, type ResearchItem as Item771 } from '../ai-gainers/research-view';
+import { fixtureInput as fx771, fixtureInputUS as fxUS771 } from './fixtures/gainers-view.fixture';
+import { RULES_VERSION as RULES771, denialKindOf as denialKind771, buildFinding as buildFinding771, classifyAnnouncement as classify771 } from '../ai-gainers/catalyst-research';
+import { classifyUsFiling as classifyUs771 } from '../ai-gainers/us-gainers';
+
+describe('zzz771 AG-1 — older filings are context, not the catalyst', () => {
+  const every = (x: View771): Item771[] => {
+    const m = new Map<string, Item771>();
+    for (const i of [...x.top3, ...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst, ...x.dataQuality, ...x.portfolio, ...(x.context || [])]) m.set(i.ticker, i);
+    return Array.from(m.values());
+  };
+  const v = buildView771(fx771());
+  const items = every(v);
+  const it = (x: View771, t: string) => { const i = every(x).find((y) => y.ticker === t); assert.ok(i, `${t} missing`); return i!; };
+  const tickers = (xs: Item771[]) => new Set(xs.map((i) => i.ticker));
+
+  test('the window table is the single source: IN 3/14, US 7/14; unknown age is RECENT', () => {
+    assert.deepEqual(WIN771, { IN: { thisMove: 3, recent: 14 }, US: { thisMove: 7, recent: 14 } });
+    assert.equal(cfOf771('IN', 0), 'THIS_MOVE'); assert.equal(cfOf771('IN', 3), 'THIS_MOVE'); assert.equal(cfOf771('IN', 4), 'RECENT'); assert.equal(cfOf771('IN', 14), 'RECENT'); assert.equal(cfOf771('IN', 15), 'CONTEXT');
+    assert.equal(cfOf771('US', 7), 'THIS_MOVE'); assert.equal(cfOf771('US', 8), 'RECENT'); assert.equal(cfOf771('US', 47), 'CONTEXT');
+    assert.equal(cfOf771('IN', null), 'RECENT'); assert.equal(cfOf771('US', undefined), 'RECENT');
+  });
+
+  test('a result filed 47 days ago (PASUPTAC case) keeps its class but is CONTEXT: out of the queue, in view.context, counted under noCatalyst, not under confirmed', () => {
+    const inp = fx771();
+    const row = inp.filedResults.find((r: any) => r.ticker === 'STALEEARN'); row._ageDays = 47; row.filing_date = '2026-08-07';
+    const x = buildView771(inp);
+    const st = it(x, 'STALEEARN');
+    assert.equal(st.eventClass, 'CONFIRMED_MATERIAL', 'the class is kept — it IS a real event');
+    assert.equal(st.catalystFor, 'CONTEXT');
+    assert.equal(st.ageDays, 47);
+    assert.match(st.headline, /^Older context \(47d\): Q1 FY27 result filed/);
+    assert.equal(st.earnings!.stale, true); assert.equal(st.earnings!.filedDaysAgo, 47);
+    assert.ok(st.priorityReasons.includes("Context, not this move's catalyst (47d)"));
+    assert.equal(st.action, 'Monitor');
+    const ranked = tickers([...x.top3, ...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst]);
+    assert.ok(!ranked.has('STALEEARN'), 'context never ranks in a live section');
+    assert.ok(x.context!.some((i) => i.ticker === 'STALEEARN'));
+    assert.equal(x.summary.context, 1);
+    assert.equal(x.summary.noCatalyst, x.noCatalyst.length + x.context!.length, 'noCatalyst counts context as "no fresh catalyst"');
+    assert.equal(x.summary.confirmed, every(x).filter((i) => i.catalystFor !== 'CONTEXT' && (i.eventClass === 'CONFIRMED_MATERIAL' || i.eventClass === 'CONFIRMED_LOW_MATERIALITY')).length);
+  });
+
+  test('a result filed 12 days ago is RECENT: it stays in the queue with the freshness factor, below the fresh names', () => {
+    const r = it(v, 'RECENTRES');
+    assert.equal(r.catalystFor, 'RECENT'); assert.equal(r.eventClass, 'CONFIRMED_MATERIAL'); assert.equal(r.earnings!.stale, false);
+    assert.ok(v.queue.some((i) => i.ticker === 'RECENTRES'));
+    assert.ok(r.priorityReasons.some((s) => /^Recent \(12d\)/.test(s)));
+    assert.equal(r.scoreDetails!.freshness, 0.7);
+    assert.ok(it(v, 'EARNBEAT').priority > r.priority, 'a 2-day-old result outranks a 12-day-old one of similar size');
+    assert.ok(it(v, 'RECENTRES').priority > it(v, 'STALEEARN').priority);
+  });
+
+  test('EarningsMini.stale flips at the recent window (14d), not 20d', () => {
+    const inp = fx771();
+    const row = inp.filedResults.find((r: any) => r.ticker === 'RECENTRES');
+    row._ageDays = 15; row.filing_date = '2026-09-08';
+    const x = buildView771(inp);
+    assert.equal(it(x, 'RECENTRES').earnings!.stale, true); assert.equal(it(x, 'RECENTRES').catalystFor, 'CONTEXT');
+    row._ageDays = 14; row.filing_date = '2026-09-09';
+    const y = buildView771(inp);
+    assert.equal(it(y, 'RECENTRES').earnings!.stale, false); assert.equal(it(y, 'RECENTRES').catalystFor, 'RECENT');
+  });
+
+  test('US: a 6-day-old filing is THIS_MOVE on a 1-week board; a 50-day-old 10-Q is context; the counts hold', () => {
+    const u = buildView771(fxUS771());
+    assert.equal(it(u, 'WEEKOLD').catalystFor, 'THIS_MOVE');
+    const o = it(u, 'OLDRES');
+    assert.equal(o.catalystFor, 'CONTEXT'); assert.match(o.headline, /^Older context \(50d\): /);
+    assert.ok(!u.queue.some((i) => i.ticker === 'OLDRES') && !u.watch.some((i) => i.ticker === 'OLDRES'));
+    assert.equal(u.summary.context, 1);
+    const s = u.summary;
+    assert.equal(s.confirmed + s.potential + s.negative + s.noCatalyst + s.dataUnavailable + (s.listings || 0), s.scanned);
+  });
+
+  test('a finding without ageDays is aged from its filing date against the scan instant, never the clock', () => {
+    const inp = fx771();
+    inp.findings.ACQ = { ...inp.findings.ACQ, ageDays: null, sourceDate: '2026-09-03T16:00:00+05:30' } as any;
+    const x = buildView771(inp);
+    assert.equal(it(x, 'ACQ').ageDays, 20, '3 Sep 16:00 IST → 23 Sep 12:00 UTC is 20.06 days'); assert.equal(it(x, 'ACQ').catalystFor, 'CONTEXT');
+  });
+
+  test('summary invariant: queue ∪ watch ⊆ eligible ∖ context; context ∩ ranked = ∅; class totals add to scanned; top3 ⊆ queue', () => {
+    for (const x of [v, buildView771(fxUS771())]) {
+      const ctx = tickers(x.context || []);
+      const ranked = [...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst];
+      for (const i of ranked) assert.ok(!ctx.has(i.ticker), `${i.ticker} is context and ranked`);
+      for (const i of [...x.queue, ...x.watch]) assert.ok(['CONFIRMED_MATERIAL', 'CONFIRMED_LOW_MATERIALITY', 'POTENTIAL_UNVERIFIED'].includes(i.eventClass) && i.catalystFor !== 'CONTEXT');
+      for (const i of x.top3) assert.ok(x.queue.some((q) => q.ticker === i.ticker));
+      for (const i of x.context || []) assert.equal(i.catalystFor, 'CONTEXT');
+      for (let k = 1; k < (x.context || []).length; k++) assert.ok(x.context![k - 1].priority >= x.context![k].priority, 'context ranked by priority');
+      const s = x.summary;
+      assert.equal(s.confirmed + s.potential + s.negative + s.noCatalyst + s.dataUnavailable + (s.listings || 0), s.scanned);
+      assert.equal(s.context, (x.context || []).length);
+      assert.equal(s.noCatalyst, x.noCatalyst.length + (x.context || []).length);
+    }
+  });
+});
+
+describe('zzz771 AG-1 — exchange clarifications are company-confirmed no-catalyst; true denials stay negative', () => {
+  const v = buildView771(fx771());
+  const find = (t: string) => [...v.queue, ...v.watch, ...v.negative, ...v.noCatalyst, ...(v.context || [])].find((i) => i.ticker === t)!;
+
+  test('denialKindOf: "no undisclosed information" / "not aware of any information" is a clarification; contradicting a report is a denial', () => {
+    assert.equal(denialKind771('Astec Lifesciences replies to BSE volume inquiry, saying no undisclosed developments exist.'), 'clarification');
+    assert.equal(denialKind771('The company is not aware of any information that has not been announced'), 'clarification');
+    assert.equal(denialKind771('Clarification on price movement: the movement is market driven; there is no undisclosed price sensitive information'), 'clarification');
+    assert.equal(denialKind771('The company denies the media report of a stake sale; the news article is baseless'), 'denial');
+    assert.equal(denialKind771('Clarification on news item: there is no such proposal under consideration'), 'denial');
+    assert.equal(denialKind771('Reply: the company refutes the speculation reported in the press report regarding a merger'), 'denial');
+  });
+
+  test('buildFinding stamps denialKind and a headline that says which it was', () => {
+    const now = new Date('2026-09-23T12:00:00Z');
+    const A = (subject: string, summary: string | null, age: number) => ({ subject, summary, url: `https://x/${age}`, dateIso: new Date(now.getTime() - age * 86_400_000).toISOString(), ageDays: age });
+    const c = buildFinding771({ ticker: 'ASTEC', company: null, market: 'IN', movePct: 10.4, marketCap: 1770, turnover: 53, announcements: [A('Response To BSE Query Dated 18.09.2026', 'Astec Lifesciences replies to BSE volume inquiry, saying no undisclosed developments exist.', 1)], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(c.status, 'denied'); assert.equal(c.denialKind, 'clarification'); assert.match(c.headline || '', /no undisclosed information/);
+    assert.ok(c.notes.some((n) => /company-confirmed absence/.test(n)));
+    const d = buildFinding771({ ticker: 'X', company: null, market: 'IN', movePct: 12, marketCap: 900, turnover: 30, announcements: [A('Clarification on news item', 'The company denies the media report of a stake sale to a strategic investor; the report is baseless.', 1)], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(d.status, 'denied'); assert.equal(d.denialKind, 'denial'); assert.match(d.headline || '', /^Company denied the reported story/);
+    assert.equal(classify771(A('Clarification on news item', 'The company denies the media report of a stake sale', 1)).kind, 'denial', 'the announcement kind is unchanged — the split is the finding\'s');
+  });
+
+  test('a clarification (DENY) → NO_CATALYST, "No identified catalyst", the clarification label, flags.denial, priced as no-catalyst, in the no-catalyst section', () => {
+    const d = find('DENY');
+    assert.equal(d.eventClass, 'NO_CATALYST'); assert.equal(d.eventType, 'No identified catalyst'); assert.equal(d.flags.denial, true);
+    assert.equal(d.eventLabel, 'Company confirmed no undisclosed information (exchange clarification, 2026-09-22)');
+    assert.equal(d.catalystFor, undefined, 'nothing to date — no catalyst');
+    assert.ok(v.noCatalyst.some((i) => i.ticker === 'DENY') && !v.negative.some((i) => i.ticker === 'DENY'));
+    assert.equal(d.scoreDetails!.eventQuality, 0.15, 'priced by the NO_CATALYST class');
+    assert.equal(d.scoreDetails!.penalty_denial, undefined, 'a clarification is not punished twice');
+    assert.ok(d.priorityReasons.includes('Company-confirmed: no undisclosed information'));
+    assert.ok(d.priorityReasons.includes('Exchange clarification on file (company-confirmed)'));
+    assert.match(d.scanNote || '', /^Company confirmed no undisclosed information to the exchange on 2026-09-22 — news, broker actions and sector moves are not scanned$/);
+    assert.match(d.whyResearch, /company-confirmed absence of a filed catalyst/);
+    assert.ok(d.researchNext.some((q) => /later filing that explains the move/.test(q)));
+  });
+
+  test('a stored pre-zzz771 finding with no denialKind is read from its headline', () => {
+    const inp = fx771();
+    delete (inp.findings.DENY as any).denialKind; delete (inp.findings.TRUEDENY as any).denialKind;
+    const x = buildView771(inp);
+    const all = [...x.negative, ...x.noCatalyst];
+    assert.equal(all.find((i) => i.ticker === 'DENY')!.eventClass, 'NO_CATALYST');
+    assert.equal(all.find((i) => i.ticker === 'TRUEDENY')!.eventClass, 'NEGATIVE');
+  });
+
+  test('a true denial (TRUEDENY) → NEGATIVE / Denial with the denial penalty, in the negative section', () => {
+    const t = find('TRUEDENY');
+    assert.equal(t.eventClass, 'NEGATIVE'); assert.equal(t.eventType, 'Denial'); assert.equal(t.flags.denial, true); assert.equal(t.action, 'Negative evidence');
+    assert.equal(t.scoreDetails!.penalty_denial, 0.5);
+    assert.ok(v.negative.some((i) => i.ticker === 'TRUEDENY'));
+    assert.match(t.whyResearch, /contradicted a specific report/);
+  });
+});
+
+describe('zzz771 AG-1 — fundraising is a flagged potential catalyst, not negative by default', () => {
+  const v = buildView771(fx771());
+  const u = buildView771(fxUS771());
+  const find = (x: View771, t: string) => [...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst, ...(x.context || [])].find((i) => i.ticker === t)!;
+
+  test('allottees are read from the filing text: a named fund, the promoter group, or none', () => {
+    assert.deepEqual(allot771('Allotment of equity shares on preferential basis to SBI Mutual Fund at ₹1,166 per share'), ['SBI Mutual Fund']);
+    assert.deepEqual(allot771('Preferential issue of warrants to promoter group entities'), ['promoter group']);
+    assert.deepEqual(allot771('Allotment of 50,00,000 equity shares on preferential basis at ₹120 per share'), []);
+    assert.deepEqual(allot771('QIP allotment to Quant Mutual Fund and others; approved by the Board'), ['Quant Mutual Fund']);
+  });
+
+  test('preferential allotment to a named fund (ROSSTECH case) → POTENTIAL_UNVERIFIED, Fundraising, dilution flag, issue ÷ market cap, WEAK transmission, 0.75 penalty', () => {
+    const r = find(v, 'ROSSFUND');
+    assert.equal(r.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(r.eventType, 'Fundraising'); assert.equal(r.flags.dilution, true);
+    assert.equal(r.eventLabel, 'Fundraising — SBI Mutual Fund');
+    assert.equal(r.materiality.label, 'MODERATE'); assert.equal(r.materiality.ratios[0].basis, 'market_cap');
+    assert.equal(r.materiality.ratios[0].text, '₹45 Cr ÷ ₹500 Cr market cap = 9%');
+    assert.equal(r.transmission, 'WEAK');
+    assert.equal(r.scoreDetails!.penalty_dilution, 0.75); assert.ok(r.priorityReasons.includes('Penalty: dilution (named allottee)'));
+    assert.match(r.whyResearch, /named allottee \(SBI Mutual Fund\)/);
+    assert.ok(!v.negative.some((i) => i.ticker === 'ROSSFUND'));
+    assert.ok(v.queue.some((i) => i.ticker === 'ROSSFUND') || v.watch.some((i) => i.ticker === 'ROSSFUND'));
+    assert.ok(r.priority > find(v, 'DISTRESS').priority);
+    const f = find(v, 'FINANCE');
+    assert.equal(f.eventLabel, 'Fundraising — allottees not stated'); assert.equal(f.scoreDetails!.penalty_dilution, 0.6);
+  });
+
+  test('an executed small allotment is CONFIRMED_LOW_MATERIALITY; a proposed one is not allotted', () => {
+    const inp = fx771();
+    inp.findings.ROSSFUND = { ...inp.findings.ROSSFUND, valueStated: 5 } as any;   // 1% of market cap
+    inp.findings.FINANCE = { ...inp.findings.FINANCE, stage: 'enabling', headline: 'Board to consider a proposal for preferential issue of equity shares to Vantage Capital Partners' } as any;
+    const x = buildView771(inp);
+    const r = find(x, 'ROSSFUND');
+    assert.equal(r.eventClass, 'CONFIRMED_LOW_MATERIALITY'); assert.equal(r.materiality.label, 'SMALL'); assert.equal(r.stage, 'EXECUTED');
+    const f = find(x, 'FINANCE');
+    assert.equal(f.eventClass, 'POTENTIAL_UNVERIFIED'); assert.match(f.eventLabel || '', /^Fundraising — Vantage Capital Partners \((enabling|proposed), not allotted\)$/);
+  });
+
+  test('a raise beside distress markers (lenders, one-time settlement, default) → NEGATIVE', () => {
+    const d = find(v, 'DISTRESS');
+    assert.equal(d.eventClass, 'NEGATIVE'); assert.equal(d.eventType, 'Fundraising'); assert.equal(d.flags.dilution, true); assert.equal(d.transmission, 'NONE');
+    assert.match(d.eventLabel || '', /distress markers/);
+    assert.ok(v.negative.some((i) => i.ticker === 'DISTRESS'));
+    for (const t of ['going concern', 'restructuring of debt with lenders', 'working capital shortfall']) {
+      const inp = fx771();
+      inp.findings.ROSSFUND = { ...inp.findings.ROSSFUND, headline: `Preferential allotment to SBI Mutual Fund to fund the ${t}` } as any;
+      assert.equal(find(buildView771(inp), 'ROSSFUND').eventClass, 'NEGATIVE', t);
+    }
+  });
+
+  test('US 424B3 / S-3 resale or shelf → NO_CATALYST with the dilution flag and the resale label; a 424B5 takedown is a new raise', () => {
+    const r = find(u, 'RESALE');
+    assert.equal(r.eventClass, 'NO_CATALYST'); assert.equal(r.flags.dilution, true);
+    assert.equal(r.eventLabel, 'Resale registration (supply overhang) — not a new raise');
+    assert.ok(u.noCatalyst.some((i) => i.ticker === 'RESALE') && !u.negative.some((i) => i.ticker === 'RESALE'));
+    assert.match(r.whyResearch, /supply overhang with no new proceeds/);
+    assert.match(r.scanNote || '', /resale \/ shelf registration/);
+    const o = find(u, 'OFFR');
+    assert.equal(o.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(o.flags.dilution, true);
+    // The classifier tells them apart by form; the view reads its words.
+    assert.match(classifyUs771({ subject: '424B3: Prospectus [Rule 424(b)(3)]' })!.routineReason || '', /resale \/ shelf registration/);
+    assert.match(classifyUs771({ subject: 'S-3: Registration statement' })!.routineReason || '', /resale \/ shelf/);
+    assert.match(classifyUs771({ subject: 'S-3ASR: Automatic shelf registration' })!.routineReason || '', /resale \/ shelf/);
+    assert.match(classifyUs771({ subject: 'S-1: Registration statement — resale by selling stockholders' })!.routineReason || '', /resale \/ shelf/);
+    assert.match(classifyUs771({ subject: 'S-1: Registration statement' })!.routineReason || '', /new supply/);
+    assert.match(classifyUs771({ subject: '424B5: Prospectus supplement' })!.routineReason || '', /new supply/);
+    assert.equal(classifyUs771({ subject: '424B3: Prospectus' })!.kind, 'negative', 'the pipeline kind is unchanged; the view decides the class');
+  });
+});
+
+describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version', () => {
+  const v = buildView771(fx771());
+  const u = buildView771(fxUS771());
+  const find = (x: View771, t: string) => [...x.queue, ...x.watch, ...x.negative, ...x.noCatalyst, ...x.dataQuality, ...(x.context || [])].find((i) => i.ticker === t)!;
+
+  test('a graded result says its figures were grader-read; a subject-line filing still says "document not parsed"', () => {
+    for (const t of ['EARNBEAT', 'EARNMISS', 'STALEEARN', 'RECENTRES']) {
+      const i = find(v, t);
+      assert.ok(i.priorityReasons.includes('Figures from the filed result (grader-read)'), t);
+      assert.ok(!i.priorityReasons.includes('Exchange filing (document not parsed)'), t);
+    }
+    assert.ok(find(v, 'SMALLORD').priorityReasons.includes('Exchange filing (document not parsed)'));
+    assert.ok(find(u, 'TENQ').priorityReasons.includes('SEC filing (document not parsed)'));
+  });
+
+  test('no-filing rows are UNVERIFIED with a scan note that says what was scanned; the headline no longer reads "nothing happened"', () => {
+    const n = find(v, 'NOCAT');
+    assert.equal(n.sourceConfidence, 'UNVERIFIED');
+    assert.equal(n.scanNote, 'No exchange filing in the last 21 days — news, broker actions and sector moves are not scanned');
+    assert.equal(n.headline, 'No exchange filing in the last 21 days (news, broker actions and sector moves are not scanned)');
+    assert.equal(n.scoreDetails!.penalty_unverified, undefined, 'not penalised as an unverified source — nothing was there to verify');
+    const r = find(v, 'ROUTINE');
+    assert.equal(r.sourceConfidence, 'UNVERIFIED'); assert.match(r.scanNote || '', /in the last 21 days, all routine paperwork — news, broker actions and sector moves are not scanned$/);
+    assert.equal(find(v, 'BAND').sourceConfidence, 'UNVERIFIED');
+    assert.match(find(v, 'UNCL').scanNote || '', /none classifiable as an event/);
+    // US wording.
+    const inp = fxUS771();
+    inp.findings.NONE_US = { ...inp.findings.TENQ, ticker: 'NONE_US', status: 'none', category: null, headline: 'No filing in the last 21 days', sourceUrl: null, ageDays: null } as any;
+    inp.board.push({ ticker: 'NONE_US', company: null, move_pct: 8, market_cap: 500 });
+    const x = buildView771(inp);
+    assert.equal(find(x, 'NONE_US').scanNote, 'No SEC filing in the last 21 days — news, broker actions and sector moves are not scanned');
+    assert.match(find(x, 'NONE_US').headline, /^No SEC filing in the last 21 days/);
+    // Rows with an event carry no scan note.
+    assert.equal(find(v, 'BIGORD').scanNote, null); assert.equal(find(v, 'EARNBEAT').scanNote, null);
+  });
+
+  test('a source failure is still DATA_UNAVAILABLE, never no-catalyst', () => {
+    const s = find(v, 'SRCFAIL');
+    assert.equal(s.eventClass, 'DATA_UNAVAILABLE'); assert.ok(!v.noCatalyst.some((i) => i.ticker === 'SRCFAIL')); assert.equal(v.summary.dataUnavailable, 1);
+  });
+
+  test('a bare BSE scrip code shows the company first and the code small; a symbol shows as itself', () => {
+    const n = find(v, '544501');
+    assert.equal(n.displayTicker, 'Numeric Scrip Industries'); assert.equal(n.displayCode, '544501');
+    assert.equal(find(v, 'BIGORD').displayTicker, 'BIGORD'); assert.equal(find(v, 'BIGORD').displayCode, null);
+    assert.deepEqual(dispOf771('517286', 'Some Company Ltd.'), { displayTicker: 'Some Company', displayCode: '517286' });
+    assert.deepEqual(dispOf771('517286', null), { displayTicker: '517286', displayCode: null }, 'no name → the code stays the ticker, nothing invented');
+    assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
+  });
+
+  test('RULES_VERSION ends in zzz771 so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    assert.match(RULES771, /zzz771$/);
+    assert.equal(fx771().findings.BIGORD.rulesVersion, RULES771);
+  });
+
+  test('deterministic, clock-free, and no trade words in any new text', () => {
+    assert.equal(JSON.stringify(buildView771(fx771())), JSON.stringify(v));
+    const src = readFileSync(join(__dirname, '..', 'ai-gainers', 'research-view.ts'), 'utf8');
+    assert.ok(!/Date\.now\(\)|new Date\(\)/.test(src));
+    assert.equal((src.match(/export const CATALYST_WINDOWS/g) || []).length, 1, 'one window table');
+    assert.ok(!/\b(thisMove|recent): \d+/.test(src.replace(/export const CATALYST_WINDOWS[\s\S]*?};/, '')), 'window days live only in the table');
+    const json = JSON.stringify(v) + JSON.stringify(u);
+    assert.ok(!/\b(BUY|SELL|EXIT|STOP)\b/.test(json));
+    for (const i of [...v.queue, ...v.watch, ...v.negative, ...v.noCatalyst, ...(v.context || []), ...u.noCatalyst, ...(u.context || [])]) {
+      const gen = [i.whyResearch, i.scanNote || '', ...i.priorityReasons, i.eventLabel || ''].join(' | ');
+      assert.ok(!/\b(buy|sell|exit|stop)\b/i.test(gen), `${i.ticker}: ${gen}`);
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz771 AG-2 — the triage UI says, on every card, whether the event can be
+// THIS move's catalyst; older filings sit apart; clarifications are neutral;
+// scrip codes are never titles; the earnings mini never prints "—".
+// Same pattern as zzz770 AG-B: static render of the ?demo=1 fixture.
+// ═══════════════════════════════════════════════════════════════════════════
+import { ResearchCard as RCard771, EarningsStrip as Strip771 } from '../../components/ai-gainers/ResearchCard';
+import { EventDrawer as Drawer771 } from '../../components/ai-gainers/EventDrawer';
+import type { ResearchItem as GItem771, ResearchView as GView771 } from '../ai-gainers/research-view';
+
+describe('zzz771 AG-2 — catalystFor / older context / clarifications / display names (fixture render)', () => {
+  (globalThis as any).React = ReactNS770;
+  const strip = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ');
+  const page = render770(ReactNS770.createElement(Triage770, { view: demo770, market: 'IN', onRescan: () => {} }));
+  const text = strip(page);
+  const card = (it: GItem771, older?: boolean) => strip(render770(ReactNS770.createElement(RCard771, { it, rank: 1, onOpen: () => {}, older })));
+  const drawer = (it: GItem771) => strip(render770(ReactNS770.createElement(Drawer771, { it, onClose: () => {} })));
+  const all: GItem771[] = [...demo770.queue, ...demo770.watch, ...demo770.negative, ...demo770.noCatalyst, ...demo770.dataQuality, ...(demo770.context || [])];
+  const by = (t: string) => { const it = all.find((x) => x.ticker === t); assert.ok(it, `fixture item ${t}`); return it!; };
+
+  test('older filings: a collapsed section after NEGATIVE with the count, a summary tile, and the OLDER CONTEXT badge on its cards', () => {
+    const neg = text.indexOf('NEGATIVE / DENIED'), ctx = text.indexOf('Older filings — context, not this move’s catalyst (2)'), noc = text.indexOf('NO IDENTIFIED CATALYST');
+    assert.ok(neg > 0 && ctx > neg && noc > ctx, 'section order: negative → older filings → no catalyst');
+    assert.ok(/data-testid="older-context" data-open="0"/.test(page), 'collapsed by default');
+    assert.ok(!text.includes('VELOCAST'), 'context cards hidden while collapsed');
+    assert.ok(/2\s+OLDER CONTEXT/.test(text), 'market-summary tile "2 older context"');
+    const c = card(by('VELOCAST'), true);
+    assert.ok(c.includes('OLDER CONTEXT · 47d'), 'older-context badge with age');
+    assert.ok(c.includes('CONTEXT (47d)'), 'catalystFor badge');
+    assert.ok(c.includes('EARNINGS') && c.includes('FILED 47D AGO') && c.includes('CFO / PAT'), 'the earnings mini stays on a context card');
+    // Never re-counted: not in the queue, not in the top 3.
+    assert.ok(!demo770.queue.some((x) => x.catalystFor === 'CONTEXT') && !demo770.top3.some((x) => x.catalystFor === 'CONTEXT'));
+  });
+
+  test('every catalystFor value has its badge; an absent field shows nothing', () => {
+    assert.ok(card(by('PACEDIGITK')).includes('THIS MOVE'));
+    assert.ok(card(by('ARCHEMTEK')).includes('RECENT (9d)'));
+    assert.ok(card(by('KRONMETAL'), true).includes('CONTEXT (55d)'));
+    assert.ok(text.includes('RECENT (9d)') && text.includes('THIS MOVE'), 'badges on the default page');
+    const bare = { ...by('PACEDIGITK'), catalystFor: undefined, ageDays: undefined };
+    const c = card(bare);
+    assert.ok(!/THIS MOVE|RECENT \(|CONTEXT \(|OLDER CONTEXT/.test(c), 'no guess when the field is absent');
+  });
+
+  test('a bare BSE scrip code is never the title: displayTicker is, the code is beside it, the name is not printed twice', () => {
+    const c = card(by('544501'));
+    assert.ok(c.includes('Demo Fabrics Ltd') && c.includes('544501'));
+    assert.equal((c.match(/Demo Fabrics Ltd/g) || []).length, 1, 'name printed once');
+    assert.ok(/Demo Fabrics Ltd\s+544501/.test(c), 'title first, code after it');
+    assert.ok(/<a [^>]*screener\.in\/company\/544501\/[^>]*>Demo Fabrics Ltd<\/a>/.test(page), 'link keeps the code, shows the name');
+  });
+
+  test('NO_CATALYST rows: scanNote under the headline; a clarification is a neutral badge, not red', () => {
+    const cl = by('GAMMAAGRO');
+    const c = card(cl), d = drawer(cl);
+    for (const t of [c, d]) {
+      assert.ok(t.includes('COMPANY: NO UNDISCLOSED INFO'), 'neutral clarification badge');
+      assert.ok(!/COMPANY DENIAL|NEGATIVE EVIDENCE/.test(t), 'never the red denial pill');
+      assert.ok(t.includes('SCANNED') && t.includes('1 price-movement clarification'), 'scanNote shown');
+    }
+    const us = by('XYZQ');
+    const u = card(us);
+    assert.ok(u.includes('DILUTION') && u.includes('Scanned EDGAR 7 days') && u.includes('NO IDENTIFIED CATALYST'));
+    assert.ok(!card({ ...cl, scanNote: null }).includes('SCANNED'), 'no scanNote → no SCANNED line');
+  });
+
+  test('fundraising: DILUTION badge in the class colour, allottee text as given', () => {
+    const html = render770(ReactNS770.createElement(RCard771, { it: by('NOVAPOLY'), rank: 1, onOpen: () => {} }));
+    const t = strip(html);
+    assert.ok(t.includes('DILUTION') && t.includes('POTENTIAL') && t.includes('Alpha Growth Mutual Fund'));
+    const pill = /<span[^>]*border:1px solid ([^;]+);[^>]*>DILUTION<\/span>/.exec(html);
+    assert.ok(pill, 'dilution pill found');
+    assert.equal(pill![1], '#F59E0B', 'amber = POTENTIAL class colour, not red');
+    assert.ok(!/NEGATIVE/.test(t));
+  });
+
+  test('earnings mini: every null says "Not disclosed", never "—"', () => {
+    const t = strip(render770(ReactNS770.createElement(Strip771, { e: by('VELOCAST').earnings! })));
+    assert.ok(!t.includes('—'), 'no dash in the mini');
+    assert.ok(t.includes('+22.0% YoY · Not disclosed QoQ') && t.includes('Not disclosed'), 'mixed row says it in words');
+    assert.ok((t.match(/Not disclosed/g) || []).length >= 4, 'EBITDA, margin, CFO/PAT, QoQ all in words');
+    const empty = strip(render770(ReactNS770.createElement(Strip771, { e: { ...by('VELOCAST').earnings!, revenueYoY: null, patYoY: null } })));
+    assert.ok(!empty.includes('—') && empty.includes('Not disclosed'));
+  });
+
+  test('the drawer carries the same badges and the scanNote; the source link is unchanged', () => {
+    const d = drawer(by('VELOCAST'));
+    assert.ok(d.includes('OLDER CONTEXT · 47d') && d.includes('CONTEXT (47d)') && d.includes('Open source'));
+    assert.ok(drawer(by('ARCHEMTEK')).includes('RECENT (9d)'));
+    const raw = render770(ReactNS770.createElement(Drawer771, { it: by('GAMMAAGRO'), onClose: () => {} }));
+    assert.ok(/href="https:\/\/www\.bseindia\.com\/"/.test(raw), 'source link');
+  });
+
+  test('no "undefined" / "NaN" / "null" and no trade words in any fixture render, cards and drawers included', () => {
+    const renders = [text, ...all.map((it) => card(it, it.catalystFor === 'CONTEXT')), ...all.map(drawer)];
+    for (const t of renders) {
+      assert.ok(!/\bundefined\b|\bNaN\b|\bnull\b/.test(t), 'undefined/NaN/null in markup');
+      assert.ok(!/\b(BUY|SELL|EXIT|STOP)\b/.test(t) && !/\b(buy|sell)\b/i.test(t), 'trade word');
+    }
+  });
+
+  test('fallback: a view with none of the zzz771 fields renders as before — no new section, tile or badge', () => {
+    const stripItem = (it: GItem771): GItem771 => { const { catalystFor, displayTicker, displayCode, scanNote, ...rest } = it; return rest as GItem771; };
+    const { context, ...restView } = demo770;
+    const { context: _c, ...restSummary } = demo770.summary;
+    const old: GView771 = {
+      ...restView, summary: restSummary,
+      top3: demo770.top3.map(stripItem), queue: demo770.queue.map(stripItem), watch: demo770.watch.map(stripItem),
+      negative: demo770.negative.map(stripItem), noCatalyst: demo770.noCatalyst.map(stripItem), dataQuality: demo770.dataQuality.map(stripItem), portfolio: demo770.portfolio.map(stripItem),
+    };
+    const h = render770(ReactNS770.createElement(Triage770, { view: old, market: 'IN', onRescan: () => {} }));
+    const t = strip(h);
+    assert.ok(!t.includes('Older filings') && !/OLDER CONTEXT/.test(t) && !/older-context/.test(h), 'no context section or tile');
+    assert.ok(!/THIS MOVE|RECENT \(|CONTEXT \(|Scanned (21 days|EDGAR)/.test(t), 'no catalystFor badge, no scan note');
+    assert.ok(t.includes('544501') && !t.includes('Demo Fabrics Ltd 544501'), 'ticker falls back to the code');
+    const order = ['MARKET SUMMARY', 'TOP 3 RESEARCH PRIORITIES', 'RESEARCH QUEUE', 'YOUR BOOK', 'WATCH / INVESTIGATE', 'NEGATIVE / DENIED', 'NO IDENTIFIED CATALYST'];
+    let at = -1;
+    for (const s of order) { const i = t.indexOf(s, at + 1); assert.ok(i > at, `${s} missing or out of order`); at = i; }
+    assert.ok(!/\bundefined\b|\bNaN\b|\bnull\b/.test(t));
+    // Same input, same output: the render is deterministic.
+    assert.equal(h, render770(ReactNS770.createElement(Triage770, { view: old, market: 'IN', onRescan: () => {} })));
   });
 });

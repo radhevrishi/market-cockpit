@@ -115,14 +115,32 @@ describe('zzz765c · status sentences', () => {
     assert.match(a.actionLine, /^THESIS STRENGTHENING — structural mechanism confirmed and financial evidence supports it/);
   });
 
-  test('A · one evidenced driver is enough (zzz765); an undisclosed core is listed as still to confirm', () => {
+  // zzz771: RETITLED. This shape has TWO distinct drivers (utilisation and the
+  // margin driver) with the core mechanism (utilisation) confirmed — that is
+  // why it is still green; one driver alone no longer is.
+  test('A · two distinct drivers with the core mechanism confirmed → green (zzz771)', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT,
+      V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
+      V('utilisation', 'improving', { after: '84%', delta: '+12pp' }),
+      // zzz771 (integration): the card's x/y must be at least half — two of
+      // five structural variables is still incomplete, so volume is evidenced too.
+      V('volume', 'improving', { after: '+12%' }),
+      V('margin_driver', 'improving', { after: 'better product mix and operating leverage' }),
+    ] });
+    assert.equal(a.status, 'STRENGTHENING');
+  });
+
+  test('A · zzz771: two drivers but 2/5 structural on the card is CONFIRMATION REQUIRED — one ratio for label, gate and chip', () => {
     const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
       ...GOOD_OUTPUT,
       V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
       V('utilisation', 'improving', { after: '84%', delta: '+12pp' }),
       V('margin_driver', 'improving', { after: 'better product mix and operating leverage' }),
     ] });
-    assert.equal(a.status, 'STRENGTHENING');
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [2, 5]);
+    assert.match(a.because, /^Evidence incomplete — financial output strengthening; structural mechanism not yet fully confirmed \(2\/5/);
   });
 
   test('A · output up with only levels and targets (no driver evidenced) is CONFIRMATION REQUIRED', () => {
@@ -136,16 +154,22 @@ describe('zzz765c · status sentences', () => {
     assert.ok(a.because.startsWith(OUTPUT_ONLY_SENTENCE) || /level|disclos/.test(a.because), a.because);
   });
 
-  test('A · MANINDS shape: target-only utilisation no longer blocks green when a stated margin driver is evidenced', () => {
+  // zzz771: UPDATED. The owner named MANINDS ("STRENGTHENING … 1/5 confirmed")
+  // as the failure: one evidenced driver with the core mechanism unconfirmed
+  // is CONFIRMATION REQUIRED, in his words. A target-only utilisation still
+  // does not BLOCK the assessment — it is listed as still to confirm.
+  test('A · MANINDS shape: target-only utilisation + one stated margin driver is CONFIRMATION REQUIRED, naming what is open', () => {
     const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
       ...GOOD_OUTPUT,
       V('operating_leverage', 'improving', { delta: '2.8×', source: 'grader' }),
-      V('utilisation', 'stated', { after: 'target 50% to 60%', statement: 'TARGET', kind: 'claim' } as any),
+      // zzz771: `statement` spread onto the row — V() does not copy it.
+      { ...V('utilisation', 'stated', { after: 'target 50% to 60%', kind: 'claim' }), statement: 'TARGET' },
       V('capacity_addition', 'stated', { after: '22,000 MTPA' }),
       V('margin_driver', 'improving', { after: "optimized product and geographic mix and higher share of value-added/coated orders" }),
     ] });
-    assert.equal(a.status, 'STRENGTHENING', a.because);
-    assert.match(a.because, /Still to confirm next quarter: utilisation/);
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED', a.because);
+    assert.ok(a.because.startsWith('Evidence incomplete — financial output strengthening; structural mechanism not yet fully confirmed (1/5: margin driver).'), a.because);
+    assert.match(a.because, /Still to confirm: .*utilisation \(target only/);
   });
 
   test('a temporary-only margin driver (refund, forex) is not a structural driver', () => {
@@ -183,10 +207,15 @@ describe('zzz765c · status sentences', () => {
     assert.notEqual(a.status, 'STRENGTHENING');
   });
 
-  test('F · live GIPCL: margin driver not disclosed, but 600 MW commissioned capacity explains the jump → green, driver named', () => {
+  // zzz771: UPDATED. One driver (capacity added) with the margin driver not
+  // disclosed is no longer green — it is CONFIRMATION REQUIRED, and the
+  // driver is still named as confirmed.
+  test('F · live GIPCL: margin driver not disclosed, 600 MW commissioned capacity is ONE driver → CONFIRMATION REQUIRED, driver named', () => {
     const a = liveAssess('GIPCL', 'F');
-    assert.equal(a.status, 'STRENGTHENING', a.because);
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED', a.because);
+    assert.ok(a.because.startsWith('Evidence incomplete — financial output strengthening'), a.because);
     assert.match(a.because, /capacity added/i);
+    assert.match(a.because, /margin driver \(not disclosed\)/);
   });
 
   test('F · an approval or new product does not explain a profit jump on its own', () => {
@@ -416,18 +445,27 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.notEqual(inferred.status, 'NEGATIVE_EXPECTATION_GAP');
   });
 
-  test('G · every thesis-critical variable reviewed and flat → NO MATERIAL CHANGE; a level-only one is not enough', () => {
+  // zzz771: UPDATED. "Unchanged" needs TWO readings. The fixture now carries
+  // a before → after on every flat figure; a single-reading flat (the old
+  // fixture shape) is asserted NOT to reach NO MATERIAL CHANGE.
+  test('G · every thesis-critical variable reviewed on two readings and flat → NO MATERIAL CHANGE; a level-only or single-reading one is not enough', () => {
+    const F2 = (key: string, before: string, after: string, source?: 'grader' | 'filing') => ({ ...V(key, 'flat', { after, source }), before, delta: 'FLAT' });
     const flatB = [
-      V('order_book', 'flat', { after: '₹1,200 Cr' }), V('book_to_bill', 'flat', { after: '1.0' }), V('order_intake', 'flat', { after: '₹300 Cr' }),
-      V('capacity', 'flat', { after: '40,000 t' }), V('margin', 'flat', { after: '14%', source: 'grader' }), V('revenue_visibility', 'flat', { after: '2.1 years' }),
-      V('revenue_growth', 'flat', { after: '+2%', source: 'grader' }),
+      F2('order_book', '₹1,200 Cr', '₹1,200 Cr'), F2('book_to_bill', '1.0', '1.0'), F2('order_intake', '₹300 Cr', '₹300 Cr'),
+      F2('capacity', '40,000 t', '40,000 t'), F2('margin', '14%', '14%', 'grader'), F2('revenue_visibility', '2.1 years', '2.1 years'),
+      V('revenue_growth', 'flat', { after: '+2%', delta: '+2%', source: 'grader' }),
     ];
     const a = R({ pattern: 'B', variables: flatB });
     fixtures.G = a;
     assert.equal(a.status, 'NEUTRAL', a.because);
     assert.ok(a.actionLine.startsWith('NO MATERIAL CHANGE — '), a.actionLine);
+    // Execution delay passed by silence: named as not mentioned, never as unchanged.
+    assert.match(a.because, /Not mentioned in the documents read \(silence, not a reading\): execution delay/);
     const levelOnly = R({ pattern: 'B', variables: flatB.map((v) => (v.key === 'revenue_visibility' ? V('revenue_visibility', 'stated', { after: '2.1 years' }) : v)) });
     assert.notEqual(levelOnly.status, 'NEUTRAL', 'a level with nothing to compare is not "nothing changed"');
+    const singleReading = R({ pattern: 'B', variables: flatB.map((v) => (v.key === 'order_book' ? V('order_book', 'flat', { after: '₹1,200 Cr' }) : v)) });
+    assert.notEqual(singleReading.status, 'NEUTRAL', 'a flat on one reading is a level, not "unchanged"');
+    assert.match(singleReading.because, /order book \(₹1,200 Cr\) is a single reading/);
   });
 
   test('H · required evidence not read → EVIDENCE INCOMPLETE, stated as unknown not bad', () => {
@@ -472,8 +510,9 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.equal(u.absence, 'not_applicable');
     assert.ok(!a.coverage.missingCore.includes(u.label), 'N/A is not a missing core variable');
     assert.ok(a.coverage.mechanism.not_applicable >= 1);
+    // zzz771: `silent` (risk variables passed by silence) is the eighth count; the sum still adds up.
     assert.equal(a.coverage.mechanism.pending + a.coverage.mechanism.not_applicable + a.coverage.mechanism.confirmed + a.coverage.mechanism.contradicted
-      + a.coverage.mechanism.stated + a.coverage.mechanism.flat + a.coverage.mechanism.unclear, a.coverage.mechanism.total);
+      + a.coverage.mechanism.stated + a.coverage.mechanism.flat + a.coverage.mechanism.unclear + a.coverage.mechanism.silent, a.coverage.mechanism.total);
     assert.equal(a.coverage.mechanism.core_variables, a.coverage.mechanism.total - a.coverage.mechanism.not_applicable);
     assert.ok(!a.coreMechanismGaps.includes(u.label));
     assert.match(evidenceStateLine(u.state, { reason: u.stateReason }), /^N\/A — /);
@@ -526,9 +565,14 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.equal(a.status, 'CONFIRMATION_REQUIRED');
     assert.deepEqual(a.coreMechanismGaps, ['Capacity utilisation']);
     assert.match(a.because, /capacity utilisation — core to this thesis, so it is UNKNOWN\. Unknown, not negative/);
-    // Volume (the same absorption mechanism) evidenced → green is available.
+    // Volume (the same absorption mechanism) evidenced lifts the UNKNOWN gap —
+    // zzz771: UPDATED — but one driver with utilisation itself unconfirmed is
+    // CONFIRMATION REQUIRED, not green. Volume AND a margin driver, with
+    // utilisation confirmed, is.
     const withVolume = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('volume', 'improving', { after: '+18% tonnage' })] });
-    assert.equal(withVolume.status, 'STRENGTHENING');
+    assert.deepEqual(withVolume.coreMechanismGaps, []);
+    assert.equal(withVolume.status, 'CONFIRMATION_REQUIRED');
+    assert.ok(withVolume.because.startsWith('Evidence incomplete — financial output strengthening'), withVolume.because);
   });
 
   test('evidence-state lines never print a bare dash once evidence was read', () => {
@@ -649,5 +693,301 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     }
     // The radar's reasons are the six thesis reasons, never a price.
     assert.ok(!(['BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP'] as const).some((s) => /price|drawdown/i.test(String(exitReasonOf({ status: s, checked: [], triggered: [] } as any)))));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz771 PC-2 — STRICT GREEN, THE THREE-QUESTION VERDICT, UNKNOWN ≠ FLAT ≠
+// CONFIRMED, AND THE LABEL AGREES WITH THE VERDICT.
+//
+// The owner's verdict on the previous build: "EMCURE is THESIS STRENGTHENING
+// while only 1/5 structural variables are confirmed. Incomplete structural
+// evidence ≠ strengthening thesis." And: "Did a break trigger? Did the thesis
+// strengthen? Did evidence merely fail to contradict it? — three different
+// questions." And: "Unknown ≠ Flat ≠ Confirmed."
+// ═══════════════════════════════════════════════════════════════════════════
+import { OUTPUT_STRENGTHENING_BECAUSE, OUTPUT_STRENGTHENING_SENTENCE } from '../thesis/status';
+
+describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ confirmed', () => {
+  const R = (x: Partial<Parameters<typeof assessThesis>[0]>) => assessThesis({ pattern: null, variables: [], evidenceReviewed: true, hasGraderRow: true, ...x } as any);
+  const LEV = V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' });
+  const OPENING = 'Evidence incomplete — financial output strengthening; structural mechanism not yet fully confirmed (';
+  assert.ok(OUTPUT_STRENGTHENING_BECAUSE.startsWith(OPENING));
+
+  // ── 1. STRICT GREEN ────────────────────────────────────────────────────
+  test('EMCURE / MANINDS shape (A: output up, one margin driver, 1/5 confirmed) → CONFIRMATION REQUIRED with the exact opening sentence', () => {
+    const a = R({ pattern: 'A', variables: [
+      ...GOOD_OUTPUT, LEV,
+      { ...V('utilisation', 'stated', { after: '50% to 60% (target)', kind: 'claim' }), statement: 'TARGET' },
+      V('capacity_addition', 'stated', { after: '22,000 MTPA' }),
+      V('margin_driver', 'improving', { after: 'optimised product mix and higher value-added share' }),
+    ] });
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.equal(a.because.slice(0, OPENING.length), OPENING);
+    assert.match(a.because, /\(1\/5: margin driver\)\. Still to confirm: /);
+    assert.match(a.because, /capacity utilisation \(target only: 50% to 60% \(target\)\)/);
+    assert.match(a.because, /volume \(not disclosed\)/);
+    assert.match(a.because, /capacity added \(level only: 22,000 MTPA\)/);
+    assert.equal(a.headline, OUTPUT_STRENGTHENING_SENTENCE);
+    assert.ok(a.actionLine.startsWith('CONFIRMATION REQUIRED — evidence incomplete — financial output strengthening'), a.actionLine);
+    assert.doesNotMatch(a.actionLine, /THESIS STRENGTHENING/);
+    assert.equal(a.structural.gatePassed, false);
+  });
+
+  test('gate passed → STRENGTHENING (A: utilisation and volume both confirmed from their own evidence)', () => {
+    const a = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('utilisation', 'improving', { after: '84%', delta: '+12pp' }), V('volume', 'improving', { after: '+12%' })] });
+    assert.equal(a.status, 'STRENGTHENING');
+    assert.equal(a.structural.gatePassed, true);
+    assert.equal(a.verdict!.evidence, 'CONFIRMED');
+    assert.equal(a.verdict!.direction, 'STRENGTHENING');
+  });
+
+  test('two distinct drivers + core coverage 50% → STRENGTHENING; two drivers + 40% → not', () => {
+    // A: applicable core mechanism = utilisation (operating leverage from the
+    // grader and margin are output). Two drivers (volume, margin driver) and
+    // utilisation confirmed = 1/1 → green.
+    // zzz771 (integration): coverage is the card's printed x/y (structural ∪
+    // evidenced drivers); three of five confirmed is at least half.
+    const half = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV,
+      V('utilisation', 'improving', { after: '84%', delta: '+12pp' }), V('volume', 'improving', { after: '+12%' }), V('margin_driver', 'improving', { after: 'operating leverage and better mix' })] });
+    assert.equal(half.status, 'STRENGTHENING', half.because);
+    assert.equal(half.verdict!.coverage.confirmed, 3);
+    assert.equal(half.verdict!.coverage.applicable, 5);
+    // Two distinct drivers (volume, margin driver) but utilisation only a
+    // level → 0/1 core confirmed → below half → not green. The gate is not
+    // passed either (volume is required and confirmed; utilisation is not).
+    const below = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV,
+      V('utilisation', 'stated', { after: '74%' }), V('volume', 'improving', { after: '+12%' }), V('margin_driver', 'improving', { after: 'operating leverage and better mix' })] });
+    assert.notEqual(below.status, 'STRENGTHENING', below.because);
+    assert.equal(below.status, 'CONFIRMATION_REQUIRED');
+    assert.equal(below.verdict!.coverage.confirmed, 2);
+    assert.equal(below.verdict!.coverage.applicable, 5);
+    assert.ok(below.verdict!.coverage.missing.includes('Capacity utilisation'));
+    // A hand-built 2-of-5 (40%) with two distinct drivers: F core mechanism is
+    // one-offs and cash conversion; margin driver + volume evidenced, cash
+    // confirmed, one-offs disclosed but not judged → 1/2 = 50% → green.
+    // Take away the cash confirmation → 0/2 → not green.
+    const fHalf = R({ pattern: 'F', variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'mix and scale' }), V('volume', 'improving', { after: '+9%' }),
+      V('cash_conversion', 'improving', { after: '1.4×', delta: '+0.3×', source: 'grader' }), V('one_offs', 'stated', { after: '1 item' })] });
+    assert.equal(fHalf.status, 'STRENGTHENING', fHalf.because);
+    const fBelow = R({ pattern: 'F', variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'mix and scale' }), V('volume', 'improving', { after: '+9%' }),
+      V('cash_conversion', 'stated', { after: '0.9×', source: 'grader' }), V('one_offs', 'stated', { after: '1 item' })] });
+    assert.notEqual(fBelow.status, 'STRENGTHENING', fBelow.because);
+    assert.equal(fBelow.verdict!.direction, 'UNKNOWN');
+  });
+
+  // ── 2. THE VERDICT: THREE SEPARATE QUESTIONS ───────────────────────────
+  test('every assessment carries a verdict, and its coverage excludes N/A and financial output', () => {
+    const all = [
+      ...['TI', 'E2E', 'SJS', 'GIPCL'].map((t) => liveAssess(t, t === 'TI' ? null : 'F')),
+      ...bench.map((r) => assessThesis({ pattern: classifyGradedRow(r)?.pattern ?? null, variables: extractVariables(r, null), evidenceReviewed: true })),
+      ...bench.map((r) => assessThesis({ pattern: classifyGradedRow(r)?.pattern ?? null, variables: extractVariables(r, null), evidenceReviewed: false })),
+    ];
+    for (const a of all) {
+      const v = a.verdict!;
+      assert.ok(v, 'verdict filled');
+      assert.ok(['STRENGTHENING', 'WEAKENING', 'UNCHANGED', 'UNKNOWN'].includes(v.direction));
+      assert.ok(v.directionWhy.length > 10);
+      assert.ok(v.evidenceWhy.length > 10);
+      assert.equal(v.breakTrigger.fired, v.breakTrigger.conditions.length > 0);
+      assert.ok(v.breakTrigger.fired ? v.breakTrigger.text.startsWith('Fired: ') : v.breakTrigger.text === 'None fired');
+      assert.ok(v.coverage.confirmed <= v.coverage.applicable);
+      assert.equal(v.coverage.missing.length, v.coverage.applicable - v.coverage.confirmed);
+      for (const m of v.coverage.missing) assert.ok(!OUTPUT_LABELS.includes(m), `${m} is output, not core mechanism`);
+    }
+  });
+
+  test('"no action triggered" with direction UNKNOWN and evidence INCOMPLETE — three different answers on one card', () => {
+    // Output improved, no invalidation condition fired, utilisation not disclosed.
+    const a = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV] });
+    const v = a.verdict!;
+    assert.equal(v.breakTrigger.fired, false);
+    assert.equal(v.breakTrigger.text, 'None fired');
+    assert.equal(v.direction, 'UNKNOWN');
+    assert.match(v.directionWhy, /^output improved .*; mechanism 0\/4 confirmed — direction cannot be called from output alone$/);
+    assert.equal(v.evidence, 'INCOMPLETE');
+    assert.match(v.evidenceWhy, /capacity utilisation \(not disclosed\).*Unknown is not neutral evidence/);
+    assert.deepEqual(v.coverage, { confirmed: 0, applicable: 4, missing: ['Capacity utilisation', 'Volume', 'Capacity added', 'Installed capacity'] });
+  });
+
+  test('a fired condition is answer 1 only: WEAKENING carries the fired text; BROKEN says the break is met', () => {
+    const weak = R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_intake', 'deteriorating', { delta: '-35%' }), V('order_book', 'improving', { delta: '+5%' })] });
+    assert.equal(weak.status, 'WEAKENING');
+    assert.equal(weak.verdict!.breakTrigger.fired, true);
+    assert.match(weak.verdict!.breakTrigger.text, /^Fired: "New order intake falls materially or stops\." — one condition on a single reading; a break needs/);
+    assert.equal(weak.verdict!.direction, 'WEAKENING');
+    assert.equal(weak.verdict!.evidence, 'CONTRADICTED');
+    const broken = R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_book', 'deteriorating', { delta: '-30%' }), V('book_to_bill', 'deteriorating', { after: '0.6' })] });
+    assert.equal(broken.status, 'BROKEN');
+    assert.match(broken.verdict!.breakTrigger.text, /thesis-break condition met/);
+    assert.equal(broken.verdict!.direction, 'WEAKENING');
+    assert.equal(broken.verdict!.evidence, 'CONTRADICTED');
+  });
+
+  test('evidence states: UNCHECKED with no document; NOT_CONTRADICTED when read and nothing confirms or contradicts; PARTIALLY_CONFIRMED with one driver; UNCHANGED only for NEUTRAL', () => {
+    const unread = R({ pattern: 'A', evidenceReviewed: false, variables: [...GOOD_OUTPUT, LEV] });
+    assert.equal(unread.verdict!.evidence, 'UNCHECKED');
+    assert.equal(unread.verdict!.direction, 'UNKNOWN');
+    const level = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('utilisation', 'stated', { after: '74%' })] });
+    assert.equal(level.verdict!.evidence, 'NOT_CONTRADICTED', level.verdict!.evidenceWhy);
+    assert.equal(level.verdict!.direction, 'UNKNOWN');
+    const one = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('volume', 'improving', { after: '+18% tonnage' })] });
+    assert.equal(one.verdict!.evidence, 'PARTIALLY_CONFIRMED');
+    assert.equal(one.verdict!.direction, 'UNKNOWN');
+    assert.equal(one.status, 'CONFIRMATION_REQUIRED');
+    // UNCHANGED belongs to NEUTRAL alone.
+    const F2 = (key: string, before: string, after: string, source?: 'grader' | 'filing') => ({ ...V(key, 'flat', { after, source }), before, delta: 'FLAT' });
+    const neutral = R({ pattern: 'B', variables: [
+      F2('order_book', '₹1,200 Cr', '₹1,200 Cr'), F2('book_to_bill', '1.0', '1.0'), F2('order_intake', '₹300 Cr', '₹300 Cr'),
+      F2('capacity', '40,000 t', '40,000 t'), F2('margin', '14%', '14%', 'grader'), F2('revenue_visibility', '2.1 years', '2.1 years'),
+      V('revenue_growth', 'flat', { after: '+2%', delta: '+2%', source: 'grader' }),
+    ] });
+    assert.equal(neutral.status, 'NEUTRAL');
+    assert.equal(neutral.verdict!.direction, 'UNCHANGED');
+    assert.equal(neutral.verdict!.evidence, 'NOT_CONTRADICTED');
+  });
+
+  // ── 3. UNKNOWN ≠ FLAT ≠ CONFIRMED ──────────────────────────────────────
+  test('silence on a risk variable passes its gate but is never counted as flat or confirmed, and is never printed as "checked, nothing material"', () => {
+    // F with margin driver + volume + cash confirmed; one-offs never mentioned.
+    const a = R({ pattern: 'F', variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'mix and scale' }), V('volume', 'improving', { after: '+9%' }),
+      V('cash_conversion', 'improving', { after: '1.4×', delta: '+0.3×', source: 'grader' })] });
+    const oo = a.checked.find((c) => c.key === 'one_offs')!;
+    assert.equal(oo.verdict, 'flat', 'the gate still passes by silence');
+    assert.equal(oo.silence, true);
+    assert.equal(oo.readings, 0);
+    assert.ok(!a.structural.confirmedLabels.includes(oo.label), 'silence is not a confirmation');
+    assert.ok(!a.structural.missingRequired.includes(oo.label), 'silence still passes the gate');
+    assert.equal(a.structural.gatePassed, true);
+    assert.equal(a.coverage.mechanism.silent, 1);
+    assert.equal(a.coverage.mechanism.flat, 0, 'silence is not flat');
+    assert.equal(a.coverage.mechanism.confirmed, a.checked.filter((c) => c.weight >= 3 && c.verdict === 'improving' && c.key === 'margin_driver').length, 'only the evidenced margin driver is confirmed; silence is not');
+    assert.equal(a.mechanismCheck.find((m) => m.link === oo.label)!.state, 'unchecked', 'a silent link does not hold');
+    assert.doesNotMatch(a.because, /checked, nothing material/);
+    assert.doesNotMatch(a.because, /one-offs checked, not material/);
+    assert.match(a.because, /one-offs none disclosed in the documents read \(silence, not a confirmation\)/);
+    assert.ok(a.verdict!.coverage.missing.includes('One-offs'), 'silence stays in the missing list of the verdict coverage');
+  });
+
+  test('a single reading never counts as flat or confirmed: one-reading flats are levels, two-reading flats are unchanged', () => {
+    const one = R({ pattern: 'B', variables: [V('order_book', 'flat', { after: '₹1,200 Cr' })] });
+    const ob1 = one.checked.find((c) => c.key === 'order_book')!;
+    assert.equal(ob1.readings, 1);
+    assert.equal(one.coverage.mechanism.flat, 0);
+    assert.ok(one.coverage.mechanism.stated >= 1, 'a one-reading flat is a level');
+    const two = R({ pattern: 'B', variables: [{ ...V('order_book', 'flat', { after: '₹1,200 Cr' }), before: '₹1,200 Cr', delta: 'FLAT' }] });
+    assert.equal(two.checked.find((c) => c.key === 'order_book')!.readings, 2);
+    assert.equal(two.coverage.mechanism.flat, 1);
+    // An undisclosed variable is UNKNOWN: pending, never flat, never confirmed.
+    const u = one.checked.find((c) => c.key === 'book_to_bill')!;
+    assert.equal(u.verdict, 'unknown');
+    assert.equal(u.state, 'NOT_DISCLOSED');
+    assert.equal(u.readings, 0);
+    assert.equal(u.silence, false);
+    assert.ok(one.verdict!.coverage.missing.includes(u.label));
+    // A disclosed one-off is 'checked, not material' only when judged flat on its own figures — never when silent.
+    for (const a of [one, two]) assert.doesNotMatch(a.because, /checked, nothing material|unchanged/);
+  });
+
+  test('unknown is never neutral evidence: no core variable that is NOT_DISCLOSED / NOT_SEARCHED / UNCLEAR is ever confirmed, flat or a held link', () => {
+    const cases = [
+      ...['TI', 'E2E', 'SJS', 'GIPCL'].map((t) => liveAssess(t, t === 'TI' ? null : 'F')),
+      ...bench.map((r) => assessThesis({ pattern: classifyGradedRow(r)?.pattern ?? null, variables: extractVariables(r, null), evidenceReviewed: true })),
+      R({ pattern: 'F', variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'value-added mix' }), V('cash_conversion', 'deteriorating', { after: '-3.72× (last FY)', source: 'grader' })] }),
+    ];
+    for (const a of cases) {
+      for (const c of a.checked) {
+        if (c.state === 'NOT_DISCLOSED' || c.state === 'NOT_SEARCHED' || c.state === 'UNCLEAR' || c.state === 'SOURCE_UNAVAILABLE') {
+          assert.ok(c.verdict !== 'improving', `${c.key} ${c.state} counted as confirmed`);
+          assert.ok(!(c.verdict === 'flat' && !c.silence), `${c.key} ${c.state} counted as flat`);
+          assert.ok(!a.structural.confirmedLabels.includes(c.label), `${c.key} ${c.state} in structural.confirmed`);
+          const link = a.mechanismCheck.find((m) => m.link === c.label);
+          if (link) assert.notEqual(link.state, 'confirmed', `${c.key} ${c.state} holds a link`);
+        }
+      }
+      const t = a.coverage.mechanism;
+      assert.equal(t.confirmed + t.pending + t.contradicted + t.stated + t.flat + t.unclear + t.not_applicable + t.silent, t.total);
+    }
+  });
+
+  // ── 4. THE LABEL AGREES WITH THE VERDICT ───────────────────────────────
+  test('"THESIS STRENGTHENING" appears only when evidence is CONFIRMED and direction is STRENGTHENING — on every fixture, live ledger, bench row and shape', () => {
+    const shapes = [
+      R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV] }),
+      R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('margin_driver', 'improving', { after: 'higher lab-grown jewellery mix' })] }),
+      R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('utilisation', 'improving', { after: '84%', delta: '+12pp' }), V('volume', 'improving', { after: '+12%' })] }),
+      R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('utilisation', 'improving', { after: '84%', delta: '+12pp' }), V('volume', 'improving', { after: '+12%' })], evidencePeriod: 'Q4 FY24', expectedPeriod: 'Q1 FY27' }),
+      R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_intake', 'improving', { delta: '+40%' }), V('order_book', 'improving', { delta: '+25%' }), V('book_to_bill', 'improving', { after: '1.4' })] }),
+      R({ pattern: 'A', evidenceReviewed: false, variables: [...GOOD_OUTPUT, LEV] }),
+    ];
+    const all = [
+      ...shapes,
+      ...['TI', 'E2E', 'SJS', 'GIPCL'].map((t) => liveAssess(t, t === 'TI' ? null : 'F')),
+      ...bench.map((r) => assessThesis({ pattern: classifyGradedRow(r)?.pattern ?? null, variables: extractVariables(r, null), evidenceReviewed: true })),
+      ...bench.map((r) => assessThesis({ pattern: classifyGradedRow(r)?.pattern ?? null, variables: extractVariables(r, null), evidenceReviewed: false })),
+    ];
+    assert.ok(all.some((a) => a.status === 'STRENGTHENING'), 'at least one green case is exercised');
+    for (const a of all) {
+      const v = a.verdict!;
+      const green = v.evidence === 'CONFIRMED' && v.direction === 'STRENGTHENING';
+      for (const text of [a.headline, a.actionLine, a.action, a.because, STATUS_META[a.status].label]) {
+        if (!green) assert.doesNotMatch(text, /THESIS STRENGTHENING/, `${a.thesis.name} ${a.status} (${v.evidence}/${v.direction}): "${text.slice(0, 120)}"`);
+      }
+      assert.equal(a.status === 'STRENGTHENING', green, `${a.thesis.name}: status ${a.status} vs verdict ${v.evidence}/${v.direction}`);
+      if (a.status === 'STRENGTHENING') assert.equal(a.headline, STRENGTHENING_SENTENCE);
+      // Direction is never called from output alone.
+      if (v.direction === 'STRENGTHENING') assert.ok(a.structural.gatePassed || v.coverage.confirmed * 2 >= v.coverage.applicable, a.because);
+      if (v.direction === 'UNCHANGED') assert.equal(a.status, 'NEUTRAL');
+      if (v.direction === 'WEAKENING') assert.ok(['WEAKENING', 'BROKEN', 'NEGATIVE_EXPECTATION_GAP'].includes(a.status));
+    }
+    // Stale evidence: the mechanism was confirmed on an old period — capped, and the direction says why.
+    const stale = shapes[3];
+    assert.equal(stale.status, 'CONFIRMATION_REQUIRED');
+    assert.equal(stale.verdict!.direction, 'UNKNOWN');
+    assert.match(stale.verdict!.directionWhy, /quarters old/);
+  });
+});
+
+describe('zzz771 PC-2 · break-trigger and evidence wording on real shapes', () => {
+  test('a fired condition on a non-critical variable (cash for A) is a financial warning, never "a break needs a second condition"', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT, V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
+      V('margin_driver', 'improving', { after: 'higher lab-grown jewellery mix' }),
+      V('cash_conversion', 'deteriorating', { after: '0.43× (last FY)', source: 'grader' }),
+    ] });
+    const b = a.verdict!.breakTrigger;
+    assert.equal(b.fired, true);
+    assert.match(b.text, /^Fired \(financial warning only — not thesis-critical for this strategy, cannot move toward a break\): "Operating cash flow falls below reported profit for two quarters\."\.$/);
+    assert.doesNotMatch(b.text, /a break needs/);
+    assert.notEqual(a.status, 'WEAKENING');
+  });
+
+  test('live TI: WEAKENING on output while no core mechanism variable moved — evidence says where the deterioration is, never "Nothing contradicted"', () => {
+    const a = liveAssess('TI', null);
+    assert.equal(a.status, 'WEAKENING');
+    assert.equal(a.verdict!.direction, 'WEAKENING');
+    assert.doesNotMatch(a.verdict!.evidenceWhy, /Nothing contradicted/);
+    assert.match(a.verdict!.evidenceWhy, /No core mechanism variable contradicted; the deterioration is in financial output: /);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe('zzz771 integration · one ratio for label, gate and chip', () => {
+  test('ANTELOPUS shape: an unclassified holding confirmed only by a cash ratio (1/5) is never green', () => {
+    const a = assessThesis({ pattern: null, evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT,
+      V('cash_conversion', 'improving', { after: '1.3×', delta: '+0.4×', source: 'grader' }),
+    ] });
+    assert.notEqual(a.status, 'STRENGTHENING', a.because);
+    assert.notEqual(a.verdict!.evidence, 'CONFIRMED');
+    assert.doesNotMatch(a.headline + a.actionLine, /THESIS STRENGTHENING/);
+  });
+  test('the verdict coverage equals the "Structural evidence reviewed: x/y" the card prints', () => {
+    const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT, V('utilisation', 'improving', { after: '84%', delta: '+12pp' }), V('margin_driver', 'improving', { after: 'operating leverage and better mix' }),
+    ] });
+    const m = a.because.match(/(\d+)\/(\d+)/);
+    assert.ok(m, a.because);
+    assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [Number(m![1]), Number(m![2])]);
   });
 });

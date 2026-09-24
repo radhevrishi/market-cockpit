@@ -5,8 +5,8 @@
 
 import React, { useState } from 'react';
 import type { EarningsMini, ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, FactLine, FlagChips, Move, Name, RelevanceBadge, SourceBadge, StatusPill, TriagePill } from './Badges';
-import { C, CLASS_META, pct, tint, txt } from './tokens';
+import { Btn, CatalystForBadge, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill } from './Badges';
+import { C, CLASS_META, pctND, tint, txt } from './tokens';
 
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
 
@@ -37,11 +37,15 @@ const oTxt: Record<EarningsMini['orderBook'], string> = { UP: 'Up', DOWN: 'Down'
 export function EarningsStrip({ e }: { e: EarningsMini }) {
   const margin = e.marginNow == null ? 'Not disclosed'
     : `${e.marginPrior != null ? `${e.marginPrior.toFixed(1)}% → ` : ''}${e.marginNow.toFixed(1)}%`;
+  // zzz771: every missing figure says "Not disclosed" — never "—" beside a
+  // "Not disclosed" in the same strip (the owner read the dash as flat/zero).
+  const yoyQoq = e.revenueYoY == null && e.revenueQoQ == null ? 'Not disclosed'
+    : `${pctND(e.revenueYoY)} YoY · ${pctND(e.revenueQoQ)} QoQ`;
   const cells: Array<[string, string, string?]> = [
-    ['REVENUE', `${pct(e.revenueYoY)} YoY · ${pct(e.revenueQoQ)} QoQ`],
-    ['EBITDA', `${pct(e.ebitdaYoY)} YoY`],
+    ['REVENUE', yoyQoq],
+    ['EBITDA', e.ebitdaYoY == null ? 'Not disclosed' : `${pctND(e.ebitdaYoY)} YoY`],
     ['MARGIN', margin, e.marginNow != null && e.marginPrior != null ? (e.marginNow >= e.marginPrior ? C.green : C.red) : undefined],
-    ['PAT', `${pct(e.patYoY)} YoY`],
+    ['PAT', e.patYoY == null ? 'Not disclosed' : `${pctND(e.patYoY)} YoY`],
     ['CFO / PAT', e.cfoToPat == null ? 'Not disclosed' : `${e.cfoToPat.toFixed(2)}×`, e.cfoToPat != null && e.cfoToPat < 0.5 ? C.amber : undefined],
     ['GUIDANCE', gTxt[e.guidance] || 'Not stated', e.guidance === 'RAISED' ? C.green : e.guidance === 'CUT' ? C.red : undefined],
     ['ORDER BOOK', oTxt[e.orderBook] || 'Not stated'],
@@ -81,7 +85,9 @@ export function ScoreDetails({ it }: { it: ResearchItem }) {
   );
 }
 
-export function ResearchCard({ it, rank, onOpen }: { it: ResearchItem; rank: number; onOpen: (it: ResearchItem) => void }) {
+/** `older`: rendered inside the "Older filings" section — carries the OLDER
+ *  CONTEXT badge so the card is never mistaken for this move's catalyst. (zzz771) */
+export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; rank: number; onOpen: (it: ResearchItem) => void; older?: boolean }) {
   const [score, setScore] = useState(false);
   const meta = CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST;
   const unverified = it.sourceConfidence === 'UNVERIFIED';
@@ -100,12 +106,15 @@ export function ResearchCard({ it, rank, onOpen }: { it: ResearchItem; rank: num
         <Name it={it} />
         <Move it={it} big />
         <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
+          {older && <OlderContextBadge it={it} />}
           <StatusPill it={it} />
+          <CatalystForBadge it={it} />
           <TriagePill it={it} />
         </span>
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 800, color: C.text, lineHeight: 1.45 }}>{txt(it.headline, 'Headline not available')}</div>
+      {it.eventClass === 'NO_CATALYST' && <ScanNote it={it} />}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         <SourceBadge it={it} />

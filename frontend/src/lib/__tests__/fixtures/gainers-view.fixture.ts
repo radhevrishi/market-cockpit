@@ -23,7 +23,7 @@ function mk(p: Partial<Finding> & { ticker: string }): Finding {
     sourceTier: 'unsourced', ageDays: null, valueStated: null, valuePctMcap: null, net: null, components: null, verdict: null,
     returns: { m1: 6, m3: 10, m6: 15, y1: 30, history: 250 }, bandPrint: false, bandLevel: null, listingDays: null,
     routine: [], filingsInWindow: 0, windowDays: 21, holding: false, notes: [], modelRead: false,
-    researchedAt: FIXTURE_NOW, sources: ['screener.in'], rulesVersion: '2026-09-23.zzz770',
+    researchedAt: FIXTURE_NOW, sources: ['screener.in'], rulesVersion: '2026-09-23.zzz771',
     ...p,
   } as Finding;
 }
@@ -115,6 +115,27 @@ export const FINDINGS: Record<string, Finding> = {
   STALEEARN: mk({ ticker: 'STALEEARN', movePct: 6, marketCap: 3000, status: 'none', headline: 'Quarterly result on file — No filing in the last 21 days', returns: { m1: 10, m3: 18, m6: 25, y1: 40, history: 250 } }),
   // 24. A shouted broker rating in source text — never passed through as an instruction.
   BROKER: mk({ ticker: 'BROKER', movePct: 5, status: 'routine_only', headline: '1 filing in window, all routine (Brokerage initiates coverage with BUY rating)', sourceTier: 'primary', ageDays: 2 }),
+
+  // ── zzz771 AG-1 ──
+  // 25. A TRUE denial: the company contradicts a specific reported story (unlike DENY, a clarification).
+  TRUEDENY: mk({ ticker: 'TRUEDENY', movePct: 11, marketCap: 900, status: 'denied', denialKind: 'denial',
+    headline: 'Company denied the reported story (2026-09-22) — denies media reports of a stake sale to a strategic investor; the report is baseless',
+    sourceUrl: url('TRUEDENY'), sourceDate: '2026-09-22T14:00:00+05:30', sourceTier: 'primary', ageDays: 1,
+    notes: ['The company contradicted a specific report while the stock moved — negative evidence for that story, not a catalyst.'] }),
+  // 26. Preferential allotment to a NAMED fund — a potential catalyst with a dilution flag, sized against market cap.
+  ROSSFUND: mk({ ticker: 'ROSSFUND', movePct: 9.9, marketCap: 500, status: 'catalyst', category: 'fundraising', stage: 'executed',
+    headline: 'Allotment of equity shares on preferential basis to SBI Mutual Fund at ₹1,166 per share aggregating ₹45 Cr',
+    sourceUrl: url('ROSSFUND'), sourceDate: '2026-09-22T18:30:00+05:30', sourceTier: 'primary', ageDays: 1, valueStated: 45,
+    notes: ['Fundraising adds supply (dilution flag): a named institutional or promoter allottee can still be the catalyst — check price, allottees and use of proceeds.'] }),
+  // 27. A raise beside distress markers — NEGATIVE.
+  DISTRESS: mk({ ticker: 'DISTRESS', movePct: 6, marketCap: 400, status: 'catalyst', category: 'fundraising', stage: 'executed',
+    headline: 'Allotment of equity shares to lenders under one-time settlement of the term loan in default',
+    sourceUrl: url('DISTRESS'), sourceDate: '2026-09-22T17:00:00+05:30', sourceTier: 'primary', ageDays: 1, valueStated: 20 }),
+  // 28. A result filed 12 days ago — RECENT: stays in the queue with the freshness factor.
+  RECENTRES: mk({ ticker: 'RECENTRES', movePct: 5.5, marketCap: 2500, status: 'none', headline: 'Quarterly result on file — No filing in the last 21 days' }),
+  // 29. A bare BSE scrip code as the ticker: the company name is shown first.
+  '544501': mk({ ticker: '544501', company: 'Numeric Scrip Industries Limited', movePct: 6.2, marketCap: 700, status: 'catalyst', category: 'order_win', stage: 'executed',
+    headline: 'Receipt of purchase order worth ₹90 Cr from a state transmission utility', sourceUrl: url('544501'), sourceDate: '2026-09-22T12:30:00+05:30', sourceTier: 'primary', ageDays: 1, valueStated: 90 }),
 };
 
 export const FILED_RESULTS: any[] = [
@@ -124,6 +145,8 @@ export const FILED_RESULTS: any[] = [
     opm_pct: 64, opm_prev_pct: 41, ocf_to_pat_ratio: 1.17, filing_url: 'https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=EARNBEAT' },
   { ticker: 'EARNMISS', tier: 'AVOID', quarter: 'Q1 FY27', filing_date: '2026-09-20', _ageDays: 3, sales_curr_cr: 88, sales_prev_cr: 100, sales_yoy_pct: -12, pat_curr_cr: 5.5, pat_prev_cr: 10, pat_yoy_pct: -45 },
   { ticker: 'STALEEARN', tier: 'BLOCKBUSTER', quarter: 'Q1 FY27', filing_date: '2026-08-14', _ageDays: 40, sales_curr_cr: 400, sales_prev_cr: 300, sales_yoy_pct: 33.3, pat_curr_cr: 60, pat_prev_cr: 35, pat_yoy_pct: 71.4 },
+  // zzz771: 12 days old — RECENT, not context.
+  { ticker: 'RECENTRES', tier: 'STRONG', quarter: 'Q1 FY27', filing_date: '2026-09-11', _ageDays: 12, sales_curr_cr: 210, sales_prev_cr: 160, sales_yoy_pct: 31.3, pat_curr_cr: 24, pat_prev_cr: 15, pat_yoy_pct: 60 },
 ];
 
 export function fixtureInput(): ResearchViewInput {
@@ -145,11 +168,21 @@ export function fixtureInput(): ResearchViewInput {
 export function fixtureInputUS(): ResearchViewInput {
   const f = (p: Partial<Finding> & { ticker: string }) => mk({ market: 'US', marketCap: 800, ...p });
   const findings: Record<string, Finding> = {
-    OFFR: f({ ticker: 'OFFR', movePct: 35, status: 'negative', category: 'dilution', headline: '424B5 — registration / prospectus for securities: supply, dilution or resale overhang',
+    OFFR: f({ ticker: 'OFFR', movePct: 35, status: 'negative', category: 'dilution', headline: '424B5 — prospectus for a securities offering: new supply, dilution',
       sourceUrl: 'https://www.sec.gov/Archives/edgar/data/1/000000000000000001/x424b5.htm', sourceTier: 'primary', ageDays: 1,
-      notes: ['An offering / registration is supply, not demand: it dilutes or releases stock for sale. No catalyst was filed beside it.'] }),
+      notes: ['An offering is supply into the move: a new raise dilutes holders. Check pricing, size against market cap and named buyers.'] }),
     TENQ: f({ ticker: 'TENQ', movePct: 12, status: 'catalyst', category: 'quarterly_result', stage: 'executed', headline: '10-Q · filed 16:05 ET after the close',
       sourceUrl: 'https://www.sec.gov/Archives/edgar/data/2/000000000000000002/x10q.htm', sourceTier: 'primary', ageDays: 2 }),
+    // zzz771: a 424B3 resale prospectus on a +111% week — a supply overhang, not a raise and not the catalyst.
+    RESALE: f({ ticker: 'RESALE', movePct: 111, status: 'negative', category: 'dilution', headline: '424B3 — resale / shelf registration: supply overhang, not a new raise',
+      sourceUrl: 'https://www.sec.gov/Archives/edgar/data/3/000000000000000003/x424b3.htm', sourceTier: 'primary', ageDays: 3,
+      notes: ['Resale / shelf registration: existing or future stock registered for sale — a supply overhang, not a new raise and not this move\'s catalyst.'] }),
+    // zzz771: a result 50 days old on a 1-week board — context, not the week's catalyst.
+    OLDRES: f({ ticker: 'OLDRES', movePct: 18, status: 'catalyst', category: 'quarterly_result', stage: 'executed', headline: '10-Q · Item 2.02 results', sourceDate: '2026-08-04T20:05:00Z',
+      sourceUrl: 'https://www.sec.gov/Archives/edgar/data/4/000000000000000004/x10q.htm', sourceTier: 'primary', ageDays: 50 }),
+    // zzz771: a filing 6 days old is within the 1-week US window — THIS_MOVE.
+    WEEKOLD: f({ ticker: 'WEEKOLD', movePct: 9, status: 'catalyst', category: 'acquisition', stage: 'executed', headline: '8-K Item 2.01 — completion of acquisition for $40M', valueStated: 40, modelRead: true,
+      evidenceQuote: 'completed the acquisition of the target for total consideration of $40 million', sourceUrl: 'https://www.sec.gov/Archives/edgar/data/5/000000000000000005/x8k.htm', sourceTier: 'primary', ageDays: 6 }),
   };
   return {
     market: 'US', findings,

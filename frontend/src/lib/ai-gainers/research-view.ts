@@ -86,8 +86,40 @@ export interface EarningsMini {
   tier?: string | null;
   quarter?: string | null;
   filedDate?: string | null;
-  /** Filed 20+ days ago: context for the move, ranked below dated catalysts. */
+  /** Filed more than CATALYST_WINDOWS.recent (14) days ago: context for the
+   *  move, never its catalyst (zzz771 — was 20d). */
   stale?: boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CATALYST WINDOWS (zzz771) — the ONE table that says how old an event can be
+// and still be this session's catalyst. India boards carry a 1-day move, so a
+// filing more than 3 days old cannot be its trigger; US boards carry a 1-week
+// move, so the window is a week. Between the window and 14 days a delayed
+// reaction is possible (RECENT). Beyond 14 days the event is real but it is
+// older CONTEXT: PASUPTAC's Q1 result filed 47 days before a +7.3% session
+// was ranked #5 as "CONFIRMED MATERIAL EVENT" — the class was right, the
+// attribution was not.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const CATALYST_WINDOWS: Record<'IN' | 'US', { thisMove: number; recent: number }> = {
+  IN: { thisMove: 3, recent: 14 },
+  US: { thisMove: 7, recent: 14 },
+};
+
+export function catalystForOf(market: 'IN' | 'US', ageDays: number | null | undefined): NonNullable<ResearchItem['catalystFor']> {
+  if (ageDays == null || !Number.isFinite(ageDays)) return 'RECENT';   // unknown age: neither claimed nor dismissed
+  const w = CATALYST_WINDOWS[market];
+  return ageDays <= w.thisMove ? 'THIS_MOVE' : ageDays <= w.recent ? 'RECENT' : 'CONTEXT';
+}
+
+/** A bare BSE scrip code ("544501") is not a name anyone recognises: the
+ *  company is shown first and the code small. (zzz771) */
+export function displayNameOf(ticker: string, company: string | null): { displayTicker: string; displayCode: string | null } {
+  const t = String(ticker || '').trim();
+  const name = company ? String(company).replace(/\s*\((india|ltd|limited)\)\s*$/i, '').replace(/[\s,]*\b(limited|ltd|pvt|private|inc|corp|corporation|plc)\b\.?\s*$/i, '').replace(/[\s,.-]+$/, '').trim() : '';
+  if (/^\d+$/.test(t) && name) return { displayTicker: name, displayCode: t };
+  return { displayTicker: t, displayCode: null };
 }
 
 export interface ResearchItem {
@@ -146,6 +178,18 @@ export interface ResearchItem {
   notes?: string[];
   /** Days since the event's source was filed. */
   ageDays?: number | null;
+  /** ── zzz771 CONTRACT (AG-1 fills, AG-2 renders) ─────────────────────────
+   *  Whether this event can be the catalyst for THIS session's move.
+   *  THIS_MOVE: filed within the move window (IN ≤3d, US ≤7d).
+   *  RECENT: 4–14d — a delayed reaction is possible; stays in the queue with a freshness penalty.
+   *  CONTEXT: >14d — a real event, but older context; never the catalyst, never in the queue/top3/confirmed counts. */
+  catalystFor?: 'THIS_MOVE' | 'RECENT' | 'CONTEXT';
+  /** Company name first when the ticker is a bare BSE scrip code ("544501"). */
+  displayTicker?: string;
+  /** Secondary code shown small when displayTicker is the name. */
+  displayCode?: string | null;
+  /** For NO_CATALYST rows: what was actually scanned, so "no catalyst" is never read as "nothing happened". */
+  scanNote?: string | null;
 }
 
 export interface ResearchView {
@@ -159,6 +203,8 @@ export interface ResearchView {
     noCatalyst: number; queue: number; portfolioMatches: number; dataUnavailable: number;
     /** Optional detail (zzz770 AG-A). */
     lowMateriality?: number; marketMoveOnly?: number; listings?: number; unresearched?: number; watch?: number;
+    /** zzz771: older filings behind names on the board — context, not this move's catalyst. */
+    context?: number;
   };
   top3: ResearchItem[];
   /** Full research queue, 10–15, ranked by priority. */
@@ -171,6 +217,9 @@ export interface ResearchView {
   dataQuality: ResearchItem[];
   sourceFailures: Array<{ ticker: string; text: string; full: string }>;
   portfolio: ResearchItem[];
+  /** zzz771: items whose only event is older than the move window (catalystFor === 'CONTEXT'),
+   *  ranked by their own priority. Rendered collapsed under "Older filings — context, not the catalyst". */
+  context?: ResearchItem[];
 }
 
 export interface ResearchViewInput {
@@ -297,7 +346,7 @@ export function earningsMiniOf(f: FiledRow): EarningsMini {
     ebitdaYoY: f.ebitdaYoY == null ? null : r1(f.ebitdaYoY), marginNow: f.opm, marginPrior: f.opmPrev,
     patYoY: f.patYoY == null ? null : r1(f.patYoY), cfoToPat: f.cfoToPat,
     guidance, orderBook: f.orderBook, keyChange, filedDaysAgo: f.ageDays,
-    tier: f.tier, quarter: f.quarter, filedDate: f.filingDate, stale: f.ageDays != null && f.ageDays > 20,
+    tier: f.tier, quarter: f.quarter, filedDate: f.filingDate, stale: f.ageDays != null && f.ageDays > CATALYST_WINDOWS.IN.recent,
   };
 }
 
@@ -439,6 +488,8 @@ const BANDS: Record<string, { revenue: Band; mcap: Band }> = {
   acquisition: { revenue: [30, 10], mcap: [20, 5] },
   capex: { revenue: [30, 10], mcap: [10, 3] },
   buyback: { revenue: [100, 100], mcap: [5, 2] },
+  // zzz771: a raise is sized against market cap only (issue ÷ market cap).
+  fundraise: { revenue: [100, 100], mcap: [10, 3] },
   generic: { revenue: [25, 10], mcap: [15, 5] },
 };
 
@@ -469,6 +520,50 @@ function valueMateriality(value: number | null, mcap: number | null, revenue: { 
     + (renewal ? ' Reads as a renewal / re-announcement — one level lower.' : '')
     + (verifiedValue ? '' : ' Figure from the filing subject/summary — not verified in the document.');
   return { label, ratios, explanation };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNDRAISING (zzz771) — a preferential allotment to a named fund or the
+// promoter is a potential catalyst with a dilution flag, not a negative event
+// by default (ROSSTECH: preferential issue to SBI Mutual Fund at ₹1,166 was
+// NEGATIVE, priority 3). It turns NEGATIVE only on distress markers, and a US
+// resale / shelf registration is a supply overhang that raises nothing new.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const RX_DISTRESS = /\bdefault(ed|s)?\b|\blenders?\b|one[- ]time settlement|\bots\b|working capital (shortfall|gap|stress|crunch)|going concern|restructuring of (the )?(debt|loans?|borrowings?|facilit)|debt restructuring|resolution plan|stressed asset|\bnpa\b/i;
+// Matches the zzz771 reason text from classifyUsFiling, not the pre-zzz771
+// "supply, dilution or resale overhang" wording that every registration carried.
+const RX_RESALE = /resale \/ shelf|resale (registration|prospectus)|shelf registration|selling (stock|share)holders?/i;
+// Named allottees: an entity phrase after "to" / "in favour of", ending in
+// a corporate suffix, or the promoter group.
+const RX_ALLOTTEE = /(?:\bto|in favou?r of|allottees?:?|subscribed by|by)\s+((?:(?:[A-Z][\w&'.-]*|of|and|&|de|the)\s+){0,7}(?:Mutual Fund|Fund|Trust|Capital|LLP|Limited|Ltd\.?|Pvt\.?|Private Limited|Investments?|Holdings?|AIF|Insurance|Bank|Partners|Ventures|Advisors|Advisers|Management|Securities|Corporation|Inc\.?|Group|Company|Co\.?))(?![\w-])/g;
+
+export function allotteesOf(text: string): string[] {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const out: string[] = [];
+  for (const m of t.matchAll(RX_ALLOTTEE)) {
+    const name = m[1].replace(/[\s,.]+$/, '').trim();
+    if (!name || /^(the )?(company|board|issuer|exchange|bse|nse)\b/i.test(name) || name.split(' ').length < 2 && !/Fund|Trust|Bank/.test(name)) continue;
+    if (!out.some((x) => x.toLowerCase() === name.toLowerCase())) out.push(name);
+  }
+  if (/\bpromoter/i.test(t) && !out.some((x) => /promoter/i.test(x))) out.push(/promoter group/i.test(t) ? 'promoter group' : 'promoters');
+  return out.slice(0, 4);
+}
+
+interface FundraiseRead { cls: EventClass; label: string; mat: Materiality; allottees: string[]; distress: boolean; resale: boolean; named: boolean }
+
+function fundraisingOf(hay: string, stage: Stage, value: number | null, mcap: number | null, market: 'IN' | 'US', verifiedValue: boolean, usRegistration: boolean): FundraiseRead {
+  const resale = usRegistration && RX_RESALE.test(hay);
+  const distress = RX_DISTRESS.test(hay);
+  const allottees = allotteesOf(hay);
+  const named = allottees.length > 0;
+  if (resale) return { cls: 'NO_CATALYST', label: 'Resale registration (supply overhang) — not a new raise', mat: { label: 'UNKNOWN', ratios: [], explanation: 'No new proceeds: existing or future stock registered for sale — nothing to size against market cap.' }, allottees, distress, resale, named };
+  const mat = valueMateriality(value, mcap, null, market, 'fundraise', verifiedValue, false);
+  if (mat.ratios.length) mat.explanation = mat.explanation.replace(/^(Large|Meaningful|Small) relative to market cap \(no revenue figure on the row\)/, '$1 issue relative to market cap');
+  const label = `Fundraising — ${named ? allottees.join(', ') : 'allottees not stated'}`;
+  if (distress) return { cls: 'NEGATIVE', label: `${label} (distress markers)`, mat, allottees, distress, resale, named };
+  const cls: EventClass = stage === 'EXECUTED' && mat.label === 'SMALL' ? 'CONFIRMED_LOW_MATERIALITY' : 'POTENTIAL_UNVERIFIED';
+  return { cls, label, mat, allottees, distress, resale, named };
 }
 
 function earningsMateriality(e: EarningsMini | null, f: FiledRow | null, market: 'IN' | 'US'): Materiality {
@@ -510,12 +605,12 @@ const NEXT: Record<string, string[]> = {
   generic: ['What exactly changed, with numbers?', 'How does it reach revenue or margin?', 'Is it repeatable?'],
 };
 
-function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Finding | null): string {
+function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Finding | null, clarification = false): string {
   if (cls === 'DATA_UNAVAILABLE') return 'unavailable';
   if (cls === 'LISTING') return 'listing';
   if (cls === 'MARKET_MOVE_ONLY') return 'band';
-  if (type === 'Denial') return 'denial';
-  if (cls === 'NO_CATALYST') return /not classifiable/i.test(String(finding?.headline || '')) ? 'unclassified' : 'none';
+  if (type === 'Denial' || clarification) return 'denial';
+  if (cls === 'NO_CATALYST') return type === 'Fundraising' ? 'fundraising' : /not classifiable/i.test(String(finding?.headline || '')) ? 'unclassified' : 'none';
   if (type === 'Fundraising') return 'fundraising';
   if (cls === 'NEGATIVE' && type !== 'Earnings') return 'negative';
   if ((type === 'Order win' || type === 'Contract' || type === 'Partnership') && (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR')) return 'enabling';
@@ -599,7 +694,10 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
 
 function transmissionOf(type: EventType, cls: EventClass, stage: Stage, mat: Materiality['label']): Transmission {
   if (cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return 'NONE';
-  if (type === 'Denial' || type === 'Fundraising' || type === 'Management change' || type === 'Governance' || type === 'No identified catalyst' || type === 'Market/technical move') return 'NONE';
+  // zzz771: a raise reaches the P&L only through what the money funds — WEAK,
+  // not NONE — unless it is a distress raise (NEGATIVE).
+  if (type === 'Fundraising') return cls === 'NEGATIVE' ? 'NONE' : 'WEAK';
+  if (type === 'Denial' || type === 'Management change' || type === 'Governance' || type === 'No identified catalyst' || type === 'Market/technical move') return 'NONE';
   const early = stage === 'RUMOUR' || stage === 'PROPOSED' || stage === 'ENABLING';
   switch (type) {
     case 'Earnings': return 'DIRECT';
@@ -700,11 +798,13 @@ const F_MAT: Record<Materiality['label'], number> = { SIGNIFICANT: 1, MODERATE: 
 const F_TRANS: Record<Transmission, number> = { DIRECT: 1, NEAR_TERM: 0.85, LONG_TERM: 0.6, WEAK: 0.4, NONE: 0.1 };
 const F_EVID: Record<SourceConfidence, number> = { VERIFIED_DOCUMENT: 1, VERIFIED_FILING: 0.85, SECONDARY_SUMMARY: 0.55, UNVERIFIED: 0.35 };
 const F_PERS: Record<Persistence, number> = { YEARS: 1, QUARTER: 0.8, DAYS: 0.55, UNKNOWN: 0.7 };
-const freshF = (age: number | null) => (age == null ? 0.6 : age <= 1 ? 1 : age <= 3 ? 0.95 : age <= 7 ? 0.85 : age <= 20 ? 0.7 : age <= 60 ? 0.45 : 0.2);
+// zzz771: the 0.7 step ends at the RECENT window (14d), not 20d, so freshness
+// and catalystFor agree on where "recent" stops.
+const freshF = (age: number | null) => (age == null ? 0.6 : age <= 1 ? 1 : age <= 3 ? 0.95 : age <= 7 ? 0.85 : age <= CATALYST_WINDOWS.IN.recent ? 0.7 : age <= 60 ? 0.45 : 0.2);
 const gapF = (g: ResearchItem['expectationGap']) => (g.direction === 'UNDER_REFLECTED' ? (g.level === 'LARGE' ? 1 : 0.9)
   : g.direction === 'ALIGNED' ? 0.75 : g.direction === 'EXPECTATION_HEAVY' ? (g.level === 'LARGE' ? 0.4 : 0.55) : 0.7);
 
-function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number | null; staleEarnings: boolean; veryStale: boolean }): { score: number; reasons: string[]; details: Record<string, number> } {
+function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number | null; staleEarnings: boolean; veryStale: boolean; namedAllottee: boolean; clarification: boolean }): { score: number; reasons: string[]; details: Record<string, number> } {
   const d: Record<string, number> = {
     eventQuality: F_CLASS[it.eventClass], materiality: F_MAT[it.materiality.label], transmission: F_TRANS[it.transmission],
     evidence: F_EVID[it.sourceConfidence], freshness: freshF(it.ageDays ?? null), expectationGap: gapF(it.expectationGap), persistence: F_PERS[it.persistence],
@@ -721,8 +821,16 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number 
   else reasons.push('Source unavailable');
   if (it.materiality.ratios[0] && it.materiality.label !== 'UNKNOWN') reasons.push(`${it.materiality.label === 'SIGNIFICANT' ? 'Material' : it.materiality.label === 'MODERATE' ? 'Moderate' : 'Small'} vs ${it.materiality.ratios[0].basis === 'market_cap' ? 'market cap' : 'revenue'} (${it.materiality.ratios[0].pct}%)`);
   else if (it.eventType === 'Earnings' && it.materiality.label !== 'UNKNOWN') reasons.push(`${it.materiality.label === 'SIGNIFICANT' ? 'Large' : it.materiality.label === 'MODERATE' ? 'Moderate' : 'Small'} change versus the prior year`);
+  // zzz771: the source reason says what was actually read. A graded result's
+  // figures ARE read from the filed statement (by the grader), and a
+  // clarification is the company's own filing; "document not parsed" is only
+  // true for a subject-line classification.
   if (it.sourceConfidence === 'VERIFIED_DOCUMENT') reasons.push('Quote verified in the document');
-  else if (it.sourceConfidence === 'VERIFIED_FILING') reasons.push('Exchange filing (document not parsed)');
+  else if (it.sourceConfidence === 'VERIFIED_FILING') {
+    if (it.eventType === 'Earnings' && it.earnings) reasons.push('Figures from the filed result (grader-read)');
+    else if (ctx.clarification) reasons.push('Exchange clarification on file (company-confirmed)');
+    else reasons.push(`${it.market === 'US' ? 'SEC' : 'Exchange'} filing (document not parsed)`);
+  }
   if (it.transmission === 'DIRECT') reasons.push('Direct P&L transmission');
   if (it.transmission === 'NONE') reasons.push('No transmission to earnings');
   if (it.ageDays != null && it.ageDays <= 3 && cls !== 'NO_CATALYST') reasons.push(`Fresh (${it.ageDays === 0 ? 'today' : `${it.ageDays}d`})`);
@@ -730,17 +838,29 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricedIn: number 
   if (it.persistence === 'YEARS') reasons.push('Multi-year persistence');
   let pen = 1;
   const penal = (k: string, f: number, why: string) => { d[`penalty_${k}`] = f; pen *= f; reasons.push(why); };
-  if (it.flags.dilution) penal('dilution', 0.6, 'Penalty: dilution / financing');
-  if (it.flags.denial) penal('denial', 0.5, 'Penalty: company denial');
+  // zzz771: dilution is a flag on a potential catalyst, not a rejection —
+  // 0.75 with a named allottee (the buyer is known), 0.6 without one.
+  if (it.flags.dilution) penal('dilution', ctx.namedAllottee ? 0.75 : 0.6, ctx.namedAllottee ? 'Penalty: dilution (named allottee)' : 'Penalty: dilution / financing');
+  // A true denial penalises; a clarification is already NO_CATALYST and is
+  // priced by its class, not punished twice.
+  if (it.flags.denial && cls === 'NEGATIVE') penal('denial', 0.5, 'Penalty: company denial');
+  if (it.flags.denial && ctx.clarification) reasons.push('Company-confirmed: no undisclosed information');
   if (it.eventClass === 'CONFIRMED_LOW_MATERIALITY') penal('lowMateriality', 0.8, 'Penalty: too small to explain the move');
   if ((ctx.pricedIn ?? 0) >= 80 || (it.expectationGap.direction === 'EXPECTATION_HEAVY' && it.expectationGap.level === 'LARGE') || (it.returns.m1 ?? 0) >= 50) {
     penal('pricedIn', 0.8, `Penalty: largely priced${it.returns.m1 != null ? ` (1M ${pctS(it.returns.m1)})` : ''}`);
   }
-  if (it.sourceConfidence === 'SECONDARY_SUMMARY' || it.sourceConfidence === 'UNVERIFIED') penal('unverified', 0.85, 'Penalty: unverified source');
+  // A no-catalyst row is UNVERIFIED because nothing was found to verify; it
+  // is not an unverified source and is not penalised as one. (zzz771)
+  const noEvent = cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY';
+  if (!noEvent && (it.sourceConfidence === 'SECONDARY_SUMMARY' || it.sourceConfidence === 'UNVERIFIED')) penal('unverified', 0.85, 'Penalty: unverified source');
   if (it.flags.listing) penal('listing', 0.3, 'Penalty: listing artifact');
   if (ctx.routine) penal('routine', 0.5, 'Penalty: routine filings only');
   if (it.eventClass === 'MARKET_MOVE_ONLY') penal('technical', 0.5, 'Penalty: technical-only move');
   if (ctx.staleEarnings) penal('staleResult', ctx.veryStale ? 0.4 : 0.7, `Penalty: result filed ${it.earnings?.filedDaysAgo}d ago — context, not this move's trigger`);
+  // zzz771: the attribution reason. The class stays (it IS a real event); the
+  // reason says why it is not in the queue.
+  if (it.catalystFor === 'CONTEXT') reasons.push(`Context, not this move's catalyst (${it.ageDays}d)`);
+  else if (it.catalystFor === 'RECENT' && it.ageDays != null) reasons.push(`Recent (${it.ageDays}d) — delayed reaction possible`);
   const product = d.eventQuality * d.materiality * d.transmission * d.evidence * d.freshness * d.expectationGap * d.persistence;
   d.product = Math.round(product * 10000) / 10000;
   d.penaltyMultiplier = Math.round(pen * 1000) / 1000;
@@ -787,13 +907,22 @@ function portfolioOf(ticker: string, type: EventType, cls: EventClass, e: Earnin
 
 interface BoardRow { ticker: string; company: string | null; move_pct: number | null; market_cap?: number | null; perf?: any; turnover?: number | null }
 
-function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality, key: string, gap: ResearchItem['expectationGap'], e: EarningsMini | null): string {
+function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality, key: string, gap: ResearchItem['expectationGap'], e: EarningsMini | null, fr: FundraiseRead | null = null, clarification = false): string {
   if (cls === 'DATA_UNAVAILABLE') return 'Sources could not be reached — this is missing data, not an absence of news.';
   if (cls === 'LISTING') return 'Recent listing — no comparable prior close, so the move is excluded from comparison.';
   if (cls === 'MARKET_MOVE_ONLY') return 'Band print on thin turnover — the move measures the price band, not demand.';
+  // zzz771: a clarification is the company confirming there is nothing filed
+  // behind the move — company-confirmed absence, not a negative event.
+  if (clarification) return 'The company told the exchange it has no undisclosed information — company-confirmed absence of a filed catalyst; only liquidity, sector or technical checks remain.';
+  if (fr?.resale) return 'A resale / shelf registration releases existing stock for sale — a supply overhang with no new proceeds; it does not explain the move.';
   if (cls === 'NO_CATALYST') return key === 'unclassified' ? 'A filing exists but its subject says nothing classifiable — open it before concluding there is no catalyst.' : 'No filing explains the move; only liquidity, sector or technical checks remain.';
-  if (type === 'Denial') return 'The company denied any undisclosed information while the stock moved — a caution flag, not a catalyst.';
-  if (type === 'Fundraising') return 'Financing adds supply, not demand — check pricing, allottees and use of proceeds.';
+  if (type === 'Denial') return 'The company contradicted a specific report while the stock moved — negative evidence for that story, not a catalyst.';
+  if (type === 'Fundraising') {
+    if (fr?.distress) return 'A raise beside distress markers (default, lenders, settlement) is supply into a stressed balance sheet — not a catalyst.';
+    return fr?.named
+      ? `A named allottee (${fr.allottees.join(', ')}) taking stock at a stated price can be the catalyst; it also adds supply — check the price against market, size against market cap and use of proceeds.`
+      : 'A raise with no named allottee adds supply — check pricing, allottees and use of proceeds before treating it as a catalyst.';
+  }
   if (cls === 'NEGATIVE') return type === 'Earnings' ? 'Results weakened; the move is not explained by fundamentals.' : type === 'Accident / disruption' ? 'Operational disruption — size the lost output and the insurance cover.' : 'Negative development in the window — check whether it changes the thesis.';
   if (key === 'enabling') return `${stage === 'PROPOSED' ? 'A proposal' : 'An enabling step (LoI / MoU / board approval)'}, not an executed order — nothing is booked yet.`;
   if (cls === 'CONFIRMED_LOW_MATERIALITY') return type === 'Earnings' ? 'Real result, but the change is modest — unlikely to explain the move alone.' : 'Real event, but too small relative to company scale to explain the move.';
@@ -853,17 +982,45 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   let value: number | null = num(f?.valueStated);
   let sourceUrl = f?.sourceUrl || null;
   let filedDate = f?.sourceDate ? String(f.sourceDate).slice(0, 10) : null;
-  let ageDays: number | null = num(f?.ageDays);
+  // The finding's own age when it has one; otherwise aged from its filing
+  // date against the scan instant (input.now) — never the clock. (zzz771)
+  let ageDays: number | null = num(f?.ageDays) ?? ageFrom(f?.sourceDate ? String(f.sourceDate) : null, input.now);
+  const windowDays = num(f?.windowDays) ?? 21;
+  const scanScope = market === 'US' ? 'SEC' : 'exchange';
+  const notScanned = 'news, broker actions and sector moves are not scanned';
+  let scanNote: string | null = null;
+  let clarification = false;
+  let fr: FundraiseRead | null = null;
 
   if (status === 'source_failed' && !e) {
     cls = 'DATA_UNAVAILABLE'; type = 'No identified catalyst'; label = 'Source unavailable'; headline = 'Filing source could not be reached — not "no catalyst"';
   } else if (listing) {
     cls = 'LISTING'; type = 'No identified catalyst'; label = 'Recent listing'; conf = f?.sourceTier === 'primary' ? 'VERIFIED_FILING' : 'UNVERIFIED';
   } else if (status === 'denied') {
-    cls = 'NEGATIVE'; type = 'Denial'; denial = true; stage = 'EXECUTED'; conf = 'VERIFIED_FILING';
+    // zzz771: "no undisclosed information" is the company confirming there is
+    // NO catalyst — evidence of absence, not a negative event. Only a reply
+    // that contradicts a specific reported story is a denial. Findings stored
+    // before zzz771 carry no denialKind; their headline says which it was.
+    const kind = f!.denialKind || (/denied the reported|denies|baseless|no such/i.test(headline0) ? 'denial' : 'clarification');
+    denial = true; conf = 'VERIFIED_FILING';
+    if (kind === 'denial') { cls = 'NEGATIVE'; type = 'Denial'; stage = 'EXECUTED'; }
+    else {
+      clarification = true; cls = 'NO_CATALYST'; type = 'No identified catalyst';
+      label = `Company confirmed no undisclosed information (exchange clarification, ${filedDate || 'undated'})`;
+      scanNote = `Company confirmed no undisclosed information to the ${scanScope}${filedDate ? ` on ${filedDate}` : ''} — ${notScanned}`;
+    }
+  } else if (status === 'negative' && f!.category === 'dilution') {
+    // zzz771 (US): a registration is a raise (potential, dilution flag), a
+    // resale / shelf (supply overhang, NO_CATALYST) or distress (NEGATIVE).
+    type = 'Fundraising'; dilution = true;
+    conf = verifiedDoc ? 'VERIFIED_DOCUMENT' : f!.sourceTier === 'primary' ? 'VERIFIED_FILING' : f!.sourceTier === 'secondary' ? 'SECONDARY_SUMMARY' : 'UNVERIFIED';
+    stage = stageOf(type, f!.stage, evHay);
+    fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, true);
+    cls = fr.cls; label = fr.label; mat = fr.mat;
+    if (fr.resale) scanNote = `Only a resale / shelf registration in the last ${windowDays} days — ${notScanned}`;
   } else if (status === 'negative') {
     const t = eventTypeOf(f!.category, evHay, true); type = t.type; label = t.label; cls = 'NEGATIVE';
-    dilution = f!.category === 'dilution' || type === 'Fundraising';
+    dilution = type === 'Fundraising';
     conf = verifiedDoc ? 'VERIFIED_DOCUMENT' : f!.sourceTier === 'primary' ? 'VERIFIED_FILING' : f!.sourceTier === 'secondary' ? 'SECONDARY_SUMMARY' : 'UNVERIFIED';
     stage = stageOf(type, f!.stage, evHay);
     if (type === 'Order cancellation') mat = valueMateriality(value, marketCap, revenue, market, 'order', verifiedDoc, false);
@@ -894,7 +1051,13 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
         explanation: `${mat.explanation} ${nonBinding ? 'Non-binding / not awarded — the ratio shows scale only, not a commitment.' : `Not executed (${stage}) — one level lower until it is.`}` };
     }
     if (early && !label) label = type === 'Capacity expansion' ? 'Capex plan (not executed)' : `${type} (${stage.toLowerCase()}, not executed)`;
-    if (type === 'Fundraising') { cls = 'NEGATIVE'; dilution = true; }
+    if (type === 'Fundraising') {
+      // zzz771: preferential / QIP / warrants / rights / private placement is
+      // a potential catalyst with a dilution flag; NEGATIVE only on distress.
+      dilution = true;
+      fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, false);
+      cls = fr.cls; label = early ? `${fr.label} (${stage.toLowerCase()}, not allotted)` : fr.label; mat = fr.mat;
+    }
     else if (type === 'Management change' && /resign|cessation|steps? down|stepped down|departure/i.test(evHay)) { cls = 'NEGATIVE'; label = 'Management departure'; }
     else if (type === 'Management change' || type === 'Governance' || type === 'Rating action') cls = 'CONFIRMED_LOW_MATERIALITY';
     else if (early || conf === 'SECONDARY_SUMMARY' || conf === 'UNVERIFIED') cls = 'POTENTIAL_UNVERIFIED';
@@ -917,15 +1080,33 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     cls = bandLevel != null && !unclassified ? 'MARKET_MOVE_ONLY' : 'NO_CATALYST';
     type = /debt financing/i.test(headline0) ? 'Debt / refinancing' : cls === 'MARKET_MOVE_ONLY' ? 'Market/technical move' : 'No identified catalyst';
     label = unclassified ? 'Unclassified filing — open it' : /debt financing/i.test(headline0) ? 'Debt financing (not a catalyst)' : 'Routine filings only';
-    conf = 'VERIFIED_FILING';
+    // zzz771: nothing here was verified as an event — the confidence is
+    // UNVERIFIED, and the note says what WAS scanned so "no catalyst" is
+    // never read as "nothing happened".
+    conf = 'UNVERIFIED';
+    const n = num(f?.filingsInWindow);
+    scanNote = `${n != null && n > 0 ? `${n} ${scanScope} filing${n === 1 ? '' : 's'}` : `${scanScope === 'SEC' ? 'SEC' : 'Exchange'} filings`} in the last ${windowDays} days, ${unclassified ? 'none classifiable as an event' : 'all routine paperwork'} — ${notScanned}`;
   } else {
     // none / unresearched without a result
     cls = bandLevel != null ? 'MARKET_MOVE_ONLY' : 'NO_CATALYST';
     type = cls === 'MARKET_MOVE_ONLY' ? 'Market/technical move' : 'No identified catalyst';
-    conf = f ? 'VERIFIED_FILING' : 'UNVERIFIED';
-    if (!headline) headline = f ? 'No filing in the window' : 'Not researched yet';
+    conf = 'UNVERIFIED';
+    if (f) {
+      scanNote = `No ${scanScope} filing in the last ${windowDays} days — ${notScanned}`;
+      if (!headline) headline = `No ${scanScope} filing in the last ${windowDays} days`;
+      // "No filing in the last 21 days" reads as "nothing happened": it names
+      // what was scanned instead. (zzz771)
+      headline = headline.replace(/No filing in the last (\d+) days/, `No ${scanScope} filing in the last $1 days (${notScanned})`);
+    } else if (!headline) headline = 'Not researched yet';
   }
   if (!headline) headline = label || type;
+
+  // zzz771: can this event be THIS session's catalyst? Only classes that
+  // carry a dated event get an answer; no-catalyst / listing / unavailable
+  // rows have nothing to date.
+  const dated = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || cls === 'NEGATIVE';
+  const catalystFor = dated ? catalystForOf(market, ageDays) : undefined;
+  const isContext = catalystFor === 'CONTEXT';
 
   const trans = transmissionOf(type, cls, stage, mat.label);
   const pers = persistenceOf(type, cls, evHay);
@@ -958,24 +1139,30 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
       : `${noun} ${money(value, market)}${ratioTxt}${conf === 'VERIFIED_DOCUMENT' ? '' : ' (figure not verified in the document)'}`;
   }
 
-  const key = nextKey(type, cls, stage, f);
+  const key = nextKey(type, cls, stage, f, clarification);
   const researchNext = (NEXT[key] || NEXT.generic).slice(0, 5);
-  const unknowns = unknownsFor(key, hay, value != null, e);
+  // A clarification's unknowns are a no-catalyst row's (cause of the move), not a negative event's impact. (zzz771)
+  const unknowns = unknownsFor(clarification ? 'none' : key, hay, value != null, e);
   const portfolio = portfolioOf(ticker, type, cls, e, { ...sets, vars: input.thesisVariables, findingHeld: !!f?.holding });
+  // zzz771: an older event keeps its class but is labelled as context, its
+  // EarningsMini is kept (stale), and its action is to monitor, not review.
+  const earnings = e && isContext ? { ...e, stale: true } : e;
+  const shownHeadline = isContext ? `Older context (${ageDays}d): ${headline}` : headline;
   const item: ResearchItem = {
     ticker, company, market, move1d: market === 'US' ? null : mv.pct, returns, marketCap,
-    eventClass: cls, eventType: type, headline: clean(headline), whatChanged, before, after, filedDate, stage,
+    eventClass: cls, eventType: type, headline: clean(shownHeadline), whatChanged, before, after, filedDate, stage,
     sourceConfidence: conf, sourceUrl, quote, materiality: mat, transmission: trans,
     transmissionChain: chainOf(type, trans, stage, { headline: clean(headline), value, market, mat, e, f: filed, cap }),
     persistence: pers, expectationGap: gap, unknowns, researchNext,
-    whyResearch: whyOf(cls, type, stage, mat, key, gap, e),
-    portfolio, earnings: e,
+    whyResearch: whyOf(cls, type, stage, mat, key, gap, e, fr, clarification),
+    portfolio, earnings,
     flags: { band: bandLevel, listing, dilution, denial, turnover: num(f?.turnover) ?? num(b?.turnover) },
     priority: 0, priorityReasons: [], scoreDetails: null,
-    eventLabel: label || type, action: actionOf(cls, portfolio.relevance), move: mv, findingStatus: status, notes, ageDays,
+    eventLabel: label || type, action: isContext ? 'Monitor' : actionOf(cls, portfolio.relevance), move: mv, findingStatus: status, notes, ageDays,
+    catalystFor, ...displayNameOf(ticker, company), scanNote,
   };
-  const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > 20;
-  const p = priorityOf(item, { routine, pricedIn: num(f?.components?.pricedIn), staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60 });
+  const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
+  const p = priorityOf(item, { routine, pricedIn: num(f?.components?.pricedIn), staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
   return item;
 }
@@ -1011,13 +1198,23 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   }
   items.sort(byPriority);
 
-  const eligible = items.filter((i) => i.eventClass === 'CONFIRMED_MATERIAL' || i.eventClass === 'CONFIRMED_LOW_MATERIALITY' || i.eventClass === 'POTENTIAL_UNVERIFIED');
+  // zzz771: an event older than the move window is CONTEXT — real, kept with
+  // its class, but never this move's catalyst. It leaves every ranked section
+  // (queue / watch / negative / no-catalyst) for its own list, and the summary
+  // counts it as "no fresh catalyst for this move". INVARIANTS the tests hold:
+  //   queue ∪ watch ⊆ eligible ∖ context;  context ∩ (queue ∪ watch ∪ negative
+  //   ∪ noCatalyst) = ∅;  summary.confirmed / potential / negative exclude
+  //   context;  summary.noCatalyst includes it;  the class totals still add
+  //   up to `scanned`.
+  const context = items.filter((i) => i.catalystFor === 'CONTEXT');
+  const live = items.filter((i) => i.catalystFor !== 'CONTEXT');
+  const eligible = live.filter((i) => i.eventClass === 'CONFIRMED_MATERIAL' || i.eventClass === 'CONFIRMED_LOW_MATERIALITY' || i.eventClass === 'POTENTIAL_UNVERIFIED');
   const queue = eligible.filter((i) => i.priority >= 12).slice(0, 15);
   const inQ = new Set(queue.map((i) => i.ticker));
   const watch = eligible.filter((i) => !inQ.has(i.ticker)).slice(0, 20);
   const top3 = queue.filter((i) => i.priority >= 25).slice(0, 3);
-  const negative = items.filter((i) => i.eventClass === 'NEGATIVE');
-  const noCatalyst = items.filter((i) => i.eventClass === 'NO_CATALYST' || i.eventClass === 'MARKET_MOVE_ONLY');
+  const negative = live.filter((i) => i.eventClass === 'NEGATIVE');
+  const noCatalyst = live.filter((i) => i.eventClass === 'NO_CATALYST' || i.eventClass === 'MARKET_MOVE_ONLY');
   const dataQuality = items.filter((i) => i.eventClass === 'LISTING' || i.eventClass === 'DATA_UNAVAILABLE');
   const portfolio = items.filter((i) => i.portfolio.relevance === 'HOLDING' || i.portfolio.relevance === 'WATCHLIST');
 
@@ -1031,7 +1228,8 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
     }
   }
 
-  const count = (c: EventClass) => items.filter((i) => i.eventClass === c).length;
+  // Class counts over the LIVE items; context is counted once, under noCatalyst. (zzz771)
+  const count = (c: EventClass) => live.filter((i) => i.eventClass === c).length;
   const s0 = input.session || { date: null, scanAt: null, status: 'unknown', cached: false };
   const session: ResearchView['session'] = { ...s0 };
   if (session.note == null) {
@@ -1043,10 +1241,11 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
     session,
     summary: {
       scanned: tickers.length, confirmed: count('CONFIRMED_MATERIAL') + count('CONFIRMED_LOW_MATERIALITY'), potential: count('POTENTIAL_UNVERIFIED'),
-      negative: count('NEGATIVE'), noCatalyst: count('NO_CATALYST') + count('MARKET_MOVE_ONLY'), queue: queue.length,
+      negative: count('NEGATIVE'), noCatalyst: count('NO_CATALYST') + count('MARKET_MOVE_ONLY') + context.length, queue: queue.length,
       portfolioMatches: portfolio.length, dataUnavailable: count('DATA_UNAVAILABLE'),
       lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
+      context: context.length,
     },
-    top3, queue, watch, negative, noCatalyst, dataQuality, sourceFailures, portfolio,
+    top3, queue, watch, negative, noCatalyst, dataQuality, sourceFailures, portfolio, context,
   };
 }

@@ -161,7 +161,9 @@ export function normalizeValue(raw: string | null | undefined, unitField?: strin
   if (/\d\s*(?:x|×)(?![a-z])|\btimes\b/i.test(s)) {
     return base({ raw_unit: 'x', value: n0, normalized_value: n0, normalized_unit: 'x', dimension: 'ratio', safe: true });
   }
-  if (/\bdays?\b/i.test(t)) {
+  // "380,000 liters per day" is a volume RATE, not a count of days: the day
+  // word is a denominator. VADILALIND's capacity printed "+110,000 days". (zzz771)
+  if (/\bdays?\b/i.test(t) && !/\b(?:per|a|each)\s+day\b|\/\s*day\b/i.test(t)) {
     return base({ raw_unit: 'days', value: n0, normalized_value: n0, normalized_unit: 'days', dimension: 'days', safe: true });
   }
   // ── money ──
@@ -212,7 +214,11 @@ export function normalizeValue(raw: string | null | undefined, unitField?: strin
   // ── volume ──
   if (/(?:\b|(?<=\d))(?:KLD|KLPD)\b|(?:KL|kilolit\w*)\s*(?:per day|\/\s*day)/i.test(t)) return base({ raw_unit: 'KLD', value: qty, normalized_value: qty, normalized_unit: 'kL/day', dimension: 'volume', rate: 'per_day', safe: true });
   if (/\bKL\b|(?<=\d)\s*kl\b|kilolit/i.test(t)) return base({ raw_unit: 'KL', value: qty, normalized_value: qty, normalized_unit: 'kL', dimension: 'volume', safe: true });
-  if (/\blit(?:re|er)s?\b/i.test(t)) return base({ raw_unit: 'litres', value: qty, normalized_value: qty / 1000, normalized_unit: 'kL', dimension: 'volume', conversion_method: 'litres ÷ 1,000 = kL', safe: true });
+  if (/\blit(?:re|er)s?\b/i.test(t)) {
+    // "380,000 liters per day" is a daily rate (kL/day), not a tank. (zzz771)
+    const perDay = /\b(?:per|a|each)\s+day\b|\/\s*day\b/i.test(t);
+    return base({ raw_unit: perDay ? 'litres/day' : 'litres', value: qty, normalized_value: qty / 1000, normalized_unit: perDay ? 'kL/day' : 'kL', dimension: 'volume', rate: perDay ? 'per_day' : null, conversion_method: 'litres ÷ 1,000 = kL', safe: true });
+  }
   // ── power / energy ──
   if (/\b(MWh|GWh|kWh)\b/i.test(t)) {
     const f = /GWh/i.test(t) ? 1000 : /kWh/i.test(t) ? 0.001 : 1;
@@ -423,7 +429,26 @@ export function beforeAfterText(prev: Comparable | null, cur: Comparable): { tex
 
 export type ValidationFlag =
   | 'UTILISATION_ABOVE_100' | 'NEGATIVE_RATIO_SIGN_UNCLEAR' | 'DENOMINATOR_MISMATCH'
-  | 'UNIT_MISMATCH' | 'IMPOSSIBLE_VALUE';
+  | 'UNIT_MISMATCH' | 'IMPOSSIBLE_VALUE' | 'AMBIGUOUS_VALUE';
+
+// ── TWO FIGURES JOINED BY "OR" ARE NOT ONE READING.                  (zzz771)
+//
+// INNOVACAP's transcript gave utilisation as "30% or 25%" — the speaker
+// corrected himself mid-sentence and the reader kept both. Printed as a level
+// it would become a time-series point that is off by five points whichever
+// one is true, and a later 28% would then read as a rise OR a fall. A value
+// with two alternatives is a validation question, never a number.
+const AMBIGUOUS_OR = /\d[\d,.]*\s*(?:%|per\s?cent|percent)?\s+or\s+(?:~|about|around|approx\w*\s+)?\d[\d,.]*\s*(?:%|per\s?cent|percent)?/i;
+/** "30% or 25%": two stated figures with no way to choose. A range ("30 to
+ *  35%", "30–35%") is one reading and is not flagged. */
+export function isAmbiguousValue(value: string | null | undefined): boolean {
+  const v = String(value ?? '').trim();
+  if (!v) return false;
+  if (!AMBIGUOUS_OR.test(v)) return false;
+  // "X or more" / "X or higher" / "X or so" is one figure with a hedge.
+  if (/\d\s*%?\s*or\s+(?:more|higher|less|lower|so|above|below|better|thereabouts)\b/i.test(v)) return false;
+  return true;
+}
 
 export interface Validation {
   /** UNCLEAR rows are counted neither confirmed nor contradicted. */
@@ -446,6 +471,11 @@ function percents(s: string): number[] {
 export function validateReading(key: VarKey | string, value: string | null | undefined, text?: string | null): Validation {
   const v = String(value ?? '');
   if (!v.trim()) return OK;
+  // Before any range test: "30% or 25%" has two figures and no answer. (zzz771)
+  if (isAmbiguousValue(v)) {
+    return { state: 'UNCLEAR', flags: ['AMBIGUOUS_VALUE'], metric_definition: null,
+      reason: `validation required — ambiguous reading: ${v.trim()}` };
+  }
   if (key === 'utilisation') {
     const ps = percents(v);
     if (ps.some((p) => p < 0)) return { state: 'UNCLEAR', flags: ['IMPOSSIBLE_VALUE'], reason: 'validation required — a negative utilisation is impossible', metric_definition: null };

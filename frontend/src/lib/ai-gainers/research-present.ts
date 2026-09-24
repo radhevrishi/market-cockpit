@@ -29,11 +29,11 @@ export function presentFindings<T extends Record<string, any>>(findings: T): T {
       && /\bncds?\b|non[- ]convertible debenture|debentures?\b|commercial paper|term loan/i.test(String(f.headline || ''))
       && !/\bequity\b|preferential|\bqip\b|warrant|rights (issue|shares)/i.test(String(f.headline || ''))) {
       // Debt is financing, not a catalyst (zzz766).
-      out[k] = { ...f, status: 'routine_only', headline: `Debt financing — ${String(f.headline)}`, net: null, verdict: null, components: null, notes: (f.notes || []).filter((n: string) => !/A raise is supply/.test(n)).concat('Borrowing is financing, not a catalyst.'), routine: [...(f.routine || []), String(f.headline)] };
+      out[k] = { ...f, status: 'routine_only', headline: `Debt financing — ${String(f.headline)}`, net: null, verdict: null, components: null, notes: (f.notes || []).filter((n: string) => !/A raise is supply|Fundraising adds supply/.test(n)).concat('Borrowing is financing, not a catalyst.'), routine: [...(f.routine || []), String(f.headline)] };
       continue;
     }
     if (f && f.status !== 'catalyst' && Array.isArray(f.notes) && /\bncds?\b|debenture/i.test(String(f.headline || ''))) {
-      out[k] = { ...f, notes: f.notes.filter((n: string) => !/A raise is supply/.test(n)) };
+      out[k] = { ...f, notes: f.notes.filter((n: string) => !/A raise is supply|Fundraising adds supply/.test(n)) };
       continue;
     }
     out[k] = f && f.category === 'management_change' && typeof f.net === 'number' && f.net > 15

@@ -32,9 +32,9 @@ import {
 } from './taxonomy';
 
 import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
-import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf } from './evidence-ledger';
+import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf, periodOrdinal, needsVariableSnapshots, withVariableSnapshots, formatDeltaAbs, type CompanyLedger, type VariableSnapshot } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
-import { normalizeEvent, gapToTarget, hedgedAround, rangeOf } from './fact-normalize';
+import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
 import {
@@ -63,7 +63,37 @@ export type { VarKey, VarGroup, EvidenceKind };
 export type VarVerdict = 'improving' | 'flat' | 'deteriorating' | 'stated' | 'unknown';
 export type VarSource = 'grader' | 'filing';
 
+/** ── zzz771 CONTRACT (PC-1 fills, PC-3 renders) ───────────────────────────
+ *  Every quantitative thesis variable as a reading with its comparison:
+ *  Current → Previous → Δ absolute → Δ % → direction → period. A missing
+ *  previous is NOT_COMPARABLE with the reason, never a silent level. */
+export type PeriodClass = 'CURRENT_QUARTER' | 'PREVIOUS_QUARTER' | 'PREVIOUS_FY' | 'HISTORICAL' | 'MANAGEMENT_TARGET' | 'GUIDANCE' | 'THESIS_BASELINE';
+export interface ReadingPoint {
+  value: string;
+  period: string | null;
+  period_class: PeriodClass;
+  unit: string | null;
+  /** Numeric value in the normalised unit, when the text parses to one number. */
+  numeric: number | null;
+  source: string | null;
+}
+export interface VariableReading {
+  current: ReadingPoint | null;
+  previous: ReadingPoint | null;
+  /** The first reading ever taken for this holding (the original thesis baseline), when different from previous. */
+  baseline: ReadingPoint | null;
+  delta_abs: string | null;
+  delta_pct: string | null;
+  direction: 'UP' | 'DOWN' | 'FLAT' | 'UNKNOWN' | 'NOT_COMPARABLE';
+  comparison_basis: 'QoQ' | 'YoY' | 'vs_prior_read' | 'vs_baseline' | 'in_text' | null;
+  /** Why there is no comparison: "first reading", "unit changed", "scope changed", "same period", "not disclosed earlier". */
+  not_comparable_reason: string | null;
+  /** "80% (Q1 FY27) vs 70% (Q4 FY26) · +10pp · ▲ QoQ" or "80% (Q1 FY27) · previous: not disclosed (first reading)". */
+  display: string;
+}
 export interface StructuralVar {
+  /** zzz771: the time-series reading behind this row. Optional until PC-1 fills it. */
+  reading?: VariableReading | null;
   key: VarKey;
   label: string;
   /** fact | claim | derived — the spec's hallucination firewall. A management
@@ -693,7 +723,11 @@ export function extractVariables(
   graded: any | null,
   summary: any | null,
   comparisons?: Partial<Record<VarKey, MetricComparison>> | null,
-  opts?: { period?: string | null; documents?: LedgerDocument[] | null },
+  opts?: { period?: string | null; documents?: LedgerDocument[] | null;
+    /** zzz771: the company ledger, so every quantitative row carries its
+     *  time-series reading (current → previous → Δ) from the persisted
+     *  per-period snapshots. Without it rows are levels, as before. */
+    ledger?: CompanyLedger | null },
 ): StructuralVar[] {
   const out: StructuralVar[] = [];
   // Typed events first. Any key they cover is not re-pushed from the
@@ -1529,7 +1563,9 @@ export function extractVariables(
     if (v.asOf === undefined) v.asOf = opts?.period ?? null;
     decorate(v, graded, opts?.period ?? null);
   }
-  return applyComparisons(dropRestatedCapacityAddition(out), comparisons).map((v) => ({ ...v, display: rowDisplay(v) }));
+  const ctx = readingContext(opts?.ledger ?? null, opts?.period ?? null);
+  return applyComparisons(dropRestatedCapacityAddition(out), comparisons)
+    .map((v) => { const r = readingFor(v, ctx); return { ...v, reading: r, display: rowDisplay({ ...v, reading: r }) }; });
 }
 
 /** Every row carries its type, group, validation, normalised value and
@@ -1559,6 +1595,259 @@ export function byKey(vars: StructuralVar[]): Partial<Record<VarKey, StructuralV
   return m;
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE READING — EVERY QUANTITATIVE ROW AS A POINT IN A SERIES.       (zzz771)
+//
+// "Capacity utilisation 80%" is not evidence of anything on its own. The
+// owner's question is always the same one: what was it earlier? So a
+// quantitative row now carries a VariableReading — current → previous → Δ —
+// built from the ledger's per-period snapshots (evidence-ledger.ts), and the
+// row's printed value is the reading's display. Where no previous exists the
+// display says so and says why: first reading, not disclosed last quarter,
+// unit changed, scope changed, same period. A guidance figure, a management
+// target or a historical figure is never the previous; those keep their own
+// labelled slots (`plan`, `context`, statement HISTORICAL).
+//
+// The reading NEVER changes a verdict. Verdicts come from the comparison
+// engine and the row's own before→after, exactly as before; the reading is
+// the printed, persisted series behind them.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ReadingContext {
+  period: string | null;
+  /** This period's snapshot, by VarKey. */
+  snapshots: Record<string, VariableSnapshot> | null;
+  /** Periods on file BEFORE this one, ascending. */
+  earlier: string[];
+  baseline: { period: string; variables: Record<string, VariableSnapshot> } | null;
+}
+
+export function readingContext(ledger: CompanyLedger | null | undefined, period: string | null): ReadingContext {
+  if (!ledger?.periods) return { period, snapshots: null, earlier: [], baseline: null };
+  // A ledger handed in before the read path filled it (a harness, a test)
+  // gets its snapshots derived here — the same pure function, same result.
+  const l = needsVariableSnapshots(ledger) ? withVariableSnapshots(ledger) : ledger;
+  const p = period || l.latest_period || null;
+  const earlier = Object.keys(l.periods).filter((k) => periodOrdinal(k) >= 0 && p != null && periodOrdinal(k) < periodOrdinal(p))
+    .sort((a, b) => periodOrdinal(a) - periodOrdinal(b));
+  return { period: p, snapshots: (p && l.periods[p]?.variables) || null, earlier, baseline: l.thesis_baseline || null };
+}
+
+/** "Q1 FY27" shifted by n quarters. Null when the period is not a quarter. */
+export function shiftPeriod(period: string | null | undefined, n: number): string | null {
+  const o = periodOrdinal(String(period || ''));
+  if (o < 0) return null;
+  const t = o + n;
+  const fy = Math.floor((t - 1) / 4), q = ((t - 1) % 4) + 1;
+  return `Q${q} FY${String(fy).slice(2)}`;
+}
+
+const basisOf = (from: string | null, to: string | null, baselinePeriod: string | null): VariableReading['comparison_basis'] => {
+  if (!from || !to) return 'in_text';
+  const gap = periodOrdinal(to) - periodOrdinal(from);
+  if (gap === 1) return 'QoQ';
+  if (gap === 4) return 'YoY';
+  if (baselinePeriod && from === baselinePeriod) return 'vs_baseline';
+  return 'vs_prior_read';
+};
+const classOf = (from: string | null, to: string | null): PeriodClass => {
+  if (!from || !to) return 'HISTORICAL';
+  const gap = periodOrdinal(to) - periodOrdinal(from);
+  return gap === 1 ? 'PREVIOUS_QUARTER' : gap === 4 ? 'PREVIOUS_FY' : 'HISTORICAL';
+};
+const GLYPH: Record<string, string> = { UP: '▲', DOWN: '▼', FLAT: '→' };
+
+/** Money as the owner reads it: "INR107 crores" → "₹107 Cr", "₹13,000 Lakhs"
+ *  → "₹130 Cr" (exact). Only a plain single-figure amount is rewritten; a
+ *  range, a dated clause or anything with more words stays as stated. */
+export function canonValue(raw: string): string {
+  const s = rupeeGlyph(String(raw ?? '').trim());
+  const nums = s.match(/\d[\d,]*(?:\.\d+)?/g) || [];
+  if (nums.length !== 1 || s.length > 32) return s;
+  const n = normalizeValue(s);
+  if (n.dimension === 'money:INR' && n.safe && n.normalized_unit === '₹ crore' && n.normalized_value != null
+    && /^[~≈]?\s*(?:₹|INR|Rs\.?|rupees?)?\s*[\d,]+(?:\.\d+)?\s*(?:crores?|cr|lakhs?|lacs?|millions?|mn|billions?|bn)\.?\s*(?:\+|plus)?$/i.test(s)) {
+    const v = Math.round(n.normalized_value * 100) / 100;
+    const plus = /\+$|plus$/i.test(s) ? '+' : '';
+    return `${/^[~≈]/.test(s) ? '~' : ''}₹${v.toLocaleString('en-US', { maximumFractionDigits: 2 })} Cr${plus}`;
+  }
+  return s;
+}
+
+const digitsOnly = (x: string | null | undefined) => String(x ?? '').replace(/[^\d.]/g, '');
+
+/** The quarter a date falls in: 2026-06-30 → "Q1 FY27". */
+export function quarterOfDate(d: Date): string {
+  const y = d.getUTCFullYear(), m = d.getUTCMonth() + 1;
+  const q = m >= 4 ? Math.ceil((m - 3) / 3) : 4;
+  const fy = m >= 4 ? y + 1 : y;
+  return `Q${q} FY${String(fy).slice(2)}`;
+}
+
+/** "161 days in Q1 FY27" → { value: "161 days", period: "Q1 FY27" }; "142
+ *  days in June 2025" → Q1 FY26; "66 days a year ago" → the quarter four
+ *  back from `from`. The date the figure names is its period; nothing is
+ *  guessed when it names none. (zzz771) */
+export function figureAndPeriod(text: string, from: string | null): { value: string; period: string | null } {
+  const t = String(text || '').trim();
+  const TAIL = /\s+(?:in|as\s+(?:at|on|of)|at|for|by|during|end(?:ing)?\s+of|as\s+of\s+end)\s+(?:the\s+)?(?:end\s+of\s+)?(Q\s?[1-4]\s*[-' ]?\s*FY\s?'?\d{2,4}|FY\s?'?\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(?:\d{1,2}(?:st|nd|rd|th)?,?\s*)?(?:20)?\d{2}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+20\d{2})\s*$/i;
+  const m = TAIL.exec(t);
+  if (m) {
+    const ds = datesIn(m[1]);
+    const rest = t.slice(0, m.index).trim();
+    if (ds.length && isFigure(rest)) {
+      const d = ds[ds.length - 1];
+      return { value: rest, period: /^FY\d{2}$/.test(d.label) ? d.label : quarterOfDate(d.end) };
+    }
+  }
+  const ago = /\s+(?:a|one)\s+year\s+(?:ago|earlier|back)\s*$/i.exec(t);
+  if (ago && isFigure(t.slice(0, ago.index))) return { value: t.slice(0, ago.index).trim(), period: shiftPeriod(from, -4) };
+  return { value: t, period: null };
+}
+
+function point(value: string, period: string | null, period_class: PeriodClass, unit: string | null, source: string | null): ReadingPoint {
+  const n = normalizeValue(value, unit);
+  return { value: canonValue(value), period, period_class, unit: n.normalized_unit || unit || n.raw_unit, numeric: n.normalized_value ?? n.value ?? null, source };
+}
+
+/** A FIGURE, not a sentence that contains one: "80%", "~450 KL", "₹107 Cr",
+ *  "9,600+MTPA", "42 days", "1.50× (last FY)" — but not "37 commercial
+ *  projects provide visibility" and not "2 items". Only a figure is a point
+ *  in a series. (zzz771) */
+export function isFigure(s: string | null | undefined): boolean {
+  const t = String(s ?? '').trim();
+  if (!t || t.length > 72) return false;
+  if (/^\d+\s+items?$/i.test(t)) return false;
+  const lead = t.replace(/^(?:approximately|approx\.?|around|about|nearly|almost|over|circa|under|roughly|~|≈|<|>|\+)\s*/i, '');
+  return /^(?:₹|INR|Rs\.?|rupees|USD|US\$|\$|€|EUR)?\s*-?\d/i.test(lead) && hasQuantity(lead);
+}
+
+/** The reading behind one row, or null for a row that is not a quantitative
+ *  actual (guidance, target, historical context, commentary, a sentence). */
+export function readingFor(v: StructuralVar, ctx: ReadingContext): VariableReading | null {
+  if (v.statement && v.statement !== 'ACTUAL') return null;
+  const src = v.sourceLabel || v.lineage?.source_name || null;
+  // Operating leverage is DERIVED from two filed growth rates; the ratio is
+  // the reading and its two inputs are named, never printed as a series.
+  if (v.key === 'operating_leverage') {
+    if (!v.delta || !/×$/.test(v.delta)) return null;
+    const period0 = v.asOf || ctx.period || null;
+    const cur: ReadingPoint = { value: v.delta, period: period0, period_class: 'CURRENT_QUARTER', unit: 'x', numeric: Number(v.delta.replace('×', '')) || null, source: src };
+    const dir: VariableReading['direction'] = v.verdict === 'improving' ? 'UP' : v.verdict === 'deteriorating' ? 'DOWN' : 'FLAT';
+    return { current: cur, previous: null, baseline: null, delta_abs: null, delta_pct: null, direction: dir, comparison_basis: 'YoY', not_comparable_reason: null,
+      display: `${v.delta} (${period0 || 'period not stated'}) · derived: ${v.after} vs ${v.before} (YoY)` };
+  }
+  const after0 = stripTypeTag(v.after);
+  if (!after0 || !isFigure(after0)) return null;
+  // The screener's cash-conversion ratio is LAST FULL YEAR's and says so on
+  // the row; the reading keeps that period rather than stamping the quarter.
+  const lastFy = /\(last FY\)\s*$/i.test(after0);
+  const fp = figureAndPeriod(lastFy ? after0.replace(/\s*\(last FY\)\s*$/i, '') : after0, v.asOf || ctx.period || null);
+  const after = fp.value;
+  const period = lastFy ? 'last FY' : (fp.period || v.asOf || ctx.period || null);
+  const s = ctx.snapshots?.[v.key] || null;
+  // The snapshot is this row's series point only when it holds this row's
+  // figure; a grader row (margin from the filed statements) or a summary row
+  // with another figure keeps to what the row itself states.
+  const matches = !!s && (s.state === 'FOUND' || s.state === 'UNCLEAR') && !!s.value
+    && (digitsOnly(s.value) === digitsOnly(after0) || digitsOnly(s.value) === digitsOnly(after) || after0.toLowerCase().includes(String(s.value).toLowerCase()));
+  const current = point(after, period, 'CURRENT_QUARTER', matches ? s!.unit : null, src);
+  const curTxt = `${current.value} (${period || 'period not stated'})`;
+  const baselineSnap = ctx.baseline?.variables?.[v.key] || null;
+  const baselineOf = (prevPeriod: string | null): ReadingPoint | null =>
+    baselineSnap && baselineSnap.state === 'FOUND' && baselineSnap.value && ctx.baseline!.period !== period && ctx.baseline!.period !== prevPeriod
+      ? point(baselineSnap.value, ctx.baseline!.period, 'THESIS_BASELINE', baselineSnap.unit, baselineSnap.source_name) : null;
+  const base: VariableReading = {
+    current, previous: null, baseline: baselineOf(null), delta_abs: null, delta_pct: null,
+    direction: 'NOT_COMPARABLE', comparison_basis: null, not_comparable_reason: null, display: curTxt,
+  };
+  // ── UNCLEAR: shown, never compared, never a level. ──
+  if (v.validation?.state === 'UNCLEAR' || (matches && s!.state === 'UNCLEAR')) {
+    const reason = v.validation?.reason || s?.not_comparable_reason || 'validation required';
+    return { ...base, not_comparable_reason: reason, display: `unclear — validation required: ${current.value}` };
+  }
+  const done = (prev: ReadingPoint, delta_abs: string | null, delta_pct: string | null, direction: VariableReading['direction'], basis: VariableReading['comparison_basis']): VariableReading => {
+    const prevTxt = `${prev.value} (${prev.period || 'earlier, in text'})`;
+    const dTxt = direction === 'FLAT' || (!delta_abs && !delta_pct) ? 'unchanged' : [delta_abs, delta_pct].filter(Boolean).join(' · ');
+    return {
+      ...base, previous: prev, baseline: baselineOf(prev.period), delta_abs, delta_pct, direction, comparison_basis: basis, not_comparable_reason: null,
+      display: `${curTxt} vs ${prevTxt} · ${dTxt} · ${GLYPH[direction] || '·'} ${basis}`,
+    };
+  };
+  // ── 1. The persisted series: an earlier period's FOUND snapshot. ──
+  if (matches && s!.previous_period && s!.previous_value) {
+    const prev = point(s!.previous_value, s!.previous_period, classOf(s!.previous_period, period), null, null);
+    if (s!.direction === 'NOT_COMPARABLE') {
+      const why = s!.not_comparable_reason || 'not comparable';
+      return { ...base, previous: prev, direction: 'NOT_COMPARABLE', comparison_basis: basisOf(s!.previous_period, period, ctx.baseline?.period ?? null),
+        not_comparable_reason: why, display: `${curTxt} · previous: ${prev.value} (${prev.period}) · not comparable (${why})` };
+    }
+    const dir = (s!.direction === 'UP' || s!.direction === 'DOWN' || s!.direction === 'FLAT') ? s!.direction : 'UNKNOWN';
+    return done(prev, s!.delta_abs, s!.delta_pct, dir, basisOf(s!.previous_period, period, ctx.baseline?.period ?? null));
+  }
+  // ── 2. The document's own before→after (no earlier period held a figure). ──
+  if (matches && s!.previous_value && !s!.previous_period) {
+    const pp = figureAndPeriod(s!.previous_value, period);
+    const prev = point(pp.value, pp.period, pp.period ? classOf(pp.period, period) : 'HISTORICAL', null, src);
+    const dir = (s!.direction === 'UP' || s!.direction === 'DOWN' || s!.direction === 'FLAT') ? s!.direction : 'UNKNOWN';
+    return done(prev, s!.delta_abs, s!.delta_pct, dir, 'in_text');
+  }
+  // ── 3. A row whose comparison (facts-based) found an earlier period. ──
+  const c = v.comparison;
+  if (c && c.previous && c.previous_period && c.basis !== 'NONE' && c.basis !== 'WITHIN_DOCUMENT'
+    && ['INCREASED', 'DECREASED', 'UNCHANGED'].includes(c.change_type) && hasQuantity(c.previous.raw)) {
+    const prev = point(c.previous.raw, c.previous_period, classOf(c.previous_period, period), null, null);
+    const dir: VariableReading['direction'] = c.change_type === 'UNCHANGED' ? 'FLAT' : c.change_type === 'INCREASED' ? 'UP' : 'DOWN';
+    // Δ absolute from the two normalised figures; the relative move only for
+    // non-percent values ("+₹27 Cr · +33.8%"), never beside pp. (zzz771)
+    const nb = normalizeValue(c.previous.raw), na = normalizeValue(after);
+    const pctUnit = na.dimension === 'percent' || na.dimension === 'percent_points';
+    const noRel = pctUnit || na.dimension === 'days';
+    const both = nb.normalized_value != null && na.normalized_value != null && nb.normalized_unit === na.normalized_unit;
+    const dAbs = c.change_type === 'UNCHANGED' ? null : both ? formatDeltaAbs(na.normalized_value! - nb.normalized_value!, pctUnit ? 'pp' : (na.normalized_unit || null)) : (pctUnit ? c.change : null);
+    const dPct = c.change_type === 'UNCHANGED' || noRel ? null : (both && nb.normalized_value !== 0 ? formatDeltaAbs(((na.normalized_value! - nb.normalized_value!) / Math.abs(nb.normalized_value!)) * 100, '%') : c.change);
+    return done(prev, dAbs, dPct, dir,
+      c.basis === 'QOQ' ? 'QoQ' : c.basis === 'YOY' ? 'YoY' : basisOf(c.previous_period, period, ctx.baseline?.period ?? null));
+  }
+  // ── 4. The row's own before (grader bridge, summary prior, in-text). ──
+  const before0 = v.before ? rupeeGlyph(v.before) : null;
+  if (before0 && hasQuantity(before0) && digitsOnly(before0) !== digitsOnly(after)) {
+    // The margin bridge is the grader's filed prior (same quarter last year,
+    // or last quarter when only the sequential move exists) even when the
+    // row is 'filing' because the summary attached the drivers.
+    const grader = v.source === 'grader' || (v.key === 'margin' && /year on year|vs last quarter/.test(v.evidence));
+    const qoq = /\bQoQ\b/i.test(String(v.delta || '')) || /vs last quarter/.test(v.evidence);
+    const bp = grader ? { value: before0, period: shiftPeriod(period, qoq ? -1 : -4) } : figureAndPeriod(before0, period);
+    const before = bp.value;
+    const prevPeriod = bp.period;
+    const prev = point(before, prevPeriod, grader ? (qoq ? 'PREVIOUS_QUARTER' : 'PREVIOUS_FY') : (prevPeriod ? classOf(prevPeriod, period) : 'HISTORICAL'), null, src);
+    const nb = normalizeValue(before), na = normalizeValue(after);
+    const b = nb.normalized_value, a = na.normalized_value;
+    const dir: VariableReading['direction'] = b != null && a != null ? (a > b ? 'UP' : a < b ? 'DOWN' : 'FLAT')
+      : /^[+]/.test(String(v.delta || '')) ? 'UP' : /^[-−]/.test(String(v.delta || '')) ? 'DOWN' : 'UNKNOWN';
+    const stated = v.delta && v.delta !== 'FLAT' ? v.delta.replace(/\s*QoQ$/i, '').replace(/^-/, '−').trim() : null;
+    const pctUnit = na.dimension === 'percent' || na.dimension === 'percent_points';
+    const noRel = pctUnit || na.dimension === 'days';
+    // Δ absolute is arithmetic on the two stated figures in one unit; the
+    // relative move is the row's own stated rate where it is one. (zzz771)
+    const sameUnitBoth = b != null && a != null && nb.normalized_unit === na.normalized_unit && nb.dimension === na.dimension;
+    const dAbs = sameUnitBoth && a !== b ? formatDeltaAbs(a! - b!, pctUnit ? 'pp' : (na.normalized_unit || null)) : (stated && /pp$/i.test(stated) ? stated : null);
+    const dPct = noRel ? null : stated && /%$/.test(stated) ? stated : (sameUnitBoth && b !== 0 && a !== b ? formatDeltaAbs(((a! - b!) / Math.abs(b!)) * 100, '%') : null);
+    return done(prev, dAbs, dPct, dir, grader ? (qoq ? 'QoQ' : 'YoY') : 'in_text');
+  }
+  // ── 5. A grader rate is already a year-on-year change: it has no "previous". ──
+  if (v.source === 'grader' && /^[+\-−]?\d[\d.,]*\s*%$/.test(after) && (v.key === 'revenue_growth' || v.key === 'earnings_growth')) {
+    const dir: VariableReading['direction'] = /^-|^−/.test(after) ? 'DOWN' : /^\+/.test(after) ? 'UP' : 'FLAT';
+    return { ...base, direction: dir, comparison_basis: 'YoY', display: `${curTxt} · ${GLYPH[dir]} YoY (growth rate as filed)` };
+  }
+  // ── 6. No previous anywhere — say precisely why. ──
+  const why = matches && s!.not_comparable_reason ? s!.not_comparable_reason
+    : !ctx.earlier.length ? 'first reading'
+      : `not on file for ${ctx.earlier[ctx.earlier.length - 1]}`;
+  const shown = /^not disclosed in /.test(why) ? why : /^(unit changed|scope changed|same period)$/.test(why) ? `not comparable (${why})` : `not disclosed (${why})`;
+  return { ...base, not_comparable_reason: why, display: `${curTxt} · previous: ${shown}` };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WHAT CHANGED, FROM THE BOARD'S OWN ROWS.                           (zzz765)
@@ -1632,6 +1921,7 @@ function withPlan(core: string, v: StructuralVar): string {
 }
 const validationTail = (v: StructuralVar) => v.validation?.state === 'UNCLEAR' ? ' · validation required'
   : v.validation?.metric_definition ? ` · definition: ${v.validation.metric_definition}` : '';
+const definitionTail = (v: StructuralVar) => v.validation?.metric_definition ? ` · definition: ${v.validation.metric_definition}` : '';
 
 export function rowValueText(v: StructuralVar): string {
   const after = stripTypeTag(v.after);
@@ -1645,6 +1935,10 @@ export function rowValueText(v: StructuralVar): string {
   }
   if (v.statement === 'MANAGEMENT_STATEMENT') return `management: “${after}”${v.plan ? ` · ${v.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupeeGlyph(v.plan.value)}` : ''}`;
   if (v.statement === 'HISTORICAL') return `${[v.before, after].filter(Boolean).join(' → ')} — historical context (${v.asOf})`;
+  // A quantitative row prints its time-series reading, so "80%" never stands
+  // alone when any prior exists. The reading already says "unclear —
+  // validation required"; only a stated definition is appended. (zzz771)
+  if (v.reading) return withPlan(v.reading.display, v) + definitionTail(v);
   return withPlan(actualCore(v, false), v) + validationTail(v);
 }
 
@@ -1664,6 +1958,7 @@ export function rowDisplay(v: StructuralVar): string {
     case 'MANAGEMENT_STATEMENT':
       return `${FACT_TYPE_LABEL[v.fact_type === 'ESTIMATE' ? 'ESTIMATE' : 'MANAGEMENT_COMMENTARY']}: “${after}”`;
     default:
+      if (v.reading) return withPlan(v.reading.display, v) + definitionTail(v);
       return withPlan(actualCore(v, true), v) + validationTail(v);
   }
 }
@@ -1714,6 +2009,9 @@ export function changeClassOf(v: StructuralVar): ChangeClass | null {
     && (c.change_type === 'UNCHANGED' || (c.change_type === 'NOT_COMPARABLE' && !(hasQuantity(c.previous.raw) && hasQuantity(v.after))))) return null;
   if (c && c.previous && c.basis !== 'NONE' && ['INCREASED', 'DECREASED', 'UNCHANGED'].includes(c.change_type)) return 'PERIOD_CHANGE';
   if (v.before && v.after && v.delta) return 'PERIOD_CHANGE';
+  // A snapshot-backed reading with a comparable previous is a period change
+  // even when the row itself carried no before. (zzz771)
+  if (v.reading?.previous && ['UP', 'DOWN', 'FLAT'].includes(v.reading.direction)) return 'PERIOD_CHANGE';
   if (EVENT_METRICS.has(v.key)) {
     if (v.key === 'execution_delay' || v.key === 'customer_loss' || v.key === 'shutdown') return v.verdict === 'deteriorating' ? 'NEW_EVENT' : null;
     if (v.key === 'capacity_bottleneck' || v.key === 'supply_bottleneck') return v.verdict === 'improving' || v.verdict === 'deteriorating' ? 'NEW_EVENT' : null;

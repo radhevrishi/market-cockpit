@@ -39,8 +39,10 @@ import { classifyUsFiling, fmtUsdM } from './us-gainers';
  *  scoreCatalyst / buildFinding change what a finding says: a stored day
  *  whose findings carry an older version is re-scored automatically on the
  *  next page open, from filings already fetched and model reads already
- *  cached — never a new model read. (zzz769) */
-export const RULES_VERSION = '2026-09-23.zzz770';
+ *  cached — never a new model read. (zzz769)
+ *  zzz771: clarification vs true denial split, fundraising no longer negative
+ *  by default, US resale/shelf registrations told apart from a new raise. */
+export const RULES_VERSION = '2026-09-23.zzz771';
 
 export type ResearchStatus =
   | 'catalyst'          // a dated, sourced event survived the reject gates
@@ -113,6 +115,29 @@ export interface Finding {
   sources: string[];               // which sources answered
   /** RULES_VERSION the finding was built under (absent = before zzz769). */
   rulesVersion?: string;
+  /** zzz771 — for status `denied`: a price-movement CLARIFICATION ("no
+   *  undisclosed information") is company-confirmed absence of a catalyst,
+   *  not a negative event; a true DENIAL contradicts a specific reported deal
+   *  or story and is negative evidence. Absent on findings built before
+   *  zzz771 (the view then reads the headline). */
+  denialKind?: 'clarification' | 'denial';
+}
+
+// ── denial vs clarification (zzz771) ──────────────────────────────────────
+// ASTEC, GABRIEL, STLNETWORK, WEL all replied to an exchange query with "no
+// undisclosed information": that is the company confirming there is NO
+// catalyst — evidence, not bad news. Only a reply that contradicts a specific
+// report ("the company denies the reported acquisition", "baseless", "no such
+// proposal") is a denial in the negative sense.
+const RX_TRUE_DENIAL = /\b(den(y|ies|ied)|baseless|not true|untrue|factually incorrect|incorrect and misleading|speculative and incorrect|refut(e|es|ed)|no truth)\b/i;
+const RX_REPORTED_THING = /\b(news (item|article|report)s?|media (report|article)s?|press report|report(ed|s)? (in|by|that)|article|rumou?rs?|speculation|social media)\b/i;
+const RX_NO_SUCH = /\bno such (proposal|plan|deal|agreement|discussion|negotiation|transaction|talks?)\b/i;
+
+/** Whether a denial-kind filing contradicts a reported story (true denial)
+ *  or merely says nothing is pending (clarification). */
+export function denialKindOf(text: string): NonNullable<Finding['denialKind']> {
+  const t = String(text || '');
+  return (RX_TRUE_DENIAL.test(t) && RX_REPORTED_THING.test(t)) || RX_NO_SUCH.test(t) ? 'denial' : 'clarification';
 }
 
 // ── 1. CLASSIFY A FILING BY ITS SUBJECT (+ the source's summary) ──────────
@@ -491,7 +516,14 @@ export function buildFinding(inp: SweepInput): Finding {
   // and the denial is a note — the earlier spike stays formally denied.
   const denial = inWindow.find((a) => a.kind === 'denial');
   const laterCatalyst = denial && inWindow.some((a) => a.kind === 'catalyst' && (a.dateIso || '') >= (denial.dateIso || ''));
-  if (denial && !laterCatalyst) return { ...base, status: 'denied', headline: `Company told the exchange it has no undisclosed information (${fmtDate(denial.dateIso)})`, sourceUrl: denial.url, sourceDate: denial.dateIso, sourceTier: 'primary', ageDays: denial.ageDays, notes: [...base.notes, 'A denial on a stock that is moving is a caution flag, not a catalyst.'] };
+  if (denial && !laterCatalyst) {
+    // zzz771: a price-movement clarification is the company CONFIRMING there
+    // is no catalyst; a true denial contradicts a reported story.
+    const denialKind = denialKindOf(`${denial.subject} ${denial.summary || ''}`);
+    return denialKind === 'denial'
+      ? { ...base, status: 'denied', denialKind, headline: `Company denied the reported story (${fmtDate(denial.dateIso)}) — ${shorten(denial.summary || denial.subject, 90)}`, sourceUrl: denial.url, sourceDate: denial.dateIso, sourceTier: 'primary', ageDays: denial.ageDays, notes: [...base.notes, 'The company contradicted a specific report while the stock moved — negative evidence for that story, not a catalyst.'] }
+      : { ...base, status: 'denied', denialKind, headline: `Company told the exchange it has no undisclosed information (${fmtDate(denial.dateIso)})`, sourceUrl: denial.url, sourceDate: denial.dateIso, sourceTier: 'primary', ageDays: denial.ageDays, notes: [...base.notes, 'Exchange clarification: the company confirmed it has nothing undisclosed — company-confirmed absence of a filed catalyst, not a negative event.'] };
+  }
   if (denial) base.notes.push(`Company denied any undisclosed information on ${fmtDate(denial.dateIso)} (exchange query) — that answered an earlier spike; a filing followed.`);
   const isNegCat = (x: unknown) => (NEGATIVE_CATALYSTS as readonly string[]).includes(String(x));
   const hasCatalyst = inWindow.some((a) => a.kind === 'catalyst')
@@ -501,7 +533,16 @@ export function buildFinding(inp: SweepInput): Finding {
   // finding. (zzz766)
   const dilution = inp.market === 'US' ? inWindow.find((a) => a.kind === 'negative' && a.category === 'dilution') : undefined;
   const negative = inWindow.find((a) => a.kind === 'negative' && !(a === dilution && hasCatalyst));
-  if (negative && inp.market === 'US') return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.routineReason || negative.subject, 140), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, negative.category === 'dilution' ? 'An offering / registration is supply, not demand: it dilutes or releases stock for sale. No catalyst was filed beside it.' : 'A negative filing in the window. The move is not explained by it.'] };
+  if (negative && inp.market === 'US') {
+    // zzz771: a resale / shelf registration releases existing stock for sale
+    // (a supply overhang) and raises nothing new; it is not the move's
+    // catalyst and not a negative event. A priced offering is a new raise.
+    const resale = negative.category === 'dilution' && /resale|shelf/i.test(negative.routineReason || '');
+    const note = negative.category === 'dilution'
+      ? (resale ? 'Resale / shelf registration: existing or future stock registered for sale — a supply overhang, not a new raise and not this move\'s catalyst.' : 'An offering is supply into the move: a new raise dilutes holders. Check pricing, size against market cap and named buyers.')
+      : 'A negative filing in the window. The move is not explained by it.';
+    return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.routineReason || negative.subject, 140), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, valueStated: negative.category === 'dilution' && !resale ? negative.valueStated : null, notes: [...base.notes, note] };
+  }
   if (negative) return { ...base, status: 'negative', category: negative.category, headline: shorten(negative.summary || negative.subject), sourceUrl: negative.url, sourceDate: negative.dateIso, sourceTier: 'primary', ageDays: negative.ageDays, notes: [...base.notes, 'The only substantive in-window filing is negative. The move is not explained by it.'] };
   const query = inWindow.find((a) => a.kind === 'exchange_query');
 
@@ -565,7 +606,9 @@ export function buildFinding(inp: SweepInput): Finding {
   if (!c.incremental) notes.push('Reads as a renewal or re-announcement, not an increment — materiality capped.');
   if (c.category === 'product_qualification' || c.category === 'regulatory_approval') notes.push('Qualification permits work; it books none.');
   if (c.category === 'rating_action' && /reaffirm|affirm/i.test(`${c.subject} ${c.summary || ''}`) && !/upgrad/i.test(`${c.subject} ${c.summary || ''}`)) notes.push('A reaffirmation is not an upgrade.');
-  if (c.category === 'fundraising') notes.push('A raise is supply, not demand — dilution unless the use of proceeds is disclosed.');
+  // zzz771: a named institutional / promoter allotment can be the catalyst
+  // (ROSSTECH — preferential issue to SBI Mutual Fund); it still adds supply.
+  if (c.category === 'fundraising') notes.push('Fundraising adds supply (dilution flag): a named institutional or promoter allottee can still be the catalyst — check price, allottees and use of proceeds.');
   if (c.category === 'quarterly_result' && !verified) notes.push('Results filed — the filing is the dated event; whether the numbers were good was not read here.');
   if (dilution) notes.push(`⚠ Offering filed in the window (${shorten(dilution.subject, 60)}, ${fmtDate(dilution.dateIso)}) — supply into the move.`);
   if (scored.valuePctMcap != null && inp.movePct != null && scored.valuePctMcap < 2 && Math.abs(inp.movePct) >= 8) notes.push(`Item is ${scored.valuePctMcap}% of market cap against a ${fmtPct(inp.movePct)} move — look for the real driver.`);

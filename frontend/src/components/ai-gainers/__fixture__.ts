@@ -3,6 +3,12 @@
 // Loaded by the page ONLY behind ?demo=1 (dynamic import), never on a normal
 // visit. Figures are illustrative demo values, labelled DEMO on screen; they
 // are not a record of any company's filing.                        (zzz770)
+//
+// zzz771 cases: catalystFor on every dated item; a CONTEXT item (47-day-old
+// result) and a 55-day-old order in `context`; a RECENT (9d) order in the
+// queue; a clarification NO_CATALYST row with a scanNote; a POTENTIAL
+// preferential allotment with dilution + a named allottee; a bare BSE scrip
+// code carrying displayTicker/displayCode; a US 424B3 NO_CATALYST + dilution.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { ResearchItem, ResearchView } from '@/lib/ai-gainers/research-view';
@@ -36,6 +42,7 @@ const PACE = mk({
   researchNext: ['What is the gross margin on BESS vs telecom EPC?', 'Execution period and milestone billing?', 'Working-capital need — advance received?', 'Is this repeatable (pipeline of tenders)?'],
   whyResearch: 'A new product line order worth ~48% of revenue — could re-base growth if margins hold.',
   priority: 86, priorityReasons: ['Fresh event (1 day)', 'Material vs revenue', 'Verified document', 'New business line'],
+  catalystFor: 'THIS_MOVE', ageDays: 1,
   scoreDetails: { freshness: 100, materiality: 90, transmission: 70, persistence: 80, sourceMult: 1, pricedIn: 0.3 },
 });
 
@@ -55,6 +62,7 @@ const PEARL = mk({
   whyResearch: 'Holding: confirms the capacity leg of your thesis; check utilisation before crediting revenue.',
   portfolio: { relevance: 'HOLDING', thesisVariable: 'Capacity & utilisation', note: 'Thesis evidence — capacity step delivered on schedule.' },
   priority: 74, priorityReasons: ['In your book', 'Operational (not just announced)', 'Exchange filing'],
+  catalystFor: 'THIS_MOVE', ageDays: 2,
   scoreDetails: { freshness: 90, materiality: 55, transmission: 70, persistence: 80, sourceMult: 0.9, pricedIn: 0.5 },
 });
 
@@ -74,6 +82,7 @@ const DEEP = mk({
   researchNext: ['Is this a renewal or new capacity?', 'Utilisation of the fleet?'],
   whyResearch: 'Routine-sized ONGC work; explains little of the move alone.',
   priority: 48, priorityReasons: ['Verified', 'Small vs revenue'],
+  catalystFor: 'THIS_MOVE', ageDays: 1,
   scoreDetails: { freshness: 100, materiality: 30, transmission: 80, persistence: 40, sourceMult: 0.9, pricedIn: 0.4 },
 });
 
@@ -122,6 +131,7 @@ const RESULT = mk({
   whyResearch: 'Margin step-up with strong growth — test whether it is durable.',
   earnings: { revenueYoY: 38.1, revenueQoQ: 6.4, ebitdaYoY: 58.7, marginNow: 25.4, marginPrior: 22.1, patYoY: 45.0, cfoToPat: 0.62, guidance: 'NOT_STATED', orderBook: 'UP', keyChange: 'EBITDA margin +330 bps YoY', filedDaysAgo: 4 },
   priority: 70, priorityReasons: ['Earnings filed this week', 'Margin inflection'],
+  catalystFor: 'THIS_MOVE', ageDays: 3,
   scoreDetails: { freshness: 80, materiality: 80, transmission: 90, persistence: 50, sourceMult: 0.9, pricedIn: 0.5 },
 });
 
@@ -131,7 +141,7 @@ const ASTEC = mk({
   headline: 'Company states it has no undisclosed information behind the price movement',
   stage: 'UNKNOWN', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.bseindia.com/',
   whyResearch: 'The company denies a catalyst; the move is unsupported by any filing.',
-  flags: { denial: true, band: null, listing: false, dilution: false, turnover: null }, priority: 22,
+  flags: { denial: true, band: null, listing: false, dilution: false, turnover: null }, priority: 22, catalystFor: 'THIS_MOVE', ageDays: 0,
 });
 const SUNDROP = mk({
   ticker: 'SUNDROP', company: 'Sundrop Brands Ltd', move1d: 4.8, returns: { w1: 2.0, m1: -5.0, m3: -11.0 }, marketCap: 3300,
@@ -151,18 +161,126 @@ const BAND = mk({
   headline: 'Upper-circuit print on thin turnover', flags: { band: 5, turnover: 4.2, listing: false, dilution: false, denial: false },
 });
 const SECZ = mk({ ticker: 'SECZ', company: 'Sec Z Ltd', move1d: 17.9, headline: 'No meaningful filing', sourceConfidence: 'VERIFIED_FILING' });
-const NOCATS = [SECZ, ...['ALPHAX', 'BETAWIRE', 'GAMMAAGRO', 'DELTAPACK'].map((t, i) => mk({ ticker: t, company: `${t[0]}${t.slice(1).toLowerCase()} Ltd`, move1d: 9 - i, headline: 'No meaningful filing in 21 days' }))];
+// zzz771: a clarification is NO_CATALYST + flags.denial — neutral, never red.
+const CLARIFY = mk({
+  ticker: 'GAMMAAGRO', company: 'Gammaagro Ltd', move1d: 7.0, returns: { w1: 9.1, m1: 3.0, m3: -1.2 }, marketCap: 880,
+  eventClass: 'NO_CATALYST', eventType: 'Denial',
+  headline: 'Clarification to the exchange: no undisclosed information behind the price movement',
+  filedDate: '2026-09-22', stage: 'UNKNOWN', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.bseindia.com/',
+  scanNote: 'Scanned 21 days of BSE/NSE announcements: 1 price-movement clarification, 0 results, 0 orders, 0 capex filings.',
+  whyResearch: 'The company answered the exchange; nothing filed explains the move.',
+  flags: { denial: true, band: null, listing: false, dilution: false, turnover: null },
+  unknowns: ['Cause of the move: Unknown', 'Turnover versus average: Unknown'], researchNext: ['Check turnover and delivery % behind the move.', 'Check bulk/block deals and shareholding changes.'],
+  catalystFor: 'THIS_MOVE', ageDays: 0, priority: 8,
+});
+// zzz771: a US resale prospectus adds shares but is not an operating event.
+const US424 = mk({
+  ticker: 'XYZQ', company: 'Xyzq Therapeutics Inc', market: 'US', move1d: null, move: { pct: 31.2, window: '1W' }, returns: { w1: 31.2, m1: 40.5, m3: 12.0 }, marketCap: 210,
+  eventClass: 'NO_CATALYST', eventType: 'Fundraising', eventLabel: 'Resale prospectus (424B3)',
+  headline: '424B3 prospectus supplement — resale registration by existing holders; no operating event in 7 days',
+  filedDate: '2026-09-18', stage: 'ENABLING', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.sec.gov/',
+  scanNote: 'Scanned EDGAR 7 days: 1 424B3, 0 8-K, 0 press releases.',
+  whyResearch: 'Supply of shares, not demand; the week’s move is unexplained by filings.',
+  flags: { dilution: true, band: null, listing: false, denial: false, turnover: null },
+  unknowns: ['Cause of the move: Unknown'], researchNext: ['Check volume versus the 1-week average.', 'Who is selling under the resale registration?'],
+  catalystFor: 'THIS_MOVE', ageDays: 4, priority: 6,
+});
+const NOCATS = [SECZ, ...['ALPHAX', 'BETAWIRE'].map((t, i) => mk({ ticker: t, company: `${t[0]}${t.slice(1).toLowerCase()} Ltd`, move1d: 9 - i, headline: 'No meaningful filing in 21 days', scanNote: 'Scanned 21 days of BSE/NSE announcements: 0 results, 0 orders, 0 capex filings.' })), CLARIFY, US424];
 const FAILED = mk({ ticker: 'SRCFAIL', company: 'Srcfail Ltd', move1d: 7.1, eventClass: 'DATA_UNAVAILABLE', eventType: 'No identified catalyst', headline: 'Filing source unreachable', whyResearch: 'Not checked — data unavailable.' });
+
+// zzz771: RECENT — a 9-day-old award; a delayed reaction is possible, so it
+// stays in the queue with a freshness penalty (never in the top 3 here).
+const ARCHEM = mk({
+  ticker: 'ARCHEMTEK', company: 'Archemtek Industries Ltd', move1d: 6.1, returns: { w1: 7.3, m1: 4.0, m3: 2.2 }, marketCap: 1450,
+  eventClass: 'CONFIRMED_MATERIAL', eventType: 'Order win',
+  headline: 'Work order of ₹212 Cr from a state transmission utility for substation packages',
+  whatChanged: 'Order inflow +₹212 Cr (≈24% of TTM revenue).', filedDate: '2026-09-13', stage: 'AWARDED', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.nseindia.com/',
+  materiality: { label: 'MODERATE', explanation: 'About a quarter of trailing revenue.', ratios: [{ basis: 'ttm_revenue', pct: 24.1, text: '₹212 Cr ÷ ₹880 Cr TTM revenue = 24.1%' }] },
+  transmission: 'NEAR_TERM', transmissionChain: ['₹212 Cr work order', 'Execution 12–18 months', 'Revenue +≈₹150 Cr/yr', 'Margin: Not disclosed', 'TBD', 'TBD'],
+  persistence: 'QUARTER', expectationGap: { level: 'MODERATE', text: 'Stock +4% over 1M since the award; today’s move came 9 days later.' },
+  unknowns: ['Order margin: Not disclosed', 'Execution period: Not disclosed'], researchNext: ['Why the reaction 9 days after the filing?', 'Margin on substation packages vs company average?'],
+  whyResearch: 'A meaningful award filed 9 days ago — check whether today’s move is a delayed reaction or something new.',
+  priority: 58, priorityReasons: ['Material vs revenue', 'Freshness penalty (9 days)'],
+  scoreDetails: { freshness: 55, materiality: 60, transmission: 70, persistence: 40, sourceMult: 0.9, pricedIn: 0.4 },
+  catalystFor: 'RECENT', ageDays: 9,
+});
+
+// zzz771: a bare BSE scrip code — the pipeline supplies the name as the
+// title and the code small beside it; the company line is not repeated.
+const SCRIP = mk({
+  ticker: '544501', displayTicker: 'Demo Fabrics Ltd', displayCode: '544501', company: 'Demo Fabrics Ltd',
+  move1d: 5.4, returns: { w1: 6.0, m1: 1.1, m3: 3.3 }, marketCap: 390,
+  eventClass: 'CONFIRMED_LOW_MATERIALITY', eventType: 'Order win',
+  headline: 'Export order of ₹9 Cr for technical textiles from a European customer',
+  whatChanged: '+₹9 Cr order.', filedDate: '2026-09-22', stage: 'AWARDED', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.bseindia.com/',
+  materiality: { label: 'SMALL', explanation: 'Small against ≈₹210 Cr revenue.', ratios: [{ basis: 'ttm_revenue', pct: 4.3, text: '₹9 Cr ÷ ₹210 Cr TTM revenue = 4.3%' }] },
+  transmission: 'NEAR_TERM', transmissionChain: ['₹9 Cr export order', 'Not disclosed', '≈4% of revenue', 'Margin: Not disclosed', 'TBD', 'TBD'],
+  persistence: 'DAYS', expectationGap: { level: 'SMALL', text: 'A 5% move on a 4%-of-revenue order.' },
+  unknowns: ['Order margin: Not disclosed'], researchNext: ['Is this a repeat customer?'],
+  whyResearch: 'Small and routine; explains little of the move.', priority: 34, priorityReasons: ['Verified', 'Small vs revenue'],
+  catalystFor: 'THIS_MOVE', ageDays: 1,
+});
+
+// zzz771: POTENTIAL preferential allotment with a named allottee — DILUTION
+// in the class colour (amber), never red; the allottee text is shown as given.
+const PREF = mk({
+  ticker: 'NOVAPOLY', company: 'Novapoly Chemicals Ltd', move1d: 8.9, returns: { w1: 10.2, m1: 19.0, m3: 35.5 }, marketCap: 2100,
+  eventClass: 'POTENTIAL_UNVERIFIED', eventType: 'Fundraising', eventLabel: 'Preferential allotment (proposed)',
+  headline: 'Board to consider a preferential allotment of 12.5 lakh equity shares to Alpha Growth Mutual Fund at ₹412 per share',
+  whatChanged: null, filedDate: '2026-09-22', stage: 'PROPOSED', sourceConfidence: 'SECONDARY_SUMMARY', sourceUrl: 'https://www.screener.in/',
+  materiality: { label: 'SMALL', explanation: '≈₹51 Cr ÷ ₹2,100 Cr market cap = 2.4%.', ratios: [{ basis: 'market_cap', pct: 2.4, text: '₹51 Cr ÷ ₹2,100 Cr market cap = 2.4%' }] },
+  transmission: 'WEAK', transmissionChain: ['Preferential allotment proposed', 'Cash on allotment', 'Use of proceeds: Not disclosed', 'Not disclosed', 'Dilution ≈2.4%', 'TBD'],
+  persistence: 'QUARTER', expectationGap: { level: 'SMALL', text: 'Stock +35% over 3M — the raise follows the move.' },
+  unknowns: ['Use of proceeds: Not disclosed', 'Issue price vs market: ₹412 stated; discount Unknown'],
+  researchNext: ['Why is an institutional allottee taking a preferential stake?', 'Stated use of proceeds?', 'Lock-in and board approval date?'],
+  whyResearch: 'An institutional allottee is a signal worth a check; the raise itself adds shares, not demand.',
+  flags: { dilution: true, band: null, listing: false, denial: false, turnover: null },
+  priority: 36, priorityReasons: ['Named institutional allottee', 'Financing, not operations'],
+  catalystFor: 'THIS_MOVE', ageDays: 1,
+});
+
+// zzz771: CONTEXT — a 47-day-old result. Real, but not this move's catalyst;
+// lives only in `context`, never in queue / top3 / confirmed.
+const OLDRESULT = mk({
+  ticker: 'VELOCAST', company: 'Velocast Engineering Ltd', move1d: 7.7, returns: { w1: 9.4, m1: 12.0, m3: 28.0 }, marketCap: 2650,
+  eventClass: 'CONFIRMED_MATERIAL', eventType: 'Earnings',
+  headline: 'Q1 FY27 results filed 47 days ago: revenue +22% YoY, PAT +31% YoY',
+  whatChanged: 'Revenue +22% YoY; PAT +31% YoY (47 days ago).',
+  filedDate: '2026-08-07', stage: 'MONETIZING', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.nseindia.com/',
+  materiality: { label: 'MODERATE', ratios: [], explanation: 'Versus the prior-year quarter: revenue +22.0% YoY; PAT +31.0% YoY.' },
+  transmission: 'DIRECT', transmissionChain: ['Q1 FY27 filed 47d ago', 'Not disclosed', 'Revenue +22% YoY', 'Margin: Not disclosed', 'PAT +31% YoY', 'TBD'],
+  persistence: 'QUARTER', expectationGap: { level: 'UNKNOWN', text: 'Stock +28% over 3M since the result; today’s move is not explained by a 47-day-old filing.' },
+  unknowns: ['Cause of today’s move: Unknown', 'Guidance: Not stated', 'CFO/PAT: Not disclosed'],
+  researchNext: ['What happened today? Nothing newer is filed.', 'Check sector and peer moves in the same session.'],
+  whyResearch: 'Context for the name only — the last real event is 47 days old.',
+  earnings: { revenueYoY: 22.0, revenueQoQ: null, ebitdaYoY: null, marginNow: null, marginPrior: null, patYoY: 31.0, cfoToPat: null, guidance: 'NOT_STATED', orderBook: 'NOT_STATED', keyChange: 'PAT +31.0% YoY on revenue +22.0% YoY', filedDaysAgo: 47, quarter: 'Q1 FY27', filedDate: '2026-08-07', stale: true },
+  priority: 18, priorityReasons: ['Older than the move window (47 days)'],
+  scoreDetails: { freshness: 5, materiality: 55, transmission: 90, persistence: 50, sourceMult: 0.9, pricedIn: 0.6 },
+  catalystFor: 'CONTEXT', ageDays: 47,
+});
+const OLDORDER = mk({
+  ticker: 'KRONMETAL', company: 'Kronmetal Forgings Ltd', move1d: 6.3, returns: { w1: 8.0, m1: 15.0, m3: 21.0 }, marketCap: 1700,
+  eventClass: 'CONFIRMED_LOW_MATERIALITY', eventType: 'Order win',
+  headline: 'Order of ₹64 Cr for forged components — filed 55 days ago',
+  whatChanged: '+₹64 Cr order (55 days ago).', filedDate: '2026-07-30', stage: 'AWARDED', sourceConfidence: 'VERIFIED_FILING', sourceUrl: 'https://www.bseindia.com/',
+  materiality: { label: 'SMALL', explanation: '₹64 Cr ÷ ₹940 Cr TTM revenue = 6.8%.', ratios: [{ basis: 'ttm_revenue', pct: 6.8, text: '₹64 Cr ÷ ₹940 Cr TTM revenue = 6.8%' }] },
+  transmission: 'NEAR_TERM', transmissionChain: ['₹64 Cr order (55d ago)', 'Not disclosed', '≈7% of revenue', 'Margin: Not disclosed', 'TBD', 'TBD'],
+  persistence: 'QUARTER', expectationGap: { level: 'UNKNOWN', text: 'Nothing newer is filed; the order is 55 days old.' },
+  unknowns: ['Cause of today’s move: Unknown'], researchNext: ['Check sector and peer moves in the same session.'],
+  whyResearch: 'Context only — a small order from nearly two months ago.', priority: 12, priorityReasons: ['Older than the move window (55 days)'],
+  catalystFor: 'CONTEXT', ageDays: 55,
+});
 
 export const DEMO_VIEW: ResearchView = {
   session: { date: '2026-09-22', scanAt: '2026-09-22T13:12:00Z', status: 'Last completed session', cached: true },
-  summary: { scanned: 42, confirmed: 5, potential: 1, negative: 2, noCatalyst: 26, queue: 4, portfolioMatches: 1, dataUnavailable: 1 },
+  summary: { scanned: 42, confirmed: 7, potential: 2, negative: 2, noCatalyst: 24, queue: 6, portfolioMatches: 1, dataUnavailable: 1, context: 2 },
   top3: [PACE, PEARL, RESULT],
-  queue: [PACE, PEARL, RESULT, DEEP],
-  watch: [OPTI, TIRU],
+  queue: [PACE, PEARL, RESULT, ARCHEM, DEEP, SCRIP],
+  watch: [OPTI, PREF, TIRU],
   negative: [ASTEC, SUNDROP],
   noCatalyst: [...NOCATS, BAND],
   dataQuality: [LISTING, FAILED],
   sourceFailures: [{ ticker: 'SRCFAIL', text: 'company page unavailable (screener.in)', full: 'SRCFAIL: company page: proxy timeout after 20000 ms; chart: unreachable' }],
   portfolio: [PEARL],
+  context: [OLDRESULT, OLDORDER],
 };

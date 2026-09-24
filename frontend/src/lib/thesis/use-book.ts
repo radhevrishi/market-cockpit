@@ -39,7 +39,7 @@ import { recordPromises, checkPromises } from './guidance-ledger';
 import { planRecentReads, type RecentPlan, type ReportedFact } from './recent-reporters';
 import { priorBackfillPlan } from './prior-period';
 import {
-  freshnessOf, whatChanged, latestSummary, latestExpectedPeriod,
+  freshnessOf, whatChanged, latestSummary, latestExpectedPeriod, needsVariableSnapshots, withVariableSnapshots,
   type CompanyLedger, type FreshnessState, type ChangeLine, type CompanyEvidenceState,
 } from './evidence-ledger';
 import { evidenceReadLine, changesNote } from './evidence-counts';
@@ -100,8 +100,13 @@ export interface BookRow {
 /** Fold a server ledger into a row: the latest period's summary becomes the
  *  card's evidence, exactly as a fresh read would. */
 export function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshness?: { state: FreshnessState; detail: string } | null): BookRow {
+  // A ledger stored before zzz771 carries no per-period variable snapshots;
+  // they are derived here from its facts (lossless, pure) so the card's
+  // series and the thesis baseline exist for every holding on file without
+  // a re-read. The server does the same on load; this is the client's guard.
+  const ledger1 = ledger0 && needsVariableSnapshots(ledger0) ? withVariableSnapshots(ledger0) : ledger0;
   // "` 480+ Crore" — the PDF's rupee glyph — printed on cards. (zzz768)
-  const ledger = ledger0 ? deepRupeeGlyph(ledger0) : ledger0;
+  const ledger = ledger1 ? deepRupeeGlyph(ledger1) : ledger1;
   const fr = freshness || freshnessOf(ledger);
   const stored = latestSummary(ledger);
   if (!stored) {
@@ -170,6 +175,9 @@ function assess(row: BookRow): BookRow {
     period,
     // Source lineage: every fact carries the document it came from. (zzz770)
     documents: (period && row.ledger?.periods?.[period]?.documents) || null,
+    // The per-period snapshots and the frozen baseline ride with the ledger:
+    // every quantitative row gets its time-series reading from them. (zzz771)
+    ledger: row.ledger || null,
   });
   const check = row.summary ? checkPromises(row.symbol, row.summary) : null;
   // The status carried by the newest period that is NOT the one being

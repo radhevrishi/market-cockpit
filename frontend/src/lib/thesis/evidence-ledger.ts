@@ -36,7 +36,13 @@
 
 import type { VarKey } from './taxonomy';
 import { VAR_LABEL, VAR_DIMENSION } from './taxonomy';
-import { judgeEventQuality, verifiedDirection, betterReading, type RankableReading, type StructuralEvent } from './evidence-extract';
+import { judgeEventQuality, verifiedDirection, betterReading, bestEventPerVariable, type RankableReading, type StructuralEvent } from './evidence-extract';
+// zzz771: the snapshot engine answers to the same comparability rules as the
+// board (fact-model) and the same type correction (fact-normalize). Both
+// modules import `scaledNumber` from here; the cycle is safe because every
+// use on both sides is inside a function, never at module load.
+import { comparability, deltaText, normalizeValue, validateReading, factTypeOf, samePeriodPair, type FactType } from './fact-model';
+import { normalizeEvent, datesIn } from './fact-normalize';
 
 // ── SCHEMA VERSION 2 (zzz770). Every field added in v2 is OPTIONAL, so a v1
 // ledger read from KV still type-checks and renders; `migrateLedger` fills the
@@ -131,6 +137,8 @@ export interface EvidenceEvent extends StructuralEvent {
 export interface Tally { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; total: number }
 
 export interface PeriodRecord {
+  /** zzz771: the full per-variable snapshot for this period (see VariableSnapshot). Optional until PC-1 fills it. */
+  variables?: Record<string, VariableSnapshot>;
   reporting_period: string;
   period_end_date: string | null;
   latest_document_date: string | null;
@@ -242,7 +250,41 @@ export interface RunLogEntry {
   error: string | null;
 }
 
+/** ── zzz771 CONTRACT (PC-1 fills) ─────────────────────────────────────────
+ *  Per company → per period → per variable. Every period carries the FULL
+ *  variable set with an explicit state, so an absent figure is recorded as
+ *  NOT_DISCLOSED / NOT_SEARCHED in that period rather than missing. A new
+ *  period is a new snapshot; it never overwrites an earlier one. */
+export interface VariableSnapshot {
+  state: 'FOUND' | 'NOT_DISCLOSED' | 'NOT_SEARCHED' | 'UNCLEAR' | 'NOT_APPLICABLE' | 'SOURCE_UNAVAILABLE' | 'RETRIEVAL_FAILED';
+  /** The ACTUAL figure as stated. Non-null ONLY when state is FOUND or
+   *  UNCLEAR: a period that holds only guidance, a target or a historical
+   *  figure for this variable is NOT_DISCLOSED with a null value, so a
+   *  renderer can never print a promise as the quarter's number. (zzz771) */
+  value: string | null;
+  unit: string | null;
+  numeric: number | null;
+  fact_type: string | null;
+  period_class: string | null;
+  source_document_id: string | null;
+  source_name: string | null;
+  /** Comparison against the previous snapshot that disclosed this variable.
+   *  `previous_period` names the EARLIER LEDGER PERIOD whose FOUND snapshot
+   *  supplied the value. A previous_value with a NULL previous_period is the
+   *  before-figure the document itself states ("improved from 70% to 80%"):
+   *  comparison basis in_text. Guidance, targets and historical figures are
+   *  never a previous value. (zzz771) */
+  previous_period: string | null;
+  previous_value: string | null;
+  delta_abs: string | null;
+  delta_pct: string | null;
+  direction: 'UP' | 'DOWN' | 'FLAT' | 'UNKNOWN' | 'NOT_COMPARABLE' | null;
+  not_comparable_reason: string | null;
+  computed_at: string;
+}
 export interface CompanyLedger {
+  /** zzz771: the first full snapshot ever taken — the original thesis baseline. Frozen; never updated. */
+  thesis_baseline?: { period: string; taken_at: string; variables: Record<string, VariableSnapshot> } | null;
   version: number;
   ticker: string;
   market: 'IN' | 'US';
@@ -619,7 +661,15 @@ export function normalisePeriod(p: PeriodRecord, now: string): PeriodRecord {
 export function migrateLedger(raw: any): CompanyLedger | null {
   if (!raw || typeof raw !== 'object' || !raw.periods || typeof raw.periods !== 'object') return null;
   const from = Number(raw.version || 1);
-  if (from >= LEDGER_VERSION && Array.isArray(raw.run_log) && Array.isArray(raw.pending_documents)) return raw as CompanyLedger;
+  // A v2 ledger written before zzz771 has no per-period snapshots: they are
+  // derived here, losslessly, from the facts already on file — so the 79
+  // existing ledgers carry a series without a re-read. `computed_at` and the
+  // baseline's `taken_at` are the ledger's own updated_at, not the clock, so
+  // two loads of one ledger derive one identical document.
+  if (from >= LEDGER_VERSION && Array.isArray(raw.run_log) && Array.isArray(raw.pending_documents)) {
+    const l = raw as CompanyLedger;
+    return needsVariableSnapshots(l) ? withVariableSnapshots(l, String(l.updated_at || l.created_at)) : l;
+  }
   const now = String(raw.updated_at || raw.created_at || new Date(0).toISOString());
   const periods: Record<string, PeriodRecord> = {};
   for (const [k, p] of Object.entries<any>(raw.periods)) if (p) periods[k] = normalisePeriod(p as PeriodRecord, now);
@@ -633,7 +683,7 @@ export function migrateLedger(raw: any): CompanyLedger | null {
     changes: 'NONE' as const, status_before: null, status_after: null,
     state_before: 'NOT_SEARCHED' as const, state_after: 'NOT_SEARCHED' as const, error: r.error ?? null,
   }));
-  return {
+  const migrated: CompanyLedger = {
     ...raw,
     version: LEDGER_VERSION,
     periods,
@@ -643,6 +693,7 @@ export function migrateLedger(raw: any): CompanyLedger | null {
     run_log,
     migrated_from_version: from < LEDGER_VERSION ? from : (raw.migrated_from_version ?? null),
   } as CompanyLedger;
+  return needsVariableSnapshots(migrated) ? withVariableSnapshots(migrated, now) : migrated;
 }
 
 // ── merge ──────────────────────────────────────────────────────────────────
@@ -818,11 +869,305 @@ export function mergePeriodDetailed(ledger0: CompanyLedger, incoming0: PeriodRec
   // A document a check saw is no longer pending once any period lists it.
   const nowKnown = knownDocumentIds(merged);
   merged.pending_documents = (ledger.pending_documents || []).filter((d) => !nowKnown.has(d.id));
-  return { ledger: merged, diff };
+  // Every period's variable snapshot, and the baseline if this is the first
+  // one ever taken. A merge is the write path, so this is where the series
+  // is persisted. (zzz771)
+  return { ledger: withVariableSnapshots(merged, now), diff };
 }
 
 export function mergePeriod(ledger: CompanyLedger, incoming: PeriodRecord, run: EvidenceRun): CompanyLedger {
   return mergePeriodDetailed(ledger, incoming, run).ledger;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE VARIABLE SNAPSHOT — PER COMPANY, PER PERIOD, PER VARIABLE.     (zzz771)
+//
+// The owner's verdict on the previous build: "Capacity utilisation 80% — what
+// was it earlier? +10pp? constant?" The ledger had the history (one
+// PeriodRecord per quarter, never overwritten) but nothing turned it into a
+// series: every card printed the latest level and the earlier quarter's
+// figure sat in a JSON blob nobody joined to it.
+//
+// So every period now carries the FULL variable set as a snapshot: for each
+// of the taxonomy's VarKeys, an explicit state — FOUND with the figure, or
+// NOT_DISCLOSED / NOT_SEARCHED / UNCLEAR / SOURCE_UNAVAILABLE /
+// RETRIEVAL_FAILED — and, where an EARLIER period's snapshot holds a
+// comparable FOUND figure, the previous value with the delta. Three rules:
+//
+//   1. DERIVED, NEVER INVENTED. Every number here is a stored fact of that
+//      period. A period with no read document says NOT_SEARCHED, a read
+//      period with no fact says NOT_DISCLOSED; neither is zero.
+//   2. A PREVIOUS VALUE IS AN EARLIER ACTUAL. The walk back stops at the most
+//      recent earlier period whose snapshot is FOUND. Guidance, targets and
+//      historical figures are typed as what they are and never supply it.
+//      The comparability engine (fact-model) decides whether the two may be
+//      subtracted at all: unit, scope, basis, definition, same period.
+//   3. Q2 IS A NEW SNAPSHOT, NEVER AN OVERWRITE. Snapshots are recomputed
+//      for every period on each merge — a backfilled Q4 gives Q1 its
+//      previous — but a period's own reading never changes because a later
+//      one arrived, and its `computed_at` is kept when nothing in it moved.
+//
+// The thesis baseline is the earliest period's snapshot the FIRST time any
+// snapshot is computed for the company, and it is frozen from then on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Every VarKey the taxonomy names — the full set every snapshot carries. */
+export const ALL_VAR_KEYS: readonly VarKey[] = Object.keys(VAR_LABEL) as VarKey[];
+
+/** The best ACTUAL per variable in a period, chosen exactly as the board
+ *  chooses its row (type corrected from the sentence, wrong-unit and
+ *  historical readings set aside, then `bestEventPerVariable`). Events carry
+ *  every reading of the period; the facts array is one-per-document-slot and
+ *  is used only when a period stored no events (two pre-zzz740 periods). */
+function snapshotActuals(p: PeriodRecord): Map<VarKey, StructuralEvent & { source_document_id?: string | null }> {
+  const period = p.reporting_period;
+  const raw: Array<StructuralEvent & { source_document_id?: string | null }> = (p.events && p.events.length)
+    ? p.events.filter((e) => !e.record_status || e.record_status === 'ACTIVE')
+    : (p.facts || []).filter((f) => !f.record_status || f.record_status === 'ACTIVE').map((f) => ({
+      variable: f.metric_name,
+      value_type: (f.fact_or_management_statement === 'FACT' ? 'ACTUAL' : f.fact_or_management_statement) as StructuralEvent['value_type'],
+      before: f.before_value, after: f.after_value ?? f.value, unit: f.unit, period: null,
+      direction: f.direction, evidence_text: f.source_quote, source: f.source_name, confidence: f.confidence,
+      evidence_quality: f.evidence_quality, source_document_id: f.source_document_id,
+    }));
+  const live = raw
+    .map((e) => ({ ...normalizeEvent(e, period), source_document_id: e.source_document_id ?? null }))
+    .filter((e) => !(e.historical_as_of && e.value_type === 'ACTUAL'))
+    .filter((e) => !(e as any).commentary && judgeEventQuality(e) !== 'unit_mismatch');
+  const out = new Map<VarKey, StructuralEvent & { source_document_id?: string | null }>();
+  for (const [k, slot] of bestEventPerVariable(live)) {
+    const a = slot.actual;
+    if (!a || a.value_type !== 'ACTUAL') continue;
+    if (!String(a.after ?? a.before ?? '').trim()) continue;
+    out.set(k, a);
+  }
+  return out;
+}
+
+/** The state a period's snapshot takes for a variable NO fact answers. */
+function absentState(p: PeriodRecord, ledger: CompanyLedger): VariableSnapshot['state'] {
+  const docs = p.documents || [];
+  const read = (p.documents_read || 0) > 0 || docs.some((d) => d.outcome === 'read');
+  if (read) return 'NOT_DISCLOSED';
+  // Nothing was read: say WHY, from the period's own discovery record and
+  // the run that produced it — a failure is never a disclosure gap.
+  const run = ledger.runs.find((r) => r.run_id === p.run_id) || null;
+  const kind = failureKindOf(run);
+  if (p.discovery_state === 'RETRIEVAL_FAILED' || kind === 'document_unreadable' || kind === 'model_failed') return 'RETRIEVAL_FAILED';
+  if (docs.length && docs.every((d) => d.outcome === 'download_failed' || d.outcome === 'scanned')) return 'RETRIEVAL_FAILED';
+  if (kind === 'source_unreachable' || (p.discovery_attempts || []).some((a: any) => a?.outcome === 'error') && !docs.length) return 'SOURCE_UNAVAILABLE';
+  return 'NOT_SEARCHED';
+}
+
+const EMPTY_SNAPSHOT = (state: VariableSnapshot['state'], now: string): VariableSnapshot => ({
+  state, value: null, unit: null, numeric: null, fact_type: null, period_class: null,
+  source_document_id: null, source_name: null,
+  previous_period: null, previous_value: null, delta_abs: null, delta_pct: null,
+  direction: null, not_comparable_reason: null, computed_at: now,
+});
+
+/** Signed, human: "+10pp", "−31 days", "+₹27 Cr", "+1,500 tonnes". The
+ *  minus is U+2212 so a delta never reads as a hyphenated range. */
+export function formatDeltaAbs(d: number, unit: string | null): string {
+  const sign = d < 0 ? '−' : '+';
+  const abs = Math.abs(d);
+  const r1 = Math.round(abs * 10) / 10;
+  const num = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: 1 });
+  switch (unit) {
+    case 'pp': return `${sign}${r1}pp`;
+    case '%': return `${sign}${r1}%`;
+    case '₹ crore': return `${sign}₹${num(r1)} Cr`;
+    case 'days': return `${sign}${num(Math.round(abs))} days`;
+    case 'x': return `${sign}${r1}×`;
+    case 'USD million': return `${sign}$${num(r1)} mn`;
+    case 'EUR million': return `${sign}€${num(r1)} mn`;
+    default: return `${sign}${num(abs >= 100 ? Math.round(abs) : r1)}${unit ? ` ${unit}` : ''}`;
+  }
+}
+
+/** The quarter a value pins itself to ("as on 31 March 2026", "in Q4 FY26"),
+ *  read off its first clause — the same rule comparison.ts applies. */
+function pinnedPeriod(value: string | null): string | null {
+  const own = datesIn(String(value ?? '').split(/\band\b|;|,(?!\d)/)[0]);
+  return own.length ? own.reduce((x, y) => (y.end > x.end ? y : x)).label : null;
+}
+
+/** Reason text the card prints in parentheses, from the engine's own wording. */
+function shortReason(reason: string | null): string {
+  const r = String(reason || '');
+  if (/same period/i.test(r)) return 'same period';
+  if (/unit|measure|stock and a rate|conversion|no number/i.test(r)) return 'unit changed';
+  if (/scope|plant|segment|basis|definition|standalone/i.test(r)) return 'scope changed';
+  if (/target|guidance|commentary/i.test(r)) return 'not an actual';
+  return r || 'not comparable';
+}
+
+/**
+ * Pure: the full variable snapshot of ONE period, with each variable's
+ * previous value taken from the most recent EARLIER period whose snapshot is
+ * FOUND and comparable. `earlier` are the already-derived snapshots of the
+ * periods before this one (ascending); the caller supplies them so the walk
+ * is one pass over the ledger.
+ */
+export function deriveVariableSnapshots(ledger: CompanyLedger, period: string, now?: string, earlier?: Array<{ period: string; variables: Record<string, VariableSnapshot> }>): Record<string, VariableSnapshot> {
+  const p = ledger.periods[period];
+  const at = now || p?.updated_at || ledger.updated_at;
+  if (!p) return Object.fromEntries(ALL_VAR_KEYS.map((k) => [k, EMPTY_SNAPSHOT('NOT_SEARCHED', at)]));
+  const prior = earlier ?? Object.keys(ledger.periods)
+    .filter((k) => periodOrdinal(k) >= 0 && periodOrdinal(k) < periodOrdinal(period))
+    .sort((a, b) => periodOrdinal(a) - periodOrdinal(b))
+    .reduce<Array<{ period: string; variables: Record<string, VariableSnapshot> }>>((acc, k) => {
+      acc.push({ period: k, variables: deriveVariableSnapshots(ledger, k, now, acc.slice()) });
+      return acc;
+    }, []);
+  const actuals = snapshotActuals(p);
+  const absent = absentState(p, ledger);
+  const out: Record<string, VariableSnapshot> = {};
+  for (const key of ALL_VAR_KEYS) {
+    const a = actuals.get(key);
+    if (!a) { out[key] = EMPTY_SNAPSHOT(absent, at); continue; }
+    const value = String(a.after ?? a.before ?? '').trim();
+    const validation = validateReading(key, value, a.evidence_text);
+    const norm = normalizeValue(value, a.unit);
+    const factType: FactType = factTypeOf({ valueType: 'ACTUAL', key, value, text: a.evidence_text, source: a.source, retyped: (a as any).retyped_because });
+    const snap: VariableSnapshot = {
+      ...EMPTY_SNAPSHOT(validation.state === 'UNCLEAR' ? 'UNCLEAR' : 'FOUND', at),
+      value, unit: norm.normalized_unit || a.unit || norm.raw_unit,
+      numeric: norm.normalized_value ?? norm.value ?? null,
+      fact_type: factType, period_class: 'CURRENT_QUARTER',
+      source_document_id: a.source_document_id ?? null, source_name: a.source || null,
+    };
+    // Rule 2: the most recent earlier period whose snapshot FOUND this variable.
+    let prev: { period: string; s: VariableSnapshot } | null = null;
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const s = prior[i].variables[key];
+      if (s && s.state === 'FOUND' && s.value) { prev = { period: prior[i].period, s }; break; }
+    }
+    if (snap.state === 'UNCLEAR') {
+      // An ambiguous or implausible reading is not subtracted from anything;
+      // the prior is named so the reader knows one exists.
+      out[key] = { ...snap, previous_period: prev?.period ?? null, previous_value: prev?.s.value ?? null,
+        direction: prev ? 'NOT_COMPARABLE' : null, not_comparable_reason: validation.reason || 'validation required' };
+      continue;
+    }
+    if (prev) {
+      const prevEv = snapshotActuals(ledger.periods[prev.period]).get(key);
+      // The period a figure DESCRIBES wins over the period it was read in:
+      // "82.88 crore deployed in April 2026" (CUPID) filed under Q4 FY26 and
+      // again under Q1 FY27 is one figure, and the engine says "same period".
+      const c = comparability(
+        { key, value: prev.s.value, unit: prevEv?.unit ?? prev.s.unit, quote: prevEv?.evidence_text ?? null, period: pinnedPeriod(prev.s.value) || prev.period, fact_type: 'ACTUAL' },
+        { key, value, unit: a.unit, quote: a.evidence_text, period: pinnedPeriod(value) || period, fact_type: 'ACTUAL' },
+      );
+      if (!c.comparable) {
+        // Two statements with no figure ("successfully commissioned" twice)
+        // are one event restated, not a unit change.
+        const pv = prev.s.value ?? '';
+        const noFigure = !/\d/.test(pv) || !/\d/.test(value);
+        const restated = noFigure && pv.trim().toLowerCase().replace(/\s+/g, ' ') === value.toLowerCase().replace(/\s+/g, ' ');
+        out[key] = { ...snap, previous_period: prev.period, previous_value: prev.s.value,
+          direction: restated ? 'FLAT' : 'NOT_COMPARABLE',
+          not_comparable_reason: restated ? null : noFigure && !c.same_period ? 'not a figure' : shortReason(c.reason) };
+        continue;
+      }
+      const d = deltaText(c.prev_norm!, c.cur_norm!);
+      const b = c.prev_norm!.normalized_value!, cur = c.cur_norm!.normalized_value!;
+      const pctUnit = c.cur_norm!.dimension === 'percent' || c.cur_norm!.dimension === 'percent_points';
+        // Days are a cycle length: the move is read in days, never as a % of days. (zzz771)
+        const noRel = pctUnit || c.cur_norm!.dimension === 'days';
+      out[key] = {
+        ...snap, previous_period: prev.period, previous_value: prev.s.value,
+        delta_abs: d.direction === 'flat' ? null : formatDeltaAbs(cur - b, pctUnit ? 'pp' : (c.cur_norm!.normalized_unit || null)),
+        delta_pct: d.direction === 'flat' || noRel || b === 0 ? null : formatDeltaAbs(((cur - b) / Math.abs(b)) * 100, '%'),
+        direction: d.direction === 'flat' ? 'FLAT' : d.direction === 'up' ? 'UP' : d.direction === 'down' ? 'DOWN' : 'UNKNOWN',
+        not_comparable_reason: null,
+      };
+      continue;
+    }
+    // No earlier FOUND period: the document's own before→after, when it is
+    // a real comparison (a figure on both sides, not one period restated).
+    const before = String(a.before ?? '').trim();
+    const bNum = scaledNumber(before), aNum = scaledNumber(value);
+    if (before && a.after && bNum != null && aNum != null && bNum !== aNum && !samePeriodPair(before, value)) {
+      const c = comparability({ key, value: before, unit: a.unit, quote: null, period: null }, { key, value, unit: a.unit, quote: null, period: null });
+      if (c.comparable) {
+        const d = deltaText(c.prev_norm!, c.cur_norm!);
+        const b = c.prev_norm!.normalized_value!, cur = c.cur_norm!.normalized_value!;
+        const pctUnit = c.cur_norm!.dimension === 'percent' || c.cur_norm!.dimension === 'percent_points';
+        // Days are a cycle length: the move is read in days, never as a % of days. (zzz771)
+        const noRel = pctUnit || c.cur_norm!.dimension === 'days';
+        out[key] = {
+          ...snap, previous_period: null, previous_value: before,
+          delta_abs: formatDeltaAbs(cur - b, pctUnit ? 'pp' : (c.cur_norm!.normalized_unit || null)),
+          delta_pct: noRel || b === 0 ? null : formatDeltaAbs(((cur - b) / Math.abs(b)) * 100, '%'),
+          direction: d.direction === 'up' ? 'UP' : d.direction === 'down' ? 'DOWN' : 'FLAT',
+          not_comparable_reason: null,
+        };
+        continue;
+      }
+    }
+    // Nothing to compare against — and the reason is specific: no earlier
+    // period at all, or an earlier period that was read and silent.
+    const last = prior.length ? prior[prior.length - 1] : null;
+    const lastState = last ? last.variables[key]?.state : null;
+    out[key] = {
+      ...snap, direction: null,
+      not_comparable_reason: !last ? 'first reading'
+        : lastState === 'NOT_DISCLOSED' ? `not disclosed in ${last.period}`
+          : lastState === 'UNCLEAR' ? `unclear in ${last.period}`
+            : `${last.period} not read`,
+    };
+  }
+  return out;
+}
+
+const SNAPSHOT_KEYS_COMPARED: Array<keyof VariableSnapshot> = ['state', 'value', 'unit', 'numeric', 'fact_type', 'period_class', 'source_document_id', 'source_name', 'previous_period', 'previous_value', 'delta_abs', 'delta_pct', 'direction', 'not_comparable_reason'];
+function sameSnapshot(a: VariableSnapshot | undefined, b: VariableSnapshot): boolean {
+  if (!a) return false;
+  return SNAPSHOT_KEYS_COMPARED.every((k) => a[k] === b[k]);
+}
+
+/**
+ * Pure: the ledger with `period.variables` on every period and
+ * `thesis_baseline` set once. Idempotent and lossless: a snapshot whose
+ * content did not move keeps its `computed_at`; a baseline already on file is
+ * never touched, whatever periods arrive later (Rule 3).
+ */
+export function withVariableSnapshots(ledger: CompanyLedger, now?: string): CompanyLedger {
+  const ordered = Object.keys(ledger.periods || {}).filter((k) => !!ledger.periods[k])
+    .sort((a, b) => periodOrdinal(a) - periodOrdinal(b));
+  if (!ordered.length) return ledger;
+  const at = now || ledger.updated_at;
+  const acc: Array<{ period: string; variables: Record<string, VariableSnapshot> }> = [];
+  const periods: Record<string, PeriodRecord> = { ...ledger.periods };
+  let changed = false;
+  for (const k of ordered) {
+    const fresh = deriveVariableSnapshots(ledger, k, at, acc.slice());
+    const old = ledger.periods[k].variables || {};
+    const variables: Record<string, VariableSnapshot> = {};
+    for (const key of Object.keys(fresh)) variables[key] = sameSnapshot(old[key], fresh[key]) ? old[key] : fresh[key];
+    if (Object.keys(variables).some((key) => variables[key] !== old[key]) || Object.keys(old).length !== Object.keys(variables).length) {
+      periods[k] = { ...ledger.periods[k], variables };
+      changed = true;
+    }
+    acc.push({ period: k, variables });
+  }
+  // The original thesis baseline: the earliest period's snapshot, taken once.
+  const baseline = ledger.thesis_baseline
+    ? ledger.thesis_baseline
+    : { period: ordered[0], taken_at: at, variables: acc[0].variables };
+  if (!changed && ledger.thesis_baseline) return ledger;
+  return { ...ledger, periods, thesis_baseline: baseline };
+}
+
+/** True when a stored ledger predates the snapshot schema (any period without
+ *  `variables`, or no baseline) — the read path fills it in memory. */
+export function needsVariableSnapshots(ledger: CompanyLedger | null | undefined): boolean {
+  if (!ledger?.periods) return false;
+  const ks = Object.keys(ledger.periods).filter((k) => !!ledger.periods[k]);
+  if (!ks.length) return false;
+  if (!ledger.thesis_baseline) return true;
+  return ks.some((k) => !ledger.periods[k].variables || Object.keys(ledger.periods[k].variables!).length < ALL_VAR_KEYS.length);
 }
 
 /** Record an attempt that produced no period (source down, nothing disclosed,

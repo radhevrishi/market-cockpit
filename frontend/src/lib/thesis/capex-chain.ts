@@ -82,11 +82,62 @@ export interface CapexChain {
   lifecycle?: LifecycleEntry[];
   /** Furthest stage the evidence has reached, across every period. */
   stage?: CapexStage | null;
-  /** "Capex earning yet?" as a state with its evidence, never a dash. */
-  earning?: { state: 'not_yet' | 'commissioned_no_disclosure' | 'revenue' | 'unknown'; line: string; source: string | null } | null;
+  /** "Capex earning yet?" as a STRUCTURED state, never a dash. (zzz771) */
+  earning: CapexEarning;
   /** Project-by-project lifecycle, announced → … → ROCE / FCF. (zzz770) */
   lifecycleProjects?: CapexProject[];
 }
+
+// ── "CAPEX EARNING YET?" IS NOT A YES/NO QUESTION.                  (zzz771)
+//
+// The owner's verdict on the previous version: the card printed "— Capex
+// earning" even where the filing said the plant was already contributing
+// revenue. Binary was the problem — INNOVACAP's Jammu plant is contributing
+// ₹107 crore of revenue at ~30% utilisation while management says the margin
+// contribution comes later. That is neither "earning" nor "not earning"; it
+// is PARTIAL, and the card has to say WHICH links of the chain the filing has
+// evidenced and which it has not.
+//
+// Five states, each derived only from what the documents state:
+//
+//   NOT_STARTED         announced (or being built); nothing spent-and-running
+//   SPENT_NOT_EARNING   spent / commissioned / producing, and the filing
+//                       attributes NO revenue to it
+//   PARTIAL             revenue attributed, but margin (or utilisation) is
+//                       still pending — the money is earning, not yet fully
+//   EARNING             revenue attributed AND margin / ROCE contribution stated
+//   UNKNOWN             cannot be established from the documents read
+//
+// UNKNOWN is a sentence, never a dash: "Cannot be established from the
+// documents read — no utilisation or revenue attribution disclosed."
+export type CapexEarningState = 'NOT_STARTED' | 'SPENT_NOT_EARNING' | 'PARTIAL' | 'EARNING' | 'UNKNOWN';
+export interface CapexEarning {
+  state: CapexEarningState;
+  /** Short, printable: "PARTIAL", "SPENT — NOT YET EARNING", … */
+  label: string;
+  /** Money out of the door, as stated. Null when the filing gives no spend. */
+  spent: string | null;
+  /** Revenue the filing ATTRIBUTES to the capex: "INR107 crores in Q1". */
+  revenueContribution: string | null;
+  /** from → to where two readings exist; `to` alone is a level. */
+  utilisation: { from: string | null; to: string | null; note: string | null } | null;
+  marginContribution: 'pending' | 'disclosed' | 'unknown';
+  marginText: string | null;
+  roceText: string | null;
+  /** The printable lines, in chain order: Spent / Revenue contribution /
+   *  Utilisation / Full margin contribution / ROCE. For UNKNOWN, one line
+   *  saying why. Never empty. */
+  lines: string[];
+  source: string | null;
+}
+export const CAPEX_EARNING_LABEL: Record<CapexEarningState, string> = {
+  NOT_STARTED: 'NOT STARTED',
+  SPENT_NOT_EARNING: 'SPENT — NOT YET EARNING',
+  PARTIAL: 'PARTIAL',
+  EARNING: 'EARNING',
+  UNKNOWN: 'UNKNOWN',
+};
+export const CAPEX_EARNING_UNKNOWN_LINE = 'Cannot be established from the documents read — no utilisation or revenue attribution disclosed';
 
 export type CapexStage = 'ANNOUNCED' | 'SPENDING' | 'UNDER_CONSTRUCTION' | 'COMMISSIONED' | 'COMMERCIAL_PRODUCTION' | 'REVENUE_CONTRIBUTION';
 export const CAPEX_STAGES: CapexStage[] = ['ANNOUNCED', 'SPENDING', 'UNDER_CONSTRUCTION', 'COMMISSIONED', 'COMMERCIAL_PRODUCTION', 'REVENUE_CONTRIBUTION'];
@@ -164,24 +215,165 @@ export function capexLifecycle(ledger: CompanyLedger | null | undefined): Lifecy
   return out;
 }
 
-/** "Capex earning yet?" from the evidence, in words the card can print. */
-export function capexEarning(vars: StructuralVar[], stage: CapexStage | null): CapexChain['earning'] {
-  const row = vars.find((v) => v.key === ('capex_earning' as VarKey));
-  const txt = String(row?.after || row?.evidence || '');
-  const src = (row as any)?.sourceLabel || null;
-  if (row && /not yet|will (?:start )?contribut|from FY\d{2}|expected to contribute|yet to/i.test(txt)) {
-    const when = (/from (FY\d{2}|Q[1-4]\s?FY\d{2})/i.exec(txt) || [])[1];
-    return { state: 'not_yet', line: `Not yet earning${when ? ` — revenue expected from ${when}` : ''}. ${txt.slice(0, 180)}`, source: src };
+// Words that say revenue has NOT yet arrived from the capex, or is a plan.
+const NOT_YET_EARNING = /not yet|will (?:start )?contribut|expected to (?:start )?contribut|contribut\w* (?:revenue )?from (?:Q[1-4]|FY\d{2}|[A-Z][a-z]{2,8}\s?'?\d{2,4})|from FY\d{2}|yet to|once (?:commissioned|complete)|upon (?:full )?commissioning/i;
+// Words that say revenue HAS been attributed to the capex.
+const EARNING_WORDS = /already contributing|contributed revenue|contributing revenue|revenue contribution of|revenue of|contribut\w* (?:INR|Rs\.?|₹)|(?:INR|Rs\.?|₹)\s?[\d,.]+\s?crores? in Q/i;
+// Margin contribution said to be still ahead.
+const MARGIN_PENDING = /margin contribution (?:will|to) come|full margin|margin (?:contribution |benefit )?(?:will|to) (?:follow|come|accrue|kick in)|as utili[sz]ation (?:increases|improves|ramps)|margin[^.]{0,40}(?:pending|not yet|yet to)|break[- ]?even/i;
+// Margin contribution said to have happened.
+// A stated EBITDA / PAT of the capex-funded unit is a stated profit
+// contribution (BHAGCHEM: "revenue Rs.81.34 crore and EBITDA Rs.7.86 crore").
+const MARGIN_STATED = /margin (?:accretive|accretion|expansion|improve\w*|contribution)[^.]{0,60}(?:from|due to|driven by|on account of)[^.]{0,60}(?:plant|capex|capacity|facility|new line)|(?:plant|capex|capacity|facility|new line)[^.]{0,60}(?:margin accretive|contributed to (?:the )?margin|added to (?:the )?margin|improved (?:the )?margin|margin expansion)|(?:EBITDA|PAT|profit)\s?(?:of\s?)?(?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*(?:crores?|cr\b|mn|million)/i;
+
+const nz = (s: unknown): string | null => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t && !/^not (?:stated|disclosed)$/i.test(t) ? t : null; };
+
+/** "Capex earning yet?" as a structured state, from the capex rows, the
+ *  utilisation row, the summary's utilisation block and the project
+ *  lifecycle. Reads only what the filing states; never sums, never infers a
+ *  number. Pure. (zzz771) */
+export function capexEarning(
+  vars: StructuralVar[],
+  stage: CapexStage | null,
+  projects: CapexProject[] = [],
+  summary: any | null = null,
+): CapexEarning {
+  const get = (k: string) => vars.find((v) => v.key === (k as VarKey)) || null;
+  const ceRow = get('capex_earning');
+  const ceTxt = String(ceRow?.after || ceRow?.evidence || '');
+  const src = (ceRow as any)?.sourceLabel || null;
+
+  // The project that answers the question: the one with attributed revenue,
+  // else the named one, else whatever is on file.
+  const pj = projects.find((x) => x.steps.some((st) => st.step === 'REVENUE_CONTRIBUTION' && st.state === 'actual'))
+    || projects.find((x) => x.name !== 'Capacity and capex not tied to a named project') || projects[0] || null;
+  const step = (s: LifecycleStep) => pj?.steps.find((x) => x.step === s) || null;
+  const actual = (s: LifecycleStep) => step(s)?.state === 'actual';
+
+  // ── SPENT. Stated spend first; a stated investment on a commissioned plant
+  // is printed as such (the spend is implied by the plant existing — said,
+  // not claimed as a disclosed spend figure).
+  let spent: string | null = pj && pj.spent.length ? pj.spent.join('; ') : null;
+  if (!spent && pj?.announced && money(pj.announced) && (actual('COMMISSIONED') || actual('COMMERCIAL_PRODUCTION'))) {
+    spent = `${pj.announced} (stated investment; spend implied by commissioning)`;
   }
-  if (row && /contribut|revenue of|INR\s?[\d,.]+\s?crores? in Q/i.test(txt)) {
-    const amt = (/(?:INR|Rs\.?|₹)\s?[\d,.]+\s?(?:crores?|cr|mn|million)(?: in Q[1-4])?/i.exec(txt) || [])[0];
-    return { state: 'revenue', line: `Revenue contribution${amt ? ` ${amt}` : ' disclosed'}. ${txt.slice(0, 180)}`, source: src };
+  // A capex FIGURE the filing states as an actual (not a plan, not a
+  // commitment) is money out of the door, even when it is not itemised to a
+  // project (E2E "INR881.1 crores capex", VAML "6,068 crores"). (zzz771)
+  const capexRow = get('capex');
+  const capexRowStage = capexRow && nz(capexRow.after) && !/committed|commitment|outlay|planned|proposed|guidance|target/i.test(String(capexRow.after))
+    ? stageOf({ variable: 'capex', value_type: capexRow.statement === 'GUIDANCE' || capexRow.statement === 'TARGET' ? capexRow.statement : 'ACTUAL',
+      after: capexRow.after, evidence_text: String(capexRow.evidence || ''), period: capexRow.asOf ?? null })
+    : null;
+  // Spent only where the row SAYS so ("deployed", "incurred", "capital WIP")
+  // or is a bare ACTUAL money figure. A list of project names with a planned
+  // amount inside (SPECTRUM, MINDSPACE) or a management statement about a
+  // programme under way (KMEW "close to INR1,000 crores") is not money out of
+  // the door. (zzz771)
+  const capexAfter = String(capexRow?.after ?? '');
+  const bareFigure = capexAfter.length <= 40 && !/[·;]/.test(capexAfter) && capexRow?.statement === 'ACTUAL';
+  const saysSpent = SPENT_VERB.test(capexAfter) || /capital (?:WIP|work[- ]in[- ]progress)|\bCWIP\b|already (?:deployed|spent|incurred)/i.test(capexAfter);
+  const capexRowSpent = capexRowStage === 'SPENDING' && !!money(capexRow!.after) && (saysSpent || bareFigure);
+  if (!spent) {
+    const cs = get('capex_status');
+    if (cs?.after && SPENT_VERB.test(String(cs.after)) && money(cs.after)) spent = nz(cs.after);
+    else if (capexRowSpent) spent = `${nz(capexRow!.after)} (capex figure as stated; not itemised to a project)`;
   }
-  if (stage && ord(stage) >= ord('COMMISSIONED')) {
-    return { state: 'commissioned_no_disclosure', line: `${STAGE_LABEL[stage]} — financial contribution not yet disclosed.`, source: src };
+
+  // ── REVENUE CONTRIBUTION. From the project step, else from the row's words.
+  let revenue: string | null = actual('REVENUE_CONTRIBUTION') ? nz(pj!.revenue_contribution) : null;
+  const rowNotYet = !!ceRow && NOT_YET_EARNING.test(ceTxt) && !/already contributing|contributed/i.test(ceTxt);
+  if (!revenue && ceRow && !rowNotYet && EARNING_WORDS.test(ceTxt)) revenue = contributionAmount(ceTxt) || 'disclosed, amount not stated';
+
+  // ── UTILISATION. The variable row (as the document worded it), else the
+  // summary block. Two readings → from → to; one → a level with the reason
+  // there is no prior. A target is never printed in the current slot.
+  const ut = get('utilisation');
+  const ub = summary?.utilisation || {};
+  let utilisation: CapexEarning['utilisation'] = null;
+  const utTarget = !!ut && (ut.statement === 'GUIDANCE' || ut.statement === 'TARGET' || /\((?:target|guidance)\)\s*$/i.test(String(ut.after ?? '')));
+  const strip = (x: unknown) => nz(String(x ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, ''));
+  if (ut && nz(ut.after) && utTarget) {
+    utilisation = { from: null, to: null, note: `current not disclosed · target ${strip(ut.after)}` };
+  } else if (ut && nz(ut.after) && !(nz(ub.prior) && nz(ub.current) && !nz(ut.before))) {
+    const target = ut.plan?.value ? `target ${ut.plan.value}` : nz(ub.expected) ? `target ${nz(ub.expected)}` : null;
+    const unclear = ((ut as any).state === 'UNCLEAR' || (ut as any).validation?.state === 'UNCLEAR') ? 'unclear — validation required' : null;
+    utilisation = { from: nz(ut.before), to: nz(ut.after),
+      note: [nz(ut.before) ? null : 'level only; prior not disclosed', unclear, target].filter(Boolean).join(' · ') || null };
+  } else if (nz(ub.current)) {
+    utilisation = { from: nz(ub.prior), to: nz(ub.current),
+      note: [nz(ub.prior) ? null : 'level only; prior not disclosed', nz(ub.expected) ? `target ${nz(ub.expected)}` : null].filter(Boolean).join(' · ') || null };
+  } else if (pj?.utilisation) {
+    utilisation = { from: null, to: pj.utilisation, note: 'level only; prior not disclosed' };
   }
-  if (stage) return { state: 'not_yet', line: `Not yet earning — ${STAGE_LABEL[stage].toLowerCase()}, commissioning pending.`, source: src };
-  return null;
+
+  // ── MARGIN. The project step, then the row's words.
+  const mStep = step('MARGIN_CONTRIBUTION');
+  let marginContribution: CapexEarning['marginContribution'] = 'unknown';
+  let marginText: string | null = null;
+  if (mStep?.state === 'actual') { marginContribution = 'disclosed'; marginText = mStep.value; }
+  else if (mStep?.state === 'target') { marginContribution = 'pending'; marginText = mStep.value; }
+  else if (MARGIN_PENDING.test(ceTxt)) { marginContribution = 'pending'; marginText = short((/[^.;]*margin[^.;]*/i.exec(ceTxt) || [null])[0], 110); }
+  else if (MARGIN_STATED.test(ceTxt)) {
+    // The clause from the match to the end of its sentence ("Rs.7.86" has a
+    // dot inside a number, so split only on ". " or ";").
+    const m = MARGIN_STATED.exec(ceTxt)!;
+    marginContribution = 'disclosed'; marginText = short(ceTxt.slice(m.index).split(/;|\.\s|\.$/)[0], 110);
+  }
+
+  // ── ROCE / FCF — only a return or payback ATTRIBUTED to the project.
+  // Company free cash flow "after net capex of ₹33 crore" (MARKSANS) is not
+  // the capex's ROCE and is never borrowed here.
+  const rStep = step('ROCE_FCF');
+  const roceText = rStep?.state === 'actual' && rStep.value && /\broce\b|return on capital|payback/i.test(rStep.value) ? rStep.value : null;
+
+  // ── THE STATE. The project that answers the question decides whether the
+  // plant is built; only where no project is on file does the company-wide
+  // lifecycle stage stand in. Company-wide utilisation is never proof that
+  // THIS capex is running.
+  const built = pj
+    ? actual('COMMISSIONED') || actual('COMMERCIAL_PRODUCTION') || actual('UTILISATION') || actual('REVENUE_CONTRIBUTION')
+    : !!stage && ord(stage) >= ord('COMMISSIONED');
+  const csRow = get('capex_status');
+  const statedSpend = !!(csRow?.after && SPENT_VERB.test(String(csRow.after)) && money(csRow.after));
+  const spentOrBuilt = built || (pj ? pj.spent.length > 0 || actual('SPENT') : stage === 'SPENDING' && statedSpend) || (!pj && statedSpend) || capexRowSpent;
+  const announcedOnly = !spentOrBuilt && (!!pj?.announced || actual('ANNOUNCED') || step('ANNOUNCED')?.state === 'target'
+    || stage === 'ANNOUNCED' || stage === 'UNDER_CONSTRUCTION' || stage === 'SPENDING' || step('COMMISSIONED')?.state === 'target' || rowNotYet
+    || !!nz(get('capex')?.after));
+
+  let state: CapexEarningState;
+  if (revenue && (marginContribution === 'disclosed' || roceText)) state = 'EARNING';
+  else if (revenue) state = 'PARTIAL';
+  else if (spentOrBuilt) state = 'SPENT_NOT_EARNING';
+  else if (announcedOnly) state = 'NOT_STARTED';
+  else state = 'UNKNOWN';
+
+  const lines: string[] = [];
+  if (state === 'UNKNOWN') {
+    lines.push(CAPEX_EARNING_UNKNOWN_LINE + (pj?.announced || get('capex')?.after ? ` (capex on file: ${pj?.announced || nz(get('capex')?.after)})` : ''));
+  } else {
+    const announcedTxt = pj?.announced || (capexRow && !capexRowSpent ? nz(capexRow.after) : null);
+    lines.push(`Spent: ${spent || (announcedTxt ? `not disclosed (announced ${announcedTxt})` : 'not disclosed')}`);
+    lines.push(`Revenue contribution: ${revenue || (state === 'NOT_STARTED'
+      ? (step('REVENUE_CONTRIBUTION')?.state === 'target' && step('REVENUE_CONTRIBUTION')?.value ? `expected ${step('REVENUE_CONTRIBUTION')!.value}` : 'none yet — not commissioned')
+      : 'not attributed in the documents read')}`);
+    // A utilisation figure on a plant that is NOT yet built is the existing
+    // capacity's, and says so — it is context for the capex, not its result.
+    const utNote = [!built && utilisation?.to ? 'existing capacity' : null, utilisation?.note].filter(Boolean).join('; ');
+    lines.push(`Utilisation: ${utilisation
+      ? `${utilisation.from ? `${utilisation.from} → ` : ''}${utilisation.to || 'not disclosed'}${utNote ? ` (${utNote})` : ''}`
+      : 'not disclosed'}`);
+    lines.push(`Full margin contribution: ${marginContribution === 'disclosed' ? `disclosed${marginText ? ` — ${marginText}` : ''}`
+      : marginContribution === 'pending' ? `pending${marginText ? ` — ${marginText}` : ''}` : 'not stated'}`);
+    if (roceText) lines.push(`ROCE / FCF: ${roceText}`);
+  }
+  const under = state === 'NOT_STARTED' && (stage === 'UNDER_CONSTRUCTION' || step('COMMISSIONED')?.state === 'target');
+  return {
+    state, label: under ? 'NOT STARTED — UNDER CONSTRUCTION' : CAPEX_EARNING_LABEL[state],
+    spent, revenueContribution: revenue, utilisation, marginContribution, marginText, roceText, lines,
+    // "summary" is not a document; only a named document is worth printing.
+    source: [src, step('REVENUE_CONTRIBUTION')?.source, pj?.steps.find((s) => s.source && s.source !== 'summary')?.source].find((x) => x && x !== 'summary') || null,
+  };
 }
 
 const pctIn = (s: unknown): number | null => {
@@ -195,21 +387,33 @@ const pctIn = (s: unknown): number | null => {
 export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledger?: CompanyLedger | null): CapexChain {
   const lifecycle = capexLifecycle(ledger);
   const reached = lifecycle.reduce<CapexStage | null>((m, e) => (!m || ord(e.stage) > ord(m) ? e.stage : m), null);
-  const earning = capexEarning(vars, reached);
-  // A disclosed revenue contribution is itself proof the capacity was built.
-  const stage: CapexStage | null = earning?.state === 'revenue' ? 'REVENUE_CONTRIBUTION' : reached;
-  const base = buildCapexChainCore(summary, vars, stage);
   const lifecycleProjects = capexProjects(summary, ledger, vars);
+  const earning = capexEarning(vars, reached, lifecycleProjects, summary);
+  const earns = earning.state === 'PARTIAL' || earning.state === 'EARNING';
+  // A disclosed revenue contribution is itself proof the capacity was built.
+  const stage: CapexStage | null = earns ? 'REVENUE_CONTRIBUTION' : reached;
+  const base = buildCapexChainCore(summary, vars, stage);
   // A disclosed revenue contribution is the capex STARTING to earn — never
   // "cannot be checked" (INNOVACAP ₹107 cr in Q1). Margin contribution is a
   // separate, later step and is said to be open. (zzz770)
-  if (earning?.state === 'revenue' && (base.state === 'unverifiable' || base.state === 'commissioned_not_earning')) {
+  if (earning.state === 'PARTIAL' && (base.state === 'unverifiable' || base.state === 'commissioned_not_earning')) {
     return { ...base, state: 'starting_to_earn', lifecycle, stage, earning, lifecycleProjects,
-      because: `${earning.line.split('. ')[0]}. Revenue contribution is disclosed; margin contribution is a separate step and is not yet established.`,
+      because: `Revenue contribution ${earning.revenueContribution} is disclosed; margin contribution is a separate step and is ${earning.marginContribution === 'pending' ? 'stated as pending' : 'not yet established'}.`,
       nextCheck: 'Whether utilisation rises and the margin follows the revenue — revenue contribution is not margin contribution.' };
+  }
+  // Revenue AND margin / ROCE attributed: every link the filing can evidence
+  // has been evidenced. (zzz771)
+  if (earning.state === 'EARNING' && (base.state === 'unverifiable' || base.state === 'commissioned_not_earning' || base.state === 'starting_to_earn')) {
+    return { ...base, state: 'earning', lifecycle, stage, earning, lifecycleProjects,
+      because: `Revenue contribution ${earning.revenueContribution} and ${earning.roceText ? `ROCE / FCF ${earning.roceText}` : `margin contribution (${earning.marginText || 'stated'})`} are both attributed to the capex in the documents read.`,
+      nextCheck: null };
   }
   return { ...base, lifecycle, stage, earning, lifecycleProjects };
 }
+
+/** The chain without the earning block; `buildCapexChain` attaches it. */
+const NO_EARNING: CapexEarning = { state: 'UNKNOWN', label: CAPEX_EARNING_LABEL.UNKNOWN, spent: null, revenueContribution: null, utilisation: null,
+  marginContribution: 'unknown', marginText: null, roceText: null, lines: [CAPEX_EARNING_UNKNOWN_LINE], source: null };
 
 function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: CapexStage | null): CapexChain {
   const projects: any[] = Array.isArray(summary?.capex_projects) ? summary.capex_projects : [];
@@ -244,7 +448,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
   ];
 
   if (!mapped.length && !stage) {
-    return { state: 'none', links, projects: mapped,
+    return { state: 'none', links, projects: mapped, earning: NO_EARNING,
       because: 'No capital programme disclosed in the latest filing.', nextCheck: null };
   }
 
@@ -259,7 +463,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
     const anyDate = mapped.some((p) => p.completes);
     return {
       state: anyDate ? 'under_construction' : 'announced',
-      links, projects: mapped,
+      links, projects: mapped, earning: NO_EARNING,
       because: anyDate
         ? `Capital programme disclosed with a commissioning date${mapped[0]?.completes ? ` (${mapped[0].completes})` : ''}, and no utilisation figure yet — it is being built.`
         : 'Capital programme announced with no commissioning date and no utilisation figure. This is a commitment, not yet a result.',
@@ -270,7 +474,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
   // Built. Now the only question that matters: is it earning?
   if (utDelta == null) {
     return {
-      state: utNow == null ? 'commissioned_not_earning' : 'unverifiable', links, projects: mapped,
+      state: utNow == null ? 'commissioned_not_earning' : 'unverifiable', links, projects: mapped, earning: NO_EARNING,
       because: utNow == null
         ? `The documents state the capacity is ${stage ? STAGE_LABEL[stage].toLowerCase() : 'commissioned'}; no utilisation figure is disclosed, so how far it has filled cannot be read.`
         : `Utilisation is ${utNow}% but no prior figure was disclosed, so whether the new capacity is filling cannot be established from this filing alone.`,
@@ -280,7 +484,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
 
   if (utDelta <= 1 && revDown) {
     return {
-      state: 'disappointment', links, projects: mapped,
+      state: 'disappointment', links, projects: mapped, earning: NO_EARNING,
       because: `Capacity is commissioned, utilisation moved ${utDelta >= 0 ? '+' : ''}${utDelta.toFixed(0)}pp (${utPrior}% → ${utNow}%) and revenue is falling. `
         + 'The money is in the ground and the earnings have not appeared.',
       nextCheck: 'This is the condition that ends a capacity-led thesis. Check order intake and management\'s explanation before anything else.',
@@ -289,7 +493,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
 
   if (utDelta <= 1) {
     return {
-      state: 'commissioned_not_earning', links, projects: mapped,
+      state: 'commissioned_not_earning', links, projects: mapped, earning: NO_EARNING,
       because: `Capacity is commissioned and utilisation is flat at ${utNow}% (${utPrior}% before). Revenue and margin have not yet responded. `
         + 'Early in a ramp this is normal; it is also what a disappointment looks like in its first quarters.',
       nextCheck: utExp != null
@@ -300,7 +504,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
 
   if (utDelta > 1 && revUp && margUp) {
     return {
-      state: 'earning', links, projects: mapped,
+      state: 'earning', links, projects: mapped, earning: NO_EARNING,
       because: `Utilisation ${utPrior}% → ${utNow}% (${utDelta >= 0 ? '+' : ''}${utDelta.toFixed(0)}pp), revenue ${rev?.after}, margin ${marg?.delta || 'up'}. `
         + 'Every link in the chain moved — the capital produced the earnings.',
       nextCheck: null,
@@ -308,7 +512,7 @@ function buildCapexChainCore(summary: any | null, vars: StructuralVar[], stage: 
   }
 
   return {
-    state: 'starting_to_earn', links, projects: mapped,
+    state: 'starting_to_earn', links, projects: mapped, earning: NO_EARNING,
     because: `Utilisation ${utPrior}% → ${utNow}% (${utDelta >= 0 ? '+' : ''}${utDelta.toFixed(0)}pp) and the plant is filling. `
       + (margUp ? 'Margin is following.' : 'Margin has not yet followed — absorption usually lags utilisation by a quarter or two.'),
     nextCheck: margUp ? null : 'Margin is the link still open. If utilisation keeps rising and margin does not follow, the absorption assumption is wrong.',
@@ -410,7 +614,10 @@ const contributionAmount = (t: string): string | null => {
   const q = /((?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*(?:crores?|cr)\b)\s*(?:in|during|for)\s*(Q[1-4](?:\s?FY\d{2})?)/i.exec(t);
   if (q) return `${q[1]} in ${q[2]}`;
   const c = /contribut\w*[^.]{0,40}?((?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*(?:crores?|cr)\b)/i.exec(t);
-  return c ? c[1] : null;
+  if (c) return c[1];
+  // "subsidiary recorded revenue Rs.81.34 crore … in FY26" (BHAGCHEM). (zzz771)
+  const r = /revenue(?: of)?\s?((?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*(?:crores?|cr)\b)(?:[^.;]{0,60}?\b(?:in|for|during)\s+(FY\d{2}|Q[1-4](?:\s?FY\d{2})?))?/i.exec(t);
+  return r ? `${r[1]}${r[2] ? ` in ${r[2]}` : ''}` : null;
 };
 /** When a plan says it completes: "by the end of the financial year", "FY28". */
 const whenOf = (t: string): string | null => {

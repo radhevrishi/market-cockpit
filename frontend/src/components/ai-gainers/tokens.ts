@@ -26,6 +26,11 @@ export const NOT_DISCLOSED = 'Not disclosed';
 export const pct = (v: number | null | undefined, digits = 1): string =>
   typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(digits)}%` : '—';
 
+/** zzz771: the earnings mini never mixes "—" with "Not disclosed" — the owner
+ *  read the dash as "zero / flat". A missing figure is said in words. */
+export const pctND = (v: number | null | undefined, digits = 1): string =>
+  typeof v === 'number' && Number.isFinite(v) ? pct(v, digits) : NOT_DISCLOSED;
+
 export const moveColor = (v: number | null | undefined) =>
   typeof v !== 'number' || !Number.isFinite(v) ? C.faint : v >= 0 ? C.green : C.red;
 
@@ -133,6 +138,38 @@ export const RELEVANCE_META: Record<ResearchItem['portfolio']['relevance'], { la
   SAME_THEME: { label: 'SAME THEME', color: C.violet },
   UNRELATED: null,
 };
+
+// ── zzz771: can this event be THIS move's catalyst? ──────────────────────
+// The owner saw 47–55-day-old results shown as the "confirmed material event"
+// behind today's move. The pipeline now says, per item, whether the event
+// falls inside the move window; the UI says it on every card and never
+// guesses when the field is absent (older stored findings have no value).
+export type CatalystFor = NonNullable<ResearchItem['catalystFor']>;
+export const CATALYST_META: Record<CatalystFor, { label: string; color: string; hover: string }> = {
+  THIS_MOVE: { label: 'THIS MOVE', color: C.cyan, hover: 'Filed within the move window (India ≤3 sessions, US ≤7 days) — can be the catalyst for this move.' },
+  RECENT: { label: 'RECENT', color: C.amber, hover: 'Filed 4–14 days ago — a delayed reaction is possible; kept in the queue with a freshness penalty.' },
+  CONTEXT: { label: 'CONTEXT', color: C.faint, hover: 'Filed more than 14 days ago — a real event, but older context. Not this move’s catalyst; never counted as confirmed.' },
+};
+
+/** "47d" when the age is known; null when it is not (nothing is invented). */
+export const ageText = (it: Pick<ResearchItem, 'ageDays'>): string | null =>
+  typeof it.ageDays === 'number' && Number.isFinite(it.ageDays) ? `${Math.max(0, Math.round(it.ageDays))}d` : null;
+
+/** The card title. A bare BSE scrip code ("544501") is not a name the reader
+ *  recognises, so the pipeline may supply displayTicker (the company name)
+ *  and displayCode (the code, shown small). Fallback: the ticker as before. */
+export function displayName(it: Pick<ResearchItem, 'ticker' | 'company' | 'displayTicker' | 'displayCode'>): { title: string; code: string | null; company: string | null } {
+  const title = txt(it.displayTicker, '') || txt(it.ticker, '');
+  const code = txt(it.displayCode, '') || null;
+  const company = txt(it.company, '') || null;
+  const same = (a: string | null, b: string | null) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+  return {
+    title,
+    code: same(code, title) ? null : code,
+    // The name line is dropped when the title already IS the name.
+    company: same(company, title) ? null : company,
+  };
+}
 
 /** Materiality arithmetic as one tooltip string. */
 export function materialityHover(it: ResearchItem): string {

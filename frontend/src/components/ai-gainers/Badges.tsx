@@ -4,8 +4,8 @@
 import React from 'react';
 import type { ResearchItem } from '@/lib/ai-gainers/research-view';
 import {
-  C, CLASS_META, GAP_META, MATERIAL_COLOR, PERSIST_META, RELEVANCE_META, SOURCE_META, STAGE_META, TRANSMIT_META,
-  materialityHover, money, moveColor, pct, tint, triageLabel, txt,
+  C, CATALYST_META, CLASS_META, GAP_META, MATERIAL_COLOR, PERSIST_META, RELEVANCE_META, SOURCE_META, STAGE_META, TRANSMIT_META,
+  ageText, displayName, materialityHover, money, moveColor, pct, tint, triageLabel, txt,
 } from './tokens';
 
 export function Pill({ color, title, children, solid }: { color: string; title?: string; children: React.ReactNode; solid?: boolean }) {
@@ -21,7 +21,32 @@ export function Pill({ color, title, children, solid }: { color: string; title?:
 export function StatusPill({ it }: { it: ResearchItem }) {
   const m = CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST;
   const denial = it.eventClass === 'NEGATIVE' && it.flags?.denial;
+  // zzz771: an exchange "no undisclosed information" clarification is the
+  // company answering the exchange, not a denial of anything. It sits under
+  // NO_CATALYST with flags.denial and is shown neutral — the owner read the
+  // red NEGATIVE/DENIAL pill as bad news about the company.
+  if (it.eventClass === 'NO_CATALYST' && it.flags?.denial) {
+    return <Pill color={C.faint} title="The company told the exchange it has no undisclosed information behind the price move. A clarification, not negative evidence.">⚪ COMPANY: NO UNDISCLOSED INFO</Pill>;
+  }
   return <Pill color={m.color} title={m.meaning}>{denial ? '🔴 COMPANY DENIAL' : m.pill}</Pill>;
+}
+
+/** zzz771: THIS MOVE / RECENT (9d) / CONTEXT (47d). Absent field → nothing:
+ *  a stored finding from before the field existed must not be guessed at. */
+export function CatalystForBadge({ it }: { it: ResearchItem }) {
+  const k = it.catalystFor;
+  const m = k ? CATALYST_META[k] : null;
+  if (!m) return null;
+  const age = ageText(it);
+  const label = k === 'THIS_MOVE' ? m.label : age ? `${m.label} (${age})` : m.label;
+  return <Pill color={m.color} title={m.hover}>{label}</Pill>;
+}
+
+/** zzz771: the card-level marker for the "Older filings" section — the reader
+ *  must never mistake one of these for the event behind today's move. */
+export function OlderContextBadge({ it }: { it: ResearchItem }) {
+  const age = ageText(it);
+  return <Pill color={C.faint} solid title="A real filing, but older than the move window. Context for the name, not the catalyst for this move.">OLDER CONTEXT{age ? ` · ${age}` : ''}</Pill>;
 }
 
 export function TriagePill({ it }: { it: ResearchItem }) {
@@ -50,7 +75,9 @@ export function FlagChips({ it }: { it: ResearchItem }) {
   return (
     <>
       <BandChip it={it} />
-      {it.flags?.dilution && <Pill color={C.amber} title="The event adds shares (warrants, preferential, QIP, offering). Per-share economics may dilute.">DILUTION</Pill>}
+      {/* zzz771: colour follows the event class — a preferential allotment to a named fund is a
+          POTENTIAL / low-materiality financing, not a red negative. */}
+      {it.flags?.dilution && <Pill color={(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).color} title="The event adds shares (warrants, preferential, QIP, offering). Per-share economics may dilute.">DILUTION</Pill>}
       {it.flags?.listing && <Pill color={C.faint} title="Recent listing — no comparable prior close; the size of the move is unreliable.">RECENT LISTING</Pill>}
     </>
   );
@@ -97,17 +124,29 @@ export function Move({ it, big }: { it: ResearchItem; big?: boolean }) {
 }
 
 export function Name({ it, max = 220 }: { it: ResearchItem; max?: number }) {
+  // zzz771: title is displayTicker || ticker (a BSE scrip code is never the
+  // title when the pipeline supplied the name); the code sits small beside it.
+  const { title, code, company } = displayName(it);
   const href = it.market === 'IN' ? `https://www.screener.in/company/${encodeURIComponent(it.ticker)}/` : null;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 7, minWidth: 0, maxWidth: '100%' }}>
       {href
-        ? <a href={href} target="_blank" rel="noopener noreferrer" title={`Open ${it.ticker} on screener.in`} style={{ fontSize: 14, fontWeight: 900, color: C.text, textDecoration: 'none' }}>{it.ticker}</a>
-        : <b style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{it.ticker}</b>}
-      {it.company && (
-        <span title={it.company} style={{ fontSize: 12, color: C.dim, maxWidth: max, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{it.company}</span>
+        ? <a href={href} target="_blank" rel="noopener noreferrer" title={`Open ${it.ticker} on screener.in`} style={{ fontSize: 14, fontWeight: 900, color: C.text, textDecoration: 'none' }}>{title}</a>
+        : <b style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{title}</b>}
+      {code && <span title="Exchange scrip code" style={{ fontSize: 11, fontWeight: 700, color: C.faint, letterSpacing: 0.3 }}>{code}</span>}
+      {company && (
+        <span title={company} style={{ fontSize: 12, color: C.dim, maxWidth: max, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{company}</span>
       )}
     </span>
   );
+}
+
+/** zzz771: for NO_CATALYST rows — what was actually scanned, so "no catalyst"
+ *  is never read as "nothing happened". Absent → nothing. */
+export function ScanNote({ it }: { it: ResearchItem }) {
+  const n = txt(it.scanNote, '');
+  if (!n) return null;
+  return <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.45 }}><span style={{ fontWeight: 800, letterSpacing: 0.4, marginRight: 6 }}>SCANNED</span>{n}</div>;
 }
 
 export function Btn({ onClick, href, children, title, color }: { onClick?: () => void; href?: string | null; children: React.ReactNode; title?: string; color?: string }) {

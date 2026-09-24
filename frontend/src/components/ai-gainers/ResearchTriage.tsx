@@ -6,15 +6,16 @@
 // reader scans ten names in a minute and knows which two or three deserve
 // deep research. Order of the page is the order of attention:
 //   header + session → market summary → top 3 → RESEARCH QUEUE (dominant) →
-//   your book → watch / investigate → negative / denied → collapsed: no
-//   catalyst, price-band moves, data quality / listings, source failures.
+//   your book → watch / investigate → negative / denied → collapsed: older
+//   filings (context, not this move's catalyst — zzz771), no catalyst,
+//   price-band moves, data quality / listings, source failures.
 // Score arithmetic, full filing lists and long explanations are reachable
 // behind expanders and never on the default screen.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import React, { useCallback, useState } from 'react';
 import type { ResearchItem, ResearchView } from '@/lib/ai-gainers/research-view';
-import { BandChip, Btn, Move, Name, Pill, SectionHead, SourceBadge, StatusPill, TriagePill } from './Badges';
+import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { ResearchCard } from './ResearchCard';
 import { C, CLASS_META, MATERIAL_COLOR, istClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
@@ -86,6 +87,10 @@ function Summary({ view }: { view: ResearchView }) {
     { n: s.portfolioMatches, l: 'Portfolio matches', color: C.cyan, title: 'Names in or related to your book.' },
   ];
   if (s.dataUnavailable > 0) cards.push({ n: s.dataUnavailable, l: 'Data unavailable', color: C.amber, title: 'Sources failed — not the same as “no catalyst”.' });
+  // zzz771: older filings are counted once, here, and nowhere else — they are
+  // not confirmed events and not in the queue. Hidden when the pipeline did
+  // not supply the count (older cached views).
+  if (typeof s.context === 'number' && s.context > 0) cards.push({ n: s.context, l: 'Older context', title: 'Names whose only event is older than the move window — context, not this move’s catalyst.' });
   return (
     <section aria-label="Market summary">
       <SectionHead title="MARKET SUMMARY" />
@@ -128,14 +133,14 @@ function Top3({ items, onOpen }: { items: ResearchItem[]; onOpen: (it: ResearchI
   );
 }
 
-function Collapsible({ title, count, sub, children, color, testid }: { title: string; count: number; sub?: string; children: React.ReactNode; color?: string; testid?: string }) {
+function Collapsible({ title, count, sub, children, color, testid, paren }: { title: string; count: number; sub?: string; children: React.ReactNode; color?: string; testid?: string; paren?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <section data-testid={testid} data-open={open ? '1' : '0'} style={{ ...box, padding: '8px 12px' }}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
         style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', width: '100%' }}>
         <span style={{ fontSize: 12, color: C.faint, width: 12 }}>{open ? '▾' : '▸'}</span>
-        <span style={{ fontSize: 13, fontWeight: 900, letterSpacing: 0.5, color: color || C.dim }}>{title} — {count}</span>
+        <span style={{ fontSize: 13, fontWeight: 900, letterSpacing: 0.5, color: color || C.dim }}>{paren ? `${title} (${count})` : `${title} — ${count}`}</span>
         {sub && <span style={{ fontSize: 12, color: C.faint }}>{sub}</span>}
       </button>
       {open && <div style={{ marginTop: 8 }}>{children}</div>}
@@ -150,8 +155,11 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       <Name it={it} max={160} />
       <span style={{ fontWeight: 800, color: moveColor(it.move1d) }}>{pct(it.move1d)}</span>
       <span style={{ color: C.dim, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', flex: '1 1 220px' }} title={it.headline}>{txt(it.headline, 'No meaningful filing')}</span>
+      {it.eventClass === 'NO_CATALYST' && it.flags?.denial && <StatusPill it={it} />}
+      <CatalystForBadge it={it} />
       {extra}
       {onOpen && <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button>}
+      {it.eventClass === 'NO_CATALYST' && it.scanNote && <div style={{ flexBasis: '100%' }}><ScanNote it={it} /></div>}
     </div>
   );
 }
@@ -186,7 +194,7 @@ function Book({ items, onOpen }: { items: ResearchItem[]; onOpen: (it: ResearchI
               <tr key={it.ticker}>
                 <td style={td}>
                   <span style={{ color: C.cyan, fontWeight: 900, marginRight: 5 }} title={it.portfolio?.relevance === 'HOLDING' ? 'In your book' : txt(it.portfolio?.relevance, '')}>{it.portfolio?.relevance === 'HOLDING' ? '✓' : '◇'}</span>
-                  <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{it.ticker}</button>
+                  <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{txt(it.displayTicker, '') || it.ticker}</button>
                 </td>
                 <td style={{ ...td, color: moveColor(it.move1d), fontWeight: 800 }}>{pct(it.move1d)}</td>
                 <td style={{ ...td, minWidth: 220 }}><div style={{ color: C.text }}>{txt(it.headline, 'No event')}</div><div style={{ marginTop: 3 }}><StatusPill it={it} /></div></td>
@@ -214,6 +222,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
   const dq = (view.dataQuality || []).filter((it) => !isBand(it));
   const listings = dq.filter((it) => it.eventClass === 'LISTING' || it.flags?.listing);
   const fails = view.sourceFailures || [];
+  const context = view.context || [];   // zzz771: absent on older cached views → section hidden
   const empty = (view.summary?.scanned || 0) === 0;
 
   return (
@@ -255,6 +264,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                   <span style={{ fontSize: 13, color: C.text, flex: '1 1 260px', minWidth: 0 }}>{txt(it.headline, 'Headline not available')}</span>
                   <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
                     <Pill color={(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).color} title={(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).meaning}>{(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).short.toUpperCase()}</Pill>
+                    <CatalystForBadge it={it} />
                     <SourceBadge it={it} />
                     <BandChip it={it} />
                   </span>
@@ -273,6 +283,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                     <Name it={it} max={150} />
                     <span style={{ fontWeight: 800, color: moveColor(it.move1d), fontSize: 13 }}>{pct(it.move1d)}</span>
                     <span style={{ fontSize: 11, fontWeight: 900, color: it.flags?.denial ? C.amber : C.red }}>{it.flags?.denial ? 'DENIED' : 'NEGATIVE'}</span>
+                    <CatalystForBadge it={it} />
                     <span style={{ fontSize: 13, color: C.text, flex: '1 1 240px', minWidth: 0 }}>{txt(it.headline, 'Not available')}</span>
                     <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                   </div>
@@ -280,6 +291,18 @@ export function ResearchTriage(props: ResearchTriageProps) {
                 </div>
               ))}
             </section>
+          )}
+
+          {/* zzz771: real filings older than the move window. Shown apart, collapsed,
+              never counted as confirmed and never in the queue — the owner saw a
+              47-day-old result presented as the event behind today's move. */}
+          {context.length > 0 && (
+            <Collapsible testid="older-context" paren title="Older filings — context, not this move’s catalyst" count={context.length}
+              sub="Real events filed before the move window. Ranked by their own priority; never the catalyst, never counted as confirmed.">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 560px), 1fr))', gap: 10 }}>
+                {context.map((it, i) => <ResearchCard key={it.ticker} it={it} rank={i + 1} onOpen={onOpen} older />)}
+              </div>
+            </Collapsible>
           )}
 
           <Collapsible testid="no-catalyst" title="NO IDENTIFIED CATALYST" count={noCat.length} sub="Checked: nothing meaningful filed in the window.">

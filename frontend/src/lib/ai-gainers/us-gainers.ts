@@ -413,7 +413,19 @@ export function classifyUsFiling(a: Pick<AnnouncementLite, 'subject'>): UsClass 
   const form = usFormOf(a.subject);
   if (!form) return null;
   if (/^(424B\d|S-1|S-1\/A|S-1MEF|S-3|S-3\/A|S-3ASR|S-3MEF|F-1|F-1\/A|F-3|F-3\/A|F-3ASR|FWP|D|D\/A)$/.test(form)) {
-    return neg('dilution', form === 'D' || form === 'D/A' ? 'Form D — exempt (private) securities offering' : `${form} — registration / prospectus for securities: supply, dilution or resale overhang`);
+    // zzz771: a 424B3 (resale prospectus / prospectus update) or an S-3 / F-3
+    // shelf registers stock for sale without pricing a raise: a supply
+    // overhang, not new proceeds and not the move's catalyst (USDE +111%
+    // weekly on a 424B3 was classed "Fundraising, negative"). A 424B4/B5
+    // takedown, an S-1 / F-1 that is not a resale, an FWP or a Form D is a
+    // new raise. The view reads the words "resale / shelf" from this reason.
+    const subj = String(a.subject || '');
+    const resaleWords = /resale|selling (stock|share)holders?|secondary offering by/i.test(subj);
+    if (form === 'D' || form === 'D/A') return neg('dilution', 'Form D — exempt (private) securities offering: a new raise');
+    if (form === '424B3' || /^(S-3|F-3)/.test(form) || (/^(S-1|F-1)/.test(form) && resaleWords)) {
+      return neg('dilution', `${form} — resale / shelf registration: supply overhang, not a new raise`);
+    }
+    return neg('dilution', `${form} — prospectus for a securities offering: new supply, dilution`);
   }
   if (/^NT (10-[QK]|20-F)/.test(form)) return neg(null, `${form} — late periodic filing`);
   // Forms 3/4/5 are insider ownership reports: who holds what, not an event. (zzz770)
