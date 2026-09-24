@@ -17,7 +17,11 @@ import { releaseDocument } from '@/lib/us-guidance';
 import { usHtmlToText, mdnaSection, looksLikeUsEarningsRelease, type UsDocCandidate } from './adapter';
 
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
-const SPACING_MS = 125;
+// zzz793: this gate is separate from lib/us-edgar's (8/s) and lib/us-guidance's,
+// and all three can be busy during a batch read. 5/s here keeps the process
+// under SEC's 10/s ceiling; going over earns a 10-minute block, which is what
+// left cards "Reading the latest document…" with nothing coming back.
+const SPACING_MS = 200;
 let last = 0;
 
 async function secFetch(url: string, timeoutMs = 15_000): Promise<Response | null> {
@@ -35,6 +39,22 @@ export interface UsReadDoc {
   text: string;
   docUrl: string | null;
   detail?: string;
+}
+
+/**
+ * Companyfacts fetched fresh (no in-process cache), with one retry. Used when
+ * the cached copy carries no financial statements although the company files
+ * 10-Q / 10-K — a partial or stale answer must not stand for 12 hours.
+ */
+export async function fetchCompanyFactsFresh(cik: number): Promise<any | null> {
+  const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, '0')}.json`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await secFetch(url, 25_000);
+    if (r && r.ok) { try { return await r.json(); } catch { /* retry */ } }
+    if (r && r.status === 404) return null;
+    await new Promise((res) => setTimeout(res, 800 * (attempt + 1)));
+  }
+  return null;
 }
 
 /** The primary document of a periodic filing: the largest .htm that is not an exhibit. */
@@ -55,6 +75,15 @@ async function primaryDocUrl(indexUrl: string): Promise<string | null> {
 
 /** Read one candidate. Never throws; the outcome says what happened. */
 export async function readUsDocument(cik: number, c: UsDocCandidate, budget: number): Promise<UsReadDoc> {
+  if (c.role === 'catalyst') {
+    // zzz793: a contract / capacity / customer press release (8-K Item 1.01 /
+    // 7.01 / 8.01): its exhibit when there is one, capped — catalyst evidence.
+    const doc = await releaseDocument(cik, c.accession, c.url).catch(() => ({ url: null, html: null }));
+    if (!doc.html) return { cand: c, outcome: 'download_failed', text: '', docUrl: null, detail: 'the press release could not be downloaded from EDGAR' };
+    const text = usHtmlToText(doc.html);
+    if (text.length < 400) return { cand: c, outcome: 'too_short', text: '', docUrl: doc.url, detail: 'the filing carries no readable press-release text' };
+    return { cand: c, outcome: 'read', text: text.slice(0, Math.min(12_000, Math.max(0, budget))), docUrl: doc.url };
+  }
   if (c.role === 'release') {
     const doc = await releaseDocument(cik, c.accession, c.url).catch(() => ({ url: null, html: null }));
     if (!doc.html) return { cand: c, outcome: 'download_failed', text: '', docUrl: null, detail: 'EX-99.1 could not be downloaded from EDGAR' };

@@ -1,0 +1,2193 @@
+{
+ "_note": "zzz794 — the 30 India names that read THESIS NOT SET on the live harness (2026-09-24): their graded / screener results row and the latest filing read (only the fields the provisional type reads). Built from ledgers_live.json + graded_live.json.",
+ "rows": {
+  "JINDRILL": {
+   "graded": {
+    "ticker": "JINDRILL",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 8.3,
+    "eps_yoy_pct": -28.7,
+    "net_profit_yoy_pct": -28.8,
+    "sales_curr_cr": 275,
+    "sales_prev_cr": 254,
+    "pat_curr_cr": 47,
+    "pat_prev_cr": 66,
+    "opm_pct": 36,
+    "opm_prev_pct": 42,
+    "cfo_to_pat_ratio": 0.84,
+    "roce_pct": 14
+   },
+   "summary": {
+    "verdict_line": "Q1 FY27 confirms order‑book visibility but flags H2 revenue dip as three rigs undergo dehire and refurbishment.",
+    "headline": {
+     "period": "Quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs. 27,539 lakh",
+     "revenue_prior": "Rs. 25,409 lakh",
+     "revenue_growth": "",
+     "profit": "Rs. 4,714 lakh",
+     "profit_prior": "Rs. 6,611 lakh",
+     "profit_growth": "",
+     "ebitda": "Rs. 10,400 lakh",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "INR1,310 crores",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "LLOYDSENT": {
+   "graded": {
+    "ticker": "LLOYDSENT",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 70.1,
+    "eps_yoy_pct": -74,
+    "net_profit_yoy_pct": -55.8,
+    "sales_curr_cr": 563,
+    "sales_prev_cr": 331,
+    "pat_curr_cr": 110,
+    "pat_prev_cr": 249,
+    "opm_pct": 16,
+    "opm_prev_pct": 7,
+    "cfo_to_pat_ratio": -0.87,
+    "roce_pct": 4
+   },
+   "summary": {
+    "verdict_line": "Presentation establishes group transitioning into two focused listed businesses and value unlock from strategic investments.",
+    "headline": {
+     "period": "Quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "605.44 Crore",
+     "revenue_prior": "613.01 Crore",
+     "revenue_growth": "",
+     "profit": "1,200.65 Crore",
+     "profit_prior": "342.73 Crore",
+     "profit_growth": "",
+     "ebitda": "130.75 Crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "8,857 Crore",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "TI": {
+   "graded": {
+    "ticker": "TI",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 155.7,
+    "eps_yoy_pct": -72,
+    "net_profit_yoy_pct": -64,
+    "sales_curr_cr": 1046,
+    "sales_prev_cr": 409,
+    "pat_curr_cr": 32,
+    "pat_prev_cr": 89,
+    "opm_pct": 16,
+    "opm_prev_pct": 23,
+    "cfo_to_pat_ratio": -21.19,
+    "roce_pct": 12
+   },
+   "summary": {
+    "verdict_line": "Quarter confirms successful Imperial Blue integration and material volume scale-up while margins are temporarily pressured by packaging inflation and TSMA costs.",
+    "headline": {
+     "period": "Q1 FY27",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs. 1,046 crore",
+     "revenue_prior": "Rs. 394 crore",
+     "revenue_growth": "",
+     "profit": "Rs. 32 crore (Profit After Tax)",
+     "profit_prior": "(Rs. 1,490.65) lakh",
+     "profit_growth": "",
+     "ebitda": "Rs. 169 crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "ACE": {
+   "graded": {
+    "ticker": "ACE",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 20.6,
+    "eps_yoy_pct": 22.2,
+    "net_profit_yoy_pct": 21.4,
+    "sales_curr_cr": 786,
+    "sales_prev_cr": 652,
+    "pat_curr_cr": 119,
+    "pat_prev_cr": 98,
+    "opm_pct": 15,
+    "opm_prev_pct": 14,
+    "cfo_to_pat_ratio": 1,
+    "roce_pct": 32
+   },
+   "summary": {
+    "verdict_line": "Best-ever Q1 for ACE driven by volume recovery, pricing actions and cost control, with KATO JV formalised and defence ramp starting.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": "Exports orders (Middle East, Saudi) were live but pending shipment; no single-order concentration figures disclosed"
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management notes seasonal pattern with ~40%–45% revenue in H1 and 55%–60% in H2; expects recovery post-monsoon"
+    },
+    "capacity": {
+     "installed": "Current complex land ~100 acres; additional capacity expansion underway; existing capacity increased to about 1,000 tower cranes after minor arrangements",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "Plant 9",
+     "new_plant_location": "Within existing complex (4-5 km from existing facility)",
+     "commissioning": "expected by end of Q3 FY27 / early Q4",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Plant 9 (defence-focused facility)",
+      "type": "greenfield",
+      "amount": "INR40 crores to INR50 crores",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "expected functional by end of Q3 FY27 / early Q4",
+      "revenue_from": "expected to contribute after commissioning; combined turnover capacity stated ~INR500 crores"
+     }
+    ]
+   }
+  },
+  "ANTELOPUS": {
+   "graded": {
+    "ticker": "ANTELOPUS",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 156.86274509803923,
+    "eps_yoy_pct": 109.34959349593495,
+    "net_profit_yoy_pct": 390.90909090909093,
+    "sales_curr_cr": 131,
+    "sales_prev_cr": 51,
+    "pat_curr_cr": 54,
+    "pat_prev_cr": 11,
+    "opm_pct": 70,
+    "opm_prev_pct": 53,
+    "cfo_to_pat_ratio": 2.24,
+    "ocf_to_pat_ratio": 2.24,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Strong operational execution with drilling progress and frac-driven production growth expected from Q2.",
+    "headline": {
+     "period": "Q1 FY 27",
+     "basis": "consolidated",
+     "comparison": "qoq",
+     "revenue": "Total Income 132.2 INR Cr.",
+     "revenue_prior": "103.7 INR Cr.",
+     "revenue_growth": "",
+     "profit": "Net Profit for the period 54.3 INR Cr.",
+     "profit_prior": "38.1 INR Cr.",
+     "profit_growth": "",
+     "ebitda": "EBITDA 93.2 INR Cr.",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "AZAD": {
+   "graded": {
+    "ticker": "AZAD",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 26.3,
+    "eps_yoy_pct": 20.4,
+    "net_profit_yoy_pct": 20.7,
+    "sales_curr_cr": 173,
+    "sales_prev_cr": 137,
+    "pat_curr_cr": 35,
+    "pat_prev_cr": 29,
+    "opm_pct": 37,
+    "opm_prev_pct": 36,
+    "cfo_to_pat_ratio": -0.89,
+    "roce_pct": 12
+   },
+   "summary": {
+    "verdict_line": "Q1 establishes that capacity build-out and OEM qualifications are translating into higher-margin, multi-year aerospace and energy revenue visibility.",
+    "headline": {
+     "period": "Q1 FY27 (quarter ended June 30, 2026)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs. 1,726.0 Mn",
+     "revenue_prior": "Rs. 1,370.12 Mn",
+     "revenue_growth": "25.9% YoY (presentation)",
+     "profit": "Rs. 351.6 Mn",
+     "profit_prior": "Rs. 294.6 Mn",
+     "profit_growth": "19.5% YoY (presentation)",
+     "ebitda": "Rs. 643.6 Mn",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": "Presentation lists several large multi-year contracts (USD 112 Mn, USD 90 Mn, USD 83 Mn, USD 53.5 Mn, USD 40 Mn, USD 16 Mn) but no consolidated backlog total disclosed in this release."
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management claims 'multiyear order book visibility' and long-cycle contracts; no quantified coverage disclosed."
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "four dedicated facilities (7,600; 7,200; 7,200; 7,600 sq.m each) mentioned",
+     "added_by": "inaugurations between April 2025 and April 2026; remaining civil construction this fiscal year",
+     "new_plant": "Azad Centre of Excellence at Tunki Bollaram",
+     "new_plant_location": "Tunki Bollaram Industrial Park, Hyderabad",
+     "commissioning": "some facilities commissioned (Baker Hughes April 2026); civil construction to finish within fiscal year",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Tunki Bollaram Centre of Excellence (multiple dedicated facilities)",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "four dedicated facilities (two 7,600 sq.m and two 7,200 sq.m) plus others under construction",
+      "status": "under_construction",
+      "completion_period": "civil construction expected to complete within this fiscal year",
+      "revenue_from": "management expects substantive contribution from H2-FY27"
+     }
+    ]
+   }
+  },
+  "CLEANMAX": {
+   "graded": {
+    "ticker": "CLEANMAX",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 107,
+    "eps_yoy_pct": null,
+    "net_profit_yoy_pct": null,
+    "sales_curr_cr": 832,
+    "sales_prev_cr": 402,
+    "pat_curr_cr": 55,
+    "pat_prev_cr": -17,
+    "opm_pct": 51,
+    "opm_prev_pct": 66,
+    "cfo_to_pat_ratio": 20.13,
+    "roce_pct": 6
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes accelerating execution and a firm FY28 EBITDA threshold tied to 4.6 GW opex capacity.",
+    "headline": {
+     "period": "quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "INR 8,321.56 million",
+     "revenue_prior": "INR 4,023.39 million",
+     "revenue_growth": "",
+     "profit": "INR 551.74 million (Profit after tax)",
+     "profit_prior": "INR (165.97) million",
+     "profit_growth": "",
+     "ebitda": "INR 4,628.62 million (Reported EBITDA) / Adjusted EBITDA INR 4,940.08 million",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "2.5 GW contracted yet to be executed capacity as of 30 June 2026",
+     "book_to_bill": "",
+     "execution_period": "portfolio provides ~18 months of build visibility; contracted yet-to-be-executed covers next 18 months",
+     "concentration": "80%+ of new volumes from existing customers; one CTU project represents 3 EAPAs but no single customer concentration percentage given"
+    },
+    "demand": {
+     "order_intake": "2,500 MW contracted yet to be executed; 6.0 GW total contracted capacity",
+     "order_intake_growth": "Contracted capacity grew from 4.422 GW (Mar-25) to 6.0 GW (Jun-26)",
+     "cancellations": "",
+     "revenue_visibility": "Built + under construction portfolio provides ~18 months of growth; weighted average PPA tenor 23 years"
+    },
+    "capacity": {
+     "installed": "6.0 GW contracted RE Power Sales capacity; 3.5 GW operational RE Power Sales capacity as of 30 June 2026",
+     "prior_installed": "4.422 GW contracted as of Mar 31, 2025",
+     "added": "403 MW commissioned in Q1 FY27; 500 MW total commissioned in quarter across segments",
+     "added_by": "Q1 FY27",
+     "new_plant": "525 MW CTU (Bikaner/Koppal referenced)",
+     "new_plant_location": "Rajasthan / Koppal mentioned",
+     "commissioning": "525 MW CTU commissioned; expectation of curtailment to persist",
+     "bottleneck": "CTU curtailment at Bikaner causing ~70% curtailment; CTU issues persisting"
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Koppal CTU project (two bays)",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "525 MW",
+      "status": "commissioned",
+      "completion_period": "one bay Oct 2026; second bay Mar 2027",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "E2E": {
+   "graded": {
+    "ticker": "E2E",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 336.1,
+    "eps_yoy_pct": null,
+    "net_profit_yoy_pct": null,
+    "sales_curr_cr": 157,
+    "sales_prev_cr": 36,
+    "pat_curr_cr": 44,
+    "pat_prev_cr": -3,
+    "opm_pct": 75,
+    "opm_prev_pct": 29,
+    "cfo_to_pat_ratio": -7.62,
+    "roce_pct": -1
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes that large GPU scale-up (Blackwell/B200) materially lifted utilization and margins.",
+    "headline": {
+     "period": "Quarter ended June 30, 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "INR 15,675.99 lakh",
+     "revenue_prior": "INR 3,611.02 lakh",
+     "revenue_growth": "334.3%",
+     "profit": "INR 4,388.21 lakh",
+     "profit_prior": "INR (284.14) lakh",
+     "profit_growth": "",
+     "ebitda": "INR 11,79.00 lakh",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "5,100+ GPUs live (including 1,024 B200)",
+     "prior_installed": "3,900 GPUs (Mar-26 figure shown)",
+     "added": "1,024 B200",
+     "added_by": "May 2026 / Q1 FY27",
+     "new_plant": "",
+     "new_plant_location": "Delhi NCR & Chennai DCs",
+     "commissioning": "B200s went online and were put on revenue",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "maximal utilization (management statement)",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": "fleet-wide (H100/H200/B200 references)"
+    },
+    "capex_projects": [
+     {
+      "name": "GPU deployments (Blackwell B200)",
+      "type": "not_stated",
+      "amount": "CWIP INR 5,334 Mn for GPUs deployed in May 2026 (FY26 note)",
+      "capacity_added": "1,024 B200s mentioned",
+      "status": "commissioned",
+      "completion_period": "May 2026",
+      "revenue_from": "Q1 FY27 (put on revenue)"
+     }
+    ]
+   }
+  },
+  "EBGNG": {
+   "graded": {
+    "ticker": "EBGNG",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 32.1,
+    "eps_yoy_pct": 33,
+    "net_profit_yoy_pct": 52.6,
+    "sales_curr_cr": 412,
+    "sales_prev_cr": 312,
+    "pat_curr_cr": 29,
+    "pat_prev_cr": 19,
+    "opm_pct": 12,
+    "opm_prev_pct": 10,
+    "cfo_to_pat_ratio": -1.63,
+    "roce_pct": 20
+   },
+   "summary": {
+    "verdict_line": "Q1 establishes that demand and margin recovery are broad-based, driven by inventory strategy and international mix.",
+    "headline": {
+     "period": "Q1 FY27",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "INR412.5 crore",
+     "revenue_prior": "INR312.3 crore",
+     "revenue_growth": "",
+     "profit": "INR28.9 crore",
+     "profit_prior": "INR18.5 crore",
+     "profit_growth": "",
+     "ebitda": "INR52.9 crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "EXICOM": {
+   "graded": {
+    "ticker": "EXICOM",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 61.5,
+    "eps_yoy_pct": null,
+    "net_profit_yoy_pct": null,
+    "sales_curr_cr": 331,
+    "sales_prev_cr": 205,
+    "pat_curr_cr": -74,
+    "pat_prev_cr": -83,
+    "opm_pct": -7,
+    "opm_prev_pct": -19,
+    "cfo_to_pat_ratio": 0.32,
+    "roce_pct": -15
+   },
+   "summary": {
+    "verdict_line": "Quarter shows strong revenue and order-book momentum but consolidated profitability still weighs on Tritium losses and transition costs.",
+    "headline": {
+     "period": "Quarter ended June 30, 2026 (Q1 FY27)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs 331.1 crore",
+     "revenue_prior": "Rs 205.3 crore",
+     "revenue_growth": "61.2% YoY",
+     "profit": "Loss Rs 73.6 crore",
+     "profit_prior": "Loss Rs 83.1 crore",
+     "profit_growth": "",
+     "ebitda": "Loss Rs 21.9 crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "INR1,400 crore (consolidated) as of 1 July 2026; Critical Power ~INR1,000 crore",
+     "growth": "",
+     "order_inflow": "Tritium bookings USD20.8m in Q1; Exicom standalone new orders including INR85 crore DC systems",
+     "book_to_bill": "",
+     "execution_period": "BharatNet service ~10 years; other orders to be executed across FY27",
+     "concentration": "Some large customers named (leading telco, two tower companies, system integrators) but no % share disclosed"
+    },
+    "demand": {
+     "order_intake": "Tritium Q1 bookings USD20.8m; Exicom wins including INR85 crore telco order; EV order book ~INR200 crore",
+     "order_intake_growth": "Tritium bookings ~2x QoQ",
+     "cancellations": "",
+     "revenue_visibility": "Order book +INR1,400 crore gives multi-quarter visibility; BharatNet service over 10 years"
+    },
+    "capacity": {
+     "installed": "Hyderabad plant built: 2,00,000+ AC chargers/annum; 4,000+ DC chargers/annum",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "Hyderabad manufacturing facility",
+     "new_plant_location": "Hyderabad, India",
+     "commissioning": "Commissioned in Q4 FY26 and fully into production in Q1 FY27",
+     "bottleneck": "Management cites supply-chain disruptions (semiconductors, plastics, copper) as limiting full utilisation"
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Hyderabad manufacturing facility",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "2,00,000+ AC chargers / annum; 4,000+ DC chargers / annum; 10K Li-ion battery packs mfg",
+      "status": "commissioned",
+      "completion_period": "Q4 FY26 (commissioned)",
+      "revenue_from": "Q1 FY27 production; expected to support FY27 order execution"
+     }
+    ]
+   }
+  },
+  "FCL": {
+   "graded": {
+    "ticker": "FCL",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 175.2,
+    "eps_yoy_pct": 50,
+    "net_profit_yoy_pct": 92,
+    "sales_curr_cr": 377,
+    "sales_prev_cr": 137,
+    "pat_curr_cr": 48,
+    "pat_prev_cr": 25,
+    "opm_pct": 16,
+    "opm_prev_pct": 18,
+    "cfo_to_pat_ratio": -0.19,
+    "roce_pct": 18
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes an early post-acquisition consolidation of US oilfield platform with upgraded Texas capacity and improving blended margins.",
+    "headline": {
+     "period": "Q1 FY27 (quarter ended June 30, 2026)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs. 386.72 crore (Total Revenue)",
+     "revenue_prior": "Rs. 146.21 crore",
+     "revenue_growth": "164.94%",
+     "profit": "Rs. 48.21 crore (PAT)",
+     "profit_prior": "Rs. 25.03 crore",
+     "profit_growth": "92.67%",
+     "ebitda": "Rs. 59.14 crore (EBITDA)",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "~2,68,000 MTPA total company capacity",
+     "prior_installed": "",
+     "added": "~69,000–70,000 MTPA (Texas)",
+     "added_by": "Q1 FY27",
+     "new_plant": "not_stated",
+     "new_plant_location": "Texas, USA",
+     "commissioning": "capacity expansion commissioned in Q1 FY27",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "63% (US Texas plant)",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": "Texas manufacturing facility"
+    },
+    "capex_projects": [
+     {
+      "name": "Texas capacity expansion",
+      "type": "brownfield",
+      "amount": "",
+      "capacity_added": "~69,000–70,000 MTPA",
+      "status": "commissioned",
+      "completion_period": "Q1 FY27",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "HSCL": {
+   "graded": {
+    "ticker": "HSCL",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 28.1,
+    "eps_yoy_pct": 23.6,
+    "net_profit_yoy_pct": 27.4,
+    "sales_curr_cr": 1432,
+    "sales_prev_cr": 1118,
+    "pat_curr_cr": 228,
+    "pat_prev_cr": 179,
+    "opm_pct": 20,
+    "opm_prev_pct": 22,
+    "cfo_to_pat_ratio": 0.51,
+    "roce_pct": 22
+   },
+   "summary": {
+    "verdict_line": "Quarter underscores transition to higher‑value materials with self‑funded capex and phased battery materials scale‑up.",
+    "headline": {
+     "period": "quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs 1,431.88 Cr",
+     "revenue_prior": "Rs 1,118.29 Cr",
+     "revenue_growth": "28.04%",
+     "profit": "Rs 228.43 Cr",
+     "profit_prior": "Rs 179.36 Cr",
+     "profit_growth": "27.36%",
+     "ebitda": "Rs 313.11 Cr",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management cites customer sampling and strategic tie-ups (IBC, Sicona) and says sample B supplied; approval process typically 1.5–2 years."
+    },
+    "capacity": {
+     "installed": "600,000 MTPA coal tar distillation; 250,000 MTPA carbon black (130,000 MTPA speciality)",
+     "prior_installed": "",
+     "added": "40,000 MTPA LFP (phase), 200 MTPA CNT, 6,000 MTPA SSCB conversion, 2,700 MTPA anthraquinone phase2",
+     "added_by": "various (Q3FY27–Q4FY28)",
+     "new_plant": "LFP cathode, CNT, SSCB, Anthraquinone/Carbazole",
+     "new_plant_location": "Mahistikry (CNT, SSCB references)",
+     "commissioning": "Various as above",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "80%",
+     "prior": "",
+     "expected": "90%+",
+     "expected_by": "during the year",
+     "basis": "consolidated (management comment)"
+    },
+    "capex_projects": [
+     {
+      "name": "LFP Cathode Phase 1",
+      "type": "greenfield",
+      "amount": "Rs. 1,125 Cr",
+      "capacity_added": "40,000 MTPA (Phase 1: 2,000 MTPA milestone)",
+      "status": "announced",
+      "completion_period": "Phase1 Q3FY27",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "CNT Plant Mahistikry",
+      "type": "greenfield",
+      "amount": "Rs. 70 Cr",
+      "capacity_added": "200 MTPA",
+      "status": "announced",
+      "completion_period": "Q4FY27",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Super Speciality Carbon Black conversion",
+      "type": "brownfield",
+      "amount": "Rs. 170 Cr",
+      "capacity_added": "6,000 MTPA (converted)",
+      "status": "announced",
+      "completion_period": "Q4FY28",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Anthraquinone & Carbazole expansion",
+      "type": "brownfield",
+      "amount": "Rs. 128 Cr",
+      "capacity_added": "2,700 MTPA (Phase2) bringing total to 5,300 MTPA",
+      "status": "announced",
+      "completion_period": "Phase1 Q2FY27 Phase2 Q2FY28",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "IFBAGRO-BE": {
+   "graded": {
+    "ticker": "IFBAGRO-BE",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 35.8,
+    "eps_yoy_pct": 18.4,
+    "net_profit_yoy_pct": 17.6,
+    "sales_curr_cr": 398,
+    "sales_prev_cr": 293,
+    "pat_curr_cr": 20,
+    "pat_prev_cr": 17,
+    "opm_pct": 8,
+    "opm_prev_pct": 7,
+    "cfo_to_pat_ratio": 1.66,
+    "roce_pct": 13
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes early integration of Cargill feed acquisition and initial Vietnam commercial shipments while margins face input and regulatory pressure.",
+    "headline": {
+     "period": "Quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "not_stated",
+     "revenue": "Rs 52,077 lakhs",
+     "revenue_prior": "Rs 41,573 lakhs",
+     "revenue_growth": "",
+     "profit": "Rs 2,583 lakhs",
+     "profit_prior": "Rs 937 lakhs",
+     "profit_growth": "",
+     "ebitda": "Rs 6,625 lakhs",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "25 KLPD Ethanol plant at the distillery",
+     "new_plant_location": "distillery (Noorpur, South 24 Parganas, West Bengal)",
+     "commissioning": "successfully commissioned during the year",
+     "bottleneck": "Due to seasonal marine supply and alleged regulatory issues, operations faced intermittent stoppages"
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Vietnam value-added seafood manufacturing (capex-light)",
+      "type": "not_stated",
+      "amount": "",
+      "capacity_added": "",
+      "status": "commercial_production",
+      "completion_period": "initial commercial operations in April 2026",
+      "revenue_from": "FY2026-27"
+     }
+    ]
+   }
+  },
+  "KOLTEPATIL": {
+   "graded": {
+    "ticker": "KOLTEPATIL",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 1021.951219512195,
+    "eps_yoy_pct": 958.8541666666666,
+    "net_profit_yoy_pct": 964.7058823529411,
+    "sales_curr_cr": 920,
+    "sales_prev_cr": 82,
+    "pat_curr_cr": 147,
+    "pat_prev_cr": -17,
+    "opm_pct": 21,
+    "opm_prev_pct": -32,
+    "cfo_to_pat_ratio": 1.48,
+    "ocf_to_pat_ratio": 1.48,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Q1 FY27 shows stronger cash generation, premiumisation of mix and Mumbai expansion while revenue recognition remains completion-timed.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "LLOYDSENGG": {
+   "graded": {
+    "ticker": "LLOYDSENGG",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 142.9,
+    "eps_yoy_pct": 120,
+    "net_profit_yoy_pct": 126.7,
+    "sales_curr_cr": 527,
+    "sales_prev_cr": 217,
+    "pat_curr_cr": 68,
+    "pat_prev_cr": 30,
+    "opm_pct": 13,
+    "opm_prev_pct": 12,
+    "cfo_to_pat_ratio": -1.28,
+    "roce_pct": 16
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes a scaled, merged platform driven by heavy consolidation and large orderbook expansion.",
+    "headline": {
+     "period": "quarter ended 30th June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs. 527.15 Crore",
+     "revenue_prior": "Rs. 217.01 Crore",
+     "revenue_growth": "approx. 142.92 %",
+     "profit": "Rs. 68.99 Crore PBT (Consolidated); PAT (incl associates) Rs. 68.2 Crore in presentation indicated as INR 682 Mn? The results filing shows PAT reconciliation; consolidated PAT (incl associates) in presentation: 682 (INR Mn)",
+     "profit_prior": "Rs. 29.73 Crore PBT prior quarter; prior PAT Rs. 168 (presentation)",
+     "profit_growth": "approx. 132.06 % (PBT growth as per filing)",
+     "ebitda": "Rs. 79.23 Crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "INR 88,569 Mn (presentation consolidated) / Rs. 2,817.42 Crore as on 1 July 2026 (results filing)",
+     "growth": "approx. 81.19 % (company statement)",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "Order inflows broad-based across group entities; presentation cites order inflows leading to proforma order book INR 88,569 Mn",
+     "order_intake_growth": "approx. 81.19 % as on 1 July 2026 vs prior year",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "Current Manufacturing Capacity ~300,000 sq m (presentation)",
+     "prior_installed": "",
+     "added": "Bhilai and Metalfab acquisitions expand fabrication capacity to ~150,000 MTPA with roadmap to ~200,000 (presentation claims)",
+     "added_by": "not stated",
+     "new_plant": "Bhilai unit and SISCOL units",
+     "new_plant_location": "Bhilai, Murbad, Nagpur, Ahmedabad, Hyderabad",
+     "commissioning": "SISCOL sixth manufacturing facility in Hyderabad fully operational (announced)",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "MOLBIO": {
+   "graded": {
+    "ticker": "MOLBIO",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 308,
+    "eps_yoy_pct": 149.6,
+    "net_profit_yoy_pct": 320.8,
+    "sales_curr_cr": 408,
+    "sales_prev_cr": 100,
+    "pat_curr_cr": 53,
+    "pat_prev_cr": -24,
+    "opm_pct": 25,
+    "opm_prev_pct": -16,
+    "cfo_to_pat_ratio": 0.94,
+    "ocf_to_pat_ratio": 0.94,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Truenat installs and kit-led recurring revenue scale; capacity headroom and R&D pipeline drive medium-term growth.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "Truenat test kits: 39 Mn kits/annum; Truenat devices: 5,400 devices/annum",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "Test kits 58.25%, Devices 42.30%",
+     "prior": "Test kits 58% (March trailing), Devices 42% (March trailing)",
+     "expected": "",
+     "expected_by": "",
+     "basis": "Consolidated FY26 utilisation stated in presentation; Q1 commentary referenced capacity headroom."
+    },
+    "capex_projects": [
+     {
+      "name": "Automation for manufacturing",
+      "type": "not_stated",
+      "amount": "INR72 crore",
+      "capacity_added": "",
+      "status": "announced",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Integrated R&D centre in Bengaluru",
+      "type": "not_stated",
+      "amount": "INR105 crore (approx)",
+      "capacity_added": "",
+      "status": "announced",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "NRBBEARING": {
+   "graded": {
+    "ticker": "NRBBEARING",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 19.4,
+    "eps_yoy_pct": 14.8,
+    "net_profit_yoy_pct": 15.2,
+    "sales_curr_cr": 370,
+    "sales_prev_cr": 310,
+    "pat_curr_cr": 38,
+    "pat_prev_cr": 33,
+    "opm_pct": 17,
+    "opm_prev_pct": 17,
+    "cfo_to_pat_ratio": 1.65,
+    "roce_pct": 18
+   },
+   "summary": {
+    "verdict_line": "Quarter confirms NRB's pivot into aerospace and engineered-adjacencies while keeping conservative financial discipline.",
+    "headline": {
+     "period": "Quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "36,953 lakhs",
+     "revenue_prior": "31,005 lakhs",
+     "revenue_growth": "",
+     "profit": "3,776 lakhs",
+     "profit_prior": "3,281 lakhs",
+     "profit_growth": "",
+     "ebitda": "",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "MTR order book ~INR25-30 crores; total defense/aerospace + NRB defence ~INR50 crores in hand",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Lifetime nominated business increased from INR800 crores to ~INR1,100 crores including US program"
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "Partial facility purchased in Aurangabad (Shendra region) for JV",
+     "new_plant_location": "Shendra, Aurangabad",
+     "commissioning": "commission by April '27",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Unitec JV plant (Aurangabad)",
+      "type": "brownfield",
+      "amount": "",
+      "capacity_added": "INR130 crores turnover capacity per INR100 crores investment mentioned",
+      "status": "announced",
+      "completion_period": "commission by April '27",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Group capex programme",
+      "type": "brownfield",
+      "amount": "INR270 crores total",
+      "capacity_added": "",
+      "status": "announced",
+      "completion_period": "not stated",
+      "revenue_from": ""
+     }
+    ]
+   }
+  },
+  "PICCADIL": {
+   "graded": {
+    "ticker": "PICCADIL",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 17.3,
+    "eps_yoy_pct": 12.4,
+    "net_profit_yoy_pct": 16.7,
+    "sales_curr_cr": 251,
+    "sales_prev_cr": 214,
+    "pat_curr_cr": 21,
+    "pat_prev_cr": 18,
+    "opm_pct": 17,
+    "opm_prev_pct": 18,
+    "cfo_to_pat_ratio": 0.86,
+    "roce_pct": 18
+   },
+   "summary": {
+    "verdict_line": "Q1 establishes capacity-led scaling while premiumisation drives branded alco‑bev growth and margin resilience.",
+    "headline": {
+     "period": "Q1 FY27 (quarter ended 30 June, 2026)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs 270.5 crore",
+     "revenue_prior": "",
+     "revenue_growth": "18.1% YoY (as stated)",
+     "profit": "Rs 21.8 crore PAT (standalone)/Rs 21.30 crore PAT (consolidated reported Rs 21.30 crore after adjustments?)",
+     "profit_prior": "",
+     "profit_growth": "15.4% YoY (as stated)",
+     "ebitda": "Rs 47.2 crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "Court order in Chennai affected ethanol orders temporarily; management expects orders to resume next month/quarter.",
+     "revenue_visibility": "Management states H2 typically contributes 60-65% of annual branded alco‑bev revenue, guiding FY27 growth to be H2-led."
+    },
+    "capacity": {
+     "installed": "Indri malt 30 KLPD; Indri ENA/Ethanol 220 KLPD; Chhattisgarh 200/210 KLPD; malt storage barrels target 100,000",
+     "prior_installed": "Indri malt 12 KLPD; Indri ENA/Ethanol 78 KLPD",
+     "added": "",
+     "added_by": "completed in FY26/Q1 FY27",
+     "new_plant": "Portavadie (Scotland) proposed distillery",
+     "new_plant_location": "Scotland",
+     "commissioning": "Chhattisgarh commissioned; Indri expansion commissioned",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "Indri malt ~80% for the 30 KLPD malt; Indri distillery ~60%; Chhattisgarh contributed ~15 days production and ~Rs 5 crore this quarter",
+     "prior": "",
+     "expected": "Chhattisgarh ~50% by year-end; Indri to scale utilisation",
+     "expected_by": "by end of FY27",
+     "basis": "company statements"
+    },
+    "capex_projects": [
+     {
+      "name": "Indri expansion",
+      "type": "brownfield",
+      "amount": "",
+      "capacity_added": "Malt from 12 KLPD to 30 KLPD; ENA/Ethanol from 78 KLPD to 220 KLPD",
+      "status": "commissioned",
+      "completion_period": "completed",
+      "revenue_from": "ongoing"
+     },
+     {
+      "name": "Chhattisgarh distillery",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "200/210 KLPD ENA/Ethanol",
+      "status": "commissioned",
+      "completion_period": "completed",
+      "revenue_from": "Q1 FY27 (sales commenced)"
+     },
+     {
+      "name": "Portavadie (Scotland) distillery",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "not stated",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "RATEGAIN": {
+   "graded": {
+    "ticker": "RATEGAIN",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 187.54578754578753,
+    "eps_yoy_pct": 101.76322418136017,
+    "net_profit_yoy_pct": 102.12765957446808,
+    "sales_curr_cr": 785,
+    "sales_prev_cr": 273,
+    "pat_curr_cr": 95,
+    "pat_prev_cr": 47,
+    "opm_pct": 22,
+    "opm_prev_pct": 18,
+    "cfo_to_pat_ratio": 2.46,
+    "ocf_to_pat_ratio": 2.46,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Integration largely complete; focus shifts from cost synergies to revenue synergies, cross‑sell and AI-driven monetisation in FY27.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "SONACOMS": {
+   "graded": {
+    "ticker": "SONACOMS",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 52.3,
+    "eps_yoy_pct": 44.3,
+    "net_profit_yoy_pct": 46.7,
+    "sales_curr_cr": 1301,
+    "sales_prev_cr": 854,
+    "pat_curr_cr": 179,
+    "pat_prev_cr": 122,
+    "opm_pct": 23,
+    "opm_prev_pct": 24,
+    "cfo_to_pat_ratio": 1.05,
+    "roce_pct": 14
+   },
+   "summary": {
+    "verdict_line": "Quarter confirms strong BEV momentum, Denso JVs and robotics orders reposition Sona for multi‑vector long‑term growth.",
+    "headline": {
+     "period": "quarter ended June 30, 2026 (Q1 FY27)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs 12,310 crore",
+     "revenue_prior": "",
+     "revenue_growth": "54%",
+     "profit": "Rs 181 crore (PAT)",
+     "profit_prior": "",
+     "profit_growth": "45%",
+     "ebitda": "Rs 303 crore (EBITDA)",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "Rs 240 billion",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "Net order book Rs 240 billion; Robotics orders Rs 8 billion added",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "TATATECH": {
+   "graded": {
+    "ticker": "TATATECH",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 33.8,
+    "eps_yoy_pct": 6,
+    "net_profit_yoy_pct": 6.5,
+    "sales_curr_cr": 1665,
+    "sales_prev_cr": 1244,
+    "pat_curr_cr": 181,
+    "pat_prev_cr": 170,
+    "opm_pct": 16,
+    "opm_prev_pct": 16,
+    "cfo_to_pat_ratio": 1.42,
+    "roce_pct": 21
+   },
+   "summary": {
+    "verdict_line": "Q1 shows accelerating, diversified deal wins (large vehicle and Tenneco), margin modestly up while investing to ramp multiyear programs.",
+    "headline": {
+     "period": "quarter ended June 30, 2026 (Q1 FY27)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "INR 1,665 crores",
+     "revenue_prior": "",
+     "revenue_growth": "25.2% year-on-year in constant currency (company statement)",
+     "profit": "PAT INR 181 crores",
+     "profit_prior": "",
+     "profit_growth": "",
+     "ebitda": "EBITDA INR 267 crores (margin 16.1%)",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "management: 'visibility across our pipeline' and expects strong double-digit organic revenue growth for FY27"
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "TDPOWERSYS": {
+   "graded": {
+    "ticker": "TDPOWERSYS",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 72.04301075268818,
+    "eps_yoy_pct": 72.49999999999997,
+    "net_profit_yoy_pct": 72,
+    "sales_curr_cr": 640,
+    "sales_prev_cr": 372,
+    "pat_curr_cr": 86,
+    "pat_prev_cr": 50,
+    "opm_pct": 19,
+    "opm_prev_pct": 19,
+    "cfo_to_pat_ratio": 1.5,
+    "ocf_to_pat_ratio": 1.5,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Quarter confirms strong export-led order inflows, execution focus, and active capacity expansion planning toward ~INR3,200–4,000 crore range.",
+    "order_book": {
+     "closing_value": "INR22,073 million",
+     "growth": "",
+     "order_inflow": "INR7,341 million in Q1",
+     "book_to_bill": "",
+     "execution_period": ""
+    },
+    "demand": {
+     "order_intake": "Q1 order inflow INR7,341 million; management expects ~INR700 crore per quarter run-rate",
+     "order_intake_growth": "87% YoY in Q1",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": "Debottlenecking planned (INR500 million) to raise capacity toward INR32 billion for FY'28; further capacity additions being evaluated for INR40 billion+."
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Debottlenecking",
+      "type": "debottlenecking",
+      "amount": "INR500 million",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "FY'28"
+     }
+    ]
+   }
+  },
+  "UNIMECH": {
+   "graded": {
+    "ticker": "UNIMECH",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 71.42857142857143,
+    "eps_yoy_pct": 45.744680851063855,
+    "net_profit_yoy_pct": 47.368421052631575,
+    "sales_curr_cr": 108,
+    "sales_prev_cr": 63,
+    "pat_curr_cr": 28,
+    "pat_prev_cr": 19,
+    "opm_pct": 36,
+    "opm_prev_pct": 31,
+    "cfo_to_pat_ratio": 2.18,
+    "ocf_to_pat_ratio": 2.18,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Quarter establishes consolidation progress post-Hobel, stronger qualification pipeline and early multi-year aerospace contracts.",
+    "order_book": {
+     "closing_value": "approximately INR280 crore as of 30 June 2026 (presentation: INR2,803 million consolidated).",
+     "growth": "marginally lower than previously consolidated order book due to execution and customer pull-ins.",
+     "order_inflow": "constructive; long-term LTAs in pipeline including aerospace Tier-1 and semiconductor OEM RFQs.",
+     "book_to_bill": "",
+     "execution_period": "nuclear execution planned in H2 FY27; precision parts next six months for many orders.",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "Order inflows remain constructive; LTA with FACC and RFQ from a large semiconductor equipment OEM.",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management cites healthy demand visibility and expects Q2 to be stronger, with H2 nuclear execution."
+    },
+    "capacity": {
+     "installed": "Installed capacity: 6.8 Lakh machine hours (FY25-26) / Manufacturing area ~563,000 sq. ft.",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "Kanoo JV facility in Dammam, Saudi Arabia",
+     "new_plant_location": "Dammam, Kingdom of Saudi Arabia",
+     "commissioning": "not stated",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "approximately 58%",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": "consolidated manufacturing facilities"
+    },
+    "capex_projects": [
+     {
+      "name": "Kanoo-Unimech Saudi JV facility",
+      "type": "greenfield",
+      "amount": "Total Investment in JV: ~USD30 Mn",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "VAML": {
+   "graded": {
+    "ticker": "VAML",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": null,
+    "eps_yoy_pct": null,
+    "net_profit_yoy_pct": null,
+    "sales_curr_cr": 21393,
+    "sales_prev_cr": null,
+    "pat_curr_cr": 6597,
+    "pat_prev_cr": null,
+    "opm_pct": 48,
+    "opm_prev_pct": null,
+    "cfo_to_pat_ratio": null,
+    "roce_pct": null
+   },
+   "summary": {
+    "verdict_line": "Debut quarter shows strong integrated production, margin expansion, deleveraging and a maiden dividend, driven by VAP and refinery ramp-up.",
+    "headline": {
+     "period": "Quarter ended 30 June 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "21,105 Cr",
+     "revenue_prior": "14,557 Cr",
+     "revenue_growth": "45%",
+     "profit": "6,597 Cr",
+     "profit_prior": "2,162 Cr",
+     "profit_growth": "205%",
+     "ebitda": "10,499 Cr",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "BALCO Smelter Expansion",
+      "type": "brownfield",
+      "amount": "",
+      "capacity_added": "435 KTPA (commissioning initiated)",
+      "status": "commissioned",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Lanjigarh Expansion",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "3.5 to 5 MTPA (Train-2 expansion)",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Kuraloi Coal Mine",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "",
+      "status": "announced",
+      "completion_period": "Q2FY27",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "VIYASH": {
+   "graded": {
+    "ticker": "VIYASH",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 19.444444444444446,
+    "eps_yoy_pct": 18.89763779527559,
+    "net_profit_yoy_pct": 113.51351351351352,
+    "sales_curr_cr": 946,
+    "sales_prev_cr": 792,
+    "pat_curr_cr": 79,
+    "pat_prev_cr": 37,
+    "opm_pct": 19,
+    "opm_prev_pct": 15,
+    "cfo_to_pat_ratio": 4.09,
+    "ocf_to_pat_ratio": 4.09,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Integration complete; margin expansion and balance-sheet repair underpin selective organic and inorganic growth.",
+    "headline": {
+     "period": "quarter ended June 30, 2026",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs. 946 crores",
+     "revenue_prior": "Rs. 792.0? (the release shows corresponding consolidated revenue 7,916.40 million -> Rs. 792 crore?)",
+     "revenue_growth": "19.5%",
+     "profit": "Rs. 79 crores (Profit after tax)",
+     "profit_prior": "Rs. 37 crores",
+     "profit_growth": "115%",
+     "ebitda": "Rs. 205 crores (Adjusted EBITDA)",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "Vizag API expansion",
+     "new_plant_location": "Vizag",
+     "commissioning": "commercialization started from July",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Companion animal tablet capacity expansion",
+      "type": "greenfield",
+      "amount": "",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "January-February (next year)",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "WONDERLA": {
+   "graded": {
+    "ticker": "WONDERLA",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 44.6,
+    "eps_yoy_pct": 38.4,
+    "net_profit_yoy_pct": 37.7,
+    "sales_curr_cr": 243,
+    "sales_prev_cr": 168,
+    "pat_curr_cr": 73,
+    "pat_prev_cr": 53,
+    "opm_pct": 46,
+    "opm_prev_pct": 46,
+    "cfo_to_pat_ratio": 1.32,
+    "ocf_to_pat_ratio": 1.32,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Chennai scales quickly; growth driven by Chennai and higher ARPU/non-ticketing, with corporate overhead and depreciation rising from new park.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Chennai Park",
+      "type": "greenfield",
+      "amount": "Rs.570 crores to Rs.600 crores",
+      "capacity_added": "",
+      "status": "commissioned",
+      "completion_period": "commenced operations 02 December 2025",
+      "revenue_from": "Q3 FY26/Q4 FY26 shown; contributed in Q1 FY27 (release states revenue Rs.4,499 lakhs for the quarter)"
+     }
+    ]
+   }
+  },
+  "BETA": {
+   "graded": {
+    "ticker": "BETA",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 26,
+    "eps_yoy_pct": 23,
+    "net_profit_yoy_pct": 33.3,
+    "sales_curr_cr": 126,
+    "sales_prev_cr": 100,
+    "pat_curr_cr": 16,
+    "pat_prev_cr": 12,
+    "opm_pct": 22,
+    "opm_prev_pct": 20,
+    "cfo_to_pat_ratio": 0.9,
+    "roce_pct": 19
+   },
+   "summary": {
+    "verdict_line": "Q4/FY26 establishes recovery-focused execution: exports delayed pushed growth into FY27, strategic IVF acquisition closed, API backward-integration underway.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": "Management says top five countries will contribute ~30% of export sales; specific large-order share not disclosed."
+    },
+    "demand": {
+     "order_intake": "200+ dossiers submitted; supply for delayed tenders to start Q1 FY27; management says ~50% of orders in hand for near-term supply.",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management: 'we have around 50% of the order in hand' and tenders cover near-term; expects H1 export growth ~30%."
+    },
+    "capacity": {
+     "installed": "Multiple plants: Adley Lab, Adley Formulations, Beta Drugs Ltd capacities listed in presentation (tablets, injections, lyophilized) as printed",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "Intermediate/API facility at Derabassi",
+     "new_plant_location": "Derabassi, Punjab",
+     "commissioning": "by end Q3 FY27",
+     "bottleneck": "Platin supply constraint impacted sales; management reports lyophilized capacity at ~85% utilization"
+    },
+    "utilisation": {
+     "current": "oral formulations ~40-45%; injectable liquid idle ~35-40%; lyophilized ~85%",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": "plant-level comments in concall"
+    },
+    "capex_projects": [
+     {
+      "name": "Derabassi intermediate/API facility",
+      "type": "brownfield",
+      "amount": "INR27 crores (total plant cost including land, machinery)",
+      "capacity_added": "",
+      "status": "under_construction",
+      "completion_period": "by end Q3 FY27",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  },
+  "ENTERO": {
+   "graded": {
+    "ticker": "ENTERO",
+    "market": "IN",
+    "source": "graded",
+    "quarter": "Q1 FY27",
+    "sales_yoy_pct": 38.17663817663818,
+    "eps_yoy_pct": 37.245696400625974,
+    "net_profit_yoy_pct": 73.33333333333333,
+    "sales_curr_cr": 1940,
+    "sales_prev_cr": 1404,
+    "pat_curr_cr": 52,
+    "pat_prev_cr": 30,
+    "opm_pct": 5,
+    "opm_prev_pct": 3.6,
+    "cfo_to_pat_ratio": 1.85,
+    "ocf_to_pat_ratio": 1.85,
+    "sector": ""
+   },
+   "summary": {
+    "verdict_line": "Q1 FY27 shows consolidated 40% LFL revenue growth with margin inflection led by MedTech mix and procurement scale.",
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": ""
+    },
+    "capacity": {
+     "installed": "",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": []
+   }
+  },
+  "LCL": {
+   "graded": {
+    "ticker": "LCL",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": null,
+    "eps_yoy_pct": null,
+    "net_profit_yoy_pct": null,
+    "sales_curr_cr": 503,
+    "sales_prev_cr": null,
+    "pat_curr_cr": 66,
+    "pat_prev_cr": null,
+    "opm_pct": 20,
+    "opm_prev_pct": null,
+    "cfo_to_pat_ratio": 1.68,
+    "roce_pct": 44
+   },
+   "summary": {
+    "verdict_line": "Order book-led revenue growth with margins driven by operating leverage, product launches and after‑sales expansion.",
+    "order_book": {
+     "closing_value": "INR1,778 Mn",
+     "growth": "up 30% since Mar 2026 and up 195% since Jun 2025 (as reported)",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "6 to 9 months",
+     "concentration": "Orders backed by advances ~20%; exports ~30% of orders in hand"
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Order book provides visibility for coming quarters (6–9 months)"
+    },
+    "capacity": {
+     "installed": "240 Tape lines / 13,800 Circular looms / 108,000 Tape winders (annual installed capacity FY26)",
+     "prior_installed": "",
+     "added": "",
+     "added_by": "",
+     "new_plant": "",
+     "new_plant_location": "",
+     "commissioning": "",
+     "bottleneck": "no specific bottleneck disclosed; management stated capacity fungible and current capacity adequate up to ~INR2,400–2,500 Mn turnover"
+    },
+    "utilisation": {
+     "current": "around 70%-75%",
+     "prior": "",
+     "expected": "up to 85%",
+     "expected_by": "",
+     "basis": "company-wide"
+    },
+    "capex_projects": [
+     {
+      "name": "Capacity to support INR2,400–2,500 Mn turnover",
+      "type": "not_stated",
+      "amount": "",
+      "capacity_added": "",
+      "status": "not_stated",
+      "completion_period": "",
+      "revenue_from": ""
+     }
+    ]
+   }
+  },
+  "SHYAMMETL": {
+   "graded": {
+    "ticker": "SHYAMMETL",
+    "market": "IN",
+    "source": "screener-live",
+    "period": "Jun 2026",
+    "sales_yoy_pct": 23.4,
+    "eps_yoy_pct": 18.1,
+    "net_profit_yoy_pct": 20.6,
+    "sales_curr_cr": 5455,
+    "sales_prev_cr": 4419,
+    "pat_curr_cr": 351,
+    "pat_prev_cr": 291,
+    "opm_pct": 14,
+    "opm_prev_pct": 13,
+    "cfo_to_pat_ratio": 1.91,
+    "roce_pct": 13
+   },
+   "summary": {
+    "verdict_line": "Quarter confirms strong execution: commissioning progress, higher value-added mix and sizeable in-flight capex funded by internal accruals.",
+    "headline": {
+     "period": "Quarter ended 30 June 2026 (Q1 FY27)",
+     "basis": "consolidated",
+     "comparison": "yoy",
+     "revenue": "Rs 5,455 crore",
+     "revenue_prior": "Rs 4,423 crore",
+     "revenue_growth": "23.3%",
+     "profit": "Rs 351 crore",
+     "profit_prior": "Rs 291 crore",
+     "profit_growth": "20.6%",
+     "ebitda": "Rs 812 crore",
+     "cash_from_operations": "",
+     "cash_flow_period": ""
+    },
+    "order_book": {
+     "closing_value": "",
+     "growth": "",
+     "order_inflow": "",
+     "book_to_bill": "",
+     "execution_period": "",
+     "concentration": ""
+    },
+    "demand": {
+     "order_intake": "",
+     "order_intake_growth": "",
+     "cancellations": "",
+     "revenue_visibility": "Management cites healthy demand and 10-month order bookings for existing foil plant"
+    },
+    "capacity": {
+     "installed": "16.93 MTPA Combined Production Capacity (presentation)",
+     "prior_installed": "",
+     "added": "Post-expansion target c.27 MTPA by FY31",
+     "added_by": "2031",
+     "new_plant": "CRM, Aluminium foil, HR coil, Ramsarup projects",
+     "new_plant_location": "Jamuria, Sambalpur, Odisha, Pakuria etc.",
+     "commissioning": "Various projects commissioning through FY27-FY29; aluminium foil commissioned Jul 2026",
+     "bottleneck": ""
+    },
+    "utilisation": {
+     "current": "",
+     "prior": "",
+     "expected": "",
+     "expected_by": "",
+     "basis": ""
+    },
+    "capex_projects": [
+     {
+      "name": "Hot Strip Mill / HR Coil (flat products)",
+      "type": "greenfield",
+      "amount": "Budgeted Capex Rs 5,400 crore (hot strip mill)",
+      "capacity_added": "1.58 MTPA",
+      "status": "under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     },
+     {
+      "name": "Aluminium flat rolled and foil projects",
+      "type": "greenfield",
+      "amount": "Total Aluminium Capex Rs. 800 crore; Rs. 744 crore incurred; pending Rs. 56 crore",
+      "capacity_added": "Flat Rolled Products 0.06 MMTPA; Aluminium Foil 0.018 MMTPA; Battery Foil 0.005 MMTPA",
+      "status": "commissioned (foil) / under_construction",
+      "completion_period": "not stated",
+      "revenue_from": "not stated"
+     }
+    ]
+   }
+  }
+ }
+}

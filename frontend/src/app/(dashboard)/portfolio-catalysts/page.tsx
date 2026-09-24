@@ -303,7 +303,7 @@ export default function PortfolioCatalystsPage() {
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
           if (set) return `${set} (set by you)`;
-          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional)` : `${r.pattern.pattern} (auto)`;
+          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional${(r.pattern as any).weak ? ', weak fit' : ''})` : `${r.pattern.pattern} (auto)`;
           return 'Not set';
         }}
         onJump={(t: string) => { setFilter(null); setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />
@@ -576,13 +576,13 @@ export default function PortfolioCatalystsPage() {
         return untyped.length > 0 || nearest.length > 0 ? (
           <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
             {untyped.length > 0 && <>
-              <b style={{ color: '#A78BFA' }}>◇ Thesis setup required — {untyped.length} holding{untyped.length === 1 ? '' : 's'}.</b> The quarter&apos;s figures fit none of the four types, even loosely, so they sit in their own <b>THESIS NOT SET</b> state — not intact, not weakening, not a thesis status at all. The evidence on their cards is shown as read. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
+              <b style={{ color: '#A78BFA' }}>◇ Thesis setup required — {untyped.length} holding{untyped.length === 1 ? '' : 's'}.</b> There are no figures on file for {untyped.length === 1 ? 'this company' : 'these companies'} yet (no results row, no screener figures, no filing read), so no thesis type can be worked out. They sit in their own <b>THESIS NOT SET</b> state — not intact, not weakening, not a thesis status at all. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
               <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{untyped.map((r) => r.symbol).join(' · ')}</div>
             </>}
             {nearest.length > 0 && (
               <div style={{ marginTop: untyped.length ? 6 : 0 }}>
-                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto, PROVISIONAL)</b> — no exact test fired, and the figures fit the type loosely. Their status is provisional: it cannot read strengthening or on-track until you confirm the type (or set another) with the <b>thesis</b> picker.
-                <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern})`).join(' · ')}</div>
+                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto, PROVISIONAL)</b> — no exact test fired, so the type was worked out from the company&apos;s own figures{nearest.some((r) => (r.pattern as any)?.weak) ? <> ({nearest.filter((r) => (r.pattern as any)?.weak).length} of them a <b>weak fit</b>, where the figures did not point clearly at one type and the business description decided)</> : null}. Their status is provisional: at most CONFIRMATION REQUIRED — it cannot read strengthening or on-track until you confirm the type (or set another) with the <b>thesis</b> picker.
+                <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern}${(r.pattern as any)?.weak ? ', weak fit' : ''})`).join(' · ')}</div>
               </div>
             )}
           </div>

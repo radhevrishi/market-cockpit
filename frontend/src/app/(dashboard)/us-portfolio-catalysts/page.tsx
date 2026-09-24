@@ -13,6 +13,11 @@
 // Output figures (revenue / earnings / margin / cash conversion) come from
 // the company's XBRL filings, deterministically, with no model.
 //
+// zzz793: the company's own fiscal periods and SEC wording on every card
+// (lib/us-thesis/display), $M never crore, a provisional type for every
+// holding with SEC data, Conviction Beats (US) on the bench, reads that
+// always end, no ranking number on screen.
+//
 // NO PRICE IS READ ON THIS PAGE OR IN ITS ENGINE. The book is read through
 // its price-free projection (/api/v1/us-book?view=universe).
 // ═══════════════════════════════════════════════════════════════════════════
@@ -20,9 +25,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useUsBook } from '@/lib/us-thesis/use-us-book';
+import { useUsBook, US_CB_SOURCE } from '@/lib/us-thesis/use-us-book';
+import { usDisplayer } from '@/lib/us-thesis/display';
+import { usExportLine, usWhyLine, usBatchLine } from '@/lib/us-thesis/page-words';
+import { usNoTypeReason } from '@/lib/us-thesis/us-type';
+import { usdWords } from '@/lib/us-thesis/xbrl';
 import { ThesisCard } from '@/components/thesis-card';
-import { PersistentStrip, detectForRow } from '@/components/special-focus-panel';
+import { PersistentStrip } from '@/components/special-focus-panel';
+import { usDetect } from '@/lib/us-thesis/persist-us';
 import { UsSpecialFocusPanel } from '@/components/us-special-focus-panel';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
@@ -44,7 +54,7 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 });
 
 export default function UsPortfolioCatalystsPage() {
-  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior } = useUsBook();
+  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount } = useUsBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
   const [copied, setCopied] = useState<string | null>(null);
@@ -62,7 +72,12 @@ export default function UsPortfolioCatalystsPage() {
       return (b.assessment?.triggered.length || 0) - (a.assessment?.triggered.length || 0) || a.symbol.localeCompare(b.symbol);
     });
   }, [inSource, filter]);
-  const persistBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, detectForRow(r as any)] as const)), [list]);
+  // Detection runs on the engine's rows (period keys intact); what is PRINTED
+  // goes through the US wording (the company's own fiscal periods, $M).
+  const displayerBySymbol = useMemo(() => new Map(all.map((r) => [r.symbol, usDisplayer(r)] as const)), [all]);
+  const displayBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(r)] as const)), [list, displayerBySymbol]);
+  const persistBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(usDetect(r as any))] as const)), [list, displayerBySymbol]);
+  const cbOnPage = all.filter((r) => r.benchSource === US_CB_SOURCE).length;
   const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
     || ['NEW_EVIDENCE_AVAILABLE', 'STALE', 'RETRIEVAL_FAILED', 'SOURCE_UNAVAILABLE'].includes(String(r.freshness?.evidence_state || '')));
   const needPrior = list.filter((r) => needsPrior(r));
@@ -94,23 +109,21 @@ export default function UsPortfolioCatalystsPage() {
   };
 
   const constructive = inSource.filter((r) => CONSTRUCTIVE.includes(String(r.assessment?.status)));
-  const analysed = inSource.filter((r) => r.assessment).length;
-  const exclStatus = ORDER.filter((s) => !CONSTRUCTIVE.includes(s)).map((s) => [s, inSource.filter((r) => r.assessment?.status === s).length] as const).filter(([, n]) => n > 0);
 
   return (
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>🇺🇸 US Portfolio Catalysts</h1>
         <div style={{ fontSize: 14, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 860 }}>
-          The India thesis engine over <b style={{ color: C.text }}>SEC evidence</b>: every US holding carries a thesis ledger (A · B · F · G) checked against its
-          10-Q / 10-K and 8-K earnings release. Revenue, earnings, margin and cash conversion come from the company&apos;s XBRL filings (no model).
+          The same thesis engine as India Portfolio Catalysts, over <b style={{ color: C.text }}>SEC evidence</b>: every US holding carries a thesis ledger (A · B · F · G) checked against its
+          10-Q / 10-K and 8-K earnings release. Revenue, earnings, margin and cash conversion come from the company&apos;s XBRL filings (no model), quarter against the same quarter a year earlier, in the company&apos;s own fiscal calendar.
           Backlog, capacity, utilization, capex and guidance come from the filings, read on click. <b style={{ color: C.text }}>No price is read anywhere in this engine.</b>{' '}
           Separate from the India book and ledgers. <a href="/portfolio-catalysts" style={{ color: C.cyan }}>India Portfolio Catalysts →</a>
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `🏆 US bench ${uc.bench}`]] as Array<[typeof source, string]>).map(([k, label]) => (
+        {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `🏆 US bench ${uc.bench}${cbOnPage ? ` (incl. ${cbOnPage} ${US_CB_SOURCE})` : ''}`]] as Array<[typeof source, string]>).map(([k, label]) => (
           <button key={k} onClick={() => setSource(k)} style={pill(source === k)}>{label}</button>
         ))}
         {excluded.length > 0 && <span style={{ fontSize: 13, color: C.amber }}>{excluded.length} non-US listing{excluded.length === 1 ? '' : 's'} excluded (no SEC coverage) — listed below</span>}
@@ -124,6 +137,7 @@ export default function UsPortfolioCatalystsPage() {
           </b>
           {' '}· status buckets {ORDER.filter((s) => uc.byStatus[s]).map((s) => uc.byStatus[s]).join(' + ') || 0}{uc.notAssessed ? ` + ${uc.notAssessed} not yet assessed` : ''} = {uc.statusSum + uc.notAssessed} shown
           {' '}· {uc.thesisNotSet} thesis not set · {uc.provisional} provisional (nearest-fit)
+          {' '}· bench: {cbOnPage} from {US_CB_SOURCE}{cbCount ? ` (${cbCount} on that list; names you hold are counted once, as holdings)` : ' (none on that list in this browser or on the server)'}
           {source !== 'all' && <span style={{ color: C.faint }}> · view {source}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
         </div>
       )}
@@ -148,18 +162,19 @@ export default function UsPortfolioCatalystsPage() {
 
       {!evidenceLoading && constructive.length > 0 && (
         <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', background: C.bg, fontSize: 13, color: C.dim }}>
-          <b style={{ color: C.text }}>📋 TradingView · US — {constructive.length} in constructive statuses</b> · {analysed} analysed = {constructive.length} constructive + {analysed - constructive.length} not exported{exclStatus.length ? ` (${exclStatus.map(([s, n]) => `${n} ${STATUS_META[s].label.toLowerCase()}`).join(', ')})` : ''}
+          <b style={{ color: C.text }}>📋 TradingView · US — {constructive.length} eligible for research export</b> · {usExportLine(inSource as any, (s) => STATUS_META[s as ThesisStatus]?.label || s).line}
           <button onClick={() => copyTv(constructive, 'US names')} style={{ ...pill(false), marginLeft: 8, fontSize: 12.5 }}>Copy for TradingView</button>
           {copied && <span style={{ marginLeft: 8, color: C.green }}>{copied}</span>}
         </div>
       )}
 
       <UsSpecialFocusPanel rows={inSource as any} ready={!evidenceLoading && !loading}
+        display={(t, x) => (displayerBySymbol.get(String(t).toUpperCase()) || displayerBySymbol.get(t) || ((y: any) => y))(x)}
         onReadPrior={(t) => readPriorPeriods(t)} priorRunning={priorBatch.running}
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
           if (set) return `${set} (set by you)`;
-          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional)` : `${r.pattern.pattern} (auto)`;
+          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `${r.pattern.pattern} (provisional — confirm it)` : `${r.pattern.pattern} (auto)`;
           return 'Not set';
         }}
         onJump={(t) => { setFilter(null); setTimeout(() => document.getElementById(`uspc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />
@@ -171,11 +186,11 @@ export default function UsPortfolioCatalystsPage() {
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
             <div style={{ fontSize: 15, fontWeight: 900, color: C.text, marginBottom: 4 }}>🏁 {researchPriorityTitle(ranked.length)}</div>
-            <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 6 }}>Only 🟢 strengthening / 🔵 on-track theses are eligible. Evidence strength, not a buy list — no price used.</div>
+            <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 6 }}>Only 🟢 strengthening / 🔵 on-track theses are eligible, ordered by how firmly the filings evidence the catalyst. Research order, not a buy list — no price used.</div>
             {ranked.slice(0, 15).map((r, i) => (
               <div key={r.symbol} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
-                <b style={{ color: C.text }}>{i + 1}. {r.symbol}</b> · {STATUS_META[r.assessment!.status].label} · score {r.assessment!.catalystRank!.score}
-                {r.assessment!.catalystRank!.drivers.slice(0, 2).map((d) => <span key={d.group} style={{ color: C.faint }}> · {d.group}: {d.text.slice(0, 90)}</span>)}
+                <b style={{ color: C.text }}>{i + 1}. {r.symbol}</b> · {STATUS_META[r.assessment!.status].label}
+                <div style={{ color: C.faint }}>{usWhyLine(displayBySymbol.get(r.symbol)?.assessment?.catalystRank || r.assessment!.catalystRank)}</div>
               </div>
             ))}
           </div>
@@ -193,10 +208,11 @@ export default function UsPortfolioCatalystsPage() {
           {!evidenceLoading && ec.retrieval_failed > 0 && <> · {ec.retrieval_failed} retrieval failed</>}
         </span>
         {!evidenceLoading && !batch.running && (
-          <button onClick={() => readAll(list.map((r) => r.symbol))} title="Reads and persists the SEC evidence of each name that needs it — never read, failed, or with a newer filing. Current names are skipped without a model call. Three at a time."
-            style={pill(true)}>&#10024; {needRead.length ? `Read SEC evidence for ${needRead.filter((r) => list.includes(r)).length} that need it (uses AI)` : 'All evidence current'}</button>
+          <button onClick={() => readAll(inSource.map((r) => r.symbol))} title="Reads and persists the SEC evidence of each name that needs it — never read, failed, or with a newer filing. Current names are skipped without a model call. Two at a time; a failed read is retried once."
+            style={pill(true)}>&#10024; {needRead.length ? `Read SEC evidence for ${needRead.length} that need it (uses AI)` : 'All evidence current'}</button>
         )}
-        {batch.running && <><span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span><button onClick={stop} style={pill(true, C.amber)}>Stop</button></>}
+        {batch.running && <><span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>{usBatchLine(batch)}</span><button onClick={stop} style={pill(true, C.amber)}>Stop</button></>}
+        {!batch.running && usBatchLine(batch) && <span style={{ fontSize: 13, color: C.amber }}>{usBatchLine(batch)}</span>}
         {!anyRunning && !evidenceLoading && (
           <button onClick={() => checkAll(list.map((r) => r.symbol))} title="Asks EDGAR for 10-Q / 10-K / 8-K Item 2.02 filings not yet on file. Discovery only — no AI, nothing is read." style={pill(false)}>&#8635; Check EDGAR for new filings (no AI)</button>
         )}
@@ -207,14 +223,14 @@ export default function UsPortfolioCatalystsPage() {
             &#8635; Read prior quarter for {needPrior.length} (uses AI · enables before → after)
           </button>
         )}
-        {priorBatch.running && <><span style={{ fontSize: 13.5, fontWeight: 800, color: C.cyan }}>Reading prior quarter {priorBatch.done} of {priorBatch.total}…</span><button onClick={stop} style={pill(true, C.amber)}>Stop</button></>}
+        {priorBatch.running && <><span style={{ fontSize: 13.5, fontWeight: 800, color: C.cyan }}>{usBatchLine(priorBatch, 'Reading prior quarter')}</span><button onClick={stop} style={pill(true, C.amber)}>Stop</button></>}
         <a href="/us-portfolio-book" style={{ marginLeft: 'auto', fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none' }}>US Portfolio Book →</a>
       </div>
 
-      {!loading && !batch.running && (batch.resumable || 0) > 0 && (
+      {!loading && !batch.running && !batch.stopped && (batch.resumable || 0) > 0 && (
         <div style={{ fontSize: 14, color: C.dim, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px' }}>
           <b style={{ color: C.text }}>Last batch: {batch.done} processed · {batch.resumable} remaining</b> — persisted; nothing was lost on reload.{' '}
-          <button onClick={() => readAll(list.map((r) => r.symbol))} style={pill(true)}>Resume</button>
+          <button onClick={() => readAll(inSource.map((r) => r.symbol))} style={pill(true)}>Resume</button>
         </div>
       )}
 
@@ -230,25 +246,32 @@ export default function UsPortfolioCatalystsPage() {
         const nearest = list.filter((r) => r.pattern?.fit === 'nearest' && !thesisTypes[r.symbol.toUpperCase()]);
         return untyped.length || nearest.length ? (
           <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
-            {untyped.length > 0 && <><b style={{ color: '#A78BFA' }}>◇ Thesis setup required — {untyped.length}.</b> The filed figures fit none of the four types, so they sit in <b>THESIS NOT SET</b> — not intact, not weakening. Set why you hold each with the <b>thesis</b> picker on its card.
-              <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{untyped.map((r) => r.symbol).join(' · ')}</div></>}
-            {nearest.length > 0 && <div style={{ marginTop: untyped.length ? 6 : 0 }}><b style={{ color: C.cyan }}>{nearest.length} on a nearest-fit type (auto, PROVISIONAL)</b> — the status cannot read strengthening or on-track until you confirm the type.
-              <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern})`).join(' · ')}</div></div>}
+            {untyped.length > 0 && <><b style={{ color: '#A78BFA' }}>◇ Thesis not set — {untyped.length}.</b> There is nothing in the SEC data to fit a type from, so they sit in <b>THESIS NOT SET</b> — not intact, not weakening. Set why you hold each with the <b>thesis</b> picker on its card.
+              {untyped.map((r) => <div key={r.symbol} style={{ fontSize: 12, color: C.faint, marginTop: 2 }}><b style={{ color: C.dim }}>{r.symbol}</b> — {usNoTypeReason(r.sec, r.gradedWhy)}</div>)}</>}
+            {nearest.length > 0 && <div style={{ marginTop: untyped.length ? 6 : 0 }}><b style={{ color: C.cyan }}>{nearest.length} on a provisional type (worked out from the company&apos;s own SEC data)</b> — CONFIRMATION REQUIRED: the status cannot read strengthening, on track or weakening until you confirm or change the type with the picker.
+              <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (provisional ${r.pattern!.pattern})`).join(' · ')}</div></div>}
           </div>
         ) : null;
       })()}
 
       {loading && <div style={{ fontSize: 14, color: C.dim }}>Reading your US book…</div>}
 
-      {list.map((r) => (
-        <div key={r.symbol} id={`uspc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
-          {!evidenceLoading && <PersistentStrip pcs={persistBySymbol.get(r.symbol) || []} onOpenFocus={() => document.getElementById('us-special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
-          {(r.fiscalLabel || r.gradedWhy) && (
-            <div style={{ fontSize: 12, color: C.faint, padding: '2px 4px' }}>
-              {r.fiscalLabel && <>Company fiscal period: <b style={{ color: C.dim }}>{r.fiscalLabel}</b>{r.reportingPeriod ? ` (engine period key ${r.reportingPeriod}, calendar quarter)` : ''}</>}
-              {!r.graded && r.gradedWhy && <> · No XBRL grader row: {r.gradedWhy}</>}
-            </div>
-          )}
+      {list.map((r0) => { const r = displayBySymbol.get(r0.symbol) || r0; return (
+        <div key={r0.symbol} id={`uspc-${r0.symbol}`} data-testid="us-card-block" style={{ scrollMarginTop: 70, border: `1px solid ${C.border}`, borderRadius: 10, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* zzz793: ONE block per company, top to bottom — the company's
+              own line, then ITS persistent-catalyst strip (named), then ITS
+              card. The strip used to sit above a fiscal line and read as the
+              previous company's card (RELL's order book under NTNX). */}
+          <div style={{ fontSize: 12, color: C.faint, padding: '2px 4px', lineHeight: 1.5 }}>
+            <b style={{ color: C.text }}>{r0.symbol}</b>{' · '}
+            {r0.graded?.period
+              ? <>SEC XBRL figures: <b style={{ color: C.dim }}>{String(r0.graded.period)}</b> vs the same quarter a year earlier{r0.graded.xbrl_derived ? ` · ${String(r0.graded.xbrl_derived)}` : ''}{r0.graded.currency && r0.graded.currency !== 'USD' ? ` · reported in ${String(r0.graded.currency)} (growth rates only)` : ''}</>
+              : <>No quarterly SEC XBRL figures: {r0.sec?.note || r0.gradedWhy || 'not loaded yet'}</>}
+            {r0.sec?.forms_line ? ` · ${r0.sec.forms_line}` : ''}
+            {(r0.graded?.rpo || r0.sec?.rpo) ? <> · order backlog (RPO, SEC XBRL) <b style={{ color: C.dim }}>{usdWords((r0.graded?.rpo || r0.sec?.rpo).cur.value)}</b>{(r0.graded?.rpo || r0.sec?.rpo).pct != null ? ` (${(r0.graded?.rpo || r0.sec?.rpo).pct >= 0 ? '+' : ''}${(r0.graded?.rpo || r0.sec?.rpo).pct}% on a year earlier)` : ''}</> : null}
+            {r0.benchSource ? <> · on the bench from <b style={{ color: C.dim }}>{r0.benchSource}</b></> : null}
+          </div>
+          {!evidenceLoading && <PersistentStrip ticker={r0.symbol} pcs={persistBySymbol.get(r0.symbol) || []} onOpenFocus={() => document.getElementById('us-special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
           <ThesisCard
             thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
             onThesisType={(t) => setThesisType(r.symbol, t)}
@@ -266,7 +289,7 @@ export default function UsPortfolioCatalystsPage() {
             sources={r.sourceUrl ? [{ label: 'SEC filing', url: r.sourceUrl }] : []}
           />
         </div>
-      ))}
+      ); })}
 
       {excluded.length > 0 && (
         <div data-testid="us-excluded" style={{ border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>

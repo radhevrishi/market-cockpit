@@ -38,7 +38,10 @@ import {
   type UsDocCandidate, type UsDocOutcome,
 } from '@/lib/us-thesis/adapter';
 import { readUsDocument } from '@/lib/us-thesis/sec-docs';
+import { fiscalCalendar, fiscalPeriodName } from '@/lib/us-thesis/xbrl';
 import { usFreshness } from '@/lib/us-thesis/calendar';
+import { sanitizeUsEvents, sanitizeUsSummary } from '@/lib/us-thesis/sanitize';
+import { usCatalystEvents, mergeUsEvents } from '@/lib/us-thesis/catalyst-text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,6 +51,10 @@ const MODEL = 'claude-haiku-4-5-20251001';
 const PROMPT_VERSION = 'us-thesis-read-v1';
 const MAX_CHARS = 140_000;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9-]{0,11}$/;
+// zzz793: every read ends inside the function's own budget, so the page is
+// never left waiting on a request the platform has already killed.
+const BUDGET_MS = 165_000;
+const DOC_TIMEOUT_MS = 40_000;
 
 type Attempt = { source: string; outcome: 'ok' | 'empty' | 'error'; detail: string; found: number };
 
@@ -64,6 +71,8 @@ export async function GET(req: NextRequest) {
   const force = sp.get('force') === '1';
   if (!TICKER_RE.test(ticker)) return NextResponse.json({ ok: false, error: 'a valid ticker is required' }, { status: 400 });
 
+  const t0 = Date.now();
+  const left = () => BUDGET_MS - (Date.now() - t0);
   const runId = `usrun_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date().toISOString();
   const ledgerBefore = await loadUsLedger(ticker);
@@ -108,8 +117,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, state: 'RETRIEVAL_FAILED', error: 'SEC EDGAR could not be reached — this is a retrieval failure, not an absence of disclosure. Retry later.', discovery_attempts: attempts, ledger: a.ledger, persisted: a.persisted, freshness: usFreshness(a.ledger) });
   }
   const now = new Date();
-  const all = usCandidatesFromSubmissions(subs.recent, cik, now, { includeSixK: mode !== 'check' });
-  const firm = all.filter((c) => c.form !== '6-K');   // what counts as NEW evidence
+  // zzz793: recent 8-K Item 1.01 / 7.01 / 8.01 press releases (≤120 days) are
+  // read as catalyst evidence; they never count as new RESULTS evidence.
+  const all = usCandidatesFromSubmissions(subs.recent, cik, now, { includeSixK: mode !== 'check', catalystDays: mode !== 'check' ? 120 : undefined });
+  const firm = all.filter((c) => c.form !== '6-K' && c.role !== 'catalyst');   // what counts as NEW evidence
   attempts.push({ source: 'SEC EDGAR submissions', outcome: all.length ? 'ok' : 'empty', detail: `${firm.length} 10-Q / 10-K / 8-K Item 2.02 filings in the window${all.length > firm.length ? ` (+${all.length - firm.length} 6-K)` : ''}`, found: all.length });
 
   const unseen = priorTarget ? [] : unseenDocuments(ledgerBefore, firm.map((c) => ({ url: c.url, kind: c.kind, label: c.label, dateIso: c.dateIso })), startedAt);
@@ -160,13 +171,17 @@ export async function GET(req: NextRequest) {
   let budget = MAX_CHARS;
   const read: Array<{ cand: UsDocCandidate; text: string }> = [];
   const outcomes: Array<{ url: string; outcome: UsDocOutcome; chars?: number; detail?: string; docUrl?: string | null; hash?: string | null }> = [];
-  const queue = [...plan.docs];
+  // Up to three recent catalyst press releases follow the period's documents
+  // (not for a prior-quarter read — they are current news).
+  const catalysts = priorTarget ? [] : all.filter((c) => c.role === 'catalyst').slice(0, 3);
+  const queue = [...plan.docs, ...catalysts];
   // A 6-K that is not a release is replaced by the next 6-K of the period.
   const spareSixK = all.filter((c) => c.form === '6-K' && c.period === plan.period && !queue.includes(c));
   while (queue.length) {
     const c = queue.shift()!;
-    if (budget < 10_000) { outcomes.push({ url: c.url, outcome: 'budget_exhausted' }); continue; }
-    const r = await readUsDocument(cik, c, budget);
+    if (budget < 10_000 || left() < 60_000) { outcomes.push({ url: c.url, outcome: 'budget_exhausted', detail: budget < 10_000 ? undefined : 'time budget reached before this document' }); continue; }
+    const r = await withTimeout(readUsDocument(cik, c, budget), DOC_TIMEOUT_MS,
+      { cand: c, outcome: 'download_failed' as const, text: '', docUrl: null, detail: `EDGAR did not answer within ${DOC_TIMEOUT_MS / 1000} s` });
     if (r.outcome !== 'read') {
       outcomes.push({ url: c.url, outcome: r.outcome, detail: r.detail, docUrl: r.docUrl });
       if (c.form === '6-K' && spareSixK.length) queue.push(spareSixK.shift()!);
@@ -176,7 +191,7 @@ export async function GET(req: NextRequest) {
     outcomes.push({ url: c.url, outcome: 'read', chars: r.text.length, docUrl: r.docUrl, hash: contentHash(r.text) });
     read.push({ cand: c, text: r.text });
   }
-  const documents = usLedgerDocuments(all.filter((c) => c.form !== '6-K' || outcomes.some((o) => o.url === c.url)), outcomes);
+  const documents = usLedgerDocuments(all.filter((c) => (c.form !== '6-K' && c.role !== 'catalyst') || outcomes.some((o) => o.url === c.url)), outcomes);
 
   if (!read.length) {
     const failed = outcomes.some((o) => o.outcome === 'download_failed');
@@ -193,7 +208,9 @@ export async function GET(req: NextRequest) {
   // The company's own fiscal quarter, from its XBRL tags (bounded; optional).
   const periodic = read.find((r) => r.cand.role === 'periodic')?.cand || plan.docs.find((d) => d.role === 'periodic') || null;
   const facts = periodic?.reportDate ? await withTimeout(companyFacts(cik).catch(() => null), 8_000, null) : null;
-  const fiscalLabel = periodic?.reportDate ? fiscalLabelFor(facts, periodic.reportDate) : null;
+  // zzz793: the company's own calendar (fiscal year end from its annual
+  // facts), falling back to the fp / fy EDGAR tagged.
+  const fiscalLabel = periodic?.reportDate ? (fiscalPeriodName(periodic.reportDate, 'Q', fiscalCalendar(facts)) || fiscalLabelFor(facts, periodic.reportDate)) : null;
 
   const text = read.map(({ cand, text: t }) => `### SOURCE: ${cand.label} (${cand.form}, SEC EDGAR)\n${t}`).join('\n\n');
   const det = deterministicUsFacts(read.map(({ cand, text: t }) => ({ label: cand.label, text: t, role: cand.role })));
@@ -205,7 +222,7 @@ export async function GET(req: NextRequest) {
       model: activeModel(MODEL), max_tokens: 4096, system: US_SYSTEM,
       tools: [SUMMARY_TOOL], tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
       messages: [{ role: 'user', content: `${ticker}${fiscalLabel ? ` — ${fiscalLabel}` : ''}${periodic?.reportDate ? ` (quarter ended ${periodic.reportDate})` : ''}\n\n${text}` }],
-    }, { signal: AbortSignal.timeout(70_000) });
+    }, { signal: AbortSignal.timeout(Math.max(20_000, Math.min(70_000, left() - 30_000))) });
     if (!resp.ok) {
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
@@ -227,20 +244,27 @@ export async function GET(req: NextRequest) {
     const a = await persistUsAttempt(ticker, runId, startedAt, 'FAILED', v.rejected, { documents_found: all.length, failureKind: 'model_failed', mode: runMode, attempts });
     return NextResponse.json({ ok: false, error: `The summary cited figures that do not appear in the SEC documents (${v.dropped.slice(0, 3).join(', ')}), so it was discarded rather than shown.`, ledger: a.ledger, persisted: a.persisted });
   }
-  data = v.data;
+  // zzz793: a figure with no unit that fits its variable is not kept.
+  data = sanitizeUsSummary(v.data).summary;
 
   // ── THE STRUCTURAL EVENTS (shared extractor; no call without passages) ───
   let events: StructuralEvent[] = [];
   let pipeline: ExtractionPipeline | null = null;
   let rawExtraction: any = null;
   try {
-    const r = await extractStructuralEvents(read.map(({ cand, text: t }) => ({ label: cand.label, kind: cand.kind, text: t })), ticker, { model: activeModel(MODEL) });
-    events = r.events; pipeline = r.pipeline; rawExtraction = (r as any).raw ?? null;
+    const budgetLeft = Math.max(5_000, left() - 15_000);
+    const r = await withTimeout(extractStructuralEvents(read.map(({ cand, text: t }) => ({ label: cand.label, kind: cand.kind, text: t })), ticker, { model: activeModel(MODEL) }), budgetLeft,
+      { events: [], pipeline: { passages_by_family: det.byFamily, passages_sent: 0, events_returned: 0, events_kept: 0, events_by_family: {}, dropped: [], model_error: `time budget reached — structural events not extracted this read (${Math.round(budgetLeft / 1000)} s left)` } } as any);
+    events = sanitizeUsEvents(r.events); pipeline = r.pipeline; rawExtraction = (r as any).raw ?? null;
   } catch (e: any) {
     pipeline = { passages_by_family: det.byFamily, passages_sent: 0, events_returned: 0, events_kept: 0, events_by_family: {}, dropped: [], model_error: String(e?.message || e) };
   }
+  // zzz793: US catalyst wording read deterministically (RPO / backlog,
+  // bookings, book-to-bill, awards, customers, new facilities, guidance
+  // raised), merged with the model's events — every one quotes its sentence.
+  events = mergeUsEvents(events, usCatalystEvents(read.map(({ cand, text: t }) => ({ label: cand.label, text: t }))));
   data.events = events;
-  data.us_fiscal = { label: fiscalLabel, quarter_end: periodic?.reportDate || null, note: 'the company\'s own fiscal quarter; the ledger period key is the calendar quarter the filing date resolves to' };
+  data.us_fiscal = { label: fiscalLabel, quarter_end: periodic?.reportDate || null, note: 'the company\'s own fiscal quarter' };
 
   const persisted = await persistUsEvidenceRun({
     ticker, runId, startedAt, documents, filingDate: plan.docs.map((d) => d.dateIso).sort().pop() || null,

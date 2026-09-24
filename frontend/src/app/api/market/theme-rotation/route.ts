@@ -12,6 +12,14 @@
 //
 // Live Yahoo data only (self-contained — no dependency on the multibagger uploads).
 // Cached in Redis for 30 min so the tab opens instantly and Yahoo isn't hammered.
+//
+// zzz795 — adds, per theme: constituent breadth (above 50-DMA now and a month
+// ago, outperformers, near highs/lows) and a volume-based flow PROXY; the
+// verdict moved to lib/theme-rotation/verdict.ts (short-term break blocks a
+// BUY; crowding is not a TRIM); weekly snapshots in KV
+// (theme-rotation:snap:v1:<market>:<ISO week>) via the build, GET ?history=1
+// and POST (the page's evidence overlay). The drill adds each member's change
+// in relative strength vs a month ago.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
@@ -21,6 +29,12 @@ import {
   themesForRegion, benchmarkForRegion, leadersFor, subThemesFor, drillSymbolsFor,
   type ThemeRegion, type ThemeDef,
 } from '@/lib/theme-universe';
+import { verdictFor as verdictForV2 } from '@/lib/theme-rotation/verdict';
+import { memberStat, aggregateBreadth, aggregateFlow, type Series } from '@/lib/theme-rotation/series-metrics';
+import {
+  isoWeek, recentWeeks, snapKey, SNAP_TTL_S, SNAP_MAX_BYTES, compactBase, mergeSnapshot, sanitizeOverlay, snapshotBytes,
+} from '@/lib/theme-rotation/history';
+import type { WeeklySnapshot } from '@/lib/theme-rotation/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,7 +42,8 @@ export const maxDuration = 60;
 // zzz485 — BUMP this version whenever the payload shape changes (e.g. adding the
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v21:${r}`;
+// v22 (zzz795): constituent breadth, volume flow proxy, short-term-break verdict.
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v22:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -315,11 +330,15 @@ function synthesize(series: { ts: number[]; closes: number[] }[]): { ts: number[
   return { ts, closes };
 }
 
-// chunked parallel fetch so Yahoo isn't hit with 50 requests at once
-async function fetchChunked(symbols: string[], range: string, interval: string) {
-  const out = new Map<string, { ts: number[]; closes: number[]; price: number; dayChg: number; dayKnown: boolean }>();
-  const size = 8;
+// chunked parallel fetch so Yahoo isn't hit with 50 requests at once.
+// zzz795 — carries the volume series (for the flow proxy) and accepts a
+// deadline: chunks not started before it are skipped, never half-fetched.
+type Bar = { ts: number[]; closes: number[]; volumes: Array<number | null>; price: number; dayChg: number; dayKnown: boolean };
+async function fetchChunked(symbols: string[], range: string, interval: string, opts: { size?: number; deadline?: number } = {}) {
+  const out = new Map<string, Bar>();
+  const size = opts.size ?? 8;
   for (let i = 0; i < symbols.length; i += size) {
+    if (opts.deadline && Date.now() > opts.deadline) break;
     const chunk = symbols.slice(i, i + size);
     const res = await Promise.all(chunk.map(async (sym) => {
       try {
@@ -327,83 +346,24 @@ async function fetchChunked(symbols: string[], range: string, interval: string) 
         if (!ch || !ch.closes || ch.closes.length < 10) return null;
         return {
           sym, ts: ch.timestamps as number[], closes: ch.closes as number[],
+          volumes: (Array.isArray((ch as any).volumes) ? (ch as any).volumes : []) as Array<number | null>,
           price: ch.regularMarketPrice || 0, dayChg: ch.changePercent || 0,
           // zzz643 — whether that 0 means "flat" or "could not be determined".
           dayKnown: (ch as any).changeKnown !== false,
         };
       } catch { return null; }
     }));
-    for (const r of res) if (r) out.set(r.sym, { ts: r.ts, closes: r.closes, price: r.price, dayChg: r.dayChg, dayKnown: r.dayKnown });
+    for (const r of res) if (r) out.set(r.sym, { ts: r.ts, closes: r.closes, volumes: r.volumes, price: r.price, dayChg: r.dayChg, dayKnown: r.dayKnown });
   }
   return out;
 }
 
-// zzz494 — VERDICT now cross-checks ABSOLUTE trend (1M + 3M returns), not just the
-// RRG quadrant + 50-DMA. The old version gave a green 'EARLY BUY' to any Improving
-// theme above its 50-DMA — so a falling knife like Drones (−27% over 3M, a one-month
-// dead-cat bounce) read as 'early buy', which is exactly what confused the read. Rule
-// now: no green call while the 3-month trend is still a deep decline, and 'EARLY BUY'
-// requires a REAL turn (above 50-DMA + last month up + 3M not deeply negative). This
-// makes the words match the numbers a human sees.
-function verdictFor(quadrant: string, aboveSMA50: boolean, m1?: number, m3?: number): { verdict: string; color: string; note: string } {
-  const up1  = typeof m1 === 'number' ? m1 > 0 : false;      // turning up over the last month
-  const pos3 = typeof m3 === 'number' ? m3 > 0 : false;      // 3-month trend actually positive
-  const deep = typeof m3 === 'number' ? m3 <= -12 : false;   // still in a real 3-month downtrend
-
-  // LEADING — strong relative strength. BUY only if PRICE confirms (above 50-DMA AND
-  // 3M positive); leading on RS alone with a soft price = HOLD, don't chase.
-  if (quadrant === 'Leading') {
-    if (aboveSMA50 && pos3) return { verdict: 'BUY', color: '#16A34A', note: 'Leading + above 50-DMA + rising 3M — strongest theme, buy leaders on strength' };
-    return { verdict: 'HOLD', color: '#F59E0B', note: 'Leading on relative strength but price/3M not confirming — hold, wait for the trend to catch up' };
-  }
-
-  // IMPROVING — the rotation-in zone, and the one that must NOT flatter a falling knife.
-  if (quadrant === 'Improving') {
-    if (aboveSMA50 && up1 && !deep) return { verdict: 'EARLY BUY', color: '#22C55E', note: 'Rotating IN — above 50-DMA, last month up, 3M no longer falling: a real early turn' };
-    if (deep)                        return { verdict: 'WATCH', color: '#EAB308', note: 'Bouncing but still down hard over 3M — unconfirmed dead-cat, watch, do not chase' };
-    return { verdict: 'WATCH', color: '#EAB308', note: 'Turning on momentum but price/trend not confirmed — watch for the 50-DMA reclaim' };
-  }
-
-  // ── WEAKENING — AND THE ASYMMETRY THAT MADE THIS WRONG  (zzz620) ───────
-  //
-  // Leading and Improving above both demand PRICE CONFIRMATION before they say
-  // anything bullish. Weakening and Lagging demanded nothing at all: the
-  // quadrant label alone produced TRIM or AVOID. That is not caution, it is an
-  // inconsistency, and it produced a flatly wrong call.
-  //
-  // Cybersecurity sat at RS 108, +6.0% on the week, +17.5% over three months,
-  // above its 50-DMA — and the board said TRIM, because RS-momentum (a
-  // doubly-smoothed measure of relative strength against its OWN trailing
-  // average) had dipped under 100. A theme can cool relative to its own recent
-  // outperformance while still beating the market and still rising. Telling
-  // someone to sell that is the single most expensive kind of error this page
-  // can make, and it was being made on the strength of a lagging indicator
-  // with no price check.
-  //
-  // So the bearish half now carries the same burden of proof as the bullish
-  // half: a call to reduce must be confirmed by PRICE, not by a smoothed
-  // relative measure alone.
-  if (quadrant === 'Weakening') {
-    // Price has actually rolled over — the RS signal and the tape agree.
-    if (!aboveSMA50 || (typeof m3 === 'number' && m3 <= 0)) {
-      return { verdict: 'TRIM', color: '#F97316', note: 'Relative momentum rolling over AND price below its 50-DMA or negative over 3M — the tape confirms it. Trim, tighten stops, do not add.' };
-    }
-    // Still above the 50-DMA and still rising: cooling, not breaking.
-    return { verdict: 'HOLD', color: '#F59E0B', note: 'Relative momentum is cooling off its own highs, but price is above the 50-DMA and still rising over 3M — hold what you own, stop adding. Not a sell: the tape has not confirmed a roll-over.' };
-  }
-
-  // ── LAGGING — the same test, in reverse ───────────────────────────────
-  // Weak relative strength and falling momentum is the avoid case, but a theme
-  // that has reclaimed its 50-DMA and is rising is a theme in the process of
-  // turning, whatever its trailing relative numbers still say. Calling that
-  // AVOID is how a reader is kept out of every early recovery.
-  if (aboveSMA50 && (up1 || pos3)) {
-    return { verdict: 'WATCH', color: '#EAB308', note: 'Relative strength is still weak, but price has reclaimed its 50-DMA and is rising — a turn may be starting. Watch for relative strength to follow; do not buy on price alone.' };
-  }
-  return { verdict: 'AVOID', color: '#EF4444', note: 'Lagging — weak RS, falling momentum, and price below its 50-DMA. Avoid until it turns.' };
-}
+// zzz795 — the verdict now lives in lib/theme-rotation/verdict.ts so it can be
+// tested. Same vocabulary; a short-term break now blocks a BUY, and a
+// long-term leader pulling back is a HOLD with crowding flagged separately.
 
 async function build(region: ThemeRegion) {
+  const BUILD_START = Date.now();
   const themes = themesForRegion(region);
   const bench = benchmarkForRegion(region);
   const range = '2y', interval = '1d';
@@ -460,6 +420,8 @@ async function build(region: ThemeRegion) {
         const live = data.get(sym);
         data.set(sym, {
           ts, closes: close,
+          // The published archive has closes only; volume stays with the vendor.
+          volumes: [],
           price: live?.price || close[close.length - 1] || 0,
           dayChg: live?.dayKnown ? live.dayChg : 0,
           dayKnown: !!live?.dayKnown,
@@ -639,7 +601,8 @@ async function build(region: ThemeRegion) {
     let characterChange: 'bullish' | 'bearish' | null = null;
     if (prevMomentum < 100 - DB && rsMomentum >= 100 + DB && aboveSMA50) characterChange = 'bullish';
     else if (prevMomentum >= 100 + DB && rsMomentum < 100 - DB && !aboveSMA50) characterChange = 'bearish';
-    const v = verdictFor(quadrant, aboveSMA50, ret.m1, ret.m3);
+    const dd1yEarly = drawdownFromHigh(closes);
+    const v = verdictForV2({ quadrant, aboveSMA50, w1: ret.w1, m1: ret.m1, m3: ret.m3, y1: ret.y1, dd1y: dd1yEarly });
     // The label the row actually shows — judged on relative strength AND price,
     // so a leader that has merely stopped accelerating is never called
     // "Weakening" in the one place a reader looks first.
@@ -730,11 +693,55 @@ async function build(region: ThemeRegion) {
       characterChange,
       conviction, rotationVelocity: +velPerWk.toFixed(2), rotation, action,
       verdict: v.verdict, verdictColor: v.color, verdictNote: v.note,
+      shortTermBreak: v.shortTermBreak,
       ok: true,
     };
   });
 
   const okRows = rows.filter((r: any) => r.ok);
+
+  // ═══ CONSTITUENT BREADTH + VOLUME FLOW PROXY  (zzz795) ═══════════════════
+  //
+  // Breadth used to exist only for basket themes, and only as "% above the
+  // 50-day line". A theme priced from an ETF or an index had none at all, so
+  // the board could not tell a broad advance from three mega-caps carrying an
+  // index. Every theme with declared constituents now gets the same read from
+  // its own stocks: how many sit above their 50-day line now and a month ago,
+  // how many beat the benchmark over three months, how many are near one-year
+  // highs versus lows. The same series carry volume, which gives the capital
+  // flow PROXY (relative volume and the share traded on up days).
+  //
+  // Bounded: a deadline stops new fetches well inside maxDuration. A theme
+  // whose members were not reached reports breadth as "not available" rather
+  // than a number built on a fraction of its names.
+  const MEMBER_CAP = 12;
+  const memberSymsOf = (t: ThemeDef) => drillSymbolsFor(t).slice(0, MEMBER_CAP);
+  const needMembers = new Set<string>();
+  for (const t of themes) for (const s of memberSymsOf(t)) if (!data.has(s)) needMembers.add(s);
+  const memberData = await fetchChunked([...needMembers], '1y', '1d', { size: 12, deadline: BUILD_START + 34_000 });
+  const seriesOf = (sym: string): Series | null => {
+    const d = data.get(sym) || memberData.get(sym);
+    return d ? { closes: d.closes, volumes: d.volumes } : null;
+  };
+  let breadthThemes = 0, breadthSkipped = 0;
+  for (const r of okRows as any[]) {
+    const def = themes.find((t) => t.id === r.id);
+    if (!def) continue;
+    const syms = memberSymsOf(def);
+    const series = syms.map(seriesOf).filter(Boolean) as Series[];
+    // Breadth is claimed only when at least three members, and at least half
+    // of the declared ones, could be priced.
+    if (series.length >= 3 && series.length >= Math.ceil(syms.length / 2)) {
+      r.breadthStats = aggregateBreadth(series.map(memberStat), benchmarkRet3m);
+      if (r.breadthStats && r.breadthStats.n) r.breadthAbove50 = Math.round((r.breadthStats.above50 / r.breadthStats.n) * 100);
+      breadthThemes++;
+    } else {
+      r.breadthStats = null;
+      if (syms.length) breadthSkipped++;
+    }
+    const etf = r.sourceKind === 'proxy' && r.proxy && !String(r.proxy).startsWith('^') ? seriesOf(r.proxy) : null;
+    r.flowStats = aggregateFlow(etf, series);
+  }
 
   // ═══ CROWDING: ARE THESE EIGHT BETS, OR ONE BET WEARING EIGHT NAMES? ═════
   //
@@ -906,6 +913,7 @@ async function build(region: ThemeRegion) {
     movedUp, movedDown,
     clusters: clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),
     rotatingIn, rotatingOut, topBuy, topAvoid, byVerdict,
+    coverage: { breadthThemes, breadthSkipped },
     asOf: new Date().toISOString(),
     source: 'Yahoo Finance · JdK RS-Ratio/Momentum',
   };
@@ -927,6 +935,14 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
   if (!syms.length) return { themeId, stocks: [], note: 'constituents not mapped for this theme yet' };
   const data = await fetchChunked([bench.symbol, ...syms], '1y', '1d');
   const bench3m = (() => { const d = data.get(bench.symbol); return d ? returns(d.ts, d.closes).m3 : 0; })();
+  // zzz795 — the benchmark's 3-month return as it stood 20 sessions ago, so
+  // each member's relative strength can be compared with a month earlier.
+  const m3At = (closes: number[], offset: number): number | null => {
+    const c = closes.filter((x) => x != null && !isNaN(x));
+    const i = c.length - 1 - offset, j = i - 63;
+    return j >= 0 && c[j] > 0 ? ((c[i] - c[j]) / c[j]) * 100 : null;
+  };
+  const bench3mPrev = (() => { const d = data.get(bench.symbol); return d ? m3At(d.closes, 20) : null; })();
   const stocks = syms.map((sym) => {
     const d = data.get(sym);
     if (!d) return null;
@@ -946,9 +962,15 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
     else if (r.m1 < 0 && r.m3 < 0) techno -= 6;
     if (r.m1 > 0) techno += 4;
     techno = Math.max(0, Math.min(100, Math.round(techno)));
+    const m3p = m3At(d.closes, 20);
+    const rs3mPrev = m3p != null && bench3mPrev != null ? +(m3p - bench3mPrev).toFixed(1) : null;
+    const rsChange = rs3mPrev != null ? +(rs3m - rs3mPrev).toFixed(1) : null;
     return {
       sym: sym.replace(/\.NS$/, ''), raw: sym, price: +d.price.toFixed(2), dayChangePct: +d.dayChg.toFixed(2),
       w1: r.w1, m1: r.m1, m3: r.m3, m6: r.m6, ytd: r.ytd, y1: r.y1, aboveSMA50, rs3m, techno,
+      rs3mPrev, rsChange,
+      // Gaining / losing relative strength against a month ago (±3 pts).
+      strengthTrend: rsChange == null ? null : rsChange >= 3 ? 'gaining' : rsChange <= -3 ? 'losing' : 'flat',
       buyReady: aboveSMA50 && rs3m > 0,
     };
   }).filter(Boolean) as any[];
@@ -1026,14 +1048,70 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
   return { themeId, benchmark3m: bench3m, stocks, subs };
 }
 
+// ═══ WEEKLY SNAPSHOTS  (zzz795) ═══════════════════════════════════════════
+// theme-rotation:snap:v1:<market>:<ISO week>, TTL ~400 days, well under 900 KB.
+// The server writes the price-side "base" whenever it rebuilds the board; the
+// page posts the evidence-side "overlay" (tier, rank) it computes in the
+// browser. Both are best-effort: a KV failure never breaks the board.
+async function writeBaseSnapshot(region: ThemeRegion, payload: any) {
+  if (!isRedisAvailable() || !Array.isArray(payload?.themes)) return;
+  try {
+    const week = isoWeek(new Date());
+    const key = snapKey(region, week);
+    const prev = await kvGet<WeeklySnapshot>(key);
+    const next = mergeSnapshot(prev, { week, market: region, base: compactBase(payload.themes) }, new Date().toISOString());
+    if (snapshotBytes(next) > SNAP_MAX_BYTES) return;
+    await kvSet(key, next, SNAP_TTL_S);
+  } catch { /* history is additive; never fail the board for it */ }
+}
+
+async function readHistory(region: ThemeRegion, weeks: number): Promise<WeeklySnapshot[]> {
+  if (!isRedisAvailable()) return [];
+  const keys = recentWeeks(new Date(), Math.max(1, Math.min(26, weeks)));
+  const got = await Promise.all(keys.map(async (w) => { try { return await kvGet<WeeklySnapshot>(snapKey(region, w)); } catch { return null; } }));
+  return (got.filter(Boolean) as WeeklySnapshot[]).sort((a, b) => a.week.localeCompare(b.week));
+}
+
+export async function POST(request: Request) {
+  // Overlay write: { region, week, overlay: { themeId: { t, r, e, c, f } } }.
+  try {
+    const body = await request.json().catch(() => null) as any;
+    const region = (body?.region === 'us' ? 'us' : body?.region === 'india' ? 'india' : null) as ThemeRegion | null;
+    const week = isoWeek(new Date());
+    if (!region) return NextResponse.json({ ok: false, error: 'region required' }, { status: 400 });
+    if (body?.week && body.week !== week) return NextResponse.json({ ok: false, error: 'only the current week can be written' }, { status: 400 });
+    const known = new Set(themesForRegion(region).map((t) => t.id));
+    const overlay = sanitizeOverlay(body?.overlay, known);
+    if (!overlay) return NextResponse.json({ ok: false, error: 'empty or invalid overlay' }, { status: 400 });
+    if (!isRedisAvailable()) return NextResponse.json({ ok: false, error: 'storage unavailable' }, { status: 200 });
+    const key = snapKey(region, week);
+    const prev = await kvGet<WeeklySnapshot>(key);
+    const next = mergeSnapshot(prev, { week, market: region, overlay }, new Date().toISOString());
+    if (snapshotBytes(next) > SNAP_MAX_BYTES) return NextResponse.json({ ok: false, error: 'snapshot too large' }, { status: 413 });
+    await kvSet(key, next, SNAP_TTL_S);
+    return NextResponse.json({ ok: true, week });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: 'snapshot write failed' }, { status: 200 });
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const region = (searchParams.get('region') === 'us' ? 'us' : 'india') as ThemeRegion;
   const themeId = searchParams.get('theme');
   const force = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1';
+  if (searchParams.get('history') === '1') {
+    try {
+      const weeks = parseInt(searchParams.get('weeks') || '12', 10);
+      const snaps = await readHistory(region, Number.isFinite(weeks) ? weeks : 12);
+      return NextResponse.json({ region, currentWeek: isoWeek(new Date()), snapshots: snaps }, { headers: { 'Cache-Control': 'no-store' } });
+    } catch {
+      return NextResponse.json({ region, currentWeek: isoWeek(new Date()), snapshots: [], error: 'history unavailable' });
+    }
+  }
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v12:drill:${region}:${themeId}`;
+      const key = `theme-rotation:v13:drill:${region}:${themeId}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
       const payload = await buildDrill(region, themeId);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }
@@ -1049,6 +1127,7 @@ export async function GET(request: Request) {
     }
     const payload = await build(region);
     try { await kvSet(CACHE_KEY(region), payload, CACHE_TTL); } catch { /* best effort */ }
+    await writeBaseSnapshot(region, payload);
     return NextResponse.json(payload);
   } catch (e: any) {
     return NextResponse.json({ region, themes: [], error: e?.message || 'theme-rotation failed', asOf: new Date().toISOString() }, { status: 200 });

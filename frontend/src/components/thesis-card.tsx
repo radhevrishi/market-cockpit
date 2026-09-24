@@ -633,7 +633,7 @@ export function ThesisCard(p: ThesisCardProps) {
           <span data-testid="pattern-badge" data-fit={p.pattern.fit || 'exact'} title={p.pattern.because} style={{
             fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
             border: `1px ${p.pattern.fit === 'nearest' ? 'dashed' : 'solid'} ${pm.color}`, background: p.pattern.fit === 'nearest' ? 'transparent' : `${pm.color}18`, color: ink(pm.color),
-          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto, provisional)' : ''}</span>
+          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto, provisional)' : ''}{(p.pattern as any).weak ? ' · weak fit' : ''}</span>
         )}
         {p.radarScore != null && (
           <span style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
@@ -641,11 +641,11 @@ export function ThesisCard(p: ThesisCardProps) {
         {p.onThesisType && (
           <select
             aria-label="Thesis type"
-            title={p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern?.fit === 'nearest' ? `${p.pattern.because}` : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No thesis type fits automatically, so no variable can move this card. Set why you hold it.'}
+            title={p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern?.fit === 'nearest' ? `${p.pattern.because}` : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No figures on file for this company yet, so no thesis type can be worked out and no variable can move this card. Set why you hold it.'}
             value={p.thesisType || ''}
             onChange={(e) => p.onThesisType!((e.target.value || null) as any)}
             style={{ fontSize: 12, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'transparent', color: p.pattern ? C.dim : '#F59E0B', border: `1px solid ${p.pattern ? C.border : '#F59E0B'}`, cursor: 'pointer' }}>
-            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern})` : 'thesis: not set — pick'}</option>
+            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}${(p.pattern as any).weak ? ', weak fit' : ''}` : p.pattern.pattern})` : 'thesis: not set — pick'}</option>
             <option value="A">A · Operating inflection</option>
             <option value="B">B · Demand explosion</option>
             <option value="F">F · Profit jump</option>
@@ -663,7 +663,7 @@ export function ThesisCard(p: ThesisCardProps) {
               border: `1px solid ${C.faint}`, color: C.faint }}>screener.in table{p.dataPeriod ? ` · ${p.dataPeriod}` : ''}</span>
         )}
         {p.dataSource === 'none' && (
-          <span title="This holding is in neither the graded bench nor the screener exports. Read the filing to populate it — nothing about it is being reported as clean."
+          <span title={p.market === 'US' ? 'No quarterly SEC XBRL figures for this company. Read its SEC filings to populate it — nothing about it is being reported as clean.' : 'This holding is in neither the graded bench nor the screener exports. Read the filing to populate it — nothing about it is being reported as clean.'}
             style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
               border: `1px solid ${C.amber}`, color: C.amber }}>no stored figures</span>
         )}
@@ -1120,8 +1120,10 @@ export function ThesisCard(p: ThesisCardProps) {
           )}
           {a.coverage.missingNeedsFiling.length > 0 && p.needsRead && (
             <div style={{ color: C.faint, marginTop: 2 }}>
-              {a.coverage.missingNeedsFiling.length} of the pending variables exist only in a filing, concall or
-              exchange announcement — no amount of screener data will fill them.
+              {p.market === 'US'
+                ? <>{a.coverage.missingNeedsFiling.length} of the pending variables exist only in a 10-Q, 10-K, 8-K or earnings release (SEC EDGAR) — the XBRL figures alone will not fill them.</>
+                : <>{a.coverage.missingNeedsFiling.length} of the pending variables exist only in a filing, concall or
+              exchange announcement — no amount of screener data will fill them.</>}
             </div>
           )}
         </div>

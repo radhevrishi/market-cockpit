@@ -150,7 +150,7 @@ const IN_NSE_VOCAB: Rule[] = [
   { re: /^fast moving consumer goods$/i, theme: 'in-fmcg' },
   { re: /^healthcare$/i, theme: 'in-pharma' },
   { re: /^consumer services$/i, theme: 'in-consumption' },
-  { re: /^oil gas .*fuels?$/i, theme: 'in-energy' },
+  { re: /^oil,?\s*gas\b.*fuels?$/i, theme: 'in-energy' },
   { re: /^forest materials$/i, theme: 'in-commodities' },
   { re: /^media entertainment/i, theme: 'in-media' },
 ];
@@ -166,8 +166,14 @@ const IN_NSE_VOCAB: Rule[] = [
 // are exact source vocabulary, not guesses, and they run before the keyword
 // rules so a fine label is never swallowed by a coarse one.
 const IN_YAHOO_VOCAB: Rule[] = [
-  { re: /confectioner|packaged food|food distribution|farm product|beverages|household & personal|tobacco|agricultural input/i, theme: 'in-fmcg' },
+  // zzz795 — fertilisers and crop protection are chemicals, not FMCG.
+  { re: /agricultural input|fertili[sz]er|agrochemical|crop protection/i, theme: 'in-chemicals' },
+  { re: /confectioner|packaged food|food distribution|farm product|beverages|household & personal|tobacco|grocery stores/i, theme: 'in-fmcg' },
+  // zzz795 — a renewable utility is a renewables name before it is a utility.
+  { re: /utilities[—-]renewable|renewable utilit/i, theme: 'in-renewables' },
   { re: /utilities/i, theme: 'in-power' },
+  { re: /pollution & treatment|waste management|water treatment/i, theme: 'in-capgoods' },
+  { re: /discount stores|grocery|pharmaceutical retailers/i, theme: 'in-retail' },
   { re: /luxury good|apparel (?:manufacturing|retail)|footwear|specialty retail|department store|internet retail|home improvement retail|auto & truck dealership/i, theme: 'in-retail' },
   { re: /tools & accessories|metal fabrication|industrial distribution|building products|electrical equipment|specialty industrial machinery|engineering & construction|conglomerates|business equipment|security & protection/i, theme: 'in-capgoods' },
   { re: /auto parts|auto manufacturers|recreational vehicles|tires/i, theme: 'in-auto' },
@@ -175,8 +181,9 @@ const IN_YAHOO_VOCAB: Rule[] = [
   { re: /medical (?:care facilities|devices|instruments|distribution)|diagnostics & research|health information/i, theme: 'in-hospitals' },
   { re: /^banks|banks[—-]/i, theme: 'in-bank' },
   { re: /capital markets|asset management|insurance|credit services|financial data|mortgage finance|financial conglomerates/i, theme: 'in-finserv' },
-  { re: /information technology services|software[—-]|computer hardware|consumer electronics/i, theme: 'in-it' },
-  { re: /electronic component|semiconductor|electronics & computer distribution|scientific & technical instrument/i, theme: 'in-ems' },
+  { re: /information technology services|software[—-]|computer hardware/i, theme: 'in-it' },
+  // zzz795 — consumer electronics makers (Dixon-type) are EMS, not IT services.
+  { re: /electronic component|semiconductor|electronics & computer distribution|scientific & technical instrument|consumer electronics/i, theme: 'in-ems' },
   { re: /oil & gas|coking coal|thermal coal|uranium/i, theme: 'in-energy' },
   { re: /real estate|^reit/i, theme: 'in-realty' },
   { re: /building materials|cement/i, theme: 'in-cement' },
@@ -226,17 +233,100 @@ const IN_RULES: Rule[] = [
   { re: /\bconstruction\b|infrastructure|\bcivil\b|\bbuilder/i, theme: 'in-capgoods' },
 ];
 
-// Classify a stock into a theme id. A curated TICKER_OVERRIDE wins first (fixes the
-// famous names the coarse sector tag mislabels), then the sector/industry keyword
-// rules (industry is the finer tell, tried before the broader sector).
-export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion, ticker?: string | null): string | null {
-  if (ticker) { const ov = TICKER_OVERRIDE[ticker.toUpperCase().replace(/\.(NS|BO)$/, '').trim()]; if (ov) return ov; }
+// ═══ LAST RUNG: THE COMPANY'S OWN NAME  (zzz795) ══════════════════════════
+//
+// 170 India names still sat under "Unclassified" because no source had an
+// industry for them yet — mostly micro-caps the Yahoo rung had not reached,
+// BSE-only scrips, and bench keys carrying a period tag. The company name and
+// the ticker itself are often enough ("Sudarshan Chemical", "…STEEL",
+// "…PHARMA"). This rung runs only after every industry rule has failed, and
+// the result is marked as matched BY NAME so the page can say it is less
+// certain than an industry match. Ambiguous words ("Technologies",
+// "Industries", "Systems") are deliberately not used.
+const IN_NAME_RULES: Rule[] = [
+  { re: /\brail|wagon|locomotive/i, theme: 'in-railways' },
+  { re: /defen[cs]e|aerospace|shipyard|ship ?build/i, theme: 'in-defence' },
+  { re: /pharma|drugs?\b|life ?science|laborator(y|ies)|\bremedies\b|formulation/i, theme: 'in-pharma' },
+  { re: /hospital|diagnostic|healthcare|medicare/i, theme: 'in-hospitals' },
+  { re: /fertili[sz]er|pesticide|crop ?(science|care)|agrochem/i, theme: 'in-chemicals' },
+  { re: /chem|petrochem|dyes|pigment|intermediates/i, theme: 'in-chemicals' },
+  { re: /steel|ispat|alloy|metal|alumin|copper|zinc|ferro/i, theme: 'in-metal' },
+  { re: /cement|ceramic|tiles|sanitary ?ware/i, theme: 'in-cement' },
+  { re: /solar|wind ?(energy|power)|renewable|green ?(energy|power)/i, theme: 'in-renewables' },
+  { re: /power|transformer|cables?\b|wires?\b|switchgear|electricals?/i, theme: 'in-power' },
+  { re: /infotech|software|infosys|it services|data ?systems/i, theme: 'in-it' },
+  { re: /electronic|semicon|circuit/i, theme: 'in-ems' },
+  { re: /auto\b|automotive|motors?\b|forging|gears?\b|tyres?|wheels?\b|axles?|brakes?/i, theme: 'in-auto' },
+  { re: /\bbank\b/i, theme: 'in-bank' },
+  { re: /finance|financial|fincorp|finserv|credit|capital\b|securities|broking|investments?\b|leasing|insurance/i, theme: 'in-finserv' },
+  { re: /realty|real estate|estates?\b|properties|developers?\b/i, theme: 'in-realty' },
+  { re: /infra|construction|engineer|projects\b|pipes?\b|tubes?\b|valves?|pumps?|compressors?|machine|tools\b|equipment/i, theme: 'in-capgoods' },
+  { re: /port\b|ports\b|shipping|logistic|marine|cargo|freight/i, theme: 'in-ports' },
+  { re: /jewel|gems|diamond|fashion|apparel|retail|\bmart\b|stores/i, theme: 'in-retail' },
+  { re: /media|broadcast|films?\b|music|publish|entertainment/i, theme: 'in-media' },
+  { re: /hotel|resort|travel|leisure|restaurant|foods? court/i, theme: 'in-consumption' },
+  { re: /textile|spinning|spinners|fabrics?|garments?|yarn|cotton|denim|silk|weav|paper|packag|polymer|plastic|laminat|polyfilm/i, theme: 'in-commodities' },
+  { re: /foods?\b|agro|dairy|sugar|\btea\b|coffee|beverage|spices|edible oils?|oil mills?|flour|rice\b/i, theme: 'in-fmcg' },
+];
+const IN_TICKER_RULES: Rule[] = [
+  { re: /RAIL/, theme: 'in-railways' },
+  { re: /PHARM|DRUG/, theme: 'in-pharma' },
+  { re: /CHEM/, theme: 'in-chemicals' },
+  { re: /STEEL|ISPAT|METAL|ALLOY/, theme: 'in-metal' },
+  { re: /CEMENT|CEM$/, theme: 'in-cement' },
+  { re: /SOLAR/, theme: 'in-renewables' },
+  { re: /POWER|CABLE/, theme: 'in-power' },
+  { re: /INFRA|ENGG|PROJ/, theme: 'in-capgoods' },
+  { re: /BANK/, theme: 'in-bank' },
+  { re: /AUTO|MOTOR|FORG|TYRE/, theme: 'in-auto' },
+  { re: /FOOD|AGRO|SUGAR|DAIRY/, theme: 'in-fmcg' },
+  { re: /TEXT|SPIN|PAPER|PLAST/, theme: 'in-commodities' },
+  { re: /REALTY|ESTATE|PROP/, theme: 'in-realty' },
+  { re: /HOTEL/, theme: 'in-consumption' },
+  { re: /JEWEL|GEMS/, theme: 'in-retail' },
+];
+
+export type ClassifyVia = 'override' | 'industry' | 'sector' | 'name' | 'ticker';
+export interface ClassifyResult { theme: string; via: ClassifyVia }
+
+/** Strip exchange prefixes/suffixes and period tags ("SUDARSCHEM@Q1-2027"). */
+export function cleanTicker(t: string | null | undefined): string {
+  return String(t || '').toUpperCase().trim()
+    .replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX)\s*:\s*/, '')
+    .split('@')[0].split('#')[0]
+    .replace(/\.(NS|BO)$/, '').replace(/\s+/g, '');
+}
+
+/**
+ * Classify a stock into a theme, and say HOW it was matched. A curated
+ * TICKER_OVERRIDE wins first; then industry (finer) before sector; then — for
+ * India only — the company name and the ticker itself as a last resort.
+ */
+export function classifyThemeDetailed(
+  sector: string | undefined | null,
+  industry: string | undefined | null,
+  region: ThemeRegion,
+  ticker?: string | null,
+  companyName?: string | null,
+): ClassifyResult | null {
+  const tk = cleanTicker(ticker);
+  if (tk) { const ov = TICKER_OVERRIDE[tk]; if (ov) return { theme: ov, via: 'override' }; }
   const rules = region === 'us' ? [...US_ENGINE_VOCAB, ...US_RULES] : [...IN_NSE_VOCAB, ...IN_YAHOO_VOCAB, ...IN_RULES];
   const ind = (industry || '').toString();
   const sec = (sector || '').toString();
-  for (const text of [ind, sec]) {
+  for (const [text, via] of [[ind, 'industry'], [sec, 'sector']] as const) {
     if (!text.trim()) continue;
-    for (const r of rules) if (r.re.test(text)) return r.theme;
+    for (const r of rules) if (r.re.test(text)) return { theme: r.theme, via };
+  }
+  if (region === 'india') {
+    const nm = (companyName || '').toString();
+    if (nm.trim()) for (const r of IN_NAME_RULES) if (r.re.test(nm)) return { theme: r.theme, via: 'name' };
+    if (tk && !/^\d+$/.test(tk)) for (const r of IN_TICKER_RULES) if (r.re.test(tk)) return { theme: r.theme, via: 'ticker' };
   }
   return null;
+}
+
+// Classify a stock into a theme id (unchanged signature, used across the app).
+export function classifyTheme(sector: string | undefined | null, industry: string | undefined | null, region: ThemeRegion, ticker?: string | null, companyName?: string | null): string | null {
+  return classifyThemeDetailed(sector, industry, region, ticker, companyName)?.theme ?? null;
 }

@@ -11,7 +11,18 @@
 
 import type { UsHolding, UsBook } from './model';
 
-export interface UsQuote { price: number | null; currency: string | null; source: string; symbol: string; asOf?: string | null }
+export interface UsQuote {
+  price: number | null; currency: string | null; source: string; symbol: string;
+  /** When the PRICE is from (Yahoo regularMarketTime), not when it was fetched. */
+  asOf?: string | null;
+  marketTime?: string | null;
+  /** Previous session close, only when Yahoo states it. */
+  prevClose?: number | null;
+  name?: string | null;
+  exchangeName?: string | null;
+  /** Why there is no price, in words. */
+  error?: string | null;
+}
 
 /** The quote symbol a holding is priced under (Yahoo convention). */
 export function quoteSymbolFor(h: Pick<UsHolding, 'ticker' | 'exchange' | 'listing'>): string {

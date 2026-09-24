@@ -48,8 +48,11 @@ export interface UsDocCandidate {
   url: string;              // the filing index (…-index.htm); the reader resolves the document
   accession: string;
   form: UsForm;
-  kind: 'results' | 'annual_report';
-  role: 'release' | 'periodic';
+  kind: 'results' | 'annual_report' | 'announcement';
+  /** zzz793: 'catalyst' — a recent 8-K Item 1.01 / 7.01 / 8.01 press release
+   *  (contract, capacity, customer news). Read as catalyst evidence; never
+   *  decides the reporting period and never counts as new results. */
+  role: 'release' | 'periodic' | 'catalyst';
   label: string;
   source: 'SEC EDGAR';
   tier: 1;
@@ -73,7 +76,10 @@ export function filingIndexUrl(cik: number | string, accession: string): string 
  * evidence). Amendments (/A) are left out: an amended filing restates, it
  * does not report a new quarter.
  */
-export function usCandidatesFromSubmissions(recent: UsFilingRow[], cik: number | string, now: Date = new Date(), opts: { windowDays?: number; includeSixK?: boolean } = {}): UsDocCandidate[] {
+const CATALYST_ITEMS: Record<string, string> = { '1.01': 'material agreement', '7.01': 'Regulation FD disclosure', '8.01': 'other events' };
+
+export function usCandidatesFromSubmissions(recent: UsFilingRow[], cik: number | string, now: Date = new Date(), opts: { windowDays?: number; includeSixK?: boolean; catalystDays?: number } = {}): UsDocCandidate[] {
+  const catCutoff = opts.catalystDays ? new Date(now.getTime() - opts.catalystDays * 86_400_000).toISOString().slice(0, 10) : null;
   const cutoff = new Date(now.getTime() - (opts.windowDays ?? 460) * 86_400_000).toISOString().slice(0, 10);
   const out: UsDocCandidate[] = [];
   for (const f of recent || []) {
@@ -85,6 +91,11 @@ export function usCandidatesFromSubmissions(recent: UsFilingRow[], cik: number |
     let label = '';
     const rep = f.reportDate ? String(f.reportDate).slice(0, 10) : null;
     if (form === '8-K' && (f.items || []).map(String).includes('2.02')) { role = 'release'; label = `Earnings release — 8-K Item 2.02 (EX-99.1), filed ${date}`; }
+    else if (form === '8-K' && catCutoff && date >= catCutoff && (f.items || []).map(String).some((i) => CATALYST_ITEMS[i])) {
+      const its = (f.items || []).map(String).filter((i) => CATALYST_ITEMS[i]);
+      role = 'catalyst'; kind = 'announcement';
+      label = `Press release — 8-K Item ${its.join(' / ')} (${its.map((i) => CATALYST_ITEMS[i]).join(', ')}), filed ${date}`;
+    }
     else if (form === '6-K' && opts.includeSixK) { role = 'release'; label = `Form 6-K (possible results release), filed ${date}`; }
     else if (form === '10-Q') { role = 'periodic'; label = `Form 10-Q${rep ? ` — quarter ended ${rep}` : ''} (MD&A), filed ${date}`; }
     else if (form === '10-K' || form === '20-F' || form === '40-F') { role = 'periodic'; kind = 'annual_report'; label = `Form ${form}${rep ? ` — fiscal year ended ${rep}` : ''} (MD&A), filed ${date}`; }
@@ -105,6 +116,8 @@ export function usCandidatesFromSubmissions(recent: UsFilingRow[], cik: number |
  * backlog, capacity and the cause.
  */
 export function planUsRead(cands: UsDocCandidate[], target?: string | null): { period: string | null; docs: UsDocCandidate[] } {
+  // A catalyst press release never decides which quarter is being read.
+  cands = cands.filter((c) => c.role !== 'catalyst');
   const periods = Array.from(new Set(cands.map((c) => c.period).filter((p): p is string => !!p)))
     .sort((a, b) => periodOrdinal(b) - periodOrdinal(a));
   const period = target ? (periods.includes(target) ? target : null) : (periods[0] || null);

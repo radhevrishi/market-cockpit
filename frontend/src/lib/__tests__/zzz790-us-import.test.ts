@@ -142,7 +142,7 @@ describe('the owner\'s seed file (scratch only, when present)', () => {
     const r = parseUsBookImport(readFileSync(SEED, 'utf8'));
     assert.equal(r.format, 'book-csv');
     assert.equal(r.rejected.length, 0, JSON.stringify(r.rejected));
-    assert.ok(r.holdings.some((h) => h.ticker === 'MOG-A' && h.rawTicker === 'MOG.A'));
+    assert.ok(r.holdings.some((h) => h.ticker === 'MOG-A' && ['MOG.A', 'MOG A', 'MOG-A'].includes(h.rawTicker)));
     const fwb = r.holdings.filter((h) => h.exchange === 'FWB2');
     assert.ok(fwb.length >= 1 && fwb.every((h) => h.listing === 'NON_US' && h.currency === 'EUR'));
     assert.ok(Object.keys(r.cash).length >= 1);

@@ -499,8 +499,13 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       // phrase ("stands at", "as on") or a value with no figure at all is a
       // level unless the sentence moves THIS figure ("grew to", "from X to").
       const movesFigure = /\bfrom\b[^.;]{0,60}\bto\b|\b(?:grew|grown|increased|rose|risen|doubled|tripled|expanded|improved|added|augmented|enhanced)\b(?:\s+[\w%.,'-]+){0,8}?\s+(?:to|by)\b/i.test(a.evidence_text);
+      // zzz794: a bare multiple with no earlier figure ("gives us 3x
+      // production capability" — EXICOM) is the management claim the note
+      // above describes, not a measured move: shown, never judged improving.
+      const bareMultiple = /^(?:capacity|capacity_addition|volume)$/.test(key) && /^\s*~?\d+(?:\.\d+)?\s*[x×]\s*$/i.test(String(a.after ?? ''));
       const levelOnly = !a.before && !flatStated && (
-        (!hasFigure(a.after) && /^(?:capacity|capacity_addition|order_book|order_intake|utilisation|volume)$/.test(key))
+        bareMultiple
+        || (!hasFigure(a.after) && /^(?:capacity|capacity_addition|order_book|order_intake|utilisation|volume)$/.test(key))
         || (/\b(?:stands?|stood|is|was)\s+at\b|\bas (?:on|of)\b|\bat a level of\b/i.test(a.evidence_text) && !movesFigure));
       const verdict0: VarVerdict = denied ? 'flat'
         : notYet ? 'stated'
@@ -898,6 +903,10 @@ export function extractVariables(
   const epsOnly = patGrowth == null && epsY != null;
   const patCurr = n(graded?.pat_curr_cr) ?? n(graded?.net_income_curr_musd);
   const patPrev = n(graded?.pat_prev_cr) ?? n(graded?.net_income_prev_musd);
+  // zzz793: a US grader row's profit is in USD millions, never crore. India
+  // rows (no market, or market 'IN') print exactly as before.
+  const usRow = graded?.market === 'US';
+  const profitAmt = (v: number) => (usRow ? `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 1 })}M` : `${v} Cr`);
   const opmNow = n(graded?.opm_pct);
   // ── A GROWTH RATE OFF A LOSS IS NOT A GROWTH RATE.               (zzz763)
   //
@@ -947,7 +956,7 @@ export function extractVariables(
   if (epsY != null && lossBase) {
     push({
       key: 'earnings_growth', label: VAR_LABEL.earnings_growth,
-      before: patPrev != null ? `${patPrev} Cr` : null, after: patCurr != null ? `${patCurr} Cr` : `${pct(epsY)} (loss base)`, delta: null,
+      before: patPrev != null ? profitAmt(patPrev) : null, after: patCurr != null ? profitAmt(patCurr) : `${pct(epsY)} (loss base)`, delta: null,
       verdict: 'unknown',
       unjudged: 'a growth rate on a loss base has no direction',
       evidence: `Reported as ${pct(epsY)} YoY, but ${patCurr != null && patCurr < 0 ? 'the latest quarter is a loss' : patPrev != null && patPrev < 0 ? 'the base quarter was a loss' : `the operating margin is ${opmNow?.toFixed(1)}%, so profit is almost certainly negative`}. A growth rate between negative numbers has no direction, so it is not read either way.`,
@@ -956,7 +965,7 @@ export function extractVariables(
   } else if (epsY != null) {
     push({
       key: 'earnings_growth', label: VAR_LABEL.earnings_growth,
-      before: patPrev != null ? `${patPrev} Cr` : null, after: patCurr != null ? `${patCurr} Cr` : pct(epsY), delta: pct(epsY),
+      before: patPrev != null ? profitAmt(patPrev) : null, after: patCurr != null ? profitAmt(patCurr) : pct(epsY), delta: pct(epsY),
       verdict: epsY >= 20 ? 'improving' : epsY >= 0 ? 'flat' : 'deteriorating',
       evidence: `${epsOnly ? 'EPS' : 'Profit after tax'} ${pct(epsY)} YoY, from the filed statements${epsOnly ? ' (PAT growth not on the row; EPS used)' : ''}.`,
       source: 'grader',
@@ -1371,10 +1380,13 @@ export function extractVariables(
       const t = String(v);
       const x = scaledNumber(t);
       if (x == null) return null;
-      return /\b(crores?|cr|lakhs?|millions?|mn|billions?|bn|thousands?)\b/i.test(t) ? x : x * 1e7;
+      // zzz793: a bare US dollar amount is dollars, not crore.
+      return /\b(crores?|cr|lakhs?|millions?|mn|billions?|bn|thousands?)\b/i.test(t) ? x : x * (usRow ? 1 : 1e7);
     };
-    const profitRaw = patCurr != null ? patCurr * 1e7 : rawOf(summary?.headline?.profit);
-    const profitCr = profitRaw != null ? Math.round(profitRaw / 1e7) : null;
+    // zzz793: a US row's profit is USD millions (× 1e6), India's crore (× 1e7).
+    const unitRaw = usRow ? 1e6 : 1e7;
+    const profitRaw = patCurr != null ? patCurr * unitRaw : rawOf(summary?.headline?.profit);
+    const profitCr = profitRaw != null ? Math.round(profitRaw / unitRaw) : null;
     const sizedGains = gains.map((o) => rawOf(o?.amount)).filter((x): x is number => x != null);
     const sized = sizedGains.length > 0;
     const gainRaw = sizedGains.reduce((t, x) => t + Math.abs(x), 0);
@@ -1388,7 +1400,7 @@ export function extractVariables(
     // the one-off. Where a gain exceeds the whole profit, the two figures are
     // on different bases (a pre-exceptional PAT, a prior-period item, another
     // currency) and nothing is concluded from them.
-    const prevRaw = patPrev != null ? patPrev * 1e7 : null;
+    const prevRaw = patPrev != null ? patPrev * unitRaw : null;
     const exGrowth = share != null && share <= 1 && profitRaw != null && prevRaw != null && prevRaw > 0
       ? ((profitRaw - gainRaw) - prevRaw) / prevRaw : null;
     const material = share == null || share > 1 ? null
@@ -1422,7 +1434,7 @@ export function extractVariables(
         + (!gains.length ? (setAside ? ' — expected in a later period or routine other / interest income: not a one-off in this quarter\'s profit, so not counted.' : '')
           : material === true ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit growth is ${Math.round(exGrowth * 100)}%` : ''} — the jump rests on items that will not repeat.`
             : material === false ? ` — one-off gains are ${Math.round(share! * 100)}% of reported profit${exGrowth != null ? `; without them profit still grew ${Math.round(exGrowth * 100)}%` : ''}: the jump does not rest on them. Shown for the record.`
-              : share != null && share > 1 ? ` — stated one-offs exceed the reported profit${profitCr != null ? ` (${profitCr} Cr)` : ''}; different bases, not judged.`
+              : share != null && share > 1 ? ` — stated one-offs exceed the reported profit${profitCr != null ? ` (${profitAmt(profitCr)})` : ''}; different bases, not judged.`
                 : ' — amount not stated, so it cannot be sized against the result; shown, not counted.'),
       source: 'filing',
     });
@@ -1572,10 +1584,15 @@ export function extractVariables(
     // The screener's ROCE is LAST FULL YEAR's, like its cash ratio: said on
     // the row so the status engine keeps it out of the current period. (zzz773)
     const roceAnnual = ['screener', 'screener-live'].includes(String(graded?.source || ''));
+    // zzz793: a US ROCE is COMPUTED from the same quarter's SEC figures (US
+    // filers do not report one) and says so. India rows are unchanged.
+    const roceWhy = graded?.roce_basis === 'sec-ttm'
+      ? ` (computed from SEC figures: operating income over the four quarters to ${graded?.roce_period || 'the latest quarter'} ÷ (total assets − current liabilities) at quarter end)`
+      : roceAnnual ? ' (last full year, screener figure — not this quarter\'s)' : '';
     push({
       key: 'roce', label: VAR_LABEL.roce, before: null, after: `${roce.toFixed(1)}%${roceAnnual ? ' (last FY)' : ''}`, delta: null,
       verdict: roce >= 18 ? 'improving' : roce >= 12 ? 'flat' : 'deteriorating',
-      evidence: `Return on capital employed ${roce.toFixed(1)}%${roceAnnual ? ' (last full year, screener figure — not this quarter\'s)' : ''}.`, source: 'grader', kind: 'fact',
+      evidence: `Return on capital employed ${roce.toFixed(1)}%${roceWhy}.`, source: 'grader', kind: 'fact',
     });
   }
 

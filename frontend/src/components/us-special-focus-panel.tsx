@@ -4,7 +4,7 @@
 //                                                                     (zzz790)
 // The India panel (components/special-focus-panel) talks to the India memory
 // (/api/v1/special-focus → persist:v1:all). This one is the same view over
-// the SAME shared logic — detection (detectForRow), the queue
+// the SAME shared logic — detection (the shared detector via usDetect, fed US inputs), the queue
 // (specialFocusQueue), near misses (nearMissList), the button words
 // (focusButtonWords) — talking to the US memory (/api/v1/us-thesis/
 // special-focus → us-persist:v1:all). So the queue count, the near-miss count
@@ -14,7 +14,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { specialFocusQueue, nearMissList, focusButtonWords } from '@/lib/catalyst/cross-view';
-import { detectForRow, type FocusRow } from '@/components/special-focus-panel';
+import { type FocusRow } from '@/components/special-focus-panel';
+import { usDetect } from '@/lib/us-thesis/persist-us';
+import { catalystIsolated } from '@/lib/us-thesis/sanitize';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -34,12 +36,24 @@ interface Stored {
 /** Pure helper shared with the page: detections for every row, one map. */
 export function usLiveDetections(rows: FocusRow[]): Map<string, { pc: PersistentCatalyst; row: FocusRow }> {
   const m = new Map<string, { pc: PersistentCatalyst; row: FocusRow }>();
-  for (const r of rows) for (const pc of detectForRow(r)) m.set(pc.id, { pc, row: r });
+  for (const r of rows) for (const pc of usDetect(r as any)) m.set(pc.id, { pc, row: r });
   return m;
 }
 
-export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrior, priorRunning }: {
+/** The CIK most of a row's own SEC documents are filed under. */
+function rowCik(r: FocusRow | null | undefined): string | null {
+  const counts = new Map<string, number>();
+  for (const p of Object.values<any>(r?.ledger?.periods || {})) for (const d of p?.documents || []) {
+    const m = /\/edgar\/data\/(\d+)\//i.exec(String(d?.url || ''));
+    if (m) { const c = String(Number(m[1])); counts.set(c, (counts.get(c) || 0) + 1); }
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+}
+
+export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrior, priorRunning, display }: {
   rows: FocusRow[]; ready: boolean;
+  /** zzz793: the company's own fiscal periods and SEC wording for what is printed. */
+  display?: (ticker: string, x: any) => any;
   thesisLabel: (r: FocusRow) => string;
   onJump: (ticker: string) => void;
   onReadPrior?: (tickers: string[]) => void; priorRunning?: boolean;
@@ -54,7 +68,12 @@ export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPr
   const live = useMemo(() => usLiveDetections(rows), [rows]);
   const load = (json: any) => {
     const map: Record<string, Stored> = {};
-    for (const rec of (json?.records || []) as Stored[]) map[rec.id] = rec;
+    // zzz793: a stored record whose evidence names another company is not shown.
+    const rowOf = new Map(rows.map((r) => [r.symbol.toUpperCase(), r] as const));
+    for (const rec of (json?.records || []) as Stored[]) {
+      if (!catalystIsolated({ ...(rec.latest as any), id: rec.id, ticker: rec.ticker }, rowCik(rowOf.get(String(rec.ticker).toUpperCase())))) continue;
+      map[rec.id] = rec;
+    }
     setStored(map);
   };
   useEffect(() => {
@@ -103,7 +122,7 @@ export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPr
       {ready && shown.length === 0 && <div style={{ fontSize: 13, color: C.dim }}>No US company currently meets the Special Focus gate (a validated mechanism, filed figures, an evidence-supported runway, thesis not broken).</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {visible.map((e) => {
-          const pc = e.pc;
+          const pc: PersistentCatalyst = display ? display(e.pc.ticker, e.pc) : e.pc;
           const u = e.st?.user?.state || null;
           const isOpen = !!open[e.id];
           return (
@@ -116,8 +135,9 @@ export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPr
                 <span style={{ fontSize: 12, fontWeight: 800, color: pc.confidence === 'HIGH' ? C.green : C.cyan }}>{persistenceWords(pc).persistence}</span>
                 <span style={{ fontSize: 12, color: C.faint }}>{e.row ? (e.row.origin === 'bench' ? '🏆 Bench' : e.row.origin === 'both' ? '📗 Book · 🏆 Bench' : '📗 Book') : 'not in the US book'} · Thesis: {e.row ? thesisLabel(e.row) : 'n/a'}</span>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: /Thesis: (weakening|broken|behind)/.test(catalystThesisLine(pc, e.row?.assessment)) ? C.red : C.dim }}>{catalystThesisLine(pc, e.row?.assessment)}</div>
-              {e.note && <div style={{ fontSize: 12.5, color: e.decayed ? C.amber : C.faint }}>{e.note}</div>}
+              {(() => { const tl = display ? display(pc.ticker, catalystThesisLine(e.pc, e.row?.assessment)) : catalystThesisLine(e.pc, e.row?.assessment); return (
+                <div style={{ fontSize: 13, fontWeight: 700, color: /Thesis: (weakening|broken|behind)/.test(tl) ? C.red : C.dim }}>{tl}</div>); })()}
+              {e.note && <div style={{ fontSize: 12.5, color: e.decayed ? C.amber : C.faint }}>{display ? display(pc.ticker, e.note) : e.note}</div>}
               <div style={{ fontSize: 13.5, color: C.dim }}><b style={{ color: C.text }}>Mechanism:</b> {pc.mechanism}</div>
               {pc.headroom && <div style={{ fontSize: 13, color: C.dim }}>{pc.headroom}</div>}
               <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Runway:</b> {pc.runway.text}</div>
@@ -160,13 +180,13 @@ export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPr
               </button>
             )}
           </div>
-          {near.map(({ pc }) => (
+          {near.map(({ pc: pc0 }) => { const pc: PersistentCatalyst = display ? display(pc0.ticker, pc0) : pc0; return (
             <div key={pc.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
               <button onClick={() => onJump(pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{pc.ticker}</button>
               <span style={{ color: C.faint }}> · {persistenceWords(pc).line} · {pc.mechanism}</span>
               <div style={{ color: C.amber }}>Needs: {pc.toQualify.join(' · ')}</div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
     </div>

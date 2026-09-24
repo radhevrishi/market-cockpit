@@ -12,6 +12,7 @@
 
 import { kvGet as realKvGet, kvSet as realKvSet } from '@/lib/kv';
 import { emptyUsBook, sanitizeUsBook, type UsBook } from '@/lib/us-book/model';
+import type { UsProfile } from '@/lib/us-book/profile';
 
 export const US_BOOK_KEY = (owner: string) => `us-book:v1:${String(owner || 'owner').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'owner'}`;
 /** The single-tenant owner id, the same default the India book uses. */
@@ -31,6 +32,18 @@ export async function readUsBook(owner: string = US_BOOK_OWNER): Promise<{ book:
   } catch (e: any) {
     return { book: emptyUsBook(owner), error: String(e?.message || e), exists: false };
   }
+}
+
+// zzz793 — company name + SEC industry per ticker (not personal data: no
+// quantity, no cost). One small document, apart from the book itself.
+export const US_PROFILE_KEY = 'us-book-profile:v1';
+
+export async function readUsProfiles(): Promise<Record<string, UsProfile>> {
+  try { return (await kv.get<Record<string, UsProfile>>(US_PROFILE_KEY)) || {}; } catch { return {}; }
+}
+
+export async function writeUsProfiles(p: Record<string, UsProfile>): Promise<void> {
+  try { await kv.set(US_PROFILE_KEY, p); } catch { /* a cache — the page still shows what it fetched */ }
 }
 
 export async function writeUsBook(book: UsBook): Promise<{ ok: boolean; error: string | null }> {

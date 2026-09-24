@@ -9,6 +9,8 @@
 import { kvGet as realKvGet, kvSet as realKvSet } from '@/lib/kv';
 import { mergeDetections, type PersistBlob, type StoredCatalyst, type UserFocusState } from '@/lib/catalyst/persistence-store';
 import type { PersistentCatalyst } from '@/lib/catalyst/persistence';
+import { catalystIsolated } from './sanitize';
+export { catalystIsolated } from './sanitize';
 
 export const US_PERSIST_KEY = 'us-persist:v1:all';
 
@@ -23,12 +25,32 @@ export async function loadUsPersist(): Promise<PersistBlob> {
   return b && b.records ? b : { version: 1, seq: 0, records: {} };
 }
 
-export async function upsertUsDetections(list: PersistentCatalyst[]): Promise<{ changed: number; blob: PersistBlob }> {
-  const blob = await loadUsPersist();
-  if (!list.length) return { changed: 0, blob };
-  const { changed } = mergeDetections(blob, list, 'portfolio');
-  if (changed) await kv.set(US_PERSIST_KEY, blob);
-  return { changed, blob };
+// ── ONE COMPANY PER RECORD.                                          (zzz793)
+// The memory is keyed `${TICKER}:${KIND}`. A detection is accepted — and a
+// stored record is shown — only when its id, its ticker and its evidence all
+// name the same company: every EDGAR address in its evidence carries one CIK,
+// and (when the ticker's CIK is known) that CIK is the ticker's own. The NTNX
+// card showed RELL's order book; a record like that is never written or read.
+/** The blob with every record that fails the isolation test removed (the
+ *  stored copy is not rewritten here; the next upsert writes the clean one). */
+export function isolatedUsBlob(blob: PersistBlob, ciks: Record<string, number | null> = {}): PersistBlob {
+  const records: PersistBlob['records'] = {};
+  for (const [id, r] of Object.entries(blob.records || {})) {
+    if (!r || String(r.ticker || '').toUpperCase() !== String(r.latest?.ticker || r.ticker || '').toUpperCase()) continue;
+    if (!catalystIsolated({ ...(r.latest as any), id, ticker: r.ticker }, ciks[String(r.ticker).toUpperCase()] ?? null)) continue;
+    records[id] = r;
+  }
+  return { ...blob, records };
+}
+
+export async function upsertUsDetections(list0: PersistentCatalyst[], ciks: Record<string, number | null> = {}): Promise<{ changed: number; blob: PersistBlob }> {
+  const raw = await loadUsPersist();
+  const blob = isolatedUsBlob(raw, ciks);
+  const dropped = Object.keys(raw.records || {}).length - Object.keys(blob.records).length;
+  const list = list0.filter((pc) => catalystIsolated(pc as any, ciks[String(pc.ticker).toUpperCase()] ?? null));
+  const { changed } = list.length ? mergeDetections(blob, list, 'portfolio') : { changed: 0 };
+  if (changed || dropped > 0) await kv.set(US_PERSIST_KEY, blob);
+  return { changed: changed + Math.max(0, dropped), blob };
 }
 
 export async function setUsUserState(id: string, state: UserFocusState | null, note: string | null = null): Promise<StoredCatalyst | null> {

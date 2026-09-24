@@ -43,6 +43,7 @@ import {
   type CompanyLedger, type FreshnessState, type ChangeLine, type CompanyEvidenceState,
 } from './evidence-ledger';
 import { evidenceReadLine, changesNote } from './evidence-counts';
+import { provisionalType, isProvisionalFallback, noTypeReason } from './provisional-type';
 
 export interface BookRow {
   symbol: string;
@@ -147,16 +148,20 @@ export function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshne
 /** zzz782 — THESIS NOT SET. With no thesis type (none fits, none chosen) no
  *  thesis variable can move a status, so none is implied: no "intact", no
  *  "strengthening". A deterioration found in the figures is still named in
- *  the text so it is never hidden. */
+ *  the text so it is never hidden.
+ *  zzz794: since every name with any figures now gets a provisional
+ *  nearest-fit type, THESIS NOT SET means "no figures at all" — and the card
+ *  says so in plain words. */
 function withThesisSet(row: BookRow, a: ThesisAssessment): ThesisAssessment {
   if (row.pattern) return a;
   const seen = a.status === 'BROKEN' || a.status === 'WEAKENING'
     ? ` ⚠ The figures show a deterioration worth a look: ${String(a.because).slice(0, 260)}`
     : '';
-  const because = `THESIS NOT SET — no thesis type fits these figures and none is set, so no thesis variable can move a status: no intact, strengthening or weakening is implied. The evidence below is shown as read. Set why you hold it with the thesis picker (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.${seen}`;
+  const reason = noTypeReason(row.graded, row.summary);
+  const because = `THESIS NOT SET — ${reason}, so there is nothing to fit a thesis type from and no thesis variable can move a status: no intact, strengthening or weakening is implied. Set why you hold it with the thesis picker (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.${seen}`;
   return {
     ...a,
-    actionLine: `THESIS NOT SET — ${because.replace(/^THESIS NOT SET — /, '')}`,
+    actionLine: because,
     status: 'THESIS_NOT_SET',
     action: 'THESIS NOT SET',
     because,
@@ -191,7 +196,15 @@ const THESIS_OVERRIDES: Record<string, AbfgPattern | null> = {};
 export function assessBookRow(row0: BookRow): BookRow { return assess(row0); }
 function assess(row0: BookRow): BookRow {
   const ov = THESIS_OVERRIDES[String(row0.symbol || '').toUpperCase()];
-  const row: BookRow = ov ? { ...row0, pattern: manualPattern(ov) } : row0;
+  // zzz794: the owner's type wins; else the classifier's own (exact, filing,
+  // nearest); else a provisional nearest fit from the company's own figures.
+  // A provisional fallback is re-derived on every pass, so it always reflects
+  // the latest figures and never outranks a real classification.
+  const row: BookRow = ov
+    ? { ...row0, pattern: manualPattern(ov) }
+    : (!row0.pattern || isProvisionalFallback(row0.pattern))
+      ? { ...row0, pattern: classifyWithFiling(row0.graded, row0.summary) || classifyOrNearest(row0.graded) || provisionalType(row0.graded, row0.summary) }
+      : row0;
   // ── THE LONGITUDINAL JOIN HAPPENS HERE.                          (zzz758)
   //
   // Every period this holding has ever had read is in `row.ledger`, and until

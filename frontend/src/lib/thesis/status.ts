@@ -690,6 +690,10 @@ export interface AssessInput {
    *  the capex line of the status narrative reads from it — one state for the
    *  narrative, the capex row and Special Focus. */
   capexState?: { build: { text: string; anyOperating: boolean; mixed: boolean } | null; economic: string | null; earningState: string | null } | null;
+  /** zzz793 (US only — India never passes it): thesis variables that do not
+   *  exist in this market's disclosures and are left off the ledger entirely
+   *  (a US filer reports no ROCE). Absent → every variable is checked. */
+  omitVariables?: VarKey[] | null;
 }
 
 /** Whole quarters between two period labels ("Q4 FY24" → "Q1 FY27" = 9), or
@@ -888,7 +892,10 @@ const flatOnTwoReadings = (c: CheckedVariable): boolean =>
   c.verdict === 'flat' && (c.readings === 2 || (SILENCE_IS_A_PASS.has(c.key) && checkPasses(c)));
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
-  const thesis = thesisFor(input.pattern);
+  const thesis0 = thesisFor(input.pattern);
+  const thesis = input.omitVariables?.length
+    ? { ...thesis0, variables: thesis0.variables.filter((tv) => !input.omitVariables!.includes(tv.key)) }
+    : thesis0;
   // ── FINANCIAL OUTPUT, READ AGAINST ITS MATERIALITY LINE FIRST.     (zzz772)
   // Done once, on the input rows, so every consumer below — the checked rows,
   // `found`, output-improved, the break conditions, the verdict — sees the

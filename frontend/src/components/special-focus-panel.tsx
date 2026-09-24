@@ -41,12 +41,15 @@ export function detectForRow(r: FocusRow): PersistentCatalyst[] {
 }
 
 /** Compact strip above a holding's card — only when there is something meaningful. */
-export function PersistentStrip({ pcs, onOpenFocus }: { pcs: PersistentCatalyst[]; onOpenFocus?: () => void }) {
+export function PersistentStrip({ pcs, onOpenFocus, ticker }: { pcs: PersistentCatalyst[]; onOpenFocus?: () => void;
+  /** zzz793: when given (US page), the strip names its company so it can never
+   *  read as the card above or below it. Absent → India output unchanged. */
+  ticker?: string }) {
   const best = pcs.find((p) => p.specialFocus) || pcs.find((p) => p.confidence === 'HIGH' || p.confidence === 'MEDIUM');
   if (!best) return null;
   return (
     <div data-testid="persistent-strip" style={{ border: `1px solid ${C.amber}`, borderBottom: 'none', borderRadius: '8px 8px 0 0', padding: '6px 12px', background: C.bg, fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
-      <b style={{ color: C.amber }}>🔥 {best.specialFocus ? 'Persistent catalyst detected · Special Focus' : 'Persistent catalyst candidate'}</b>{' '}
+      {ticker ? <b style={{ color: C.text }}>{ticker} · </b> : null}<b style={{ color: C.amber }}>🔥 {best.specialFocus ? 'Persistent catalyst detected · Special Focus' : 'Persistent catalyst candidate'}</b>{' '}
       <b style={{ color: C.text }}>{best.label}</b>
       <span style={{ color: C.faint }}> · {persistenceWords(best).evidence} · {persistenceWords(best).persistence}</span>
       <div>{best.stage ? <span style={{ color: C.faint }}>Stage: {best.stage} · </span> : null}{best.mechanism}</div>

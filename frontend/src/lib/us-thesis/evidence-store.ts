@@ -45,7 +45,14 @@ function logRun(entry: RunLogEntry): void {
 export async function loadUsLedger(ticker: string): Promise<CompanyLedger | null> {
   try {
     const l = await kv.get<CompanyLedger>(US_LEDGER_KEY(ticker));
-    return l && typeof l === 'object' && l.periods ? migrateLedger(l) : null;
+    if (!l || typeof l !== 'object' || !l.periods) return null;
+    // zzz793: a ledger stored under this key that names ANOTHER company is
+    // never handed out as this one's (one company per ledger, always).
+    if (l.ticker && tickerKey(l.ticker) !== tickerKey(ticker)) {
+      try { console.warn(`[us] ledger under ${US_LEDGER_KEY(ticker)} names ${l.ticker} — ignored`); } catch { /* noop */ }
+      return null;
+    }
+    return migrateLedger(l);
   } catch { return null; }
 }
 
@@ -63,10 +70,14 @@ export async function loadUsLedgers(tickers: string[], concurrency = 16): Promis
   return out;
 }
 
-export async function saveUsLedger(ledger: CompanyLedger): Promise<{ ok: boolean; error: string | null }> {
+export async function saveUsLedger(ledger0: CompanyLedger, ticker?: string): Promise<{ ok: boolean; error: string | null }> {
+  // zzz793: written under the ticker the run is FOR, and the document says so.
+  const t = tickerKey(ticker || ledger0.ticker);
+  if (!t) return { ok: false, error: 'no ticker for the ledger — nothing written' };
+  const ledger = ledger0.ticker === t ? ledger0 : { ...ledger0, ticker: t };
   try {
-    await kv.set(US_LEDGER_KEY(ledger.ticker), ledger);
-    const back = await kv.get<CompanyLedger>(US_LEDGER_KEY(ledger.ticker));
+    await kv.set(US_LEDGER_KEY(t), ledger);
+    const back = await kv.get<CompanyLedger>(US_LEDGER_KEY(t));
     if (!back || back.updated_at !== ledger.updated_at) return { ok: false, error: 'write did not land in KV (read-back mismatch)' };
     return { ok: true, error: null };
   } catch (e: any) { return { ok: false, error: String(e?.message || e) }; }
@@ -93,7 +104,9 @@ export interface UsPersistInput {
 /** The India persist path, verbatim in logic, on the US keys. */
 export async function persistUsEvidenceRun(inp: UsPersistInput): Promise<{ ledger: CompanyLedger; period: string; persisted: boolean; error: string | null; diff: MergeDiff | null; log: RunLogEntry | null }> {
   const now = new Date().toISOString();
-  const rp = reportingPeriodForDocuments(inp.documents, inp.filingDate);
+  // zzz793: a catalyst press release (kind 'announcement') is evidence, but
+  // the quarter is decided by the results documents only.
+  const rp = reportingPeriodForDocuments(inp.documents.filter((d) => d.kind !== 'announcement'), inp.filingDate);
   if (inp.expectPeriod && rp.period !== inp.expectPeriod) {
     const existing = (await loadUsLedger(inp.ticker)) || emptyLedger(tickerKey(inp.ticker), 'US', now);
     return { ledger: ledgerView(existing), period: rp.period, persisted: false, error: `documents resolve to ${rp.period}, not ${inp.expectPeriod} — nothing written`, diff: null, log: null };
@@ -126,7 +139,7 @@ export async function persistUsEvidenceRun(inp: UsPersistInput): Promise<{ ledge
   const { ledger: merged0, diff } = mergePeriodDetailed(existing, period, run);
   const entry = buildRunLogEntry({ ticker: tickerKey(inp.ticker), run, before, after: merged0, diff, attempts: inp.discoveryAttempts });
   const merged = appendRunLog(merged0, entry);
-  const saved = await saveUsLedger(merged);
+  const saved = await saveUsLedger(merged, inp.ticker);
   logRun({ ...entry, error: saved.ok ? entry.error : `persist failed: ${saved.error}` });
   return { ledger: ledgerView(merged), period: rp.period, persisted: saved.ok, error: saved.error, diff, log: entry };
 }
@@ -146,7 +159,7 @@ export async function persistUsAttempt(ticker: string, runId: string, startedAt:
   if (extra?.newestSeenDate || extra?.unseen?.length) ledger = recordSeen(ledger, extra?.newestSeenDate || null, now, extra?.unseen);
   const entry = buildRunLogEntry({ ticker: tickerKey(ticker), run, before, after: ledger, attempts: extra?.attempts });
   ledger = appendRunLog(ledger, entry);
-  const saved = await saveUsLedger(ledger);
+  const saved = await saveUsLedger(ledger, ticker);
   logRun(entry);
   return { ledger: ledgerView(ledger), persisted: saved.ok };
 }
@@ -164,7 +177,7 @@ export async function persistUsSeen(ticker: string, newestDocDate: string | null
     ledger = appendRunLog(ledger, entry);
     logRun(entry);
   }
-  await saveUsLedger(ledger);
+  await saveUsLedger(ledger, ticker);
   return { ledger: ledgerView(ledger), unseen };
 }
 
@@ -172,7 +185,7 @@ export async function persistUsStatus(ticker: string, period: string, status: st
   const now = new Date().toISOString();
   const ledger = await loadUsLedger(ticker);
   if (!ledger || !ledger.periods[period]) return { ok: false, error: `no ${period} evidence on file for ${ticker}` };
-  return saveUsLedger(recordStatus(ledger, period, status, because, tallies, now));
+  return saveUsLedger(recordStatus(ledger, period, status, because, tallies, now), ticker);
 }
 
 export interface UsBatchHeader { batch_id: string; started_at: string; finished_at: string | null; tickers: string[]; requested_by: string }

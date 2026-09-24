@@ -1,9 +1,12 @@
 // zzz790 — US Special Focus memory. Same contract as /api/v1/special-focus,
 // separate KV key (`us-persist:v1:all`). Personal research state: protected
 // by the site login (lib/site-auth '/api/v1/us-thesis'). No price read or stored.
+// zzz793 — one company per record: a record whose evidence names another
+// company's SEC filings is neither written nor returned (catalystIsolated).
 import { NextRequest, NextResponse } from 'next/server';
 import { focusStatus, type UserFocusState } from '@/lib/catalyst/persistence-store';
-import { loadUsPersist, upsertUsDetections, setUsUserState } from '@/lib/us-thesis/special-focus-store';
+import { tickerToCik } from '@/lib/us-edgar';
+import { loadUsPersist, upsertUsDetections, setUsUserState, isolatedUsBlob } from '@/lib/us-thesis/special-focus-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,8 +19,19 @@ function payload(blob: Awaited<ReturnType<typeof loadUsPersist>>) {
   return { ok: true, count: records.length, inQueue: records.filter((r) => r.focus.inQueue).length, records };
 }
 
+/** The SEC CIK of every ticker named, so evidence can be checked against it. */
+async function ciksFor(tickers: string[]): Promise<Record<string, number | null>> {
+  const out: Record<string, number | null> = {};
+  for (const t of Array.from(new Set(tickers.map((x) => String(x).toUpperCase()))).slice(0, 400)) {
+    out[t] = await tickerToCik(t).catch(() => null);
+  }
+  return out;
+}
+
 export async function GET() {
-  return NextResponse.json(payload(await loadUsPersist()), { headers: { 'Cache-Control': 'no-store' } });
+  const blob = await loadUsPersist();
+  const ciks = await ciksFor(Object.values(blob.records).map((r) => r.ticker)).catch(() => ({}));
+  return NextResponse.json(payload(isolatedUsBlob(blob, ciks)), { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function POST(req: NextRequest) {
@@ -25,7 +39,8 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, error: 'invalid json' }, { status: 400 }); }
   if (body?.action === 'upsert') {
     const list = Array.isArray(body.catalysts) ? body.catalysts.filter((c: any) => c && typeof c.id === 'string' && typeof c.ticker === 'string' && typeof c.kind === 'string').slice(0, 400) : [];
-    const { changed, blob } = await upsertUsDetections(list);
+    const ciks = await ciksFor(list.map((c: any) => c.ticker)).catch(() => ({}));
+    const { changed, blob } = await upsertUsDetections(list, ciks);
     return NextResponse.json({ ...payload(blob), changed });
   }
   if (body?.action === 'user') {

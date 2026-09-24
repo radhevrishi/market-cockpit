@@ -98,7 +98,7 @@ export interface UniverseRow {
   origin: 'book' | 'bench' | 'both' | string;
   market?: string | null;
   assessment?: { status?: string | null } | null;
-  pattern?: { fit?: string | null; pattern?: string | null } | null;
+  pattern?: { fit?: string | null; pattern?: string | null; weak?: boolean } | null;
 }
 export interface UniverseCounts {
   total: number;
@@ -112,6 +112,8 @@ export interface UniverseCounts {
   statusSum: number;
   thesisNotSet: number;
   provisional: number;
+  /** zzz794: provisional types the figures did not decide (industry words did). */
+  provisionalWeak: number;
   exportable: number;
   exportableUs: number;
   excluded: Record<string, number>;
@@ -122,7 +124,7 @@ export interface UniverseCounts {
 export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[], constructive: string[]): UniverseCounts {
   const total = allRows.length, shown = shownRows.length;
   const hiddenLargeCap = total - shown;
-  let book = 0, bench = 0, evaluated = 0, provisional = 0, exportable = 0, exportableUs = 0;
+  let book = 0, bench = 0, evaluated = 0, provisional = 0, provisionalWeak = 0, exportable = 0, exportableUs = 0;
   const byStatus: Record<string, number> = {};
   const excluded: Record<string, number> = {};
   for (const r of shownRows) {
@@ -131,7 +133,7 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
     if (!s) continue;
     evaluated++;
     byStatus[s] = (byStatus[s] || 0) + 1;
-    if (r.pattern?.fit === 'nearest' && s !== 'THESIS_NOT_SET') provisional++;
+    if (r.pattern?.fit === 'nearest' && s !== 'THESIS_NOT_SET') { provisional++; if (r.pattern.weak) provisionalWeak++; }
     if (constructive.includes(s)) { if (r.market === 'US') exportableUs++; else exportable++; }
     else excluded[s] = (excluded[s] || 0) + 1;
   }
@@ -140,10 +142,10 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
   const excludedN = Object.values(excluded).reduce((a, b) => a + b, 0);
   const line = `${total} total${hiddenLargeCap ? ` − ${hiddenLargeCap} large caps hidden` : ''} = ${shown} shown = ${book} book + ${bench} bench`
     + ` · ${evaluated} evaluated${notAssessed ? ` + ${notAssessed} not yet assessed` : ''}`
-    + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit)`
+    + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit${provisionalWeak ? `, ${provisionalWeak} of them a weak fit` : ''})`
     + ` · ${exportable} eligible for research export (NSE)${exportableUs ? ` + ${exportableUs} US eligible` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`;
   return { total, hiddenLargeCap, shown, book, bench, evaluated, notAssessed, byStatus, statusSum, thesisNotSet: byStatus.THESIS_NOT_SET || 0,
-    provisional, exportable, exportableUs, excluded, excludedN, line };
+    provisional, provisionalWeak, exportable, exportableUs, excluded, excludedN, line };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -165,6 +165,9 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
       marketCap: 0, // not available in chart API
       timestamps: result.timestamp || [],
       closes: _closes,
+      // zzz795 — the per-bar volume series, aligned with `closes`. Additive:
+      // the Theme Rotation capital-flow proxy reads it; nothing else changes.
+      volumes: (result.indicators?.quote?.[0]?.volume || []) as Array<number | null>,
     };
 
     setCache(cacheKey, data);
