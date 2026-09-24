@@ -1254,3 +1254,281 @@ html[data-theme="light"] {
   --tc-faint: #334155; /* slate 700 */
   --tc-accent: #0E7490; /* cyan 700 */
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   zzz796 — PHONE LAYOUT (360–430px, portrait). The installed app.
+   ───────────────────────────────────────────────────────────────────────────
+   Layout only. Nothing here changes what a page says or computes; it only
+   changes how the same content fits on a phone. Desktop (≥768px) is untouched
+   except for the --mc-bottom-bar variable, which is 0 there.
+
+   Three problems the earlier mobile passes (0263 / 0719 / 0727) left behind:
+   · P0727 #4 forces flex-wrap on EVERY flex container with a gap — including
+     column containers. A wrapping column container sizes each line to its
+     WIDEST child, so one wide table made the whole page 1,100px wide (US
+     Portfolio Book). Column containers are put back to nowrap.
+   · P0719 split <thead>/<tbody> into two separate display:table boxes, so
+     header and body columns were sized independently and could drift apart.
+     Tables are tables again; their parent scrolls instead (:has()).
+   · Table text was forced to 10–11px. Cells are now 14px (headers 12px),
+     numbers tabular.
+
+   Shared utilities (use these rather than one-off rules):
+     .mc-table-scroll   horizontal-scroll wrapper for a wide table
+     .mc-sticky-first   …and keep its first column pinned while scrolling
+                        (add .mc-on-card when the table sits on a card)
+     .mc-sticky-grid    the same for a grid-of-divs table (first cell of each row)
+     .mc-stack-mobile   any grid/flex row → one column on a phone
+     .mc-grid-2-mobile  small stat tiles → two per row on a phone
+     .mc-wrap-mobile    a chip/button row that must wrap
+     .mc-flow-mobile    a fixed-height inner scroller flows with the page
+     .mc-sheet-mobile   a modal/panel → full-width bottom sheet on a phone
+     .mc-hide-mobile    not shown on a phone
+   --mc-bottom-bar is the height of the phone tab bar (0 on desktop). The tab
+   bar may set it; anything pinned to the bottom of the screen should sit
+   above calc(var(--mc-bottom-bar) + env(safe-area-inset-bottom)).
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root { --mc-bottom-bar: 0px; }
+
+.mc-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+@media (max-width: 767px) {
+  :root { --mc-bottom-bar: 72px; }
+
+  /* Room for the tab bar and the home indicator under the last card. */
+  .mobile-main-content {
+    padding-bottom: calc(var(--mc-bottom-bar) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ── Base type: 14px body, tabular numbers, long tokens break. ───────── */
+  main {
+    font-size: 14px;
+    overflow-wrap: break-word;
+    --mc-text-xs: 12px;      /* design-system caption size, 11px on desktop */
+  }
+  main td, main th, main [style*="tabular-nums"] { font-variant-numeric: tabular-nums; }
+  /* Tiny inline sizes (8–11.5px) become 12px — captions, not body text. */
+  main [style*="font-size: 8px"], main [style*="font-size: 8.5px"],
+  main [style*="font-size: 9px"], main [style*="font-size: 9.5px"],
+  main [style*="font-size: 10px"], main [style*="font-size: 10.5px"],
+  main [style*="font-size: 11px"], main [style*="font-size: 11.5px"] {
+    font-size: 12px !important;
+  }
+
+  /* ── Nothing wider than the screen. ─────────────────────────────────── */
+  /* (min-width still wins over max-width, so a deliberately wide table
+     inside a scroll wrapper keeps its width.) */
+  main div, main section, main article, main form, main header, main footer,
+  main nav, main p, main ul, main ol, main details, main label, main pre,
+  main button, main a, main input, main select, main textarea,
+  main img, main video, main canvas, main iframe {
+    max-width: 100%;
+  }
+  main pre { overflow-x: auto; white-space: pre-wrap; }
+  main > div { min-width: 0; }
+
+  /* Column flex containers never wrap (see header note). */
+  main [style*="flex-direction: column"] { flex-wrap: nowrap !important; }
+  /* Inline-flex chip groups wrap too (P0727 only caught display: flex). */
+  main div[style*="display: inline-flex"][style*="gap"],
+  main span[style*="display: inline-flex"][style*="gap"] { flex-wrap: wrap; }
+  /* A row that was built to scroll sideways (tab strips) keeps scrolling. */
+  main [style*="display: flex"][style*="overflow-x: auto"],
+  main [style*="display: flex"][style*="overflow: auto"] { flex-wrap: nowrap !important; }
+  /* Grid and column-flex children may shrink below their content width, so
+     a long word or a wide table inside them can't widen the page. */
+  main [style*="display: grid"] > *,
+  main [style*="flex-direction: column"] > * { min-width: 0; }
+
+  /* Small stat tiles (auto-fit/auto-fill grids with an 80–199px minimum) go two-up on a
+     phone instead of the one-per-row collapse from P0263/P0727 — a column of
+     single numbers is a lot of scrolling for very little. */
+  main div[style*="auto-f"][style*="minmax(8"],
+  main div[style*="auto-f"][style*="minmax(9"],
+  main div[style*="auto-f"][style*="minmax(1"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  /* ── Tables: real tables again, scrolled by their parent. ────────────── */
+  main table {
+    display: table;
+    overflow: visible;
+    max-width: none;
+  }
+  main table thead, main table tbody, main table tfoot {
+    display: revert;
+    width: auto;
+    min-width: 0;
+  }
+  main :has(> table) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  main table th {
+    font-size: 12px !important;
+    padding: 8px 8px !important;
+    white-space: nowrap;
+  }
+  main table td {
+    font-size: 14px !important;
+    padding: 8px 8px !important;
+  }
+  /* Pin the first column while the rest scrolls sideways. */
+  .mc-sticky-first th:first-child,
+  .mc-sticky-first td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--mc-sticky-bg, var(--mc-bg-0));
+    box-shadow: 1px 0 0 var(--mc-bg-4);
+  }
+  /* The same for a grid-of-divs "table": each row's first cell is pinned. */
+  .mc-sticky-grid > div > :first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--mc-sticky-bg, var(--mc-bg-0));
+  }
+  /* A table that sits on a card (--mc-bg-1) rather than the page. */
+  .mc-sticky-first.mc-on-card { --mc-sticky-bg: var(--mc-bg-1); }
+
+  /* ── Tap targets ≥ 40px. ─────────────────────────────────────────────── */
+  /* !important because many buttons reset themselves with an inline
+     `all: unset`; an inline (text-flow) button is unaffected, since
+     min-height does not apply to inline boxes. */
+  main button,
+  main select,
+  main [role="button"],
+  main summary,
+  main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]) {
+    min-height: 40px !important;
+  }
+  main button { flex-shrink: 1; }
+  main input[type="checkbox"], main input[type="radio"] { min-width: 20px; min-height: 20px; }
+  /* Link-styled chips (padded anchors laid out as boxes). */
+  main a[style*="display: inline-flex"], main a[style*="display: flex"],
+  main a[style*="display: inline-block"], main a[style*="display: block"] {
+    min-height: 40px;
+  }
+  main a[style*="display: inline-flex"], main a[style*="display: flex"] { align-items: center; }
+  /* Links laid out as items of a flex row (link rows, footers of cards). */
+  main [style*="display: flex"] > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+  /* Pill links (padded + bordered anchors) that were left inline. */
+  main a[style*="padding"][style*="border"]:not([style*="display: block"]):not([style*="display: flex"]):not([style*="display: grid"]) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  /* ── Fixed / modal panels never wider than the screen. ──────────────── */
+  main [style*="position: fixed"] { max-width: 100vw; }
+
+  /* ── Utilities. ─────────────────────────────────────────────────────── */
+  .mc-stack-mobile {
+    grid-template-columns: 1fr !important;
+    flex-direction: column !important;
+    flex-wrap: nowrap !important;
+    align-items: stretch !important;
+  }
+  .mc-stack-mobile > * { min-width: 0 !important; width: auto !important; max-width: 100% !important; }
+  /* Class repeated so it outranks the P0727 "1fr 1fr → 1 column" rule. */
+  .mc-grid-2-mobile.mc-grid-2-mobile.mc-grid-2-mobile.mc-grid-2-mobile.mc-grid-2-mobile {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+  .mc-grid-2-mobile > * { min-width: 0 !important; }
+  .mc-grid-2-mobile > button { text-align: left; justify-content: flex-start; }
+  .mc-wrap-mobile { flex-wrap: wrap !important; }
+  /* A desktop "app" layout (fixed-height column with its own inner scroller)
+     flows with the page instead — on a phone the header alone is taller than
+     the screen and the inner scroller was squeezed to nothing. */
+  .mc-flow-mobile {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    flex: none !important;
+  }
+  .mc-hide-mobile { display: none !important; }
+  .mc-sheet-mobile {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(100dvh - 48px - env(safe-area-inset-top, 0px)) !important;
+    overflow-y: auto !important;
+    margin: 0 !important;
+    border-radius: 16px 16px 0 0 !important;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+    transform: none !important;
+  }
+}
+
+/* zzz796 — page-specific phone rules (Home, books, catalysts, earnings, …). */
+@media (max-width: 767px) {
+  /* Home ⭐ Favourites: two-up grid of 44px tap targets. */
+  .mc-fav-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+  .mc-fav-grid > a {
+    display: flex !important;
+    align-items: center;
+    min-height: 44px;
+    font-size: 13px !important;
+    white-space: normal !important;
+    line-height: 1.25 !important;
+  }
+}
+@media (max-width: 767px) {
+  /* Toasts sit above the tab bar, full width. */
+  .mc-toast-mobile {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: calc(var(--mc-bottom-bar) + 12px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  /* Full-screen drawers clear the notch and the home indicator. */
+  .mc-drawer-mobile {
+    padding-top: calc(14px + env(safe-area-inset-top, 0px)) !important;
+    padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+@media (max-width: 767px) {
+  /* Exit Radar table → one card per flagged name: stock + severity on the
+     first line, thesis under it, the reason across the full width. */
+  .mc-exit-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    row-gap: 4px !important;
+  }
+  .mc-exit-row > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .mc-exit-row > :nth-child(3) { grid-column: 1 / -1; grid-row: 3; }
+  .mc-exit-row > :nth-child(4) { grid-column: 2; grid-row: 1; text-align: right; }
+}
+@media (max-width: 767px) {
+  /* Thesis card (Portfolio Catalysts, India + US) — selectors only, the
+     component itself is unchanged. The right-aligned 128px group label
+     ("CAPACITY & UTILISATION") goes above its chips instead of squeezing
+     them into a 150px column; the tally names sit on their own line and the
+     named-variable lines lose their 78px desktop indent. */
+  main span[style*="min-width: 128px"][style*="text-align: right"] {
+    flex-basis: 100%;
+    min-width: 0 !important;
+    text-align: left !important;
+  }
+  main [data-testid^="tally-row-"] > span:first-child { display: block !important; }
+  main [data-testid^="tally-"][style*="padding-left: 78px"] { padding-left: 10px !important; }
+}

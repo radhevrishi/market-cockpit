@@ -107,7 +107,37 @@ export function usScaleMoney(variable: string, value: string | null | undefined,
     : /\bin thousands|\(\s*(?:in )?(?:\$ ?)?thousands?\s*\)|thousands of (?:u\.?s\.? )?dollars/i.test(ctx) ? 'thousand' : null;
   if (!scale) return { value: null, why: 'a dollar figure with no stated scale (millions? thousands?)' };
   BARE_DOLLAR.lastIndex = 0;
+  // zzz797: a table "(in thousands)" figure is shown in millions — OII's
+  // "$445,000" (thousands) is $445.0 million, never "$445,000".
+  if (scale === 'thousand') {
+    return { value: v.replace(BARE_DOLLAR, (_m, n) => {
+      const x = Number(String(n).replace(/,/g, '')) / 1000;
+      return Number.isFinite(x) ? `$${x.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: x < 10 ? 2 : 1 })} million` : `$${n} thousand`;
+    }), why: null };
+  }
   return { value: v.replace(BARE_DOLLAR, (_m, n) => `$${n} ${scale}`), why: null };
+}
+
+// ── TABLE FRAGMENTS ARE NOT FIGURES.                                 (zzz797)
+// POWL's capex read "announced $ | 6,525 | $ | 5,117 | …": a financial-table
+// row (cells joined by the HTML-to-text pipe) lifted as if it were a sentence.
+// Any value with a pipe next to a number or a dollar sign is a table cell run,
+// not a stated figure, and is dropped wherever it appears.
+const TABLE_FRAGMENT = /\|\s*[$€£(]?\s*\d|\d[\d,.)%]*\s*\|\s*[$€£]?|\$\s*\|/;
+export const isTableFragment = (s: unknown): boolean => typeof s === 'string' && TABLE_FRAGMENT.test(s);
+
+// ── A SHARE COUNT IS NOT GUIDANCE.                                   (zzz797)
+// MDA's "guidance" was "8,106,539 common shares" — a share count from the
+// capital section. Guidance names revenue, earnings, margin, cash or a unit
+// of output; a number of shares (or warrants / options / units of stock)
+// with no dollar or percentage figure is never guidance.
+const SHARE_COUNT = /\d[\d,.]*\s*(?:million\s+|m\s+)?(?:(?:common|ordinary|preferred|class [a-z]|restricted)\s+)?(?:shares?|stock options?|options|warrants?|RSUs?|share units?)\b/i;
+export function isShareCountNotGuidance(s: unknown): boolean {
+  const t = String(s ?? '');
+  if (!t.trim() || !SHARE_COUNT.test(t)) return false;
+  // a per-share money figure ("$1.20 per share") or a % is a real guide
+  if (/\$\s?\d|\d\s*%|per (?:diluted )?share|\bEPS\b/i.test(t)) return false;
+  return true;
 }
 
 const SUMMARY_FIELDS: Array<[string, string, string]> = [
@@ -125,6 +155,36 @@ export function sanitizeUsSummary(summary: any): { summary: any; dropped: string
   if (!summary || typeof summary !== 'object') return { summary, dropped: [] };
   const s = JSON.parse(JSON.stringify(summary));
   const dropped: string[] = [];
+  // zzz797: table-cell runs anywhere in the summary (strings blanked, array
+  // items that carry one dropped); share counts never stand as guidance.
+  // A quote / evidence sentence may legitimately come from a table; only the
+  // VALUE fields are tested.
+  const QUOTE_KEY = /evidence|quote|context|source|url|text|label/i;
+  const strip = (o: any, path: string): any => {
+    if (typeof o === 'string') { if (isTableFragment(o)) { dropped.push(`${path} "${o.slice(0, 40)}" — a table row, not a stated figure`); return ''; } return o; }
+    if (Array.isArray(o)) {
+      return o.filter((it) => {
+        const bad = typeof it === 'string' ? isTableFragment(it)
+          : it && typeof it === 'object' && Object.entries(it).some(([k, x]) => !QUOTE_KEY.test(k) && isTableFragment(x));
+        if (bad) dropped.push(`${path}[] — a table row, not a stated figure`);
+        return !bad;
+      }).map((it, i) => strip(it, `${path}[${i}]`));
+    }
+    if (o && typeof o === 'object') { for (const k of Object.keys(o)) if (!QUOTE_KEY.test(k)) o[k] = strip(o[k], path ? `${path}.${k}` : k); return o; }
+    return o;
+  };
+  for (const k of Object.keys(s)) if (k !== 'events' && !QUOTE_KEY.test(k)) s[k] = strip(s[k], k);
+  if (s.guidance && typeof s.guidance === 'object' && isShareCountNotGuidance(s.guidance.detail)) {
+    dropped.push(`guidance "${String(s.guidance.detail).slice(0, 40)}" — a share count, not guidance`);
+    s.guidance = { ...s.guidance, action: 'none', detail: '' };
+  }
+  if (Array.isArray(s.management_targets)) {
+    s.management_targets = s.management_targets.filter((t: any) => {
+      const bad = isShareCountNotGuidance(`${t?.target ?? ''}`) && !/\$|%/.test(`${t?.metric ?? ''}`);
+      if (bad) dropped.push(`management target "${String(t?.target).slice(0, 40)}" — a share count, not guidance`);
+      return !bad;
+    });
+  }
   for (const [grp, key, variable] of SUMMARY_FIELDS) {
     const o = s[grp];
     if (!o || typeof o !== 'object' || typeof o[key] !== 'string' || !o[key].trim()) continue;
@@ -148,6 +208,8 @@ export function sanitizeUsEvents<T extends { variable: string; after: string | n
   for (const e0 of events || []) {
     if (!e0) continue;
     const v = String(e0.variable || '');
+    if (isTableFragment(e0.after) || isTableFragment(e0.before)) continue;
+    if (/guidance|target/i.test(v) && isShareCountNotGuidance(e0.after)) continue;
     const a = usScaleMoney(v, e0.after, e0.evidence_text);
     if (e0.after && a.value == null) continue;
     const b = e0.before ? usScaleMoney(v, e0.before, e0.evidence_text) : { value: e0.before ?? null };
@@ -182,6 +244,8 @@ export function isolateUsLedger(ledger: CompanyLedger | null | undefined, ticker
     if (!p) continue;
     const docs = (p.documents || []).filter((d) => mine(d.url));
     const facts = (p.facts || []).filter((f: any) => (!f.ticker || usTickerKey(f.ticker) === want) && mine(f.source_url))
+      .filter((f: any) => !isTableFragment(f.after_value) && !isTableFragment(f.before_value) && !isTableFragment(f.value)
+        && !(/guidance|target/i.test(String(f.metric_name || '')) && isShareCountNotGuidance(f.after_value ?? f.value)))
       .map((f: any) => {
         const m = String(f.metric_name || '');
         const a = usScaleMoney(m, f.after_value, f.source_quote);

@@ -11,7 +11,8 @@
 // Pure functions only.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { CatalystInput, CatalystKind, PrintInput } from './types';
+import type { CatalystInput, CatalystKind, EarningsInput, GradedInput, PrintInput } from './types';
+import { BENCH_MIN_PRIOR, EARN_PRIOR_DAYS, EARN_RECENT_DAYS } from './layers';
 import { detectRatingAction } from '@/lib/rating-agency-detector';
 import { classifyFiling as filingTypeOf } from '@/lib/concall-bullish';
 
@@ -60,6 +61,74 @@ export function printsByTheme(prints: PrintInput[], themeOf: (p: PrintInput) => 
     if (seen.has(key)) continue; seen.add(key);
     for (const th of themeOf({ ...p, ticker: tk })) (out[th] ||= []).push({ ...p, ticker: tk });
   }
+  return out;
+}
+
+// ── EARNINGS EVIDENCE PER THEME  (zzz797) ─────────────────────────────────
+const DAY_MS = 86_400_000;
+const windowOf = (date: string, now: Date): 'recent' | 'prior' | null => {
+  const t = new Date(date.length === 10 ? `${date}T00:00:00Z` : date).getTime();
+  if (!Number.isFinite(t)) return null;
+  const age = (now.getTime() - t) / DAY_MS;
+  if (age < -2) return null;
+  if (age <= EARN_RECENT_DAYS) return 'recent';
+  if (age <= EARN_PRIOR_DAYS) return 'prior';
+  return null;
+};
+const isStrong = (tier: string) => /BLOCK|STRONG/i.test(tier || '');
+
+/** The earlier window counts as "on file" in the graded history when at
+ *  least this many companies reported in it, market-wide. */
+export const GRADED_MIN_PRIOR = 30;
+
+/**
+ * Graded history (every tier) → per-theme earnings evidence: how many of the
+ * theme's companies reported in each window and how many of them printed
+ * strong. One result per company per window (the latest).
+ */
+export function earningsFromGraded(rows: GradedInput[], themesOf: (ticker: string) => string[], themeIds: string[], now: Date): Record<string, EarningsInput> {
+  const latest = new Map<string, GradedInput & { w: 'recent' | 'prior' }>();
+  for (const r of rows) {
+    const t = sanitizeTicker(r.ticker); if (!t || !r.filingDate) continue;
+    const w = windowOf(r.filingDate, now); if (!w) continue;
+    const k = `${t}|${w}`;
+    const prev = latest.get(k);
+    if (!prev || r.filingDate > prev.filingDate) latest.set(k, { ...r, ticker: t, w });
+  }
+  const market = { strong: { recent: 0, prior: 0 }, reported: { recent: 0, prior: 0 } };
+  const out: Record<string, EarningsInput> = {};
+  for (const id of themeIds) out[id] = { source: 'graded', prints: [], reported: { recent: 0, prior: 0 }, priorCovered: false, market };
+  for (const r of latest.values()) {
+    market.reported[r.w]++;
+    if (isStrong(r.tier)) market.strong[r.w]++;
+    for (const th of themesOf(r.ticker)) {
+      const e = out[th]; if (!e) continue;
+      e.reported![r.w]++;
+      if (isStrong(r.tier)) e.prints.push({ ticker: r.ticker, tier: r.tier, filingDate: r.filingDate.slice(0, 10), company: r.company ?? null });
+    }
+  }
+  const covered = market.reported.prior >= GRADED_MIN_PRIOR;
+  for (const id of themeIds) out[id].priorCovered = covered;
+  return out;
+}
+
+/**
+ * Bench-only strong prints → per-theme evidence. The earlier window counts as
+ * on file only when the bench holds enough strong prints in it market-wide.
+ */
+export function earningsFromBench(prints: PrintInput[], themesOf: (ticker: string) => string[], themeIds: string[], now: Date): Record<string, EarningsInput> {
+  const byTheme = printsByTheme(prints, (p) => themesOf(p.ticker));
+  const seen = new Set<string>();
+  const strong = { recent: 0, prior: 0 };
+  for (const p of prints) {
+    const t = sanitizeTicker(p.ticker); if (!t || !p.filingDate) continue;
+    const k = `${t}|${p.filingDate.slice(0, 10)}`; if (seen.has(k)) continue; seen.add(k);
+    const w = windowOf(p.filingDate, now); if (w) strong[w]++;
+  }
+  const market = { strong, reported: null };
+  const covered = strong.prior >= BENCH_MIN_PRIOR;
+  const out: Record<string, EarningsInput> = {};
+  for (const id of themeIds) out[id] = { source: 'bench', prints: byTheme[id] || [], priorCovered: covered, market };
   return out;
 }
 

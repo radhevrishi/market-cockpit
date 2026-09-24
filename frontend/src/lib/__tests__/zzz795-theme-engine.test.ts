@@ -7,7 +7,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { BreadthStats, FlowStats, Payload, PrintInput, CatalystInput, ThemeRow, WeeklySnapshot } from '../theme-rotation/types';
+import type { BreadthStats, EarningsInput, FlowStats, Payload, PrintInput, CatalystInput, ThemeRow, WeeklySnapshot } from '../theme-rotation/types';
 import { breadthLayer, catalystLayer, earningsLayer, flowLayer, priceLayer, strengthLayer, valuationLayer, buildLayers } from '../theme-rotation/layers';
 import { detectBreakdown, detectCrowding, detectCrossFlows, detectEarlyRotation, detectFlags } from '../theme-rotation/detectors';
 import { assessTheme, rankAssessments } from '../theme-rotation/ranking';
@@ -40,6 +40,9 @@ const cats = (pos: number, neg: number): CatalystInput[] => [
   ...Array.from({ length: pos }, (_, i) => ({ ticker: `C${i}`, kind: 'order' as const, tone: 'pos' as const, title: 'Receipt of order worth Rs 120 crore', date: new Date(NOW.getTime() - (i + 1) * 86_400_000).toISOString(), url: `https://nse.example/${i}`, source: 'filing' as const })),
   ...Array.from({ length: neg }, (_, i) => ({ ticker: `N${i}`, kind: 'rating-down' as const, tone: 'neg' as const, title: 'Rating downgraded', date: new Date(NOW.getTime() - (i + 2) * 86_400_000).toISOString(), url: null, source: 'news' as const })),
 ];
+// zzz797 — earnings are compared only when the earlier window is on file; these
+// fixtures model a bench that covered both windows (20 strong prints in each).
+const benchIn = (p: PrintInput[], covered = true): EarningsInput => ({ source: 'bench', prints: p, priorCovered: covered, market: { strong: { recent: 20, prior: 20 }, reported: null } });
 function payload(themes: ThemeRow[], extra: Partial<Payload> = {}): Payload {
   return {
     region: 'us', benchmark: { symbol: 'SPY', name: 'S&P 500', price: 600, changePercent: 0.2 },
@@ -52,14 +55,14 @@ function payload(themes: ThemeRow[], extra: Partial<Payload> = {}): Payload {
 function vm(themes: ThemeRow[], opts: { prints?: Record<string, PrintInput[]> | null; cats?: Record<string, CatalystInput[]> | null; snaps?: WeeklySnapshot[]; pay?: Partial<Payload> } = {}) {
   return buildViewModel({
     payload: payload(themes, opts.pay), now: NOW,
-    printsByTheme: opts.prints === undefined ? {} : opts.prints, benchLabel: 'Conviction bench (US)',
+    earningsByTheme: opts.prints === undefined ? {} : opts.prints === null ? null : Object.fromEntries(Object.entries(opts.prints).map(([k, p]) => [k, benchIn(p)])), benchLabel: 'Conviction bench (US)',
     catalystsByTheme: opts.cats === undefined ? {} : opts.cats, catalystWindowDays: 14,
     pesByTheme: {}, allPEs: [], snapshots: opts.snaps || [], currentWeek: isoWeek(NOW),
     beneficiariesOf: (id) => [`${id}-leader`],
   });
 }
 const L = (t: ThemeRow, p: PrintInput[] | null = [], c: CatalystInput[] | null = []) => buildLayers(t, {
-  benchName: 'S&P 500', benchRet: { w1: 0.5, m1: 1.5, m3: 4, m6: 7, ytd: 12, y1: 18 }, prints: p, benchLabel: 'bench', catalysts: c, catalystWindowDays: 14, themePEs: [], allPEs: [], now: NOW,
+  benchName: 'S&P 500', benchRet: { w1: 0.5, m1: 1.5, m3: 4, m6: 7, ytd: 12, y1: 18 }, earnings: p == null ? null : benchIn(p), benchLabel: 'bench', catalysts: c, catalystWindowDays: 14, themePEs: [], allPEs: [], now: NOW,
 });
 
 // ═══ VERDICT FIXES ══════════════════════════════════════════════════════════
@@ -86,9 +89,13 @@ describe('verdict — the owner vocabulary with its reasons', () => {
     assert.equal(verdictFor({ quadrant: 'Improving', aboveSMA50: true, w1: -4, m1: 0.5, m3: -2 }).verdict, 'EARLY BUY');
     assert.notEqual(verdictFor({ quadrant: 'Improving', aboveSMA50: true, w1: -4, m1: -7, m3: -2 }).verdict, 'EARLY BUY');
   });
-  test('short-term break thresholds', () => {
-    assert.equal(isShortTermBreak(-1, -6), true);
-    assert.equal(isShortTermBreak(-3.5, -0.5), true);
+  test('short-term break thresholds (zzz797: 1M ≤ −7%, or 1W ≤ −4% with 1M ≤ −3%, while below the 20-day line)', () => {
+    assert.equal(isShortTermBreak(-1, -7), true);
+    assert.equal(isShortTermBreak(-1, -6), false);
+    assert.equal(isShortTermBreak(-3.5, -0.5), false);
+    assert.equal(isShortTermBreak(-4.5, -3.5, false), true);
+    assert.equal(isShortTermBreak(1, -8, true), false, 'bounced back above the 20-day line');
+    assert.equal(isShortTermBreak(1, -8, false), true, 'a positive week inside the break');
     assert.equal(isShortTermBreak(-2, -4), false);
     assert.equal(isShortTermBreak(null, null), false);
   });
@@ -146,20 +153,20 @@ describe('layer calculators — separate, honest, unknown ≠ negative', () => {
     assert.equal(none.state, 'unknown'); assert.equal(none.proxy, true);
   });
   test('earnings: quarter-on-quarter count of strong prints; bench missing → unknown', () => {
-    assert.equal(earningsLayer(prints(4, 1), NOW, 'b').state, 'improving');
-    assert.equal(earningsLayer(prints(0, 3), NOW, 'b').state, 'weakening');
-    assert.equal(earningsLayer(prints(2, 2), NOW, 'b').state, 'steady');
+    assert.equal(earningsLayer(benchIn(prints(4, 1)), NOW, 'b').state, 'improving');
+    assert.equal(earningsLayer(benchIn(prints(0, 3)), NOW, 'b').state, 'weakening');
+    assert.equal(earningsLayer(benchIn(prints(2, 2)), NOW, 'b').state, 'steady');
     assert.equal(earningsLayer(null, NOW, 'b').state, 'unknown');
-    const none = earningsLayer([], NOW, 'b');
+    const none = earningsLayer(benchIn([]), NOW, 'b');
     assert.equal(none.state, 'unknown'); assert.match(none.detail, /Unknown is not negative/);
-    assert.equal(earningsLayer(prints(3, 0), NOW, 'b').evidence?.length, 3);
+    assert.equal(earningsLayer(benchIn(prints(3, 0)), NOW, 'b').evidence?.length, 3);
   });
-  test('catalysts: positive vs negative dated items; quiet is steady; no feed is unknown', () => {
+  test('catalysts: positive vs negative dated items; nothing counted is no data (zzz797); no feed is unknown', () => {
     const r = catalystLayer(cats(3, 0), NOW, 14);
-    assert.equal(r.state, 'improving'); assert.match(r.headline, /3 order wins in 14 days/);
+    assert.equal(r.state, 'improving'); assert.match(r.headline, /3 order wins in the last 14 days/);
     assert.ok(r.evidence?.every((e) => e.date));
     assert.equal(catalystLayer(cats(0, 3), NOW, 14).state, 'weakening');
-    assert.equal(catalystLayer([], NOW, 14).state, 'steady');
+    assert.equal(catalystLayer([], NOW, 14).state, 'unknown');
     assert.equal(catalystLayer(null, NOW, 14).state, 'unknown');
   });
   test('valuation never claims a direction and needs a real field', () => {
@@ -331,8 +338,9 @@ describe('ranking — by evidence, not by % change', () => {
 
 // ═══ CROSS-THEME FLOW ═══════════════════════════════════════════════════════
 describe('cross-theme flow', () => {
-  const from = row({ id: 'semis', group: 'AI & Compute', cluster: 1, trail: trail([106, 106, 105.5, 105, 104, 103, 102, 101], [103, 103, 102.5, 102, 101, 100, 99, 98.5]) });
-  const to = row({ id: 'photonics', group: 'AI & Compute', cluster: 1, trail: trail([97, 97, 97.2, 97.5, 98, 99, 100, 101], [98, 98, 98.5, 99, 100.5, 101.5, 102.5, 103.5]) });
+  // zzz797 — a rotation also needs the destination to beat the source over the month.
+  const from = row({ id: 'semis', group: 'AI & Compute', cluster: 1, ret: { w1: -1, m1: -3, m3: 4, m6: 8, ytd: 10, y1: 15 }, trail: trail([106, 106, 105.5, 105, 104, 103, 102, 101], [103, 103, 102.5, 102, 101, 100, 99, 98.5]) });
+  const to = row({ id: 'photonics', group: 'AI & Compute', cluster: 1, ret: { w1: 2, m1: 6, m3: 9, m6: 8, ytd: 10, y1: 15 }, trail: trail([97, 97, 97.2, 97.5, 98, 99, 100, 101], [98, 98, 98.5, 99, 100.5, 101.5, 102.5, 103.5]) });
   const unrelated = row({ id: 'gold', group: 'Energy & Resources', cluster: 7, trail: trail([97, 97, 97.2, 97.5, 98, 99, 100, 101], [98, 98, 98.5, 99, 100.5, 101.5, 102.5, 104]) });
   test('related pair detected with second-order beneficiaries', () => {
     const f = detectCrossFlows([from, to, unrelated], (id) => (id === 'photonics' ? ['COHR', 'LITE'] : []));

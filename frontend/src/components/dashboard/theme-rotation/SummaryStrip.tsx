@@ -62,8 +62,8 @@ export function SummaryStrip({ vm, benchName, nameOf, onPick, holdings, historyL
         <div style={cell}>
           <div style={label}>Early rotation</div>
           {s.early.length
-            ? <>{chips(s.early, T.accent, 5)}<div style={{ fontSize: 10.5, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>Earnings or catalysts improving while relative strength still lags — the turn before the price confirms it.</div></>
-            : <div style={{ fontSize: 11.5, color: T.faint, lineHeight: 1.45 }}>None this week. This needs improving earnings or catalysts plus a second confirmation, while the price still lags.</div>}
+            ? <>{chips(s.early, T.accent, 5)}<div style={{ fontSize: 10.5, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>Earnings or catalysts genuinely improving against an earlier period, plus a second confirmation, while relative strength still lags — research these; the price has not confirmed yet.</div></>
+            : <div style={{ fontSize: 11.5, color: T.faint, lineHeight: 1.45 }}>None this week. This needs a real improvement in earnings or catalysts (compared with an earlier period on file) plus a second confirmation, while the price still lags.</div>}
         </div>
 
         <div style={cell}>
@@ -72,7 +72,9 @@ export function SummaryStrip({ vm, benchName, nameOf, onPick, holdings, historyL
             <div><span style={{ color: T.down, fontWeight: 900 }}>Breakdown</span> {chips(s.breakdown, T.down)}</div>
             <div><span style={{ color: T.warn, fontWeight: 900 }}>Short-term break</span> {chips(s.shortBreak, T.warn)}</div>
             <div><span style={{ color: T.warn, fontWeight: 900 }}>Crowded</span> {chips(s.crowded, T.warn)}</div>
+            {s.defensive?.length ? <div title="Down less than the benchmark — defensive, not strength"><span style={{ color: T.warn, fontWeight: 900 }}>Falling less (defensive)</span> {chips(s.defensive, T.warn, 3)}</div> : null}
           </div>
+          <div style={{ fontSize: 10.5, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>Short-term break = 1M ≤ −7% (or 1W ≤ −4% with 1M ≤ −3%) while still below the 20-day line. Falling less = down less than the benchmark: defence, not strength.</div>
           {holdings && holdings.atRisk.length ? (
             <div style={{ marginTop: 5, fontSize: 11, color: T.down, background: tint(T.down, 8), border: `1px solid ${tint(T.down, 30)}`, borderRadius: 6, padding: '3px 7px', lineHeight: 1.4 }}>
               Your holdings in these themes: <b>{holdings.atRisk.slice(0, 6).join(', ')}{holdings.atRisk.length > 6 ? ` +${holdings.atRisk.length - 6}` : ''}</b>
@@ -85,14 +87,15 @@ export function SummaryStrip({ vm, benchName, nameOf, onPick, holdings, historyL
         <div style={{ ...cell, marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
           <span style={{ ...label, marginBottom: 0 }}>Rotation between themes</span>
           {vm.flows.slice(0, 3).map((f) => (
-            <span key={`${f.from}>${f.to}`} title={f.why} style={{ fontSize: 11.5, color: T.dim }}>
+            <span key={`${f.from}>${f.to}`} title={f.why} style={{ fontSize: 11.5, color: T.dim, flexBasis: '100%', lineHeight: 1.45 }}>
               <button type="button" onClick={() => onPick(f.from)} style={linkBtn(T.down)}>{nameOf(f.from)}</button>
               <span style={{ color: T.faint }}> → </span>
               <button type="button" onClick={() => onPick(f.to)} style={linkBtn(T.up)}>{nameOf(f.to)}</button>
-              {f.beneficiaries.length ? <span style={{ color: T.faint }}> · next in line: {f.beneficiaries.slice(0, 3).join(', ')}</span> : null}
+              {f.plain ? <span style={{ color: T.dim }}> — {f.plain}</span> : null}
+              <span style={{ color: T.faint }}> · next in line (small / mid caps only): {f.beneficiaries.length ? f.beneficiaries.slice(0, 3).join(', ') : 'none on file'}</span>
             </span>
           ))}
-          <span style={{ fontSize: 10.5, color: T.faint }}>(relative-momentum proxy over {vm.flows[0].weeks} weeks, not fund-flow data)</span>
+          <span style={{ fontSize: 10.5, color: T.faint }}>(a relative-strength proxy over {vm.flows[0].weeks} weeks — the source falling while the destination rises, with a gap — not fund-flow data)</span>
         </div>
       ) : null}
     </div>

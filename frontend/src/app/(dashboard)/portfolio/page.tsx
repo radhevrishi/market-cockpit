@@ -739,7 +739,7 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+      <div className="mc-grid-2-mobile" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
         {cards.map(c => (
           <div key={c.label} style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
             <div style={{ fontSize: '10px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
@@ -2401,7 +2401,7 @@ export default function PortfolioPage() {
   return (
     <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
       {/* ── Header ──────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+      <div className="mc-stack-mobile" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', gap: 12 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)', margin: 0 }}>Portfolio</h1>
@@ -2557,7 +2557,7 @@ export default function PortfolioPage() {
             </p>
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid var(--mc-border-2)', borderRadius: '12px' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <table className="mc-sticky-first" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--mc-border-2)', backgroundColor: 'var(--mc-bg-1)' }}>
                   {[

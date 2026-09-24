@@ -190,7 +190,7 @@ function Book({ items, onOpen }: { items: ResearchItem[]; onOpen: (it: ResearchI
     <section aria-label="Your book" style={box}>
       <SectionHead title="YOUR BOOK" count={items.length} sub="Position reviews against your thesis — not trade instructions." />
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 680 }}>
+        <table className="mc-sticky-first" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 680 }}>
           <thead><tr><th style={th}>Name</th><th style={th}>1D</th><th style={th}>Event</th><th style={th}>Thesis variable</th><th style={th}>Materiality</th><th style={th}>Research next</th></tr></thead>
           <tbody>
             {items.map((it) => (

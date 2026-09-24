@@ -111,7 +111,7 @@ export function ListsByTheme(p: ListsByThemeProps) {
             <div style={{ border: `1px dashed ${T.border2}`, borderRadius: 8, padding: '7px 9px' }}>
               <div style={{ fontSize: 11.5, fontWeight: 800, color: T.dim, marginBottom: 3 }}>No theme yet · {p.unclassified.length}</div>
               <div style={{ fontSize: 10.5, color: T.faint, marginBottom: 5, lineHeight: 1.45 }}>
-                No industry, company name or ticker pattern placed these. {p.region === 'india' ? 'Industries are looked up in the background and kept for good, so this list shrinks over visits. BSE numeric codes cannot be looked up.' : 'US names need a sector or industry on the bench row or upload.'}
+                No industry, SEC code, theme membership, company name or ticker pattern placed these. {p.region === 'india' ? 'Industries are looked up in the background and kept for good, so this list shrinks over visits. BSE numeric codes cannot be looked up.' : 'US names are placed by sector / industry, then by their SEC industry code, then by theme membership; what is left has none of these on file (see "Your exposure" for the reason per holding).'}
               </div>
               <NameChips names={p.unclassified.map(label)} n={10} />
             </div>

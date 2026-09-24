@@ -13,7 +13,7 @@ import { TIER_LABEL } from '@/lib/theme-rotation/types';
 import type { ThemeView } from '@/lib/theme-rotation/view-model';
 import { LAYER_NAME, LAYER_ORDER, LAYER_SHORT } from '@/lib/theme-rotation/layers';
 import { defaultDir, type SortDir, type SortKey, type TableFilter } from '@/lib/theme-rotation/table';
-import { LayerBadge, LayerStrip, Pill, TierBadge, VerdictBadge } from './ui';
+import { LayerBadge, LayerStrip, Pill, Sparkline, TierBadge, VerdictBadge } from './ui';
 import { T, VERDICT_TONE, TIER_TONE, fmtPct, tint } from './tokens';
 
 export interface ThemeTableProps {
@@ -34,8 +34,8 @@ export interface ThemeTableProps {
 
 const VERDICTS = ['BUY', 'EARLY BUY', 'HOLD', 'WATCH', 'TRIM', 'AVOID'];
 const TIERS: Tier[] = ['top', 'look', 'monitor', 'low'];
-const FLAGS: Array<[FlagKind | 'mine', string]> = [['early-rotation', 'Early rotation'], ['crowded', 'Crowded'], ['breakdown', 'Breakdown'], ['short-term-break', 'Short-term break'], ['mine', 'Has my names']];
-const COLS = 11;
+const FLAGS: Array<[FlagKind | 'mine', string]> = [['early-rotation', 'Early rotation'], ['crowded', 'Crowded'], ['breakdown', 'Breakdown'], ['short-term-break', 'Short-term break'], ['defensive', 'Falling less'], ['mine', 'Has my names']];
+const COLS = 12;
 
 function toggleSet<T>(s: Set<T>, x: T): Set<T> { const n = new Set(s); if (n.has(x)) n.delete(x); else n.add(x); return n; }
 
@@ -63,15 +63,15 @@ export function ThemeTable(p: ThemeTableProps) {
       {/* Filters */}
       <div style={{ display: 'grid', gap: 5, marginBottom: 8 }}>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: T.faint, fontWeight: 900, width: 52 }}>VERDICT</span>
+          <span className="trt-filter-label" style={{ fontSize: 10, color: T.faint, fontWeight: 900, width: 52 }}>VERDICT</span>
           {VERDICTS.map((v) => chip(filter.verdicts.has(v), VERDICT_TONE[v], v, () => onFilter({ ...filter, verdicts: toggleSet(filter.verdicts, v) })))}
         </div>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: T.faint, fontWeight: 900, width: 52 }}>PRIORITY</span>
+          <span className="trt-filter-label" style={{ fontSize: 10, color: T.faint, fontWeight: 900, width: 52 }}>PRIORITY</span>
           {TIERS.map((t) => chip(filter.tiers.has(t), TIER_TONE[t], TIER_LABEL[t], () => onFilter({ ...filter, tiers: toggleSet(filter.tiers, t) })))}
         </div>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: T.faint, fontWeight: 900, width: 52 }}>FLAGS</span>
+          <span className="trt-filter-label" style={{ fontSize: 10, color: T.faint, fontWeight: 900, width: 52 }}>FLAGS</span>
           {FLAGS.map(([k, l]) => chip(filter.flags.has(k), k === 'early-rotation' ? T.accent : k === 'breakdown' ? T.down : k === 'mine' ? T.info : T.warn, l, () => onFilter({ ...filter, flags: toggleSet(filter.flags, k) })))}
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -86,6 +86,7 @@ export function ThemeTable(p: ThemeTableProps) {
             <option value="m3|desc">3M change</option>
             <option value="y1|desc">1Y change</option>
             <option value="trend|asc">Trend</option>
+            <option value="rs12|desc">RS 12 weeks</option>
             <option value="yours|desc">My names</option>
             <option value="name|asc">Name</option>
           </select>
@@ -121,6 +122,7 @@ export function ThemeTable(p: ThemeTableProps) {
                     ))}
                   </span>
                 </th>
+                {th('rs12', 'RS 12w', 'Relative strength vs the benchmark, weekly, last 12 weeks — rising = beating it', 'center')}
                 {th('w1', '1W')}{th('m1', '1M')}{th('m3', '3M')}{th('y1', '1Y')}
                 {th('trend', 'Trend', 'Accelerating / continuing / reversing vs prior weeks', 'center')}
                 {th('yours', 'Yours', 'Names on your lists in this theme (● = holdings)')}
@@ -144,11 +146,16 @@ export function ThemeTable(p: ThemeTableProps) {
                         {flags.length ? <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 2 }}>{flags.map((f) => <Pill key={f.kind} title={f.why} color={f.kind === 'early-rotation' ? T.accent : f.kind === 'breakdown' ? T.down : T.warn} style={{ fontSize: 9 }}>{f.label}</Pill>)}</div> : null}
                       </td>
                       <td className="trt-d" style={{ padding: '6px 6px', minWidth: 220, maxWidth: 380 }}>
-                        <TierBadge tier={v.a.tier} />
+                        <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }} title={v.a.evidenceLine}>
+                          <TierBadge tier={v.a.tier} />
+                          {!v.a.relation.agree ? <Pill color={T.info} title={v.a.relation.text} style={{ fontSize: 9 }}>≠ price verdict</Pill> : null}
+                        </span>
                         <div style={{ fontSize: 10.5, color: T.dim, marginTop: 2, lineHeight: 1.35 }}><b style={{ color: T.faint }}>Why:</b> {v.a.why}</div>
+                        {!v.a.relation.agree ? <div style={{ fontSize: 10.5, color: T.info, marginTop: 2, lineHeight: 1.35 }}>{v.a.relation.text}</div> : null}
                       </td>
                       <td className="trt-d" style={{ padding: '6px 6px', textAlign: 'center' }}><VerdictBadge verdict={v.row.verdict} note={v.row.verdictNote} /></td>
                       <td className="trt-d" style={{ padding: '6px 6px' }}><LayerStrip layers={v.a.layers} compact /></td>
+                      <td className="trt-d" style={{ padding: '6px 6px' }}><Sparkline values={v.row.rsWeekly} label={v.row.name} /></td>
                       {retCell(r?.w1)}{retCell(r?.m1)}{retCell(r?.m3)}{retCell(r?.y1)}
                       <td className="trt-d" style={{ padding: '6px 6px', textAlign: 'center', fontSize: 10.5, color: trendC, whiteSpace: 'nowrap' }} title={v.trend.note}>
                         {v.trend.dir === 'up' ? '↗' : v.trend.dir === 'down' ? '↘' : '→'} {v.trend.word === 'unknown' ? '—' : v.trend.word}
@@ -166,9 +173,11 @@ export function ThemeTable(p: ThemeTableProps) {
                           <span style={{ flex: 1 }} />
                           <span style={{ fontSize: 10, color: T.faint }}>{open ? '▾' : '▸'}</span>
                         </div>
-                        {flags.length ? <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 3 }}>{flags.map((f) => <Pill key={f.kind} color={f.kind === 'early-rotation' ? T.accent : f.kind === 'breakdown' ? T.down : T.warn} style={{ fontSize: 9 }}>{f.label}</Pill>)}</div> : null}
+                        {flags.length ? <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 3 }}>{flags.map((f) => <Pill key={f.kind} title={f.why} color={f.kind === 'early-rotation' ? T.accent : f.kind === 'breakdown' ? T.down : T.warn} style={{ fontSize: 9 }}>{f.label}</Pill>)}</div> : null}
                         <div style={{ fontSize: 11, color: T.dim, marginTop: 3, lineHeight: 1.4 }}><b style={{ color: T.faint }}>Why:</b> {v.a.why}</div>
+                        {!v.a.relation.agree ? <div style={{ fontSize: 11, color: T.info, marginTop: 2, lineHeight: 1.4 }}>{v.a.relation.text}</div> : null}
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
+                          <Sparkline values={v.row.rsWeekly} label={v.row.name} width={56} height={16} />
                           {LAYER_ORDER.map((k) => <LayerBadge key={k} k={k} r={v.a.layers[k]} />)}
                         </div>
                         <div style={{ fontSize: 10.5, color: T.faint, marginTop: 3, fontFamily: T.mono }}>
@@ -213,5 +222,7 @@ export const THEME_ROTATION_CSS = `
   .trt-sub { grid-template-columns: minmax(90px, 130px) 1fr !important; }
   .trt-sub > span:last-child { grid-column: 1 / -1; }
   .trt-header { flex-direction: column; align-items: stretch !important; }
+  /* zzz796 — filter label on its own line above its chips. */
+  .trt-filter-label { flex-basis: 100%; width: auto !important; }
 }
 `;

@@ -87,3 +87,25 @@ export function SectionTitle({ children, hint }: { children: React.ReactNode; hi
 }
 
 export const card: React.CSSProperties = { background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px' };
+
+/**
+ * zzz797 — a tiny relative-strength sparkline (12 weekly points of the theme
+ * ÷ benchmark line, rebased to 100). Rising = beating the benchmark over
+ * those weeks. No axis: the title carries the numbers.
+ */
+export function Sparkline({ values, width = 64, height = 18, label }: { values?: number[] | null; width?: number; height?: number; label?: string }) {
+  const v = (values || []).filter((x) => typeof x === 'number' && Number.isFinite(x));
+  if (v.length < 3) return <span style={{ color: T.faint, fontSize: 10 }} title="Not enough weekly history for a sparkline">—</span>;
+  const mn = Math.min(...v), mx = Math.max(...v), span = mx - mn || 1;
+  const pts = v.map((y, i) => `${((i / (v.length - 1)) * (width - 2) + 1).toFixed(1)},${(height - 2 - ((y - mn) / span) * (height - 4) - 1).toFixed(1)}`).join(' ');
+  const chg = v[v.length - 1] - v[0];
+  const c = chg >= 0.5 ? T.up : chg <= -0.5 ? T.down : T.flat;
+  const title = `${label ? `${label}: ` : ''}relative strength vs the benchmark over ${v.length} weeks ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% (rising = beating it)`;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title} style={{ display: 'block' }}>
+      <title>{title}</title>
+      <polyline points={pts} fill="none" style={{ stroke: c }} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={width - 1.5} cy={Number(pts.split(' ').pop()!.split(',')[1])} r="1.6" style={{ fill: c }} />
+    </svg>
+  );
+}

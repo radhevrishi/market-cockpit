@@ -19,8 +19,8 @@
 import type { ClassifyResult } from '@/lib/theme-classify';
 import { sanitizeTicker } from './evidence-inputs';
 
-export interface RawListRow { symbol?: string; ticker?: string; sector?: string | null; industry?: string | null; company?: string | null; name?: string | null; grade?: string | null }
-export interface RawBenchRow { ticker: string; company?: string | null; sector?: string | null; industry?: string | null; tier?: string | null; filing_date?: string | null; pe?: number | null; url?: string | null }
+export interface RawListRow { symbol?: string; ticker?: string; sector?: string | null; industry?: string | null; company?: string | null; name?: string | null; grade?: string | null; mcap?: number | null }
+export interface RawBenchRow { ticker: string; company?: string | null; sector?: string | null; industry?: string | null; tier?: string | null; filing_date?: string | null; pe?: number | null; url?: string | null; mcap?: number | null }
 
 export interface ListEntry {
   ticker: string;
@@ -36,6 +36,8 @@ export interface ListEntry {
   filingDate?: string | null;
   pe?: number | null;
   url?: string | null;
+  /** zzz797 — market cap when a source carries one (US $M, India ₹ Cr). */
+  mcap?: number | null;
   theme: string | null;
   via: ClassifyResult['via'] | null;
 }
@@ -55,11 +57,13 @@ export function buildListEntries(
     if (!e) { e = { ticker: t, inTech: false, inFundo: false, inBench: false, held: held.has(t), theme: null, via: null }; map.set(t, e); }
     return e;
   };
-  for (const r of tech) { const e = get(r.symbol ?? r.ticker); if (!e) continue; e.inTech = true; e.sector ||= r.sector; e.industry ||= r.industry; e.company ||= r.company || r.name; }
-  for (const r of fundo) { const e = get(r.symbol ?? r.ticker); if (!e) continue; e.inFundo = true; e.sector ||= r.sector; e.industry ||= r.industry; e.company ||= r.company || r.name; if (r.grade) e.grade = r.grade; }
+  const capOk = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x > 0;
+  for (const r of tech) { const e = get(r.symbol ?? r.ticker); if (!e) continue; e.inTech = true; e.sector ||= r.sector; e.industry ||= r.industry; e.company ||= r.company || r.name; if (capOk(r.mcap) && e.mcap == null) e.mcap = r.mcap; }
+  for (const r of fundo) { const e = get(r.symbol ?? r.ticker); if (!e) continue; e.inFundo = true; e.sector ||= r.sector; e.industry ||= r.industry; e.company ||= r.company || r.name; if (r.grade) e.grade = r.grade; if (capOk(r.mcap) && e.mcap == null) e.mcap = r.mcap; }
   for (const b of bench) {
     const e = get(b.ticker); if (!e) continue;
     e.inBench = true; e.sector ||= b.sector; e.industry ||= b.industry; e.company ||= b.company;
+    if (capOk(b.mcap)) e.mcap = b.mcap;
     // Keep the most recent graded print for the name.
     if (!e.filingDate || (b.filing_date && b.filing_date > e.filingDate)) { e.benchTier = b.tier; e.filingDate = b.filing_date; e.url = b.url; }
     if (typeof b.pe === 'number' && b.pe > 0) e.pe = b.pe;
@@ -136,6 +140,32 @@ export function bestSupported(entries: ListEntry[], favoured: Set<string>, nowIs
   return { picks, rankedBy, declined: null, eligible: eligible.length };
 }
 
+// ── CASH LINES, NON-US LINES, AND WHY A NAME STAYS UNMATCHED  (zzz797) ────
+/** A broker cash / currency line is not a holding in any theme. */
+export function isCashLine(ticker: string): boolean {
+  const t = String(ticker || '').toUpperCase().trim();
+  return /^(USD|EUR|GBP|CHF|JPY|INR|CAD|AUD|HKD|SGD|SEK|NOK|DKK|BASE|CASH|FX|MMF)$/.test(t) || /(^|[^A-Z])CASH([^A-Z]|$)/.test(t) || /\.CASH$/.test(t);
+}
+
+export interface SecProfileLite { status?: 'sec' | 'not-found' | 'error' | string; sic?: string | null; sicDescription?: string | null }
+
+/** Why a holding has no theme, in words the owner can act on. */
+export function unmatchedReason(e: ListEntry, region: 'us' | 'india', ctx: { profile?: SecProfileLite | null; industry?: string | null } = {}): string {
+  if (region === 'india') {
+    if (/^\d+$/.test(e.ticker)) return 'BSE numeric code — its industry cannot be looked up';
+    const ind = ctx.industry || e.industry || e.sector;
+    if (ind) return `industry "${ind}" has no theme on the board`;
+    return 'no industry on file yet (looked up in the background, kept for good)';
+  }
+  const p = ctx.profile;
+  if (p?.status === 'not-found') return 'the SEC does not list this ticker (a foreign or unlisted line?)';
+  if (p?.status === 'error') return 'the SEC record could not be read this visit';
+  if (p?.sic || p?.sicDescription) return `SEC industry "${p.sicDescription || 'unnamed'}" (SIC ${p.sic || '?'}) has no theme on the board`;
+  const ind = e.industry || e.sector;
+  if (ind) return `sector "${ind}" has no theme on the board`;
+  return 'no sector, industry or SEC code on file yet';
+}
+
 export interface HoldingsExposure {
   total: number;
   themed: number;
@@ -143,18 +173,29 @@ export interface HoldingsExposure {
   atRisk: string[];
   crowded: string[];
   line: string;
+  /** zzz797 — holdings left out of the counts (cash lines, non-US listings), with why. */
+  excluded?: Array<{ ticker: string; reason: string }>;
+  /** zzz797 — held names still without a theme. */
+  unmatched?: string[];
 }
 
 /**
  * Where actual HOLDINGS sit against the board. `riskThemes` = themes rated
  * TRIM/AVOID or showing a breakdown; `crowdedThemes` = crowded flag.
+ * zzz797 — cash lines and `excluded` lines (non-US listings) are left out of
+ * the counts and listed separately with the reason.
  */
-export function holdingsExposure(entries: ListEntry[], favoured: Set<string>, riskThemes: Set<string>, crowdedThemes: Set<string>): HoldingsExposure {
-  const held = entries.filter((e) => e.held);
+export function holdingsExposure(entries: ListEntry[], favoured: Set<string>, riskThemes: Set<string>, crowdedThemes: Set<string>, excludedIn: Map<string, string> = new Map()): HoldingsExposure {
+  const allHeld = entries.filter((e) => e.held);
+  const excluded = allHeld.filter((e) => excludedIn.has(e.ticker) || isCashLine(e.ticker))
+    .map((e) => ({ ticker: e.ticker, reason: excludedIn.get(e.ticker) || 'cash / currency line' }));
+  const exSet = new Set(excluded.map((x) => x.ticker));
+  const held = allHeld.filter((e) => !exSet.has(e.ticker));
   const themed = held.filter((e) => e.theme);
   const favouredH = themed.filter((e) => favoured.has(e.theme!)).map((e) => e.ticker);
   const atRisk = themed.filter((e) => riskThemes.has(e.theme!)).map((e) => e.ticker);
   const crowded = themed.filter((e) => crowdedThemes.has(e.theme!)).map((e) => e.ticker);
-  const line = !held.length ? '' : `${held.length} holding${held.length === 1 ? '' : 's'}: ${favouredH.length} in themes rated BUY / EARLY BUY, ${atRisk.length} in themes rated TRIM / AVOID or breaking down, ${crowded.length} in crowded themes${held.length - themed.length ? `, ${held.length - themed.length} not matched to a theme` : ''}.`;
-  return { total: held.length, themed: themed.length, favoured: favouredH, atRisk, crowded, line };
+  const unmatched = held.filter((e) => !e.theme).map((e) => e.ticker);
+  const line = !held.length ? '' : `${held.length} holding${held.length === 1 ? '' : 's'}: ${favouredH.length} in themes rated BUY / EARLY BUY, ${atRisk.length} in themes rated TRIM / AVOID or breaking down, ${crowded.length} in crowded themes${unmatched.length ? `, ${unmatched.length} not matched to a theme` : ''}${excluded.length ? ` (${excluded.length} cash / non-US line${excluded.length === 1 ? '' : 's'} not counted)` : ''}.`;
+  return { total: held.length, themed: themed.length, favoured: favouredH, atRisk, crowded, line, excluded, unmatched };
 }

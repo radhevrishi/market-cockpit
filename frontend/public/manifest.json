@@ -1,27 +1,73 @@
 {
   "name": "Market Cockpit",
-  "short_name": "MarketCockpit",
+  "short_name": "Cockpit",
   "id": "/",
-  "description": "Bloomberg-lite trading terminal for India + US markets",
-  "start_url": "/",
+  "description": "Your private India + US market cockpit: portfolio books, catalysts, earnings and daily gainers.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#0A0E1A",
   "theme_color": "#0A0E1A",
   "categories": ["finance", "business", "productivity"],
   "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
     {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
+      "name": "Home",
+      "short_name": "Home",
+      "description": "Home dashboard",
+      "url": "/?source=pwa-shortcut",
+      "icons": [{ "src": "/icons/shortcut-home.png", "sizes": "96x96", "type": "image/png" }]
     },
     {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
+      "name": "Portfolio Book (India)",
+      "short_name": "India Book",
+      "description": "Your India holdings",
+      "url": "/portfolio",
+      "icons": [{ "src": "/icons/shortcut-portfolio.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "US Portfolio Book",
+      "short_name": "US Book",
+      "description": "Your US holdings",
+      "url": "/us-portfolio-book",
+      "icons": [{ "src": "/icons/shortcut-us-portfolio-book.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Portfolio Catalysts (India)",
+      "short_name": "Catalysts",
+      "description": "What changed in your India book",
+      "url": "/portfolio-catalysts",
+      "icons": [{ "src": "/icons/shortcut-portfolio-catalysts.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "US Portfolio Catalysts",
+      "short_name": "US Catalysts",
+      "description": "What changed in your US book",
+      "url": "/us-portfolio-catalysts",
+      "icons": [{ "src": "/icons/shortcut-us-portfolio-catalysts.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "AI Daily Gainers",
+      "short_name": "Gainers",
+      "description": "Why today's gainers moved",
+      "url": "/ai-gainers",
+      "icons": [{ "src": "/icons/shortcut-ai-gainers.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Earnings Opportunities",
+      "short_name": "Earnings",
+      "description": "Graded India earnings results",
+      "url": "/earnings-opportunities",
+      "icons": [{ "src": "/icons/shortcut-earnings.png", "sizes": "96x96", "type": "image/png" }]
     }
   ]
 }

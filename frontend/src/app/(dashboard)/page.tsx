@@ -3125,6 +3125,7 @@ export default function HomeDashboard() {
               }}
             >
               <div
+                className="mc-sheet-mobile"
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   width: 420, maxWidth: '92vw',
@@ -3205,6 +3206,7 @@ export default function HomeDashboard() {
           {lensToast && (
             <div
               role="status"
+              className="mc-toast-mobile"
               style={{
                 position: 'fixed', bottom: 24, right: 24, zIndex: 10000,
                 fontSize: 12, padding: '8px 14px',
@@ -5994,7 +5996,7 @@ function FavouritesGrid() {
   };
 
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}
+    <div className="mc-fav-grid" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}
       title="Drag any chip to reorder — the order is remembered on this browser">
       {items.map((f, i) => {
         const st: React.CSSProperties = { ...navChip(f.color), opacity: dragFrom === i ? 0.4 : 1, cursor: 'grab' };

@@ -194,3 +194,37 @@ export function interimDiff(rows: ThemeRow[], currentWeek: string): HistoryDiff 
     note: `History starts this week (${currentWeek}). Until earlier weeks are stored, changes are read from the 8-week relative-strength tail.`,
   };
 }
+
+// ── WEEKLY CHANGE LOG  (zzz797) ───────────────────────────────────────────
+export interface ChangeLogWeek {
+  week: string;
+  previousWeek: string;
+  changes: Array<{ id: string; kind: 'verdict' | 'tier'; from: string; to: string; dir: 'up' | 'down' }>;
+}
+
+const TIER_WORD: Record<Tier, string> = { top: 'Research first', look: 'Worth a look', monitor: 'Monitor', low: 'Low priority' };
+
+/**
+ * What changed week to week, from the stored snapshots (oldest first in,
+ * newest week first out): verdict changes from the server base, and research
+ * tier changes where both weeks hold an evidence overlay. Empty until two
+ * weeks are stored — the page says so rather than inventing a history.
+ */
+export function changeLog(snaps: WeeklySnapshot[], maxWeeks = 8): ChangeLogWeek[] {
+  const s = [...snaps].sort((a, b) => a.week.localeCompare(b.week));
+  const out: ChangeLogWeek[] = [];
+  for (let i = s.length - 1; i >= 1 && out.length < maxWeeks; i--) {
+    const cur = s[i], prev = s[i - 1];
+    const changes: ChangeLogWeek['changes'] = [];
+    const ids = new Set([...Object.keys(cur.base || {}), ...Object.keys(cur.overlay || {})]);
+    for (const id of ids) {
+      const v1 = prev.base?.[id]?.v, v2 = cur.base?.[id]?.v;
+      if (v1 && v2 && v1 !== v2) changes.push({ id, kind: 'verdict', from: v1, to: v2, dir: (VERDICT_RANK[v2] ?? 2) > (VERDICT_RANK[v1] ?? 2) ? 'up' : 'down' });
+      const t1 = prev.overlay?.[id]?.t, t2 = cur.overlay?.[id]?.t;
+      if (t1 && t2 && t1 !== t2) changes.push({ id, kind: 'tier', from: TIER_WORD[t1], to: TIER_WORD[t2], dir: TIER_ORDER[t2] < TIER_ORDER[t1] ? 'up' : 'down' });
+    }
+    changes.sort((a, b) => (a.dir === b.dir ? a.id.localeCompare(b.id) : a.dir === 'up' ? -1 : 1));
+    out.push({ week: cur.week, previousWeek: prev.week, changes });
+  }
+  return out;
+}

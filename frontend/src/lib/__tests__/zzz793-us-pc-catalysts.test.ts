@@ -98,9 +98,9 @@ describe('Special Focus on US inputs (the India gate, unchanged)', () => {
 });
 
 describe('"$3,250" in a table is scaled from its context, or dropped', () => {
-  test('(in millions) → $3,250 million; (in thousands) → thousand; no scale → dropped', () => {
+  test('(in millions) → $3,250 million; (in thousands) → shown in millions (zzz797); no scale → dropped', () => {
     assert.equal(usScaleMoney('order_book', '$3,250', 'Backlog (in millions) $3,250').value, '$3,250 million');
-    assert.equal(usScaleMoney('order_book', '$3,250', '(in thousands) backlog $3,250').value, '$3,250 thousand');
+    assert.equal(usScaleMoney('order_book', '$3,250', '(in thousands) backlog $3,250').value, '$3.25 million');
     assert.equal(usScaleMoney('order_book', '$3,250', 'Backlog was $3,250').value, null);
     assert.equal(usScaleMoney('order_book', '$164.4 million', null).value, '$164.4 million');
     assert.equal(usScaleMoney('margin', '$3,250', null).value, '$3,250', 'not a money variable');

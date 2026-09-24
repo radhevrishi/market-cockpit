@@ -24,6 +24,12 @@ export interface BreadthStats {
   newHighs: number;
   /** Members within 2% of their one-year low. */
   newLows: number;
+  /** zzz797 — members above their own 20-day average (short-term participation). */
+  above20?: number | null;
+  /** zzz797 — members above their own 200-day average, out of `n200`. */
+  above200?: number | null;
+  /** zzz797 — members with enough history (200 sessions) for the 200-day test. */
+  n200?: number | null;
 }
 
 /** Volume-based proxy for money moving in or out. NOT fund-flow data. */
@@ -71,6 +77,14 @@ export interface ThemeRow {
   /** zzz795 — the price has broken down over the last week / month even
    *  though the three-month picture is still strong. */
   shortTermBreak?: boolean;
+  /** zzz797 — what triggered the short-term break, in words. */
+  shortTermBreakWhy?: string | null;
+  /** zzz797 — price above its own 20-day average (null = too short). */
+  aboveSMA20?: boolean | null;
+  dist20?: number | null;
+  /** zzz797 — the theme's relative-strength line vs the benchmark, weekly,
+   *  last ~12 weeks, rebased to 100 at the first point (for the sparkline). */
+  rsWeekly?: number[] | null;
   ok?: boolean;
 }
 
@@ -100,8 +114,10 @@ export interface Payload {
 // ── EVIDENCE LAYERS ────────────────────────────────────────────────────────
 
 export type LayerKey = 'strength' | 'breadth' | 'flow' | 'earnings' | 'catalysts' | 'valuation' | 'price';
-/** Direction of a layer. 'unknown' means NO DATA — it is never read as bad. */
-export type LayerState = 'improving' | 'steady' | 'weakening' | 'unknown';
+/** Direction of a layer. 'unknown' means NO DATA — it is never read as bad.
+ *  zzz797 — 'level' means there IS data for now but no earlier period on file
+ *  to compare it with: a level, never a direction, never counted as improving. */
+export type LayerState = 'improving' | 'steady' | 'weakening' | 'level' | 'unknown';
 
 export interface EvidenceLink { label: string; date?: string | null; url?: string | null; ticker?: string | null; tone?: 'pos' | 'neg' | 'neutral' }
 
@@ -120,6 +136,11 @@ export interface LayerRead {
   proxy?: boolean;
   /** Dated items that back the layer (prints, filings, news). */
   evidence?: EvidenceLink[];
+  /** zzz797 — the reading rests on too few names (fewer than 5) to trust. */
+  lowConfidence?: boolean;
+  /** zzz797 — the reading compared two like-for-like periods ('compared'),
+   *  or only states where it stands now ('level'). */
+  basis?: 'compared' | 'level';
 }
 
 export type LayerSet = Record<LayerKey, LayerRead>;
@@ -128,6 +149,30 @@ export type LayerSet = Record<LayerKey, LayerRead>;
 
 /** A graded earnings print (BLOCKBUSTER / STRONG) from the Conviction bench. */
 export interface PrintInput { ticker: string; tier: string; filingDate: string; company?: string | null; url?: string | null; pe?: number | null }
+
+/** zzz797 — one graded result of ANY tier (from the graded-earnings history),
+ *  so a theme's strong-print SHARE can be measured against everyone who reported. */
+export interface GradedInput { ticker: string; tier: string; filingDate: string; company?: string | null; sector?: string | null; mcap?: number | null }
+
+/**
+ * zzz797 — the earnings evidence for one theme, from whichever source exists:
+ *  · 'graded'  — every graded result (all tiers) → strong share of reporters,
+ *                compared quarter on quarter, like for like;
+ *  · 'bench'   — only the strong prints on the Conviction bench → a count,
+ *                compared only when the bench demonstrably covered the
+ *                earlier window, else a level.
+ */
+export interface EarningsInput {
+  source: 'graded' | 'bench';
+  /** Strong prints mapped to this theme (both windows). */
+  prints: PrintInput[];
+  /** 'graded' only: every result in this theme (any tier), by window. */
+  reported?: { recent: number; prior: number } | null;
+  /** Whether the source covered the earlier window at all (market-wide). */
+  priorCovered: boolean;
+  /** Market-wide totals for the same windows, for a like-for-like share. */
+  market?: { strong: { recent: number; prior: number }; reported?: { recent: number; prior: number } | null } | null;
+}
 
 export type CatalystKind = 'order' | 'rating-up' | 'rating-down' | 'capacity' | 'guidance-up' | 'guidance-down' | 'approval' | 'regulatory-negative' | 'deal' | 'buyback' | 'other';
 export interface CatalystInput {
@@ -165,6 +210,11 @@ export interface ThemeAssessment {
   why: string;
   improving: LayerKey[];
   weakening: LayerKey[];
+  /** zzz797 — how the research priority relates to the price verdict, in
+   *  words ("fundamentals improving, price not confirming yet"). */
+  relation: { agree: boolean; text: string };
+  /** zzz797 — the evidence count behind the tier, in words. */
+  evidenceLine: string;
 }
 
 export interface CrossFlow {
@@ -176,6 +226,10 @@ export interface CrossFlow {
   /** Names inside the receiving theme most likely to benefit next. */
   beneficiaries: string[];
   why: string;
+  /** zzz797 — change in RS-ratio (relative strength itself) over the window. */
+  fromRsDelta?: number; toRsDelta?: number;
+  /** zzz797 — the flow in plain words. */
+  plain?: string;
 }
 
 // ── HISTORY ────────────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ import { readJsonResponse, describeFetchError } from '@/lib/ai-gainers/client-fe
 import { boardCoverage } from '@/lib/ai-gainers/research-present';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 import { ResearchTriage } from '@/components/ai-gainers/ResearchTriage';
+import { parseScreenerLink, US_SCAN_EXCHANGES, type UsScanCriteria as UsCriteria } from '@/lib/ai-gainers/us-scan-criteria';
 
 type Mkt = 'IN' | 'US';
 type TechTab = 'sweep' | 'scanned' | 'filed' | 'notes';
@@ -80,6 +81,13 @@ interface Payload {
     // zzz786 — '1D' live scan of today's US gainers, '1W' only when falling back to the weekly export
     move_window?: '1D' | '1W';
     live?: boolean;
+    // zzz797 — the criteria this list was read with
+    criteria?: UsCriteria | null;
+    criteria_summary?: string | null;
+    criteria_is_default?: boolean;
+    tv_total?: number | null;
+    scan_limit?: number | null;
+    truncated?: boolean;
   };
   scanned?: Array<{ ticker: string; company: string | null; move_pct: number | null;
     volume_ratio: number | null; matched: boolean; volume?: number | null; price?: number | null; market_cap?: number | null }>;
@@ -420,6 +428,9 @@ export default function AiGainersPage() {
 
   const notice = (
     <>
+      {market === 'US' && data && !demo && data.market === 'US' && (
+        <UsCriteriaBar sl={data.source_list} scanned={data.gainers_scanned} onSaved={() => load('US')} />
+      )}
       {demo && (
         <div style={{ fontSize: 12, fontWeight: 800, color: C.violet, border: `1px dashed ${C.violet}`, borderRadius: 8, padding: '6px 10px' }}>
           DEMO DATA (?demo=1) — illustrative fixture for layout checks. No API was called.
@@ -655,7 +666,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
   const turnoverLabel = market === 'IN' ? 'Avg value/day (1W)' : 'Traded';
   // The US move is the 1-WEEK export column; calling it "1d" was false. (zzz766)
   const mv = market === 'US' && (research as any)?.view?.session?.status === 'weekly_export' ? '1W' : '1D';
-  const Wrap = ({ children }: { children: React.ReactNode }) => <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>{children}</table></div>;
+  const Wrap = ({ children }: { children: React.ReactNode }) => <div style={{ overflowX: 'auto' }}><table className="mc-sticky-first" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>{children}</table></div>;
   const Name = ({ f }: { f: Finding }) => (
     <span><TickerLink ticker={f.ticker} market={market} />{f.holding && <span title="In your book" style={{ marginLeft: 5, fontSize: 12, fontWeight: 800, color: C.cyan }}>📗</span>}
       {f.company && <div style={{ fontSize: 12, color: C.faint }}>{f.company}</div>}</span>
@@ -829,7 +840,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
         )}
         <div style={{ fontSize: 12, color: C.faint }}>
           Every name is swept against its exchange filings of the last 21 days and a year of price history; a name with nothing is an explicit <i>none</i>, never a silence.
-          {market === 'IN' ? ' Sources: BSE\'s complete announcement list for the window, plus screener.in\'s five newest with their summaries; dated press coverage is shown beside each finding as secondary context and never scores. A name is SOURCE UNAVAILABLE only when every filing source failed.' : ' Source: SEC EDGAR submissions, classified by form and 8-K item. Offerings (424B, S-1/S-3, Item 3.02, Form D) are flagged as dilution, never as a catalyst; Item 2.02/10-Q are results; Item 1.01/7.01/8.01 are read before they are called anything. Forms 3/4/144 are excluded. Universe: today\'s US-listed small/mid-cap gainers ($300M–$10B), read live; the move is today\'s % change.'}
+          {market === 'IN' ? ' Sources: BSE\'s complete announcement list for the window, plus screener.in\'s five newest with their summaries; dated press coverage is shown beside each finding as secondary context and never scores. A name is SOURCE UNAVAILABLE only when every filing source failed.' : ' Source: SEC EDGAR submissions, classified by form and 8-K item. Offerings (424B, S-1/S-3, Item 3.02, Form D) are flagged as dilution, never as a catalyst; Item 2.02/10-Q are results; Item 1.01/7.01/8.01 are read before they are called anything. Forms 3/4/144 are excluded. Universe: today\'s US gainers read live with the scan criteria shown at the top of the page; the move is today\'s % change.'}
         </div>
       </div>
 
@@ -974,12 +985,12 @@ function ScannedLevel({ data }: { data: Payload }) {
         )}
         {data.market === 'US' && sl?.move_window !== '1W' && (
           <div style={{ fontSize: 12, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
-            Today&rsquo;s US gainers, read live from TradingView when the page loads: US-listed common stock, $300M–$10B market cap, up at least 4% on the day, sorted by today&rsquo;s move.
+            Today&rsquo;s US gainers, read live from TradingView when the page loads, sorted by today&rsquo;s move. Scan criteria: {sl.criteria_summary || 'US-listed common stock, $300M–$10B market cap, up at least 4% on the day'}{typeof sl.tv_total === 'number' ? ` · TradingView total ${sl.tv_total}` : ''}.
           </div>
         )}
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: isIN ? 600 : 480 }}>
+        <div className="mc-sticky-grid" style={{ minWidth: isIN ? 600 : 480 }}>
           <div style={{ display: 'grid', gridTemplateColumns: cols,
             gap: 8, padding: '6px 14px', borderBottom: `1px solid ${C.border}`,
             fontSize: 12, fontWeight: 800, letterSpacing: 0.3, color: C.faint }}>
@@ -1015,6 +1026,140 @@ function ScannedLevel({ data }: { data: Payload }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── zzz797 — US SCAN CRITERIA: what the list was read with, and an editor ──
+// The owner compares this line with his own TradingView screener. The app
+// cannot read a saved TradingView screener (the link carries only its ID),
+// so the numbers are entered here and saved on the server.
+type CritForm = { minChangePct: string; minMcapM: string; maxMcapM: string; minAvgVol: string; minPrice: string; limit: string;
+  exchanges: string[]; includeCommon: boolean; includePreferred: boolean; includeDr: boolean; primaryOnly: boolean; link: string };
+
+const toForm = (c: UsCriteria): CritForm => ({
+  minChangePct: String(c.minChangePct),
+  minMcapM: c.minMcapUsd != null ? String(+(c.minMcapUsd / 1e6).toFixed(2)) : '',
+  maxMcapM: c.maxMcapUsd != null ? String(+(c.maxMcapUsd / 1e6).toFixed(2)) : '',
+  minAvgVol: c.minAvgVol30d != null ? String(c.minAvgVol30d) : '',
+  minPrice: c.minPrice != null ? String(c.minPrice) : '',
+  limit: String(c.limit),
+  exchanges: [...c.exchanges], includeCommon: c.includeCommon, includePreferred: c.includePreferred, includeDr: c.includeDr,
+  primaryOnly: c.primaryOnly, link: c.screenerUrl || '',
+});
+const fromForm = (f: CritForm) => {
+  const n = (v: string) => (v.trim() === '' ? null : Number(v.replace(/[,\s$]/g, '')));
+  const m = (v: string) => { const x = n(v); return x == null || !Number.isFinite(x) ? null : x * 1e6; };
+  return {
+    minChangePct: n(f.minChangePct) ?? 0, minMcapUsd: m(f.minMcapM), maxMcapUsd: m(f.maxMcapM),
+    minAvgVol30d: n(f.minAvgVol), minPrice: n(f.minPrice), limit: n(f.limit) ?? 500,
+    exchanges: f.exchanges, includeCommon: f.includeCommon, includePreferred: f.includePreferred, includeDr: f.includeDr, primaryOnly: f.primaryOnly,
+  };
+};
+
+function UsCriteriaBar({ sl, scanned, onSaved }: { sl: Payload['source_list']; scanned: number; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<CritForm | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
+  if (!sl || sl.move_window === '1W') return null;
+  const summary = sl.criteria_summary || 'change ≥ 4% · cap $300M–$10B · avg vol (30d) ≥ 300k · exchanges NASDAQ/NYSE/AMEX · common';
+  const total = typeof sl.tv_total === 'number' ? sl.tv_total : null;
+
+  const begin = async () => {
+    setOpen(true); setMsg(null);
+    if (sl.criteria) { setForm(toForm(sl.criteria)); return; }
+    try {
+      const r = await fetch('/api/v1/ai-gainers/us-criteria', { cache: 'no-store' });
+      const res = await readJsonResponse<{ criteria?: UsCriteria }>(r, 'The criteria service');
+      if (res.json?.criteria) setForm(toForm(res.json.criteria));
+      else setMsg({ tone: 'warn', text: res.error || 'The saved criteria could not be read.' });
+    } catch (e) { setMsg({ tone: 'warn', text: describeFetchError(e, 'The criteria service') }); }
+  };
+  const put = async (body: unknown) => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/v1/ai-gainers/us-criteria', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await readJsonResponse<any>(r, 'The criteria service');
+      const j = res.json;
+      if (!res.ok || !j?.ok) { setMsg({ tone: 'warn', text: j?.error || res.error || `Saving failed (HTTP ${r.status}).` }); return; }
+      setForm(toForm(j.criteria));
+      const notes = [j.link?.message, ...(j.problems || []), j.warning].filter(Boolean);
+      setMsg({ tone: j.link && !j.link.criteria && j.link.kind !== 'screener_link' ? 'warn' : 'ok', text: ['Saved — the list is being re-read with these criteria.', ...notes].join(' ') });
+      onSaved();
+    } catch (e) { setMsg({ tone: 'warn', text: describeFetchError(e, 'Saving the criteria') }); }
+    finally { setBusy(false); }
+  };
+  const save = () => {
+    if (!form) return;
+    const link = form.link.trim();
+    const body: Record<string, unknown> = { criteria: fromForm(form) };
+    if (link && link !== (sl.criteria?.screenerUrl || '')) body.link = link;
+    void put(body);
+  };
+  const linkHint = form && form.link.trim() ? parseScreenerLink(form.link) : null;
+  const inp: React.CSSProperties = { width: 96, fontSize: 12, padding: '3px 6px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg2, color: C.text };
+  const lab: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12, color: C.faint };
+  const set = (k: keyof CritForm, v: unknown) => setForm((f) => (f ? { ...f, [k]: v } as CritForm : f));
+
+  return (
+    <div style={{ fontSize: 12, color: C.dim, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.55 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
+        <span>
+          <b style={{ color: C.text }}>US scan criteria:</b> {summary}
+          {' · '}<b style={{ color: C.text }}>{scanned} name{scanned === 1 ? '' : 's'}</b>
+          {total != null ? <> (TradingView total {total}{sl.truncated ? `, only the first ${sl.scan_limit} read — raise the row limit` : ''})</> : null}
+          {sl.criteria_is_default === false ? <span style={{ color: C.cyan }}> · your saved criteria</span> : <span style={{ color: C.faint }}> · default (small/mid caps)</span>}
+        </span>
+        {!open && (
+          <button type="button" onClick={begin} style={{ fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>
+            ✎ Edit criteria
+          </button>
+        )}
+      </div>
+      {open && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ color: C.faint }}>
+            Make these match your TradingView screener, then Save. Leave a box empty for &ldquo;no limit&rdquo; (for example, an empty maximum market cap means no ceiling).
+          </div>
+          {!form ? <div>Loading…</div> : (<>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              <label style={lab}>Change today ≥ %<input style={inp} inputMode="decimal" value={form.minChangePct} onChange={(e) => set('minChangePct', e.target.value)} /></label>
+              <label style={lab}>Market cap min ($M)<input style={inp} inputMode="decimal" value={form.minMcapM} placeholder="none" onChange={(e) => set('minMcapM', e.target.value)} /></label>
+              <label style={lab}>Market cap max ($M)<input style={inp} inputMode="decimal" value={form.maxMcapM} placeholder="no ceiling" onChange={(e) => set('maxMcapM', e.target.value)} /></label>
+              <label style={lab}>Avg volume 30d ≥ (shares)<input style={inp} inputMode="numeric" value={form.minAvgVol} placeholder="none" onChange={(e) => set('minAvgVol', e.target.value)} /></label>
+              <label style={lab}>Price ≥ ($)<input style={inp} inputMode="decimal" value={form.minPrice} placeholder="none" onChange={(e) => set('minPrice', e.target.value)} /></label>
+              <label style={lab}>Row limit (max 1000)<input style={inp} inputMode="numeric" value={form.limit} onChange={(e) => set('limit', e.target.value)} /></label>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+              <span style={{ color: C.faint }}>Exchanges:</span>
+              {US_SCAN_EXCHANGES.map((x) => (
+                <label key={x} style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                  <input type="checkbox" checked={form.exchanges.includes(x)}
+                    onChange={(e) => set('exchanges', e.target.checked ? [...form.exchanges, x] : form.exchanges.filter((y) => y !== x))} />{x === 'AMEX' ? 'AMEX (NYSE American/Arca)' : x}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+              <span style={{ color: C.faint }}>Types:</span>
+              <label style={{ display: 'inline-flex', gap: 4 }}><input type="checkbox" checked={form.includeCommon} onChange={(e) => set('includeCommon', e.target.checked)} />Common stock</label>
+              <label style={{ display: 'inline-flex', gap: 4 }}><input type="checkbox" checked={form.includePreferred} onChange={(e) => set('includePreferred', e.target.checked)} />Preferred</label>
+              <label style={{ display: 'inline-flex', gap: 4 }}><input type="checkbox" checked={form.includeDr} onChange={(e) => set('includeDr', e.target.checked)} />ADRs / depositary receipts</label>
+              <label style={{ display: 'inline-flex', gap: 4 }}><input type="checkbox" checked={form.primaryOnly} onChange={(e) => set('primaryOnly', e.target.checked)} />Primary listing only</label>
+            </div>
+            <label style={lab}>Your TradingView screener link (optional)
+              <input style={{ ...inp, width: '100%', maxWidth: 520 }} value={form.link} placeholder="https://www.tradingview.com/screener/…" onChange={(e) => set('link', e.target.value)} />
+            </label>
+            {linkHint && <div style={{ color: linkHint.criteria ? C.green : C.amber }}>{linkHint.message}</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" disabled={busy} onClick={save} style={{ fontSize: 12, fontWeight: 800, padding: '3px 12px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: `color-mix(in srgb, ${C.cyan} 16%, transparent)`, color: C.cyan, cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving…' : 'Save'}</button>
+              <button type="button" disabled={busy} onClick={() => put({ reset: true })} style={{ fontSize: 12, fontWeight: 700, padding: '3px 12px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>Reset to defaults</button>
+              <button type="button" disabled={busy} onClick={() => { setOpen(false); setMsg(null); }} style={{ fontSize: 12, fontWeight: 700, padding: '3px 12px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.faint, cursor: 'pointer' }}>Close</button>
+            </div>
+          </>)}
+        </div>
+      )}
+      {msg && <div style={{ marginTop: 6, color: msg.tone === 'ok' ? C.green : C.amber }}>{msg.text}</div>}
     </div>
   );
 }

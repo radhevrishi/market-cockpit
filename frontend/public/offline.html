@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0E1A">
+  <meta name="robots" content="noindex">
+  <title>Offline · Market Cockpit</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0A0E1A; color: #F1F5F9; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+      box-sizing: border-box;
+    }
+    .card { max-width: 360px; }
+    .logo {
+      width: 56px; height: 56px; margin: 0 auto 20px; border-radius: 14px;
+      background: linear-gradient(135deg, #0F7ABF, #06B6D4);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 22px; color: #fff; letter-spacing: -1px;
+    }
+    h1 { font-size: 20px; line-height: 1.35; margin: 0 0 10px; }
+    p { font-size: 14px; color: #AEBBCB; margin: 0 0 24px; line-height: 1.5; }
+    button {
+      font-size: 16px; font-weight: 800; padding: 14px 28px; min-height: 48px;
+      border-radius: 12px; border: 0; background: #22D3EE; color: #0A0E1A; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="logo" aria-hidden="true">MC</div>
+    <h1>You&rsquo;re offline &mdash; reconnect to load live data</h1>
+    <p>Market Cockpit only shows live prices and your own book, so it needs the internet. Nothing is stored on this phone while you&rsquo;re away.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </main>
+  <script>
+    window.addEventListener('online', function () { location.reload(); });
+  </script>
+</body>
+</html>

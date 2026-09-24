@@ -50,6 +50,76 @@ export function withXbrlOrderBook(summary: any | null, rpo: UsRpo | null): any |
   };
 }
 
+// ── A BIGGER LOSS IS NOT EARNINGS GROWTH.                           (zzz797)
+// CIFR / WULF showed "earnings growth +484.4%" on a net loss that widened
+// from $(45,781) to $(267,529) thousand: the accounting parentheses were read
+// as positive numbers. AVAV showed "−92.5%" (a decline, WATCH) on a loss that
+// NARROWED from $(67,370) to $(5,066). On the US page, whenever either
+// period is a loss — from the XBRL row, or from the release's own headline
+// figures, with "(…)" read as negative — the earnings row says what happened
+// in words ("loss widened", "loss narrowed", "swung to a profit"), computes
+// no growth rate, and is not scored either way.
+
+/** "$(45,781)", "−$5.1 million", "net loss of $3M" → a signed number; null
+ *  when no figure is printed. Accounting parentheses are a minus sign. */
+export function usSignedAmount(s: unknown): number | null {
+  const t = String(s ?? '').trim();
+  if (!t || !/\d/.test(t)) return null;
+  const neg = /\(\s*(?:US)?[$€£]?\s*\d[\d,.]*\s*(?:million|billion|thousand|[mbk])?\s*\)/i.test(t)
+    || /^[\-−–]\s*(?:US)?[$€£]?\s*\d/.test(t) || /^(?:US)?[$€£]\s*[\-−–]\s*\d/.test(t)
+    || /\bloss\b/i.test(t);
+  const m = /(\d[\d,]*(?:\.\d+)?)\s*(billion|million|thousand|bn\b|mn\b|[mbk]\b)?/i.exec(t.replace(/[()]/g, ' '));
+  if (!m) return null;
+  const x = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(x)) return null;
+  const u = String(m[2] || '').toLowerCase();
+  const scale = u.startsWith('b') ? 1e9 : u.startsWith('m') ? 1e6 : u.startsWith('t') || u === 'k' ? 1e3 : 1;
+  return (neg ? -1 : 1) * x * scale;
+}
+
+export function usLossWords(cur: number, prev: number): string | null {
+  if (cur >= 0 && prev >= 0) return null;
+  if (cur < 0 && prev < 0) return Math.abs(cur) > Math.abs(prev) * 1.001 ? 'loss widened' : Math.abs(cur) < Math.abs(prev) * 0.999 ? 'loss narrowed' : 'loss about unchanged';
+  return prev < 0 ? 'swung from a loss to a profit' : 'swung from a profit to a loss';
+}
+
+/** The earnings row, rewritten in words whenever a loss is involved. Other
+ *  rows are returned untouched. Pure. */
+export function usLossAwareEarnings<V extends { key: string; label: string; before: string | null; after: string | null; delta: string | null; verdict: any; evidence: string; source: any; unjudged?: string | null }>(vars: V[], graded: any | null, summary: any | null): V[] {
+  const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const m$ = (v: number) => `${v < 0 ? 'net loss' : 'net income'} $${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 1 })}M`;
+  let cur: number | null = null, prev: number | null = null, curTxt = '', prevTxt = '', from = '';
+  let source: 'grader' | 'filing' = 'grader';
+  const gc = n(graded?.net_income_curr_musd), gp = n(graded?.net_income_prev_musd);
+  if (gc != null && gp != null) {
+    cur = gc; prev = gp; curTxt = m$(gc); prevTxt = m$(gp); from = `SEC XBRL, ${graded?.period ? String(graded.period) : 'latest quarter'} vs the same quarter a year earlier`;
+  } else {
+    const hl = summary?.headline || {};
+    const c = usSignedAmount(hl.profit), p = usSignedAmount(hl.profit_prior);
+    if (c != null && p != null) {
+      const clean = (s: unknown, v: number) => `${v < 0 ? 'net loss' : 'net income'} ${String(s).trim().replace(/^[\-−–]\s*/, '').replace(/\(\s*([^)]*?)\s*\)/, '$1')}`;
+      cur = c; prev = p; curTxt = clean(hl.profit, c); prevTxt = clean(hl.profit_prior, p);
+      from = `as printed in the results filing${hl.period ? ` (${String(hl.period).trim()})` : ''}`; source = 'filing';
+    }
+  }
+  if (cur == null || prev == null) return vars;
+  const words = usLossWords(cur, prev);
+  if (!words) return vars;
+  const existing = vars.find((v) => v.key === 'earnings_growth');
+  // A fresh row: nothing of the misread one (its % move, its comparison) survives.
+  const row = {
+    key: 'earnings_growth', label: existing?.label || 'Earnings growth',
+    before: prevTxt, after: `${curTxt} — ${words}`, delta: null,
+    verdict: 'unknown',
+    unjudged: `${words} — a growth rate between a loss and another figure has no direction, so no earnings-growth % is computed or scored`,
+    evidence: `Earnings: ${prevTxt} → ${curTxt} (${from}) — ${words}. A larger loss is not earnings growth and a smaller loss is not a decline; no growth rate is computed on a loss.`,
+    source,
+  } as unknown as V;
+  const out = vars.filter((v) => v.key !== 'operating_leverage').map((v) => (v.key === 'earnings_growth' ? row : v));
+  if (!existing) out.push(row);
+  return out;
+}
+
 export interface UsRow {
   symbol: string;
   origin: UsOrigin;
@@ -168,9 +238,9 @@ export function assessUsRow(row0: UsRow, overrides: Record<string, AbfgPattern |
   // zzz793: the FILED order backlog (XBRL RPO) is the order-book variable for
   // every company that tags it, read or not — no model needed. A figure the
   // documents read already state wins.
-  const vars = extractVariables(row.graded, withXbrlOrderBook(row.summary, (row.graded?.rpo || row.sec?.rpo || null) as UsRpo | null), comparisons, {
+  const vars = usLossAwareEarnings(extractVariables(row.graded, withXbrlOrderBook(row.summary, (row.graded?.rpo || row.sec?.rpo || null) as UsRpo | null), comparisons, {
     period, documents: (period && row.ledger?.periods?.[period]?.documents) || null, ledger: row.ledger || null,
-  });
+  }), row.graded, row.summary);
   const check = row.summary ? checkPromises(usPromiseKey(row.symbol), row.summary) : null;
   const prevStatus = (() => {
     const l = row.ledger;

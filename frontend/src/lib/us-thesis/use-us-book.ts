@@ -34,6 +34,7 @@ import { assessUsRow, applyUsLedger, newUsRow, usPromiseKey, autoPattern, type U
 import { usFreshness } from './calendar';
 import { usTickerKey } from './sanitize';
 import type { UsUniverseEntry } from '@/lib/us-book/model';
+import { mergeUsBench, type UsBenchName } from './us-bench';
 
 export type { UsRow } from './assess';
 
@@ -57,19 +58,56 @@ export function convictionBenchAdds(universe: Array<{ ticker: string }>, cb: Arr
   return Array.from(out.values()).sort((a, b) => a.ticker.localeCompare(b.ticker));
 }
 
-/** The US Conviction Beats bench: the server copy and this browser's. */
-async function loadUsConvictionBench(): Promise<Array<{ ticker: string; exchange?: string | null }>> {
-  const out: Array<{ ticker: string; exchange?: string | null }> = [];
-  try {
-    const j = await readJson(await fetch('/api/v1/bench-us', { cache: 'no-store' }));
-    for (const e of Array.isArray(j?.entries) ? j.entries : []) if (e?.ticker) out.push({ ticker: String(e.ticker), exchange: e.exchange ?? null });
-  } catch { /* the local bench still counts */ }
+/** zzz797: where the bench came from, for the header and the empty state. */
+export interface UsCbInfo {
+  /** names on the US Conviction Beats list after removals (before de-dup against holdings) */
+  total: number;
+  server: number;
+  local: number;
+  localOnly: number;
+  removed: number;
+  updatedAt: string | null;
+  serverSource: 'kv' | 'rebuilt' | 'empty' | null;
+  serverNote: string | null;
+  serverError: string | null;
+}
+
+/**
+ * The US Conviction Beats bench (zzz797). The SERVER list is the source of
+ * truth — /api/v1/bench-us, which rebuilds itself from the graded-US cache
+ * when the nightly list was never built — so a fresh phone or browser gets
+ * the full list. This browser's list (IndexedDB, read only after it has
+ * hydrated) adds the names graded here and not yet on the server; names the
+ * owner removed on the US Conviction Beats page stay off.
+ */
+async function loadUsConvictionBench(): Promise<{ names: UsBenchName[]; info: UsCbInfo }> {
+  let server: any[] = [];
+  let serverSource: UsCbInfo['serverSource'] = null, serverNote: string | null = null, serverError: string | null = null, updatedAt: string | null = null;
+  // The server list first, retried once (a cold rebuild can take a while).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch('/api/v1/bench-us?view=tickers', { cache: 'no-store' });
+      const j = await readJson(r);
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
+      server = Array.isArray(j?.entries) ? j.entries : [];
+      serverSource = j?.source || (server.length ? 'kv' : 'empty');
+      serverNote = j?.note || null; updatedAt = j?.updatedAt || null; serverError = null;
+      break;
+    } catch (e: any) { serverError = humanError(e); }
+  }
+  let local: any[] = [];
+  let removed: string[] = [];
   try {
     const m = await import('@/lib/conviction-beats-us');
-    await m.hydrateUsConviction().catch(() => 0);
-    for (const [k, e] of Object.entries(m.readUsConviction())) out.push({ ticker: String((e as any)?.ticker || k), exchange: (e as any)?.exchange ?? null });
-  } catch { /* no local bench in this browser */ }
-  return out;
+    await m.hydrateUsConviction().catch(() => 0);          // read AFTER hydration, never before
+    local = Object.entries(m.readUsConviction()).map(([k, e]) => ({ ...(e as any), ticker: String((e as any)?.ticker || k) }));
+    removed = m.readUsConvictionBin().map((e: any) => String(e?.ticker || '')).filter(Boolean);
+  } catch { /* no local list in this browser (an installed app has its own, empty storage) */ }
+  const mg = mergeUsBench(server, local, removed);
+  return {
+    names: mg.names,
+    info: { total: mg.names.length, server: mg.server, local: mg.local, localOnly: mg.localOnly, removed: mg.removed.length, updatedAt, serverSource, serverNote, serverError },
+  };
 }
 
 export function useUsBook() {
@@ -83,6 +121,7 @@ export function useUsBook() {
   const [checkBatch, setCheckBatch] = useState<{ running: boolean; done: number; total: number; found: number }>({ running: false, done: 0, total: 0, found: 0 });
   const [thesisTypes, setThesisTypes] = useState<Record<string, AbfgPattern>>({});
   const [cbCount, setCbCount] = useState<number>(0);
+  const [cbInfo, setCbInfo] = useState<UsCbInfo | null>(null);
   const rowsRef = useRef<Record<string, UsRow>>({});
   const typesRef = useRef<Record<string, AbfgPattern>>({});
   const stopRef = useRef(false);
@@ -115,11 +154,12 @@ export function useUsBook() {
         return;
       }
       if (cancelled) return;
-      const cb = await loadUsConvictionBench();
+      const { names: cb, info } = await loadUsConvictionBench();
       if (cancelled) return;
       const cbSet = new Set(cb.map((e) => usTickerKey(String(e.ticker).split('@')[0])));
       const adds = convictionBenchAdds(uni, cb);
       setCbCount(cbSet.size);
+      setCbInfo(info);
       const us = uni.filter((u) => u.listing === 'US');
       setExcluded(uni.filter((u) => u.listing !== 'US'));
       const first: Record<string, UsRow> = {};
@@ -134,12 +174,18 @@ export function useUsBook() {
       // ── STAGE 2 — deterministic XBRL grader rows + SEC profiles
       const tickers = Object.keys(first);
       const facts: Record<string, any> = {};
-      for (let i = 0; i < tickers.length && !cancelled; i += 20) {
+      const factsBatch = async (list: string[]) => {
         try {
-          const j = await readJson(await fetch(`/api/v1/us-thesis/facts?tickers=${encodeURIComponent(tickers.slice(i, i + 20).join(','))}`, { cache: 'no-store' }));
+          const j = await readJson(await fetch(`/api/v1/us-thesis/facts?tickers=${encodeURIComponent(list.join(','))}`, { cache: 'no-store' }));
           Object.assign(facts, j?.rows || {});
-        } catch { /* the card says no grader row */ }
-      }
+        } catch { /* retried below; the card says why */ }
+      };
+      for (let i = 0; i < tickers.length && !cancelled; i += 20) await factsBatch(tickers.slice(i, i + 20));
+      // zzz797: a batch that timed out (a cold EDGAR read for 20 names) or a
+      // name EDGAR did not answer for is asked again in small batches — a lost
+      // batch used to leave 20 names at THESIS NOT SET with "no XBRL row".
+      const missing = tickers.filter((t) => !facts[t] || facts[t]?.retrieval_failed);
+      for (let i = 0; i < missing.length && !cancelled; i += 5) await factsBatch(missing.slice(i, i + 5));
       if (cancelled) return;
       {
         const next: Record<string, UsRow> = { ...rowsRef.current };
@@ -148,7 +194,7 @@ export function useUsBook() {
           const g = f && f.source === 'sec-xbrl' ? f : null;
           const sec = f && 'us_profile' in f ? (f.us_profile || null) : undefined;
           const prev = next[t];
-          next[t] = assessUsRow({ ...prev, graded: g, gradedWhy: g ? null : (f?.why || 'no XBRL row'), dataSource: g ? 'sec-xbrl' : 'none',
+          next[t] = assessUsRow({ ...prev, graded: g, gradedWhy: g ? null : (f?.why || 'SEC figures could not be fetched this time (EDGAR did not answer) — reload to retry'), dataSource: g ? 'sec-xbrl' : 'none',
             ...(sec !== undefined ? { sec } : {}),
             pattern: autoPattern(g, sec), sourceUrl: prev.sourceUrl || g?.source_url || null }, typesRef.current);
         }
@@ -355,7 +401,7 @@ export function useUsBook() {
     try { await fetch('/api/v1/us-thesis/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'thesis_type', ticker: key, pattern: p }) }); } catch { /* kept for this session */ }
   }, []);
 
-  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount };
+  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo };
 }
 
 async function postStatus(row: UsRow): Promise<void> {

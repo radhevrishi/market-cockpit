@@ -286,7 +286,53 @@ const IN_TICKER_RULES: Rule[] = [
   { re: /JEWEL|GEMS/, theme: 'in-retail' },
 ];
 
-export type ClassifyVia = 'override' | 'industry' | 'sector' | 'name' | 'ticker';
+export type ClassifyVia = 'override' | 'industry' | 'sector' | 'sec-industry' | 'constituent' | 'name' | 'ticker';
+
+// ═══ SEC SIC CODE → THEME  (zzz797) ═══════════════════════════════════════
+//
+// 17 of 33 US holdings were "not matched to a theme", because a holding that
+// is on no research list carries no sector or industry at all. Every SEC
+// filer has a four-digit SIC industry code (EDGAR submissions, read through
+// the US book's profile helper), and that code is precise enough to place
+// most companies. Specific codes first, then ranges. A code with no theme on
+// the board (insurance, for instance) stays unplaced — never a guess.
+const inR = (n: number, a: number, b: number) => n >= a && n <= b;
+export function sicTheme(sic: string | number | null | undefined): string | null {
+  const n = Number(String(sic ?? '').trim());
+  if (!Number.isInteger(n) || n <= 0) return null;
+  if (n === 3674) return 'us-semis';                              // semiconductors
+  if (n === 3572) return 'us-memory';                             // computer storage devices
+  if (n === 3576) return 'us-cloud';                              // computer communications equipment
+  if (inR(n, 3570, 3579)) return 'us-ai-hardware';                // computers, peripherals
+  if (n === 3661 || n === 3663 || n === 3669) return 'us-5g';     // telephone / radio comms equipment
+  if (inR(n, 7370, 7379)) return 'us-software';                   // software & IT services
+  if (n === 6798) return 'us-reit';
+  if (inR(n, 2833, 2836) || n === 8731) return 'us-biotech';      // drugs, biologicals, bio research
+  if (inR(n, 3840, 3851) || inR(n, 8000, 8099) || inR(n, 5120, 5122) || n === 6324) return 'us-healthcare';
+  if (n === 1040) return 'us-gold';
+  if (n === 1090 || n === 1000) return 'us-critminerals';
+  if (n === 1021) return 'us-copper';
+  if (n === 1094) return 'us-nuclear';                            // uranium-radium-vanadium ores
+  if (inR(n, 1311, 1389) || inR(n, 2911, 2999) || inR(n, 4610, 4619) || n === 4922 || n === 4923 || n === 4924) return 'us-energy';
+  if (inR(n, 1200, 1299)) return 'us-energy';                     // coal
+  if (inR(n, 3720, 3729) || inR(n, 3760, 3769) || n === 3812 || n === 3480 || n === 3489) return 'us-defense';
+  if (n === 3711 || n === 3713 || n === 3714) return 'us-ev';
+  if (n === 3690 || n === 3691) return 'us-battery';
+  if (n === 1531 || inR(n, 1520, 1529)) return 'us-homebuild';
+  if (inR(n, 1600, 1629) || n === 1731) return 'us-infra';
+  if (inR(n, 6020, 6036)) return 'us-regbanks';                   // commercial banks, savings institutions
+  if (n === 6099 || inR(n, 6141, 6199) || inR(n, 6200, 6211)) return 'us-fintech';   // credit, payments, brokers
+  if (inR(n, 4900, 4991) && n !== 4922 && n !== 4923 && n !== 4924) return n === 4941 ? 'us-water' : 'us-utilities';
+  if (inR(n, 4400, 4799) || inR(n, 4011, 4213) || n === 4512 || n === 4513) return 'us-transport';
+  if (inR(n, 4800, 4899) || inR(n, 2710, 2799) || inR(n, 7810, 7849) || inR(n, 7310, 7319)) return 'us-comm';
+  if (inR(n, 5200, 5999)) return inR(n, 5400, 5499) || n === 5912 ? 'us-staples' : 'us-retail';
+  if (inR(n, 2000, 2111) || inR(n, 2840, 2844)) return 'us-staples';
+  if (inR(n, 7000, 7099) || inR(n, 7900, 7999) || inR(n, 5810, 5813) || inR(n, 3630, 3651) || inR(n, 3940, 3949)) return 'us-condisc';
+  if (inR(n, 2800, 2899) || inR(n, 2600, 2699) || inR(n, 3310, 3399) || inR(n, 1400, 1499) || inR(n, 3200, 3299)) return 'us-materials';
+  if (inR(n, 3400, 3599) || inR(n, 3600, 3629) || inR(n, 3800, 3829) || inR(n, 5000, 5199) || inR(n, 8700, 8748) || inR(n, 1700, 1799) || inR(n, 7380, 7389)) return 'us-industrials';
+  if (inR(n, 3670, 3679)) return 'us-semis';                      // electronic components
+  return null;
+}
 export interface ClassifyResult { theme: string; via: ClassifyVia }
 
 /** Strip exchange prefixes/suffixes and period tags ("SUDARSCHEM@Q1-2027"). */
@@ -308,9 +354,18 @@ export function classifyThemeDetailed(
   region: ThemeRegion,
   ticker?: string | null,
   companyName?: string | null,
+  /** zzz797 — SEC SIC code and description (US), when a profile is on file. */
+  secProfile?: { sic?: string | null; description?: string | null } | null,
 ): ClassifyResult | null {
   const tk = cleanTicker(ticker);
   if (tk) { const ov = TICKER_OVERRIDE[tk]; if (ov) return { theme: ov, via: 'override' }; }
+  if (region === 'us' && secProfile) {
+    // The SEC's own code is more precise than a coarse sector label ("IT").
+    const byCode = sicTheme(secProfile.sic);
+    if (byCode) return { theme: byCode, via: 'sec-industry' };
+    const d = (secProfile.description || '').toString();
+    if (d.trim()) for (const r of US_RULES) if (r.re.test(d)) return { theme: r.theme, via: 'sec-industry' };
+  }
   const rules = region === 'us' ? [...US_ENGINE_VOCAB, ...US_RULES] : [...IN_NSE_VOCAB, ...IN_YAHOO_VOCAB, ...IN_RULES];
   const ind = (industry || '').toString();
   const sec = (sector || '').toString();

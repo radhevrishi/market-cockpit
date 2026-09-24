@@ -51,7 +51,7 @@ export function SortableTable<T>({ rows, cols, rowKey, defaultSort, footer, test
   const pad = compact ? '3px 6px' : '5px 7px';
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table data-testid={testId} style={{ width: '100%', borderCollapse: 'collapse', fontSize: compact ? 12.5 : 13 }}>
+      <table data-testid={testId} className="mc-sticky-first mc-on-card" style={{ width: '100%', borderCollapse: 'collapse', fontSize: compact ? 12.5 : 13 }}>
         <thead>
           <tr style={{ color: C.faint, fontSize: 11.5, textTransform: 'uppercase' }}>
             {cols.map((c) => {

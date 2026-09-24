@@ -35,6 +35,10 @@ import {
   isoWeek, recentWeeks, snapKey, SNAP_TTL_S, SNAP_MAX_BYTES, compactBase, mergeSnapshot, sanitizeOverlay, snapshotBytes,
 } from '@/lib/theme-rotation/history';
 import type { WeeklySnapshot } from '@/lib/theme-rotation/types';
+import { gradedKeyCandidates } from '@/lib/graded-cache-key';
+import { readUsProfiles } from '@/lib/us-book-store';
+import { fetchUsProfiles, profileIsFresh, type UsProfile } from '@/lib/us-book/profile';
+import { gzipSync, gunzipSync } from 'zlib';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -43,7 +47,9 @@ export const maxDuration = 60;
 // techno score to drill stocks), so the 6h cache doesn't keep serving old data
 // missing the new fields. A new version orphans stale entries → recompute on deploy.
 // v22 (zzz795): constituent breadth, volume flow proxy, short-term-break verdict.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v22:${r}`;
+// v23 (zzz797): 20-day line + tightened short-term break with its trigger,
+// 12-week RS line for the sparkline, 20/200-day constituent breadth.
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v23:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -144,9 +150,9 @@ function quadrantMoveBetween(from: string | null, to: string):
 
 // JdK RS-Ratio / RS-Momentum from two aligned weekly close series. Returns the
 // current pair plus a short trail and the previous-momentum (for cross detection).
-function jdk(themeWk: number[], benchWk: number[]): { rsRatio: number; rsMomentum: number; prevMomentum: number; trail: { x: number; y: number }[] } {
+function jdk(themeWk: number[], benchWk: number[]): { rsRatio: number; rsMomentum: number; prevMomentum: number; trail: { x: number; y: number }[]; rsWeekly: number[] } {
   const len = Math.min(themeWk.length, benchWk.length);
-  if (len < 8) return { rsRatio: 100, rsMomentum: 100, prevMomentum: 100, trail: [] };
+  if (len < 8) return { rsRatio: 100, rsMomentum: 100, prevMomentum: 100, trail: [], rsWeekly: [] };
   const t = themeWk.slice(themeWk.length - len);
   const b = benchWk.slice(benchWk.length - len);
   // Relative-strength line = theme / benchmark (unitless).
@@ -178,11 +184,17 @@ function jdk(themeWk: number[], benchWk: number[]): { rsRatio: number; rsMomentu
   const trail: { x: number; y: number }[] = [];
   const n = Math.min(8, rsS.length);
   for (let i = rsS.length - n; i < rsS.length; i++) if (i >= 0) trail.push({ x: +rsS[i].toFixed(2), y: +(momS[i] || 100).toFixed(2) });
+  // zzz797 — the plain relative-strength line (theme ÷ benchmark) over the
+  // last 12 weeks, rebased to 100, for the per-row sparkline. Rising = the
+  // theme is beating the benchmark over those weeks.
+  const tail = rs.slice(-12);
+  const base = tail[0] || 1;
+  const rsWeekly = tail.map((v) => +((v / base) * 100).toFixed(2));
   return {
     rsRatio: +rsS[rsS.length - 1].toFixed(2),
     rsMomentum: +momS[momS.length - 1].toFixed(2),
     prevMomentum: +(momS[momS.length - 2] ?? momS[momS.length - 1]).toFixed(2),
-    trail,
+    trail, rsWeekly,
   };
 }
 
@@ -587,11 +599,15 @@ async function build(region: ThemeRegion) {
     }
     const ret = returns(ts, closes);
     const themeWk = resampleToWeekly(ts, closes);
-    const { rsRatio, rsMomentum, prevMomentum, trail } = jdk(themeWk, benchWk);
+    const { rsRatio, rsMomentum, prevMomentum, trail, rsWeekly } = jdk(themeWk, benchWk);
     const quadrant = getQuadrant(rsRatio, rsMomentum);
     const s50 = sma(closes, 50);
     const cLast = closes.filter((x) => x != null && !isNaN(x)).pop() as number;
     const aboveSMA50 = s50 != null ? cLast > s50 : false;
+    // zzz797 — the 20-day line, which the short-term-break rule now needs.
+    const s20 = sma(closes, 20);
+    const aboveSMA20: boolean | null = s20 != null ? cLast > s20 : null;
+    const dist20 = s20 != null && s20 > 0 ? +(((cLast - s20) / s20) * 100).toFixed(1) : null;
     // character change: momentum crossed 100 on the latest bar AND price on the
     // right side of the 50-DMA (bullish turn = the theme just became buyable;
     // bearish turn = a leader just rolled over). A ±0.5 deadband around 100 keeps
@@ -602,7 +618,7 @@ async function build(region: ThemeRegion) {
     if (prevMomentum < 100 - DB && rsMomentum >= 100 + DB && aboveSMA50) characterChange = 'bullish';
     else if (prevMomentum >= 100 + DB && rsMomentum < 100 - DB && !aboveSMA50) characterChange = 'bearish';
     const dd1yEarly = drawdownFromHigh(closes);
-    const v = verdictForV2({ quadrant, aboveSMA50, w1: ret.w1, m1: ret.m1, m3: ret.m3, y1: ret.y1, dd1y: dd1yEarly });
+    const v = verdictForV2({ quadrant, aboveSMA50, w1: ret.w1, m1: ret.m1, m3: ret.m3, y1: ret.y1, dd1y: dd1yEarly, aboveSMA20 });
     // The label the row actually shows — judged on relative strength AND price,
     // so a leader that has merely stopped accelerating is never called
     // "Weakening" in the one place a reader looks first.
@@ -694,6 +710,8 @@ async function build(region: ThemeRegion) {
       conviction, rotationVelocity: +velPerWk.toFixed(2), rotation, action,
       verdict: v.verdict, verdictColor: v.color, verdictNote: v.note,
       shortTermBreak: v.shortTermBreak,
+      shortTermBreakWhy: v.shortTermBreakWhy,
+      aboveSMA20, dist20, rsWeekly,
       ok: true,
     };
   });
@@ -922,7 +940,7 @@ async function build(region: ThemeRegion) {
 // zzz481 — DRILL-DOWN: the buyable stocks inside one theme, so the tab answers
 // "buy Cybersecurity" with "PANW / CRWD / ZS are the strongest, above their
 // 50-DMA". Lazy (only when a row is expanded) so the main call stays fast.
-async function buildDrill(region: ThemeRegion, themeId: string) {
+async function buildDrill(region: ThemeRegion, themeId: string, extra: string[] = []) {
   const bench = benchmarkForRegion(region);
   const theme = themesForRegion(region).find((t) => t.id === themeId);
   if (!theme) return { themeId, stocks: [], error: 'unknown theme' };
@@ -931,10 +949,19 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
   // top-six leaders cannot represent four sub-industries, and the whole reason
   // for the split is that "Photonics" is really transceivers + switching +
   // packaging + lasers, each of which can be doing something different.
-  const syms = drillSymbolsFor(theme);
+  // zzz797 — `extra`: small / mid caps from the owner's lists and the graded
+  // history mapped to this theme, so leaders and laggards are not limited to
+  // the (mostly large-cap) curated constituents. Marked `extra` in the reply.
+  const declared = drillSymbolsFor(theme);
+  const declaredBare = new Set(declared.map((x) => x.replace(/\.NS$/, '')));
+  const extraSyms = extra.filter((x) => !declaredBare.has(x)).map((x) => (region === 'india' ? `${x}.NS` : x));
+  const syms = [...declared, ...extraSyms];
   if (!syms.length) return { themeId, stocks: [], note: 'constituents not mapped for this theme yet' };
   const data = await fetchChunked([bench.symbol, ...syms], '1y', '1d');
-  const bench3m = (() => { const d = data.get(bench.symbol); return d ? returns(d.ts, d.closes).m3 : 0; })();
+  const benchRet = (() => { const d = data.get(bench.symbol); return d ? returns(d.ts, d.closes) : null; })();
+  const bench3m = benchRet?.m3 ?? 0;
+  const bench1m = benchRet?.m1 ?? null;
+  const extraSet = new Set(extraSyms);
   // zzz795 — the benchmark's 3-month return as it stood 20 sessions ago, so
   // each member's relative strength can be compared with a month earlier.
   const m3At = (closes: number[], offset: number): number | null => {
@@ -968,6 +995,9 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
     return {
       sym: sym.replace(/\.NS$/, ''), raw: sym, price: +d.price.toFixed(2), dayChangePct: +d.dayChg.toFixed(2),
       w1: r.w1, m1: r.m1, m3: r.m3, m6: r.m6, ytd: r.ytd, y1: r.y1, aboveSMA50, rs3m, techno,
+      // zzz797 — one-month relative strength (1M minus the benchmark's 1M).
+      rs1m: bench1m != null ? +(r.m1 - bench1m).toFixed(1) : null,
+      extra: extraSet.has(sym) || undefined,
       rs3mPrev, rsChange,
       // Gaining / losing relative strength against a month ago (±3 pts).
       strengthTrend: rsChange == null ? null : rsChange >= 3 ? 'gaining' : rsChange <= -3 ? 'losing' : 'flat',
@@ -1045,8 +1075,135 @@ async function buildDrill(region: ThemeRegion, themeId: string) {
       subs.forEach((s) => { s._spread = spread; });
     }
   }
-  return { themeId, benchmark3m: bench3m, stocks, subs };
+  return { themeId, benchmark3m: bench3m, benchmark1m: bench1m, stocks, subs };
 }
+
+// ═══ GRADED-EARNINGS HISTORY (India)  (zzz797) ════════════════════════════
+//
+// The earnings layer compared strong prints on the Conviction bench against an
+// earlier window the bench never covered. The graded sessions themselves
+// (every tier, every reporter) are kept in KV for ~180 days per settled day,
+// so the like-for-like comparison exists: the share of a theme's reporters
+// that printed strong, this quarter vs the quarter before.
+//
+// Cost control: one compact, gzipped blob (`theme-rotation:earnhist:v1:india`)
+// holds the rows already read, per date. A rebuild reads only dates not yet in
+// it (plus the last few unsettled days). The first build reads ~130 dates
+// (spread over visits if it runs out of time); later ones a
+// handful. Rows are compact: ticker, tier letter, filing date, sector, cap.
+// Every cache namespace is tried (newest first): the quarter before was graded
+// by an older engine version and is only readable under its older key.
+type EarnRow = { t: string; g: 'B' | 'S' | 'M' | 'A'; d: string; s?: string; m?: number; c?: string };
+const EARN_BLOB_KEY = 'theme-rotation:earnhist:v1:india';
+const EARN_BLOB_TTL = 3 * 24 * 3600;
+const EARN_SCAN_DAYS = 185;
+const EARN_UNSETTLED_DAYS = 5;
+const TIER_LETTER: Record<string, EarnRow['g']> = { BLOCKBUSTER: 'B', STRONG: 'S', MIXED: 'M', AVOID: 'A' };
+const LETTER_TIER: Record<EarnRow['g'], string> = { B: 'BLOCKBUSTER', S: 'STRONG', M: 'MIXED', A: 'AVOID' };
+
+function istDate(offsetDays: number): string {
+  return new Date(Date.now() + 5.5 * 3600_000 - offsetDays * 86_400_000).toISOString().slice(0, 10);
+}
+function packBlob(v: unknown): { z: string } { return { z: gzipSync(Buffer.from(JSON.stringify(v), 'utf8')).toString('base64') }; }
+function unpackBlob<T>(raw: any): T | null {
+  if (!raw) return null;
+  if (typeof raw?.z === 'string') { try { return JSON.parse(gunzipSync(Buffer.from(raw.z, 'base64')).toString('utf8')); } catch { return null; } }
+  return raw as T;
+}
+
+async function readGradedHistory(deadline: number): Promise<{ rows: EarnRow[]; coverage: { days: number; withData: number; oldest: string | null; newest: string | null; pending: number } }> {
+  let blob: { days: Record<string, EarnRow[]>; updatedAt?: string } = { days: {} };
+  if (isRedisAvailable()) { try { blob = unpackBlob<typeof blob>(await kvGet(EARN_BLOB_KEY)) || blob; } catch { /* rebuild */ } }
+  const dates: string[] = [];
+  for (let o = 0; o <= EARN_SCAN_DAYS; o++) {
+    const d = istDate(o);
+    const wd = new Date(`${d}T00:00:00Z`).getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    dates.push(d);
+  }
+  const need = dates.filter((d, i) => !(d in blob.days) || i < EARN_UNSETTLED_DAYS);
+  let pending = 0, changed = false;
+  const CONC = 8;
+  for (let i = 0; i < need.length; i += CONC) {
+    if (Date.now() > deadline) { pending = need.length - i; break; }
+    const slab = need.slice(i, i + CONC);
+    await Promise.all(slab.map(async (date) => {
+      let rows: EarnRow[] = [];
+      // Every namespace: the quarter before was graded by an older engine and
+      // lives under an older key. A settled day is read once, then kept.
+      for (const key of gradedKeyCandidates(date)) {
+        try {
+          const p: any = await kvGet<any>(key);
+          const bt = p?.by_tier;
+          if (!bt) continue;
+          const out: EarnRow[] = [];
+          for (const tier of Object.keys(TIER_LETTER)) {
+            for (const c of (Array.isArray(bt[tier]) ? bt[tier] : [])) {
+              const t = String(c?.ticker || c?.symbol || '').toUpperCase();
+              if (!t) continue;
+              const cap = Number(c?.market_cap_cr);
+              out.push({ t, g: TIER_LETTER[tier], d: String(c?.filing_date || date).slice(0, 10), ...(c?.sector ? { s: String(c.sector).slice(0, 60) } : {}), ...(Number.isFinite(cap) && cap > 0 ? { m: Math.round(cap) } : {}), ...(c?.company ? { c: String(c.company).slice(0, 48) } : {}) });
+            }
+          }
+          if (out.length) { rows = out; break; }
+        } catch { /* next namespace */ }
+      }
+      blob.days[date] = rows;
+      changed = true;
+    }));
+  }
+  // Drop dates that have left the window.
+  const keep = new Set(dates);
+  for (const d of Object.keys(blob.days)) if (!keep.has(d)) { delete blob.days[d]; changed = true; }
+  if (changed && isRedisAvailable()) { try { await kvSet(EARN_BLOB_KEY, packBlob({ ...blob, updatedAt: new Date().toISOString() }), EARN_BLOB_TTL); } catch { /* next visit re-reads */ } }
+  const withData = Object.entries(blob.days).filter(([, r]) => r.length);
+  const sorted = withData.map(([d]) => d).sort();
+  return {
+    rows: withData.flatMap(([, r]) => r),
+    coverage: { days: Object.keys(blob.days).length, withData: withData.length, oldest: sorted[0] || null, newest: sorted[sorted.length - 1] || null, pending },
+  };
+}
+
+// ═══ HOLDINGS' OWN PRICE MOVES  (zzz797) ══════════════════════════════════
+// For "your exposure": each holding's price, 1W and 1M, so the page can
+// weight holdings by value and show the holdings sitting in breakdown themes
+// with their own move. Three months of daily closes, one fetch per name.
+async function holdingQuotes(region: ThemeRegion, tickers: string[]) {
+  const syms = tickers.map((t) => (region === 'india' ? (/^\d+$/.test(t) ? `${t}.BO` : `${t}.NS`) : t));
+  const data = await fetchChunked(syms, '3mo', '1d', { size: 10, deadline: Date.now() + 25_000 });
+  const out: Record<string, { price: number | null; w1: number | null; m1: number | null }> = {};
+  syms.forEach((sym, i) => {
+    const d = data.get(sym);
+    if (!d) return;
+    const r = returns(d.ts, d.closes);
+    const c = d.closes.filter((x) => x != null && !isNaN(x));
+    out[tickers[i]] = { price: d.price || c[c.length - 1] || null, w1: c.length > 5 ? r.w1 : null, m1: c.length > 21 ? r.m1 : null };
+  });
+  return out;
+}
+
+// ═══ SEC INDUSTRY FOR US NAMES  (zzz797) ══════════════════════════════════
+// Read-only use of the US book's profile helper: its cached profiles first,
+// then this route's own cache, then the SEC for what is still missing (at
+// most 40 a call — the SEC asks for ≤ 10 requests a second).
+const PROFILE_KEY = 'theme-rotation:us-profile:v1';
+async function usProfiles(tickers: string[]): Promise<Record<string, UsProfile>> {
+  const book = await readUsProfiles().catch(() => ({} as Record<string, UsProfile>));
+  let mine: Record<string, UsProfile> = {};
+  if (isRedisAvailable()) { try { mine = (await kvGet<Record<string, UsProfile>>(PROFILE_KEY)) || {}; } catch { /* empty */ } }
+  const have = (t: string) => (profileIsFresh(book[t]) ? book[t] : profileIsFresh(mine[t]) ? mine[t] : null);
+  const missing = tickers.filter((t) => !have(t)).slice(0, 40);
+  if (missing.length) {
+    const fresh = await fetchUsProfiles(missing);
+    mine = { ...mine, ...fresh };
+    if (isRedisAvailable()) { try { await kvSet(PROFILE_KEY, mine, 60 * 24 * 3600); } catch { /* a cache */ } }
+  }
+  const out: Record<string, UsProfile> = {};
+  for (const t of tickers) { const p = have(t) || mine[t]; if (p) out[t] = p; }
+  return out;
+}
+
+const tickerList = (raw: string | null, max: number) => [...new Set(String(raw || '').split(',').map((x) => x.trim().toUpperCase().replace(/\.(NS|BO)$/, '')).filter((x) => /^[A-Z0-9][A-Z0-9&.\-]{0,19}$/.test(x)))].slice(0, max);
 
 // ═══ WEEKLY SNAPSHOTS  (zzz795) ═══════════════════════════════════════════
 // theme-rotation:snap:v1:<market>:<ISO week>, TTL ~400 days, well under 900 KB.
@@ -1109,11 +1266,36 @@ export async function GET(request: Request) {
       return NextResponse.json({ region, currentWeek: isoWeek(new Date()), snapshots: [], error: 'history unavailable' });
     }
   }
+  if (searchParams.get('earnings') === '1') {
+    if (region !== 'india') return NextResponse.json({ region, source: 'none', rows: [], note: 'US graded history is not kept long enough in storage; the US Conviction bench is used instead.' });
+    try {
+      const { rows, coverage } = await readGradedHistory(Date.now() + 40_000);
+      return NextResponse.json({
+        region, source: 'graded', coverage,
+        rows: rows.map((r) => ({ ticker: r.t, tier: LETTER_TIER[r.g], filingDate: r.d, sector: r.s ?? null, mcap: r.m ?? null, company: r.c ?? null })),
+      }, { headers: { 'Cache-Control': 's-maxage=1800, stale-while-revalidate=21600' } });
+    } catch (e: any) {
+      return NextResponse.json({ region, source: 'none', rows: [], error: 'graded history unavailable' });
+    }
+  }
+  if (searchParams.get('holdings') === '1') {
+    const tickers = tickerList(searchParams.get('tickers'), 80);
+    if (!tickers.length) return NextResponse.json({ region, quotes: {} });
+    try { return NextResponse.json({ region, quotes: await holdingQuotes(region, tickers), asOf: new Date().toISOString() }, { headers: { 'Cache-Control': 'no-store' } }); }
+    catch { return NextResponse.json({ region, quotes: {}, error: 'quotes unavailable' }); }
+  }
+  if (searchParams.get('profiles') === '1') {
+    if (region !== 'us') return NextResponse.json({ region, profiles: {} });
+    const tickers = tickerList(searchParams.get('tickers'), 150);
+    try { return NextResponse.json({ region, profiles: await usProfiles(tickers) }, { headers: { 'Cache-Control': 'no-store' } }); }
+    catch { return NextResponse.json({ region, profiles: {}, error: 'profiles unavailable' }); }
+  }
   if (themeId) {   // drill-down: one theme's constituent stocks (cached 30 min)
     try {
-      const key = `theme-rotation:v13:drill:${region}:${themeId}`;
+      const extra = tickerList(searchParams.get('extra'), 12);
+      const key = `theme-rotation:v14:drill:${region}:${themeId}${extra.length ? `:${extra.sort().join(',')}` : ''}`;
       if (isRedisAvailable() && !force) { const c = await kvGet<any>(key); if (c) return NextResponse.json(c); }
-      const payload = await buildDrill(region, themeId);
+      const payload = await buildDrill(region, themeId, extra);
       try { await kvSet(key, payload, CACHE_TTL); } catch { /* best effort */ }
       return NextResponse.json(payload);
     } catch (e: any) {

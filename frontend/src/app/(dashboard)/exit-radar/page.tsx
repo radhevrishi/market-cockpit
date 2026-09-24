@@ -106,7 +106,7 @@ export default function ExitRadarPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div className="mc-grid-2-mobile" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {ORDER.map((s) => {
           const m = STATUS_META[s];
           return (
@@ -179,7 +179,7 @@ export default function ExitRadarPage() {
       {/* ── THE TABLE. Ticker, thesis, trigger, evidence, severity. ─────── */}
       {flagged.length > 0 && (
         <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '92px 168px 1fr 108px',
+          <div className="mc-hide-mobile" style={{ display: 'grid', gridTemplateColumns: '92px 168px 1fr 108px',
             gap: 10, padding: '7px 12px', borderBottom: `1px solid ${C.border}`,
             fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>
             <span>STOCK</span><span>THESIS</span><span>REASON · TRIGGER &amp; EVIDENCE</span><span>SEVERITY</span>
@@ -189,7 +189,7 @@ export default function ExitRadarPage() {
             const m = STATUS_META[a.status];
             const top = a.triggered[0];
             return (
-              <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '92px 168px 1fr 108px',
+              <div key={r.symbol} className="mc-exit-row" style={{ display: 'grid', gridTemplateColumns: '92px 168px 1fr 108px',
                 gap: 10, padding: '8px 12px', borderBottom: `1px solid ${C.border}`, alignItems: 'baseline' }}>
                 <span style={{ fontSize: 12, fontWeight: 900, color: C.text }}>{r.symbol}</span>
                 <span style={{ fontSize: 10.5, color: C.dim }}>{a.thesis.name}</span>

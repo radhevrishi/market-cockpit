@@ -2322,7 +2322,7 @@ export default function EarningsOpportunitiesPage() {
   })();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
+    <div className="mc-flow-mobile" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)' }}>
         {/* PATCH 0557 — backend-degraded banner. */}
@@ -3358,7 +3358,7 @@ Source label: ${coverageStats.source}`}
       </div>
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div style={{
+      <div className="mc-flow-mobile" style={{
         flex: 1, overflowY: 'auto', padding: '18px 24px',
         display: 'flex', flexDirection: 'column', gap: 14,
         opacity: isStaleView ? 0.5 : 1,
@@ -4053,7 +4053,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
 
       {/* ── Three metric tiles + score ────────────────────────────────────── */}
       {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+      <div className="mc-grid-2-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(stock.sales_prev_cr)} />
         <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT'} pct={_usePatQoQ ? _patQoQ : (_patTraj ? null : stock.net_profit_yoy_pct)} word={!_usePatQoQ && _patTraj ? { text: _patTraj.short, good: _patTraj.improving, title: _patTraj.label } : undefined} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(stock.pat_prev_cr)} />
         <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : (_epsTraj ? null : stock.eps_yoy_pct)}        word={!_useEpsQoQ && _epsTraj ? { text: _epsTraj.short, good: _epsTraj.improving, title: _epsTraj.label } : undefined} curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />

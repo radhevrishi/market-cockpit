@@ -9,9 +9,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type {
-  CatalystInput, CrossFlow, Flag, HistoryDiff, Payload, PrintInput, ThemeAssessment, ThemeRow, Tier, TrendRead, WeeklySnapshot,
+  CatalystInput, CrossFlow, EarningsInput, Flag, HistoryDiff, Payload, PrintInput, ThemeAssessment, ThemeRow, Tier, TrendRead, WeeklySnapshot,
 } from './types';
-import { buildLayers } from './layers';
+import { buildLayers, splitPrints } from './layers';
 import { detectCrossFlows, detectFlags } from './detectors';
 import { assessTheme, rankAssessments } from './ranking';
 import { diffHistory, trendForTheme } from './history';
@@ -19,12 +19,18 @@ import { diffHistory, trendForTheme } from './history';
 export interface ViewInputs {
   payload: Payload;
   now: Date;
-  /** Graded strong prints by theme; null = bench not loaded on this device. */
-  printsByTheme: Record<string, PrintInput[]> | null;
+  /** Graded strong prints by theme; null = bench not loaded on this device.
+   *  Used (as a bench-only source) when `earningsByTheme` is not given. */
+  printsByTheme?: Record<string, PrintInput[]> | null;
+  /** zzz797 — the full earnings evidence per theme (graded history or bench).
+   *  null = nothing loaded on this device. Takes precedence over printsByTheme. */
+  earningsByTheme?: Record<string, EarningsInput> | null;
   benchLabel: string;
   /** Catalysts by theme; null = no feed could be read. */
   catalystsByTheme: Record<string, CatalystInput[]> | null;
   catalystWindowDays: number;
+  /** zzz797 — how far back the catalyst feed reaches, in days. */
+  catalystCoverageDays?: number;
   pesByTheme: Record<string, number[]>;
   allPEs: number[];
   snapshots: WeeklySnapshot[];
@@ -48,6 +54,10 @@ export interface SummaryModel {
   crowded: string[];
   breakdown: string[];
   shortBreak: string[];
+  /** zzz797 — themes "falling less" than the market (defensive). */
+  defensive: string[];
+  /** zzz797 — themes where priority and price verdict disagree. */
+  disagree: string[];
 }
 
 export interface ViewModel {
@@ -64,18 +74,20 @@ export function buildViewModel(inp: ViewInputs): ViewModel {
   const { payload } = inp;
   const rows = (payload.themes || []).filter((t) => t.ok !== false && t.ret);
   const benchName = payload.benchmark?.name || 'the benchmark';
+  const earningsOf = earningsResolver(inp);
   const views: ThemeView[] = rows.map((row) => {
     const layers = buildLayers(row, {
       benchName, benchRet: payload.benchmarkRet,
-      prints: inp.printsByTheme ? (inp.printsByTheme[row.id] || []) : null,
+      earnings: earningsOf(row.id),
       benchLabel: inp.benchLabel,
       catalysts: inp.catalystsByTheme ? (inp.catalystsByTheme[row.id] || []) : null,
       catalystWindowDays: inp.catalystWindowDays,
+      catalystCoverageDays: inp.catalystCoverageDays,
       themePEs: inp.pesByTheme[row.id] || [], allPEs: inp.allPEs,
       now: inp.now,
     });
     const flags = detectFlags(row, layers, payload.benchmarkRet?.y1);
-    const a = assessTheme(row.id, layers, flags);
+    const a = assessTheme(row.id, layers, flags, row.verdict);
     return { row, a, rank: 0, trend: trendForTheme(row, inp.snapshots) };
   });
   const ranked = rankAssessments(views.map((v) => ({ ...v, tier: v.a.tier, sortKey: v.a.sortKey, name: v.row.name, id: v.row.id })));
@@ -103,8 +115,30 @@ export function buildViewModel(inp: ViewInputs): ViewModel {
       crowded: flagIds(themes, 'crowded'),
       breakdown: flagIds(themes, 'breakdown'),
       shortBreak: flagIds(themes, 'short-term-break'),
+      defensive: flagIds(themes, 'defensive'),
+      disagree: themes.filter((v) => !v.a.relation.agree).map((v) => v.row.id),
     },
   };
+}
+
+/**
+ * zzz797 — earnings evidence per theme. Prefers the explicit
+ * `earningsByTheme`; otherwise treats `printsByTheme` as a BENCH-ONLY source
+ * and decides, market-wide, whether the bench covered the earlier window.
+ */
+function earningsResolver(inp: ViewInputs): (id: string) => EarningsInput | null {
+  if (inp.earningsByTheme !== undefined) {
+    const e = inp.earningsByTheme;
+    return (id) => (e == null ? null : e[id] || { source: 'bench', prints: [], priorCovered: false, market: null });
+  }
+  const p = inp.printsByTheme;
+  if (p == null) return () => null;
+  const all = new Map<string, PrintInput>();
+  for (const list of Object.values(p)) for (const x of list) all.set(`${x.ticker}|${x.filingDate.slice(0, 10)}`, x);
+  const w = splitPrints([...all.values()], inp.now);
+  const market = { strong: { recent: w.recent.length, prior: w.prior.length }, reported: null };
+  const priorCovered = w.prior.length >= 15;
+  return (id) => ({ source: 'bench', prints: p[id] || [], priorCovered, market });
 }
 
 /** The compact overlay the page posts to the weekly snapshot. */

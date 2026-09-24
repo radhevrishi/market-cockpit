@@ -470,3 +470,43 @@ export function drillSymbolsFor(t: ThemeDef): string[] {
   for (const s of SUB_THEMES[t.id] || []) s.members.forEach((m) => out.add(m));
   return [...out];
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIZE — SMALL / MID CAPS ONLY FOR "NEXT IN LINE" NAMES  (zzz797)
+//
+// The owner invests in small and mid caps. "Second-order beneficiaries: TSLA,
+// COIN, HOOD" named three large caps and was useless to him. Names suggested
+// by the page (next-in-line after a rotation, leaders and laggards inside a
+// theme) are therefore small / mid caps only:
+//   · US    — market cap ≤ ~$10B, India — ≤ ~₹20,000 Cr, where a market cap
+//             is on file (graded results, the Conviction bench, your uploads);
+//   · where no market cap is on file, a well-known large cap is excluded by
+//     this list. A name on neither side is kept and marked "size not on file".
+// The lists are deliberately the obvious, well-known large caps — they only
+// need to catch the names a curated constituent list is full of.
+// ═══════════════════════════════════════════════════════════════════════════
+export const SMALL_MID_MAX = { us: 10_000 /* $ millions */, india: 20_000 /* ₹ crore */ } as const;
+
+export const US_LARGE_CAPS = new Set<string>([
+  'AAPL','MSFT','NVDA','GOOGL','GOOG','AMZN','META','TSLA','AVGO','BRK-B','LLY','JPM','V','MA','UNH','XOM','JNJ','WMT','PG','HD','COST','ORCL','ABBV','MRK','CVX','KO','PEP','BAC','ADBE','CRM','NFLX','AMD','TMO','LIN','MCD','CSCO','ACN','ABT','WFC','DIS','INTU','TXN','QCOM','DHR','AMGN','PM','IBM','CAT','GE','NOW','ISRG','SPGI','UBER','VZ','T','CMCSA','NEE','RTX','HON','UNP','LOW','PFE','GS','MS','BKNG','AMAT','LRCX','KLAC','MU','ADI','PANW','CRWD','ANET','SNPS','CDNS','INTC','MRVL','TSM','ASML','ARM','SHOP','PLTR','COIN','HOOD','SQ','XYZ','PYPL','SOFI','ABNB','DASH','SNOW','DDOG','NET','ZS','FTNT','WDAY','TEAM','MDB','HUBS','TTD','APP','RBLX','U','SNAP','PINS','SPOT','EA','TTWO','NTES','SE','BABA','PDD','JD','BIDU','LMT','NOC','GD','LHX','BA','HWM','TDG','GEV','ETN','PWR','VRT','EMR','ROK','DE','MMM','UPS','FDX','CSX','NSC','ODFL','DAL','UAL','LUV','F','GM','RIVN','LCID','APTV','ALB','SQM','FCX','SCCO','NEM','GOLD','AEM','FNV','WPM','TECK','NUE','STLD','DOW','DD','SHW','ECL','APD','CTVA','NTR','MOS','CF','COP','EOG','SLB','OXY','PSX','MPC','VLO','KMI','WMB','OKE','CEG','VST','SO','DUK','AEP','D','EXC','SRE','AWK','XYL','WM','RSG','AMT','PLD','EQIX','WELL','DLR','CCI','PSA','O','SPG','VRTX','REGN','GILD','MRNA','BIIB','BMY','ZTS','SYK','BSX','MDT','EW','CI','ELV','HUM','CVS','MCK','NVO','AZN','SNY','GSK','NVS','TMUS','CHTR','ADP','PAYX','FI','FIS','GPN','AXP','COF','SCHW','BLK','C','USB','PNC','TFC','KEY','RF','MTB','FITB','HBAN','CFG','BK','STT','ICE','CME','MCO','CB','PGR','TRV','AIG','MET','PRU','AFL','ALL','MMC','AON','AJG','DHI','LEN','PHM','NVR','TOL','NKE','SBUX','CMG','YUM','MAR','HLT','TJX','ROST','TGT','DG','DLTR','ORLY','AZO','LULU','EL','CL','KMB','GIS','K','KHC','MDLZ','HSY','STZ','MO','KDP','MNST','CELH','ADM','BG','CCJ','FSLR','ENPH','SMCI','DELL','HPE','HPQ','WDC','STX','NTAP','PSTG','GLW','APH','TEL','CIEN','COHR','LITE','ON','NXPI','MCHP','MPWR','TER','ENTG','ONTO','CGNX','ZBRA','IT','CTSH','EPAM','MSTR','AFRM','TOST','NU','MELI','CPNG','RDDT','DUOL','AXON','KTOS','RKLB','ASTS','AVAV','OKLO','SMR','LEU','IONQ','RGTI','QBTS','CRSP','NTLA','BNTX','ILMN','EXAS','TWST',
+]);
+
+export const INDIA_LARGE_CAPS = new Set<string>([
+  'RELIANCE','TCS','HDFCBANK','ICICIBANK','INFY','BHARTIARTL','SBIN','LICI','ITC','HINDUNILVR','LT','BAJFINANCE','HCLTECH','KOTAKBANK','MARUTI','SUNPHARMA','AXISBANK','M&M','ULTRACEMCO','NTPC','TITAN','ONGC','ADANIENT','ADANIPORTS','TATAMOTORS','POWERGRID','ASIANPAINT','BAJAJFINSV','WIPRO','COALINDIA','NESTLEIND','JSWSTEEL','TATASTEEL','BAJAJ-AUTO','DMART','ADANIGREEN','ADANIPOWER','HAL','BEL','JIOFIN','IOC','LTIM','TRENT','ZOMATO','ETERNAL','SIEMENS','ABB','VBL','DLF','GRASIM','HINDALCO','PIDILITIND','SBILIFE','HDFCLIFE','TECHM','BRITANNIA','EICHERMOT','DIVISLAB','CIPLA','DRREDDY','APOLLOHOSP','TATAPOWER','INDIGO','GODREJCP','HAVELLS','DABUR','BPCL','GAIL','VEDL','PFC','RECLTD','IRFC','BANKBARODA','PNB','CANBK','UNIONBANK','INDUSINDBK','CHOLAFIN','SHRIRAMFIN','BAJAJHLDNG','TVSMOTOR','HEROMOTOCO','AMBUJACEM','SHREECEM','ACC','TORNTPHARM','LUPIN','ZYDUSLIFE','MAXHEALTH','ICICIGI','ICICIPRULI','SBICARD','MOTHERSON','BOSCHLTD','CUMMINSIND','POLYCAB','CGPOWER','BHEL','BDL','MAZDOCK','SOLARINDS','RVNL','IRCTC','NHPC','SJVN','JSWENERGY','TORNTPOWER','ADANIENSOL','ATGL','LODHA','GODREJPROP','PRESTIGE','OBEROIRLTY','PHOENIXLTD','INDHOTEL','JUBLFOOD','UNITDSPR','UBL','COLPAL','MARICO','TATACONSUM','PAGEIND','NAUKRI','PAYTM','NYKAA','POLICYBZR','PERSISTENT','COFORGE','MPHASIS','OFSS','KPITTECH','DIXON','HINDZINC','NMDC','SAIL','JINDALSTEL','SRF','PIIND','UPL','DEEPAKNTR','MUTHOOTFIN','BAJAJHFL','HDFCAMC','ABCAPITAL','IDFCFIRSTB','FEDERALBNK','AUBANK','YESBANK','INDIANB','BANKINDIA','IOB','UCOBANK','CENTRALBK','PERSISTENT','TATAELXSI','TATACOMM','INDUSTOWER','IDEA','HINDPETRO','OIL','PETRONET','GMRAIRPORT','CONCOR','ASTRAL','SUPREMEIND','APLAPOLLO','AUROPHARMA','ALKEM','MANKIND','GLENMARK','BIOCON','FORTIS','LALPATHLAB','SYNGENE','ESCORTS','ASHOKLEY','BALKRISIND','MRF','APOLLOTYRE','EXIDEIND','UNOMINDA','SONACOMS','TIINDIA','SCHAEFFLER','SKFINDIA','THERMAX','KEI','BHARATFORG','COCHINSHIP','GESHIP','SUZLON','WAAREEENER','PREMIERENE','HUDCO','IREDA','LICHSGFIN','MFSL','360ONE','ANGELONE','BSE','MCX','CDSL','KALYANKJIL','VOLTAS','BLUESTARCO','CROMPTON','WHIRLPOOL','BERGEPAINT','KANSAINER','PATANJALI','EMAMILTD','GILLETTE','PGHH','3MINDIA','HONAUT','LINDEINDIA','ZFCVINDIA','AIAENG','TIMKEN','GRINDWELL','CARBORUNDUM','KAYNES','NETWEB','ANANTRAJ',
+]);
+
+/** Is this a well-known large cap (used only when no market cap is on file)? */
+export function isKnownLargeCap(ticker: string, region: ThemeRegion): boolean {
+  const t = String(ticker || '').toUpperCase().replace(/\.(NS|BO)$/, '');
+  return region === 'us' ? US_LARGE_CAPS.has(t) : INDIA_LARGE_CAPS.has(t);
+}
+
+/**
+ * Size class for a name: 'small-mid' / 'large' from a market cap when one is
+ * on file (US: $ millions, India: ₹ crore), else from the large-cap list;
+ * 'unknown' when neither says anything.
+ */
+export function sizeClass(ticker: string, region: ThemeRegion, cap?: number | null): 'small-mid' | 'large' | 'unknown' {
+  if (typeof cap === 'number' && Number.isFinite(cap) && cap > 0) return cap <= SMALL_MID_MAX[region] ? 'small-mid' : 'large';
+  return isKnownLargeCap(ticker, region) ? 'large' : 'unknown';
+}

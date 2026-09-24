@@ -413,7 +413,7 @@ export default function TickerExportToolbar({
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="mc-grid-2-mobile" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {/* PATCH 1050 — One-click Excel export. Most prominent button: builds a
             formatted .xlsx of the full bench (ticker, company, NSE/BSE code,
             tier, conviction) and downloads it immediately. */}

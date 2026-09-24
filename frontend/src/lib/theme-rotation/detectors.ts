@@ -21,26 +21,41 @@ import type { CrossFlow, Flag, LayerSet, ThemeRow } from './types';
 const pct = (v: number | null | undefined, dp = 0) => (typeof v === 'number' ? `${v > 0 ? '+' : ''}${v.toFixed(dp)}%` : 'n/a');
 
 // ── EARLY ROTATION ─────────────────────────────────────────────────────────
+//
+// zzz797 — it fired for FMCG and Energy off an artefact (an earnings layer
+// comparing against an empty earlier window). It now needs:
+//   1. a REAL improvement in earnings or catalysts — compared like for like
+//      with an earlier period on file (a 'level' reading never counts), and
+//      not resting on a handful of names;
+//   2. a SECOND, independent confirmation — the other fundamental layer, or
+//      breadth (on at least 5 names), or the volume proxy;
+//   3. relative strength still Lagging or Improving (otherwise it is not early).
+
+/** A layer that genuinely improved against an earlier period, on enough names. */
+export function realImprovement(L: LayerSet, k: keyof LayerSet): boolean {
+  const r = L[k];
+  return r.state === 'improving' && r.basis !== 'level' && !r.lowConfidence;
+}
+
 export function detectEarlyRotation(t: ThemeRow, L: LayerSet): Flag | null {
   const q = t.quadrant || '';
   if (q !== 'Lagging' && q !== 'Improving') return null;
-  const fundamentals = (['earnings', 'catalysts'] as const).filter((k) => L[k].state === 'improving');
+  const fundamentals = (['earnings', 'catalysts'] as const).filter((k) => realImprovement(L, k));
   if (!fundamentals.length) return null;
-  const participation = L.breadth.state === 'improving' || L.flow.state === 'improving';
+  const participation = (['breadth', 'flow'] as const).filter((k) => realImprovement(L, k));
   // Two independent confirmations, at least one of them a fundamental one.
-  const confirmations = fundamentals.length + (participation ? 1 : 0);
-  if (confirmations < 2) return null;
+  if (fundamentals.length + participation.length < 2) return null;
   // A theme in free fall is not turning, whatever its filings say.
   if (L.price.state === 'weakening' && L.breadth.state === 'weakening') return null;
   const bits = [
-    ...fundamentals.map((k) => L[k].headline.toLowerCase()),
-    ...(L.breadth.state === 'improving' ? [`breadth improving (${L.breadth.headline.toLowerCase()})`] : []),
-    ...(L.flow.state === 'improving' ? ['volume leaning to up days (proxy)'] : []),
+    ...fundamentals.map((k) => L[k].headline.replace(/^Level only: /, '').toLowerCase()),
+    ...(participation.includes('breadth') ? [`breadth improving (${L.breadth.headline.toLowerCase()})`] : []),
+    ...(participation.includes('flow') ? ['volume leaning to up days (proxy)'] : []),
   ];
   return {
     kind: 'early-rotation',
     label: 'Early rotation',
-    why: `Fundamentals improving before the price: ${bits.join('; ')} — while relative strength is still ${q.toLowerCase()}.`,
+    why: `Fundamentals improving before the price: ${bits.join('; ')} — while relative strength is still ${q.toLowerCase()}. Research now; the price has not confirmed yet.`,
   };
 }
 
@@ -99,13 +114,20 @@ export function detectBreakdown(t: ThemeRow, L: LayerSet): Flag | null {
 export function detectShortTermBreak(t: ThemeRow): Flag | null {
   const r = t.ret; if (!r || !t.shortTermBreak) return null;
   if ((r.m3 ?? 0) <= 0) return null; // then it is not "masking" anything
-  return { kind: 'short-term-break', label: 'Short-term break', why: `Strong over 3 months (${pct(r.m3, 1)}) but ${pct(r.m1, 1)} over 1 month and ${pct(r.w1, 1)} over 1 week. The 3-month strength is hiding a break that is under way.` };
+  // zzz797 — say exactly what tripped it (1M fall and/or 1W fall, and the
+  // 20-day line), so a positive week inside a break is not a mystery.
+  const trig = t.shortTermBreakWhy || `1M ${pct(r.m1, 1)}, 1W ${pct(r.w1, 1)}.`;
+  const bounce = (r.w1 ?? 0) > 0 ? ' Last week was up — a bounce inside the break, not yet a recovery (it clears once the price is back above its 20-day line).' : '';
+  return { kind: 'short-term-break', label: 'Short-term break', why: `Triggered by: ${trig} Strong over 3 months (${pct(r.m3, 1)}), so the 3-month number is hiding a break that is under way.${bounce}` };
 }
 
 export function detectDefensive(t: ThemeRow): Flag | null {
   // Only a theme actually AHEAD of the market can be "leading while falling".
   if (!t.fallingLeader || (t.rsRatio ?? 0) < 100) return null;
-  return { kind: 'defensive', label: 'Falling less', why: `Leads on relative strength while its own price is down over 3 months (${pct(t.ret?.m3, 1)}). Falling less than the market is defence, not a buy signal.` };
+  const m3 = t.ret?.m3;
+  const bm3 = typeof m3 === 'number' && typeof t.excess3m === 'number' ? m3 - t.excess3m : null;
+  const vs = bm3 != null ? ` against the benchmark's ${pct(bm3, 1)}` : '';
+  return { kind: 'defensive', label: 'Falling less (defensive)', why: `Falling less = down less than the benchmark — defensive, not strength. Its own price is ${pct(m3, 1)} over 3 months${vs}; it only "leads" because it fell less. That is shelter, not a buy signal.` };
 }
 
 export function detectFlags(t: ThemeRow, L: LayerSet, benchY1?: number | null): Flag[] {
@@ -120,48 +142,55 @@ export function detectFlags(t: ThemeRow, L: LayerSet, benchY1?: number | null): 
 
 // ── CROSS-THEME FLOW ───────────────────────────────────────────────────────
 /**
- * Pairs where one theme's relative momentum fell while a RELATED theme's rose
- * over the same weeks. "Related" means the same group on the board, or the
- * same correlation cluster ("moves with") — money rotating inside a
- * neighbourhood, which is what a reader can act on. Unrelated pairs are not
- * reported: a fall in Gold and a rise in Software on the same weeks is a
- * coincidence the data cannot tell apart from a rotation.
+ * zzz797 — "Genomics → Disruptive Innovation" was reported while BOTH were
+ * rising: a dip in one theme's momentum reading next to a rise in another's is
+ * not money moving between them. A rotation now needs, over the SAME weeks:
+ *   · the source's relative strength falling (RS line down) AND its relative
+ *     momentum falling;
+ *   · the destination's relative strength rising AND its momentum rising;
+ *   · a meaningful gap between the two relative-strength moves, and the
+ *     destination beating the source over the last month;
+ *   · the two themes related (same board group or the same "moves with"
+ *     correlation cluster) — unrelated pairs are coincidence.
  *
- * @param subBeneficiaries names inside each theme most likely to benefit next
- *        (strongest sub-themes / leaders), used as second-order beneficiaries.
+ * @param subBeneficiaries second-order names inside a theme — the caller
+ *        passes small / mid caps only.
  */
+export const FLOW_MIN_GAP = 2;
+
 export function detectCrossFlows(
   themes: ThemeRow[],
   subBeneficiaries: (themeId: string) => string[],
-  opts: { weeks?: number; minMove?: number; max?: number } = {},
+  opts: { weeks?: number; minMove?: number; max?: number; minGap?: number } = {},
 ): CrossFlow[] {
-  const weeks = opts.weeks ?? 4, minMove = opts.minMove ?? 1.2, max = opts.max ?? 5;
-  const delta = (t: ThemeRow) => {
-    const tr = t.trail || [];
-    if (tr.length < weeks + 1) return null;
-    return +(tr[tr.length - 1].y - tr[tr.length - 1 - weeks].y).toFixed(2);
-  };
-  const rsThen = (t: ThemeRow) => { const tr = t.trail || []; return tr.length > weeks ? tr[tr.length - 1 - weeks].x : null; };
-  const withD = themes.filter((t) => t.ok !== false).map((t) => ({ t, d: delta(t) })).filter((x) => x.d != null) as Array<{ t: ThemeRow; d: number }>;
-  const losers = withD.filter((x) => x.d <= -minMove);
-  const gainers = withD.filter((x) => x.d >= minMove);
+  const weeks = opts.weeks ?? 4, minMove = opts.minMove ?? 1.2, max = opts.max ?? 5, minGap = opts.minGap ?? FLOW_MIN_GAP;
+  const at = (t: ThemeRow) => { const tr = t.trail || []; return tr.length >= weeks + 1 ? { now: tr[tr.length - 1], then: tr[tr.length - 1 - weeks] } : null; };
+  const rows = themes.filter((t) => t.ok !== false).map((t) => {
+    const p = at(t); if (!p) return null;
+    return { t, dy: +(p.now.y - p.then.y).toFixed(2), dx: +(p.now.x - p.then.x).toFixed(2) };
+  }).filter(Boolean) as Array<{ t: ThemeRow; dy: number; dx: number }>;
+  const losers = rows.filter((x) => x.dy <= -minMove && x.dx < 0);
+  const gainers = rows.filter((x) => x.dy >= minMove && x.dx > 0);
   const out: CrossFlow[] = [];
   for (const L of losers) for (const G of gainers) {
     if (L.t.id === G.t.id) continue;
     const sameGroup = !!L.t.group && L.t.group === G.t.group && L.t.group !== 'Broad Sectors';
     const sameCluster = L.t.cluster != null && L.t.cluster === G.t.cluster;
     if (!sameGroup && !sameCluster) continue;
-    // Money leaves the stronger theme for the weaker one — that is rotation.
-    const a = rsThen(L.t), b = rsThen(G.t);
-    if (a != null && b != null && a < b) continue;
+    if (G.dx - L.dx < minGap) continue;
+    // Over the last month the destination must actually have done better.
+    const m1L = L.t.ret?.m1, m1G = G.t.ret?.m1;
+    if (typeof m1L === 'number' && typeof m1G === 'number' && m1G - m1L < 2) continue;
     const basis: CrossFlow['basis'] = sameGroup && sameCluster ? 'same group, moves together' : sameGroup ? 'same group' : 'moves together';
+    const plain = `Over the last ${weeks} weeks ${L.t.name} has been losing ground against the market (relative strength ${L.dx.toFixed(1)} pts) while ${G.t.name} has been gaining (+${G.dx.toFixed(1)} pts)${typeof m1L === 'number' && typeof m1G === 'number' ? `; last month ${L.t.name} ${pct(m1L, 1)} vs ${G.t.name} ${pct(m1G, 1)}` : ''}. Because the two usually trade as neighbours, that looks like money shifting from one to the other.`;
     out.push({
-      from: L.t.id, to: G.t.id, fromDelta: L.d, toDelta: G.d, weeks, basis,
+      from: L.t.id, to: G.t.id, fromDelta: L.dy, toDelta: G.dy, fromRsDelta: L.dx, toRsDelta: G.dx, weeks, basis,
       beneficiaries: subBeneficiaries(G.t.id).slice(0, 4),
-      why: `Over ${weeks} weeks ${L.t.name}'s relative momentum fell (${L.d.toFixed(1)}) while ${G.t.name}'s rose (+${G.d.toFixed(1)}); they are ${basis === 'moves together' ? 'in the same correlation group' : basis === 'same group' ? 'in the same group on the board' : 'in the same group and move together'}. A rotation proxy from relative momentum, not fund-flow data.`,
+      plain,
+      why: `Over ${weeks} weeks ${L.t.name}'s relative strength fell (${L.dx.toFixed(1)}) and its momentum fell (${L.dy.toFixed(1)}), while ${G.t.name}'s relative strength rose (+${G.dx.toFixed(1)}) and its momentum rose (+${G.dy.toFixed(1)}); they are ${basis === 'moves together' ? 'in the same correlation group' : basis === 'same group' ? 'in the same group on the board' : 'in the same group and move together'}. A rotation proxy from relative strength, not fund-flow data.`,
     });
   }
-  out.sort((x, y) => (y.toDelta - y.fromDelta) - (x.toDelta - x.fromDelta));
+  out.sort((x, y) => ((y.toRsDelta ?? 0) - (y.fromRsDelta ?? 0)) - ((x.toRsDelta ?? 0) - (x.fromRsDelta ?? 0)));
   // One line per receiving theme and per source theme keeps it readable.
   const seenTo = new Set<string>(), seenFrom = new Set<string>();
   const dedup: CrossFlow[] = [];

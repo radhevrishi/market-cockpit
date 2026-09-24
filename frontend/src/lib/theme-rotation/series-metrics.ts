@@ -39,6 +39,10 @@ export function smaAt(closes: number[], period: number, offset = 0): number | nu
 }
 
 export interface MemberStat {
+  /** zzz797 — above its own 20-day average. */
+  above20?: boolean | null;
+  /** zzz797 — above its own 200-day average (null: under 200 sessions). */
+  above200?: boolean | null;
   above50: boolean | null;
   above50Prev: boolean | null;
   /** % change over ~3 months (63 sessions). */
@@ -63,7 +67,11 @@ export function memberStat(s: Series): MemberStat {
     nearHigh = last >= hi * 0.98;
     nearLow = last <= lo * 1.02;
   }
+  const s20 = smaAt(p, 20, 0);
+  const s200 = smaAt(p, 200, 0);
   return {
+    above20: s20 != null ? last > s20 : null,
+    above200: s200 != null ? last > s200 : null,
     above50: s50 != null ? last > s50 : null,
     above50Prev: s50p != null && prev20 != null ? prev20 > s50p : null,
     m3: m3 != null ? +m3.toFixed(2) : null,
@@ -86,6 +94,12 @@ export function aggregateBreadth(stats: MemberStat[], bench3m: number | null): B
     outperf: bench3m == null ? 0 : priced.filter((s) => s.m3 != null && s.m3 > bench3m).length,
     newHighs: priced.filter((s) => s.nearHigh === true).length,
     newLows: priced.filter((s) => s.nearLow === true).length,
+    // zzz797 — short- and long-term participation for the breadth heatmap.
+    // The 200-day read has its own sample size: a member with under 200
+    // sessions of history is left out of it rather than counted as "below".
+    above20: priced.filter((s) => s.above20 === true).length,
+    above200: priced.filter((s) => s.above200 === true).length,
+    n200: priced.filter((s) => s.above200 != null).length,
   };
 }
 

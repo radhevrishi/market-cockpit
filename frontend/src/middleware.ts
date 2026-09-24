@@ -162,8 +162,12 @@ export async function middleware(req: NextRequest) {
 // pass through with NextResponse.next() unchanged.
 // zzz778 — every path except Next's static output and plain static files,
 // so the page gate covers the whole site. API paths keep the rate limits.
+// zzz796 — the installable-app files must load before login (the phone reads
+// them to install the app): manifest.json, sw.js, the icons (png) and the
+// offline page. offline.html is named exactly; other .html files in public/
+// stay behind the login.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon\\.ico|robots\\.txt|manifest\\.json|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|webmanifest|txt|xml|css|js|map|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|robots\\.txt|manifest\\.json|sw\\.js$|offline\\.html$|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|webmanifest|txt|xml|css|js|map|woff2?)$).*)',
   ],
 };

@@ -33,8 +33,10 @@ export const VERDICT_ORDER: Record<string, number> = { BUY: 0, 'EARLY BUY': 1, H
 export const STATE_META: Record<LayerState, { glyph: string; color: string; word: string; order: number }> = {
   improving: { glyph: '▲', color: T.up, word: 'improving', order: 0 },
   steady: { glyph: '●', color: T.flat, word: 'steady', order: 1 },
-  unknown: { glyph: '○', color: T.absent, word: 'no data', order: 2 },
-  weakening: { glyph: '▼', color: T.down, word: 'weakening', order: 3 },
+  // zzz797 — data for now, but no earlier period on file: a level, not a trend.
+  level: { glyph: '◆', color: T.info, word: 'level only', order: 2 },
+  unknown: { glyph: '○', color: T.absent, word: 'no data', order: 3 },
+  weakening: { glyph: '▼', color: T.down, word: 'weakening', order: 4 },
 };
 
 export const TIER_TONE: Record<Tier, string> = { top: T.accent, look: T.up, monitor: T.flat, low: T.absent };

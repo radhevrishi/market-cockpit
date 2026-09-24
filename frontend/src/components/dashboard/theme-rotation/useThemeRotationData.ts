@@ -15,7 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CatalystInput, Market, Payload, WeeklySnapshot } from '@/lib/theme-rotation/types';
+import type { CatalystInput, GradedInput, Market, Payload, WeeklySnapshot } from '@/lib/theme-rotation/types';
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { getUsConvictionList, hydrateUsConviction } from '@/lib/conviction-beats-us';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
@@ -83,13 +83,16 @@ export function useDrill(region: Market) {
   const [drill, setDrill] = useState<Record<string, any>>({});
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const asked = useRef<Set<string>>(new Set());
-  const loadDrill = useCallback(async (themeId: string, force = false) => {
+  // zzz797 — `extra`: small / mid caps from your lists and the graded history
+  // mapped to this theme, priced alongside the declared constituents.
+  const loadDrill = useCallback(async (themeId: string, force = false, extra: string[] = []) => {
     const key = `${region}:${themeId}`;
     if (asked.current.has(key) && !force) return;
     asked.current.add(key);
     setLoadingKey(key);
     try {
-      const j = await getJson(`/api/market/theme-rotation?region=${region}&theme=${encodeURIComponent(themeId)}`, 45_000);
+      const ex = extra.length ? `&extra=${encodeURIComponent(extra.slice(0, 12).join(','))}` : '';
+      const j = await getJson(`/api/market/theme-rotation?region=${region}&theme=${encodeURIComponent(themeId)}${ex}${force ? '&refresh=1' : ''}`, 45_000);
       setDrill((p) => ({ ...p, [key]: j }));
     } catch {
       setDrill((p) => ({ ...p, [key]: { themeId, stocks: [], error: 'Constituents could not be loaded. Try again.' } }));
@@ -109,11 +112,17 @@ export interface ClientLists {
   held: Set<string>;
   holdingsSource: string;
   holdingsNote: string | null;
+  /** zzz797 — held lines left out of theme counts (non-US listings), with why. */
+  nonUs: Map<string, string>;
+  /** zzz797 — quantity held (US book), for value weights. */
+  qty: Map<string, number>;
+  /** zzz797 — current value where the portfolio page stores one (India). */
+  values: Map<string, number>;
 }
 
 export function useClientLists(region: Market, reloadKey: number): ClientLists {
   const [benchReady, setBenchReady] = useState(false);
-  const [usBook, setUsBook] = useState<{ held: string[]; note: string | null } | null>(null);
+  const [usBook, setUsBook] = useState<{ held: string[]; note: string | null; nonUs: Array<[string, string]>; qty: Array<[string, number]> } | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => { void hydrateUsConviction().catch(() => 0).finally(() => setBenchReady(true)); }, []);
   // Re-read when another tab updates the bench or the portfolio.
@@ -126,13 +135,25 @@ export function useClientLists(region: Market, reloadKey: number): ClientLists {
   useEffect(() => {
     if (region !== 'us') return;
     let alive = true;
-    getJson('/api/v1/us-book?view=universe', 15_000)
+    // zzz797 — the full book (holdings only; cash is kept apart in the book
+    // and never read here): tickers, listing and quantity. A Frankfurt (FWB2)
+    // or other non-US line is kept OUT of the theme counts and labelled.
+    getJson('/api/v1/us-book', 15_000)
       .then((j) => {
         if (!alive) return;
-        const u = Array.isArray(j?.universe) ? j.universe : [];
-        setUsBook({ held: u.filter((x: any) => x?.origin !== 'bench').map((x: any) => sanitizeTicker(x?.ticker)).filter(Boolean), note: j?.ok === false ? 'The US book could not be read.' : null });
+        const hs = Array.isArray(j?.book?.holdings) ? j.book.holdings : [];
+        const held: string[] = [], nonUs: Array<[string, string]> = [], qty = new Map<string, number>();
+        const isUs = new Set<string>();
+        for (const h of hs) { const t = sanitizeTicker(h?.ticker); if (t && h?.listing === 'US') isUs.add(t); }
+        for (const h of hs) {
+          const t = sanitizeTicker(h?.ticker); if (!t) continue;
+          held.push(t);
+          if (!isUs.has(t)) nonUs.push([t, `held on ${h?.listingNote || h?.exchange || 'a non-US venue'} — no US theme`]);
+          else if (h?.listing === 'US' && typeof h?.quantity === 'number') qty.set(t, (qty.get(t) || 0) + h.quantity);
+        }
+        setUsBook({ held: [...new Set(held)], note: j?.ok === false ? 'The US book could not be read.' : null, nonUs, qty: [...qty.entries()] });
       })
-      .catch(() => { if (alive) setUsBook({ held: [], note: 'The US book could not be read (you may need to sign in).' }); });
+      .catch(() => { if (alive) setUsBook({ held: [], note: 'The US book could not be read (you may need to sign in).', nonUs: [], qty: [] }); });
     return () => { alive = false; };
   }, [region, reloadKey]);
 
@@ -142,26 +163,37 @@ export function useClientLists(region: Market, reloadKey: number): ClientLists {
     const bench: RawBenchRow[] = [];
     try {
       if (region === 'us') {
-        for (const e of getUsConvictionList() as any[]) bench.push({ ticker: e.ticker, company: e.company, sector: e.sector, industry: e.industry, tier: e.tier, filing_date: e.filing_date, pe: e.pe, url: e.release_url || e.source_url || null });
+        for (const e of getUsConvictionList() as any[]) bench.push({ ticker: e.ticker, company: e.company, sector: e.sector, industry: e.industry, tier: e.tier, filing_date: e.filing_date, pe: e.pe, url: e.release_url || e.source_url || null, mcap: typeof e.market_cap_musd === 'number' ? e.market_cap_musd : null });
       } else {
         const cb = readConvictionBeats() as Record<string, any>;
-        for (const k of Object.keys(cb)) { const e = cb[k]; bench.push({ ticker: e?.ticker || k, company: e?.company, sector: e?.sector, industry: e?.industry, tier: e?.tier, filing_date: e?.filing_date, pe: e?.pe, url: e?.source_url || null }); }
+        for (const k of Object.keys(cb)) { const e = cb[k]; bench.push({ ticker: e?.ticker || k, company: e?.company, sector: e?.sector, industry: e?.industry, tier: e?.tier, filing_date: e?.filing_date, pe: e?.pe, url: e?.source_url || null, mcap: typeof e?.market_cap_cr === 'number' ? e.market_cap_cr : null }); }
       }
     } catch { /* bench unreadable → earnings layer reads "unknown" */ }
     const held = new Set<string>();
+    const values = new Map<string, number>();
+    const pfQty = new Map<string, number>();
     let holdingsSource = '';
     try {
       for (const [sym, h] of getPortfolioMap()) {
         const isUs = h.market === 'US';
-        if ((region === 'us') === isUs) { const t = sanitizeTicker(sym); if (t) held.add(t); }
+        if ((region === 'us') === isUs) {
+          const t = sanitizeTicker(sym); if (!t) continue;
+          held.add(t);
+          if (region === 'india' && typeof h.currentValue === 'number' && h.currentValue > 0) values.set(t, h.currentValue);
+          if (typeof h.quantity === 'number' && h.quantity > 0) pfQty.set(t, h.quantity);
+        }
       }
       holdingsSource = region === 'us' ? 'US book + portfolio page' : 'Portfolio page (this browser)';
     } catch { /* none */ }
     if (region === 'us' && usBook) for (const t of usBook.held) held.add(t);
+    // The US book's quantity wins; the portfolio page fills the rest.
+    const qty = new Map<string, number>(pfQty);
+    if (region === 'us' && usBook) for (const [t, q] of usBook.qty) qty.set(t, q);
     return {
       tech: Array.isArray(tech) ? tech : [], fundo: Array.isArray(fundo) ? fundo : [], bench,
       benchReady: region === 'us' ? benchReady : true,
       held, holdingsSource, holdingsNote: region === 'us' ? (usBook?.note ?? null) : null,
+      nonUs: new Map(region === 'us' && usBook ? usBook.nonUs : []), qty, values,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region, benchReady, usBook, tick, reloadKey]);
@@ -205,31 +237,106 @@ export function useNseIndustry(region: Market, missing: string[]) {
 }
 
 // ── catalysts from filings and news ───────────────────────────────────────
+// zzz797 — the layer compares the last 14 days with the 14 before, so the
+// feeds are asked for 28 days. `coverageDays` is how far back the items that
+// came back actually reach (market-wide): a news feed of the latest 300
+// headlines may cover only a few days, and then the layer reads as a level.
 export const CATALYST_WINDOW_DAYS = 14;
 export function useCatalysts(region: Market, reloadKey: number) {
-  const [state, setState] = useState<{ items: CatalystInput[] | null; loaded: boolean; sources: string[] }>({ items: null, loaded: false, sources: [] });
+  const [state, setState] = useState<{ items: CatalystInput[] | null; loaded: boolean; sources: string[]; coverageDays: number }>({ items: null, loaded: false, sources: [], coverageDays: 0 });
   useEffect(() => {
     let alive = true;
-    setState({ items: null, loaded: false, sources: [] });
+    setState({ items: null, loaded: false, sources: [], coverageDays: 0 });
     (async () => {
-      const jobs: Array<Promise<{ src: string; items: CatalystInput[] } | null>> = [];
+      const now = Date.now();
+      const reach = (dates: string[]) => { const ts = dates.map((d) => new Date(d).getTime()).filter(Number.isFinite); return ts.length ? (now - Math.min(...ts)) / 86_400_000 : 0; };
+      const jobs: Array<Promise<{ src: string; items: CatalystInput[]; reach: number } | null>> = [];
       if (region === 'india') {
-        jobs.push(getJson(`/api/v1/concall-intel/live-feed?days=${CATALYST_WINDOW_DAYS}&bullishOnly=false&cacheOnly=1`, 12_000).then((j) => {
+        const feed = async (days: number) => {
+          const j = await getJson(`/api/v1/concall-intel/live-feed?days=${days}&bullishOnly=false&cacheOnly=1`, 12_000);
           const fs = Array.isArray(j?.filings) ? j.filings : [];
           if (!fs.length && (j?.cacheStatus === 'CACHE_WARMING' || j?.error)) return null;
-          return { src: 'NSE/BSE filings', items: fs.map(classifyFiling).filter(Boolean) as CatalystInput[] };
-        }).catch(() => null));
+          return { src: `NSE/BSE filings (${days}d)`, items: fs.map(classifyFiling).filter(Boolean) as CatalystInput[], reach: Math.min(days, reach(fs.map((f: any) => String(f?.filing_datetime || '')))) };
+        };
+        jobs.push(feed(CATALYST_WINDOW_DAYS * 2).then((r) => r || feed(CATALYST_WINDOW_DAYS)).catch(() => null));
       }
       jobs.push(getJson(`/api/v1/news?region=${region === 'us' ? 'US' : 'IN'}&limit=300`, 15_000).then((j) => {
         const arr = Array.isArray(j) ? j : Array.isArray(j?.articles) ? j.articles : [];
-        return { src: 'News feed', items: arr.flatMap(classifyNews) };
+        return { src: 'News feed', items: arr.flatMap(classifyNews), reach: reach(arr.map((a: any) => String(a?.published_at || ''))) };
       }).catch(() => null));
       const got = await Promise.all(jobs);
       if (!alive) return;
-      const ok = got.filter(Boolean) as Array<{ src: string; items: CatalystInput[] }>;
-      setState({ items: ok.length ? dedupeCatalysts(ok.flatMap((g) => g.items)) : null, loaded: true, sources: ok.map((g) => g.src) });
+      const ok = got.filter(Boolean) as Array<{ src: string; items: CatalystInput[]; reach: number }>;
+      setState({ items: ok.length ? dedupeCatalysts(ok.flatMap((g) => g.items)) : null, loaded: true, sources: ok.map((g) => g.src), coverageDays: ok.length ? Math.max(...ok.map((g) => g.reach)) : 0 });
     })();
     return () => { alive = false; };
   }, [region, reloadKey]);
   return state;
+}
+
+// ── graded-earnings history (India)  (zzz797) ─────────────────────────────
+export function useGradedHistory(region: Market, reloadKey: number) {
+  const [state, setState] = useState<{ rows: GradedInput[] | null; loaded: boolean; coverage: any; note: string | null }>({ rows: null, loaded: false, coverage: null, note: null });
+  useEffect(() => {
+    let alive = true;
+    setState({ rows: null, loaded: false, coverage: null, note: null });
+    if (region !== 'india') { setState({ rows: null, loaded: true, coverage: null, note: null }); return; }
+    getJson(`/api/market/theme-rotation?region=india&earnings=1`, 55_000)
+      .then((j) => { if (alive) setState({ rows: Array.isArray(j?.rows) && j.rows.length ? j.rows as GradedInput[] : null, loaded: true, coverage: j?.coverage || null, note: j?.error || j?.note || null }); })
+      .catch(() => { if (alive) setState({ rows: null, loaded: true, coverage: null, note: 'Graded history could not be read; the bench is used instead.' }); });
+    return () => { alive = false; };
+  }, [region, reloadKey]);
+  return state;
+}
+
+// ── SEC industry for US names  (zzz797) ───────────────────────────────────
+export interface SecProfile { ticker: string; status?: string; sic?: string | null; sicDescription?: string | null; name?: string | null }
+export function useUsProfiles(region: Market, tickers: string[]) {
+  const [map, setMap] = useState<Record<string, SecProfile>>({});
+  const [loaded, setLoaded] = useState(false);
+  // Order kept (holdings first): the server looks up at most 40 new names a call.
+  const key = region === 'us' ? [...new Set(tickers)].join(',') : '';
+  useEffect(() => {
+    if (!key) { setLoaded(true); return; }
+    let alive = true;
+    setLoaded(false);
+    const LS = 'mc:theme-rotation:us-profile:v1';
+    const local = readLS(LS);
+    if (local && typeof local === 'object') setMap((p) => ({ ...local, ...p }));
+    const want = key.split(',').filter((t) => !(local && local[t]?.status === 'sec'));
+    if (!want.length) { setLoaded(true); return; }
+    // The server looks up at most 40 new names per call (the SEC's pace), so
+    // ask in rounds of 40, holdings first, at most five rounds per visit.
+    (async () => {
+      for (let i = 0; i < want.length && i < 200 && alive; i += 40) {
+        try {
+          const j = await getJson(`/api/market/theme-rotation?region=us&profiles=1&tickers=${encodeURIComponent(want.slice(i, i + 40).join(','))}`, 55_000);
+          if (!alive || !j?.profiles) break;
+          setMap((p) => {
+            const next = { ...p, ...j.profiles };
+            try { localStorage.setItem(LS, JSON.stringify(next)); } catch { /* quota */ }
+            return next;
+          });
+        } catch { break; /* names stay unplaced, with the reason shown */ }
+      }
+      if (alive) setLoaded(true);
+    })();
+    return () => { alive = false; };
+  }, [key]);
+  return { map, loaded };
+}
+
+// ── holdings' own price moves  (zzz797) ───────────────────────────────────
+export function useHoldingQuotes(region: Market, tickers: string[], reloadKey: number) {
+  const [quotes, setQuotes] = useState<Record<string, { price: number | null; w1: number | null; m1: number | null }>>({});
+  const key = [...new Set(tickers)].sort().join(',');
+  useEffect(() => {
+    if (!key) { setQuotes({}); return; }
+    let alive = true;
+    getJson(`/api/market/theme-rotation?region=${region}&holdings=1&tickers=${encodeURIComponent(key)}`, 45_000)
+      .then((j) => { if (alive) setQuotes(j?.quotes || {}); })
+      .catch(() => { if (alive) setQuotes({}); });
+    return () => { alive = false; };
+  }, [region, key, reloadKey]);
+  return quotes;
 }

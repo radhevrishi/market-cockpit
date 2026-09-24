@@ -70,6 +70,11 @@ export function usText(s: string, name: (key: string) => string, cal: FiscalCale
     .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)\s?mn\b/g, '$$$1M')
     .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)\s?bn\b/g, '$$$1B')
     .replace(/(\d[\d,]*(?:\.\d+)?)\s?USD million\b/g, '$$$1M')
+    // zzz797: the shared engine's India wording sizes a one-off against the
+    // profit "(₹815 Cr)". On a US card that figure is the XBRL profit in USD
+    // millions — never rupees, never crore.
+    .replace(/(?:₹|\bRs\.?|\bINR)\s?(\d[\d,]*(?:\.\d+)?)\s?(?:Cr\b|crores?\b)/g, '$$$1M')
+    .replace(/(?<![\w$₹])(\d[\d,]*(?:\.\d+)?)\s?(?:Cr\b|crores?\b)/g, '$$$1M')
     .replace(/filing, concall or exchange announcement/gi, '10-Q, 10-K, 8-K or earnings release (SEC EDGAR)')
     .replace(/\bexchange announcements?\b/gi, 'SEC filing')
     .replace(/\bconcall(s)?\b/gi, 'earnings release$1')

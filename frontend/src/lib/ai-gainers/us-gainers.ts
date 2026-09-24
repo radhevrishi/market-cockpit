@@ -122,28 +122,37 @@ export interface UsExclusion { ticker: string; exchange: string; reason: string;
  * that actually went UP over the window. Every row that is dropped is
  * returned with its reason, so "20 of 52 kept" can be checked.
  */
-export function screenUsGainers(rows: UsExportRow[]): { kept: UsScreenedRow[]; excluded: UsExclusion[] } {
+/** zzz797 — the owner's own scan criteria override the fixed small/mid bands
+ *  here, so a name his screener asked for is never dropped again downstream.
+ *  Omitted = the original small/mid rules. Values in $ M. */
+export interface UsScreenOptions { maxMcapM?: number | null; minMcapM?: number | null; minPrice?: number | null; allowOtc?: boolean; allowPreferred?: boolean }
+
+export function screenUsGainers(rows: UsExportRow[], opts: UsScreenOptions = {}): { kept: UsScreenedRow[]; excluded: UsExclusion[] } {
+  // undefined → the fixed rule; null → no bound (the owner removed it).
+  const ceilingM = opts.maxMcapM === undefined ? US_CAP_BANDS_M.midMax : opts.maxMcapM;
+  const floorM = opts.minMcapM === undefined ? US_CAP_BANDS_M.nanoMax : Math.min(opts.minMcapM ?? 0, US_CAP_BANDS_M.nanoMax);
+  const pennyFloor = opts.minPrice === undefined || opts.minPrice === null ? US_PENNY_PRICE : Math.min(opts.minPrice, US_PENNY_PRICE);
   const kept: UsScreenedRow[] = [];
   const excluded: UsExclusion[] = [];
   const seen = new Set<string>();
   const ex = (r: UsExportRow, kind: UsExclusion['kind'], reason: string) => excluded.push({ ticker: r.ticker, exchange: r.exchange, kind, reason });
   for (const r of rows) {
     if (!r.ticker) continue;
-    if (/^OTC/.test(r.exchange)) { ex(r, 'otc', 'OTC quote, not an exchange listing'); continue; }
-    if (!US_EXCHANGES.has(r.exchange)) { ex(r, 'non_us', `not a US listing (${r.exchange || 'no exchange'})`); continue; }
+    if (/^OTC/.test(r.exchange) && !opts.allowOtc) { ex(r, 'otc', 'OTC quote, not an exchange listing'); continue; }
+    if (!US_EXCHANGES.has(r.exchange) && !(opts.allowOtc && /^OTC/.test(r.exchange))) { ex(r, 'non_us', `not a US listing (${r.exchange || 'no exchange'})`); continue; }
     if (seen.has(r.ticker)) { ex(r, 'duplicate', 'duplicate row'); continue; }
     seen.add(r.ticker);
-    if (/\bwarrants?\b|\bunits?\b|\brights?\b|\bpreferred\b|\bdepositary shares?,? each representing\b|\bnotes? due\b/i.test(r.company)
-      || /[.\-/](WS|W|WT|U|UN|R|RT)$|[.\-/]P[A-Z]?$/.test(r.ticker)) {
+    if (/\bwarrants?\b|\bunits?\b|\brights?\b|\bnotes? due\b/i.test(r.company) || /[.\-/](WS|W|WT|U|UN|R|RT)$/.test(r.ticker)
+      || (!opts.allowPreferred && (/\bpreferred\b|\bdepositary shares?,? each representing\b/i.test(r.company) || /[.\-/]P[A-Z]?$/.test(r.ticker)))) {
       ex(r, 'not_common', 'warrant / unit / right / preferred — not common stock'); continue;
     }
     if (r.movePct == null) { ex(r, 'no_move', 'no 1-week move in the export'); continue; }
     if (r.movePct <= 0) { ex(r, 'not_gainer', `not a gainer on the window (${r.movePct.toFixed(1)}%)`); continue; }
     const tier = capTierUs(r.marketCap);
     if (!tier) { ex(r, 'no_mcap', 'market cap missing — small/mid cannot be confirmed'); continue; }
-    if (tier === 'large' || tier === 'mega') { ex(r, 'large_cap', `${tier} cap (${fmtUsdM(r.marketCap)}) — above the $10B small/mid ceiling`); continue; }
-    if (tier === 'nano') { ex(r, 'nano_cap', `nano cap (${fmtUsdM(r.marketCap)}) — below the $50M floor`); continue; }
-    if (r.price != null && r.price < US_PENNY_PRICE) { ex(r, 'penny', `penny stock ($${r.price.toFixed(2)})`); continue; }
+    if (ceilingM != null && r.marketCap! > ceilingM) { ex(r, 'large_cap', `${tier} cap (${fmtUsdM(r.marketCap)}) — above the ${fmtUsdM(ceilingM)} ceiling`); continue; }
+    if (r.marketCap! < floorM) { ex(r, 'nano_cap', `nano cap (${fmtUsdM(r.marketCap)}) — below the ${fmtUsdM(floorM)} floor`); continue; }
+    if (r.price != null && r.price < pennyFloor) { ex(r, 'penny', `penny stock ($${r.price.toFixed(2)})`); continue; }
     const flags: string[] = [];
     if (/\bacquisition corp|\bblank check\b|\bspac\b/i.test(r.company)) flags.push('SPAC');
     if (/\bADRs?\b|\bADS\b|american depositary/i.test(r.company)) flags.push('ADR');
@@ -153,7 +162,7 @@ export function screenUsGainers(rows: UsExportRow[]): { kept: UsScreenedRow[]; e
 }
 
 /** One sentence for the notes: what was dropped and why, with examples. */
-export function describeExclusions(excluded: UsExclusion[], total: number, kept: number): string | null {
+export function describeExclusions(excluded: UsExclusion[], total: number, kept: number, universe?: string): string | null {
   if (!excluded.length) return null;
   const by = new Map<string, UsExclusion[]>();
   for (const e of excluded) { if (!by.has(e.kind)) by.set(e.kind, []); by.get(e.kind)!.push(e); }
@@ -166,7 +175,9 @@ export function describeExclusions(excluded: UsExclusion[], total: number, kept:
     const names = Array.from(new Set(v.map((e) => e.ticker)));
     return `${v.length} ${label[k as UsExclusion['kind']]} (${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''})`;
   });
-  return `Kept ${kept} of ${total} export rows as US-listed small/mid-cap gainers ($50M–$10B). Excluded: ${parts.join('; ')}.`;
+  return universe
+    ? `Kept ${kept} of ${total} scanned rows (${universe}). Excluded: ${parts.join('; ')}.`
+    : `Kept ${kept} of ${total} export rows as US-listed small/mid-cap gainers ($50M–$10B). Excluded: ${parts.join('; ')}.`;
 }
 
 // ── 3. THE US SESSION CALENDAR ─────────────────────────────────────────────

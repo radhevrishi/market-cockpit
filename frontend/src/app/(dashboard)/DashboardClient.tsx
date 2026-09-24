@@ -19,6 +19,10 @@ import StockPassport from '@/components/StockPassport'; // zzz524 — global one
 // PATCH 0283 — Surface Conviction Beats count in the global header.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { scheduleBookSync } from '@/lib/book-sync-client';
+// zzz796 — installable app: phone tab bar, favourites sheet, menu drawer, install help.
+import MobileNav from '@/components/pwa/MobileNav';
+import { InstallBanner, InstallAppCard } from '@/components/pwa/InstallApp';
+import pwa from '@/components/pwa/pwa.module.css';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
@@ -595,10 +599,14 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname === href || pathname?.startsWith(href + '/');
 
-  function handleSignOut() {
-    localStorage.removeItem('token');
-    router.push('/login');
+  // zzz796 — also clear the owner cookie (before, Sign Out left you logged in).
+  async function handleSignOut() {
+    try { localStorage.removeItem('token'); } catch { /* ignore */ }
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* offline: still leave */ }
+    window.location.href = '/login';
   }
+
+  const openSearch = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true } as any));
 
   const handleRetry = () => {
     qc.invalidateQueries({ queryKey: ['market', 'indices'] });
@@ -607,7 +615,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', backgroundColor: 'var(--mc-bg-0)', overflow: 'hidden' }}>
+    <div className={pwa.shell}>
 
       {/* ── Desktop Sidebar ───────────────────────────────────────────── */}
       {/*
@@ -624,7 +632,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
        * clean "Intellig…" with the existing title-attr tooltip showing
        * the full label on hover.
        */}
-      <aside className="desktop-sidebar" style={{
+      <aside className={`desktop-sidebar ${pwa.sidebar}`} style={{
         width: '96px',
         flexShrink: 0,
         backgroundColor: 'var(--mc-bg-1)',
@@ -775,23 +783,25 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
         {/* Top Bar */}
-        <header style={{ backgroundColor: 'var(--mc-bg-1)', borderBottom: '1px solid var(--mc-bg-4)', flexShrink: 0 }}>
+        <header className={pwa.header} style={{ backgroundColor: 'var(--mc-bg-1)', borderBottom: '1px solid var(--mc-bg-4)', flexShrink: 0 }}>
 
           {/* zzz240 — Markets ticker bar (NIFTY 50 / BANK NIFTY / SENSEX /
               USD-INR) removed per user request. Full-width index widgets on
               Market Snapshot cover the same ground with more detail. */}
 
           {/* Header row — compact on mobile */}
-          <div style={{ height: '48px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '15px', fontWeight: '700', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          <div className={pwa.headerRow}>
+            <div className={pwa.brand}>
+              {/* zzz796 — on phones the long name collapses to the MC badge so the chips fit. */}
+              <Link href="/" className={pwa.brandBadge} aria-label="Market Cockpit home">MC</Link>
+              <span className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 MARKET COCKPIT
               </span>
               <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>Bloomberg-lite · India + US</span>
             </div>
 
             {/* Market hours + Theme + PDF + Search + User */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className={pwa.chips}>
               <div className="desktop-market-hours">
                 <MarketHours />
               </div>
@@ -823,7 +833,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               <PdfExportButton />
 
               <button
-                onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true } as any))}
+                className={pwa.desktopOnly}
+                onClick={openSearch}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -874,90 +885,28 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         </header>
 
         {/* Page content — add bottom padding on mobile for bottom nav */}
-        <main className="mobile-main-content" style={{ flex: 1, overflowY: 'auto', backgroundColor: 'var(--mc-bg-0)' }}>
+        <main className={`mobile-main-content ${pwa.main}`} style={{ flex: 1, overflowY: 'auto', backgroundColor: 'var(--mc-bg-0)' }}>
+          {/* zzz796 — "Install app" help on Settings (kept here so the page itself is untouched). */}
+          {pathname?.startsWith('/settings') && (
+            <div id="install-app"><InstallAppCard /></div>
+          )}
           {children}
         </main>
       </div>
 
-      {/* ── Mobile Bottom Navigation ─────────────────────────────────── */}
-      <nav
-        className="mobile-bottom-nav mobile-bottom-nav"
-        style={{
-          display: 'none',
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '56px',
-          backgroundColor: 'var(--mc-bg-1)',
-          borderTop: '1px solid var(--mc-bg-4)',
-          zIndex: 50,
-          alignItems: 'center',
-          justifyContent: 'space-around',
-          paddingTop: '4px',
-          paddingBottom: '4px',
-        }}
-      >
-        {NAV.map(item => {
-          const active = isActive(item.href);
-          return (
-            <Link key={item.href} href={item.href}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '2px',
-                padding: '6px 12px',
-                textDecoration: 'none',
-                color: active ? 'var(--mc-accent)' : 'var(--mc-text-4)',
-                fontSize: '10px',
-                fontWeight: active ? '600' : '400',
-                minWidth: '56px',
-                minHeight: '44px',
-                justifyContent: 'center',
-              }}>
-              {item.icon}
-              <span>{item.label.split(' ')[0]}</span>
-            </Link>
-          );
-        })}
-        <Link href="/settings"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '2px',
-            padding: '6px 12px',
-            textDecoration: 'none',
-            color: pathname?.startsWith('/settings') ? 'var(--mc-accent)' : 'var(--mc-text-4)',
-            fontSize: '10px',
-            minWidth: '56px',
-            minHeight: '44px',
-            justifyContent: 'center',
-          }}>
-          <Settings className="w-5 h-5" />
-          <span>Settings</span>
-        </Link>
-        <button onClick={handleSignOut}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '2px',
-            padding: '6px 12px',
-            background: 'none',
-            border: 'none',
-            color: 'var(--mc-text-4)',
-            fontSize: '10px',
-            cursor: 'pointer',
-            minWidth: '56px',
-            minHeight: '44px',
-            justifyContent: 'center',
-          }}>
-          <LogOut className="w-5 h-5" />
-          <span>Sign Out</span>
-        </button>
-      </nav>
+      {/* ── Phone navigation (zzz796) ─────────────────────────────────
+          Bottom tab bar (Home · Favourites · Search · Menu) at ≤768px. The
+          old bar looped over all ~40 pages and could not fit a phone. */}
+      <MobileNav
+        groups={NAV_GROUPS}
+        favs={favs}
+        pathname={pathname}
+        isActive={isActive}
+        onToggleFav={(href) => setFavs(toggleFavourite(href))}
+        onSearch={openSearch}
+        onSignOut={handleSignOut}
+      />
+      <InstallBanner />
 
       {/* Click-away for user menu */}
       {userMenu && (

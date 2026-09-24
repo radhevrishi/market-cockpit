@@ -12,6 +12,7 @@ import { TIER_LABEL } from '@/lib/theme-rotation/types';
 import type { ThemeView } from '@/lib/theme-rotation/view-model';
 import type { ListEntry } from '@/lib/theme-rotation/lists';
 import { LAYER_NAME, LAYER_ORDER } from '@/lib/theme-rotation/layers';
+import { leadersLaggards } from '@/lib/theme-rotation/analytics';
 import { NameChips, Pill, VerdictBadge } from './ui';
 import { STATE_META, T, TIER_TONE, fmtPct, tint } from './tokens';
 
@@ -26,6 +27,9 @@ export interface EvidencePanelProps {
   snapshots: WeeklySnapshot[];
   nameOf: (id: string) => string;
   onPick: (id: string) => void;
+  /** zzz797 — market, and a market cap lookup (US $M / India ₹ Cr), for the small / mid filter. */
+  region?: 'us' | 'india';
+  capOf?: (sym: string) => number | null;
 }
 
 const sub: React.CSSProperties = { fontSize: 10, fontWeight: 900, letterSpacing: 0.6, color: T.faint, textTransform: 'uppercase', margin: '10px 0 5px' };
@@ -55,7 +59,7 @@ function EvidenceList({ items, max = 4 }: { items: EvidenceLink[]; max?: number 
   );
 }
 
-export function EvidencePanel({ v, drill, drillLoading, onRetryDrill, listNames, flows, clusterPeers, snapshots, nameOf, onPick }: EvidencePanelProps) {
+export function EvidencePanel({ v, drill, drillLoading, onRetryDrill, listNames, flows, clusterPeers, snapshots, nameOf, onPick, region = 'us', capOf = () => null }: EvidencePanelProps) {
   const { row, a, trend } = v;
   const stocks: any[] = Array.isArray(drill?.stocks) ? drill.stocks : [];
   const subs: any[] = Array.isArray(drill?.subs) ? drill.subs.filter((s: any) => !s.residual) : [];
@@ -64,6 +68,8 @@ export function EvidencePanel({ v, drill, drillLoading, onRetryDrill, listNames,
   const losing = hasChange ? stocks.filter((s) => s.strengthTrend === 'losing').sort((x, y) => x.rsChange - y.rsChange) : [];
   const onList = new Set(listNames.map((e) => e.ticker));
   const fmtStock = (s: any) => `${s.sym}${onList.has(String(s.sym).toUpperCase()) ? ' ★' : ''} (${s.rsChange > 0 ? '+' : ''}${typeof s.rsChange === 'number' ? s.rsChange.toFixed(0) : '?'} pts)`;
+  const ll = stocks.length ? leadersLaggards(stocks, region, capOf) : null;
+  const llFmt = (x: { sym: string; rs1m: number; m1: number | null; size: string }) => `${x.sym}${onList.has(x.sym.toUpperCase()) ? ' ★' : ''} ${x.rs1m > 0 ? '+' : ''}${x.rs1m.toFixed(0)} pts${x.size === 'unknown' ? ' (size n/a)' : ''}`;
   const weeks = snapshots.map((s) => ({ week: s.week, tier: s.overlay?.[row.id]?.t as Tier | undefined, verdict: s.base?.[row.id]?.v })).filter((w) => w.tier || w.verdict);
 
   return (
@@ -73,6 +79,11 @@ export function EvidencePanel({ v, drill, drillLoading, onRetryDrill, listNames,
         <VerdictBadge verdict={row.verdict} note={row.verdictNote} />
         <span style={{ fontSize: 11.5, color: T.dim, flex: 1, minWidth: 220, lineHeight: 1.45 }}>{row.verdictNote || 'No verdict note.'}</span>
       </div>
+      {/* zzz797 — priority vs verdict, said out loud when they differ */}
+      <div style={{ fontSize: 11.5, color: a.relation.agree ? T.faint : T.info, marginTop: 4, lineHeight: 1.45 }}>
+        <b>Priority vs verdict:</b> {a.relation.text}
+      </div>
+      <div style={{ fontSize: 10.5, color: T.faint, marginTop: 2, lineHeight: 1.45 }}><b>Evidence behind the priority:</b> {a.evidenceLine}.</div>
       {a.flags.length ? (
         <div style={{ display: 'grid', gap: 3, marginTop: 6 }}>
           {a.flags.map((f) => (
@@ -112,6 +123,15 @@ export function EvidencePanel({ v, drill, drillLoading, onRetryDrill, listNames,
       {drill?.note ? <div style={{ fontSize: 11.5, color: T.faint }}>{drill.note}</div> : null}
       {stocks.length ? (
         <div style={{ display: 'grid', gap: 5 }}>
+          {ll ? (
+            ll.eligible >= 2 ? (
+              <div style={{ fontSize: 11.5, color: T.dim, lineHeight: 1.5 }}>
+                <span style={{ fontWeight: 900 }}>Leaders</span> <span style={{ color: T.faint }}>(1-month relative strength, small / mid caps only)</span>: <NameChips names={ll.leaders.map(llFmt)} n={3} color={T.up} />
+                {ll.laggards.length ? <> · <span style={{ fontWeight: 900 }}>Laggards</span>: <NameChips names={ll.laggards.map(llFmt)} n={3} color={T.down} /></> : null}
+                <div style={{ fontSize: 10.5, color: T.faint }}>{ll.eligible} small / mid names priced{ll.excludedLarge ? `; ${ll.excludedLarge} large cap${ll.excludedLarge === 1 ? '' : 's'} left out` : ''}. ★ = on your lists.</div>
+              </div>
+            ) : <div style={{ fontSize: 11, color: T.faint }}>Leaders / laggards: {ll.eligible ? 'only one' : 'no'} small / mid name priced in this theme{ll.excludedLarge ? ` (${ll.excludedLarge} large caps left out)` : ''} — the constituents on file are mostly large caps.</div>
+          ) : null}
           {hasChange ? (
             <>
               <div style={{ fontSize: 11.5, color: T.dim }}><span style={{ color: T.up, fontWeight: 900 }}>Gaining strength</span> <span style={{ color: T.faint }}>(3-month relative strength vs a month ago)</span>: <NameChips names={gaining.map(fmtStock)} n={5} color={T.up} /></div>
@@ -159,7 +179,8 @@ export function EvidencePanel({ v, drill, drillLoading, onRetryDrill, listNames,
         {flows.map((f) => (
           <div key={`${f.from}>${f.to}`} style={{ lineHeight: 1.45 }}>
             {f.to === row.id ? <>Money appears to be rotating <b>in</b> from <button type="button" onClick={() => onPick(f.from)} style={lnk}>{nameOf(f.from)}</button>.</> : <>Money appears to be rotating <b>out</b> to <button type="button" onClick={() => onPick(f.to)} style={lnk}>{nameOf(f.to)}</button>.</>}
-            {f.beneficiaries.length && f.to === row.id ? <> Second-order beneficiaries here: {f.beneficiaries.join(', ')}.</> : null}
+            {' '}{f.plain || ''}
+            {f.to === row.id ? (f.beneficiaries.length ? <> Next in line here (small / mid caps only): {f.beneficiaries.join(', ')}.</> : <> No small / mid names on file for this theme to name as next in line.</>) : null}
             <span style={{ color: T.faint }}> {f.why}</span>
           </div>
         ))}

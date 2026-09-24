@@ -56,7 +56,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
     <div role="dialog" aria-modal="true" aria-label={`Event detail — ${it.ticker}`}
       style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', justifyContent: 'flex-end' }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)' }} />
-      <div style={{
+      <div className="mc-drawer-mobile" style={{
         position: 'relative', width: 'min(760px, 100vw)', height: '100%', overflowY: 'auto', overflowX: 'hidden',
         background: C.bg, borderLeft: `1px solid ${C.border}`, padding: '14px 16px 40px', boxSizing: 'border-box',
       }}>

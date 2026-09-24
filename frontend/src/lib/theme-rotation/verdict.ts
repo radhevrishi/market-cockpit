@@ -29,9 +29,11 @@ export interface VerdictInput {
   m3?: number | null;
   y1?: number | null;
   dd1y?: number | null;
+  /** zzz797 — price above its own 20-day average; null/undefined = unknown. */
+  aboveSMA20?: boolean | null;
 }
 
-export interface VerdictOut { verdict: string; color: string; note: string; shortTermBreak: boolean }
+export interface VerdictOut { verdict: string; color: string; note: string; shortTermBreak: boolean; shortTermBreakWhy: string | null }
 
 const C = {
   BUY: '#16A34A', 'EARLY BUY': '#22C55E', HOLD: '#F59E0B', WATCH: '#EAB308', TRIM: '#F97316', AVOID: '#EF4444',
@@ -39,13 +41,36 @@ const C = {
 
 const pct = (v: number | null | undefined) => (typeof v === 'number' ? `${v > 0 ? '+' : ''}${v.toFixed(1)}%` : 'n/a');
 
-/** The last week and month are falling hard enough to override a strong 3M picture. */
-export function isShortTermBreak(w1?: number | null, m1?: number | null): boolean {
+/**
+ * zzz797 — THE SHORT-TERM BREAK, TIGHTENED AND EXPLAINED.
+ *
+ * The old rule fired on "1M ≤ −6%" alone, so a theme that had already bounced
+ * (1W positive, back above its 20-day line) kept its "Short-term break" tag
+ * and the tag never said what tripped it. A break now needs BOTH a real fall
+ * AND the price still sitting below its own 20-day line:
+ *
+ *   · 1M ≤ −7% and below the 20-day line, or
+ *   · 1W ≤ −4% and 1M ≤ −3% and below the 20-day line.
+ *
+ * When the 20-day line is unknown (an older cached board), "still falling
+ * this week" (1W ≤ 0) stands in for it, so a bounce still clears the flag.
+ */
+export function shortTermBreakRead(w1?: number | null, m1?: number | null, aboveSMA20?: boolean | null): { hit: boolean; why: string | null } {
   const W = typeof w1 === 'number' ? w1 : null;
   const M = typeof m1 === 'number' ? m1 : null;
-  if (M != null && M <= -6) return true;
-  if (W != null && M != null && W <= -3 && M < 0) return true;
-  return false;
+  if (M == null) return { hit: false, why: null };
+  const below20 = aboveSMA20 === false ? true : aboveSMA20 === true ? false : null;
+  const stillBelow = below20 === true || (below20 == null && W != null && W <= 0);
+  const where = below20 === true ? 'and the price is below its 20-day line' : 'and still falling this week';
+  const wk = W != null ? ` (1W ${pct(W)})` : '';
+  if (M <= -7 && stillBelow) return { hit: true, why: `1M ${pct(M)}${wk} ${where}.` };
+  if (W != null && W <= -4 && M <= -3 && stillBelow) return { hit: true, why: `1W ${pct(W)} and 1M ${pct(M)} ${where}.` };
+  return { hit: false, why: null };
+}
+
+/** The last week and month are falling hard enough to override a strong 3M picture. */
+export function isShortTermBreak(w1?: number | null, m1?: number | null, aboveSMA20?: boolean | null): boolean {
+  return shortTermBreakRead(w1, m1, aboveSMA20).hit;
 }
 
 /** A long-term leader: well up over a year and not deeply off its high. */
@@ -54,17 +79,18 @@ export function isStructuralLeader(y1?: number | null, dd1y?: number | null): bo
 }
 
 export function verdictFor(inp: VerdictInput): VerdictOut {
-  const { quadrant, aboveSMA50, w1, m1, m3, y1, dd1y } = inp;
+  const { quadrant, aboveSMA50, w1, m1, m3, y1, dd1y, aboveSMA20 } = inp;
   const up1 = typeof m1 === 'number' ? m1 > 0 : false;
   const pos3 = typeof m3 === 'number' ? m3 > 0 : false;
   const deep = typeof m3 === 'number' ? m3 <= -12 : false;
-  const brk = isShortTermBreak(w1, m1);
+  const brkRead = shortTermBreakRead(w1, m1, aboveSMA20);
+  const brk = brkRead.hit;
   const structural = isStructuralLeader(y1, dd1y);
-  const out = (verdict: keyof typeof C, note: string): VerdictOut => ({ verdict, color: C[verdict], note, shortTermBreak: brk });
+  const out = (verdict: keyof typeof C, note: string): VerdictOut => ({ verdict, color: C[verdict], note, shortTermBreak: brk, shortTermBreakWhy: brkRead.why });
 
   if (quadrant === 'Leading') {
     if (aboveSMA50 && pos3 && !brk) return out('BUY', 'Ahead of the market and gaining, above its 50-day line, and up over 3 months. Price confirms the strength.');
-    if (aboveSMA50 && pos3 && brk) return out('HOLD', `Strong over 3 months (${pct(m3)}), but the last month is ${pct(m1)} and the last week ${pct(w1)} — a short-term break. Hold; do not add until it steadies.`);
+    if (aboveSMA50 && pos3 && brk) return out('HOLD', `Strong over 3 months (${pct(m3)}), but a short-term break: ${brkRead.why} Hold; do not add until it steadies.`);
     return out('HOLD', 'Ahead of the market on relative strength, but its own price is not confirming (below the 50-day line or down over 3 months). Hold; wait for price to catch up.');
   }
 

@@ -30,6 +30,7 @@ import { usDisplayer } from '@/lib/us-thesis/display';
 import { usExportLine, usWhyLine, usBatchLine } from '@/lib/us-thesis/page-words';
 import { usNoTypeReason } from '@/lib/us-thesis/us-type';
 import { usdWords } from '@/lib/us-thesis/xbrl';
+import { usBenchLine, usBenchEmptyReason } from '@/lib/us-thesis/us-bench';
 import { ThesisCard } from '@/components/thesis-card';
 import { PersistentStrip } from '@/components/special-focus-panel';
 import { usDetect } from '@/lib/us-thesis/persist-us';
@@ -54,7 +55,7 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 });
 
 export default function UsPortfolioCatalystsPage() {
-  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount } = useUsBook();
+  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo } = useUsBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
   const [copied, setCopied] = useState<string | null>(null);
@@ -77,7 +78,9 @@ export default function UsPortfolioCatalystsPage() {
   const displayerBySymbol = useMemo(() => new Map(all.map((r) => [r.symbol, usDisplayer(r)] as const)), [all]);
   const displayBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(r)] as const)), [list, displayerBySymbol]);
   const persistBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(usDetect(r as any))] as const)), [list, displayerBySymbol]);
-  const cbOnPage = all.filter((r) => r.benchSource === US_CB_SOURCE).length;
+  // zzz797: bench names that came from US Conviction Beats, and CB names you already hold.
+  const cbOnPage = all.filter((r) => r.origin === 'bench' && r.benchSource === US_CB_SOURCE).length;
+  const cbHeld = all.filter((r) => r.origin !== 'bench' && r.benchSource === US_CB_SOURCE).length;
   const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
     || ['NEW_EVIDENCE_AVAILABLE', 'STALE', 'RETRIEVAL_FAILED', 'SOURCE_UNAVAILABLE'].includes(String(r.freshness?.evidence_state || '')));
   const needPrior = list.filter((r) => needsPrior(r));
@@ -126,8 +129,16 @@ export default function UsPortfolioCatalystsPage() {
         {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `🏆 US bench ${uc.bench}${cbOnPage ? ` (incl. ${cbOnPage} ${US_CB_SOURCE})` : ''}`]] as Array<[typeof source, string]>).map(([k, label]) => (
           <button key={k} onClick={() => setSource(k)} style={pill(source === k)}>{label}</button>
         ))}
+        {cbInfo && cbCount > 0 && <span data-testid="us-cb-source" style={{ fontSize: 13, color: C.faint }}>🏆 {US_CB_SOURCE}: {cbCount} on the list ({cbInfo.server ? `server list${cbInfo.updatedAt ? `, updated ${String(cbInfo.updatedAt).slice(0, 10)}` : ''}` : 'this browser only'}{cbInfo.localOnly && cbInfo.server ? ` + ${cbInfo.localOnly} from this browser` : ''}) · {cbOnPage} on the bench · {cbHeld} held</span>}
         {excluded.length > 0 && <span style={{ fontSize: 13, color: C.amber }}>{excluded.length} non-US listing{excluded.length === 1 ? '' : 's'} excluded (no SEC coverage) — listed below</span>}
       </div>
+
+      {!loading && cbInfo && cbCount === 0 && (
+        <div data-testid="us-cb-empty" style={{ fontSize: 13.5, color: C.dim, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
+          <b style={{ color: C.amber }}>🏆 US bench is empty.</b> {usBenchEmptyReason(cbInfo)}{' '}
+          <a href="/us-earnings-opportunities" style={{ color: C.cyan }}>US Earnings Opportunities →</a>
+        </div>
+      )}
 
       {!loading && !evidenceLoading && (
         <div data-testid="us-universe-reconciliation" style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
@@ -137,7 +148,7 @@ export default function UsPortfolioCatalystsPage() {
           </b>
           {' '}· status buckets {ORDER.filter((s) => uc.byStatus[s]).map((s) => uc.byStatus[s]).join(' + ') || 0}{uc.notAssessed ? ` + ${uc.notAssessed} not yet assessed` : ''} = {uc.statusSum + uc.notAssessed} shown
           {' '}· {uc.thesisNotSet} thesis not set · {uc.provisional} provisional (nearest-fit)
-          {' '}· bench: {cbOnPage} from {US_CB_SOURCE}{cbCount ? ` (${cbCount} on that list; names you hold are counted once, as holdings)` : ' (none on that list in this browser or on the server)'}
+          {' '}· {usBenchLine(cbInfo, cbOnPage, cbHeld)}
           {source !== 'all' && <span style={{ color: C.faint }}> · view {source}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
         </div>
       )}
@@ -147,7 +158,7 @@ export default function UsPortfolioCatalystsPage() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', opacity: evidenceLoading ? 0.35 : 1, pointerEvents: evidenceLoading ? 'none' : undefined }}>
+      <div className="mc-grid-2-mobile" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', opacity: evidenceLoading ? 0.35 : 1, pointerEvents: evidenceLoading ? 'none' : undefined }}>
         {ORDER.map((s) => {
           const m = STATUS_META[s];
           const on = filter === s;

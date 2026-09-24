@@ -16,31 +16,32 @@
 
 import { etParts, etToday, usPhaseAt, lastCompletedNyseSession, isNyseTradingDay, type UsExportRow, type UsExportAsOf } from './us-gainers';
 
+import { DEFAULT_US_SCAN_CRITERIA, scanFilters, type UsScanCriteria } from './us-scan-criteria';
+
+// zzz797 — the filters are no longer hard-coded here: they come from the
+// owner-editable criteria (us-scan-criteria.ts). US_LIVE_SCAN is kept as the
+// read-only view of the DEFAULTS for older callers.
 export const US_LIVE_SCAN = {
   url: 'https://scanner.tradingview.com/america/scan',
-  minChangePct: 4,          // today's move floor
-  minMcapUsd: 300e6,        // owner's screen: ≥ $300M
-  maxMcapUsd: 10e9,         // small/mid ceiling used everywhere else
-  minAvgVol30d: 300_000,    // liquidity floor (30-day average shares)
-  limit: 150,
+  minChangePct: DEFAULT_US_SCAN_CRITERIA.minChangePct,
+  minMcapUsd: DEFAULT_US_SCAN_CRITERIA.minMcapUsd as number,
+  maxMcapUsd: DEFAULT_US_SCAN_CRITERIA.maxMcapUsd as number,
+  minAvgVol30d: DEFAULT_US_SCAN_CRITERIA.minAvgVol30d as number,
+  limit: DEFAULT_US_SCAN_CRITERIA.limit,
 } as const;
 
 const COLS = ['name', 'exchange', 'description', 'change', 'market_cap_basic', 'close', 'volume',
   'relative_volume_10d_calc', 'gap', 'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.Y', 'sector', 'type', 'subtype'] as const;
 
-export function liveScanBody(cfg = US_LIVE_SCAN) {
+export function liveScanBody(criteria: UsScanCriteria = DEFAULT_US_SCAN_CRITERIA) {
+  const { filter, filter2 } = scanFilters(criteria);
   return {
-    filter: [
-      { left: 'change', operation: 'egreater', right: cfg.minChangePct },
-      { left: 'market_cap_basic', operation: 'in_range', right: [cfg.minMcapUsd, cfg.maxMcapUsd] },
-      { left: 'exchange', operation: 'in_range', right: ['NASDAQ', 'NYSE', 'AMEX'] },
-      { left: 'type', operation: 'equal', right: 'stock' },
-      { left: 'average_volume_30d_calc', operation: 'egreater', right: cfg.minAvgVol30d },
-    ],
+    filter,
+    filter2,
     options: { lang: 'en' },
     columns: COLS,
     sort: { sortBy: 'change', sortOrder: 'desc' },
-    range: [0, cfg.limit],
+    range: [0, criteria.limit],
   };
 }
 
@@ -89,7 +90,7 @@ export function describeLiveScan(now: Date = new Date()): UsExportAsOf {
 export interface UsLiveResult { rows: UsExportRow[]; totalCount: number; asOf: UsExportAsOf; error: string | null }
 
 /** Read today's gainers. Two attempts with a short back-off; never throws. */
-export async function fetchUsLiveGainers(now: Date = new Date(), fetchImpl: typeof fetch = fetch): Promise<UsLiveResult> {
+export async function fetchUsLiveGainers(now: Date = new Date(), fetchImpl: typeof fetch = fetch, criteria: UsScanCriteria = DEFAULT_US_SCAN_CRITERIA): Promise<UsLiveResult> {
   const asOf = describeLiveScan(now);
   let lastErr = 'unknown error';
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -97,7 +98,7 @@ export async function fetchUsLiveGainers(now: Date = new Date(), fetchImpl: type
       const r = await fetchImpl(US_LIVE_SCAN.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(liveScanBody()),
+        body: JSON.stringify(liveScanBody(criteria)),
         signal: AbortSignal.timeout(12_000),
         cache: 'no-store',
       } as any);

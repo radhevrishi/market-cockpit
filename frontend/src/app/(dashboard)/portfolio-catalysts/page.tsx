@@ -239,7 +239,7 @@ export default function PortfolioCatalystsPage() {
         </div>
       )}
       {/* ── THE FIVE SIGNALS. Not fifty scores. ─────────────────────────── */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', opacity: evidenceLoading ? 0.35 : 1, pointerEvents: evidenceLoading ? 'none' : undefined }}>
+      <div className="mc-grid-2-mobile" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', opacity: evidenceLoading ? 0.35 : 1, pointerEvents: evidenceLoading ? 'none' : undefined }}>
         {ORDER.map((s) => {
           const m = STATUS_META[s];
           const on = filter === s;

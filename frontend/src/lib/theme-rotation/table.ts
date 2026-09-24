@@ -6,11 +6,11 @@
 import type { FlagKind, LayerKey, LayerState, Tier } from './types';
 import type { ThemeView } from './view-model';
 
-export type SortKey = 'rank' | 'name' | 'verdict' | 'w1' | 'm1' | 'm3' | 'y1' | 'trend' | 'yours' | `layer:${LayerKey}`;
+export type SortKey = 'rank' | 'name' | 'verdict' | 'w1' | 'm1' | 'm3' | 'y1' | 'trend' | 'yours' | 'rs12' | `layer:${LayerKey}`;
 export type SortDir = 'asc' | 'desc';
 
 const VERDICT_ORDER: Record<string, number> = { BUY: 0, 'EARLY BUY': 1, HOLD: 2, WATCH: 3, TRIM: 4, AVOID: 5 };
-const STATE_ORDER: Record<LayerState, number> = { improving: 0, steady: 1, unknown: 2, weakening: 3 };
+const STATE_ORDER: Record<LayerState, number> = { improving: 0, steady: 1, level: 2, unknown: 3, weakening: 4 };
 const TREND_ORDER: Record<string, number> = { 'accelerating:up': 0, 'continuing:up': 1, 'reversing:up': 2, 'flat:flat': 3, 'unknown:flat': 4, 'reversing:down': 5, 'continuing:down': 6, 'accelerating:down': 7 };
 
 /** Natural direction for each column when first clicked. */
@@ -27,6 +27,7 @@ export function sortViews(views: ThemeView[], key: SortKey, dir: SortDir, yours:
       case 'w1': case 'm1': case 'm3': case 'y1': return v.row.ret?.[key] ?? Number.NEGATIVE_INFINITY;
       case 'trend': return TREND_ORDER[`${v.trend.word}:${v.trend.dir}`] ?? 4;
       case 'yours': return yours(v.row.id);
+      case 'rs12': { const w = v.row.rsWeekly || []; return w.length >= 2 ? w[w.length - 1] - w[0] : Number.NEGATIVE_INFINITY; }
       default: {
         const lk = key.slice(6) as LayerKey;
         const r = v.a.layers[lk];

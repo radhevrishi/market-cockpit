@@ -136,7 +136,7 @@ export default function EarningsHubPage() {
   const activeMeta = TABS.find((t) => t.id === active) || TABS[0];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="mc-flow-mobile" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Tab bar */}
       <div
         style={{
@@ -201,7 +201,7 @@ export default function EarningsHubPage() {
       </div>
 
       {/* Active panel */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div className="mc-flow-mobile" style={{ flex: 1, overflowY: 'auto' }}>
         <Suspense fallback={<PanelLoader label={activeMeta.label} />}>
           {active === 'calendar' && <CalendarPage />}
           {active === 'scan'     && <ScanPage />}
