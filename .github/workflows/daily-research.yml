@@ -47,6 +47,7 @@ jobs:
         id: main
         env:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}   # zzz778 — personal-data / AI APIs need the service key
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           REPROCESS: ${{ (github.event_name == 'schedule' || github.event.inputs.reprocess == 'true') && '1' || '' }}

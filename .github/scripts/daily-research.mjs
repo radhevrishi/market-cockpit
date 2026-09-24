@@ -19,7 +19,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function call(path, init = {}, timeoutMs = 90_000, tries = 3) {
   for (let attempt = 1; attempt <= tries; attempt++) {
     try {
-      const r = await fetch(BASE + path, { ...init, signal: AbortSignal.timeout(timeoutMs), headers: { 'content-type': 'application/json', ...(init.headers || {}) } });
+      const r = await fetch(BASE + path, { ...init, signal: AbortSignal.timeout(timeoutMs), headers: { 'content-type': 'application/json', ...(process.env.CRON_SECRET ? { 'x-mc-key': process.env.CRON_SECRET } : {}), ...(init.headers || {}) } });
       const text = await r.text();
       let j = null; try { j = JSON.parse(text); } catch { /* not JSON */ }
       if (r.ok && j) return j;
