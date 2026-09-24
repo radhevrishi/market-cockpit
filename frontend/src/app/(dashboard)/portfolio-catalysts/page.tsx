@@ -38,7 +38,7 @@ import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/s
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
-import { evidenceCounts } from '@/lib/thesis/evidence-counts';
+import { evidenceCounts, universeCounts } from '@/lib/thesis/evidence-counts';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -88,14 +88,12 @@ export default function PortfolioCatalystsPage() {
       : source === 'book' ? (r.origin === 'book' || r.origin === 'both')
       : (r.origin === 'bench' || r.origin === 'both')), [sized, source]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const r of inSource) {
-      const k = r.assessment?.status || 'NEUTRAL';
-      c[k] = (c[k] || 0) + 1;
-    }
-    return c;
-  }, [inSource]);
+  // zzz784: one set of header numbers from the same arrays; a row without an
+  // assessment is "not yet assessed", never counted into NO MATERIAL CHANGE.
+  const CONSTRUCTIVE = ['STRENGTHENING', 'ON_TRACK', 'CONFIRMATION_REQUIRED', 'POSITIVE_EXPECTATION_GAP'];
+  const uc = useMemo(() => universeCounts(all as any, sized as any, CONSTRUCTIVE), [all, sized]);
+  const ucView = useMemo(() => universeCounts(sized as any, inSource as any, CONSTRUCTIVE), [sized, inSource]);
+  const counts = ucView.byStatus;
 
   const list = useMemo(() => {
     let f = sized;
@@ -183,9 +181,11 @@ export default function PortfolioCatalystsPage() {
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {([
-          ['all', `All ${note.book + note.bench - note.both}`, 'Everything below: your book, plus every bench name that passes the preset.'],
-          ['book', `\uD83D\uDCD7 My book ${note.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
-          ['bench', `\uD83C\uDFC6 Bench ${note.bench}`, 'Conviction-bench candidates that pass the quality preset. You do not own these.'],
+          // zzz784: the chips count the same rows the reconciliation line sums
+          // (after the size filter), so "All" = book + bench on screen.
+          ['all', `All ${uc.shown}`, 'Everything below: your book, plus every bench name that passes the preset (after the size filter).'],
+          ['book', `\uD83D\uDCD7 My book ${uc.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
+          ['bench', `\uD83C\uDFC6 Bench ${uc.bench}`, 'Conviction-bench candidates that pass the quality preset (and the size filter). You do not own these.'],
         ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
           const on = source === k;
           return (
@@ -219,6 +219,15 @@ export default function PortfolioCatalystsPage() {
         )}
       </div>
 
+      {/* ── THE ARITHMETIC, VISIBLY. (zzz784) Every figure from the same rows. */}
+      {!evidenceLoading && !loading && (
+        <div data-testid="universe-reconciliation" style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}
+          title="total − large caps hidden = shown = book + bench; status buckets + not yet assessed = shown; exportable + excluded = evaluated">
+          <b style={{ color: C.text }}>{uc.line}</b>
+          {' '}· status buckets {ORDER.filter((s) => uc.byStatus[s]).map((s) => uc.byStatus[s]).join(' + ') || 0}{uc.notAssessed ? ` + ${uc.notAssessed} not yet assessed` : ''} = {uc.statusSum + uc.notAssessed} shown
+          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : 'bench'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
+        </div>
+      )}
       {/* Until the stored evidence is in, every card reads "incomplete" and
           the counters are wrong — say so instead of showing them. (zzz768) */}
       {evidenceLoading && !loading && (

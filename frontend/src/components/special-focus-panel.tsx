@@ -21,6 +21,8 @@ const STATE_WORD: Record<string, string> = { IDENTIFIED: 'Identified', VALIDATED
 export interface FocusRow {
   symbol: string; origin?: string | null; market?: string | null;
   assessment?: any; ledger?: any; graded?: any; pattern?: any;
+  /** zzz784: the card's capex chain — Special Focus reads the same build state. */
+  capex?: any;
 }
 interface Stored {
   id: string; ticker: string; kind: string; label: string; sfId: number | null; firstSeen: string; lastSeen: string;
@@ -33,7 +35,7 @@ interface Stored {
 export function detectForRow(r: FocusRow): PersistentCatalyst[] {
   if (!r.ledger && !r.assessment) return [];
   try {
-    return detectPersistentCatalysts({ ticker: r.symbol, ledger: r.ledger, assessment: r.assessment, origin: 'portfolio', quarterRevenueCr: typeof r.graded?.sales_curr_cr === 'number' ? r.graded.sales_curr_cr : null });
+    return detectPersistentCatalysts({ ticker: r.symbol, ledger: r.ledger, assessment: r.assessment, capex: r.capex ?? null, origin: 'portfolio', quarterRevenueCr: typeof r.graded?.sales_curr_cr === 'number' ? r.graded.sales_curr_cr : null });
   } catch { return []; }
 }
 
@@ -46,8 +48,8 @@ export function PersistentStrip({ pcs, onOpenFocus }: { pcs: PersistentCatalyst[
       <b style={{ color: C.amber }}>🔥 {best.specialFocus ? 'Persistent catalyst detected · Special Focus' : 'Persistent catalyst candidate'}</b>{' '}
       <b style={{ color: C.text }}>{best.label}</b>
       <span style={{ color: C.faint }}> · {CONFIDENCE_LABEL[best.confidence]} · {STATE_WORD[best.state]}</span>
-      <div>{best.mechanism}</div>
-      <div style={{ color: C.faint }}>Runway: {best.runway.text}{best.nextMilestone ? ` · Next evidence: ${best.nextMilestone}` : ''}</div>
+      <div>{best.stage ? <span style={{ color: C.faint }}>Stage: {best.stage} · </span> : null}{best.mechanism}</div>
+      <div style={{ color: C.faint }}>Runway: {best.runway.text}{best.nextEvidence || best.nextMilestone ? ` · Next comparable evidence: ${best.nextEvidence || best.nextMilestone}` : ''}{best.managementTarget ? ` · ${best.managementTarget}` : ''}</div>
       {onOpenFocus && best.specialFocus && <button onClick={onOpenFocus} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.amber }}>Open in Special Focus →</button>}
     </div>
   );
@@ -168,9 +170,17 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
               </div>
               {e.decayed && <div style={{ fontSize: 12.5, color: C.amber }}>{e.note}</div>}
               {!e.decayed && e.note && <div style={{ fontSize: 12.5, color: C.faint }}>{e.note}</div>}
-              <div style={{ fontSize: 13.5, color: C.dim, marginTop: 3 }}><b style={{ color: C.text }}>Mechanism:</b> {pc.mechanism}</div>
-              <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Why it may persist:</b> {pc.runway.text}</div>
-              <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Next milestone:</b> {pc.nextMilestone || 'none evidenced'} · <b style={{ color: C.text }}>{pc.duration}</b></div>
+              {/* zzz784: stage, source quality and the next COMPARABLE evidence —
+                  the same normalized evidence the card reads (capex build state included). */}
+              <div data-testid="sf-stage" style={{ fontSize: 13, color: C.dim, marginTop: 3 }}>
+                <b style={{ color: C.text }}>Catalyst type:</b> {pc.label} · <b style={{ color: C.text }}>Stage:</b> {pc.stage || STATE_WORD[pc.state]} · <b style={{ color: C.text }}>Current state:</b> {STATE_WORD[pc.state]}
+                {' '}· <b style={{ color: C.text }}>Evidence quality:</b> {pc.sourceQuality || `${pc.hardCount} filed mechanism figure${pc.hardCount === 1 ? '' : 's'}`}
+              </div>
+              <div style={{ fontSize: 13.5, color: C.dim }}><b style={{ color: C.text }}>Mechanism:</b> {pc.mechanism}</div>
+              <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Runway:</b> {pc.runway.text}</div>
+              <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Next comparable evidence:</b> {pc.nextEvidence || pc.nextMilestone || 'none evidenced'} · <b style={{ color: C.text }}>{pc.duration}</b></div>
+              {pc.managementTarget && <div style={{ fontSize: 12.5, color: C.faint }}>◌ {pc.managementTarget}</div>}
+              {pc.capexNote && <div data-testid="sf-capex-note" style={{ fontSize: 12.5, color: C.faint }}>{pc.capexNote}</div>}
               <div style={{ fontSize: 12, color: C.faint }}>Last evidence: {pc.latestEvidenceDate || 'undated'} · {pc.freshness === 'CURRENT' ? 'current' : 'historical'} · {pc.hardCount} filed mechanism figure{pc.hardCount === 1 ? '' : 's'} across {pc.distinctMetrics} metric{pc.distinctMetrics === 1 ? '' : 's'}{pc.periods.length > 1 ? ` and ${pc.periods.length} periods` : ''}</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
                 <button onClick={() => setOpen((o) => ({ ...o, [e.id]: !isOpen }))} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan }}>{isOpen ? 'Hide evidence' : 'Evidence · timeline · before → after'}</button>

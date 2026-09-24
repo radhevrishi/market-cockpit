@@ -17,7 +17,7 @@
 // "OCR unavailable" and the reader moves to the next candidate document.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { anthropicMessages, type MessagesBody } from '@/lib/anthropic-meter';
+import { anthropicMessages, modelConfigured, modelKeyName, type MessagesBody } from '@/lib/anthropic-meter';
 import { exchangeProxyFor } from '@/lib/pdf-text-extractor';
 
 export const OCR_MAX_BYTES = 10 * 1024 * 1024;
@@ -98,7 +98,7 @@ export type OcrResult = { ok: true; text: string; detail: 'ocr' } | { ok: false;
  */
 export async function ocrPdf(url: string, label: string, model: string, opts: { timeoutMs?: number } = {}): Promise<OcrResult> {
   const unavailable = (why: string): OcrResult => ({ ok: false, detail: `OCR unavailable — ${why}`.slice(0, 300) });
-  if (!process.env.ANTHROPIC_API_KEY) return unavailable('ANTHROPIC_API_KEY is not configured');
+  if (!modelConfigured()) return unavailable(`${modelKeyName()} is not configured`);
   const got = await fetchPdfBytes(url, 30_000);
   if (!got.buf) return unavailable(got.why);
   try {

@@ -21,6 +21,8 @@
 // dates right up to the day).
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { snapshotFresh } from './us-earnings-dates';
+
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -39,12 +41,9 @@ export interface ExpectedReporter {
   foreign_filer?: boolean;
 }
 
-const _cal = new Map<string, { at: number; data: ExpectedReporter[] }>();
+const _cal = new Map<string, { at: number; data: ExpectedReporter[]; ok: boolean }>();
 const CAL_MAX = 200;
 
-function etToday(): string {
-  return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
-}
 const money = (s: any): number | null => {
   if (s == null) return null;
   const t = String(s).trim();
@@ -60,14 +59,43 @@ const mdyToIso = (s: any): string | null => {
   return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
 };
 
-/** Expected reporters for one date. Empty array when Nasdaq has nothing (or is unreachable). */
-export async function nasdaqEarningsOn(date: string): Promise<ExpectedReporter[]> {
-  const today = etToday();
-  const ttl = date < today ? 24 * 3600_000 : 60 * 60_000;
+/** Map one Nasdaq calendar row. Exported for tests; null for a row with no symbol. */
+export function parseNasdaqEarningsRow(r: any): ExpectedReporter | null {
+  const sym = String(r?.symbol || '').trim().toUpperCase();
+  if (!sym) return null;
+  const t = String(r?.time || '');
+  return {
+    ticker: sym,
+    company: String(r?.name || sym),
+    time: t.includes('pre') ? 'pre-market' : t.includes('after') ? 'after-hours' : 'unknown',
+    market_cap_musd: (() => { const v = money(r?.marketCap); return v == null ? null : v / 1e6; })(),
+    fiscal_quarter: r?.fiscalQuarterEnding ? String(r.fiscalQuarterEnding) : null,
+    eps_estimate: money(r?.epsForecast),
+    estimates_n: (() => { const n = parseInt(String(r?.noOfEsts || ''), 10); return Number.isFinite(n) ? n : null; })(),
+    eps_last_year: money(r?.lastYearEPS),
+    last_year_report_date: mdyToIso(r?.lastYearRptDt),
+  };
+}
+
+/**
+ * Expected reporters for one ET date, and whether Nasdaq actually answered.
+ *
+ * A failed request used to be cached as an EMPTY schedule for an hour (24h
+ * for a past date) — indistinguishable from "nobody reports today", which
+ * silently emptied "scheduled / still to report" for the whole day. A failure
+ * is now cached for two minutes only and reported as `ok: false`.
+ */
+export async function nasdaqEarningsOnDetailed(date: string): Promise<{ rows: ExpectedReporter[]; ok: boolean }> {
   const hit = _cal.get(date);
-  if (hit && Date.now() - hit.at < ttl) return hit.data;
+  if (hit) {
+    const fresh = hit.ok
+      ? snapshotFresh(date, hit.at, Date.now(), 60 * 60_000, 24 * 3600_000)
+      : Date.now() - hit.at < 2 * 60_000;
+    if (fresh) return { rows: hit.data, ok: hit.ok };
+  }
 
   let out: ExpectedReporter[] = [];
+  let ok = false;
   try {
     const res = await fetch(`https://api.nasdaq.com/api/calendar/earnings?date=${date}`, {
       headers: { 'User-Agent': BROWSER_UA, 'Accept': 'application/json' },
@@ -76,32 +104,27 @@ export async function nasdaqEarningsOn(date: string): Promise<ExpectedReporter[]
     });
     if (res.ok) {
       const j: any = await res.json();
-      const rows: any[] = j?.data?.rows || [];
-      for (const r of rows) {
-        const sym = String(r?.symbol || '').trim().toUpperCase();
-        if (!sym) continue;
-        const t = String(r?.time || '');
-        out.push({
-          ticker: sym,
-          company: String(r?.name || sym),
-          time: t.includes('pre') ? 'pre-market' : t.includes('after') ? 'after-hours' : 'unknown',
-          market_cap_musd: (() => { const v = money(r?.marketCap); return v == null ? null : v / 1e6; })(),
-          fiscal_quarter: r?.fiscalQuarterEnding ? String(r.fiscalQuarterEnding) : null,
-          eps_estimate: money(r?.epsForecast),
-          estimates_n: (() => { const n = parseInt(String(r?.noOfEsts || ''), 10); return Number.isFinite(n) ? n : null; })(),
-          eps_last_year: money(r?.lastYearEPS),
-          last_year_report_date: mdyToIso(r?.lastYearRptDt),
-        });
+      // `rows: null` is Nasdaq's genuine "nothing that day" (weekends,
+      // holidays); a body without `data` is not an answer.
+      if (j && typeof j === 'object' && j.data !== undefined) {
+        ok = true;
+        const rows: any[] = j?.data?.rows || [];
+        for (const r of rows) { const x = parseNasdaqEarningsRow(r); if (x) out.push(x); }
       }
     }
-  } catch { out = []; }
+  } catch { out = []; ok = false; }
 
   if (_cal.size >= CAL_MAX) {
     const oldest = Array.from(_cal.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 50);
     for (const [k] of oldest) _cal.delete(k);
   }
-  _cal.set(date, { at: Date.now(), data: out });
-  return out;
+  _cal.set(date, { at: Date.now(), data: out, ok });
+  return { rows: out, ok };
+}
+
+/** Expected reporters for one date. Empty array when Nasdaq has nothing (or is unreachable). */
+export async function nasdaqEarningsOn(date: string): Promise<ExpectedReporter[]> {
+  return (await nasdaqEarningsOnDetailed(date)).rows;
 }
 
 // ─── earnings surprise history (actual ADJUSTED EPS vs consensus) ───────────

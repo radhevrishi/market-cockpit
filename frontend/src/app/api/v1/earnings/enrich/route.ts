@@ -394,12 +394,20 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     // N-5 lands out of bounds and YoY silently nulls even though the exact
     // year-ago quarter is sitting in column 0. Fall back to a MONTH-MATCHED
     // lookup: same month, year − 1.
+    // zzz800 — the MONTH-MATCHED column is now authoritative whenever the
+    // latest label is parseable, not only when N-5 is out of bounds. A sparse
+    // table with five or more columns (an IPO with RHP quarters plus a few
+    // listed ones, or a company that skipped a quarter) put a DIFFERENT quarter
+    // at N-5, and the YoY was then silently computed against the wrong period.
+    // Positional N-5 is kept only when the labels cannot be read at all.
     let priorIdx = N - 5;
-    if (priorIdx < 0) {
+    {
       const lm = String(q.labels[latestIdx] || '').match(/([A-Za-z]{3})\s+(\d{4})/);
       if (lm) {
-        const want = `${lm[1]} ${parseInt(lm[2], 10) - 1}`;
-        priorIdx = q.labels.findIndex((l: any) => String(l).trim().toLowerCase() === want.toLowerCase());
+        const want = `${lm[1]} ${parseInt(lm[2], 10) - 1}`.toLowerCase();
+        const matched = q.labels.findIndex((l: any) => String(l).trim().toLowerCase() === want);
+        const positionalOk = priorIdx >= 0 && String(q.labels[priorIdx] || '').trim().toLowerCase() === want;
+        priorIdx = positionalOk ? priorIdx : matched;   // -1 → no year-ago column → YoY null
       }
     }
     const get = (kw: string, idx: number) => {
@@ -2017,7 +2025,14 @@ export async function GET(req: Request) {
   const filedHint = searchParams.get('filed') || undefined;
   // PATCH 0160 — nocache=1 forces fresh fetch (used by partial-refresh mode)
   const bypassCache = searchParams.get('nocache') === '1';
-  const symbols = symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(isValidSymbol).slice(0, 80);
+  // zzz800 — the cap and the validator used to discard silently. Both are now
+  // reported (`rejected_symbols`, `skipped_over_cap`) so a caller — or a person
+  // reading the response — can see a name was never attempted.
+  const _allRequested = symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const _validSymbols = _allRequested.filter(isValidSymbol);
+  const rejectedSymbols = _allRequested.filter((s) => !isValidSymbol(s));
+  const symbols = _validSymbols.slice(0, 80);
+  const skippedOverCap = _validSymbols.slice(80);
   if (symbols.length === 0) {
     return NextResponse.json({ data: {}, generated_at: new Date().toISOString(), error: 'no valid symbols' });
   }
@@ -2163,6 +2178,8 @@ export async function GET(req: Request) {
     data, generated_at: new Date().toISOString(),
     requested: symbols.length, enriched: ok, ms: Date.now() - t0,
     truncated_at: truncatedAt,
+    ...(rejectedSymbols.length ? { rejected_symbols: rejectedSymbols } : {}),
+    ...(skippedOverCap.length ? { skipped_over_cap: skippedOverCap } : {}),
     tech_overlay_applied: overlayApplied,
     tech_overlay_generated_at: overlayAge,
     guidance_overlay_applied: guidanceApplied,

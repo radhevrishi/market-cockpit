@@ -428,3 +428,59 @@ export function gapToTarget(actual: string | null | undefined, target: string | 
   const d = ((a.lo - tv) / Math.abs(tv)) * 100;
   return `${d >= 0 ? '+' : ''}${Math.round(d * 10) / 10}%`;
 }
+
+/** The end date a completion phrase points to: "Q3 FY27", "May 2025", "FY28",
+ *  "27-28". Null when none can be read. (zzz784) */
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+export function completionDate(t: string | null | undefined): Date | null {
+  const s0 = String(t ?? '');
+  const q = /Q\s?[1-4]\s*FY\s?'?\d{2,4}/i.exec(s0);
+  if (q) return periodEnd(q[0]);
+  const m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*[\s,']+(20\d{2})\b/i.exec(s0);
+  if (m) { const i = MONTH_NAMES.findIndex((x: string) => x.startsWith(m[1].toLowerCase().slice(0, 3))); return new Date(Date.UTC(Number(m[2]), i + 1, 0)); }
+  const fy = /\bFY\s?'?(\d{2,4})\b/i.exec(s0);
+  if (fy) return periodEnd(fy[0]);
+  const r = /\b(\d{2})\s*[-–]\s*(\d{2})\b/.exec(s0);
+  if (r && Number(r[2]) === Number(r[1]) + 1) return periodEnd(`FY${r[2]}`);
+  const y = /\b(20\d{2})\b/.exec(s0);
+  return y ? new Date(Date.UTC(Number(y[1]), 11, 31)) : null;
+}
+
+
+/** zzz784: the sentence that carries a figure speaks about the future —
+ *  "capacity to increase from 384k TPA to 484k TPA in FY27", "total furnace
+ *  capacity will stand at 355 MVA", "this facility will add 1,200 lakh sq ft".
+ *  The model's FACT label is not trusted over the sentence's own tense. */
+/** Where a figure sits in a sentence, whatever its comma grouping ("1024" in "1,024"). */
+export function figureIndex(text: string, fig: string): number {
+  const digits = fig.replace(/,/g, '');
+  const [intPart, dec] = digits.split('.');
+  const re = new RegExp(`(?<![\\d.,])${intPart.split('').join(',?')}${dec ? `\\.${dec}` : ''}(?![\\d])`);
+  const m = re.exec(text);
+  return m ? m.index : -1;
+}
+export function forwardSentence(after: string | null | undefined, text: string | null | undefined): boolean {
+  const t = String(text ?? '');
+  const n = (/\d[\d,]*(?:\.\d+)?/.exec(String(after ?? '')) || [])[0];
+  if (!t || !n) return false;
+  const at = figureIndex(t, n);
+  if (at < 0) return false;
+  const s0 = t.lastIndexOf('. ', at);
+  const e0 = t.indexOf('. ', at);
+  const sentence = t.slice(s0 < 0 ? 0 : s0 + 2, e0 < 0 ? t.length : e0);
+  return /\bwill\b|\bshall\b|\bexpecting\b|\bupcoming\b|\bto increase\b|\bto (?:be )?(?:add|added|expand|commission\w*|reach)\b|\bproposed\b|\bplann(?:ed|ing)\b|\bexpected to\b|\bgoing to\b|\bwould\b|\bwith the commissioning of\b|\bupon (?:full )?commissioning\b|\bpost[- ]commissioning\b|\bonce (?:commissioned|complete)/i.test(sentence)
+    && !/\b(?:has|have|had|was|were)\s+(?:been\s+)?(?:added|commissioned|increased|expanded)\b|\bnow stands\b|\bcompleted\b/i.test(sentence);
+}
+
+/** The words just before a figure in its own sentence call it volume. */
+export function volumeContext(after: string | null | undefined, quote: string | null | undefined): boolean {
+  const q = String(quote ?? '');
+  const n = (/\d[\d,]*(?:\.\d+)?/.exec(String(after ?? '')) || [])[0];
+  if (!n || !q) return false;
+  // A store / boutique count is a network, never a volume (ETHOSLTD "network grew … to 103").
+  if (/\b(boutiques?|stores?|showrooms?|outlets?|clinics?|branch(?:es)?|hospitals?|beds|cent(?:re|er)s?)\b/i.test(String(after ?? ''))) return false;
+  const at = figureIndex(q, n);
+  if (at < 0) return false;
+  const before = q.slice(Math.max(0, at - 160), at);
+  return /\b(volumes?|grown|grew|handled|throughput|sold|sales|despatch\w*|dispatch\w*|produced|production of)\b/i.test(before) && !/\bcapacit\w*\b/i.test(before);
+}

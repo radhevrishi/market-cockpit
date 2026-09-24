@@ -3465,7 +3465,7 @@ export default function EarningsPage() {
             const buttonTitle = aiLoading
               ? 'AI extraction in progress…'
               : budgetDominates
-                ? `Anthropic returned 429 for ${budget} of ${uncoveredCount} tickers. 429 = either RATE LIMIT (RPM cap, resets 1-5min) OR MONTHLY SPEND CAP (resets 1st of next month at midnight UTC). Check console.anthropic.com to see which. The ${coveredCount} already-extracted tickers are CACHED and will NOT be re-billed when you retry — P0955 client cache + P0962 KV cache both skip them.`
+                ? `The AI provider (OpenAI) returned 429 for ${budget} of ${uncoveredCount} tickers. 429 = either RATE LIMIT (RPM cap, resets 1-5min) OR MONTHLY SPEND CAP (resets 1st of next month at midnight UTC). Check console.anthropic.com to see which. The ${coveredCount} already-extracted tickers are CACHED and will NOT be re-billed when you retry — P0955 client cache + P0962 KV cache both skip them.`
                 : statsAlign && breakdownSum > 0
                   ? `${uncoveredCount} uncovered. Click to retry — ${coveredCount} already-extracted are cache-skipped (no re-bill).${budget > 0 ? ` ${budget} hit Anthropic 429 last run (rate-limit OR monthly cap — check console.anthropic.com).` : ''}${noPdf > 0 ? ` ${noPdf} have no concall PDF (24h short-TTL cache, retries automatically when company uploads).` : ''}${errors > 0 ? ` ${errors} transient errors — usually succeed on retry.` : ''} Shift-click to force-refresh ALL.`
                   : `AI Forward Guidance — extracts real concall statements via Haiku for ${qualifying.length} qualifying cards. ${coveredCount} already cached (skipped), ${uncoveredCount} need fresh Haiku call. Quarter-cached so same period won't re-bill. Shift-click to force-refresh ALL.`;
@@ -3523,7 +3523,7 @@ export default function EarningsPage() {
                     color: 'var(--mc-warn)',
                     whiteSpace: 'nowrap',
                   }}
-                    title={`Anthropic returned 429 for ${budget} tickers. Could be RATE LIMIT (RPM cap, resets 1-5min) OR your monthly $5 spend cap (resets 1st of next month at midnight UTC). Check console.anthropic.com to confirm which. ${coveredCount} already-extracted are CACHED — they will NOT re-bill when you click again. Button is greyed because clicking RIGHT NOW would just re-hit the same 429 wall.`}
+                    title={`The AI provider (OpenAI) returned 429 for ${budget} tickers. Could be RATE LIMIT (RPM cap, resets 1-5min) OR your monthly $5 spend cap (resets 1st of next month at midnight UTC). Check console.anthropic.com to confirm which. ${coveredCount} already-extracted are CACHED — they will NOT re-bill when you click again. Button is greyed because clicking RIGHT NOW would just re-hit the same 429 wall.`}
                   >
                     ⏳ 429 (rate-limit or $5 cap) — cached entries safe
                   </span>

@@ -221,10 +221,14 @@ function assess(row0: BookRow): BookRow {
     }
     return null;
   })();
+  // zzz784: the capex chain first, so the status narrative reads the SAME
+  // normalized build / economic state the capex row prints.
+  const capex = buildCapexChain(row.summary, vars, row.ledger || null);
   return {
     ...row,
     comparisons,
     assessment: withThesisSet(row, assessThesis({
+      capexState: capex ? { build: capex.build || null, economic: capex.earning?.economic ?? null, earningState: capex.earning?.state ?? null } : null,
       pattern: row.pattern?.pattern ?? null,
       patternFit: (row.pattern as any)?.fit ?? null,
       variables: vars,
@@ -249,7 +253,7 @@ function assess(row0: BookRow): BookRow {
       evidencePeriod: row.ledger?.latest_period || row.reportingPeriod || null,
       expectedPeriod: latestExpectedPeriod().period,
     })),
-    capex: buildCapexChain(row.summary, vars, row.ledger || null),
+    capex,
     promiseNote: check ? check.detail : null,
     // WHAT CHANGED comes from the same rows as the board. (zzz765)
     changed: row.ledger ? rowChangeLines(vars, row.reportingPeriod || row.ledger.latest_period || null) : row.changed,

@@ -443,6 +443,11 @@ function ApiKeysSection() {
     };
 
     checkHealth();
+    // zzz783: the model key lives in Railway (OpenAI now). Ask this app's own
+    // wrapper, not the legacy backend's /health, whether a model is configured.
+    fetch('/api/v1/haiku/health', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j && typeof j.hasApiKey === 'boolean') setApiKeyStatus(j.hasApiKey ? 'present' : 'not_configured'); })
+      .catch(() => null);
   }, []);
 
   const handleRefresh = async () => {
@@ -468,7 +473,7 @@ function ApiKeysSection() {
 
   return (
     <div>
-      <Row label="Anthropic API key" description="Powers morning briefs, evening briefs, and AI chat">
+      <Row label="AI model key (OpenAI)" description="Powers AI summaries, AI Guidance, filing reads and scanned-PDF OCR">
         <div className="flex items-center gap-2">
           <StatusBadgeWithBackend status={apiKeyStatus} isLoading={isLoadingHealth} />
           <button onClick={handleRefresh} className="text-[#4A5B6C] hover:text-[#8899AA] transition-colors" title="Recheck">
@@ -496,9 +501,9 @@ function ApiKeysSection() {
           You don&apos;t need to (and cannot) configure keys from this page.
         </p>
         <div className="flex flex-wrap gap-4 mt-4">
-          <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer"
+          <a href="https://platform.openai.com" target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-[#0F7ABF] hover:text-[#38A9E8] transition-colors">
-            About Anthropic <ExternalLink className="w-3 h-3" />
+            About OpenAI <ExternalLink className="w-3 h-3" />
           </a>
           <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-[#0F7ABF] hover:text-[#38A9E8] transition-colors">
@@ -539,7 +544,7 @@ export default function SettingsPage() {
           <span className="text-xs text-green-400 font-semibold">Local only</span>
         </Row>
         <Row label="External connections" description="Services Market Cockpit contacts">
-          <span className="text-[#8899AA] text-xs">Yahoo Finance, Anthropic (if key set)</span>
+          <span className="text-[#8899AA] text-xs">Yahoo Finance, OpenAI (if key set)</span>
         </Row>
         <Row label="Account" description="Your portfolio data never leaves your machine">
           <span className="text-[#4A5B6C] text-xs">No cloud sync</span>

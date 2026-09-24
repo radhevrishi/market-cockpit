@@ -142,7 +142,7 @@ describe('zzz765c · status sentences', () => {
     ] });
     assert.equal(a.status, 'ON_TRACK');
     assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [2, 5]);
-    assert.match(a.because, /^Financial output materially improved \(revenue \+30% · earnings \+45% · margin \+2\.0pp\)\. Mechanism evidenced in the documents[^:]*: .*utilisation/);
+    assert.match(a.because, /^Financial output materially improved \(revenue \+30% · earnings \+45% · margin \+2\.0pp\)\. Mechanism evidence in the documents — structural \(\d+\/\d+ confirmed\): .*utilisation/);
     assert.match(a.because, /Open for next quarter: .*volume \(not disclosed\)/);
   });
 
@@ -173,7 +173,7 @@ describe('zzz765c · status sentences', () => {
     // zzz775: one evidenced driver, nothing falling → ON TRACK, not green;
     // the target-only utilisation is named as open for next quarter.
     assert.equal(a.status, 'ON_TRACK', a.because);
-    assert.match(a.because, /Mechanism evidenced in the documents[^:]*: margin driver/);
+    assert.match(a.because, /Mechanism evidence in the documents — structural \(\d+\/\d+ confirmed\): margin driver/);
     assert.match(a.because, /Open for next quarter: .*utilisation \(target only/);
   });
 
@@ -219,7 +219,7 @@ describe('zzz765c · status sentences', () => {
   test('F · live GIPCL: margin driver not disclosed, 600 MW commissioned capacity is ONE driver → ON TRACK, not green, driver named', () => {
     const a = liveAssess('GIPCL', 'F');
     assert.equal(a.status, 'ON_TRACK', a.because);
-    assert.match(a.because, /Mechanism evidenced in the documents[^:]*: .*capacity added/i);
+    assert.match(a.because, /Mechanism evidence in the documents — structural \(\d+\/\d+ confirmed\): .*capacity added/i);
     assert.match(a.because, /Open for next quarter: .*margin driver \(not disclosed\)/);
   });
 
@@ -606,7 +606,7 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     const withVolume = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('volume', 'improving', { after: '+18% tonnage' })] });
     assert.deepEqual(withVolume.coreMechanismGaps, []);
     assert.equal(withVolume.status, 'ON_TRACK', withVolume.because);
-    assert.match(withVolume.because, /Mechanism evidenced in the documents[^:]*: volume/);
+    assert.match(withVolume.because, /Mechanism evidence in the documents — structural \(\d+\/\d+ confirmed\): volume/);
   });
 
   test('evidence-state lines never print a bare dash once evidence was read', () => {
@@ -759,7 +759,7 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
       V('margin_driver', 'improving', { after: 'optimised product mix and higher value-added share' }),
     ] });
     assert.equal(a.status, 'ON_TRACK');
-    assert.match(a.because, /Mechanism evidenced in the documents[^:]*: margin driver/);
+    assert.match(a.because, /Mechanism evidence in the documents — structural \(\d+\/\d+ confirmed\): margin driver/);
     assert.match(a.because, /Open for next quarter: .*capacity utilisation \(target only: 50% to 60% \(target\)\)/);
     assert.match(a.because, /volume \(not disclosed\)/);
     assert.match(a.because, /capacity added \(level only: 22,000 MTPA\)/);
@@ -1456,7 +1456,7 @@ describe('zzz775 · decision statuses', () => {
     assert.equal(STATUS_META.ON_TRACK.label, 'THESIS INTACT — ON TRACK');
     assert.equal(STATUS_META.ON_TRACK.dot, '🔵');
     assert.ok(!['#10B981', '#F59E0B', '#FBBF24', '#C084FC', '#818CF8'].includes(STATUS_META.ON_TRACK.color), 'distinct from green, amber and violet');
-    assert.match(a.actionLine, /^THESIS INTACT — ON TRACK — financial output materially improved \(revenue \+38\.9% · earnings \+52% · margin \+1\.0pp\)\. Mechanism evidenced in the documents[^:]*: capacity added 5000MTPA → 9,600\+MTPA \(\+92%\)\. Nothing thesis-critical deteriorated and no break condition fired/);
+    assert.match(a.actionLine, /^THESIS INTACT — ON TRACK — financial output materially improved \(revenue \+38\.9% · earnings \+52% · margin \+1\.0pp\)\. Mechanism evidence in the documents — structural \(\d+\/\d+ confirmed\): capacity added 5000MTPA → 9,600\+MTPA \(\+92%\)\. Thesis intact — nothing contradicts it — but mechanism evidence is incomplete \(1\/4 core confirmed\); intact does not mean the catalyst is confirmed\. No break condition fired/);
     assert.match(a.because, /Open for next quarter: .*capacity utilisation \(not disclosed\).*volume \(not disclosed\)/);
     assert.equal(a.verdict!.direction, 'INTACT');
     assert.equal(a.verdict!.breakTrigger.fired, false);

@@ -25,7 +25,7 @@ import EarningsSearch, { type EarningsSearchResult } from './EarningsSearch';
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow, QUADRANT_META, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow, QUADRANT_META, profitTrajectory, MARKET_REACTION_CAVEATS, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import { useCardBadges, CardBadgesToggle } from '@/components/card-badges';
@@ -213,7 +213,9 @@ function useLiveEnrichmentMap(symbols: string[], filed?: string) {
       for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
       const filedParam = filed ? `&filed=${encodeURIComponent(filed)}` : '';
       const responses = await Promise.all(chunks.map((chunk) =>
-        fetch(`/api/v1/earnings/enrich?symbols=${chunk.join(',')}${filedParam}`)
+        // zzz800 — encode each symbol: a raw '&' (M&M, S&SPOWER, GMRP&UI) ended
+        // the query string and silently dropped it and every symbol after it.
+        fetch(`/api/v1/earnings/enrich?symbols=${chunk.map(encodeURIComponent).join(',')}${filedParam}`)
           .then((r) => r.ok ? r.json() : { data: {} })
           .catch(() => ({ data: {} }))
       ));
@@ -418,10 +420,19 @@ function dedupePayloadByCompany<T extends { by_tier?: Record<string, any[]> }>(p
   return { ...p, by_tier: out_by_tier } as T;
 }
 
+// zzz800 — IST calendar arithmetic. `new Date(); setDate(-1); toISOString()`
+// mixes the browser's LOCAL day with the UTC date: in India between 00:00 and
+// 05:30 it returns the day BEFORE yesterday, so "yesterday" was off by one for
+// the first five and a half hours of every day. Everything below derives from
+// the IST date string and moves in whole UTC days, which cannot drift.
+function istDaysAgoISO(n: number): string {
+  const [y, m, d] = _istToday().split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
+}
+
+/** Yesterday in IST (the name predates the fix; kept for its call sites). */
 function todayISO(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return istDaysAgoISO(1);
 }
 
 // PATCH 0560 — BUG-AUDIT-5: return today's date in IST (Asia/Kolkata, UTC+5:30).
@@ -653,12 +664,13 @@ export default function EarningsOpportunitiesPage() {
         }
       }
     } catch {}
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    const dow = d.getDay();
-    if (dow === 0) d.setDate(d.getDate() - 2);      // Sun → Fri
-    else if (dow === 6) d.setDate(d.getDate() - 1); // Sat → Fri
-    return d.toISOString().slice(0, 10);
+    // zzz800 — yesterday in IST, weekend → Friday (UTC day-of-week of an IST
+    // calendar date is that date's weekday).
+    const y1 = istDaysAgoISO(1);
+    const dow = new Date(y1 + 'T00:00:00Z').getUTCDay();
+    if (dow === 0) return istDaysAgoISO(3);   // Sun → Fri
+    if (dow === 6) return istDaysAgoISO(2);   // Sat → Fri
+    return y1;
   });
   // PATCH zzz98 — persist filterDate to LS so Hard Refresh keeps the selected date
   // Mirrors every filterDate change (including the "↩ Latest" clear) so the
@@ -779,13 +791,16 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v18:';  // zzz507b derived PAT add quarters_pat; zzz505 — v15->v16 to surface OPM + QoQ trend on newly-listed cards  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
+  const LS_PREFIX = 'mc:graded:v19:';  // zzz800 — v18→v19: loss-base PAT/EPS no longer a growth %, reaction floor, turnaround tier.  // zzz507b derived PAT add quarters_pat; zzz505 — v15->v16 to surface OPM + QoQ trend on newly-listed cards  // zzz503 — v14→v15 to flush snapshots holding the old "prior-year missing" narrative; zzz417 — v13→v14; zzz189 — v12→v13
   if (typeof window !== 'undefined') {
     try {
-      const SCRUB_GRADED = 'mc:graded-scrub:v9';
+      // zzz800 — the scrub flag is tied to the CURRENT prefix. The old flag
+      // was set once ('v9') and never re-armed, so every later prefix bump left
+      // its predecessor's snapshots orphaned in localStorage for ever.
+      const SCRUB_GRADED = 'mc:graded-scrub:' + LS_PREFIX;
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:') || k.startsWith('mc:graded:v13:') || k.startsWith('mc:graded:v14:') || k.startsWith('mc:graded:v15:') || k.startsWith('mc:graded:v16:') || k.startsWith('mc:graded:v17:')) localStorage.removeItem(k);  // zzz507b — v17 added
+          if (/^mc:graded:v\d+:/.test(k) && !k.startsWith(LS_PREFIX)) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
@@ -882,7 +897,7 @@ export default function EarningsOpportunitiesPage() {
       // PATCH 0447 REGRESSION FIX — For past dates (>= 2 days old), if a
       // valid LS snapshot exists, return it directly. Never hit the network.
       // User wants 'whatever is loaded already saved → render immediately'.
-      const yIso = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+      const yIso = istDaysAgoISO(1);  // zzz800 — IST, was local-day/UTC-date mix
       const isPastDate = resolvedDateForGrading < yIso;
       if (isPastDate) {
         const cached = readLsCache(resolvedDateForGrading);
@@ -1176,7 +1191,7 @@ export default function EarningsOpportunitiesPage() {
     // Probe last 14 days serially so we don't hammer the API.
     let cancelled = false;
     (async () => {
-      const todayIsoLocal = new Date().toISOString().slice(0, 10);
+      const todayIsoLocal = _istToday();  // zzz800 — was the UTC date (yesterday before 05:30 IST)
       const collected: Record<string, number> = {};
       const start = new Date(todayIsoLocal);
       for (let i = 0; i <= 14; i++) {
@@ -1253,7 +1268,7 @@ export default function EarningsOpportunitiesPage() {
     if (!gradedData?.by_tier || !resolvedDateForGrading) return;
     if (autoHealFiredRef.current.has(resolvedDateForGrading)) return;
     // Only auto-heal today + yesterday. Past dates trust the cache.
-    const yIso = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+    const yIso = istDaysAgoISO(1);  // zzz800 — IST, was local-day/UTC-date mix
     if (resolvedDateForGrading !== todayIso && resolvedDateForGrading !== yIso) return;
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []) as ParsedEarning[];
@@ -1288,7 +1303,7 @@ export default function EarningsOpportunitiesPage() {
   const convergeRef = useRef<{ date: string; rounds: number; lastMissing: number }>({ date: '', rounds: 0, lastMissing: -1 });
   useEffect(() => {
     if (!gradedData?.by_tier || !resolvedDateForGrading) return;
-    const yIso = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+    const yIso = istDaysAgoISO(1);  // zzz800 — IST, was local-day/UTC-date mix
     if (resolvedDateForGrading !== todayIso && resolvedDateForGrading !== yIso) return;
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []) as ParsedEarning[];
@@ -1889,7 +1904,7 @@ export default function EarningsOpportunitiesPage() {
     queryKey: ['force-included', resolvedDateForGrading, forceIncludeForDate.join(',')],
     enabled: forceIncludeForDate.length > 0 && !!resolvedDateForGrading,
     queryFn: async () => {
-      const symbolsCsv = forceIncludeForDate.join(',');
+      const symbolsCsv = forceIncludeForDate.map(encodeURIComponent).join(',');  // zzz800 — '&' in tickers
       const res = await fetch(
         `/api/v1/earnings/enrich?symbols=${symbolsCsv}&filed=${resolvedDateForGrading}&nocache=1`,
         { cache: 'no-store' }
@@ -2582,7 +2597,7 @@ export default function EarningsOpportunitiesPage() {
                   </div>
                   <div>
                     <strong style={{ color: 'var(--mc-text-2)' }}>2 · QUALITY (25%)</strong> — starts at 100, each caveat deducts:<br/>
-                    ocf divergence −25 · low quality −25 · optical eps −20 · tax distortion −15 · segment mix shift −10 · exceptional item −10 · thin float / reaction tags −8.
+                    ocf divergence −25 · low quality −25 · optical eps −20 · tax distortion −15 · segment mix shift −10 · still loss-making (loss narrowing) −10 · exceptional item −10 · thin float −8. A Day-1 price reaction is shown as a separate market-reaction note and deducts nothing.
                     Margin ladder: OPM ≥ +5pp adds +14 · ≥ +3pp adds +10 · ≥ +1pp adds +5 · ≤ −0.5pp costs −8 · ≤ −2pp costs −14.
                   </div>
                   <div>
@@ -2643,7 +2658,9 @@ export default function EarningsOpportunitiesPage() {
                   · <strong>tax distortion</strong> (−15) — PAT YoY &gt; 100% while Op Profit YoY &lt; 30%: the tax line, not the business, is driving PAT<br/>
                   · <strong>segment mix shift</strong> (−10) — OPM contracted &gt; 1.5pp YoY: growth came from lower-margin mix<br/>
                   · <strong>ocf divergence</strong> (−25) — annual operating cash flow &lt; 60% of PAT, or negative OCF while PAT positive: profits not converting to cash<br/>
-                  · <strong>low quality</strong> (−25) — Stage 4 chart, or &gt; 25% below 52-wk high: market disagrees with the print<br/>
+                  · <strong>low quality</strong> (−25) — still loss-making with the loss NOT narrowing (widened, flat, or a profit that swung to a loss); or a Stage 4 chart / &gt; 25% below 52-wk high<br/>
+                  · <strong>still loss-making</strong> (−10) — a loss that narrowed YoY. No growth % is computed off a loss; the card says &ldquo;loss narrowed ₹X → ₹Y&rdquo;. Loss at least halved + revenue ≥ +25% + OPM ≥ +5pp and now positive = an operating turnaround, graded STRONG at most<br/>
+                  · <strong>market reaction</strong> (sold off / market rejected print) — a price move after the print, not a fundamental caveat: it may cost the BLOCKBUSTER label but never pushes a STRONG quarter to MIXED<br/>
                   · <strong>thin float</strong> — ADTV &lt; ₹1 Cr/day: also demotes BLOCKBUSTER/STRONG → MIXED<br/>
                   · <strong>exceptional item / one-time order</strong> (−10) — filing text flags non-recurring income<br/>
                   · <strong>accelerated depreciation</strong> (−10) · <strong>accounting change / pooling restate</strong> (−12) — comparability of YoY numbers is compromised<br/>
@@ -3837,6 +3854,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
   const _useSalesQoQ = _isNewCard && stock.sales_yoy_pct == null && _salesQoQ != null;
   const _useEpsQoQ = _isNewCard && stock.eps_yoy_pct == null && _epsQoQ != null;
   const _usePatQoQ = _isNewCard && stock.net_profit_yoy_pct == null && _patQoQ != null;
+  // zzz800 — when either quarter is a loss there is no honest growth %; the
+  // tile says what happened ("LOSS NARROWED") and the ₹ line below shows both
+  // figures. Computed from the absolutes so payloads cached before the grader
+  // stopped emitting "+77%" on a loss base read correctly too.
+  const _patTraj = profitTrajectory(stock.pat_curr_cr, stock.pat_prev_cr, 'cr');
+  const _epsTraj = profitTrajectory(stock.eps_curr, stock.eps_prev, 'eps');
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
     if (!stock.filing_url) return null;
@@ -4032,8 +4055,8 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(stock.sales_prev_cr)} />
-        <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT'} pct={_usePatQoQ ? _patQoQ : stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(stock.pat_prev_cr)} />
-        <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />
+        <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT'} pct={_usePatQoQ ? _patQoQ : (_patTraj ? null : stock.net_profit_yoy_pct)} word={!_usePatQoQ && _patTraj ? { text: _patTraj.short, good: _patTraj.improving, title: _patTraj.label } : undefined} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(stock.pat_prev_cr)} />
+        <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : (_epsTraj ? null : stock.eps_yoy_pct)}        word={!_useEpsQoQ && _epsTraj ? { text: _epsTraj.short, good: _epsTraj.improving, title: _epsTraj.label } : undefined} curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />
         <OpmTile opm={stock.opm_pct} opmPrev={stock.opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
         {/* zzz694 — cash sits beside the score, so the figure that decides the
             tier is on the card rather than only in the caveat pills. The score
@@ -4065,9 +4088,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             // recent IPO's card reads as "just listed" rather than a scary
             // warning. All genuine caveats keep the amber ⚠ styling.
             const _info = t === 'newly listed' || t === 'no YoY yet';
-            const _c = _info ? 'var(--mc-cyan)' : 'var(--mc-warn)';
+            // zzz800 — a Day-1 price reaction is not a fault in the filing:
+            // rendered as a neutral, explicitly labelled market-reaction pill.
+            const _reaction = MARKET_REACTION_CAVEATS.has(t);
+            const _c = _info ? 'var(--mc-cyan)' : _reaction ? 'var(--mc-text-3)' : 'var(--mc-warn)';
             return (
-              <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: `color-mix(in srgb, ${_c} 8%, transparent)`, color: _c, border: `1px solid color-mix(in srgb, ${_c} 25%, transparent)`, fontWeight: 700 }}>{_info ? 'ℹ' : '⚠'} {t}</span>
+              <span key={t} title={_reaction ? 'Price reaction after the print, not a judgement on the reported numbers' : undefined} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: `color-mix(in srgb, ${_c} 8%, transparent)`, color: _c, border: `1px solid color-mix(in srgb, ${_c} 25%, transparent)`, fontWeight: 700 }}>{_info ? 'ℹ' : _reaction ? '📉 market reaction:' : '⚠'} {t === 'newly listed' ? 'new listing — no YoY history' : t}</span>
             );
           })}
         </div>
@@ -4365,8 +4391,8 @@ function CashTile({ ratio }: { ratio: number | null | undefined }) {
   );
 }
 
-function MetricTile({ label, pct, curr, prev }: { label: string; pct: number | null; curr: string | null; prev: string | null }) {
-  const color = pct == null ? '#6B7A8D' : pct >= 0 ? '#10B981' : '#EF4444';
+function MetricTile({ label, pct, curr, prev, word }: { label: string; pct: number | null; curr: string | null; prev: string | null; word?: { text: string; good: boolean; title?: string } }) {
+  const color = word ? (word.good ? '#10B981' : '#EF4444') : pct == null ? '#6B7A8D' : pct >= 0 ? '#10B981' : '#EF4444';
   // zzz385 — clamp base-effect blow-ups on the card tile (mirror the narrative fmtP
   // clamp): a near-zero prior base makes YoY % explode (e.g. ₹0.5 Cr → ₹50 Cr PAT =
   // +5000%). Exact precision is meaningless there and reads as fabricated, so show
@@ -4379,7 +4405,9 @@ function MetricTile({ label, pct, curr, prev }: { label: string; pct: number | n
   return (
     <div style={{ padding: '8px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
       <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 900, color, marginTop: 2, lineHeight: 1 }}>{pctLabel}</div>
+      {word
+        ? <div title={word.title} style={{ fontSize: 12, fontWeight: 900, color, marginTop: 4, lineHeight: 1.1 }}>{word.text}</div>
+        : <div style={{ fontSize: 18, fontWeight: 900, color, marginTop: 2, lineHeight: 1 }}>{pctLabel}</div>}
       {(curr || prev) && (
         <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {curr || '—'}{prev && ` vs ${prev}`}

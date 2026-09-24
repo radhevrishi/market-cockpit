@@ -22,6 +22,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { US_TIER_ORDER, type UsGradedRow, type EarningsTier } from './us-earnings-core';
+import { mergeExclusions, formatExclusions, normalizeUsTicker, type ExclusionCounts } from './us-earnings-dates';
 
 export interface DayPayload {
   filing_date: string | null;
@@ -38,6 +39,8 @@ export interface DayPayload {
   sources_polled: number;
   truncated: boolean;
   notes: string[];
+  /** Filers left out before grading, by reason (summed across the window). */
+  excluded?: ExclusionCounts;
 }
 
 /** Which of two rows for the same ticker is the better one to show. */
@@ -70,6 +73,7 @@ export function mergeDayPayloads(
   const scheduled = new Map<string, any>();
   const notes = new Set<string>();
   let raw = 0, noPrice = 0, truncated = false, newest = '';
+  let excluded: ExclusionCounts = {};
 
   const ordered = parts.filter(Boolean).slice().sort((a, b) =>
     String(a!.filing_date).localeCompare(String(b!.filing_date))) as DayPayload[];
@@ -78,6 +82,7 @@ export function mergeDayPayloads(
     raw += p.raw_items_total || 0;
     noPrice += p.no_price_total || 0;
     truncated = truncated || !!p.truncated;
+    excluded = mergeExclusions(excluded, p.excluded);
     if (p.generated_at > newest) newest = p.generated_at;
     for (const t of US_TIER_ORDER) {
       for (const r of (p.by_tier?.[t] || [])) {
@@ -107,7 +112,10 @@ export function mergeDayPayloads(
     if (rows.has(q.ticker) && q.reason !== 'reported-earlier') pending.delete(k);
   }
   // Nor is a name that has already filed still "scheduled".
-  for (const t of Array.from(scheduled.keys())) if (rows.has(t)) scheduled.delete(t);
+  {
+    const graded = new Set(Array.from(rows.keys()).map(normalizeUsTicker));
+    for (const t of Array.from(scheduled.keys())) if (graded.has(normalizeUsTicker(t))) scheduled.delete(t);
+  }
 
   const by_tier: Record<EarningsTier, UsGradedRow[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
   for (const r of rows.values()) by_tier[r.tier].push(r);
@@ -127,6 +135,8 @@ export function mergeDayPayloads(
   const earlier = pendingList.filter((p) => p.reason === 'reported-earlier').length;
   if (earlier) counted.push(`${earlier} filing(s) in the window were 10-Qs or follow-up 8-Ks for results already announced before the window — not re-graded as fresh`);
   if (noPrice) counted.push(`${noPrice} filer(s) had no usable price history`);
+  const exLine = formatExclusions(excluded);
+  if (exLine) counted.push(exLine);
 
   return {
     filing_date: filingDate,
@@ -143,6 +153,7 @@ export function mergeDayPayloads(
     sources_polled: 3,
     truncated,
     notes: [...counted, ...Array.from(notes)],
+    excluded,
   };
 }
 

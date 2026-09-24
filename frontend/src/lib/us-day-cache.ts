@@ -43,6 +43,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { US_ENGINE_VERSION } from './us-engine-version';
+import { snapshotFresh } from './us-earnings-dates';
 
 const DB_NAME = 'mc-us-days';
 const DB_VERSION = 1;
@@ -159,13 +160,20 @@ function lsClear(): void {
  * keeps moving as 8-Ks land, so it expires in 10 minutes.
  */
 export async function getCachedDay(day: string, isToday: boolean): Promise<any | null> {
-  const maxAge = isToday ? 10 * 60_000 : 30 * 24 * 3600_000;
   let rec = await tx<DayRecord>('readonly', (s) => s.get(day) as IDBRequest<DayRecord>);
   if (!rec) rec = lsGet(day);
   if (!rec || !rec.payload) return null;
-  const age = Date.now() - (rec.cachedAt || 0);
-  if (!Number.isFinite(age) || age > maxAge) return null;
   const p: any = rec.payload;
+  // WHEN WAS THE DAY GRADED, not "is it in the past now". A session graded at
+  // 09:00 ET while it was still running used to become a "completed" day at
+  // midnight and be served for 30 days — without every name that reported
+  // after 09:00 (the whole after-close cohort). The server's own generated_at
+  // is the moment the filer list was read; the local write time is the
+  // fallback for payloads that lack it.
+  const at = Date.parse(p?.generated_at || '') || rec.cachedAt || 0;
+  // (`isToday` is kept for callers; the snapshot's own time now decides.)
+  void isToday;
+  if (!snapshotFresh(day, at, Date.now(), 10 * 60_000, 30 * 24 * 3600_000)) return null;
   if (!p?.by_tier) return null;
   // A DAY GRADED BY AN OLDER ENGINE IS SHOWN, THEN REPLACED.
   //

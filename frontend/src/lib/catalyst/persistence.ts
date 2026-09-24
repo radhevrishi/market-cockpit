@@ -31,6 +31,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { scaledNumber } from '@/lib/thesis/evidence-ledger';
+import { forwardSentence, volumeContext } from '@/lib/thesis/fact-normalize';
+export { volumeContext };
 
 export type PersistKind = 'CAPACITY_RAMP' | 'ORDER_VISIBILITY' | 'CUSTOMER_RAMP' | 'GEOGRAPHY' | 'MIX_PRICING' | 'PROJECT_PIPELINE';
 export type PersistState = 'IDENTIFIED' | 'VALIDATED' | 'RAMPING' | 'SCALING' | 'MATURE' | 'STALLING' | 'WEAKENING' | 'COMPLETED' | 'DISPROVED';
@@ -63,6 +65,8 @@ export interface PersistItem {
   date: string | null;            // source date (YYYY-MM-DD)
   sources: Array<{ name: string; url: string | null; date: string | null; quote: string | null }>;
   origin: 'ledger' | 'assessment' | 'gainer';
+  /** zzz784: for capacity rows — production rate, store network, floor space. */
+  capClass?: CapacityClass;
 }
 
 export interface BeforeAfterRow { variable: string; before: string; current: string; direction: '↑' | '↓' | '→' | '?'; source: string; date: string | null }
@@ -94,6 +98,20 @@ export interface PersistentCatalyst {
   temporarySignals: string[];
   origins: Array<'portfolio' | 'gainers'>;
   specialFocus: boolean;
+  /** zzz784: the highest stage the filed evidence reaches (capacity ladder for
+   *  a capacity ramp; the lifecycle state word otherwise). */
+  stage: string;
+  /** zzz784: the next piece of EVIDENCE, derived from `stage` — never an earlier stage. */
+  nextEvidence: string | null;
+  /** zzz784: a management target for a LATER stage, labelled as a milestone. */
+  managementTarget: string | null;
+  /** zzz784: label variant — a store network or floor space is not production capacity. */
+  variant?: 'PRODUCTION' | 'NETWORK' | 'FLOOR_SPACE';
+  /** zzz784: filed figures vs management remarks behind the catalyst. */
+  sourceQuality: string;
+  /** zzz784: the card's capex projects that are NOT this capacity (still being
+   *  built while this one runs) — named, so the two never read as a contradiction. */
+  capexNote?: string | null;
   why: string[];                  // why it is (or is not) Special Focus — every line evidence-backed
   /** What evidence would qualify it — the research to do next. (zzz781) */
   toQualify: string[];
@@ -111,13 +129,83 @@ const KIND_OF: Record<string, PersistKind> = {
   product_mix: 'MIX_PRICING', margin_driver: 'MIX_PRICING', price: 'MIX_PRICING',
 };
 const TEMPORARY = /inventory (gain|benefit|valuation)|one[- ]off|one[- ]time|exceptional|base effect|raw material (price )?(fall|decline|softening|moderation)|commodity (price )?(fall|decline|softening)|moderation in [a-z]+ prices|forex gain|write[- ]?back|reversal/i;
-const CAPACITY_UNIT = /(?<![a-z])(mtpa|ktpa|tpa|tpd|tpm|mtpd|tons?|tonnes?|mt\b|kl\b|kilo ?lit|klpd|kl\/?d|mw|gw|kw|units?|lines?|sq\.? ?ft|square feet|beds|boutiques|stores|looms|spindles|vessels|vlgcs?|reactors?|furnaces?|kg|litres?|pieces|pcs|sets|mva)\b/i;
+const CAPACITY_UNIT = /(?<![a-z])(mtpa|ktpa|tpa|tpd|tpm|mtpd|tons?|tonnes?|mt\b|kl\b|kilo ?lit|klpd|kl\/?d|mw|gw|kw|units?|lines?|sq\.? ?ft|square feet|beds|boutiques|stores|looms|spindles|vessels|vlgcs?|reactors?|furnaces?|kg|litres?|pieces|pcs|sets|mva|gpus?|servers?|racks?)\b/i;
 const MONEY = /₹|\binr\b|\brs\.?\s?\d|\bcrores?\b|\bcr\b|\bmn\b|million|billion|\busd\b|\$/i;
 const PCT = /(\d+(?:\.\d+)?)\s*%/;
 /** A currency marker — "37 million sq ft" is not money. */
 const CUR = /₹|\binr\b|\brs\.?|\bcrores?\b|\bcr\b|\busd\b|\$/i;
 const LIFECYCLE_METRIC = /^(capex_status|commissioning|new_plant)$/;
 const LIFECYCLE_DONE = /commissioned|commercial production|commenced (commercial )?(production|operations)|started (commercial )?production|operational|production (started|commenced)|now running|went live/i;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHAT KIND OF "CAPACITY" A FIGURE IS.                               (zzz784)
+//
+// A boutique count, a lab's floor area and a rupee figure all arrived as
+// "capacity" and were chained into "production running → utilisation 13.2%"
+// (ETHOSLTD: the 13.2% was same-store sales growth). Only a PRODUCTION rate
+// (tonnes, MW, KL, units per period…) can be commissioned, run and utilised.
+//   PRODUCTION  a physical output rate — the capacity-ramp ladder applies
+//   NETWORK     stores / boutiques / clinics / branches / beds — a network
+//               expansion: opened, not commissioned; no "production"
+//   FLOOR_SPACE a floor area with no output rate (lab, office, warehouse)
+//   MONEY       a rupee figure ("installed capacity ₹1,400 Cr" is a peak-
+//               revenue potential) — never capacity
+// ═══════════════════════════════════════════════════════════════════════════
+export type CapacityClass = 'PRODUCTION' | 'NETWORK' | 'FLOOR_SPACE' | 'MONEY' | 'UNKNOWN';
+export const NETWORK_UNIT = /\b(boutiques?|stores?|showrooms?|outlets?|clinics?|centres?|centers?|hospitals?|beds|branch(?:es)?|hubs?|(?:amusement |theme )?parks?|ferr(?:y|ies)|touch ?points?|restaurants?|cinemas?|screens|schools?|kiosks?|dealerships?|pharmacies|franchisees?|doors)\b/i;
+const AREA_UNIT = /\b(sq\.? ?ft|square (?:feet|foot|metres?|meters?)|sq\.? ?m(?:tr)?s?\b|sqm|acres?|hectares?)\b/i;
+const RATE = /per\s*(annum|year|day|month|hour|shift)|\bp\.?\s?a\b|\/\s*(?:yr|year|annum|day|month|hr|hour)|\bannual\b|\bmtpa\b|\bktpa\b|\btpa\b|\btpd\b|\btpm\b|\bklpd\b|\bmtpd\b/i;
+const FLOOR_WORDS = /\b(lab|laborator\w*|office|floor|space|warehouse|campus|hangar|built[- ]up|carpet|leasable|shop floor|facility area)\b/i;
+export function capacityClass(after: string | null | undefined, quote?: string | null): CapacityClass {
+  const a = String(after ?? '');
+  const q = String(quote ?? '');
+  if (NETWORK_UNIT.test(a)) return 'NETWORK';
+  if (AREA_UNIT.test(a)) {
+    // "1,200 lakh square feet of ANNUAL capacity" (window film) is an output rate.
+    if (RATE.test(a) || RATE.test(q.slice(0, 260)) && !FLOOR_WORDS.test(q.slice(0, 260))) return 'PRODUCTION';
+    return 'FLOOR_SPACE';
+  }
+  if (CAPACITY_UNIT.test(a)) return 'PRODUCTION';
+  if (MONEY.test(a)) return 'MONEY';
+  // "3x", "~5100 GPUs live": a production capability stated without a rate.
+  if (/\d/.test(a)) return 'UNKNOWN';
+  return 'UNKNOWN';
+}
+/** A percentage that is NOT a capacity-utilisation reading: same-store sales
+ *  growth (ETHOSLTD 13.2%), a renewable-energy share (CYIENTDLM 63.61%), a
+ *  market share, a fixed-asset turn. A utilisation reading names what it is. */
+const UTIL_NOT = /same[- ]store|\bsssg\b|like[- ]for[- ]like|\blfl\b|renewable|electricity consumption|\bRE\b|market share|share of (?:revenue|sales|total)|attrition|asset turn|fixed asset turnover|accounted for/i;
+const UTIL_CONTEXT = /utili[sz]|capacity|\bcuf\b|\bplf\b|occupanc|operating rate|running at|loading|load factor/i;
+export function isUtilisationReading(after: string | null | undefined, quote?: string | null): boolean {
+  const t = `${after ?? ''} ${String(quote ?? '').slice(0, 300)}`;
+  if (UTIL_NOT.test(t)) return false;
+  return UTIL_CONTEXT.test(t) || !quote;
+}
+/** A plant-load / capacity-utilisation FACTOR (solar, wind, thermal) is bounded
+ *  by the resource, not by 100% — no headroom to 100 is ever computed from it. */
+const FACTOR_UTIL = /\bcuf\b|\bplf\b|capacity utili[sz]ation factor|plant load factor/i;
+/** Float noise ("23.099999999999994 points") never reaches a sentence. */
+const pp1 = (n: number): string => String(Math.round(n * 10) / 10);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE CAPACITY STAGE LADDER.                                          (zzz784)
+//
+// The next evidence is derived MECHANICALLY from the highest stage the filed
+// evidence reaches, and it is never an earlier stage: a plant already running
+// at 19.89% CUF (GIPCL) cannot be waiting for "commissioning". A management
+// target is offered only when it belongs to a LATER stage, and is labelled a
+// milestone, not evidence.
+// ═══════════════════════════════════════════════════════════════════════════
+export type CapacityStage = 'ANNOUNCED' | 'UNDER_CONSTRUCTION' | 'COMMISSIONED' | 'RUNNING' | 'UTILISATION_RAMP' | 'VOLUME_RAMP'
+  | 'REVENUE_CONTRIBUTION' | 'MARGIN_CONTRIBUTION' | 'STEADY_STATE';
+export const CAPACITY_STAGES: CapacityStage[] = ['ANNOUNCED', 'UNDER_CONSTRUCTION', 'COMMISSIONED', 'RUNNING', 'UTILISATION_RAMP', 'VOLUME_RAMP',
+  'REVENUE_CONTRIBUTION', 'MARGIN_CONTRIBUTION', 'STEADY_STATE'];
+export const CAPACITY_STAGE_LABEL: Record<CapacityStage, string> = {
+  ANNOUNCED: 'Announced', UNDER_CONSTRUCTION: 'Under construction', COMMISSIONED: 'Commissioned', RUNNING: 'Production / running',
+  UTILISATION_RAMP: 'Utilisation ramp', VOLUME_RAMP: 'Volume ramp', REVENUE_CONTRIBUTION: 'Revenue contribution',
+  MARGIN_CONTRIBUTION: 'Margin contribution', STEADY_STATE: 'Steady state',
+};
+export const stageRank = (s: CapacityStage | null | undefined): number => (s ? CAPACITY_STAGES.indexOf(s) : -1);
 
 const iso = (s: string | null | undefined): string | null => (s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null);
 const clip = (s: string, n = 140) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -146,8 +234,22 @@ export function itemsFromLedger(ledger: any): PersistItem[] {
       const after = String(f?.after_value ?? f?.value ?? '').trim();
       const before = f?.before_value ? String(f.before_value).trim() : null;
       if (!after) continue;
-      // "capacity 63.61%" is a utilisation reading, not a capacity.
-      if ((metric === 'capacity' || metric === 'capacity_addition') && PCT.test(after) && !CAPACITY_UNIT.test(after)) metric = 'utilisation';
+      // "capacity 63.61%" is a utilisation reading, not a capacity — when the
+      // sentence is about utilisation at all (CYIENTDLM's 63.61% is a
+      // renewable-energy share). (zzz784)
+      if ((metric === 'capacity' || metric === 'capacity_addition') && PCT.test(after) && !CAPACITY_UNIT.test(after)) {
+        if (!isUtilisationReading(after, f?.source_quote)) continue;
+        metric = 'utilisation';
+      }
+      // Same-store sales growth, a market share, an RE share: not utilisation. (zzz784)
+      if (metric === 'utilisation' && !isUtilisationReading(after, f?.source_quote)) continue;
+      // A tonnage the sentence describes as volume grown / handled (GPPL
+      // "liquids have grown … to 1.6 million MT", GOODLUCK "volume has
+      // increased … to 1,22,718 MT") is output volume, not capacity. (zzz784)
+      if (metric === 'capacity' && volumeContext(after, f?.source_quote)) metric = 'volume';
+      // "Installed capacity ₹1,400 Cr" is a peak-revenue potential: money is
+      // never capacity. (zzz784)
+      if (metric === 'capacity' && MONEY.test(after) && !CAPACITY_UNIT.test(after)) continue;
       const kind = KIND_OF[metric];
       if (!kind) continue;
       const stmt = String(f?.fact_or_management_statement || 'FACT');
@@ -161,7 +263,8 @@ export function itemsFromLedger(ledger: any): PersistItem[] {
       if ((metric === 'capacity_addition' || metric === 'capex_status') && MONEY.test(after) && !CAPACITY_UNIT.test(after)) metric = 'capex';
       // Ore reserves / resources are not capacity (HINDCOPPER "198.61 Million Tonne").
       if ((metric === 'capacity' || metric === 'capacity_addition') && /reserve|resource|\bore\b|mineable|deposit/i.test(`${after} ${String(f?.source_quote || '').slice(0, 300)}`)) continue;
-      const cls: EvidenceClass = stmt === 'TARGET' || stmt === 'GUIDANCE' || f?.evidence_type === 'forward' ? 'FORWARD'
+      const planned = (metric === 'capacity' || metric === 'capacity_addition') && forwardSentence(after, f?.source_quote);
+      const cls: EvidenceClass = stmt === 'TARGET' || stmt === 'GUIDANCE' || f?.evidence_type === 'forward' || planned ? 'FORWARD'
         // Capex SPENDING is the announced / spent stage — never a mechanism figure.
         : metric === 'capex' ? 'REMARK'
         // A filed, dated lifecycle fact ("plant commissioned", "commercial
@@ -175,6 +278,7 @@ export function itemsFromLedger(ledger: any): PersistItem[] {
         period, date: iso(f?.source_date) || iso(f?.effective_date),
         sources: [{ name: String(f?.source_name || 'filing'), url: f?.source_url || null, date: iso(f?.source_date), quote: f?.source_quote ? clip(String(f.source_quote), 260) : null }],
         origin: 'ledger',
+        capClass: metric === 'capacity' || metric === 'capacity_addition' ? capacityClass(after, f?.source_quote) : undefined,
       });
       // one-off facts are not items; they are read by temporarySignals()
     }
@@ -209,14 +313,22 @@ export function itemsFromAssessment(a: any, period: string | null, date: string 
     // documents read (the ledger's events as well as its facts); a figure in
     // them — "capacity 5,000 → 9,600 MTPA", "order book ₹140 → ₹225 Cr" — is
     // filed evidence. The dedup below merges it with the same ledger fact.
-    const body = d.text.replace(/^[a-z /]+:\s*/i, '');
+    // "capacity added capacity added 3x": the driver text carries its own
+    // label; the value is what follows it. (zzz784)
+    const body = d.text.replace(/^[a-z /]+:\s*/i, '')
+      .replace(/^(?:(?:installed )?capacity(?: added)?|capacity utili[sz]ation|utili[sz]ation|volume|capex status|capex earning|order book|order intake)\s+(?=\S)/i, '')
+      .replace(/^(?:capacity added|installed capacity)\s+/i, '');
     const ba = /^(.+?)\s*→\s*(.+?)(?:\s*\([+-]?[\d.]+%\))?$/.exec(body);
     const before = ba ? ba[1].replace(/^[a-z ]+\s(?=\d)/i, '').trim() : null;
     const after = ba ? ba[2].trim() : body;
     const hasFig = /\d/.test(d.text) && (MONEY.test(d.text) || PCT.test(d.text) || CAPACITY_UNIT.test(d.text) || /\d(\.\d+)?\s*x\b/i.test(d.text));
     if ((d.key === 'capacity' || d.key === 'capacity_addition') && !CAPACITY_UNIT.test(d.text) && !/\d(\.\d+)?\s*x\b|doubl/i.test(d.text)) continue;
-    out.push({ metric: d.key, kind, cls: hasFig ? 'HARD' : 'REMARK', text: d.text, before, after, numeric: scaledNumber(after), numericBefore: before ? scaledNumber(before) : null,
-      period, date, sources: [{ name: 'documents read this period', url: null, date, quote: null }], origin: 'assessment' });
+    if ((d.key === 'capacity' || d.key === 'capacity_addition') && MONEY.test(after) && !CAPACITY_UNIT.test(after)) continue;
+    if (d.key === 'utilisation' && !isUtilisationReading(after, null)) continue;
+    const label = d.key === 'capacity' ? 'Installed capacity' : d.key === 'capacity_addition' ? 'Capacity added' : d.key === 'utilisation' ? 'Capacity utilisation' : null;
+    out.push({ metric: d.key, kind, cls: hasFig ? 'HARD' : 'REMARK', text: label ? `${label}: ${body}` : d.text, before, after, numeric: scaledNumber(after), numericBefore: before ? scaledNumber(before) : null,
+      period, date, sources: [{ name: 'documents read this period', url: null, date, quote: null }], origin: 'assessment',
+      capClass: d.key === 'capacity' || d.key === 'capacity_addition' ? capacityClass(after, null) : undefined });
   }
   return out;
 }
@@ -267,14 +379,37 @@ function dedupe(items: PersistItem[]): PersistItem[] {
 }
 
 // ── 5. EVALUATE ONE MECHANISM ──────────────────────────────────────────────
-interface Ctx { ticker: string; thesisStatus?: string | null; temporary: string[]; origins: Array<'portfolio' | 'gainers'>; today: string; quarterRevenueCr?: number | null }
+interface Ctx { ticker: string; thesisStatus?: string | null; temporary: string[]; origins: Array<'portfolio' | 'gainers'>; today: string; quarterRevenueCr?: number | null;
+  /** zzz784: the card's normalized capex state — false when no capital project
+   *  on the card is built (all announced / under construction). Lifecycle WORDS
+   *  alone then cannot put the capacity past construction, so Special Focus and
+   *  the card never disagree. Null / undefined = unknown. */
+  capexOperating?: boolean | null;
+  capexBuild?: { projects: Array<{ name: string; build: string }> } | null }
 
 function series(items: PersistItem[], metric: string): PersistItem[] {
   return items.filter((i) => i.metric === metric && i.cls === 'HARD' && i.numeric != null).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCatalyst | null {
-  const items = all.filter((i) => i.kind === kind);
+  let items = all.filter((i) => i.kind === kind);
+  // ── PRODUCTION ≠ STORE NETWORK ≠ FLOOR SPACE.                      (zzz784)
+  // Keep the kind (no new scoring kind); choose the label variant from what
+  // the capacity figures ARE. A production rate or a utilisation reading makes
+  // it a production ramp and the store / floor rows are dropped from it; with
+  // neither, stores make a network expansion and floor area a facility
+  // expansion — never "production running" or "capacity utilisation".
+  let variant: 'PRODUCTION' | 'NETWORK' | 'FLOOR_SPACE' | undefined;
+  if (kind === 'CAPACITY_RAMP') {
+    const capRow = (i: PersistItem) => i.metric === 'capacity' || i.metric === 'capacity_addition';
+    const nonProd = (i: PersistItem) => capRow(i) && (i.capClass === 'NETWORK' || i.capClass === 'FLOOR_SPACE' || i.capClass === 'MONEY');
+    const prod = items.some((i) => i.cls !== 'FORWARD' && ((capRow(i) && !nonProd(i)) || i.metric === 'utilisation'));
+    const net = items.filter((i) => capRow(i) && i.capClass === 'NETWORK');
+    const floor = items.filter((i) => capRow(i) && i.capClass === 'FLOOR_SPACE');
+    if (prod || (!net.length && !floor.length)) { variant = 'PRODUCTION'; items = items.filter((i) => !nonProd(i)); }
+    else if (net.length) { variant = 'NETWORK'; items = items.filter((i) => (capRow(i) && i.capClass === 'NETWORK') || i.metric === 'volume'); }
+    else { variant = 'FLOOR_SPACE'; items = floor; }
+  }
   const hard = items.filter((i) => i.cls === 'HARD');
   // A MECHANISM figure: a filed number that shows the mechanism moving —
   // installed capacity that did not change, flat volume or a capex budget
@@ -319,59 +454,194 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
   let confirmWith = '', invalidateIf = '';
   const fwdText = (re: RegExp) => forward.find((i) => re.test(i.metric) || re.test(i.text));
 
-  if (kind === 'CAPACITY_RAMP') {
+  let stage: string = '';
+  let nextEvidence: string | null = null;
+  let managementTarget: string | null = null;
+  let capexNote: string | null = null;
+  const targetText = (i: PersistItem) => `Management target (milestone, not evidence): ${clip(i.text, 150)} (${i.date || i.period || 'undated'})`;
+
+  if (kind === 'CAPACITY_RAMP' && variant === 'NETWORK') {
+    // ── A STORE NETWORK OPENS; IT IS NOT COMMISSIONED.               (zzz784)
+    const net = items.filter((i) => i.metric === 'capacity' || i.metric === 'capacity_addition');
+    const unitWord = ((NETWORK_UNIT.exec(net.map((i) => i.after).join(' ')) || [])[0] || 'stores').toLowerCase();
+    const grew = net.find((i) => i.cls === 'HARD' && i.numericBefore != null && i.numeric != null && i.numeric > i.numericBefore);
+    const levels = net.filter((i) => i.metric === 'capacity' && i.cls === 'HARD' && i.numeric != null);
+    const saysGrowth = levels.some((i) => /\b(grew|increased|expanded|from)\b/i.test(i.sources[0]?.quote || ''));
+    const lo = levels.length >= 2 && saysGrowth ? levels.reduce((a, b) => (b.numeric! < a.numeric! ? b : a)) : null;
+    const hi = levels.length >= 2 && saysGrowth ? levels.reduce((a, b) => (b.numeric! > a.numeric! ? b : a)) : null;
+    const opened = net.find((i) => i.metric === 'capacity_addition' && i.cls === 'HARD');
+    const from = grew ? grew.numericBefore! : lo && hi && hi.numeric! > lo.numeric! ? lo.numeric! : null;
+    const to = grew ? grew.numeric! : hi ? hi.numeric! : null;
+    const growthPct = from && to ? Math.round(((to - from) / from) * 1000) / 10 : null;
+    const vol = items.find((i) => i.metric === 'volume' && i.cls === 'HARD');
+    mechanism = [from != null && to != null ? `network ${from} → ${to} ${unitWord}` : levels.length ? `network ${levels[levels.length - 1].after}` : null,
+      opened ? `opened: ${opened.after}` : null, vol ? `volume ${vol.after}` : null].filter(Boolean).join(' · ') || 'store-network evidence on file';
+    stage = from != null || opened ? 'Network expanded (stores opened)' : 'Network disclosed';
+    state = from != null || opened ? 'VALIDATED' : 'IDENTIFIED';
+    runway = growthPct != null && growthPct >= 5
+      ? { ok: true, text: `Network grew ${from} → ${to} ${unitWord} (+${growthPct}%) — newly opened ${unitWord} take several quarters to mature; store maturity, not unused production capacity, is the runway.` }
+      : { ok: false, text: 'Store count on file, but no network growth over two readings — a store network is not production capacity and has no utilisation headroom.' };
+    if (from != null) baRow(`Network (${unitWord})`, String(from), String(to), '↑', grew || hi!);
+    (from != null || opened) ? happened.push(`Network expanded${from != null ? `: ${from} → ${to} ${unitWord}` : ''}${opened ? ` (${opened.after})` : ''}`) : notYet.push('Network growth shown over two readings');
+    notYet.push('Same-store sales / revenue per store on the enlarged network disclosed');
+    nextEvidence = 'Revenue per store or same-store sales growth on the enlarged network, and the next disclosed store count';
+    confirmWith = 'same-store sales holding while the network grows, and revenue per new store rising as stores mature';
+    invalidateIf = 'store closures, falling same-store sales, or new stores not reaching the network average';
+  } else if (kind === 'CAPACITY_RAMP' && variant === 'FLOOR_SPACE') {
+    // ── FLOOR AREA IS NOT OUTPUT CAPACITY.                              (zzz784)
+    const grew = items.find((i) => i.cls === 'HARD' && i.numericBefore != null && i.numeric != null && i.numeric > i.numericBefore);
+    const last = items.filter((i) => i.cls === 'HARD').pop();
+    mechanism = grew ? `facility floor space ${grew.before} → ${grew.after}` : last ? `facility floor space ${last.after}` : 'floor-space evidence on file';
+    stage = grew ? 'Facility expanded (floor space)' : 'Floor space disclosed';
+    state = grew ? 'VALIDATED' : 'IDENTIFIED';
+    runway = { ok: false, text: 'Floor space is not production capacity — its use is not measured by a utilisation figure, so no runway is evidenced from it.' };
+    if (grew) baRow('Floor space', grew.before!, grew.after!, '↑', grew);
+    grew ? happened.push(`Floor space expanded: ${grew.before} → ${grew.after}`) : notYet.push('Floor-space expansion quantified');
+    notYet.push('Revenue or output attributed to the expanded facility');
+    nextEvidence = 'Revenue or output attributed to the expanded facility';
+    confirmWith = 'revenue or output attributed to the expanded facility';
+    invalidateIf = 'the expanded facility stays under-used or no attributable revenue follows';
+  } else if (kind === 'CAPACITY_RAMP') {
     const util = series(items, 'utilisation');
     // "between 60% and 85%" — the upper bound, so runway is never overstated.
     const pctMax = (t: string | null | undefined) => { const all = Array.from(String(t || '').matchAll(/(\d+(?:\.\d+)?)\s*%/g)).map((m) => Number(m[1])); return all.length ? Math.max(...all) : null; };
     const utilNow = util.length ? pctMax(util[util.length - 1].after) : null;
     const utilThen = util.length >= 2 ? pctOf(util[0].after) : null;
+    const utilItem = util.length ? util[util.length - 1] : null;
+    const factor = !!utilItem && FACTOR_UTIL.test(`${utilItem.text} ${utilItem.sources.map((x) => x.quote || '').join(' ')}`);
     const add = items.find((i) => (i.metric === 'capacity' || i.metric === 'capacity_addition') && i.cls === 'HARD' && i.before && i.numeric != null && i.numericBefore != null && i.numeric > i.numericBefore);
     const addPct = add ? Math.round(((add.numeric! - add.numericBefore!) / add.numericBefore!) * 100) : null;
     const addOnly = items.find((i) => i.metric === 'capacity_addition' && i.cls === 'HARD');
     const capNow = series(items, 'capacity').pop();
     const addVsBase = !add && addOnly && capNow && addOnly.numeric != null && capNow.numeric && unitKey(addOnly.after) && unitKey(addOnly.after) === unitKey(capNow.after)
       ? Math.round((addOnly.numeric / capNow.numeric) * 100) : null;
-    const lifecycleText = items.filter((i) => /capex_status|commissioning|new_plant|capex_earning/.test(i.metric)).map((i) => i.text).join(' ; ');
-    const commissioned = /commission|commercial production|operational|started production|production (started|commenced)/i.test(lifecycleText) || (!!add && (utilNow != null || items.some((i) => i.metric === 'volume' && isMech(i))));
-    const producing = /commercial production|production (started|commenced)|operational|running at/i.test(lifecycleText);
-    const earning = items.some((i) => i.metric === 'capex_earning' && i.cls === 'HARD');
+    // Lifecycle words come only from NON-forward rows: "Commissioning: December
+    // 2026 (guidance)" is a plan, not a commissioned plant (GPPL). (zzz784)
+    const lifeRows = items.filter((i) => i.cls !== 'FORWARD' && /capex_status|commissioning|new_plant|capex_earning|capex/.test(i.metric));
+    const lifeTxt = lifeRows.map((i) => i.text).join(' ; ');
+    const wordsTrusted = ctx.capexOperating !== false;   // the card says nothing is built → words cannot lift the stage
     const vol = series(items, 'volume');
     const volUp = items.some((i) => i.metric === 'volume' && isMech(i));
+    const volHard = items.some((i) => i.metric === 'volume' && i.cls === 'HARD');
+    const ceHard = items.filter((i) => i.metric === 'capex_earning' && i.cls === 'HARD');
+    const earning = ceHard.some((i) => /revenue|contribut|sales|turnover|generat/i.test(i.text) && !/not yet|yet to|will|expected/i.test(i.text));
+    const marginIn = ceHard.some((i) => /ebitda|margin|profit/i.test(i.text) && !/not yet|yet to|will|expected|pending/i.test(i.text));
+    // A capacity row whose own sentence says the plant is in use ("commissioned
+    // & put to use in Q1 FY27", "~5100 GPUs live") evidences running. (zzz784)
+    const capQuotes = items.filter((i) => (i.metric === 'capacity' || i.metric === 'capacity_addition') && i.cls === 'HARD')
+      .map((i) => i.sources.map((x) => x.quote || '').join(' ')).join(' ; ');
+    const quoteRunning = /put to use|into operation|\blive\b|\boperational\b|commenced (?:commercial )?(?:production|operations)|started production/i.test(capQuotes)
+      && !/to be (?:put|commissioned)|will be|expected/i.test(capQuotes.slice(0, 400));
+    const textRunning = wordsTrusted && quoteRunning || wordsTrusted && /commercial production|commenced (commercial )?(production|operations)|started (commercial )?production|production (started|commenced)|\boperational\b|now running|put to use|went live|generat\w* (revenue|power)/i.test(lifeTxt);
+    const textCommissioned = wordsTrusted && /\bcommissioned\b|\bcommissioning of\b.*\b(done|complete)|capacity (?:expanded|added)/i.test(lifeTxt) && !/under construction|to be commissioned|will be|expected/i.test(lifeTxt);
+    const underConstruction = /under[_ ]construction|construction|installation|civil work|erection|capital work|\bcwip\b|\bwip\b|\bspent\b|incurred|deployed/i.test(lifeTxt);
+
+    // ── THE HIGHEST STAGE THE FILED EVIDENCE REACHES.
+    const ev: Partial<Record<CapacityStage, string>> = {};
+    const ann = items.find((i) => /^(capex|new_plant|capex_status)$/.test(i.metric) || ((i.metric === 'capacity' || i.metric === 'capacity_addition') && i.cls === 'FORWARD'));
+    if (ann) ev.ANNOUNCED = clip(ann.text, 90);
+    if (underConstruction) ev.UNDER_CONSTRUCTION = clip(lifeRows.find((i) => /construction|install|wip|spent|incurred|deployed/i.test(i.text))?.text || lifeTxt, 90);
+    if (textCommissioned || add || addOnly) ev.COMMISSIONED = add ? `capacity ${add.before} → ${add.after}` : addOnly ? `capacity added ${addOnly.after}` : 'commissioned (stated in the documents)';
+    // Company-wide volume is a rung of THIS ladder only when a capacity is on
+    // file for it to come from (GPPL: liquids volume grew while the new berth
+    // is still under construction). (zzz784)
+    const capInPlace = !!(add || addOnly || capNow || textCommissioned || textRunning || utilNow != null);
+    if (textRunning || utilNow != null || (volHard && capInPlace)) ev.RUNNING = utilNow != null ? `utilisation ${utilNow}%${factor ? ' (load factor)' : ''}` : volHard ? `output volume ${vol[vol.length - 1]?.after ?? 'disclosed'}` : quoteRunning && !/commercial production|commenced (commercial )?(production|operations)/i.test(lifeTxt) ? 'in use (stated in the documents)' : 'commercial production (stated in the documents)';
+    if (utilNow != null && utilThen != null && utilNow > utilThen + 1) ev.UTILISATION_RAMP = `utilisation ${utilThen}% → ${utilNow}%`;
+    if (volUp && capInPlace) ev.VOLUME_RAMP = 'volume rising';
+    if (earning) ev.REVENUE_CONTRIBUTION = 'revenue contribution from the capacity disclosed';
+    if (marginIn) ev.MARGIN_CONTRIBUTION = 'margin / EBITDA contribution disclosed';
+    if (utilNow != null && utilNow >= 90 && !factor && !add && (addVsBase == null || addVsBase < 15)) ev.STEADY_STATE = `utilisation ${utilNow}% — existing capacity nearly full`;
+    // The card's normalized capex build state is the same evidence here: a
+    // project it calls under construction or built is on this ladder too, so
+    // Special Focus and the card never disagree. (zzz784)
+    const cb = ctx.capexBuild;
+    if (cb) {
+      const uc = cb.projects.filter((x) => x.build === 'under construction');
+      const op = cb.projects.filter((x) => /commissioned|commercial production|operating/.test(x.build));
+      if (uc.length && !ev.UNDER_CONSTRUCTION) ev.UNDER_CONSTRUCTION = `capex: ${uc.map((x) => x.name).join('; ')} — under construction`;
+      if (op.length && !ev.COMMISSIONED) ev.COMMISSIONED = `capex: ${op.map((x) => `${x.name} — ${x.build}`).join('; ')}`;
+      if (op.some((x) => x.build !== 'commissioned') && !ev.RUNNING) ev.RUNNING = `capex: ${op.filter((x) => x.build !== 'commissioned').map((x) => `${x.name} — ${x.build}`).join('; ')}`;
+    }
+    const reached = CAPACITY_STAGES.filter((st) => ev[st]);
+    const highest: CapacityStage | null = reached.length ? reached[reached.length - 1] : null;
+    const hr = stageRank(highest);
+    if (cb && hr >= stageRank('COMMISSIONED')) {
+      const pending = cb.projects.filter((x) => x.build === 'under construction' || x.build === 'announced');
+      if (pending.length) capexNote = `Also on the card — separate capex, not this capacity: ${pending.map((x) => `${x.name} (${x.build})`).join('; ')}; its next rung is ${pending.some((x) => x.build === 'under construction') ? 'commissioning' : 'construction'}.`;
+    }
+    stage = highest ? CAPACITY_STAGE_LABEL[highest] : 'No stage evidenced';
+
+    const utilWord = utilNow != null ? `utilisation ${utilThen != null ? `${utilThen}% → ` : ''}${utilNow}%${factor ? ' (load factor)' : ''}` : null;
     mechanism = [add ? `capacity ${add.before} → ${add.after}` : addOnly ? `capacity added ${addOnly.after}` : capNow ? `installed capacity ${capNow.after}` : null,
-      commissioned ? (producing ? 'production running' : 'commissioned') : null,
-      utilNow != null ? `utilisation ${utilNow}%` : null, volUp ? 'volume rising' : null, earning ? 'revenue contribution disclosed' : null].filter(Boolean).join(' → ') || 'capacity evidence on file';
-    // Lifecycle
+      textRunning ? (quoteRunning && !/commercial production|commenced (commercial )?(production|operations)/i.test(lifeTxt) ? 'in use (stated in the documents)' : 'in commercial production') : hr >= stageRank('COMMISSIONED') && textCommissioned ? 'commissioned' : hr === stageRank('UNDER_CONSTRUCTION') ? 'under construction' : null,
+      utilWord, ev.VOLUME_RAMP ? 'volume rising' : null, earning ? 'revenue contribution disclosed' : null, marginIn ? 'margin contribution disclosed' : null].filter(Boolean).join(' → ') || 'capacity evidence on file';
+    // Lifecycle state, from the same ladder.
     if (utilNow != null && utilThen != null && utilNow < utilThen - 3) state = 'STALLING';
-    else if (utilNow != null && utilNow >= 90 && !add && (addVsBase == null || addVsBase < 15)) state = 'MATURE';
-    else if (earning || (utilNow != null && utilThen != null && utilNow > utilThen + 3)) state = 'SCALING';
-    else if (producing || volUp) state = 'RAMPING';
-    else if (commissioned) state = 'VALIDATED';
-    // Runway: unused capacity is the runway.
+    else if (highest === 'STEADY_STATE') state = 'MATURE';
+    else if (hr >= stageRank('REVENUE_CONTRIBUTION') || ev.UTILISATION_RAMP) state = 'SCALING';
+    else if (ev.VOLUME_RAMP || textRunning) state = 'RAMPING';
+    else if (hr >= stageRank('COMMISSIONED')) state = 'VALIDATED';
+    // Runway: unused capacity is the runway — said in percentage points of
+    // utilisation, never converted into physical capacity. (zzz784)
+    const head = utilNow != null ? pp1(100 - utilNow) : null;
     if (add && (addPct ?? 0) >= 20 && (utilNow == null || utilNow < 85)) runway = { ok: true, text: `Capacity up ${addPct}% (${add.before} → ${add.after})${utilNow != null ? ` with utilisation at ${utilNow}%` : '; utilisation on the new base not yet disclosed'} — the added capacity can still contribute.` };
-    else if (utilNow != null && utilNow < 80 && (volUp || addOnly)) runway = { ok: true, text: `Utilisation ${utilNow}% with volume growing — ${100 - utilNow} points of installed capacity still unused.` };
-    else if (utilNow != null && utilNow < 80) runway = { ok: false, text: `Utilisation ${utilNow}%, but ${volFlat ? 'volume is flat' : 'no volume growth or capacity addition is evidenced'} — unused capacity without demand is not a catalyst.` };
+    else if (utilNow != null && factor) runway = addOnly
+      ? { ok: true, text: `Capacity added ${addOnly.after}; ${utilNow}% is a load / utilisation FACTOR, bounded by resource availability rather than by 100% — the runway is the added capacity generating over full periods, not headroom to 100%.` }
+      : { ok: false, text: `${utilNow}% is a load / utilisation FACTOR, bounded by resource availability rather than by 100% — no headroom is computed from it, and no capacity addition is evidenced.` };
+    else if (utilNow != null && utilNow < 80 && (ev.VOLUME_RAMP || addOnly)) runway = { ok: true, text: `Utilisation ${utilNow}% ${ev.VOLUME_RAMP ? 'with volume growing' : `with capacity added (${addOnly!.after})`} — ${head} percentage points of utilisation headroom.` };
+    else if (utilNow != null && utilNow < 80) runway = { ok: false, text: `Utilisation ${utilNow}% (${head} percentage points of utilisation headroom), but ${volFlat ? 'volume is flat' : 'no volume growth or capacity addition is evidenced'} — unused capacity without demand is not a catalyst.` };
     else if (addVsBase != null && addVsBase >= 15 && (utilNow == null || utilNow < 90)) runway = { ok: true, text: `Addition of ${addOnly!.after} ≈ ${addVsBase}% of installed capacity.` };
     else if (utilNow != null && utilNow >= 90) runway = { ok: false, text: `Utilisation ${utilNow}% — existing capacity is nearly full; the next leg needs new capacity${addOnly ? ` (addition on file: ${addOnly.after}${addVsBase != null ? `, ≈${addVsBase}% of the base` : ''})` : ''}.` };
     rowFor('capacity', 'Capacity'); rowFor('capacity_addition', 'Capacity added'); rowFor('utilisation', 'Utilisation'); rowFor('volume', 'Volume');
-    (add || addOnly) ? happened.push(`Capacity added (${(add || addOnly)!.after})`) : notYet.push('Capacity addition quantified');
-    commissioned ? happened.push(producing ? 'Commercial production running' : 'Commissioned') : notYet.push('Commissioning');
-    utilNow != null ? happened.push(`Utilisation disclosed: ${utilNow}%`) : notYet.push('Utilisation on the new capacity disclosed');
-    earning ? happened.push('Revenue contribution from the new capacity disclosed') : notYet.push('Revenue / EBITDA contribution from the new capacity disclosed');
-    // A forward figure is a milestone only if it is ahead of where the company
-    // already is (a 35% "target" under 65% actual utilisation is mislabelled).
-    const f = forward.find((i) => /commission|phase|capacity|utili/i.test(`${i.metric} ${i.text}`)
-      && !(i.metric === 'utilisation' && utilNow != null && (pctMax(i.after) ?? 101) <= utilNow)
-      && !(i.metric === 'utilisation' && !PCT.test(i.after || ''))
-      // A capacity target must be bigger than today's capacity, in the same unit (HSCL "200 MTPA" under 5,300 MTPA).
-      && !((i.metric === 'capacity' || i.metric === 'capacity_addition') && i.numeric != null && (() => {
+    // Happened = the evidenced rungs; not yet = LATER rungs only. (zzz784)
+    for (const st of reached) happened.push(`${CAPACITY_STAGE_LABEL[st]}: ${ev[st]}`);
+    const LATER: Array<[CapacityStage, string]> = [
+      ['UNDER_CONSTRUCTION', 'Construction / capex spend on the announced capacity'],
+      ['COMMISSIONED', 'Commissioning of the capacity'],
+      ['RUNNING', 'Commercial production / first output from the capacity'],
+      ['UTILISATION_RAMP', 'Utilisation rising on a comparable installed-capacity basis'],
+      ['VOLUME_RAMP', 'Volume growth from the capacity'],
+      ['REVENUE_CONTRIBUTION', 'Revenue contribution from the new capacity disclosed'],
+      ['MARGIN_CONTRIBUTION', 'Margin / EBITDA contribution from the new capacity disclosed'],
+    ];
+    for (const [st, t] of LATER) if (stageRank(st) > hr && !(highest === 'STEADY_STATE')) notYet.push(t);
+    // ── NEXT EVIDENCE, MECHANICALLY FROM THE HIGHEST RUNG.
+    const lastU = utilNow != null ? `${utilNow}%${factor ? ' load factor' : ''}` : null;
+    nextEvidence = highest == null ? 'A filed capacity figure (installed or added)'
+      : highest === 'ANNOUNCED' ? 'Construction start or capex spend on the announced capacity'
+        : highest === 'UNDER_CONSTRUCTION' ? 'Commissioning of the capacity under construction'
+          : highest === 'COMMISSIONED' ? 'Commercial production from the commissioned capacity, then its first utilisation figure'
+            : highest === 'RUNNING' ? (lastU ? `Next disclosed utilisation on a comparable installed-capacity basis (last ${lastU}), plus volume or revenue contribution from the new capacity where disclosed`
+              : 'First disclosed utilisation (or output volume) on the installed base — the capacity is already running')
+              : highest === 'UTILISATION_RAMP' ? `Next utilisation above ${lastU} on the same installed-capacity basis, and volume / revenue contribution from the new capacity`
+                : highest === 'VOLUME_RAMP' ? `Revenue contribution from the new capacity disclosed${lastU ? `, with the next utilisation above ${lastU} on the same installed-capacity basis` : ''}`
+                  : highest === 'REVENUE_CONTRIBUTION' ? `Margin / EBITDA contribution attributed to the new capacity${lastU ? `; next utilisation on a comparable basis (last ${lastU})` : ''}`
+                    : highest === 'MARGIN_CONTRIBUTION' ? 'Utilisation reaching steady state with the margin holding'
+                      : ev.UNDER_CONSTRUCTION ? `Commissioning of the further capacity under construction (${ev.UNDER_CONSTRUCTION.replace(/^capex: /, '')}) — current capacity nearly full`
+                        : 'A further capacity addition (current capacity nearly full)';
+    // A management target is offered only for a LATER rung, same unit and
+    // bigger for a capacity figure. (zzz784)
+    const targetStage = (i: PersistItem): CapacityStage | null => {
+      const t = `${i.metric} ${i.text}`;
+      if (i.metric === 'utilisation') {
+        const v = pctMax(i.after);
+        if (v == null || !PCT.test(i.after || '') || (utilNow != null && v <= utilNow)) return null;
+        return 'UTILISATION_RAMP';
+      }
+      if (i.metric === 'capacity' || i.metric === 'capacity_addition') {
         const base = add || capNow;
-        if (!base || base.numeric == null) return false;
-        return unitKey(i.after) !== unitKey(base.after) || i.numeric <= base.numeric;
-      })()));
-    nextMilestone = f ? `${clip(f.text, 150)} (management ${/target/i.test(f.text) || f.metric === 'utilisation' ? 'target' : 'guidance'}, ${f.date || f.period || 'undated'} — not a result)`
-      : !commissioned && (add || addOnly) ? 'Commissioning of the added capacity'
-        : utilNow == null ? 'First disclosed utilisation figure for the new capacity'
-          : utilNow < 90 ? `Next disclosed utilisation above ${utilNow}%` : 'A further capacity addition (current capacity nearly full)';
+        if (i.numeric != null && base && base.numeric != null && (unitKey(i.after) !== unitKey(base.after) || i.numeric <= base.numeric)) return null;
+        return highest === 'STEADY_STATE' ? 'STEADY_STATE' : 'ANNOUNCED';   // a new tranche is later only once this one is full
+      }
+      if (i.metric === 'capex_earning') return /margin|ebitda|profit/i.test(t) ? 'MARGIN_CONTRIBUTION' : 'REVENUE_CONTRIBUTION';
+      if (/commercial production|commercial operations/i.test(t)) return 'RUNNING';
+      if (/commission|complet|come on stream|operational|phase/i.test(t)) return 'COMMISSIONED';
+      return null;
+    };
+    const tgt = forward.map((i) => ({ i, st: targetStage(i) })).filter((x) => x.st && (stageRank(x.st) > hr || (x.st === 'STEADY_STATE' && highest === 'STEADY_STATE')))
+      .sort((a, b) => stageRank(a.st) - stageRank(b.st))[0];
+    managementTarget = tgt ? targetText(tgt.i) : null;
     confirmWith = 'utilisation rising on the new base, volume growth, and a disclosed revenue / EBITDA contribution';
     invalidateIf = 'utilisation falls, volume declines, or the new capacity stays idle / is delayed';
   } else if (kind === 'ORDER_VISIBILITY') {
@@ -404,8 +674,12 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     (obUp || obSeriesUp) ? happened.push('Order book grew') : notYet.push('Order book growth shown over two readings');
     repeat ? happened.push('Repeat / continuing order intake') : notYet.push('Repeat orders');
     notYet.push('Conversion of the order book into revenue shown quarter by quarter');
-    const f = fwdText(/order/i);
-    nextMilestone = f ? `${clip(f.text, 150)} (management guidance, ${f.date || f.period || 'undated'} — not a result)` : ob.length ? `Next order book above ${ob[ob.length - 1].after}, with revenue growth showing conversion` : 'First disclosed order book figure';
+    // A target is a LATER milestone only when it is above where the order
+    // book already is (MTARTECH "INR5,000 cr by year-end" under ₹5,143 cr). (zzz784)
+    const f0 = fwdText(/order/i);
+    const f = f0 && !(obLatest && obLatest.numeric != null && f0.numeric != null && CUR.test(f0.after || '') && f0.numeric <= obLatest.numeric) ? f0 : null;
+    nextEvidence = ob.length ? `Next order book above ${ob[ob.length - 1].after}, with revenue growth showing conversion` : 'First disclosed order book figure';
+    managementTarget = f ? targetText(f) : null;
     confirmWith = 'order book growing while revenue grows (conversion), book-to-bill ≥ 1, repeat orders';
     invalidateIf = 'order book declines, orders are cancelled or deferred, or execution slips';
   } else if (kind === 'CUSTOMER_RAMP') {
@@ -419,7 +693,7 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     qual ? happened.push('Qualification / approval') : notYet.push('Qualification');
     order ? happened.push('First commercial order / supplies') : notYet.push('First commercial order');
     repeat ? happened.push('Repeat or expanded orders') : notYet.push('Repeat order');
-    nextMilestone = !order ? 'First commercial order from the qualified customer' : !repeat ? 'Repeat order or a second product / facility qualified' : 'Volume from the customer disclosed';
+    nextEvidence = !order ? 'First commercial order from the qualified customer' : !repeat ? 'Repeat order or a second product / facility qualified' : 'Volume from the customer disclosed';
     confirmWith = 'a commercial order after the qualification, then a repeat order';
     invalidateIf = 'no order follows the qualification, or the customer is lost';
   } else if (kind === 'GEOGRAPHY') {
@@ -428,7 +702,7 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     state = g ? 'VALIDATED' : 'IDENTIFIED';
     if (g) runway = { ok: true, text: `${clip(g.text, 100)} — a new market still being penetrated.` };
     (g ? happened : notYet).push('Export / new-geography growth quantified');
-    nextMilestone = 'Export share of revenue disclosed and rising';
+    nextEvidence = 'Export share of revenue disclosed and rising';
     confirmWith = 'export share rising over two periods';
     invalidateIf = 'export growth reverses';
   } else {
@@ -437,10 +711,15 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     state = 'IDENTIFIED';
     runway = { ok: hard.length > 0 && multiPeriod, text: hard.length > 0 && multiPeriod ? 'Mix / pricing improvement quantified in more than one period.' : 'A single period of mix / pricing improvement — persistence not shown.' };
     notYet.push('The same mix / pricing gain shown again next period');
-    nextMilestone = 'Value-added / premium share of revenue disclosed again next period';
+    nextEvidence = 'Value-added / premium share of revenue disclosed again next period';
     confirmWith = 'the mix share rising again, with margins holding when input costs change';
     invalidateIf = 'margin reverts when commodity or inventory effects unwind';
   }
+
+  // ── ONE NEXT-EVIDENCE LINE: evidence first, a later-stage target after it,
+  // labelled as a milestone. (zzz784)
+  nextMilestone = [nextEvidence, managementTarget].filter(Boolean).join(' · ') || null;
+  if (!stage) stage = state.charAt(0) + state.slice(1).toLowerCase();
 
   // ── Confidence — evidence only; output never counts. ─────────────────────
   const temporary = kind === 'MIX_PRICING' || kind === 'CAPACITY_RAMP' ? ctx.temporary : [];
@@ -466,8 +745,10 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
   const evidence = [...hard, ...remarks].sort((a, b) => (a.cls === b.cls ? String(b.date).localeCompare(String(a.date)) : a.cls === 'HARD' ? -1 : 1));
   const id = `${ctx.ticker.toUpperCase()}:${kind}`;
   const pc: PersistentCatalyst = {
-    id, ticker: ctx.ticker.toUpperCase(), kind, label: KIND_LABEL[kind], mechanism, state, confidence, runway,
+    id, ticker: ctx.ticker.toUpperCase(), kind, label: variant === 'NETWORK' ? 'Network expansion (stores)' : variant === 'FLOOR_SPACE' ? 'Facility expansion (floor space)' : KIND_LABEL[kind], mechanism, state, confidence, runway,
     evidence, forward, beforeAfter, happened, notYet, nextMilestone, confirmWith, invalidateIf, duration,
+    stage, nextEvidence, managementTarget, variant, capexNote,
+    sourceQuality: `${hard.length} filed figure${hard.length === 1 ? '' : 's'} · ${remarks.length} management remark${remarks.length === 1 ? '' : 's'}${forward.length ? ` · ${forward.length} target${forward.length === 1 ? '' : 's'} (milestones, not evidence)` : ''}`,
     firstEvidenceDate: dated[0] || null, latestEvidenceDate: latest, freshness: ageDays <= 200 ? 'CURRENT' : 'HISTORICAL',
     periods, hardCount: mech.length, distinctMetrics: metrics.size, temporarySignals: temporary,
     origins: [...new Set([...ctx.origins, ...(items.some((i) => i.origin === 'gainer') ? ['gainers' as const] : [])])],
@@ -529,6 +810,9 @@ export interface DetectInput {
   /** Other catalyst filings in the gainers window (pre-classified server-side,
    *  Finding-shaped) — a second order is a repeat order, not a new catalyst. */
   extraFindings?: any[] | null;
+  /** zzz784: the card's capex chain (use-book's `capex`). When no capital project
+   *  on it is built, lifecycle words cannot lift a capacity past construction. */
+  capex?: { earning?: { state?: string } | null; build?: { anyOperating: boolean; projects: Array<{ name: string; build: string }> } | null } | null;
   origin: 'portfolio' | 'gainers';
   today?: string;
 }
@@ -547,7 +831,8 @@ export function detectPersistentCatalysts(inp: DetectInput): PersistentCatalyst[
     ...(inp.ledger ? temporarySignalsFromLedger(inp.ledger) : []),
     ...((inp.assessment?.mechanismEvidence || []) as Array<{ text: string }>).filter((d) => TEMPORARY.test(d.text)).map((d) => clip(d.text, 100)),
   ];
-  const ctx: Ctx = { ticker: inp.ticker, quarterRevenueCr: inp.quarterRevenueCr ?? null, thesisStatus: inp.assessment?.status ?? null, temporary: [...new Set(temporary)], origins: [inp.origin, ...(inp.finding ? ['gainers' as const] : [])], today };
+  const capexOperating = inp.capex?.build ? inp.capex.build.anyOperating : null;
+  const ctx: Ctx = { ticker: inp.ticker, quarterRevenueCr: inp.quarterRevenueCr ?? null, capexOperating, capexBuild: inp.capex?.build || null, thesisStatus: inp.assessment?.status ?? null, temporary: [...new Set(temporary)], origins: [inp.origin, ...(inp.finding ? ['gainers' as const] : [])], today };
   const kinds: PersistKind[] = ['CAPACITY_RAMP', 'ORDER_VISIBILITY', 'CUSTOMER_RAMP', 'GEOGRAPHY', 'MIX_PRICING'];
   return kinds.map((k) => evaluate(k, items, ctx)).filter((x): x is PersistentCatalyst => !!x)
     .sort((a, b) => rankOf(b) - rankOf(a));
@@ -570,10 +855,12 @@ export interface PersistSummary {
   id: string; kind: PersistKind; label: string; confidence: PersistConfidence; state: PersistState;
   specialFocus: boolean; mechanism: string; runway: string; nextMilestone: string | null;
   why: string[]; hardCount: number; ledgerBacked: boolean;
+  /** zzz784 */ stage?: string; nextEvidence?: string | null; managementTarget?: string | null;
 }
 export function summarizePersistence(pc: PersistentCatalyst, ledgerBacked: boolean): PersistSummary {
   return { id: pc.id, kind: pc.kind, label: pc.label, confidence: pc.confidence, state: pc.state, specialFocus: pc.specialFocus,
-    mechanism: pc.mechanism, runway: pc.runway.text, nextMilestone: pc.nextMilestone, why: pc.why.slice(0, 4), hardCount: pc.hardCount, ledgerBacked };
+    mechanism: pc.mechanism, runway: pc.runway.text, nextMilestone: pc.nextMilestone, why: pc.why.slice(0, 4), hardCount: pc.hardCount, ledgerBacked,
+    stage: pc.stage, nextEvidence: pc.nextEvidence, managementTarget: pc.managementTarget };
 }
 // ── TRACKED POTENTIAL CATALYST — an enabling step, never Special Focus. (zzz782)
 // A binding MoU / JDA / LoI (MAXESTATES "binding MoU for Ghaziabad JDA") books
@@ -611,6 +898,7 @@ export function trackPotentialFromFinding(f: any, today?: string): PersistentCat
     firstEvidenceDate: date, latestEvidenceDate: date, freshness: 'CURRENT', periods: [],
     hardCount: 0, distinctMetrics: 1, temporarySignals: [], origins: ['gainers'],
     specialFocus: false,
+    stage: chain[done - 1] || 'Enabling step', nextEvidence: next, managementTarget: null, sourceQuality: '0 filed figures · enabling step only',
     why: ['Tracked potential, not Special Focus: an enabling step with no booked revenue and no filed company economics.'],
     toQualify: chain.slice(done, done + 3),
     nearMiss: false,

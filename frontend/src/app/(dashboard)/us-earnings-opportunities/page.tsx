@@ -29,6 +29,7 @@ import {
 } from '@/lib/us-earnings-core';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@/lib/us-merge';
+import { usEasternDate, snapshotFresh, encodeSelectedDate, restoreSelectedDate } from '@/lib/us-earnings-dates';
 // The card itself — shared with /us-conviction-beats so the two tabs can never
 // drift apart again. See src/components/us-earnings-card.tsx.
 import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllAiSummaries, useAiSummaryQueue } from '@/components/us-earnings-card';
@@ -56,7 +57,7 @@ interface UsPayload {
   notes: string[];
 }
 
-interface CalendarTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string; }
+interface CalendarTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string; redated_from?: string; }
 interface Expected {
   ticker: string; company: string; time: 'pre-market' | 'after-hours' | 'unknown';
   market_cap_musd: number | null; fiscal_quarter: string | null;
@@ -67,6 +68,8 @@ interface CalendarDay {
   tickers: string[]; entries?: CalendarTicker[]; expected?: Expected[]; eightK: number; periodic: number;
   projected?: Array<{ ticker: string; company: string; last_year_date: string }>;
   reported_elsewhere?: number;
+  excluded_note?: string;
+  sources_failed?: Array<'edgar' | 'nasdaq'>;
 }
 interface CalendarPayload {
   from: string; to: string; total: number; days: CalendarDay[]; generated_at: string;
@@ -80,7 +83,9 @@ interface CalendarPayload {
 // v3 — one entry per SESSION rather than per window, so widening 5d → 10d
 // re-uses the five days already on disk and fetches only the new ones.
 const LS_PREFIX = 'mc:graded-us:v3:';
-const LS_CAL_PREFIX = 'mc:cal-us:v1:';
+// v2 — v1 chunks cached while their last day was still running were then served
+// as "complete" for 30 days, freezing that day without its after-close filers.
+const LS_CAL_PREFIX = 'mc:cal-us:v2:';
 /** How many day-scans may be in flight at once. Three keeps the first rows on
  *  screen quickly without asking the server to sweep the whole window at once. */
 // Days in flight at once. The real ceiling is the server's sec.gov gate (8
@@ -160,10 +165,11 @@ function scrubOldCaches() {
   } catch { /* storage unavailable */ }
 }
 
-/** ET-anchored today. US markets close at 16:00 ET; anchoring at UTC-4 keeps
- *  "today" correct for anyone loading the page from Europe after the close. */
+/** Today as a US Eastern session date, whatever the reader's timezone (a 16:05
+ *  ET release is 01:35 IST the next day and still belongs to today's US
+ *  session). America/New_York, so EST and EDT are both right. */
 function etToday(): string {
-  return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
+  return usEasternDate();
 }
 
 /** One cached SESSION. A completed session is immutable on EDGAR, so it is held
@@ -194,7 +200,10 @@ function cacheable(p: UsPayload): boolean {
 export default function UsEarningsOpportunitiesPage() {
   const today = etToday();
   const [date, setDate] = useState<string>(() => {
-    try { return getItemSync(LS_DATE) || today; } catch { return today; }
+    // A remembered date that was "today" when saved reopens on TODAY — the page
+    // used to reopen on whatever day it was last looked at, hiding every name
+    // that had reported since.
+    try { return restoreSelectedDate(getItemSync(LS_DATE), today); } catch { return today; }
   });
   // zzz703 — A/B/F/G pattern filter; independent of tier.
   const [patternOnly, setPatternOnly] = useState<AbfgPattern | null>(null);
@@ -245,7 +254,7 @@ export default function UsEarningsOpportunitiesPage() {
   // The day cache lives in IndexedDB now (see src/lib/us-day-cache.ts for why).
   // This drops the localStorage generations it replaces, once.
   useEffect(() => { scrubOldCaches(); scrubLegacyDayCaches(); }, []);
-  useEffect(() => { try { debouncedSetItem(LS_DATE, date); } catch {} }, [date]);
+  useEffect(() => { try { debouncedSetItem(LS_DATE, encodeSelectedDate(date, today)); } catch {} }, [date, today]);
   useEffect(() => { try { debouncedSetItem(LS_DAYS, String(days)); } catch {} }, [days]);
 
   const isToday = date >= today;
@@ -553,15 +562,16 @@ export default function UsEarningsOpportunitiesPage() {
       queryKey: ['calendar-us', a, b, forceKey],
       queryFn: async (): Promise<CalendarPayload> => {
         const key = `${LS_CAL_PREFIX}${a}|${b}`;
-        const chunkHasToday = b >= today;
         if (forceKey === 0) {
           try {
             const raw = getItemSync(key);
             if (raw) {
               const o = JSON.parse(raw);
-              const age = Date.now() - Date.parse(o?._cachedAt || '');
-              const maxAge = chunkHasToday ? 10 * 60_000 : 30 * 24 * 3600_000;
-              if (Number.isFinite(age) && age < maxAge && Array.isArray(o?.days)) return o as CalendarPayload;
+              // Final only if the server swept it AFTER the chunk's last ET day
+              // ended; a chunk swept while that day was running is refetched
+              // once the day is over (it lacks the after-close filers).
+              const at = Date.parse(o?.generated_at || o?._cachedAt || '');
+              if (snapshotFresh(b, at, Date.now(), 10 * 60_000, 30 * 24 * 3600_000) && Array.isArray(o?.days)) return o as CalendarPayload;
             }
           } catch { /* storage unavailable */ }
         }
@@ -1380,7 +1390,18 @@ export default function UsEarningsOpportunitiesPage() {
                       )}
                       {!shown.length && !shownExp.length && !shownProj.length && (
                         <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-4)' }}>
-                          {d.weekend ? 'weekend' : isFuture ? 'nothing scheduled yet' : 'no filings'}
+                          {d.weekend ? 'weekend' : (d.sources_failed?.length ? 'not readable' : isFuture ? 'nothing scheduled yet' : 'no filings')}
+                        </span>
+                      )}
+                      {(d.sources_failed?.length ?? 0) > 0 && (
+                        <span title="This source could not be read for this day — the list may be incomplete. Refresh to retry."
+                          style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', border: '1px solid #F59E0B', color: '#F59E0B' }}>
+                          ⚠ {d.sources_failed!.map((x) => (x === 'edgar' ? 'EDGAR' : 'Nasdaq schedule')).join(' + ')} unavailable
+                        </span>
+                      )}
+                      {d.excluded_note && (
+                        <span title="EDGAR earnings filers on this date that are not listed here, by reason" style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap' }}>
+                          {d.excluded_note}
                         </span>
                       )}
                       {shown.length > 0 && (
@@ -1405,7 +1426,7 @@ export default function UsEarningsOpportunitiesPage() {
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: shownExp.length ? 6 : 0 }}>
                         {visible.map((e) => (
                           <a key={e.ticker} href={e.filing_url || undefined} target="_blank" rel="noreferrer"
-                            title={`${e.company} · ${e.form}${e.filing_url ? ' · open SEC filing' : ''}`}
+                            title={`${e.company} · ${e.form}${e.redated_from ? ` · EDGAR-dated ${e.redated_from} (accepted after EDGAR's 17:30 ET cutoff; scheduled after-hours this day)` : ''}${e.filing_url ? ' · open SEC filing' : ''}`}
                             style={{
                               fontSize: 11, fontWeight: 700, padding: '3px 7px', borderRadius: 5, textDecoration: 'none',
                               border: '1px solid var(--mc-bg-4)',

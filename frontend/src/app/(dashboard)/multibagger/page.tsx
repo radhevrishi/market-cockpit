@@ -1093,7 +1093,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       const e = aiGuidanceMap[t]; return !e || (now - (e.fetchedAt || 0)) > STALE_MS;
     });
     if (needsFetch.length === 0) { alert('All Good-filter stocks already have fresh AI Guidance cached (< 100 days). Use Hard Refresh if needed.'); return; }
-    if (hardRefresh && !confirm(`Hard Refresh will re-fetch AI Guidance for ${targets.length} stocks (cost ~$${(targets.length * 0.0014).toFixed(2)} of Anthropic credits). Continue?`)) return;
+    if (hardRefresh && !confirm(`Hard Refresh will re-fetch AI Guidance for ${targets.length} stocks (cost ~$${(targets.length * 0.0014).toFixed(2)} of AI (OpenAI) credits). Continue?`)) return;
     setAiGuidanceLoading(true);
     setAiGuidanceProgress({done: 0, total: needsFetch.length, failed: 0, configMissing: false});
     const CHUNK = 5;

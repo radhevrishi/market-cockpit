@@ -40,6 +40,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { windowSessions } from '@/lib/us-merge';
+import { usEasternDate } from '@/lib/us-earnings-dates';
 import { kvGet } from '@/lib/kv';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
 
@@ -64,9 +65,10 @@ const MAX_SESSIONS = 95;
 
 /** The engine's own trading-day calendar, so this warms exactly the sessions
  *  the page will ask for — never a Saturday the page never requests. */
+// (The previous version parsed a New York wall-clock string back as the
+// SERVER's local time — right only on a UTC host.)
 function etToday(): string {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
-    .toISOString().slice(0, 10);
+  return usEasternDate();
 }
 
 export async function GET(req: NextRequest) {

@@ -34,7 +34,7 @@ import {
 import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
 import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf, periodOrdinal, needsVariableSnapshots, withVariableSnapshots, formatDeltaAbs, type CompanyLedger, type VariableSnapshot } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
-import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn, stripPeriodTokens, movePeriodOut } from './fact-normalize';
+import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn, stripPeriodTokens, movePeriodOut, completionDate, periodEnd, forwardSentence, volumeContext } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
 import {
@@ -550,7 +550,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
             { key, value: String(f.after), unit: f.unit, quote: f.evidence_text, period: null }).comparable) ? {
           value: String(f.after), type: f.value_type === 'GUIDANCE' ? 'GUIDANCE' : 'TARGET',
           quote: f.evidence_text.slice(0, 240), source: f.source,
-          gap: isFact && /%/.test(String(a.after ?? '')) && /%/.test(String(f.after)) ? gapToTarget(a.after, f.after)
+          gap: isFact && /%/.test(String(a.after ?? '')) && /%/.test(String(f.after)) ? utilisationGap(key, a.after, f.after)
             : isFact && inverseByUnit(key, `${a.unit || ''} ${a.after || ''}`) ? daysGap(a.after, f.after) : null,
         } : null,
         asOf: period || a.period || null,
@@ -1630,6 +1630,8 @@ export function extractVariables(
   return applyComparisons(dropRestatedCapacityAddition(cleaned), comparisons)
     .map(scopeCapacityMismatch)
     .map(unitlessPriorGuard)
+    .map((v) => planGuard(v, summary, opts?.period ?? null))
+    .map(provenanceLabel)
     .map((v) => { const r = readingFor(v, ctx); return { ...v, reading: r, display: rowDisplay({ ...v, reading: r }) }; })
     // ── THE PERIOD'S OWN SERIES OUTRANKS AN OLD IN-TEXT MOVE.        (zzz775)
     // VADILALIND's capacity read "270,000 → 380,000 (+40.7%)" — a move the
@@ -1651,6 +1653,93 @@ export function extractVariables(
       const why = `history — installed capacity is unchanged since ${r.previous.period || 'the previous period'} (${r.previous.value}), so this addition predates ${opts?.period || 'the current period'}; not current-period evidence`;
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: why };
     });
+}
+
+// ── A PLANNED CAPACITY IS A TARGET, NOT CAPACITY ADDED.              (zzz784)
+// TATVA printed "capacity added 344 KL" as a confirmed driver: the summary's
+// `added` field with `added_by: 21 months` and the project row "announced".
+// IMFA's "355 MVA … post KNR-1" is the installed base AFTER a plant still
+// under construction. A capacity row whose own period / project says it is
+// not built yet is a TARGET: shown as one, never confirmed, never "added".
+const PLAN_BY = /\bwithin\b|\bnext\b|\d+\s*months?\b|expected|\bwill\b|planned|proposed|\bby (?:FY|H[12]|Q[1-4]|the end|end|20\d\d)/i;
+const POST_PROJECT = /\bpost[- ](?:[A-Z]{2,}[\w-]*|expansion|commissioning|completion)\b|\bwith [A-Z][\w-]+ (?:will|shall) be\b|\bupon (?:full )?commissioning\b|\bonce (?:commissioned|complete)/;
+/** A utilisation TARGET below the current reading is not a gap — it is almost
+ *  always a different plant or basis (SAMBHV "60% level · target around 35%"
+ *  is FY28's average across new capacity). Said, never computed. (zzz784) */
+export function utilisationGap(key: string, actual: string | null | undefined, target: string | null | undefined): string | null {
+  const g = gapToTarget(actual, target);
+  if (key === 'utilisation' && g && /^\+/.test(g) && Number(g.replace(/[^\d.]/g, '')) > 0) return 'not comparable — the target is below the current reading, so it is a different plant or basis';
+  return g;
+}
+export function planGuard(v: StructuralVar, summary: any, period: string | null): StructuralVar {
+  if (v.source !== 'filing' || (v.key !== 'capacity' && v.key !== 'capacity_addition') || (v.statement && v.statement !== 'ACTUAL')) return v;
+  const a = String(v.after ?? '');
+  const cap = summary?.capacity || {};
+  const num = (/\d[\d,]*(?:\.\d+)?/.exec(a) || [])[0] || null;
+  const projects: any[] = Array.isArray(summary?.capex_projects) ? summary.capex_projects : [];
+  // The same figure as a whole number (never "2" inside "52,000"), and one
+  // specific enough to identify a project (two or more significant digits).
+  const whole = num && num.replace(/[^\d]/g, '').length >= 2 ? new RegExp(`(?:^|[^\\d.,])${num.replace(/[.,]/g, (c) => `\\${c}`)}(?![\\d]|[.,]\\d)`) : null;
+  const proj = whole ? projects.find((p) => whole.test(String(p?.capacity_added || ''))) : null;
+  const projPlan = !!proj && /announced|under[_ ]construction|planned|proposed/i.test(String(proj.status || ''));
+  // `added_by` dates the summary's own `added` figure only — never another
+  // capacity row that happens to share the key (MANORAMA 25,000 → 32,500). (zzz784)
+  const addedNum = (/\d[\d,]*(?:\.\d+)?/.exec(String(cap.added ?? '')) || [])[0] || null;
+  const by = v.key === 'capacity_addition' && said(cap.added_by) && !!num && num === addedNum ? String(cap.added_by) : '';
+  const asOf = periodEnd(period);
+  const byDate = by ? completionDate(by) : null;
+  const byFuture = !!by && (PLAN_BY.test(by) || (!!byDate && !!asOf && byDate.getTime() > asOf.getTime()));
+  // "The liquids have grown … to 1.6 million MT" (GPPL) is throughput, not
+  // capacity: shown, not judged as capacity. (zzz784)
+  if (v.key === 'capacity' && volumeContext(a, `${v.quote || ''} ${v.evidence || ''}`)) {
+    return { ...v, verdict: 'stated', delta: null, unjudged: 'a volume / throughput figure (the sentence says volume grown or handled), not installed capacity' };
+  }
+  const post = v.key === 'capacity' && POST_PROJECT.test(a);
+  const fwd = forwardSentence(a, `${v.quote || ''} ${v.evidence || ''}`);
+  if (!projPlan && !byFuture && !post && !fwd) return v;
+  const why = fwd && !post && !projPlan && !byFuture ? 'the sentence that states it speaks about the future'
+    : post ? 'the installed base after a project not yet built' : projPlan ? `the project (${proj.name}) is ${String(proj.status).replace(/_/g, ' ')}` : `stated as due ${by}`;
+  return { ...v, statement: 'TARGET', verdict: 'stated', delta: null,
+    evidence: `${v.evidence} Target / plan, not capacity in place — ${why}.` };
+}
+
+// ── A ROW'S LABEL SAYS WHAT IT IS.                                   (zzz784)
+// GPPL printed "Installed capacity guidance: 260 to 270,000" (RoRo car VOLUME
+// guidance) and "Capacity added 5.2 million MT" (a berth still being built);
+// GALAXYSURF's "guidance: ₹24,000–25,000 per metric ton" is an EBITDA-per-MT
+// target. A target never wears the label of an actual, and a guidance row
+// keeps the metric the source named.
+export function guidanceMetric(after: string | null | undefined, text: string | null | undefined): string | null {
+  const a = String(after ?? '');
+  const t = String(text ?? '');
+  const n = (/\d[\d,]*(?:\.\d+)?/.exec(a) || [])[0];
+  const at = n ? t.indexOf(n) : -1;
+  const win = at >= 0 ? t.slice(Math.max(0, at - 140), at + 40) : t.slice(0, 260);
+  if (/per\s*(?:metric\s*)?(?:ton|tonne|mt)\b|\/\s*mt\b|per kg/i.test(a)) {
+    const m = /(EBITDA|gross margin|contribution|realisation|realization|margin|price)\s+(?:per|\/)\s*(?:metric\s*)?(?:ton|tonne|mt|kg)/i.exec(win) || /(EBITDA|gross margin|contribution|realisation|realization|margin)\b/i.exec(win);
+    return m ? `${m[1].replace(/^ebitda$/i, 'EBITDA')} per MT` : 'per-tonne figure';
+  }
+  const m = /\b(volume|EBITDA margin|EBITDA|revenue|sales|top[- ]?line|PAT|profit|margin|order (?:book|intake|inflow)|capex|utili[sz]ation|exports?)\b(?![^.;]*\b(?:volume|revenue|EBITDA)\b[^.;]*\d)/i.exec(win.slice(Math.max(0, win.length - 180)));
+  return m ? m[1].replace(/^ebitda/i, 'EBITDA').replace(/^pat$/i, 'PAT').replace(/^(\w)/, (c) => c.toUpperCase()) : null;
+}
+const NETWORK_WORDS = /\b(boutiques?|stores?|showrooms?|outlets?|clinics?|hospitals?|branch(?:es)?|restaurants?|kiosks?|dealerships?|pharmacies|franchisees?)\b/i;
+export function provenanceLabel(v: StructuralVar): StructuralVar {
+  const txt = `${v.quote || ''} ${v.evidence || ''}`;
+  // A boutique / store count is a network, not production capacity (ETHOSLTD). (zzz784)
+  if ((v.key === 'capacity' || v.key === 'capacity_addition') && NETWORK_WORDS.test(String(v.after ?? ''))) {
+    return { ...v, label: v.key === 'capacity' ? 'Store network (count — not production capacity)' : 'Stores opened (network — not production capacity)' };
+  }
+  if ((v.key === 'capacity' || v.key === 'capacity_addition') && (v.statement === 'GUIDANCE' || v.statement === 'TARGET')) {
+    const label = volumeContext(v.after, txt) || /\bvolume\b/i.test(String(v.quote || '').slice(0, 200)) && !/capacit/i.test(String(v.quote || '').slice(0, 200))
+      ? 'Volume target (guidance only — not capacity)'
+      : v.key === 'capacity' ? 'Capacity target (guidance only — not installed capacity)' : 'Capacity addition target (guidance only — not capacity added)';
+    return { ...v, label };
+  }
+  if ((v.key === 'guidance' || v.key === 'management_target') && v.after && !/^(maintained|reiterated|unchanged|raised|lowered|cut)$/i.test(String(v.after).trim())) {
+    const m = guidanceMetric(v.after, txt);
+    if (m) return { ...v, label: `${VAR_LABEL[v.key]} — ${m}` };
+  }
+  return v;
 }
 
 // ── A MISMATCH NOTE BELONGS TO THE PAIR THAT WAS COMPARED.          (zzz775)

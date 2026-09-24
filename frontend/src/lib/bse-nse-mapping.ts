@@ -35,7 +35,10 @@ const ENTRIES: TickerInfo[] = [
   { nseSymbol: 'POKARNA',    bseCode: '532486', shortName: 'Pokarna' },
   { nseSymbol: 'HIKAL',      bseCode: '524735', shortName: 'Hikal' },
   { nseSymbol: 'DOMSIND',    bseCode: '544045', shortName: 'DOMS Industries' },
-  { nseSymbol: 'STYLAMIND',  bseCode: '526612', shortName: 'Stylam Industries' },
+  // zzz800 — STYLAMIND was listed here with bseCode '526612', which is Blue
+  // Dart's code (first row). The index below is last-write-wins, so every BSE
+  // filing from Blue Dart resolved to STYLAMIND. Removed rather than guessed:
+  // an unmapped code falls back to itself, a wrong one mislabels a company.
   { nseSymbol: 'PATELENG',   bseCode: '531120', shortName: 'Patel Engineering' },
   { nseSymbol: 'INNOVANA',   bseCode: '540850', shortName: 'Innovana Thinklabs' },
   { nseSymbol: 'ELECON',     bseCode: '505700', shortName: 'Elecon Engineering' },
@@ -64,8 +67,10 @@ const ENTRIES: TickerInfo[] = [
 const BY_NSE = new Map<string, TickerInfo>();
 const BY_BSE = new Map<string, TickerInfo>();
 for (const e of ENTRIES) {
-  BY_NSE.set(e.nseSymbol.toUpperCase(), e);
-  BY_BSE.set(e.bseCode, e);
+  // zzz800 — first entry wins on a duplicate key, so an accidental duplicate
+  // can never silently re-point an existing code at another company.
+  if (!BY_NSE.has(e.nseSymbol.toUpperCase())) BY_NSE.set(e.nseSymbol.toUpperCase(), e);
+  if (!BY_BSE.has(e.bseCode)) BY_BSE.set(e.bseCode, e);
 }
 
 /**

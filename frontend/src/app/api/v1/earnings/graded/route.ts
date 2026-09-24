@@ -26,7 +26,7 @@ import { NextResponse } from 'next/server';
 import { gradedKey, gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 // zzz669 — the grader and its two date helpers now live in ONE place, shared
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
-import { gradeIndiaRow as gradeRow, deriveQuarterLabel } from '@/lib/india-grade';
+import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
@@ -142,6 +142,15 @@ function _isoFromQuarterLabel(label: any): string | null {
   const mi: Record<string, number> = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
   const d = new Date(Date.UTC(parseInt(m[2],10), (mi[m[1].toUpperCase().slice(0,3)] ?? 0) + 1, 0));
   return d.toISOString().slice(0, 10);
+}
+
+/** zzz800 — "Q4 FY26" → "2026-03-31" (the quarter's last day), or null. */
+function _quarterEndFromFyLabel(label: any): string | null {
+  const m = String(label || '').match(/Q([1-4])\s*FY\s?(\d{2})/i);
+  if (!m) return null;
+  const qn = +m[1], fy = 2000 + +m[2];
+  const d = qn === 1 ? Date.UTC(fy - 1, 5, 30) : qn === 2 ? Date.UTC(fy - 1, 8, 30) : qn === 3 ? Date.UTC(fy - 1, 11, 31) : Date.UTC(fy, 2, 31);
+  return new Date(d).toISOString().slice(0, 10);
 }
 
 // ─── gradeRow (server-side, mirrors page.tsx PATCH 0158) ───────────────────
@@ -889,6 +898,55 @@ export async function GET(req: Request) {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // A REBUILD MUST NOT FORGET A COMPANY A PREVIOUS GRADE FOUND.     (zzz800)
+  //
+  // The live-NSE/BSE augmentation above only runs for the last 14 days. A
+  // company that reached this date ONLY through it — typically a recent
+  // listing (INDOMIM-class) that the month hub never picked up because it has
+  // no board-meeting row and no NSE financial-results-API row — was graded
+  // once, cached, and then silently vanished the next time the date was
+  // rebuilt: a force refresh, an auto-heal, or an engine-version bump (which
+  // re-grades EVERY date). Nothing reported the loss.
+  //
+  // So the tickers of the newest existing grade for this date (current or
+  // legacy namespace) are unioned back in. They still pass through
+  // dropGhosts (as `prior-grade`) and every freshness guard below, so a name
+  // later rules would reject is still rejected — it is simply no longer
+  // dropped for the accident of which feed happened to answer on the day.
+  if (isRedisAvailable()) {
+    try {
+      const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
+      let addedFromPrior = 0;
+      for (const k of gradedKeyCandidates(date)) {
+        const prior: any = await kvGet<any>(k);
+        const rows: any[] = prior?.by_tier
+          ? (Object.values(prior.by_tier) as any[][]).flatMap((v) => (Array.isArray(v) ? v : []))
+          : [];
+        if (rows.length === 0) continue;
+        for (const c of rows) {
+          const sym = String(c?.ticker || '').toUpperCase();
+          if (!sym || existingTickers.has(sym)) continue;
+          dayList.push({
+            ticker: sym,
+            company: c.company || sym,
+            resultDate: date,
+            quarter: c.quarter || deriveQuarterLabel(date),
+            sector: c.sector || null,
+            marketCap: null,
+            quality: 'Confirmed',
+            source_url: c.filing_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
+            __source: 'prior-grade',
+          });
+          existingTickers.add(sym);
+          addedFromPrior++;
+        }
+        break;  // the newest namespace that has rows is the one to trust
+      }
+      if (addedFromPrior > 0) console.log(`[graded] ${date}: re-seeded ${addedFromPrior} tickers from the previous grade (not in hub/live this pass)`);
+    } catch { /* best effort — never block a rebuild */ }
+  }
+
   if (dayList.length === 0) {
     const empty: any = {
       filing_date: date,
@@ -982,7 +1040,7 @@ export async function GET(req: Request) {
   // belt-and-suspenders so a future regex regression can't silently
   // resurrect the bug.
   const dropGhosts = (m: any, e: any): boolean => {
-    if (m.__source !== 'nse-live' && m.__source !== 'nse-live-retry' && m.__source !== 'nse-announcements') return false;
+    if (m.__source !== 'nse-live' && m.__source !== 'nse-live-retry' && m.__source !== 'nse-announcements' && m.__source !== 'prior-grade') return false;
 
     // PATCH zzz102 — STRICT hub-corroboration guard.
     // The user verified that bare "Outcome of Board Meeting" filings from
@@ -1045,10 +1103,20 @@ export async function GET(req: Request) {
     return true;
   };
   const graded: ParsedEarning[] = [];
+  // zzz800 — every candidate that does not become a card is recorded with the
+  // reason, and travels in the payload. "Why is X missing?" is answered by the
+  // response itself instead of by re-deriving five guards by hand.
+  const dropped: Array<{ ticker: string; reason: string; source?: string }> = [];
   for (const m of dayList) {
     const e = enrich[m.ticker] || {};
-    if (dropGhosts(m, e)) {
+    // zzz800 — a ticker re-seeded from a previous grade whose enrichment came
+    // back EMPTY this pass (Screener rate-limit) has no evidence either way;
+    // it was confirmed once, so keep it rather than let a transient miss
+    // delete it.
+    const _priorNoEvidence = m.__source === 'prior-grade' && !e.announce_date_iso && !e.latest_quarter_end_iso;
+    if (!_priorNoEvidence && dropGhosts(m, e)) {
       console.log(`[graded] ${date}: dropping ghost-filing ${m.ticker} (no announce_date and quarter_end too far)`);
+      dropped.push({ ticker: m.ticker, reason: 'ghost-filing guard: not on hub, no announce date, Screener quarter not fresh', source: m.__source });
       continue;
     }
     // PATCH zzz102 — Freshness guard. If screener's latest_quarter_end_iso
@@ -1060,8 +1128,16 @@ export async function GET(req: Request) {
       const q = new Date(e.latest_quarter_end_iso).getTime();
       const f = new Date(m.resultDate).getTime();
       const daysSince = (f - q) / 86_400_000;
-      if (daysSince > 100) {
+      // zzz800 — unless the filing is FOR that very quarter. A new listing
+      // files the quarter preceding its listing up to 21 days after listing
+      // (and late filers get extensions), so "Mar-quarter results filed in
+      // July" is a real filing whose Screener quarter is legitimately >100
+      // days old. The hub now admits those (previous quarter, <=120 days);
+      // this guard must not then throw them away.
+      const _filedForThatQuarter = _quarterEndFromFyLabel(m.quarter) === String(e.latest_quarter_end_iso).slice(0, 10);
+      if (daysSince > 100 && !(_filedForThatQuarter && daysSince <= 125)) {
         console.log(`[graded] ${date}: dropping ${m.ticker} — screener quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d stale (Q4 not filed yet)`);
+        dropped.push({ ticker: m.ticker, reason: `Screener's latest quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d before the filing (new quarter not on Screener yet)`, source: m.__source });
         continue;
       }
     }
@@ -1128,8 +1204,9 @@ export async function GET(req: Request) {
             announce_date_iso: e.announce_date_iso,
       financials_source: e.financials_source,
     };
-    const g = gradeRow(row);
+    const { card: g, dropReason } = gradeIndiaRowExplained(row);
     if (g) graded.push(g);
+    else dropped.push({ ticker: m.ticker, reason: dropReason || 'unknown', source: m.__source });
   }
 
   const by_tier: Record<EarningsTier, ParsedEarning[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
@@ -1166,6 +1243,8 @@ export async function GET(req: Request) {
     _refresh: `${populated}/${dayList.length} updated`,
     _attempted_tickers: dayList.map((m: any) => m.ticker),
     _failed_tickers: failedTickers,
+    // zzz800 — candidates that did not become cards, with the reason.
+    _dropped: dropped,
     // PATCH 0909 — propagate hub failure flag if applicable (live-NSE saved us)
     ...(hubFailReason ? { _hub_fail: hubFailReason } : {}),
   };

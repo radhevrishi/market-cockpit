@@ -28,6 +28,7 @@ import {
   CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, caveatPenaltyFor, countingCaveats, marginQualityDelta, decideTier,
   marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow,
   fundamentalComposite, setupGrade,
+  profitTrajectory, reactionFloor, MARKET_REACTION_CAVEATS,
   type EarningsTier,
 } from '@/lib/earnings-grade-shared';
 import { peadScore } from '@/lib/pead-score';
@@ -59,24 +60,90 @@ function parseTrendlynePeriodEnd(s: string): string | null {
   return new Date(Date.UTC(+m[3], mm, +m[1])).toISOString().slice(0, 10);
 }
 
+/**
+ * zzz800 — NO SILENT DROPS. Same grader, but when it declines to produce a
+ * card it says WHY. The graded route records these reasons in its payload
+ * (`_dropped`), so a company that filed and does not appear — a recent listing
+ * like INDOMIM — can be diagnosed from the response instead of by bisecting
+ * five `return null` gates by hand.
+ */
+export function gradeIndiaRowExplained(row: any): { card: IndiaGradedRow | null; dropReason: string | null } {
+  let reason: string | null = null;
+  const card = _gradeIndiaRow(row, (r) => { reason = r; return null; });
+  return { card, dropReason: card ? null : (reason ?? 'unknown') };
+}
+
 export function gradeIndiaRow(row: any): IndiaGradedRow | null {
+  return _gradeIndiaRow(row, () => null);
+}
+
+/** IST calendar date (YYYY-MM-DD). Pure — no Intl, no env. */
+function istTodayIso(nowMs: number = Date.now()): string {
+  return new Date(nowMs + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRow | null {
   const salesY = row?.sales_yoy_pct ?? null;
-  const patY = row?.pat_yoy_pct ?? null;
-  const epsY = row?.eps_yoy_pct ?? null;
+  // ═══════════════════════════════════════════════════════════════════════
+  // NO GROWTH RATE OFF A LOSS.                                     (zzz800)
+  //
+  // Enrichment computes PAT/EPS YoY as (curr − prev) / |prev|, so a loss that
+  // narrowed from ₹7.61 Cr to ₹1.74 Cr arrives here as "+77%". That number
+  // then opened megaMag / Path C, earned SEPA / CANSLIM / Bonde EP (all of
+  // which mean EPS GROWTH), and was printed on the card as profit growth —
+  // KABRAEXTRU Q1 FY27. When the year-ago figure is a loss the percentage is
+  // refused here, at the one place every India verdict passes through, and
+  // the move is described by `profitTrajectory` instead ("loss narrowed
+  // ₹7.61 Cr → ₹1.74 Cr"). The US engine has refused it for a long time.
+  // ═══════════════════════════════════════════════════════════════════════
+  const _numA = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const _patCurA = _numA(row?.pat_curr_cr), _patPrevA = _numA(row?.pat_prev_cr);
+  const _epsCurA = _numA(row?.eps_curr), _epsPrevA = _numA(row?.eps_prev);
+  const _patNegBase = (_patPrevA != null && _patPrevA < 0) || (_patPrevA == null && _epsPrevA != null && _epsPrevA < 0);
+  const _epsNegBase = (_epsPrevA != null && _epsPrevA < 0) || (_epsPrevA == null && _patPrevA != null && _patPrevA < 0);
+  const patY = _patNegBase ? null : (row?.pat_yoy_pct ?? null);
+  const epsY = _epsNegBase ? null : (row?.eps_yoy_pct ?? null);
   const opmExp = row?.opm_pct != null && row?.opm_prev_pct != null ? row.opm_pct - row.opm_prev_pct : null;
-  const hasFin = salesY != null || patY != null || epsY != null;
+  // Financials are PRESENT even when the percentage was refused — a turnaround
+  // with a negative base must not fall into the no-financials preview path.
+  const hasFin = salesY != null || patY != null || epsY != null
+    || ((_patNegBase || _epsNegBase) && (_patCurA != null || _epsCurA != null));
   const hubQuality = row?.hub_quality;
 
   // No-financials preview path
   if (!hasFin) {
-    if (!hubQuality || hubQuality === 'Upcoming') return null;
+    // zzz800 — a hub-'Upcoming' row whose Screener table already shows a
+    // quarter ending 0–95 days before the filing date HAS filed (Screener only
+    // renders the quarter after the results exist) — the same corroboration the
+    // main path accepts below (zzz414). Recent listings reach this preview path
+    // precisely because they have no year-ago column, so without this escape a
+    // newly-listed filer scheduled via a board meeting was dropped here.
+    const _hasAbs = row?.sales_curr_cr != null || row?.pat_curr_cr != null || row?.eps_curr != null;
+    let _upcomingCorroborated = false;
+    if (hubQuality === 'Upcoming' && _hasAbs && row?.latest_quarter_end_iso && row?.filing_date) {
+      const qe = new Date(row.latest_quarter_end_iso).getTime();
+      const fd = new Date(row.filing_date).getTime();
+      if (!isNaN(qe) && !isNaN(fd)) {
+        const d = (fd - qe) / 86_400_000;
+        _upcomingCorroborated = d >= 0 && d <= 95;
+      }
+    }
+    if (!hubQuality) return drop('no financials and no hub confirmation');
+    if (hubQuality === 'Upcoming' && !_upcomingCorroborated) return drop('scheduled (Upcoming) — no filing confirmed and no fresh quarter on Screener');
+    // zzz800 — 'Confirmed' is what the live NSE/BSE feed (and a prior grade)
+    // stamps on a REAL filing whose quality is unknown. It fell through to
+    // AVOID / 22 — "fails the bar" — for every absolute-only card, which is
+    // where a newly-listed company lands (no year-ago quarter), so a recent
+    // IPO that filed a perfectly good first quarter was published as AVOID and
+    // could never reach Opportunities or the bench. Unknown quality is MIXED.
+    const _hq = _upcomingCorroborated || hubQuality === 'Confirmed' || hubQuality === 'Preview' ? 'Good' : hubQuality;
     const tier: EarningsTier =
-      hubQuality === 'Excellent' ? 'BLOCKBUSTER' :
-      hubQuality === 'Great'     ? 'STRONG' :
-      hubQuality === 'Good'      ? 'MIXED' :
-      hubQuality === 'OK'        ? 'MIXED' :
+      _hq === 'Excellent' ? 'BLOCKBUSTER' :
+      _hq === 'Great'     ? 'STRONG' :
+      _hq === 'Good'      ? 'MIXED' :
+      _hq === 'OK'        ? 'MIXED' :
                                    'AVOID';
-    const score = hubQuality === 'Excellent' ? 88 : hubQuality === 'Great' ? 76 : hubQuality === 'Good' ? 58 : hubQuality === 'OK' ? 42 : 22;
+    const score = _hq === 'Excellent' ? 88 : _hq === 'Great' ? 76 : _hq === 'Good' ? 58 : _hq === 'OK' ? 42 : 22;
     const move = row?.move_pct ?? null;
     const moveLabel = move != null ? ` (${move >= 0 ? '+' : ''}${move.toFixed(1)}% on the day)` : '';
     // zzz187: preserve absolute-quarter values + PE + market cap from enrichment.
@@ -210,8 +277,11 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   }
 
   // Future date guard
-  const todayIso = new Date().toISOString().slice(0, 10);
-  if (row?.filing_date && row.filing_date > todayIso) return null;
+  // zzz800 — IST, not UTC. Between 00:00 and 05:30 IST the UTC date is still
+  // yesterday, so every filing dated today-IST was dropped as "future" until
+  // 05:30 — exactly when late-night result filings land.
+  const todayIso = istTodayIso();
+  if (row?.filing_date && row.filing_date > todayIso) return drop(`filing date ${row.filing_date} is in the future`);
 
   // PATCH 0182 — STRICT announce-date attribution guard.
   // The previous data flow attributed Screener's LATEST Q4 financials to whatever
@@ -226,7 +296,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     const filingD = new Date(row.filing_date);
     if (!isNaN(announceD.getTime()) && !isNaN(filingD.getTime())) {
       const diffDays = Math.abs((announceD.getTime() - filingD.getTime()) / 86_400_000);
-      if (diffDays > 3) return null;
+      if (diffDays > 3) return drop(`NSE announce date ${String(row.announce_date_iso).slice(0, 10)} is ${Math.round(diffDays)}d from filing date (wrong-date attribution guard)`);
     }
   }
   // zzz72 — require recent announce_date for past dates to prevent stale Screener data pollution.
@@ -264,7 +334,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
           quarterCorroborated = qDays >= 0 && qDays <= 95;
         }
       }
-      if (ageDays > 7 && !hubConfirmed && !quarterCorroborated) return null;
+      if (ageDays > 7 && !hubConfirmed && !quarterCorroborated) return drop('no announce date, older than 7d, not hub-confirmed, no fresh quarter (stale-data guard)');
     }
   }
 
@@ -278,7 +348,7 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
       const diffDays = Math.abs((new Date(promised).getTime() - new Date(row.latest_quarter_end_iso).getTime()) / 86_400_000);
       const src = (row?.financials_source || '').toLowerCase();
       const isScreenerOnly = src === 'screener' || src === '';
-      if (isScreenerOnly && diffDays > 95) return null;
+      if (isScreenerOnly && diffDays > 95) return drop(`period ${row.period_ended} vs Screener quarter ${row.latest_quarter_end_iso} (quarter-mismatch guard)`);
     }
   }
 
@@ -348,7 +418,9 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
       // (b) EPS outran PAT — per-share arithmetic, not the business
       if (epsY != null && patY != null && patY > 0 && epsY >= patY * 1.5 && (epsY - patY) >= 25) return true;
       // (c) operations are still loss-making, so the EPS came from elsewhere
-      if (_opmNow != null && _opmNow <= 0) return true;
+      //     zzz800: only when there IS an EPS growth figure — a refused (loss-
+      //     base) or missing EPS % makes no claim for this label to doubt.
+      if (epsY != null && _opmNow != null && _opmNow <= 0) return true;
       // (d) loss-making margin turned positive — the leverage is the story
       if (_opmNow != null && _opmPrev != null && _opmPrev <= 0 && _opmNow > 0) return false;
       // (e) both margins positive — beyond twice what sales x margin explains
@@ -361,19 +433,28 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     if (_optical()) caveat_tags.push('optical eps');
   }
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) caveat_tags.push('tax distortion');
-  // PATCH 1001 — Still loss-making gate. Going from bigger loss to smaller
-  // loss inflates YoY % by absolute-value math. The story may be valid
-  // (turnaround) but the conviction label is not earned yet.
-  const stillLossPat = row?.pat_curr_cr != null && row.pat_curr_cr <= 0;
-  const stillLossEps = row?.eps_curr != null && row.eps_curr <= 0;
+  // PATCH 1001 — Still loss-making gate, amended by zzz800.
+  //
+  // Being loss-making is a risk. But a loss that is SHRINKING is the opposite
+  // of low quality — it is the improvement the second axis exists to reward —
+  // and stamping it 'low quality' (25 points, and a critical flag) is what
+  // turned KABRAEXTRU's turnaround into a "mixed print". So:
+  //   · still a loss, and the loss narrowed        → 'still loss-making' (10)
+  //   · still a loss, widened / flat / no history  → 'low quality' (25)
+  //   · a profit that swung to a loss              → 'low quality' (25)
+  const stillLossPat = _patCurA != null && _patCurA <= 0;
+  const stillLossEps = _epsCurA != null && _epsCurA <= 0;
   const stillLossMaking = stillLossPat || stillLossEps;
-  if (stillLossMaking) caveat_tags.push('low quality');
+  const patTraj = profitTrajectory(_patCurA, _patPrevA, 'cr');
+  const epsTraj = profitTrajectory(_epsCurA, _epsPrevA, 'eps');
+  // PAT is the primary evidence; EPS stands in only when PAT is unavailable.
+  const _profitTraj = patTraj ?? (_patCurA == null || _patPrevA == null ? epsTraj : null);
+  const lossNarrowing = stillLossMaking && _profitTraj?.kind === 'loss narrowed';
+  if (stillLossMaking) caveat_tags.push(lossNarrowing ? 'still loss-making' : 'low quality');
   // PATCH 1008 — Turnaround base: YoY% is mathematically meaningless when
-  // prior was negative. Block BLOCKBUSTER for these even though they show
-  // huge +X% growth (from abs-value division). Story may be valid but
-  // conviction label is not yet earned.
-  const turnaroundBase = (row?.pat_prev_cr != null && row.pat_prev_cr < 0)
-                      || (row?.eps_prev   != null && row.eps_prev   < 0);
+  // prior was negative (now refused outright above, zzz800).
+  const turnaroundBase = (_patPrevA != null && _patPrevA < 0)
+                      || (_epsPrevA != null && _epsPrevA < 0);
   // ═══════════════════════════════════════════════════════════════════════
   // A NEGATIVE YEAR-AGO BASE IS NOT A QUALITY PROBLEM ONCE THE COMPANY IS
   // MAKING MONEY.  (zzz668 — porting the US rule)
@@ -389,12 +470,14 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   // The percentage is still refused. The company is simply no longer slandered
   // for having recovered, and the recovery is recorded as what it is.
   // ═══════════════════════════════════════════════════════════════════════
-  const _patCurCr = typeof row?.pat_curr_cr === 'number' ? row.pat_curr_cr : null;
+  const _patCurCr = _patCurA;
   const _cfoRatio = typeof row?.ocf_to_pat_ratio === 'number' ? row.ocf_to_pat_ratio : null;
   const turnaroundCompleted = turnaroundBase
     && _patCurCr != null && _patCurCr > 0
     && (_cfoRatio == null || _cfoRatio > 0);
-  if (turnaroundBase && !turnaroundCompleted) caveat_tags.push('low quality');
+  // zzz800 — a still-loss-making row was already judged just above (narrowing
+  // or not); only a PROFITABLE-now recovery that the cash contradicts is left.
+  if (turnaroundBase && !turnaroundCompleted && !stillLossMaking) caveat_tags.push('low quality');
   else if (turnaroundCompleted && !methodology_tags.includes('returned to profit')) {
     methodology_tags.push('returned to profit');
   }
@@ -646,6 +729,18 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     : _guidanceMatches >= 2;
 
   const chartOk = stage !== 4 && (pct52 == null || pct52 >= -25);
+  // zzz800 — the loss-narrowing operating turnaround (see decideTier). Every
+  // input is a reported figure: the prior loss at least halved, revenue up
+  // >= 25%, operating margin up >= 5pp and positive now, and the annual cash
+  // flow — when it exists — not negative. A still-loss company that meets all
+  // of that had a strong quarter; one that does not stays where it was.
+  const _ocfAnnualForTurn = _numA(row?.ocf_annual_cr);
+  const lossTurnaround = lossNarrowing
+    && _profitTraj != null && _profitTraj.lossReductionPct != null && _profitTraj.lossReductionPct >= 50
+    && salesY != null && salesY >= 25
+    && opmExp != null && opmExp >= 5
+    && _opmNow != null && _opmNow > 0
+    && (_ocfAnnualForTurn == null || _ocfAnnualForTurn > 0);
   // zzz395 — tier-decision chain (BLOCKBUSTER gate Paths A–E + graduated margin
   // gate + loss-maker/turnaround/quality-STRONG rules) now lives in the shared
   // module so this server copy and the client gradeRow can never re-drift.
@@ -687,10 +782,19 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
         && salesY != null && salesY >= 25
         && opmExp != null && opmExp >= 5;
     })(),
+    lossTurnaround,
     tier1MethodCount: _t1MethodCount,
     positiveGuidance,
     chartOk,
   }).tier;
+  if (lossTurnaround && tier === 'STRONG' && !methodology_tags.includes('operating turnaround')) {
+    // Pushed AFTER composite, so it describes the verdict without scoring it.
+    methodology_tags.push('operating turnaround');
+  }
+  // What the FUNDAMENTALS said before the tape got a vote (zzz800).
+  const tierOnFundamentals: EarningsTier = tier;
+  let _reactionDemotedFrom: EarningsTier | null = null;
+  let _reactionTierAfter: EarningsTier = tier;
 
   // PATCH 0938 — Market-reaction gate (user-reported: POCL +78%/+124% scored
   // BLOCKBUSTER but stock sold off -6% D1; CARRARO same pattern at -5% D1).
@@ -703,7 +807,8 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   //
   // Downgrade ladder based on Day-1 close % (the cleanest signal of market
   // verdict — gap alone is noisy from pre-market liquidity).
-  //   D1 <= -7%  → cap at MIXED, caveat 'sold off post-results'
+  //   D1 <= -7%  → caveat 'sold off post-results' (tier capped at STRONG —
+  //                zzz800: never below STRONG on the price alone, see below)
   //   D1 <= -3%  → downgrade BLOCKBUSTER → STRONG, caveat 'market rejected print'
   //   Gap >= +3 BUT D1 close <= -2% → caveat 'intraday reversal · distribution'
   //
@@ -728,7 +833,14 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
       tier, row?.d1_pct, row?.gap_pct,
       typicalDailyMovePct((row as any)?.close_30d ?? null),
     );
-    tier = _mr.tier;
+    // zzz800 — the price may cost the TOP tier ("market confirming" has to
+    // mean the market confirmed it), but a Day-1 sell-off on its own can no
+    // longer turn a fundamentally STRONG quarter into a "mixed print". The US
+    // engine has always had this floor; India did not. The reaction is kept
+    // as a separate, labelled note (`market_reaction`), not a verdict.
+    tier = reactionFloor(tierOnFundamentals, _mr.tier);
+    _reactionDemotedFrom = tier !== tierOnFundamentals ? tierOnFundamentals : null;
+    _reactionTierAfter = tier;
     for (const c of _mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
   }
 
@@ -944,14 +1056,34 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
   // explode (e.g. +5000% on a ₹0.5 Cr → ₹50 Cr PAT). Exact precision is meaningless
   // and reads as fabricated, so show '>500% (low base)' above the threshold.
   const fmtP = (lbl: string, v: number | null) => v == null ? '' : (v >= 500 ? `${lbl} >500% YoY (low base)` : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`);
+  const isTurnaroundVerdict = lossTurnaround && tier === 'STRONG';
   const head = tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${q}` :
+               isTurnaroundVerdict ? `${co} ${q} is a strong operating turnaround` :
                tier === 'STRONG' ? `${co} delivers strong ${q}` :
                tier === 'MIXED' ? `${co} ${q} is a mixed print` : `${co} ${q} fails the bar`;
-  const metrics = [fmtP('revenue', salesY), fmtP('PAT', patY), fmtP('EPS', epsY)].filter(Boolean).join(', ');
+  // zzz800 — whenever either quarter is a loss, the profit line is a DIRECTION
+  // with both absolutes, never a percentage.
+  const _patBit = patTraj ? patTraj.label : fmtP('PAT', patY);
+  const _epsBit = patTraj ? '' : (epsTraj ? epsTraj.label.replace(/^loss per share/, 'EPS loss').replace(/^turned profitable/, 'EPS turned positive').replace(/^swung to a loss per share/, 'EPS swung to a loss') : fmtP('EPS', epsY));
+  const _opmBit = ((patTraj || epsTraj) && typeof row?.opm_pct === 'number' && typeof row?.opm_prev_pct === 'number' && opmExp != null && Math.abs(opmExp) >= 3)
+    ? `operating margin ${row.opm_prev_pct}% → ${row.opm_pct}%` : '';
+  const metrics = [fmtP('revenue', salesY), _patBit, _epsBit, _opmBit].filter(Boolean).join(', ');
+  // Price-reaction tags are NOT fundamental caveats: they go in their own
+  // clearly labelled sentence so "with caveats" only ever describes the filing.
+  const _fundCaveats = [...new Set(caveat_tags)].filter((t) => !MARKET_REACTION_CAVEATS.has(t));
+  const _reactionTags = [...new Set(caveat_tags)].filter((t) => MARKET_REACTION_CAVEATS.has(t));
   const flavor =
-    caveat_tags.length > 0 ? ` with caveat${caveat_tags.length > 1 ? 's' : ''}: ${[...new Set(caveat_tags)].slice(0, 3).join(' + ')}.` :
+    _fundCaveats.length > 0 ? ` with caveat${_fundCaveats.length > 1 ? 's' : ''}: ${_fundCaveats.slice(0, 3).join(' + ')}.` :
     methodology_tags.length >= 2 ? ` and ${[...new Set(methodology_tags)].join('/')} all passing.` : '.';
-  const narrative = `${head} (${metrics})${flavor}`;
+  const _d1 = typeof row?.d1_pct === 'number' && Number.isFinite(row.d1_pct) ? row.d1_pct : null;
+  const market_reaction = _reactionTags.length > 0 ? {
+    d1_pct: _d1,
+    gap_pct: typeof row?.gap_pct === 'number' ? row.gap_pct : null,
+    tags: _reactionTags,
+    demoted_from: _reactionDemotedFrom,
+    note: `Market reaction: ${_d1 != null ? `D1 ${_d1 >= 0 ? '+' : ''}${Math.round(_d1 * 10) / 10}% after the print` : 'sold after the print'} — a price move, not a verdict on the filing${_reactionDemotedFrom ? ` (it cost the top tier only: ${_reactionDemotedFrom} → ${_reactionTierAfter})` : ''}.`,
+  } : null;
+  const narrative = `${head} (${metrics})${flavor}${market_reaction ? ' ' + market_reaction.note : ''}`;
 
   // PATCH 1006 — compute ELITE / PEAD / MULTIBAGGER flags from available data
   const _stillLoss = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);
@@ -1095,6 +1227,12 @@ export function gradeIndiaRow(row: any): IndiaGradedRow | null {
     fund_composite: Math.round(_fund_composite), setup_grade: _setup_grade,  // zzz673 — display only
     methodology_tags: [...new Set(methodology_tags)], caveat_tags: [...new Set(caveat_tags)],
     narrative, filing_url: row.source_url, source: row.financials_source || 'NSE+BSE',
+    // zzz800 — the profit move stated honestly when either quarter is a loss
+    // (null when both are profits and the YoY % above is meaningful), and the
+    // Day-1 price reaction kept apart from the fundamental verdict.
+    pat_trajectory: patTraj ? patTraj.label : null,
+    eps_trajectory: epsTraj ? epsTraj.label : null,
+    market_reaction,
     // PATCH 1006
     is_elite: _is_elite,
     pead_score: _pead_score,

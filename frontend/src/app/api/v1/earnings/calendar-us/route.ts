@@ -23,9 +23,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { earningsFilersOn, announcementDateFor, type EdgarFiling } from '@/lib/us-edgar';
+import { earningsFilersOn, earningsFilerExclusions, announcementDateFor, type EdgarFiling } from '@/lib/us-edgar';
 import { pooled } from '@/lib/us-prices';
-import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
+import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq';
+import {
+  usEasternDate, snapshotFresh, normalizeUsTicker, afterHoursAnnouncementDate,
+  countExclusion, mergeExclusions, formatExclusions, type ExclusionCounts,
+} from '@/lib/us-earnings-dates';
 import { snapshotEstimates } from '@/lib/us-estimate-snapshot';
 
 export const runtime = 'nodejs';
@@ -35,7 +39,13 @@ export const dynamic = 'force-dynamic';
 const dayMs = 86_400_000;
 const MAX_DAYS = 95;
 
-interface DayTicker { ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string; }
+interface DayTicker {
+  ticker: string; company: string; form: '8-K' | '10-Q' | '10-K'; filing_url: string;
+  /** EDGAR filing date when it differs from the day listed — an after-close
+   *  release accepted after EDGAR's 17:30 ET cutoff is dated the next
+   *  business day; it is listed on the day Nasdaq scheduled it after-hours. */
+  redated_from?: string;
+}
 interface DayEntry {
   date: string;
   weekend: boolean;
@@ -57,6 +67,13 @@ interface DayEntry {
   projected?: Array<{ ticker: string; company: string; last_year_date: string }>;
   eightK: number;
   periodic: number;
+  /** Filers on this EDGAR date left out, counted by reason (never silent). */
+  excluded?: ExclusionCounts;
+  /** "N excluded: reason, …" — '' when nothing was excluded. */
+  excluded_note?: string;
+  /** A source that could NOT be read for this day. An unreadable day is not
+   *  an empty day, and the UI must say so. */
+  sources_failed?: Array<'edgar' | 'nasdaq'>;
 }
 
 /** Tickers scheduled to report on or after today — the ones whose consensus is
@@ -76,8 +93,9 @@ function lastYearScheduleTickers(
 
 const _cache = new Map<string, { at: number; data: any }>();
 
+/** The US Eastern session date — see lib/us-earnings-dates.ts. */
 function etToday(): string {
-  return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
+  return usEasternDate();
 }
 
 export async function GET(req: Request) {
@@ -98,10 +116,11 @@ export async function GET(req: Request) {
     from = new Date(Date.parse(to + 'T00:00:00Z') - MAX_DAYS * dayMs).toISOString().slice(0, 10);
   }
 
-  const key = `v3|${from}|${to}`;
+  const key = `v4|${from}|${to}`;
   const hit = _cache.get(key);
-  const ttl = to >= today ? 10 * 60_000 : 24 * 3600_000;
-  if (hit && Date.now() - hit.at < ttl && searchParams.get('force') !== '1') {
+  // A range swept while its last day was still running is not reused once
+  // that ET day is over (it lacks the after-close filers).
+  if (hit && snapshotFresh(to, hit.at, Date.now(), 10 * 60_000, 24 * 3600_000) && searchParams.get('force') !== '1') {
     return NextResponse.json(hit.data, { headers: { 'x-mc-cache': 'hit' } });
   }
 
@@ -125,24 +144,43 @@ export async function GET(req: Request) {
 
     const [results, schedules] = await Promise.all([
       pooled(pastDates, 4, async (d) => {
-        try { return { d, list: await earningsFilersOn(d) }; }
-        catch { return { d, list: [] as EdgarFiling[] }; }
+        try { return { d, list: await earningsFilersOn(d), ok: true }; }
+        catch { return { d, list: [] as EdgarFiling[], ok: false }; }
       }),
       pooled(scheduleDates, 4, async (d) => {
-        try { return { d, list: await nasdaqEarningsOn(d) }; }
-        catch { return { d, list: [] as ExpectedReporter[] }; }
+        try { const r = await nasdaqEarningsOnDetailed(d); return { d, list: r.rows, ok: r.ok }; }
+        catch { return { d, list: [] as ExpectedReporter[], ok: false }; }
       }),
     ]);
+    const failed = new Map<string, Set<'edgar' | 'nasdaq'>>();
+    const markFailed = (d: string, src: 'edgar' | 'nasdaq') => {
+      if (!failed.has(d)) failed.set(d, new Set());
+      failed.get(d)!.add(src);
+    };
+    for (const r of results) if (r && !r.ok) markFailed(r.d, 'edgar');
+    for (const s of schedules) if (s && !s.ok) markFailed(s.d, 'nasdaq');
+    const excludedByDate = new Map<string, ExclusionCounts>();
+    for (const r of results) {
+      if (!r?.ok) continue;
+      const ex = earningsFilerExclusions(r.d);
+      if (ex) excludedByDate.set(r.d, mergeExclusions(ex));
+    }
+    const exclude = (d: string, reason: string) => {
+      if (!excludedByDate.has(d)) excludedByDate.set(d, {});
+      countExclusion(excludedByDate.get(d)!, reason);
+    };
+    const scheduleByDate = new Map<string, ExpectedReporter[]>();
+    for (const s of schedules) if (s?.ok) scheduleByDate.set(s.d, s.list);
 
     // Collapse to one event per company: the 8-K wins; a 10-Q/10-K is
     // re-dated to its announcement or dropped if that was before the range.
-    type Ev = { f: EdgarFiling; date: string; form: DayTicker['form'] };
+    type Ev = { f: EdgarFiling; date: string; form: DayTicker['form']; redated_from?: string };
     const byCik = new Map<number, Ev>();
     const periodicOnly: EdgarFiling[] = [];
     for (const r of results) {
       if (!r) continue;
       for (const f of r.list) {
-        if (!f.ticker) continue;
+        if (!f.ticker) { exclude(r.d, 'no ticker resolved'); continue; }
         if (f.form === '8-K') {
           const prev = byCik.get(f.cikNum);
           if (!prev || prev.form !== '8-K' || f.filed > prev.date) byCik.set(f.cikNum, { f, date: f.filed, form: '8-K' });
@@ -157,12 +195,23 @@ export async function GET(req: Request) {
       const { f, a } = x;
       if (byCik.has(f.cikNum) && byCik.get(f.cikNum)!.form === '8-K') continue;   // already have the release
       if (a.via === '8-K') {
-        if (a.date < from) continue;                                              // announced before the range
+        if (a.date < from) { exclude(f.filed, 'follow-up 10-Q/10-K for a result announced before this range'); continue; }
         byCik.set(f.cikNum, { f, date: a.date, form: '8-K' });
       } else {
         byCik.set(f.cikNum, { f, date: f.filed, form: f.form === '10-K' ? '10-K' : '10-Q' });
       }
     }
+
+    // ── AFTER-CLOSE RELEASES DATED THE NEXT BUSINESS DAY ─────────────────
+    // An 8-K accepted after EDGAR's 17:30 ET cutoff carries the NEXT business
+    // day's filing date. When Nasdaq had the company scheduled AFTER-HOURS on
+    // the previous weekday (and not on the filing day), list it on the day it
+    // actually announced — flagged with the EDGAR date, never silently.
+    byCik.forEach((ev) => {
+      if (ev.form !== '8-K' || !ev.f.ticker) return;
+      const prev = afterHoursAnnouncementDate(ev.f.ticker, ev.date, (d) => scheduleByDate.get(d));
+      if (prev && prev >= from) { ev.redated_from = ev.date; ev.date = prev; }
+    });
 
     // ── PROJECTED DATES ──────────────────────────────────────────────────
     //
@@ -207,7 +256,10 @@ export async function GET(req: Request) {
     byCik.forEach((ev) => {
       const entry = byDate.get(ev.date);
       if (!entry) return;
-      entry.entries.push({ ticker: ev.f.ticker!, company: ev.f.company, form: ev.form, filing_url: ev.f.filing_url });
+      entry.entries.push({
+        ticker: ev.f.ticker!, company: ev.f.company, form: ev.form, filing_url: ev.f.filing_url,
+        ...(ev.redated_from ? { redated_from: ev.redated_from } : {}),
+      });
     });
     // Schedule: whole list for future dates; for today only the ones that
     // have not filed yet (so the row empties as the day goes on).
@@ -215,8 +267,9 @@ export async function GET(req: Request) {
       if (!s) continue;
       const entry = byDate.get(s.d);
       if (!entry) continue;
-      const filed = new Set(entry.entries.map((e) => e.ticker));
-      const left = s.list.filter((r) => !filed.has(r.ticker));
+      // Matched on a normalised spelling: SEC writes BRK-B, Nasdaq BRK/B.
+      const filed = new Set(entry.entries.map((e) => normalizeUsTicker(e.ticker)));
+      const left = s.list.filter((r) => !filed.has(normalizeUsTicker(r.ticker)));
       entry.expected = left.sort((a, b) => (b.market_cap_musd ?? 0) - (a.market_cap_musd ?? 0));
       // On a day that has already happened, "expected but no 8-K" means the
       // company reported some other way — nearly always a 6-K from a foreign
@@ -229,8 +282,8 @@ export async function GET(req: Request) {
     {
       const known = new Set<string>();
       byDate.forEach((e) => {
-        for (const x of e.entries) known.add(x.ticker);
-        for (const x of e.expected) known.add(x.ticker);
+        for (const x of e.entries) known.add(normalizeUsTicker(x.ticker));
+        for (const x of e.expected) known.add(normalizeUsTicker(x.ticker));
       });
       const placed = new Set<string>();
       for (const ly of lastYear) {
@@ -242,8 +295,9 @@ export async function GET(req: Request) {
           // An 8-K carries the announcement; a 10-Q-only filer a year ago says
           // nothing about when it will announce this year.
           if (f.form !== '8-K' || !f.ticker) continue;
-          if (known.has(f.ticker) || placed.has(f.ticker)) continue;
-          placed.add(f.ticker);
+          const k = normalizeUsTicker(f.ticker);
+          if (known.has(k) || placed.has(k)) continue;
+          placed.add(k);
           out.push({ ticker: f.ticker, company: f.company, last_year_date: ly.y });
         }
         entry.projected = out.sort((a, b) => a.ticker.localeCompare(b.ticker));
@@ -256,6 +310,10 @@ export async function GET(req: Request) {
       entry.eightK = entry.entries.filter((e) => e.form === '8-K').length;
       entry.periodic = entry.entries.length - entry.eightK;
       entry.count = entry.entries.length + entry.expected.length + (entry.projected?.length ?? 0);
+      const ex = excludedByDate.get(entry.date);
+      if (ex && Object.keys(ex).length) { entry.excluded = ex; entry.excluded_note = formatExclusions(ex); }
+      const bad = failed.get(entry.date);
+      if (bad && bad.size && !entry.weekend) entry.sources_failed = Array.from(bad);
       total += entry.count;
     });
 

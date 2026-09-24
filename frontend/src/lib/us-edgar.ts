@@ -31,6 +31,8 @@
 // NOTE: no `import 'server-only'` — that package is not a dependency of this
 // repo. This module is only ever imported from a route handler.
 
+import { snapshotFresh, countExclusion, type ExclusionCounts } from './us-earnings-dates';
+
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 const EFTS = 'https://efts.sec.gov/LATEST/search-index';
 
@@ -518,19 +520,35 @@ export async function edgarFilingsOn(date: string, forms: string[]): Promise<Edg
 // held effectively forever; today keeps moving as filings land through the
 // session, so it expires in 10 minutes. This is what makes the calendar view
 // affordable: a 60-day sweep costs ~90 requests once, then nothing.
-const _filersByDate = new Map<string, { at: number; data: EdgarFiling[] }>();
+const _filersByDate = new Map<string, { at: number; data: EdgarFiling[]; excluded: ExclusionCounts }>();
 const FILERS_MAX = 400;
+
+/**
+ * Why filers on `date` were left out of `earningsFilersOn(date)`, counted —
+ * so a thin day can say "4 excluded: 3 not listed on a major US exchange, 1
+ * shell / SPAC / trust" instead of silently looking complete. Null when the
+ * day has not been fetched in this process.
+ */
+export function earningsFilerExclusions(date: string): ExclusionCounts | null {
+  return _filersByDate.get(date)?.excluded ?? null;
+}
 
 /**
  * The day's earnings filers: 8-Ks carrying Item 2.02, plus 10-Q/10-K filers.
  * De-duplicated by CIK, preferring the 8-K (it is the earnings release; the
  * 10-Q that often lands the same day is the same quarter's detail).
+ *
+ * `date` is EDGAR's filing date, which is a US Eastern business day. Throws
+ * when EDGAR cannot be read — callers must not mistake that for a quiet day.
  */
 export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
-  const today = new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
-  const ttl = date < today ? 30 * 24 * 3600_000 : 10 * 60_000;
+  // Cached per date. A snapshot taken WHILE the ET day was running is not
+  // reused once the day is over — it misses the after-close filers — and a
+  // snapshot taken after the day ended is final (30 days). See
+  // lib/us-earnings-dates.ts: this cache used to decide "past date → 30 days"
+  // at read time, which froze a 09:00 ET snapshot of a day for a month.
   const hit = _filersByDate.get(date);
-  if (hit && Date.now() - hit.at < ttl) return hit.data;
+  if (hit && snapshotFresh(date, hit.at, Date.now(), 10 * 60_000, 30 * 24 * 3600_000)) return hit.data;
 
   const [eightK, periodic] = await Promise.all([
     edgarFilingsOn(date, ['8-K']),
@@ -546,12 +564,14 @@ export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
 
   // Resolve the tradeable common ticker on a major exchange; drop the rest
   // (OTC shells, unlisted filers, preferred lines) and blank-check / trust
-  // issuers, which file 10-Qs but have no earnings to grade.
+  // issuers, which file 10-Qs but have no earnings to grade. Every drop is
+  // counted by reason.
+  const excluded: ExclusionCounts = {};
   const out: EdgarFiling[] = [];
   for (const f of Array.from(byCik.values())) {
-    if (looksLikeShell(f.company, f.sic)) continue;
+    if (looksLikeShell(f.company, f.sic)) { countExclusion(excluded, 'shell / SPAC / trust'); continue; }
     const p = await primaryTicker(f.cikNum);
-    if (!p) continue;
+    if (!p) { countExclusion(excluded, 'not listed on a major US exchange (OTC / unlisted / no SEC ticker)'); continue; }
     f.ticker = p.ticker;
     out.push(f);
   }
@@ -560,7 +580,7 @@ export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
     const oldest = Array.from(_filersByDate.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 80);
     for (const [k] of oldest) _filersByDate.delete(k);
   }
-  _filersByDate.set(date, { at: Date.now(), data: out });
+  _filersByDate.set(date, { at: Date.now(), data: out, excluded });
   return out;
 }
 

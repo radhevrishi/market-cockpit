@@ -181,10 +181,60 @@ export interface Tally {
   historical?: number;
   /** Every contradicted, pending, unclear and watch variable BY NAME, with
    *  its figure — "3 confirmed · 1 contradicted" named nothing. (zzz773) */
-  named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[] };
+  named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[];
+    statementOnly?: string[]; levelOnly?: string[]; silent?: string[]; confirmed?: string[] };
+  /** zzz784: a row read only as a management statement / target, or a figure
+   *  already counted under another variable — neither confirmed nor pending. */
+  statementOnly?: number;
+  duplicate?: number;
 }
 type TallyRow = { verdict: string; state?: EvidenceState; readings?: 0 | 1 | 2; watch?: boolean; label?: string; key?: VarKey;
   after?: string | null; before?: string | null; delta?: string | null; stateReason?: string | null; historical?: HistoricalItem | null };
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE STATE PER VARIABLE.                                             (zzz784)
+//
+// GANDHAR printed "structural 2/5 confirmed", "4 mechanism drivers evidenced"
+// and a MECHANISM footer "3 core · 0 confirmed · 0 pending · 0 contradicted ·
+// 1 unclear · 1 level only" — the footer summed to 2 of 3 (the silent one-offs
+// row was never printed) and the three numbers counted three populations
+// without saying so. Every count on the card is now a partition of ONE state
+// per variable, computed here, and each population is named where printed.
+// ═══════════════════════════════════════════════════════════════════════════
+export type MechState = 'confirmed' | 'pending' | 'contradicted' | 'historical' | 'watch' | 'unclear' | 'level_only' | 'flat' | 'silent'
+  | 'not_applicable' | 'statement_only' | 'duplicate';
+export const MECH_STATE_WORD: Record<MechState, string> = {
+  confirmed: 'confirmed', pending: 'pending', contradicted: 'contradicted', historical: 'historical unresolved', watch: 'watch',
+  unclear: 'unclear', level_only: 'level only', flat: 'flat', silent: 'silent (not mentioned — passes, not a reading)',
+  not_applicable: 'n/a', statement_only: 'statement / target only', duplicate: 'same figure counted once',
+};
+export function rowState(c: TallyRow): MechState {
+  if (c.state === 'NOT_APPLICABLE') return 'not_applicable';
+  if (c.state === 'UNCLEAR') return 'unclear';
+  if (c.verdict === 'improving') return 'confirmed';
+  if (c.verdict === 'unknown') return 'pending';
+  if (c.verdict === 'deteriorating') return c.watch ? 'watch' : c.historical?.active ? 'historical' : 'contradicted';
+  if (c.verdict === 'stated') return 'level_only';
+  if (c.verdict === 'flat') return c.readings === 1 ? 'level_only' : c.readings === 0 ? 'silent' : 'flat';
+  return 'pending';
+}
+/** The parts of a tally that must add up to its total — the card prints each. */
+export function tallyPartitionSum(t: Tally): number {
+  return t.confirmed + t.pending + t.contradicted + (t.historical ?? 0) + (t.watch ?? 0) + t.unclear + t.stated + t.flat + t.silent + t.not_applicable
+    + (t.statementOnly ?? 0) + (t.duplicate ?? 0);
+}
+/** A tally over rows whose state is already decided (the structural X/Y). */
+function tallyStates(rows: Array<{ state: MechState; label: string; figure?: string | null }>): Tally {
+  const n = (st: MechState) => rows.filter((r) => r.state === st).length;
+  const names = (st: MechState) => rows.filter((r) => r.state === st).map((r) => `${r.label}${r.figure ? ` — ${r.figure}` : ''}`);
+  return {
+    confirmed: n('confirmed'), pending: n('pending'), contradicted: n('contradicted'), stated: n('level_only'), flat: n('flat'),
+    unclear: n('unclear'), not_applicable: n('not_applicable'), silent: n('silent'), watch: n('watch'), historical: n('historical'),
+    statementOnly: n('statement_only'), duplicate: n('duplicate'),
+    core_variables: rows.length - n('not_applicable'), total: rows.length,
+    named: { contradicted: names('contradicted'), pending: names('pending'), unclear: names('unclear'), watch: names('watch'), historical: names('historical'),
+      statementOnly: names('statement_only'), levelOnly: names('level_only'), silent: names('silent'), confirmed: names('confirmed') },
+  };
+}
 function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pending' | 'unclear' | 'watch' | 'historical') => string): Tally {
   const na = vs.filter((c) => c.state === 'NOT_APPLICABLE').length;
   const unclearRows = vs.filter((c) => c.state === 'UNCLEAR');
@@ -392,6 +442,12 @@ export interface ThesisAssessment {
   /** zzz780: the mechanism drivers the documents evidence (quality-filtered),
    *  for every status — the persistence layer reads these. */
   mechanismEvidence?: Array<{ key: string; text: string }>;
+  /** zzz784: one state per variable of the structural X/Y (the status line's ratio). */
+  structuralStates?: Array<{ key: VarKey; label: string; state: MechState; role: 'structural' | 'driver'; figure: string | null }>;
+  /** zzz784: disclosed one-offs in reported earnings — always shown, sized vs PAT. */
+  qualification?: string[];
+  /** zzz784: the documents' mechanism evidence, split by whether it counts in the X/Y. */
+  evidenceItems?: { structural: string[]; supporting: string[] };
   thesis: Thesis;
   /** Every variable the thesis rests on, disclosed or not. */
   checked: CheckedVariable[];
@@ -469,6 +525,9 @@ export interface ThesisAssessment {
     output: Tally;
     mechanism: Tally;
     forward: Tally;
+    /** zzz784: the status line's structural X/Y as a partition — confirmed is
+     *  verdict.coverage.confirmed, core_variables is verdict.coverage.applicable. */
+    structural?: Tally;
     /** Core variables disclosed as a LEVEL only — read, recorded, and not
      *  yet a direction. Named separately from missingCore because "the
      *  company told you and there is nothing to compare it to" and "nobody
@@ -617,6 +676,10 @@ export interface AssessInput {
   business?: BusinessProfile | null;
   /** The last discovery ended RETRIEVAL_FAILED. (zzz770) */
   retrievalFailed?: boolean;
+  /** zzz784: the capex chain's normalized build / economic state. When given,
+   *  the capex line of the status narrative reads from it — one state for the
+   *  narrative, the capex row and Special Focus. */
+  capexState?: { build: { text: string; anyOperating: boolean; mixed: boolean } | null; economic: string | null; earningState: string | null } | null;
 }
 
 /** Whole quarters between two period labels ("Q4 FY24" → "Q1 FY27" = 9), or
@@ -692,6 +755,17 @@ export function isReserveTonnage(v: { key: string; after?: string | null; label?
   if (/\b(reserves?|resources?|deposits?|ore body|mineable|mining lease|lease area)\b/i.test(all)) return true;
   return /\d[\d.,]*\s*(million|mn|billion)\s*(metric\s*)?(tonnes?|tons?|mt)\b/i.test(a)
     && !/per\s*(annum|year|day|month)|\bp\.?\s*a\b|\/\s*(yr|year|annum|day)|mtpa|tpa|tpd|\bmt\s*\/|mt per/i.test(a);
+}
+/** zzz784: a clause describing a one-off item in reported earnings. */
+export const ONE_OFF_CLAUSE = /tariff (?:duty )?refund|duty (?:benefit|drawback|refund)|\bSEIS\b|\bMEIS\b|\bRoDTEP\b|provisions? (?:reversal|reversed|written back|write[- ]?back)|reversal of provisions?|write[- ]?backs?|one[- ]off|one[- ]time|exceptional (?:item|gain|income)|\bMTM\b|mark[- ]to[- ]market|forex gain|insurance claim|inventory gain|ad[- ]hoc|other income includes|arbitration award|interest on (?:income[- ]tax )?refund/i;
+/** "₹31.6 Cr", "INR22 crores", "Rs.31.6 crores" → 31.6 (crore). */
+export function croreOf(t: string | null | undefined): number | null {
+  const m = /(?:₹|INR|Rs\.?)\s?([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|mn\b|million)?/i.exec(String(t ?? '')) || /([\d,]+(?:\.\d+)?)\s*(crores?|cr\b)/i.exec(String(t ?? ''));
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  const u = String(m[2] || 'cr').toLowerCase();
+  return u.startsWith('lakh') ? n / 100 : u === 'mn' || u === 'million' ? n / 10 : n;
 }
 export function isImmaterialDecline(c: { key: VarKey; before?: string | null; after?: string | null; delta?: string | null }): boolean {
   const line = MATERIAL_LINE[c.key];
@@ -794,9 +868,26 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const rawFound = byKey(input.variables || []);
   const earnBases = earningsExceedRevenue(rawFound.revenue_growth, rawFound.earnings_growth);
   const immaterialKeys = new Set<VarKey>();
+  const oneOffClauses: string[] = [];
   const variables0: StructuralVar[] = (input.variables || []).map((v) => {
     if (v.key === 'earnings_growth' && earnBases && !v.unjudged) {
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: EARNINGS_EXCEED_REVENUE };
+    }
+    // ── A ONE-OFF IS NOT A MARGIN DRIVER.                            (zzz784)
+    // GOLDIAM's "Other income includes tariff refund of ~₹22 Cr contributing to
+    // Q1 EBITDA" sat inside the margin driver and counted as structural. The
+    // one-off clauses are taken out of the driver (they go to the one-off
+    // QUALIFICATION line); a driver that is nothing but one-offs is unjudged.
+    if (v.key === 'margin_driver' && v.after && !v.unjudged) {
+      const clauses = String(v.after).split(/;\s+/);
+      const off = clauses.filter((c) => ONE_OFF_CLAUSE.test(c));
+      if (off.length) {
+        oneOffClauses.push(...off);
+        const keep = clauses.filter((c) => !ONE_OFF_CLAUSE.test(c));
+        return keep.length
+          ? { ...v, after: keep.join('; '), evidence: `${v.evidence} One-off clause set aside (shown under QUALIFICATION, not a structural driver): ${off.join('; ')}.` }
+          : { ...v, verdict: 'stated' as VarVerdict, unjudged: 'the stated margin driver is a one-off benefit, not a structural mechanism' };
+      }
     }
     if (isReserveTonnage(v as any) && !v.unjudged) {
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: 'a mineral resource / reserve tonnage (a stock, not a production rate) — not capacity evidence' };
@@ -868,6 +959,46 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   }
   const found = byKey(variables);
   const comps = input.comparisons || {};
+  // ── ONE-OFFS STAY VISIBLE, WHATEVER THE STATUS.                    (zzz784)
+  // GOLDIAM's ~₹22 Cr tariff refund, GPPL's ₹31.6 Cr duty benefit, TIIL's ₹27 Cr
+  // MTM gain and DEEPINDS' ₹208 Cr exceptional item do not break a thesis — and
+  // must not disappear from the card either. Each disclosed one-off is a
+  // QUALIFICATION line, sized against the quarter's profit where both exist;
+  // one larger than the profit is a DATA VALIDATION question.
+  const qualification: string[] = (() => {
+    const out: string[] = [];
+    const earn = found.earnings_growth;
+    const patCr = earn && earn.after && !/%/.test(String(earn.after)) ? croreOf(earn.after) : null;
+    const oo = found.one_offs;
+    const seen: number[] = [];
+    const line = (desc: string, cr: number | null, gain: boolean, share0: number | null, exceeds: boolean) => {
+      // A prior-period item ("standalone previous year") is not this quarter's
+      // one-off and is never sized against this quarter's profit.
+      const prior = /previous year|prior year|last year|preceding year|prior period/i.test(desc);
+      const share = prior ? null : share0 ?? (cr != null && patCr && patCr > 0 ? cr / patCr : null);
+      const big = !prior && (exceeds || (share != null && share > 1));
+      const size = prior ? ' — a prior-period figure as described in the filing; not sized against this quarter\'s profit — verify which period it belongs to'
+        : big ? ' — DATA VALIDATION REQUIRED: the one-off is larger than the reported profit, so the two are on different bases (or one figure is misread); verify in the filing'
+        : share != null ? ` ≈ ${Math.round(share * 100)}% of the quarter's reported profit${patCr ? ` (₹${patCr} Cr)` : ''}${share >= 0.1 ? ' — material' : ''}`
+          : ' — not sized: no same-period profit figure on file to compare against';
+      out.push(`QUALIFICATION / WATCH — one-off ${gain ? 'benefit' : 'item'} in reported earnings: ${desc}${size}. Shown, not structural; it does not repeat on its own.`);
+    };
+    if (oo && oo.after && (oo.verdict !== 'flat' || /₹|INR|Rs|cr/i.test(String(oo.after)))) {
+      const item = (/“([^”]+)”/.exec(String(oo.evidence || '')) || [])[1];
+      const cr = croreOf(oo.after);
+      if (cr != null) seen.push(cr);
+      const sh = /(\d+(?:\.\d+)?)% of reported profit/.exec(String(oo.evidence || ''));
+      line(`${oo.after}${item ? ` (“${item.slice(0, 90)}”)` : ''}`, cr, !/^\s*[−-]/.test(String(oo.evidence || '')), sh ? Number(sh[1]) / 100 : null,
+        /exceeds the reported profit/i.test(String(oo.unjudged || oo.evidence || '')));
+    }
+    for (const c of oneOffClauses) {
+      const cr = croreOf(c);
+      if (cr != null && seen.some((x) => Math.abs(x - cr) < 0.6)) continue;
+      if (cr != null) seen.push(cr);
+      line(`${c.replace(/\s+/g, ' ').trim().slice(0, 140)} (stated as a margin driver — set aside)`, cr, true, null, false);
+    }
+    return out;
+  })();
 
   const graderMissing = input.hasGraderRow === false;
   const cashCritical = cashIsThesisCritical(thesis.pattern);
@@ -1362,7 +1493,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       : c.verdict === 'unknown' && c.historical ? `${curNot} — ${c.historical.period}: ${c.historical.value} is historical context only`
       : c.verdict === 'unknown' ? (c.state === 'NOT_SEARCHED' ? 'not searched' : 'not disclosed')
       : c.kind === 'claim' && c.statement !== 'TARGET' && c.statement !== 'GUIDANCE' && !isForwardRow({ after: c.after }) ? `management statement, not a filed figure: ${c.after || c.before}`
-      : isForwardRow(c) ? `target only: ${c.after || c.before}`
+      : isForwardRow(c) ? `${c.key === 'capacity' ? 'target / guidance only — not installed capacity' : c.key === 'capacity_addition' ? 'target / guidance only — not capacity added' : 'target only'}: ${c.after || c.before}`
       : c.verdict === 'stated' ? `level only: ${c.after || c.before}`
       : c.verdict === 'flat' && c.silence ? 'not mentioned in the documents read — silence, not a reading'
       : c.verdict === 'flat' && c.withinMateriality ? `within materiality: ${c.delta || c.after || c.before}`
@@ -1389,7 +1520,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const val = (v.delta && v.before ? `${v.before} → ${v.after} (${v.delta})` : (v.after || ''))
       // zzz776: "including a richer specialty product mix' and 'architectural business" — a quoted fragment.
       .replace(/^\s*(including|such as|and|with)\s+/i, '').replace(/['"]\s+and\s+['"]/g, ' and ').replace(/^['"]+|['"]+$/g, '');
-    const label = v.key === 'capex_earning' ? 'capex earning' : (VAR_LABEL[v.key] || v.label).toLowerCase();
+    // A relabelled row (store network, target / guidance) keeps its own label. (zzz784)
+    const label = v.key === 'capex_earning' ? 'capex earning'
+      : /network|not production|target|guidance/i.test(String(v.label || '')) ? String(v.label).replace(/\s*\([^)]*\)\s*$/, '').toLowerCase()
+        : (VAR_LABEL[v.key] || v.label).toLowerCase();
     if (val && val.length <= 60) return `${label} ${val}`;
     // The clause of a long statement that names the mechanism, never a
     // bare "(stated in the filing)". (zzz770)
@@ -1942,7 +2076,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // approval received — each by the same fact / ACTUAL / not-a-plan rule.
   // STRENGTHENING keeps its strategy-specific driver list.
   const ON_TRACK_EXTRA = new Set<VarKey>(['capex_status', 'approval'] as VarKey[]);
+  const cxs = input.capexState || null;
   const onTrackDriver = (v: StructuralVar): boolean => {
+    // A capex status counts as mechanism evidence only when the normalized
+    // build state says something is actually built. (zzz784)
+    if (v.key === 'capex_status' && cxs?.build && !cxs.build.anyOperating) return false;
     if (ON_TRACK_EXTRA.has(v.key)) {
       return v.source === 'filing' && v.kind !== 'claim' && !v.unjudged && (!v.statement || v.statement === 'ACTUAL')
         && v.verdict === 'improving' && !isForwardRow(v)
@@ -1955,7 +2093,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const m = new Map<VarKey, string>();
     for (const d of drivers) if (d.key !== 'cash_conversion') m.set(d.key, driverText(d));
     for (const d of variables.filter(onTrackDriver)) if (d.key !== 'cash_conversion' && !m.has(d.key)) {
-      m.set(d.key, d.key === 'capex_status' ? (() => { const st = [...new Set(String(d.after).replace(/_/g, ' ').split(/\s*;\s*/).filter(Boolean))]; return `capex status: ${st.join('; ')}${st.some((x) => /commercial production|operational/i.test(x)) ? ' (producing — revenue contribution not yet disclosed)' : ' (commissioned — not yet proven earning)'}`; })() : driverText(d));
+      m.set(d.key, d.key === 'capex_status' && cxs?.build ? `capex: ${cxs.build.text} — economic status: ${cxs.economic || 'not established'}`
+        : d.key === 'capex_status' ? (() => { const st = [...new Set(String(d.after).replace(/_/g, ' ').split(/\s*;\s*/).filter(Boolean))]; return `capex status: ${st.join('; ')}${st.some((x) => /commercial production|operational/i.test(x)) ? ' (producing — revenue contribution not yet disclosed)' : ' (commissioned — not yet proven earning)'}`; })() : driverText(d));
     }
     // One list, one punctuation: "(management remark).; qualification" and
     // "presentation.." were the joins of sentences that already ended. (zzz775)
@@ -1967,6 +2106,32 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     }
     return m;
   })();
+  // ── THE STRUCTURAL X/Y AS A PARTITION, FROM ONE STATE PER VARIABLE. (zzz784)
+  // The printed ratio's rows, each with the SAME state function the footer
+  // uses; confirmed is exactly the printed-confirmed set. A row that improved
+  // but is not counted says why (a statement / target, or a figure already
+  // counted under another variable).
+  const structuralStates = [...printedKeys].map((k) => {
+    const c = checked.find((x) => x.key === k);
+    const d = drivers.find((x) => x.key === k);
+    let st: MechState;
+    if (printedConfirmed.has(k)) st = 'confirmed';
+    else if (!c) st = 'pending';
+    else {
+      st = rowState(c);
+      if (st === 'confirmed') st = c.kind === 'claim' || isForwardRow(c) ? 'statement_only' : confirmedIds.has(figureIdentity(c.after) || '') ? 'duplicate' : 'level_only';
+      else if (st === 'level_only' && (c.kind === 'claim' || isForwardRow(c))) st = 'statement_only';
+    }
+    return { key: k, label: VAR_LABEL[k] || c?.label || d?.label || k, state: st,
+      role: (structuralVars.some((x) => x.key === k) ? 'structural' : 'driver') as 'structural' | 'driver',
+      figure: (c ? (c.historical?.standing ? `${c.historical.period} ${c.historical.value} (standing test)` : c.delta || c.after || c.before) : d?.after) || null };
+  });
+  const structuralTally = tallyStates(structuralStates);
+  // The documents' mechanism evidence, split by whether it counts in the X/Y. (zzz784)
+  const evStructural = [...mechEvidence].filter(([k]) => printedConfirmed.has(k)).map(([, t]) => t);
+  const evSupporting = [...mechEvidence].filter(([k]) => !printedConfirmed.has(k)).map(([, t]) => t);
+  const evidenceSplit = (x: number, y: number) => `${evStructural.length ? `structural (${x}/${y} confirmed): ${evStructural.slice(0, 4).join('; ')}` : `structural ${x}/${y} confirmed`}`
+    + `${evSupporting.length ? `. Supporting evidence (${evSupporting.length}, not counted in ${x}/${y}): ${evSupporting.slice(0, 3).join('; ')}` : ''}`;
   const UNIT_SCOPE = /unit|scope|comparable|mismatch|power capacity|production capacity/i;
   const unclearMech = checked.filter((c) => c.state === 'UNCLEAR' && !isFinancialOutput(c.key, c.source)
     && (structuralKeys.has(c.key) || DRIVER_KEYS.has(c.key)));
@@ -1988,19 +2153,26 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     && mappedDown.length === 0 && !anyFired;
   if (decisionBase && upKeys.some((k) => k !== 'margin') && downKeys.length === 0 && !lossMaking && mechEvidence.size >= 1) {
     status = 'ON_TRACK';
+    const cx = verdict.coverage.confirmed, cy = verdict.coverage.applicable;
+    // ── INTACT ≠ CONFIRMED.                                          (zzz784)
+    // ON TRACK with under half the structural mechanism confirmed says so in
+    // the status sentence itself; the status is unchanged.
+    const incompleteMech = cy > 0 && cx * 2 < cy;
     because = `Financial output materially improved (${OUTPUT_SHORT.map(([k]) => k).filter((k) => outRow(k)).map(outFig).join(' · ')}). `
-      + `Mechanism evidenced in the documents${verdict.coverage.applicable ? ` (structural ${verdict.coverage.confirmed}/${verdict.coverage.applicable} confirmed)` : ''}: ${[...mechEvidence.values()].slice(0, 4).join('; ')}. `
-      + 'Nothing thesis-critical deteriorated and no break condition fired — the thesis is intact. '
+      + `Mechanism evidence in the documents — ${evidenceSplit(cx, cy)}. `
+      + (incompleteMech
+        ? `Thesis intact — nothing contradicts it — but mechanism evidence is incomplete (${cx}/${cy} core confirmed); intact does not mean the catalyst is confirmed. No break condition fired. `
+        : 'Nothing thesis-critical deteriorated and no break condition fired — the thesis is intact. ')
       + `Open for next quarter: ${openNext.length ? openNext.join('; ') : 'the remaining structural variables'}.`;
     verdict.direction = 'INTACT';
-    verdict.directionWhy = `output materially improved (${upKeys.map(outFig).join(' · ')}) and ${mechEvidence.size} mechanism driver${mechEvidence.size === 1 ? '' : 's'} evidenced; nothing thesis-critical deteriorated — short of the full mechanism, so not strengthening`;
+    verdict.directionWhy = `output materially improved (${upKeys.map(outFig).join(' · ')}); ${cx}/${cy} structural confirmed; ${mechEvidence.size} evidence item${mechEvidence.size === 1 ? '' : 's'} in the documents (${evStructural.length} structural, ${evSupporting.length} supporting — not counted in ${cx}/${cy}); nothing thesis-critical deteriorated — short of the full mechanism, so not strengthening`;
   } else if (decisionBase && topLineOnFile && upKeys.length === 0 && downKeys.length === 0) {
     status = 'NEUTRAL';
     const lineOf = (k: VarKey) => { const u = MATERIAL_LINE[k]!.unit; const dn = MATERIAL_LINE[k]!.size; const up = MATERIAL_UP[k]!;
       return `${outFig(k)} (material beyond ${up === dn ? `±${up}${u}` : `+${up}${u} / −${dn}${u}`})`; };
     because = `Financial output within materiality — ${OUTPUT_SHORT.map(([k]) => k).filter((k) => outRow(k)).map(lineOf).join(', ')}. `
       + 'Nothing thesis-critical deteriorated and no break condition fired. '
-      + (mechEvidence.size ? `Mechanism evidence on file (not an output change): ${[...mechEvidence.values()].slice(0, 3).join('; ')}. ` : '')
+      + (mechEvidence.size ? `Mechanism evidence on file (not an output change) — ${evidenceSplit(verdict.coverage.confirmed, verdict.coverage.applicable)}. ` : '')
       + (openNext.length ? `Open for next quarter: ${openNext.join('; ')}.` : '');
     verdict.direction = 'UNCHANGED';
     verdict.directionWhy = 'financial output moved inside its materiality lines and nothing thesis-critical moved';
@@ -2388,9 +2560,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     if (typeof o === 'object') { const r: any = {}; for (const [k, v] of Object.entries(o as any)) r[k] = wcDeep(v); return r; }
     return o;
   };
+  // The first qualification rides on the status sentence itself. (zzz784)
+  if (qualification.length) because = `${because.replace(/\s+$/, '')} ${qualification[0].replace(/ Shown, not structural; it does not repeat on its own\.$/, '').replace(/\.+$/, '')}.`;
   because = wcFix(because);
   return {
+    qualification,
     verdict: wcDeep(verdict), catalystRank, mechanismEvidence: [...mechEvidence].map(([key, text]) => ({ key: key as string, text })),
+    structuralStates, evidenceItems: { structural: evStructural, supporting: evSupporting },
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
     historicalContext, currentPeriod: curPeriod,
     logicChain, coreMechanismGaps: coreMechanismGaps.map((c) => c.label),
@@ -2419,6 +2595,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       output: wcDeep(tally(criticalAll.filter((c) => isOutput(c.key)), tallyName)),
       mechanism: wcDeep(tally(criticalAll.filter((c) => !isOutput(c.key) && VAR_DIMENSION[c.key] !== 'forward'), tallyName)),
       forward: tally(criticalAll.filter((c) => VAR_DIMENSION[c.key] === 'forward'), tallyName),
+      structural: structuralTally,
       missingCore: core.filter((c) => c.verdict === 'unknown').map((c) => c.label),
       levelOnlyCore: coreLevelOnly.filter((c) => !c.unjudged).map((c) => c.label),
       unjudgedCore: coreLevelOnly.filter((c) => c.unjudged).map((c) => `${c.label} — ${c.unjudged}`),

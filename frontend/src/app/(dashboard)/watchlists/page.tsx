@@ -2520,7 +2520,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         for (let ci = 0; ci < tickers.length; ci += 8) {
           const chunk = tickers.slice(ci, ci + 8);
           try {
-          const url = `/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${dt}${retry ? '&nocache=1' : ''}`;
+          const url = `/api/v1/earnings/enrich?symbols=${chunk.map(encodeURIComponent).join(',')}&filed=${dt}${retry ? '&nocache=1' : ''}`;  // zzz800 — '&' in tickers
           // zzz372 — a failed/timed-out batch used to be SKIPPED, leaving every symbol in
           // the chunk without P/E, DRIFT, ROCE (the "P/E vanished on many cards" symptom,
           // clustered by chunk/date). Now: fall back to per-symbol fetches so one slow
@@ -2535,7 +2535,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             for (const sym of chunk) {
               if (data[sym]) continue;
               try {
-                const r1 = await fetch(`/api/v1/earnings/enrich?symbols=${sym}&filed=${dt}${retry ? '&nocache=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
+                const r1 = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(sym)}&filed=${dt}${retry ? '&nocache=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
                 if (r1.ok) { const j1 = await r1.json(); if (j1?.data?.[sym]) data[sym] = j1.data[sym]; }
               } catch {}
               await new Promise(r => setTimeout(r, 150));

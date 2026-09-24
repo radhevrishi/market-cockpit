@@ -56,12 +56,12 @@ function unzipPayload(raw: any): UsGradedPayload | null {
   return raw?.by_tier ? (raw as UsGradedPayload) : null;
 }
 import {
-  earningsFilersOn, companyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
+  earningsFilersOn, earningsFilerExclusions, companyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
   type EdgarFiling,
 } from '@/lib/us-edgar';
 import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, yahooForwardEstimates, type UsTechnicals, type EpsHistoryRow, type ForwardEstimate } from '@/lib/us-prices';
-import { nasdaqEarningsOn, type ExpectedReporter } from '@/lib/us-nasdaq';
+import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
@@ -81,6 +81,10 @@ import {
 } from '@/lib/us-earnings-core';
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
 import { quadrantScore } from '@/lib/earnings-grade-shared';
+import {
+  usEasternDate, classifyXbrlFreshness, snapshotFresh, normalizeUsTicker, mergeExclusions, formatExclusions,
+  type ExclusionCounts,
+} from '@/lib/us-earnings-dates';
 
 export const runtime = 'nodejs';
 // A HEAVY SESSION NEEDS LONGER THAN FIVE MINUTES, AND THIS IS NOT SERVERLESS.
@@ -138,6 +142,8 @@ interface UsGradedPayload {
   sources_polled: number;
   truncated: boolean;
   notes: string[];
+  /** EDGAR earnings filers in the window left out before grading, by reason. */
+  excluded?: ExclusionCounts;
 }
 
 // ─── server-side cache ─────────────────────────────────────────────────────
@@ -256,8 +262,9 @@ function bgEnqueue(key: string, origin: string): number {
   return place;
 }
 
+/** The US Eastern session date — see lib/us-earnings-dates.ts. */
 function etToday(): string {
-  return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
+  return usEasternDate();
 }
 const dayMs = 86_400_000;
 const isoAddDays = (iso: string, n: number) =>
@@ -834,7 +841,13 @@ export async function GET(req: Request) {
   const cacheOnlyParam = searchParams.get('cache_only') === '1';
   if (!force) {
     const hit = _cache.get(cacheKey);
-    if (hit && Date.now() - hit.at < hit.ttl) {
+    // A window graded while `date` was still running is not reused once that
+    // ET day has ended — it misses every filer that came in after it was
+    // graded (the after-close reporters), and the page would then cache that
+    // partial day as final. Explicit-ticker lookups are not day-bound.
+    if (hit && (explicit
+      ? Date.now() - hit.at < hit.ttl
+      : snapshotFresh(date, hit.at, Date.now(), hit.ttl, hit.ttl))) {
       return NextResponse.json(hit.data, {
         headers: { 'x-mc-cache': 'hit', 'Cache-Control': 'private, max-age=60' },
       });
@@ -924,6 +937,7 @@ export async function GET(req: Request) {
     let filings: EdgarFiling[] = [];
     let windowStart: string | null = null;
     let reportedEarlier: EdgarFiling[] = [];
+    let excluded: ExclusionCounts = {};
 
     if (explicit) {
       // Debug / verification path: grade an explicit ticker list off each
@@ -971,6 +985,13 @@ export async function GET(req: Request) {
       }
       windowStart = dates.length ? dates[dates.length - 1] : date;
       const perDay = await pooled(dates, 3, (d) => earningsFilersOn(d));
+      // Say how many filers each day left out and why (OTC / unlisted, shells)
+      // — a thin day must not look complete when it is not.
+      excluded = mergeExclusions(...dates.map((d) => earningsFilerExclusions(d)));
+      {
+        const line = formatExclusions(excluded);
+        if (line) notes.push(line);
+      }
       const byCik = new Map<number, EdgarFiling>();
       for (const list of perDay) {
         for (const f of (list || [])) {
@@ -1060,15 +1081,23 @@ export async function GET(req: Request) {
       if (!fund.q_end) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t, facts: fx }); continue; }
       // Stale-quarter guard — see header note. The 8-K is real but the XBRL on
       // file is last quarter's: a PRELIM candidate too.
-      if (daysBetween(f.filed, fund.q_end) > MAX_QUARTER_LAG_DAYS) {
-        pendingXbrl++; addPending(f, 'quarter-stale'); awaitingXbrl.push({ f, t, facts: fx }); continue;
-      }
       // Already-public guard. If the quarter's figures reached EDGAR more than
       // 7 days BEFORE the filing we are crediting, this filing is not the
-      // announcement. AIN's 1 Sep 8-K carried an Item 2.02 header for a
-      // strategic-review update; its Q2 numbers had been on EDGAR since the
-      // 4 Aug 10-Q, and the market had traded the print four weeks earlier.
-      if (!explicit && fund.q_filed && daysBetween(f.filed, fund.q_filed) > 7) {
+      // announcement OF THAT QUARTER. AIN's 1 Sep 8-K carried an Item 2.02
+      // header for a strategic-review update 63 days after its quarter end;
+      // its Q2 numbers had been on EDGAR since the 4 Aug 10-Q. But when a whole
+      // fiscal quarter has elapsed since the XBRL quarter end, a NEWER quarter
+      // has closed and the 8-K is its announcement with the numbers not posted
+      // yet — a fast reporter (a bank on 14 Jul holds 31 Mar in XBRL, 105 days)
+      // was being dropped as "reported earlier". See classifyXbrlFreshness.
+      const fresh = classifyXbrlFreshness({
+        filed: f.filed, qEnd: fund.q_end, qFiled: fund.q_filed,
+        maxLagDays: MAX_QUARTER_LAG_DAYS, checkAlreadyPublic: !explicit,
+      });
+      if (fresh === 'quarter-stale') {
+        pendingXbrl++; addPending(f, 'quarter-stale'); awaitingXbrl.push({ f, t, facts: fx }); continue;
+      }
+      if (fresh === 'reported-earlier') {
         addPending(f, 'reported-earlier'); continue;
       }
       prepared.push({ f, t, facts: fx, shares: sharesOutstandingFromFacts(fx, fund.q_end), fundamentals: fund });
@@ -2176,9 +2205,10 @@ export async function GET(req: Request) {
     let scheduled: ExpectedReporter[] = [];
     if (!explicit) {
       try {
-        const filedSet = new Set(filings.map((f) => f.ticker).filter(Boolean) as string[]);
-        const exp = await nasdaqEarningsOn(date);
-        scheduled = exp.filter((e) => !filedSet.has(e.ticker));
+        const filedSet = new Set(filings.map((f) => f.ticker).filter(Boolean).map((t) => normalizeUsTicker(t)));
+        const { rows: exp, ok: nasdaqOk } = await nasdaqEarningsOnDetailed(date);
+        if (!nasdaqOk) notes.push('Nasdaq schedule could not be read for this date — "scheduled / results pending" is unknown, not empty');
+        scheduled = exp.filter((e) => !filedSet.has(normalizeUsTicker(e.ticker)));
         // A foreign private issuer (Grifols, NIO, Canaan…) reports on a 6-K, not
         // an 8-K, and files 20-F/40-F annually — it will NEVER move into a tier
         // off an 8-K, and leaving it sitting in "results pending" for ever looks
@@ -2302,6 +2332,7 @@ export async function GET(req: Request) {
       sources_polled: 3,
       truncated,
       notes,
+      excluded,
     };
 
     const includesToday = date >= today;

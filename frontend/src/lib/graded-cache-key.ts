@@ -78,7 +78,16 @@
 //   what its name claims: a tiny base, EPS outrunning PAT, operations still
 //   loss-making, or EPS beyond twice what sales and margin together explain.
 //   20 of the 42 tagged rows on 2026-08-14 were mislabelled leverage.
-export const GRADED_CACHE_VERSION = 'v22';
+// zzz800 — v22 → v23. Four changes alter what an India grade SAYS:
+//   · PAT/EPS growth is REFUSED off a negative year-ago base (it arrived as
+//     (curr − prev)/|prev| — KABRAEXTRU's loss ₹7.61 → ₹1.74 Cr read "+77%")
+//     and the move is described instead ("loss narrowed ₹7.61 Cr → ₹1.74 Cr");
+//   · a NARROWING loss carries 'still loss-making' (10), not 'low quality' (25);
+//   · a loss-narrowing operating turnaround (loss at least halved, revenue
+//     +25%, margin +5pp and positive) can be STRONG;
+//   · a Day-1 sell-off may cost the top tier but can no longer push a
+//     fundamentally STRONG quarter to MIXED (the US floor, ported).
+export const GRADED_CACHE_VERSION = 'v23';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -91,7 +100,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

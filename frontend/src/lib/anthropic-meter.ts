@@ -255,7 +255,18 @@ export function toOpenAIRequest(body: MessagesBody, model: string, reasoningEffo
   const messages: any[] = [];
   const sys = systemText(body.system);
   if (sys) messages.push({ role: 'system', content: sys });
-  for (const m of body.messages) messages.push({ role: m.role, content: contentText(m.content) });
+  for (const m of body.messages) {
+    // zzz783: a native PDF `document` block (OCR of a scanned filing) is sent
+    // to OpenAI as a Chat Completions `file` part — base64 inline, same bytes.
+    const parts = Array.isArray(m.content) ? m.content as any[] : null;
+    const pdfs = parts ? parts.filter((c) => c?.type === 'document' && c?.source?.type === 'base64' && /pdf/i.test(String(c?.source?.media_type || ''))) : [];
+    if (m.role === 'user' && pdfs.length) {
+      const content: any[] = pdfs.map((c, i) => ({ type: 'file', file: { filename: `filing-${i + 1}.pdf`, file_data: `data:application/pdf;base64,${c.source.data}` } }));
+      const txt = parts!.filter((c) => c?.type === 'text').map((c) => String(c.text || '')).join('\n');
+      if (txt) content.push({ type: 'text', text: txt });
+      messages.push({ role: m.role, content });
+    } else messages.push({ role: m.role, content: contentText(m.content) });
+  }
   const reasoning = /^gpt-5/.test(model) || /^o\d/.test(model);
   // A caller's max_tokens is a budget for the VISIBLE answer. On reasoning
   // models the same budget also pays for hidden reasoning tokens, and the
@@ -316,7 +327,9 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
   // anthropicOnly: a request that only the Messages API can carry (a native
   // PDF `document` block for OCR) is never translated to Chat Completions,
   // which would silently drop the document. (zzz765)
-  if (prov === 'openai' && !opts.anthropicOnly) return openaiMessages(feature, body, opts);
+  // zzz783: OpenAI now carries the PDF as a `file` part, so an anthropicOnly
+  // request goes to OpenAI too when there is no Anthropic key.
+  if (prov === 'openai' && (!opts.anthropicOnly || !process.env.ANTHROPIC_API_KEY)) return openaiMessages(feature, body, opts);
   const apiKey = opts.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return new Response(JSON.stringify({ error: { type: 'no_key', message: 'No ANTHROPIC_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });

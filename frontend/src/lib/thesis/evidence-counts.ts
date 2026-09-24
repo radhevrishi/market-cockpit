@@ -84,3 +84,64 @@ export function changesNote(diff: any): string | null {
     default: return null;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE PAGE HEADER'S ARITHMETIC, IN ONE PLACE.                        (zzz784)
+//
+// "All 131 · 53 book · 78 bench · 12 large caps hidden … 119 of 119 shown ·
+// 53 held · 66 bench" was right and unreadable: three populations and no sum.
+// Every header number is derived here from the same row arrays, and the line
+// it returns reconciles visibly: total − hidden = shown = book + bench, and
+// the status buckets (plus "not yet assessed") add up to shown.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface UniverseRow {
+  origin: 'book' | 'bench' | 'both' | string;
+  market?: string | null;
+  assessment?: { status?: string | null } | null;
+  pattern?: { fit?: string | null; pattern?: string | null } | null;
+}
+export interface UniverseCounts {
+  total: number;
+  hiddenLargeCap: number;
+  shown: number;
+  book: number;
+  bench: number;
+  evaluated: number;
+  notAssessed: number;
+  byStatus: Record<string, number>;
+  statusSum: number;
+  thesisNotSet: number;
+  provisional: number;
+  exportable: number;
+  exportableUs: number;
+  excluded: Record<string, number>;
+  excludedN: number;
+  /** "131 total − 12 large caps hidden = 119 shown = 53 book + 66 bench". */
+  line: string;
+}
+export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[], constructive: string[]): UniverseCounts {
+  const total = allRows.length, shown = shownRows.length;
+  const hiddenLargeCap = total - shown;
+  let book = 0, bench = 0, evaluated = 0, provisional = 0, exportable = 0, exportableUs = 0;
+  const byStatus: Record<string, number> = {};
+  const excluded: Record<string, number> = {};
+  for (const r of shownRows) {
+    if (r.origin === 'book' || r.origin === 'both') book++; else bench++;
+    const s = r.assessment?.status || null;
+    if (!s) continue;
+    evaluated++;
+    byStatus[s] = (byStatus[s] || 0) + 1;
+    if (r.pattern?.fit === 'nearest' && s !== 'THESIS_NOT_SET') provisional++;
+    if (constructive.includes(s)) { if (r.market === 'US') exportableUs++; else exportable++; }
+    else excluded[s] = (excluded[s] || 0) + 1;
+  }
+  const notAssessed = shown - evaluated;
+  const statusSum = Object.values(byStatus).reduce((a, b) => a + b, 0);
+  const excludedN = Object.values(excluded).reduce((a, b) => a + b, 0);
+  const line = `${total} total${hiddenLargeCap ? ` − ${hiddenLargeCap} large caps hidden` : ''} = ${shown} shown = ${book} book + ${bench} bench`
+    + ` · ${evaluated} evaluated${notAssessed ? ` + ${notAssessed} not yet assessed` : ''}`
+    + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit)`
+    + ` · ${exportable} exportable (NSE)${exportableUs ? ` + ${exportableUs} US in constructive statuses` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`;
+  return { total, hiddenLargeCap, shown, book, bench, evaluated, notAssessed, byStatus, statusSum, thesisNotSet: byStatus.THESIS_NOT_SET || 0,
+    provisional, exportable, exportableUs, excluded, excludedN, line };
+}

@@ -76,7 +76,118 @@ export const CAVEAT_PENALTY: Record<string, number> = {
   // it would turn "look here" into "this is bad", which is exactly the mistake
   // the composite floor made when it demoted FPS.
   'profit leaked below the operating line': 0,
+  // zzz800 — a company still reporting a loss, but a SMALLER one than a year
+  // ago. It is a real risk (the business has not yet proved it can earn), so it
+  // costs something — but far less than 'low quality', which is now reserved
+  // for a loss that is NOT improving (widened, flat, or a profit that swung to
+  // a loss). KABRAEXTRU Q1 FY27 — revenue +45%, OPM −3.5% → +5.0%, net loss
+  // ₹7.61 Cr → ₹1.74 Cr — was stamped 'low quality' and graded MIXED for an
+  // improvement, which is the opposite of what the numbers say.
+  'still loss-making': 10,
 };
+
+/**
+ * zzz800 — the caveats that describe the PRICE REACTION to a print, not the
+ * print. They are rendered as a separate, clearly labelled market-reaction
+ * note, never counted as fundamental caveats, and (with {@link reactionFloor})
+ * can cost a row the top tier but never push a fundamentally STRONG quarter to
+ * MIXED on their own.
+ */
+export const MARKET_REACTION_CAVEATS: ReadonlySet<string> = new Set([
+  'market rejected print',
+  'sold off post-results',
+  'intraday reversal · distribution',
+]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROFIT TRAJECTORY — A GROWTH RATE OFF A LOSS IS NOT A NUMBER.     (zzz800)
+//
+// (curr − prev) / |prev| turns "loss narrowed from ₹7.61 Cr to ₹1.74 Cr" into
+// "+77%", which then clears every magnitude gate built for real profit growth
+// and reads on the card as though the company grew its profit. The US engine
+// has refused that percentage for a long time; India's enrichment still
+// computed it with Math.abs and the grader consumed it.
+//
+// Whenever either quarter is a loss, the honest statement is a DIRECTION with
+// the two absolutes, never a percentage. This helper produces that statement
+// once so the grader's narrative and the card's tile say the same thing.
+// ═══════════════════════════════════════════════════════════════════════════
+export type ProfitTrajectoryKind =
+  | 'turned profitable' | 'loss narrowed' | 'loss widened' | 'loss unchanged' | 'swung to loss';
+
+export interface ProfitTrajectory {
+  kind: ProfitTrajectoryKind;
+  /** e.g. "loss narrowed ₹7.61 Cr → ₹1.74 Cr" */
+  label: string;
+  /** Short word for a metric tile, e.g. "LOSS NARROWED". */
+  short: string;
+  /** Improving (turned profitable / loss narrowed) vs worsening. */
+  improving: boolean;
+  /** For 'loss narrowed': how much of the prior loss was eliminated, in %. */
+  lossReductionPct: number | null;
+}
+
+const _fmtAbs = (v: number, unit: 'cr' | 'eps'): string => {
+  const a = Math.abs(v);
+  const s = a >= 100 ? String(Math.round(a)) : String(Math.round(a * 100) / 100);
+  return unit === 'cr' ? `₹${s} Cr` : `₹${s}`;
+};
+
+/**
+ * Describe a profit (or EPS) move where either quarter is a loss. Returns null
+ * when both quarters are profitable (an ordinary growth % is then meaningful)
+ * or when either figure is missing. Pure.
+ */
+export function profitTrajectory(
+  curr: number | null | undefined,
+  prev: number | null | undefined,
+  unit: 'cr' | 'eps' = 'cr',
+): ProfitTrajectory | null {
+  if (typeof curr !== 'number' || !Number.isFinite(curr)) return null;
+  if (typeof prev !== 'number' || !Number.isFinite(prev)) return null;
+  if (curr > 0 && prev > 0) return null;
+  if (curr === 0 && prev === 0) return null;
+  const what = unit === 'cr' ? 'loss' : 'loss per share';
+  if (prev <= 0 && curr > 0) {
+    const from = prev === 0 ? 'breakeven' : `a ${what} of ${_fmtAbs(prev, unit)}`;
+    return { kind: 'turned profitable', label: `turned profitable (${from} → a profit of ${_fmtAbs(curr, unit)})`,
+      short: 'TURNED PROFITABLE', improving: true, lossReductionPct: null };
+  }
+  if (prev > 0 && curr <= 0) {
+    return { kind: 'swung to loss', label: `swung to a ${what} (a profit of ${_fmtAbs(prev, unit)} → a ${what} of ${_fmtAbs(curr, unit)})`,
+      short: 'SWUNG TO LOSS', improving: false, lossReductionPct: null };
+  }
+  // Both quarters are losses (or the current one is exactly zero).
+  if (curr > prev) {
+    const red = prev < 0 ? Math.round(((curr - prev) / Math.abs(prev)) * 100) : null;
+    return { kind: 'loss narrowed', label: `${what} narrowed ${_fmtAbs(prev, unit)} → ${_fmtAbs(curr, unit)}`,
+      short: 'LOSS NARROWED', improving: true, lossReductionPct: red };
+  }
+  if (curr < prev) {
+    return { kind: 'loss widened', label: `${what} widened ${_fmtAbs(prev, unit)} → ${_fmtAbs(curr, unit)}`,
+      short: 'LOSS WIDENED', improving: false, lossReductionPct: null };
+  }
+  return { kind: 'loss unchanged', label: `${what} unchanged at ${_fmtAbs(curr, unit)}`,
+    short: 'LOSS UNCHANGED', improving: false, lossReductionPct: null };
+}
+
+/**
+ * zzz800 — THE TAPE IS NOT THE FUNDAMENTALS (India port of the US floor).
+ *
+ * `marketReactionDelta` may demote a sold-off print from STRONG to MIXED. The
+ * US engine has long undone that with a floor ("a price reaction alone can
+ * never push a row below STRONG"); India never got it, so a strong quarter the
+ * market sold on Day 1 read "mixed print". Given the tier the FUNDAMENTALS
+ * earned and the tier after the reaction ladder, return the tier the reaction
+ * is allowed to leave: it may cost the top tier, never more than that.
+ */
+export function reactionFloor(tierOnFundamentals: EarningsTier, tierAfterReaction: EarningsTier): EarningsTier {
+  const order: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
+  const fund = order.indexOf(tierOnFundamentals);
+  const after = order.indexOf(tierAfterReaction);
+  const floor = Math.max(fund, order.indexOf('STRONG'));
+  return after > floor ? order[floor] : tierAfterReaction;
+}
 
 /** zzz698 — the guide-down tag embeds the period label, so it is matched by
  *  shape rather than by exact key. Everything else falls through unchanged. */
@@ -253,7 +364,15 @@ export interface DecideTierInputs {
    * can honestly be stated in. Optional so the India caller is unaffected.
    */
   swingMag?: boolean;
-  tier1MethodCount: number;          // TT / SEPA / CANSLIM count
+  /**
+   * zzz800 — an operating turnaround still reporting a (much smaller) loss:
+   * the prior loss at least halved, revenue up >= 25%, operating margin up
+   * >= 5pp and now positive, and no contrary cash evidence. That is a strong
+   * QUARTER, but not yet a profitable company, so it earns STRONG and never
+   * BLOCKBUSTER. Optional so callers that do not compute it are unaffected.
+   */
+  lossTurnaround?: boolean;
+  tier1MethodCount: number;         // TT / SEPA / CANSLIM count
   positiveGuidance: boolean;
   chartOk: boolean;
   // ── BEAT-AND-RAISE ingredients (see the STRONG path below) ──
@@ -303,7 +422,7 @@ export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveat
 
   let tier: EarningsTier;
   if (i.broken && i.composite < 70) tier = 'AVOID';
-  else if (i.stillLossMaking && blockbusterGate) tier = 'MIXED';                    // PATCH 1001
+  else if (i.stillLossMaking && blockbusterGate) tier = i.lossTurnaround ? 'STRONG' : 'MIXED';  // PATCH 1001 (+zzz800)
   // PATCH 1008, amended by zzz665c.
   //
   // This line exists to stop a MEANINGLESS PERCENTAGE earning a tier: a growth
@@ -325,6 +444,13 @@ export function decideTier(i: DecideTierInputs): { tier: EarningsTier; addCaveat
   else if (blockbusterGate && i.marginSevereContraction) tier = 'MIXED';            // PATCH 1020
   else if (blockbusterGate && !i.marginContracting) tier = 'BLOCKBUSTER';
   else if (blockbusterGate && i.marginContracting) tier = 'STRONG';                 // PATCH 1000
+  // zzz800 — the loss-narrowing operating turnaround. Every path above is a
+  // growth-rate test, and a growth rate off a loss is refused, so a company
+  // that halved its loss on +45% revenue and a margin swing from −3.5% to +5%
+  // could only ever be MIXED. The evidence here is stated in the terms the
+  // quarter can honestly be stated in; STRONG is the ceiling because the
+  // company still loses money.
+  else if (i.lossTurnaround && i.caveatCount <= 2 && i.stage !== 4 && !i.marginContracting) tier = 'STRONG';
   else if (i.composite >= 68 && i.mCount >= 1 && i.caveatCount <= 3 && i.stage !== 4 && !i.stillLossMaking && !i.turnaroundBase && !i.marginSevereContraction) tier = 'STRONG';
   // PATCH 1022 — QUALITY STRONG: double-digit sales + strong PAT + genuinely
   // EXPANDING margins can be STRONG a point or two under the 68 floor.

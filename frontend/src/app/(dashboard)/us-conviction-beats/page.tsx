@@ -49,6 +49,7 @@ import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-pro
 import { classifyTheme } from '@/lib/theme-classify';
 import { useThemeVerdicts, confluenceFor, type ConfluenceKind } from '@/lib/theme-confluence';
 import { DeskHeader, deskNumerals } from '@/components/desk-chrome';
+import { usEasternDate } from '@/lib/us-earnings-dates';
 
 const OPT_OUT_KEY = 'mc:us-cb:preset:v1:optout';
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -68,7 +69,7 @@ const VERDICTS = ['STRONG BUY', 'BUY', 'WATCH', 'AVOID'];
 type SortKey = 'fresh' | 'score' | 'pead' | 'sales' | 'eps' | 'drift' | 'mcap' | 'pe' | 'addv' | 'age' | 'align';
 
 function etToday(): string {
-  return new Date(Date.now() - 4 * 3600_000).toISOString().slice(0, 10);
+  return usEasternDate();   // America/New_York — right in EST as well as EDT
 }
 
 /** Identity for the open/closed state of one card. The BENCH KEY, not the

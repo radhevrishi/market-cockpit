@@ -1,3 +1,4 @@
+import { isAcceptableQuarter } from '@/lib/earnings/quarter-window';
 import { NextResponse } from 'next/server';
 import {
   fetchBoardMeetings,
@@ -224,6 +225,23 @@ function getExpectedQuarter(filingDate: Date): string {
   return `Q2 FY${(y + 1).toString().slice(2)}`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE PREVIOUS QUARTER IS ALSO A REAL FILING — FOR A WHILE.          (zzz800)
+//
+// Every source below required `quarter === expectedQuarter`, one quarter per
+// calendar MONTH. Two legitimate populations file the quarter before:
+//   · a NEW LISTING, which under SEBI LODR files the quarter preceding its
+//     listing within 21 days of listing — e.g. listed in late June, files the
+//     March quarter in July, when the month expects the June quarter;
+//   · a late filer with an extension.
+// Both were silently discarded by the hub, so the graded page never saw them
+// once the 14-day live-feed window had passed. The previous quarter is now
+// accepted while the filing is within 120 days of that quarter's end — the
+// window those filings actually occur in — and no older, so a restated or
+// re-submitted old result still cannot masquerade as this season's filing.
+// ═══════════════════════════════════════════════════════════════════════════
+// (helpers live in @/lib/earnings/quarter-window so they can be unit-tested)
+
 function getResultsQuarter(meetingDate: Date, desc: string): string {
   const lower = desc.toLowerCase();
   const periodMatch = lower.match(
@@ -342,7 +360,7 @@ function isOutcomeForResults(ann: any, expectedQtr?: string): boolean {
     const annDate = parseDate(ann.sort_date || ann.an_dt || '');
     if (annDate) {
       const extractedQtr = getResultsQuarter(annDate, attText);
-      if (extractedQtr !== expectedQtr) return false;
+      if (!isAcceptableQuarter(extractedQtr, expectedQtr, annDate)) return false;  // zzz800
     }
   }
 
@@ -874,7 +892,7 @@ export async function GET(request: Request) {
       const quarter = getResultsQuarter(meetingDate, desc);
 
       // Quarter filter: only expected quarter for past events
-      if (quarter !== expectedQuarter && meetingDate < today) continue;
+      if (!isAcceptableQuarter(quarter, expectedQuarter, meetingDate) && meetingDate < today) continue;  // zzz800
 
       const isPast = meetingDate < today;
 
@@ -938,7 +956,7 @@ export async function GET(request: Request) {
       const annDate = ann._annDate as Date;
       const attText = ann.attchmntText || '';
       const quarter = getResultsQuarter(annDate, attText);
-      if (quarter !== expectedQuarter) continue;
+      if (!isAcceptableQuarter(quarter, expectedQuarter, annDate)) continue;  // zzz800
 
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
@@ -968,7 +986,7 @@ export async function GET(request: Request) {
       const filingDate = fr._filingDate as Date;
       const periodEnded = fr.re_toDate || fr.toDate || fr.re_periodEnded || '';
       const quarter = getResultsQuarter(filingDate, `period ended ${periodEnded}`);
-      if (quarter !== expectedQuarter) continue;
+      if (!isAcceptableQuarter(quarter, expectedQuarter, filingDate)) continue;  // zzz800
 
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
@@ -993,6 +1011,46 @@ export async function GET(request: Request) {
         timing: 'pre',
         source: 'NSE',
       });
+    }
+
+    // E) zzz800 — NSE "Financial Results" sub-category filings, standalone.
+    //
+    // These were used ONLY to confirm a board meeting (see B above). But the
+    // NSE board-meetings endpoint answers this host with nothing (zzz748), so
+    // a company whose meeting reached us from neither exchange, whose outcome
+    // text failed the strict "Outcome of Board Meeting" match, and which is
+    // absent from the financial-results API — the usual profile of a RECENT
+    // LISTING — had a real, NSE-categorised results filing and was dropped
+    // without a trace. `isResultsFiling` already demands "financial result",
+    // a reporting period and a clean blocklist, and NSE's own sub-category is
+    // the strongest label available, so it now creates the event itself,
+    // under the same quarter rule as every other source.
+    let resultsFilingsStandalone = 0;
+    for (const [ticker, rf] of resultsFilingsByTicker) {
+      if (eventsMap.has(ticker)) continue;
+      if (TICKER_BLOCKLIST.has(ticker)) continue;
+      const rfDate = rf._filingDate as Date;
+      const rfText = `${rf.attchmntText || ''} ${rf.desc || rf.subject || ''}`;
+      const quarter = getResultsQuarter(rfDate, rfText);
+      if (!isAcceptableQuarter(quarter, expectedQuarter, rfDate)) continue;
+      const stockInfo = priceLookup[ticker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+      eventsMap.set(ticker, {
+        ticker,
+        company: rf.sm_name || rf.companyName || ticker,
+        resultDate: rfDate.toISOString().split('T')[0],
+        quarter,
+        quality: rateQualityFromPriceMove(stockInfo?.changePercent || 0),
+        sector: normalizeSector(stockInfo?.industry) || '',
+        industry: stockInfo?.industry || '',
+        marketCap: getCapCategory(marketCapCr),
+        edp: null,
+        cmp: stockInfo?.price || null,
+        priceMove: null,
+        timing: getResultTiming(rf),
+        source: 'NSE',
+      });
+      resultsFilingsStandalone++;
     }
 
     // ═══════════════════════════════════════════
@@ -1466,6 +1524,9 @@ export async function GET(request: Request) {
       announcementsTotal: annArray.length,
       resultsFilingsRaw: resultsFilingsArr.length,
       resultsFilingsMatched: resultsFilingsMatchCount,
+      resultsFilingsStandalone,                 // zzz800 — events created from NSE Financial-Results filings alone
+      quotesSkippedOverCap: Math.max(0, tickersNeedingQuotes.length - 30),  // zzz800 — say it when the quote cap bites
+      qualityEnrichSkipped: confirmedTickers.length > 30 ? confirmedTickers.length : 0,
       outcomeMatches: outcomeMatchCount,
       outcomeFiltered: outcomeFilteredCount,
       confirmedOutcomes: confirmedOutcomes.size,

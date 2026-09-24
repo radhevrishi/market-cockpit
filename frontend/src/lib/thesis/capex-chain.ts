@@ -37,7 +37,7 @@
 import { said, type StructuralVar, type VarKey } from './variables';
 import type { CompanyLedger } from './evidence-ledger';
 import { periodOrdinal } from './evidence-ledger';
-import { normalizeEvent, hasQuantity } from './fact-normalize';
+import { normalizeEvent, hasQuantity, periodEnd } from './fact-normalize';
 import { capacityMismatch, isCapacityFigure } from './fact-model';
 
 export type CapexState =
@@ -87,7 +87,72 @@ export interface CapexChain {
   earning: CapexEarning;
   /** Project-by-project lifecycle, announced → … → ROCE / FCF. (zzz770) */
   lifecycleProjects?: CapexProject[];
+  /** zzz784: ONE normalized construction / operational state across every
+   *  project. The status narrative, the capex row and Special Focus all read
+   *  this, so no card says "producing" in one line and "under construction"
+   *  in another for the same programme. */
+  build?: CapexBuild | null;
 }
+
+// ── CONSTRUCTION STATUS ≠ ECONOMIC STATUS.                            (zzz784)
+// ETHOSLTD read "capex status: commercial production (producing)" in its
+// summary and "Capex earning: NOT STARTED — UNDER CONSTRUCTION" in its capex
+// row — one programme, two states. Two questions, answered separately and once:
+//   BUILD    announced · under construction · commissioned · commercial production
+//   ECONOMIC not yet earning · partially contributing · contributing
+// With several projects the answer names each ("multiple projects: A —
+// commercial production; B — under construction"), never one for all.
+export type BuildState = 'announced' | 'under construction' | 'commissioned' | 'commercial production' | 'operating' | 'opened';
+export interface CapexBuild {
+  projects: Array<{ name: string; build: BuildState; note: string | null }>;
+  anyOperating: boolean;
+  mixed: boolean;
+  /** "commercial production (City of Time Gurgaon)" or "multiple projects: …". */
+  text: string;
+}
+const BUILD_RANK: Record<BuildState, number> = { announced: 0, 'under construction': 1, commissioned: 2, 'commercial production': 3, operating: 3, opened: 3 };
+/** A store / boutique / showroom (or a floor area with no plant word) opens;
+ *  it is never "commissioned" or in "commercial production". (zzz784) */
+const NETWORK_ASSET = /\b(boutiques?|stores?|showrooms?|outlets?|clinics?|hospitals?|branch(?:es)?|malls?|restaurants?|flagship)\b/i;
+const isNetworkAsset = (p: CapexProject) => NETWORK_ASSET.test(`${p.name} ${p.capacity_added || ''}`)
+  || (/\b(sq\.? ?ft|square feet)\b/i.test(String(p.capacity_added || '')) && !/plant|factory|facility|line|unit|works|park|hangar|lab/i.test(p.name));
+export const isOperatingBuild = (b: BuildState) => BUILD_RANK[b] >= 2;
+export function capexBuild(projects: CapexProject[]): CapexBuild | null {
+  const named = projects.filter((p) => p.name !== 'Capacity and capex not tied to a named project');
+  const use = named.length ? named : projects;
+  if (!use.length) return null;
+  const st = (p: CapexProject, s: LifecycleStep) => p.steps.find((x) => x.step === s)?.state;
+  const rows = use.map((p) => {
+    const build: BuildState = st(p, 'COMMERCIAL_PRODUCTION') === 'actual' ? 'commercial production'
+      : st(p, 'REVENUE_CONTRIBUTION') === 'actual' ? 'operating'
+        : st(p, 'COMMISSIONED') === 'actual' || st(p, 'COMMISSIONED') === 'implied' ? 'commissioned'
+          : p.underConstruction || st(p, 'SPENT') === 'actual' || st(p, 'COMMISSIONED') === 'target' || st(p, 'CAPACITY_CREATED') === 'target' ? 'under construction'
+            // A utilisation line matched to the project by name, with no
+            // construction step against it, says it is running.
+            : st(p, 'UTILISATION') === 'actual' ? 'operating'
+            // Capacity created with no stated construction step (a company-wide
+            // "capacity added") is built: it exists.
+            : st(p, 'CAPACITY_CREATED') === 'actual' ? 'commissioned'
+              : 'announced';
+    const net = isNetworkAsset(p) && isOperatingBuild(build);
+    return { name: p.name, build: net ? 'opened' as BuildState : build, note: p.statusConflict || (net ? 'a store / network asset — opened, not production capacity' : null) };
+  });
+  const kinds = new Set(rows.map((r) => r.build));
+  const mixed = rows.length > 1 && kinds.size > 1;
+  const one = (r: { name: string; build: BuildState; note: string | null }) => `${r.name} — ${r.build}${r.note ? ` (${r.note})` : ''}`;
+  const text = rows.length === 1 ? `${rows[0].build} (${rows[0].name}${rows[0].note ? `; ${rows[0].note}` : ''})`
+    : mixed ? `multiple projects: ${rows.map(one).join('; ')}`
+      : `${rows.length} projects, all ${rows[0].build}: ${rows.map((r) => `${r.name}${r.note ? ` (${r.note})` : ''}`).join('; ')}`;
+  return { projects: rows, anyOperating: rows.some((r) => isOperatingBuild(r.build)), mixed, text };
+}
+/** The economic answer in words, separate from the build state. (zzz784) */
+export const ECONOMIC_WORD: Record<CapexEarningState, string> = {
+  NOT_STARTED: 'not yet earning (not built)',
+  SPENT_NOT_EARNING: 'not yet earning — no revenue attributed to it',
+  PARTIAL: 'partially contributing — revenue attributed, margin not yet',
+  EARNING: 'contributing — revenue and margin attributed',
+  UNKNOWN: 'cannot be established from the documents read',
+};
 
 // ── "CAPEX EARNING YET?" IS NOT A YES/NO QUESTION.                  (zzz771)
 //
@@ -125,6 +190,10 @@ export interface CapexEarning {
   marginContribution: 'pending' | 'disclosed' | 'unknown';
   marginText: string | null;
   roceText: string | null;
+  /** zzz784: the construction / operational status (all projects), and the
+   *  economic status in words — two questions, never one label. */
+  operational?: string | null;
+  economic?: string;
   /** The printable lines, in chain order: Spent / Revenue contribution /
    *  Utilisation / Full margin contribution / ROCE. For UNKNOWN, one line
    *  saying why. Never empty. */
@@ -478,7 +547,19 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledg
   const lifecycle = capexLifecycle(ledger);
   const reached = lifecycle.reduce<CapexStage | null>((m, e) => (!m || ord(e.stage) > ord(m) ? e.stage : m), null);
   const lifecycleProjects = capexProjects(summary, ledger, vars);
-  const earning = capexEarning(vars, reached, lifecycleProjects, summary);
+  const earning0 = capexEarning(vars, reached, lifecycleProjects, summary);
+  const build = capexBuild(lifecycleProjects);
+  // The earning block carries the SAME build answer as the narrative: with
+  // several projects in different states it names each, and its label says
+  // "MIXED" rather than one project's state for all. (zzz784)
+  const earning: CapexEarning = { ...earning0,
+    operational: build ? build.text : null,
+    economic: earning0.state === 'NOT_STARTED' && build?.anyOperating ? 'not yet earning — no revenue attributed to any project (the built one included)' : ECONOMIC_WORD[earning0.state],
+    label: build?.mixed && (earning0.state === 'NOT_STARTED' || earning0.state === 'SPENT_NOT_EARNING')
+      ? `MIXED — ${build.projects.filter((x) => isOperatingBuild(x.build)).length} built, ${build.projects.filter((x) => !isOperatingBuild(x.build)).length} not yet built · NOT YET EARNING`
+      : earning0.state === 'SPENT_NOT_EARNING' && build && build.anyOperating && !earning0.spent ? 'BUILT — NOT YET EARNING'
+        : earning0.label,
+    lines: earning0.lines };
   const earns = earning.state === 'PARTIAL' || earning.state === 'EARNING';
   // A disclosed revenue contribution is itself proof the capacity was built.
   const stage: CapexStage | null = earns ? 'REVENUE_CONTRIBUTION' : reached;
@@ -487,18 +568,26 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledg
   // "cannot be checked" (INNOVACAP ₹107 cr in Q1). Margin contribution is a
   // separate, later step and is said to be open. (zzz770)
   if (earning.state === 'PARTIAL' && (base.state === 'unverifiable' || base.state === 'commissioned_not_earning')) {
-    return { ...base, state: 'starting_to_earn', lifecycle, stage, earning, lifecycleProjects,
+    return { ...base, state: 'starting_to_earn', lifecycle, stage, earning, lifecycleProjects, build,
       because: `Revenue contribution is disclosed (${earning.revenueContribution}); margin contribution is a separate step and is ${earning.marginContribution === 'pending' ? 'stated as pending' : 'not yet established'}.`,
       nextCheck: 'Whether utilisation rises and the margin follows the revenue — revenue contribution is not margin contribution.' };
   }
   // Revenue AND margin / ROCE attributed: every link the filing can evidence
   // has been evidenced. (zzz771)
   if (earning.state === 'EARNING' && (base.state === 'unverifiable' || base.state === 'commissioned_not_earning' || base.state === 'starting_to_earn')) {
-    return { ...base, state: 'earning', lifecycle, stage, earning, lifecycleProjects,
+    return { ...base, state: 'earning', lifecycle, stage, earning, lifecycleProjects, build,
       because: `Revenue contribution ${earning.revenueContribution} and ${earning.roceText ? `ROCE / FCF ${earning.roceText}` : `margin contribution (${earning.marginText || 'stated'})`} are both attributed to the capex in the documents read.`,
       nextCheck: null };
   }
-  return { ...base, lifecycle, stage, earning, lifecycleProjects };
+  // The chain headline follows the same build answer: a chain whose projects
+  // are all operating is never "UNDER CONSTRUCTION", and a mixed one says so. (zzz784)
+  if (build && (base.state === 'under_construction' || base.state === 'announced') && build.anyOperating) {
+    return { ...base, state: build.mixed ? base.state : 'commissioned_not_earning', lifecycle, stage, earning, lifecycleProjects, build,
+      because: build.mixed ? `Operational status: ${build.text}. ${base.because}` : `Operational status: ${build.text}; no utilisation or revenue attributed to it yet, so whether it is earning cannot be read.`,
+      nextCheck: build.mixed ? base.nextCheck : 'The first utilisation or revenue figure attributed to the operating capacity.' };
+  }
+  return { ...base, lifecycle, stage, earning, lifecycleProjects, build,
+    because: build?.mixed && !/^Operational status/.test(base.because) ? `Operational status: ${build.text}. ${base.because}` : base.because };
 }
 
 /** The chain without the earning block; `buildCapexChain` attaches it. */
@@ -672,12 +761,20 @@ export interface CapexProject {
    *  scope: "UNCLEAR — unit/scope mismatch: 55 MT vs 150,000 MTPA, no delta
    *  calculated". The later step is not read as this capacity's. (zzz773) */
   mismatch?: string | null;
+  /** zzz784: the summary row says it is being built. */
+  underConstruction?: boolean;
+  /** zzz784: a reported status that its own completion date contradicts
+   *  (IMFA KNR-1 "commercial production" with completion Q3 FY27). */
+  statusConflict?: string | null;
 }
+
+export { completionDate } from './fact-normalize';
+import { completionDate } from './fact-normalize';
 
 const STOP = new Set(['facility', 'facilities', 'plant', 'plants', 'capacity', 'expansion', 'programme', 'program', 'project',
   'projects', 'greenfield', 'brownfield', 'manufacturing', 'part', 'capex', 'unit', 'units', 'line', 'lines', 'phase', 'total',
   'investment', 'crore', 'crores', 'plot', 'power', 'based', 'with', 'from', 'into', 'this', 'that', 'components', 'capability',
-  'additions', 'addition', 'stated', 'being', 'built', 'company', 'strategic']);
+  'additions', 'addition', 'stated', 'being', 'built', 'company', 'strategic', 'site', 'sites', 'centre', 'center']);
 const tokensOf = (name: string): string[] => Array.from(new Set(
   name.toLowerCase().replace(/[^a-z\s-]/g, ' ').split(/[\s-]+/).filter((w) => w.length >= 4 && !STOP.has(w))));
 const MONEY = /(?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*\+?\s*(?:crores?|cr\b|lakhs?|mn|million|bn|billion)?|[\d,]+(?:\.\d+)?\s*\+?\s*(?:crores?|cr\b)/i;
@@ -792,6 +889,7 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
     const es = buckets.get(name) || [];
     if (!es.length && !row) continue;
     const steps = new Map<LifecycleStep, ProjectStep>();
+    let curUC = false; let curConflict: string | null = null;
     const set = (step: LifecycleStep, state: 'actual' | 'target', value: string | null, e: Ev | null) => {
       const cur = steps.get(step);
       if (cur && cur.state === 'actual' && state === 'target') return;
@@ -874,11 +972,37 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
       if (amt && !steps.has('ANNOUNCED')) { set('ANNOUNCED', 'actual', money(amt) || short(amt, 60), null); announced = announced || money(amt) || short(amt, 60); }
       if (said(row.capacity_added) && !steps.has('CAPACITY_CREATED')) set('CAPACITY_CREATED', row.status === 'commissioned' ? 'actual' : 'target', short(row.capacity_added, 70), null);
       const comp = said(row.completion_period) ? String(row.completion_period) : null;
+      // ── THE ROW'S OWN STATUS, CHECKED AGAINST ITS OWN DATE.        (zzz784)
+      // "commercial_production" with a completion date already past (ETHOSLTD
+      // City of Time, May 2025) is running; with one still ahead (IMFA KNR-1,
+      // Q3 FY27) it is a conflict and stays a plan. A past-tense completion
+      // phrase ("steam commissioned", "commenced operations Aug 2026") says it.
+      const status = String(row.status || '').toLowerCase();
+      // "Future" is judged against the newest document read (a filing dated
+      // after quarter-end can report an event that has already happened).
+      const pe = periodEnd(ledger?.latest_period || null);
+      const dd = ledger?.latest_document_date ? new Date(String(ledger.latest_document_date).slice(0, 10)) : null;
+      const asOf0 = dd && !isNaN(dd.getTime()) && (!pe || dd.getTime() > pe.getTime()) ? dd : pe;
+      // A month named in the text is not "future" within the month of the newest document.
+      const asOf = asOf0 ? new Date(Date.UTC(asOf0.getUTCFullYear(), asOf0.getUTCMonth() + 1, 0)) : null;
+      const cd = completionDate(comp);
+      const compFuture = !!comp && ((!!cd && !!asOf && cd.getTime() > asOf.getTime()) || (FORWARD_CUE.test(comp) && !/\b(commissioned|commenced|operational)\b/i.test(comp)));
+      // A clause in the past tense with no future word in it ("steam
+      // commissioned; power expected in ~45 days" — the first clause).
+      const compDone = !!comp && comp.split(/[;()]/).some((cl) => /\b(commissioned|commenced (?:commercial )?(?:operations|production)|(?:is|now|already) operational|commerciali[sz]ed)\b/i.test(cl)
+        && !/\b(by|expected|planned|will|to be|shall|targeted)\b/i.test(cl));
+      if (/under[_ ]construction/.test(status)) curUC = true;
       if (comp) {
-        if (/commerciali[sz]ed|commercial production|commercial operations/i.test(comp) && !FORWARD_CUE.test(comp)) set('COMMERCIAL_PRODUCTION', 'actual', short(comp.replace(/^commerciali[sz]ed\s*(?:in\s*)?/i, ''), 50), null);
-        else if (row.status === 'commissioned') set('COMMISSIONED', 'actual', short(comp, 50), null);
-        else set('COMMISSIONED', 'target', short(comp, 60), null);
-      }
+        if (/commerciali[sz]ed|commercial production|commercial operations|commenced operations/i.test(comp) && !FORWARD_CUE.test(comp)) set('COMMERCIAL_PRODUCTION', 'actual', short(comp.replace(/^commerciali[sz]ed\s*(?:in\s*)?/i, ''), 50), null);
+        else if (/commercial[_ ]production/.test(status) && (!compFuture || compDone)) set('COMMERCIAL_PRODUCTION', 'actual', short(comp, 50), null);
+        else if ((status === 'commissioned' && !compFuture) || compDone) set('COMMISSIONED', 'actual', short(comp, 50), null);
+        else {
+          set('COMMISSIONED', 'target', short(comp, 60), null);
+          if (/commercial[_ ]production|commissioned/.test(status)) curConflict = `reported status "${status.replace(/_/g, ' ')}" conflicts with its stated completion ${short(comp, 40)} — validation required`;
+          if (/commercial[_ ]production|commissioned/.test(status)) curUC = true;
+        }
+      } else if (/commercial[_ ]production/.test(status)) set('COMMERCIAL_PRODUCTION', 'actual', 'as reported', null);
+      else if (status === 'commissioned') set('COMMISSIONED', 'actual', 'as reported', null);
       const rf = said(row.revenue_from) ? String(row.revenue_from) : null;
       if (rf && !/^not stated$/i.test(rf)) {
         if (/already contributing|contributed|contributing/i.test(rf) && money(rf)) {
@@ -903,6 +1027,10 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
         if (mismatch) steps.delete('COMMISSIONED');
       }
     }
+    // A plant in commercial production has its capacity: a "planned" capacity
+    // on the same project row is the capacity that now exists. (zzz784)
+    { const cc = steps.get('CAPACITY_CREATED');
+      if (cc && cc.state === 'target' && (steps.get('COMMERCIAL_PRODUCTION')?.state === 'actual' || steps.get('COMMISSIONED')?.state === 'actual')) cc.state = 'actual'; }
     // IMPLIED: a later ACTUAL step proves an earlier one happened even when
     // the documents never said so — marked as such, never as disclosed.
     const lastActual = LIFECYCLE_STEPS.reduce((m, st, i) => (steps.get(st)?.state === 'actual' ? i : m), -1);
@@ -954,8 +1082,13 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
       fcf_contribution: null,
       source_ids: Array.from(new Set(ordered.flatMap((x) => x.sourceIds))),
       steps: ordered,
-      line,
+      line: (() => { const l = curConflict ? `${line} · ${curConflict}` : line;
+        // A store opens; it is not commissioned or in commercial production. (zzz784)
+        return isNetworkAsset({ name: name === OTHER ? '' : name, capacity_added: get('CAPACITY_CREATED').value } as CapexProject)
+          ? l.replace(/commercial production|commissioned|commissioning expected/gi, (m) => (/expected/i.test(m) ? 'opening expected' : 'opened')) : l; })(),
       mismatch,
+      underConstruction: curUC,
+      statusConflict: curConflict,
     });
   }
   return out;

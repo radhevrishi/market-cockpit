@@ -24,6 +24,7 @@
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
+import { capacityClass, isUtilisationReading } from '@/lib/catalyst/persistence';
 import { CAPEX_META, CAPEX_STAGES, STAGE_LABEL, LIFECYCLE_LABEL, type CapexChain, type CapexEarning, type CapexEarningState } from '@/lib/thesis/capex-chain';
 import type { VarVerdict, VariableReading, ReadingPoint, PeriodClass } from '@/lib/thesis/variables';
 import type { ThesisVerdict } from '@/lib/thesis/status';
@@ -324,7 +325,7 @@ const sameText = (a: unknown, b: unknown) => String(a ?? '').trim().toLowerCase(
 const stripTag = (s: string | null | undefined) => rupee(String(s ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '')).trim();
 
 type RowLike = {
-  verdict: VarVerdict; before: string | null; after: string | null; delta: string | null;
+  verdict: VarVerdict; before: string | null; after: string | null; delta: string | null; label?: string | null;
   statement?: string | null; plan?: { value: string; type: string; gap: string | null } | null;
   asOf?: string | null; comparison?: any; unjudged?: string | null;
   reading?: VariableReading | null; state?: string | null;
@@ -347,13 +348,20 @@ function chipValueRaw(c: RowLike): string {
   if (c.state === 'UNCLEAR' && after) return `unclear — validation required: ${after}`;
   // The time-series reading, when the variables layer supplied one, is the
   // whole statement: current → previous → Δ → direction → basis. (zzz771)
-  if (c.reading && c.reading.display) return readingText(c.reading).text;
+  // A management statement keeps its tag on the row whichever path prints it. (zzz784)
+  if (c.reading && c.reading.display) {
+    const rt = readingText(c.reading).text;
+    return c.statement === 'MANAGEMENT_STATEMENT' && !/management/i.test(rt) ? `${rt} — management statement, not a filed figure` : rt;
+  }
   if (c.statement === 'GUIDANCE' || c.statement === 'TARGET') {
     // "maintained" / "raised" are the finding; print them as such.
     if (/^(maintained|reiterated|unchanged)$/i.test(after)) return `${c.statement.toLowerCase()} MAINTAINED`;
+    // The label already names the metric and that it is a target (zzz784).
+    if (/ — |target|guidance/i.test(String(c.label || ''))) return `${after} (${c.statement.toLowerCase()} only — not a filed figure)`;
     return `${c.statement.toLowerCase()}: ${after}`;
   }
-  if (c.statement === 'MANAGEMENT_STATEMENT') return `“${after}”${planTxt}`;
+  // zzz784: the row itself says it is a management statement, not a filed figure.
+  if (c.statement === 'MANAGEMENT_STATEMENT') return `“${after}” — management statement, not a filed figure${planTxt}`;
   // A historical row on the board read as this period's figure: CASTROLIND
   // "◐ Guidance INR1,871 crores (FY26)". It says it is history. (zzz769)
   if (c.statement === 'HISTORICAL') return `history: ${[c.before, after].filter(Boolean).join(' → ')} (${c.asOf})`;
@@ -467,7 +475,10 @@ function ClassTag({ word }: { word: string }) {
 function CapexEarningBlock({ e, inline }: { e: CapexEarning; inline: boolean }) {
   const color = EARNING_COLOR[e.state];
   const dashed = e.state === 'UNKNOWN';
-  const title = `Capex earning: ${e.label}\n${e.lines.join('\n')}${e.source ? `\nSource: ${e.source}` : ''}`;
+  // zzz784: construction / operational status and economic status are two
+  // questions, printed as two lines from the one normalized capex state.
+  const lines = [...(e.operational ? [`Operational status: ${e.operational}`] : []), ...e.lines, ...(e.economic ? [`Economic status: ${e.economic}`] : [])];
+  const title = `Capex earning: ${e.label}\n${lines.join('\n')}${e.source ? `\nSource: ${e.source}` : ''}`;
   if (inline) {
     return (
       <span data-testid="capex-earning" data-state={e.state} title={title} style={{
@@ -476,7 +487,7 @@ function CapexEarningBlock({ e, inline }: { e: CapexEarning; inline: boolean }) 
         background: dashed ? 'transparent' : `color-mix(in srgb, ${color} 10%, transparent)`,
       }}>
         Capex earning: <b style={{ color: ink(color) }}>{e.label}</b>
-        {e.lines.map((l, i) => <span key={i}> · {l}</span>)}
+        {[...e.lines, ...(e.operational ? [`Operational status: ${e.operational}`] : []), ...(e.economic ? [`Economic status: ${e.economic}`] : [])].map((l, i) => <span key={i}> · {l}</span>)}
       </span>
     );
   }
@@ -484,11 +495,26 @@ function CapexEarningBlock({ e, inline }: { e: CapexEarning; inline: boolean }) 
     <div data-testid="capex-earning" data-state={e.state} style={{ fontSize: 13.5, marginBottom: 5, color: C.text }}>
       <b style={{ color: ink(color) }}>CAPEX EARNING: {e.label}</b>
       {e.source && <span style={{ color: C.faint }}> — {e.source}</span>}
-      {e.lines.map((l, i) => (
+      {lines.map((l, i) => (
         <div key={i} style={{ fontSize: 13, color: dashed ? C.dim : C.text, paddingLeft: 10 }}>{l}</div>
       ))}
     </div>
   );
+}
+
+/** zzz784: the raw extraction log shows what was STORED; where the engine
+ *  reads a stored "capacity" differently (money, stores, floor area, a share
+ *  that is not a utilisation), the log says so beside it. */
+export function rawEventNote(e: { variable: string; after?: string | null; evidence_text?: string | null }): string | null {
+  if (e.variable === 'capacity' || e.variable === 'capacity_addition') {
+    if (/%/.test(String(e.after ?? '')) && !isUtilisationReading(e.after, e.evidence_text)) return 'not a capacity or utilisation reading — not used';
+    const k = capacityClass(e.after, e.evidence_text);
+    if (k === 'MONEY') return 'a money figure — not capacity';
+    if (k === 'NETWORK') return 'a store / network count — not production capacity';
+    if (k === 'FLOOR_SPACE') return 'floor space — not production capacity';
+  }
+  if (e.variable === 'utilisation' && !isUtilisationReading(e.after, e.evidence_text)) return 'not a utilisation reading (e.g. same-store sales growth) — not used';
+  return null;
 }
 
 /** Every earlier-period figure on the assessment, with the engine's decision:
@@ -965,6 +991,14 @@ export function ThesisCard(p: ThesisCardProps) {
         </div>
       )}
 
+      {/* ── ONE-OFFS: A QUALIFICATION, NEVER HIDDEN.               (zzz784) */}
+      {a && (a.qualification || []).length > 0 && (
+        <div data-testid="one-off-qualification" style={{ marginTop: 7, fontSize: 13, lineHeight: 1.55, padding: '6px 9px', borderRadius: 6,
+          border: `1px solid ${C.warn}`, background: `color-mix(in srgb, ${C.warn} 8%, transparent)` }}>
+          {(a.qualification || []).map((q, i) => <div key={i} style={{ color: C.text }}>{rupee(q)}</div>)}
+        </div>
+      )}
+
       {/* ── HISTORICAL CONTEXT, APART FROM THE CURRENT PERIOD.    (zzz773)
           "Cash conversion -7.62× (last FY)" sat on the board as if it were
           Q1 FY27's reading and moved Q1 FY27's status. Every earlier-period
@@ -996,17 +1030,20 @@ export function ThesisCard(p: ThesisCardProps) {
       {a && (
         <div style={{ marginTop: 7, fontSize: 13, color: C.dim, lineHeight: 1.7 }}>
           {([
-            ['MECHANISM', a.coverage.mechanism, 'the WHY — capacity, utilisation, orders, capex, customers, one-offs, cash'],
+            // zzz784: the status line's X/Y, as a partition of the same per-variable states.
+            ...(a.coverage.structural ? [['STRUCTURAL', a.coverage.structural, 'the X/Y in the status line — the strategy\'s structural variables plus evidenced drivers; every row in exactly one state']] : []),
+            ['MECHANISM', a.coverage.mechanism, 'thesis-critical mechanism variables of this ledger (weight 3–4) — the WHY: capacity, utilisation, orders, capex, customers, one-offs'],
             ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
             ['FORWARD', a.coverage.forward, 'what management commits to next'],
           ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; unclear?: number; not_applicable?: number; core_variables?: number; total: number;
-            watch?: number; historical?: number; named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[] } }, string]>)
+            watch?: number; historical?: number; silent?: number; statementOnly?: number; duplicate?: number;
+            named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[]; statementOnly?: string[]; confirmed?: string[] } }, string]>)
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
-              <div key={name} title={hint}>
+              <div key={name} title={hint} data-testid={`tally-row-${name.toLowerCase()}`}>
                 <span style={{ display: 'inline-block', minWidth: 78, fontSize: 11, fontWeight: 800, letterSpacing: 0.4,
-                  color: name === 'MECHANISM' ? C.text : C.faint }}>{name}</span>
-                <span style={{ color: C.faint }}>{t.core_variables ?? t.total} core · </span>
+                  color: name === 'MECHANISM' || name === 'STRUCTURAL' ? C.text : C.faint }}>{name}</span>
+                <span style={{ color: C.faint }}>{t.core_variables ?? t.total} {name === 'STRUCTURAL' ? 'structural (status-line ratio)' : name === 'MECHANISM' ? 'thesis-critical' : 'core'} · </span>
                 <b style={{ color: t.confirmed ? C.up : C.flat }}>{t.confirmed} confirmed</b>
                 {' · '}
                 <b style={{ color: t.pending ? C.warn : C.flat }}>{t.pending} pending</b>
@@ -1018,10 +1055,15 @@ export function ThesisCard(p: ThesisCardProps) {
                 {(t.flat || 0) > 0 && <span style={{ color: C.flat }}> · {t.flat} flat</span>}
                 {(t.not_applicable || 0) > 0 && <span style={{ color: C.faint }} title="Cannot apply to this business — never counted as pending."> · {t.not_applicable} n/a</span>}
                 {(t.watch || 0) > 0 && <span style={{ color: C.warn }} title="Moved the wrong way, but not mapped to this thesis type — context, never status-changing."> · {t.watch} watch</span>}
+                {(t.silent || 0) > 0 && <span style={{ color: C.flat }} title="A risk variable the documents did not mention: the check passes, but silence is not a reading."> · {t.silent} silent (passes, not a reading)</span>}
+                {(t.statementOnly || 0) > 0 && <span style={{ color: C.warn }} title="Read only as a management statement or a target — never confirmed."> · {t.statementOnly} statement / target only</span>}
+                {(t.duplicate || 0) > 0 && <span style={{ color: C.flat }} title="The same figure as another confirmed variable — counted once."> · {t.duplicate} same figure counted once</span>}
                 {/* ── EVERY COUNT NAMES ITS VARIABLES.                    (zzz773)
                     "1 contradicted · of 4" named nothing; each non-confirmed
                     variable is listed with its figure. */}
                 {t.named && ([
+                  ...(name === 'STRUCTURAL' ? [['Confirmed', t.named.confirmed || [], C.up] as [string, string[], string]] : []),
+                  ['Statement / target only', t.named.statementOnly || [], C.warn],
                   ['Historical unresolved', t.named.historical || [], C.warn],
                   ['Contradicted', t.named.contradicted, C.down], ['Pending', t.named.pending, C.warn],
                   ['Unclear', t.named.unclear, C.flat], ['Watch', t.named.watch, C.warn],
@@ -1032,6 +1074,12 @@ export function ThesisCard(p: ThesisCardProps) {
                 ))}
               </div>
             ))}
+          {a.evidenceItems && (a.evidenceItems.structural.length + a.evidenceItems.supporting.length) > 0 && (
+            <div data-testid="evidence-items" style={{ color: C.faint, marginTop: 2 }}>
+              Evidence items in the documents: <span style={{ color: C.text }}>{a.evidenceItems.structural.length + a.evidenceItems.supporting.length}</span>
+              {' '}— {a.evidenceItems.structural.length} count in the structural ratio{a.evidenceItems.supporting.length ? `, ${a.evidenceItems.supporting.length} supporting (not in the ratio): ${a.evidenceItems.supporting.join(' · ')}` : ''}
+            </div>
+          )}
           {a.coverage.missingCore.length > 0 && (
             <div style={{ color: C.faint, marginTop: 2 }}>
               Core unknown (not bad):{' '}
@@ -1540,7 +1588,7 @@ export function ThesisCard(p: ThesisCardProps) {
                     {' '}· read {pr.extracted_at.slice(0, 10)}{pr.updated_at !== pr.extracted_at ? `, updated ${pr.updated_at.slice(0, 10)}` : ''}
                     <div style={{ color: C.faint, paddingLeft: 10 }}>
                       {pr.events.slice(0, 8).map((e, i) => (
-                        <div key={i} title={e.evidence_text}>{e.variable.replace(/_/g, ' ')} · {e.value_type.toLowerCase().replace('_', ' ')}{e.before ? ` ${e.before} →` : ''} {e.after || ''}{e.unit && !/%/.test(String(e.after || '')) ? ` ${e.unit}` : ''}{e.period ? ` (${e.period})` : ''} — {e.source}
+                        <div key={i} title={e.evidence_text}>{e.variable.replace(/_/g, ' ')} · {e.value_type.toLowerCase().replace('_', ' ')}{e.before ? ` ${e.before} →` : ''} {e.after || ''}{e.unit && !/%/.test(String(e.after || '')) ? ` ${e.unit}` : ''}{e.period ? ` (${e.period})` : ''} — {e.source}{rawEventNote(e) ? <span style={{ color: C.warn }}> · {rawEventNote(e)}</span> : null}
                           {/* zzz773: a unit-less amount or a counterparty-less "customer" is UNCLEAR, with its source kept. */}
                           {(() => { const v = validateReading(e.variable, e.after, e.evidence_text, e.unit); return v.state === 'UNCLEAR' ? <span style={{ color: C.warn }}> · {v.reason}</span> : null; })()}</div>
                       ))}

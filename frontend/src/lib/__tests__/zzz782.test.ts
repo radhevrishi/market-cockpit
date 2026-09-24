@@ -41,3 +41,13 @@ test('reserve / resource tonnage is not production capacity', () => {
   assert.equal(isReserveTonnage({ key: 'capacity', after: '12.2 million tonnes per annum' }), false);
   assert.equal(isReserveTonnage({ key: 'capacity_addition', after: '5300 MTPA' }), false);
 });
+
+import { toOpenAIRequest } from '../anthropic-meter';
+test('zzz783: a PDF document block goes to OpenAI as a file part (OCR works without an Anthropic key)', () => {
+  const r: any = toOpenAIRequest({ model: 'claude-haiku-4-5', max_tokens: 100, system: 'Transcribe.', messages: [{ role: 'user', content: [
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'QUJD' } }, { type: 'text', text: 'Transcribe this filing.' }] }] } as any, 'gpt-5-mini', 'minimal');
+  const u = r.messages.find((m: any) => m.role === 'user');
+  assert.equal(u.content[0].type, 'file');
+  assert.equal(u.content[0].file.file_data, 'data:application/pdf;base64,QUJD');
+  assert.equal(u.content[1].text, 'Transcribe this filing.');
+});
