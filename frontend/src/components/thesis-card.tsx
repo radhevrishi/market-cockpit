@@ -126,6 +126,13 @@ export const ROW_TREATMENT = {
   SOURCE_UNAVAILABLE: { mark: '⚠', word: 'SOURCE UNAVAILABLE' },
   RETRIEVAL_FAILED: { mark: '⚠', word: 'RETRIEVAL FAILED' },
   UNCHANGED: { mark: '→', word: 'UNCHANGED (two readings)' },
+  // A flat verdict on a real move (+15.1%, +0.5pp) is "not material", not
+  // "did not move": the owner read "UNCHANGED" on NRBBEARING's +15.1%
+  // earnings and REDINGTON's +0.5pp margin. The word prints the delta. (zzz772)
+  WITHIN_MATERIALITY: { mark: '–', word: 'within materiality' },
+  // Only a sequential move is on file: a level with a labelled seasonal
+  // delta, deliberately not judged — never "unclear". (zzz772)
+  QOQ_ONLY: { mark: '◐', word: 'QoQ only — seasonal, not judged' },
   SINGLE: { mark: '–', word: 'single reading' },
   SILENT: { mark: '–', word: 'none disclosed · check passes' },
   CONFIRMED: { mark: '✓', word: 'CONFIRMED' },
@@ -134,11 +141,71 @@ export const ROW_TREATMENT = {
 } as const;
 export type RowTreatmentKey = keyof typeof ROW_TREATMENT;
 
+type TreatInput = { key?: string; verdict: VarVerdict; state?: string | null; stateReason?: string | null; unjudged?: string | null;
+  before?: string | null; after?: string | null; delta?: string | null; comparison?: any; reading?: VariableReading | null; withinMateriality?: boolean };
+
+// ── QoQ-ONLY IS A LEVEL, NOT AN UNCLEAR FIGURE.                    (zzz772)
+// CYIENTDLM, JINDRILL, TI, AZAD, WENDT … printed "? Operating margin unclear
+// — validation required: 10.5%". The figure is not in doubt: the reason on
+// the row is that only a sequential (QoQ) move is on file, which carries
+// seasonality, so it is shown and not judged. Detected from that reason.
+export function isQoqOnly(c: TreatInput): boolean {
+  if (c.state !== 'UNCLEAR' && c.verdict !== 'stated') return false;
+  return /\bsequential\b|\bQoQ\b/i.test(`${c.stateReason || ''} ${c.unjudged || ''}`);
+}
+
+/** The printed change on a row: its own delta, else the reading's, else the
+ *  comparison's. */
+export function deltaText(c: TreatInput): string | null {
+  const d = c.delta || c.reading?.delta_abs || c.comparison?.change || null;
+  return d ? String(d).trim() || null : null;
+}
+
+const plainNum = (x: unknown): number | null => {
+  const t = String(x ?? '');
+  const ns = t.match(/-?\d[\d,]*(?:\.\d+)?/g);
+  if (!ns || ns.length !== 1) return null;
+  const v = Number(ns[0].replace(/,/g, ''));
+  return Number.isFinite(v) ? v : null;
+};
+
+/** Is the move ≈ 0? true: |Δ| < 0.5pp, < 50bps, < 1% relative, or the two
+ *  readings say the same thing; false: a real move; null: cannot tell. (zzz772) */
+export function isNegligibleDelta(c: TreatInput): boolean | null {
+  if (sameText(c.before, c.after)) return true;
+  if (c.reading?.current && c.reading?.previous && sameText(c.reading.current.value, c.reading.previous.value)) return true;
+  if (c.comparison?.previous && sameText(c.comparison.previous.raw, stripTag(c.after))) return true;
+  const d = deltaText(c);
+  if (d) {
+    const m = /(\d+(?:\.\d+)?)\s*(pp|bps?|%)?/i.exec(d);
+    if (m) {
+      const v = Math.abs(Number(m[1]));
+      const u = (m[2] || '').toLowerCase();
+      if (u === 'pp') return v < 0.5;
+      if (u.startsWith('bp')) return v < 50;
+      if (u === '%') return v < 1;
+      if (v === 0) return true;
+    }
+  }
+  const dp = plainNum(c.reading?.delta_pct);
+  if (dp != null && /%/.test(String(c.reading?.delta_pct))) return Math.abs(dp) < 1;
+  const a = plainNum(c.before), b = plainNum(c.after);
+  if (a != null && b != null && a !== 0) return Math.abs(b - a) / Math.abs(a) < 0.01;
+  return null;
+}
+
+/** A growth rate or a margin is a comparison in itself: "+8.4%" YoY is two
+ *  periods, so "single reading" is never its word. (zzz772) */
+const RATE_KEYS = new Set(['revenue_growth', 'earnings_growth', 'margin', 'operating_leverage']);
+const isRateRow = (c: TreatInput) => !!c.key && RATE_KEYS.has(c.key)
+  && (!!deltaText(c) || /^[+\-−]\s*\d/.test(stripTag(c.after)) || /[+\-−]\d+(?:\.\d+)?\s*(?:%|pp)/.test(String(c.after ?? '')));
+
 /** Which of the three treatments a row gets. Reads the evidence state first
  *  (an UNCLEAR or NOT_DISCLOSED row is never judged by its verdict), then the
  *  verdict, then whether two readings actually exist. */
-export function rowTreatment(c: { verdict: VarVerdict; state?: string | null; before?: string | null; after?: string | null; comparison?: any; reading?: VariableReading | null }): RowTreatmentKey {
+export function rowTreatment(c: TreatInput): RowTreatmentKey {
   const st = c.state || null;
+  if (isQoqOnly(c)) return 'QOQ_ONLY';
   if (st === 'UNCLEAR') return 'UNCLEAR';
   if (c.verdict === 'unknown') {
     if (st && st in ROW_TREATMENT && st !== 'FOUND') return st as RowTreatmentKey;
@@ -151,9 +218,21 @@ export function rowTreatment(c: { verdict: VarVerdict; state?: string | null; be
   const twoReadings = !!(c.reading?.current && c.reading?.previous)
     || (!!c.before && !!c.after)
     || !!(c.comparison?.previous && c.comparison?.basis !== 'NONE');
-  if (twoReadings) return 'UNCHANGED';
+  // UNCHANGED only when the move is ≈ 0; any other flat verdict is a move
+  // judged not material, and says so with its delta. X's `withinMateriality`
+  // confirms the second case where the status engine supplies it. (zzz772)
+  if (twoReadings) return isNegligibleDelta(c) === true && c.withinMateriality !== true ? 'UNCHANGED' : 'WITHIN_MATERIALITY';
+  if (isRateRow(c)) return 'WITHIN_MATERIALITY';
   if (c.after || c.before) return 'SINGLE';
   return 'SILENT';
+}
+
+/** The treatment word as printed: "within materiality (+15.1%)" carries the
+ *  delta unless the value beside it already shows it. (zzz772) */
+export function treatmentWord(tr: RowTreatmentKey, c: TreatInput, shown = ''): string {
+  if (tr !== 'WITHIN_MATERIALITY') return ROW_TREATMENT[tr].word;
+  const d = deltaText(c);
+  return d && !shown.includes(d) ? `within materiality (${d})` : 'within materiality';
 }
 
 // ── A READING SAYS WHAT PERIOD IT DESCRIBES.                        (zzz771)
@@ -168,6 +247,17 @@ export const PERIOD_CLASS_LABEL: Record<PeriodClass, string> = {
   CURRENT_QUARTER: 'CURRENT', PREVIOUS_QUARTER: 'PREV QTR', PREVIOUS_FY: 'PREV FY', HISTORICAL: 'HISTORICAL',
   MANAGEMENT_TARGET: 'TARGET', GUIDANCE: 'GUIDANCE', THESIS_BASELINE: 'BASELINE',
 };
+// ── NO CODE TOKENS ON THE CARD.                                    (zzz772)
+// A comparison basis or state enum ("▲ in_text", "→ vs_baseline") is a code
+// name, not a word the owner reads. Every printed reading passes through here;
+// the variables layer is fixing its display strings too, and this keeps the
+// card clean whichever lands first.
+const TOKEN_WORD: Array<[RegExp, string]> = [
+  [/\bin_text\b/g, 'in the text'], [/\bvs_baseline\b/g, 'vs the thesis baseline'], [/\bvs_prior_read\b/g, 'vs the prior read'],
+  [/\bNOT_COMPARABLE\b/g, 'not comparable'], [/\bUNKNOWN_[A-Z_]+\b/g, 'unknown'],
+  [/\b(?:undefined|NaN|null)\b/g, 'not stated'],
+];
+export const humanTokens = (s: string): string => TOKEN_WORD.reduce((t, [re, w]) => t.replace(re, w), String(s ?? ''));
 const pointText = (pt: ReadingPoint) => `${rupee(pt.value)}${pt.period ? ` (${pt.period})` : ''}`;
 /** The printable text of a reading plus the class tags to show beside it. */
 export function readingText(r: VariableReading): { text: string; tags: string[]; displaced: boolean } {
@@ -178,9 +268,9 @@ export function readingText(r: VariableReading): { text: string; tags: string[];
     // own class rather than letting it occupy the slot.
     const parts = [`current: not disclosed`, `${PERIOD_CLASS_LABEL[r.current.period_class].toLowerCase()} ${pointText(r.current)}`];
     if (r.previous && !NON_CURRENT.has(r.previous.period_class)) parts.push(`previous ${pointText(r.previous)}`);
-    return { text: parts.join(' · '), tags: Array.from(new Set(tags)), displaced: true };
+    return { text: humanTokens(parts.join(' · ')), tags: Array.from(new Set(tags)), displaced: true };
   }
-  return { text: rupee(r.display || ''), tags: Array.from(new Set(tags)), displaced: false };
+  return { text: humanTokens(rupee(r.display || '')), tags: Array.from(new Set(tags)), displaced: false };
 }
 
 // ── THREE VERDICT DIMENSIONS, THREE COLOURS.                        (zzz771)
@@ -228,10 +318,18 @@ type RowLike = {
 
 /** The compact value a chip shows — one figure, typed. */
 export function chipValue(c: RowLike): string {
+  return humanTokens(chipValueRaw(c));
+}
+function chipValueRaw(c: RowLike): string {
   const after = stripTag(c.after);
   const planTxt = c.plan ? ` · ${c.plan.type === 'TARGET' ? 'target' : 'plan'} ${rupee(c.plan.value)}${c.plan.gap ? ` (gap ${c.plan.gap})` : ''}` : '';
   // UNCLEAR is printed as a demand for validation with the value, never as a
   // figure and never as a dash. (zzz771)
+  if (isQoqOnly(c as TreatInput)) {
+    const level = after || stripTag(c.reading?.current?.value) || '';
+    const d = (deltaText(c as TreatInput) || '').replace(/\s*\(?\bQoQ\b\)?\s*$/i, '').trim();
+    return `${level ? `${level} · ` : ''}QoQ only${d ? ` (${d} QoQ)` : ''} — seasonal, not judged${planTxt}`;
+  }
   if (c.state === 'UNCLEAR' && after) return `unclear — validation required: ${after}`;
   // The time-series reading, when the variables layer supplied one, is the
   // whole statement: current → previous → Δ → direction → basis. (zzz771)
@@ -556,11 +654,14 @@ export function ThesisCard(p: ThesisCardProps) {
             // direction, with any non-current point labelled. (zzz771)
             const row = a?.checked.find((x) => x.key === c.metric) as any;
             const rd: VariableReading | null = row?.reading || null;
-            const rt = rd && rd.display ? readingText(rd) : null;
+            // A QoQ-only row prints its level and labelled seasonal delta,
+            // not the reading's "unclear" text. (zzz772)
+            const rt = row && isQoqOnly(row) ? { text: chipValue(row), tags: [] as string[], displaced: false }
+              : rd && rd.display ? readingText(rd) : null;
             return (
               <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55, color: C.dim }} title={`Source: ${c.source}`}>
                 <span style={{ fontWeight: 900, color: c.sign === '+' ? C.up : c.sign === '-' ? C.down : C.faint }}>{c.sign}</span>{' '}
-                <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{rt ? `${row.label}: ${rt.text}` : c.text}</span>
+                <span style={{ color: c.sign === '·' ? C.dim : C.text }}>{rt ? `${row.label}: ${rt.text}` : humanTokens(c.text)}</span>
                 {rt && rt.tags.map((t) => <ClassTag key={t} word={t} />)}
               </div>
             );
@@ -589,6 +690,14 @@ export function ThesisCard(p: ThesisCardProps) {
         const dirColor = v.direction === 'STRENGTHENING' ? C.up : v.direction === 'WEAKENING' ? C.down : v.direction === 'UNCHANGED' ? C.flat : C.absent;
         const evColor = v.evidence === 'CONFIRMED' ? C.up : v.evidence === 'PARTIALLY_CONFIRMED' ? C.cyan : v.evidence === 'CONTRADICTED' ? C.down
           : v.evidence === 'NOT_CONTRADICTED' ? C.flat : C.absent;
+        // ── A CONTRADICTED VARIABLE IS NOT A MISSING ONE.            (zzz772)
+        // CYIENTDLM's working capital moved the wrong way and was listed under
+        // "missing". The status engine now names contradicted variables
+        // (`coverage.contradicted`, optional); they print first, in red, and
+        // are filtered out of "missing" by name here as well.
+        const contradicted: string[] = Array.isArray((v.coverage as any).contradicted) ? (v.coverage as any).contradicted.filter(Boolean) : [];
+        const contraSet = new Set(contradicted.map((x) => String(x).trim().toLowerCase()));
+        const missing = (v.coverage.missing || []).filter((x) => !contraSet.has(String(x).trim().toLowerCase()));
         const chip = (color: string, dashed: boolean, title: string, body: React.ReactNode, testid: string) => (
           <span data-testid={testid} title={title} style={{
             fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 4, lineHeight: 1.5, maxWidth: '100%',
@@ -600,7 +709,9 @@ export function ThesisCard(p: ThesisCardProps) {
             {chip(btColor, false, bt.text, <>BREAK TRIGGER: <b>{!bt.fired ? 'none fired' : warnOnly ? `none — financial warning only: ${bt.conditions.join('; ') || bt.text}` : `fired: ${bt.conditions.join('; ') || bt.text}`}</b></>, 'verdict-break')}
             {chip(dirColor, v.direction === 'UNKNOWN', v.directionWhy, <>DIRECTION: <b>{DIRECTION_WORD[v.direction]}</b>{v.directionWhy ? <span style={{ fontWeight: 500 }}> — {v.directionWhy}</span> : null}</>, 'verdict-direction')}
             {chip(evColor, v.evidence === 'UNCHECKED' || v.evidence === 'INCOMPLETE', v.evidenceWhy,
-              <>EVIDENCE: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural){v.coverage.missing.length ? <span style={{ fontWeight: 500 }}> · missing: {v.coverage.missing.join(', ')}</span> : null}</>, 'verdict-evidence')}
+              <>EVIDENCE: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural)
+                {contradicted.length ? <span data-testid="evidence-contradicted" style={{ fontWeight: 700, color: ink(C.down) }}> · contradicted: {contradicted.join(', ')}</span> : null}
+                {missing.length ? <span style={{ fontWeight: 500 }}> · missing: {missing.join(', ')}</span> : null}</>, 'verdict-evidence')}
           </div>
         );
       })()}
@@ -653,9 +764,12 @@ export function ThesisCard(p: ThesisCardProps) {
                       const un = c.verdict === 'unknown' && !lifecycle;
                       const ab = un ? (c.absence ? ABSENCE_MARK[c.absence] : ABSENCE_MARK.not_read) : null;
                       const isCore = c.weight >= 4;
-                      const unclear = (c as any).state === 'UNCLEAR';
                       const tr = rowTreatment(c as any);
                       const T = ROW_TREATMENT[tr];
+                      // A QoQ-only level is read and shown, not unclear. (zzz772)
+                      const unclear = (c as any).state === 'UNCLEAR' && tr !== 'QOQ_ONLY';
+                      const shownVal = !un && (c.before || c.after || c.delta) ? chipValue(c as any) : '';
+                      const tWord = treatmentWord(tr, c as any, shownVal);
                       const rd: VariableReading | null = (c as any).reading || null;
                       const tags = rd && rd.display ? readingText(rd).tags : [];
                       if (lifecycle) {
@@ -678,7 +792,7 @@ export function ThesisCard(p: ThesisCardProps) {
                             ? `${c.label} — ${stateLine(c as any)}. ${ab!.hint}${isCore ? '\n\nCORE to this thesis.' : ''}`
                             : unclear
                               ? `${c.label} — ${stateLine(c as any)}. Counted neither as confirmed nor as contradicted.\n\n${c.evidence}`
-                              : `${c.label} — ${T.word}${T.word !== v.word ? ` · ${v.word}` : ''}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
+                              : `${c.label} — ${tWord}${tWord !== v.word ? ` · ${v.word}` : ''}.\n\n${c.evidence}${isCore ? '\n\nCORE to this thesis.' : ''}`}
                           style={{
                             fontSize: 12, fontWeight: isCore ? 800 : 600,
                             padding: '1px 6px', borderRadius: 4,
@@ -705,15 +819,15 @@ export function ThesisCard(p: ThesisCardProps) {
                               status sentence showed the level (32), so one
                               card stated two different numbers for one
                               variable. One field order, everywhere. */}
-                          {!un && (c.before || c.after || c.delta) ? (
-                            <> <b>{chipValue(c as any)}</b></>
+                          {shownVal ? (
+                            <> <b>{shownVal}</b></>
                           ) : ''}
                           {/* The treatment word AFTER the value: "0.83× · single
                               reading", "→ UNCHANGED (two readings)". Confirmed
                               and contradicted are said by the mark and colour;
                               unclear is said by the value text itself. (zzz771) */}
-                          {!un && (tr === 'UNCHANGED' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
-                            && <span style={{ fontSize: 11 }}> · {T.word}</span>}
+                          {!un && (tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
+                            && <span style={{ fontSize: 11 }}> · {tWord}</span>}
                           {tags.map((t) => <ClassTag key={t} word={t} />)}
                         </span>
                       );
@@ -843,7 +957,7 @@ export function ThesisCard(p: ThesisCardProps) {
                       return (
                         <>
                           <b>{chipValue(cc)}</b>
-                          {(tr === 'UNCHANGED' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {T.word}</span>}
+                          {(tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {treatmentWord(tr, cc, chipValue(cc))}</span>}
                           {rdTags.map((t) => <ClassTag key={t} word={t} />)}
                           {cc.comparison?.change_type === 'UNCHANGED' && cc.comparison?.basis === 'WITHIN_DOCUMENT' && tr !== 'UNCHANGED' && <b style={{ color: C.flat }}> · FLAT</b>}
                           <span style={{ display: 'block', fontSize: 12, color: C.dim, marginTop: 1 }}>
@@ -1180,6 +1294,7 @@ export function ThesisCard(p: ThesisCardProps) {
                     {c.weight >= 4 && <span style={{ fontSize: 11, fontWeight: 800, color: C.faint }}> CORE</span>}
                     {' — '}{c.key === 'capex_earning' && p.capex?.earning
                       ? `capex earning: ${p.capex.earning.label} — ${p.capex.earning.lines.join(' · ')}`
+                      : isQoqOnly(c as any) ? chipValue(c as any)
                       : c.state === 'UNCLEAR' && (c.after || c.before)
                         ? `unclear — validation required: ${stripTag(c.after || c.before)}`
                         : stateLine(c)}

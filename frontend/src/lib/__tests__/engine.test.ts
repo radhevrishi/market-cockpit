@@ -4737,7 +4737,8 @@ describe('zzz771 · variable snapshots, baseline and time-series readings', () =
     const vars = extract771(null, a.period.summary, null, { period: 'Q1 FY27', ledger: l });
     const u = vars.find((v) => v.key === 'utilisation')!;
     assert.equal(u.reading!.comparison_basis, 'in_text');
-    assert.match(u.reading!.display, /^80% \(Q1 FY27\) vs 70% .* · \+10pp · ▲ in_text$/);
+    // zzz772: the display prints the basis in words ("per filing"), never the code.
+    assert.match(u.reading!.display, /^80% \(Q1 FY27\) vs 70% .* · \+10pp · ▲ per filing$/);
   });
 
   test('guidance is never a previous value: Q1 guidance 90%, Q2 actual 80% → no previous', () => {
@@ -5416,5 +5417,333 @@ describe('zzz771 AG-2 — catalystFor / older context / clarifications / display
     assert.ok(!/\bundefined\b|\bNaN\b|\bnull\b/.test(t));
     // Same input, same output: the render is deterministic.
     assert.equal(h, render770(ReactNS770.createElement(Triage770, { view: old, market: 'IN', onRescan: () => {} })));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz772 — agent Y: extraction / reading defects from the live page.
+// ═══════════════════════════════════════════════════════════════════════════
+import { readingFor as readingFor772, figureAndPeriod as figureAndPeriod772, daysGap as daysGap772, capexAmountText as capexAmountText772, BASIS_WORDS as BASIS_WORDS772 } from '../thesis/variables';
+import { normalizeValue as normalizeValue772 } from '../thesis/fact-model';
+import { quantity as quantity772 } from '../thesis/comparison';
+import { stripPeriodTokens as strip772, movePeriodOut as movePeriodOut772, historicalAsOf as historicalAsOf772, rangeOf as rangeOf772 } from '../thesis/fact-normalize';
+import { valueFitsVariable as fits772, isUtilisationValue as isUtil772, isResultsTable as isResultsTable772, verifiedDirection as verifiedDirection772 } from '../thesis/evidence-extract';
+
+describe('zzz772 — agent Y rules', () => {
+  const ev772 = (variable: string, value_type: string, before: string | null, after: string | null, evidence_text: string) =>
+    ({ variable, value_type, before, after, unit: null, period: 'Q1 FY27', direction: 'up', evidence_text, source: 'Concall transcript Aug 2026', confidence: 'HIGH' }) as any;
+  const vars772 = (events: any[], extra: any = {}) => extractVariables(null, { events, ...extra }, null, { period: 'Q1 FY27' });
+
+  // ── Rule 1: the basis in words ──
+  test('1 · the reading prints the basis in words, never in_text / vs_baseline / vs_prior_read', () => {
+    assert.deepEqual(BASIS_WORDS772, { QoQ: 'QoQ', YoY: 'YoY', vs_prior_read: 'vs prior read', vs_baseline: 'vs first read', in_text: 'per filing' });
+    const v = vars772([ev772('working_capital', 'ACTUAL', '145 days in Q4 FY26', '161 days', 'Working capital days increased to 161 days from 145 days in Q4 FY26.')])
+      .find((x) => x.key === 'working_capital')!;
+    assert.ok(v.reading, 'a reading exists');
+    assert.doesNotMatch(v.reading!.display, /in_text|vs_baseline|vs_prior_read/);
+    // The prior names its period, one quarter before: QoQ.
+    assert.equal(v.reading!.comparison_basis, 'QoQ');
+    assert.match(v.reading!.display, /161 days \(Q1 FY27\) vs 145 days \(Q4 FY26\) · \+16 days · ▲ QoQ$/);
+  });
+
+  // ── Rule 2: period labels are not numbers ──
+  test('2 · period tokens are stripped before any number is read', () => {
+    assert.equal(strip772('Q1 FY26: 54.80 mmscm'), '54.80 mmscm');
+    assert.equal(strip772('58.94 mmscm in Q1 FY27'), '58.94 mmscm');
+    assert.equal(strip772('H1 FY26 ₹120 Cr'), '₹120 Cr');
+    assert.equal(strip772('9M FY26: 450 MT'), '450 MT');
+    assert.equal(strip772('FY2025-26 ₹1,200 Cr'), '₹1,200 Cr');
+    assert.equal(strip772('-1.43'), '-1.43', 'a minus sign is not a separator');
+    assert.equal(normalizeValue772('Q1 FY26: 54.80 mmscm').normalized_value, 54.8);
+    assert.equal(normalizeValue772('Q1 FY26: 54.80 mmscm').raw_value, 'Q1 FY26: 54.80 mmscm', 'the value as written is kept');
+    assert.equal(quantity772('Q1 FY26: 54.80 mmscm')!.value, 54.8);
+    assert.equal(quantity772('Q1 FY26: 54.80 mmscm')!.unit, quantity772('58.94 mmscm')!.unit);
+    assert.deepEqual(rangeOf772('FY27: 20-25%'), { lo: 20, hi: 25, pct: true });
+    assert.equal(verifiedDirection772({ before: 'Q4 FY26: 80', after: '60', direction: 'down', evidence_text: 'fell' }), 'down');
+  });
+
+  test('2 · IRMENERGY: "Q1 FY26: 54.80 mmscm → 58.94 mmscm" is +4.1 mmscm / +7.6% YoY, and the period moves out of the value', () => {
+    assert.equal(movePeriodOut772('Q1 FY26: 54.80 mmscm'), '54.80 mmscm (Q1 FY26)');
+    assert.deepEqual(figureAndPeriod772('Q1 FY26: 54.80 mmscm', 'Q1 FY27'), { value: '54.80 mmscm', period: 'Q1 FY26' });
+    assert.deepEqual(figureAndPeriod772('54.80 mmscm (Q1 FY26)', 'Q1 FY27'), { value: '54.80 mmscm', period: 'Q1 FY26' });
+    const text = 'Total sales volume grew 8% YoY to 58.94 mmscm in Q1 FY27 (Q1 FY26: 54.80 mmscm; Q4 FY26: 58.14 mmscm), with CNG continuing to be the primary growth driver.';
+    const v = vars772([ev772('volume', 'ACTUAL', 'Q1 FY26: 54.80 mmscm', '58.94 mmscm', text)]).find((x) => x.key === 'volume')!;
+    assert.equal(v.before, '54.80 mmscm (Q1 FY26)');
+    assert.equal(v.delta, '+7.6%');
+    assert.doesNotMatch(v.reading!.display, /5794|57\.9/);
+    assert.match(v.reading!.display, /58\.94 mmscm \(Q1 FY27\) vs 54\.80 mmscm \(Q1 FY26\) · \+4\.1 MMSCM · \+7\.6% · ▲ YoY/);
+  });
+
+  test('2 · a persisted snapshot whose delta was computed by the old parser is recomputed from the two figures', () => {
+    const v = vars772([ev772('volume', 'ACTUAL', null, '58.94 mmscm', 'Total sales volume grew to 58.94 mmscm in the quarter.')]).find((x) => x.key === 'volume')!;
+    const stale: any = { state: 'FOUND', value: '58.94 mmscm', unit: 'MMSCM', numeric: 58.94, fact_type: 'ACTUAL', period_class: 'CURRENT_QUARTER',
+      source_document_id: null, source_name: null, previous_period: null, previous_value: 'Q1 FY26: 54.80 mmscm',
+      delta_abs: '+57.9 MMSCM', delta_pct: '+5794%', direction: 'UP', not_comparable_reason: null, computed_at: '2026-09-22' };
+    const r = readingFor772({ ...v, reading: null } as any, { period: 'Q1 FY27', snapshots: { volume: stale } as any, earlier: [], baseline: null })!;
+    assert.equal(r.delta_pct, '+7.6%');
+    assert.equal(r.comparison_basis, 'YoY');
+    assert.doesNotMatch(r.display, /5794/);
+  });
+
+  // ── Rule 3: utilisation is a utilisation ──
+  test('3 · a utilisation value is a percentage or a capacity-use word', () => {
+    for (const x of ['65%', '~98%', '170-odd percent utilization', 'maximum level', 'almost 100%', '19.89% CUF', 'optimum utilization', 'at full capacity', '100% capacity', 'near-full'])
+      assert.equal(isUtil772(x), true, x);
+    for (const x of ['1587.17 million', '30 days inventory in India (management said 15-30 days, currently 30 days).', 'tracking similar to other larger parks',
+      'Civil construction at the Azad Centre of Excellence (CoE) in Tunki Bollaram is expected to be completed within this fiscal year.',
+      'strong double-digit organic revenue growth for FY27', '12,000 units', 'INR 337 crores', ''])
+      assert.equal(isUtil772(x), false, x);
+  });
+
+  test('3 · AZAD / TATATECH: a construction or growth sentence filed as utilisation does not reach the board, even as commentary', () => {
+    const vs = vars772([
+      ev772('utilisation', 'ACTUAL', null, 'Civil construction at the Azad Centre of Excellence (CoE) in Tunki Bollaram is expected to be completed within this fiscal year.',
+        'Civil construction at the Azad Centre of Excellence (CoE) in Tunki Bollaram is expected to be completed within this fiscal year, adding capacity.'),
+    ]);
+    assert.equal(vs.find((x) => x.key === 'utilisation'), undefined);
+    const ts = vars772([ev772('utilisation', 'GUIDANCE', null, 'strong double-digit organic revenue growth for FY27', 'We expect capacity to support strong double-digit organic revenue growth for FY27.')]);
+    assert.equal(ts.find((x) => x.key === 'utilisation'), undefined);
+    assert.equal(fits772({ variable: 'utilisation', before: null, after: '1587.17 million', unit: null, evidence_text: 'the unutilized amount stands at 1587.17 million, towards capacity' }), false);
+    // Genuine ones survive.
+    const ok = vars772([ev772('utilisation', 'ACTUAL', null, 'maximum level', 'We are pretty much operating at maximum level of capacity utilisation.')]);
+    assert.ok(ok.find((x) => x.key === 'utilisation'));
+  });
+
+  test('3 · the summary block does not print an empty "Management commentary: “”" utilisation row', () => {
+    const vs = extractVariables(null, { utilisation: { current: '', prior: '', expected: 'Optimal Level based on phased implementation.' } }, null, { period: 'Q1 FY27' });
+    const u = vs.find((x) => x.key === 'utilisation');
+    assert.ok(!u || !/“”/.test(String(u.display || '')));
+  });
+
+  // ── Rule 4: results table ──
+  test('4 · TBZ: a value naming three or more line items with figures is a results table, never guidance', () => {
+    const tbz = 'Revenue from Operations 8,409.74; Gross Profit 1,251.35; Gross Margin % 14.9%; EBITDA 710.23; EBITDA Margin % 8.4%; PBT 455.75; PAT 328.54; PAT Margin% 3.9%; EPS (₹) 4.92';
+    assert.equal(isResultsTable772(tbz), true);
+    assert.equal(fits772({ variable: 'guidance', before: null, after: tbz, unit: null, evidence_text: tbz }), false);
+    assert.equal(vars772([ev772('guidance', 'ACTUAL', null, tbz, tbz)]).find((x) => x.key === 'guidance'), undefined);
+    // Real guidance survives: two items, or three that say they look forward.
+    assert.equal(isResultsTable772('Revenue growth of 20% with EBITDA margin of 18%'), false);
+    assert.equal(fits772({ variable: 'guidance', before: null, after: 'Revenue ₹1,000 Cr, EBITDA ₹200 Cr and PAT ₹100 Cr by FY28', unit: null, evidence_text: 'We target revenue ₹1,000 Cr, EBITDA ₹200 Cr and PAT ₹100 Cr by FY28.' }), true);
+  });
+
+  // ── Rule 5: working-capital days, lower is better ──
+  test('5 · UNIMECH: 130 days against a 160-day plan is better, and a drift word with no prior figure is not ✕', () => {
+    assert.equal(daysGap772('approximately 130 days', '160 days plus'), '−30 days, better than plan');
+    assert.equal(daysGap772('170 days', '160 days'), '+10 days, worse than plan');
+    assert.equal(daysGap772('70%', '80%'), null);
+    const v = vars772([
+      ev772('working_capital', 'ACTUAL', null, 'approximately 130 days', 'Working capital days stood at approximately 130 days, slightly inching up due to new business acquisition.'),
+      ev772('working_capital', 'GUIDANCE', null, '160 days plus', 'As a result, overall working capital days could gradually increase to 160 days plus by end of this year.'),
+    ]).find((x) => x.key === 'working_capital')!;
+    assert.notEqual(v.verdict, 'deteriorating');
+    assert.equal(v.plan?.gap, '−30 days, better than plan');
+  });
+
+  test('5 · period comparisons of days keep the inverse reading: 145 → 161 days worse, 142 → 117 days better', () => {
+    const worse = vars772([ev772('working_capital', 'ACTUAL', '145 days', '161 days', 'Working capital days increased from 145 days to 161 days.')]).find((x) => x.key === 'working_capital')!;
+    const better = vars772([ev772('working_capital', 'ACTUAL', '142 days', '117 days', 'Working capital days improved from 142 days to 117 days.')]).find((x) => x.key === 'working_capital')!;
+    assert.equal(worse.verdict, 'deteriorating');
+    assert.equal(better.verdict, 'improving');
+  });
+
+  // ── Rule 6: a bare level is stated ──
+  test('6 · an installed capacity / order book with no prior and no stated move is stated, not improving', () => {
+    const lvl = vars772([ev772('capacity', 'ACTUAL', null, '55 MT', 'A major capacity expansion programme is in progress: mining throughput capacity approved at 55 MT.')]).find((x) => x.key === 'capacity')!;
+    assert.equal(lvl.verdict, 'stated');
+    const ob = vars772([ev772('order_book', 'ACTUAL', null, 'INR5,143 crores', 'Our closing order book by end of this quarter stands at INR5,143 crores.')]).find((x) => x.key === 'order_book')!;
+    assert.notEqual(ob.verdict, 'improving');
+    // A stated addition still counts.
+    const add = vars772([ev772('capacity', 'ACTUAL', null, '120,000 MTPA', 'During the year, we successfully expanded Ethyl Acetate capacity to 120,000 MTPA.')]).find((x) => x.key === 'capacity')!;
+    assert.equal(add.verdict, 'improving');
+  });
+
+  // ── Rule 7: capex is an amount; services have no installed capacity ──
+  test('7 · capex needs an amount; a long spend sentence keeps only its amounts', () => {
+    assert.equal(fits772({ variable: 'capex', before: null, after: 'remain at similar levels', unit: null, evidence_text: 'We expect FY27 investments to remain at similar levels.' }), false);
+    assert.equal(fits772({ variable: 'capex', before: null, after: 'City of Time Gurgaon', unit: null, evidence_text: 'Capex on City of Time Gurgaon.' }), false);
+    assert.equal(vars772([ev772('capex', 'GUIDANCE', null, 'remain at similar levels', 'We expect FY 2026-27 investments to remain at similar levels.')]).find((x) => x.key === 'capex'), undefined);
+    const mtar = 'for quarter 1, we might have spent around INR30 crores -INR35 crores only capex, but overall INR80 crores which is capitalized';
+    assert.equal(capexAmountText772(mtar), 'around INR30 crores -INR35 crores · INR80 crores');
+    assert.equal(capexAmountText772('216 vessels approximately with investment of INR1 lakh crores by 2047'), 'INR1 lakh crores');
+    assert.equal(capexAmountText772('Rs 58.29 crores'), 'Rs 58.29 crores');
+    // A stated absence of capex is kept.
+    assert.equal(fits772({ variable: 'capex', before: null, after: 'we did not foresee any significant core business capex during FY27', unit: null, evidence_text: 'x' }), true);
+  });
+
+  test('7 · installed capacity is dropped for a services business and for captive solar at a non-power business', () => {
+    const svc = extractVariables({ sector: 'IT Services', industry: 'Software' }, {
+      events: [ev772('capacity', 'ACTUAL', null, '12,579 associates', 'Our total installed capacity was 12,579 associates at quarter end.')],
+    }, null, { period: 'Q1 FY27' });
+    assert.equal(svc.find((x) => x.key === 'capacity'), undefined);
+    const dist = extractVariables({ sector: 'Trading & Distributors', industry: 'IT distribution' }, {
+      events: [ev772('capacity', 'ACTUAL', null, '100 MW', '100 MW of solar capacity created across our warehouses for captive use.')],
+    }, null, { period: 'Q1 FY27' });
+    assert.equal(dist.find((x) => x.key === 'capacity'), undefined);
+    const solarCo = extractVariables({ sector: 'Power', industry: 'Renewable energy' }, {
+      events: [ev772('capacity', 'ACTUAL', null, '100 MW', 'We commissioned 100 MW of solar capacity in the quarter.')],
+    }, null, { period: 'Q1 FY27' });
+    assert.ok(solarCo.find((x) => x.key === 'capacity'), 'a power company keeps its MW');
+  });
+
+  test('7 · "In FY 2025-26, capex stood at …" read in Q1 FY27 is last year\'s figure, not this quarter\'s (and never "FY20")', () => {
+    const t = 'In FY 2025-26, capital expenditure stood at INR 4,342 Mn (Excluding Manx Acquisition) and we expect FY 2026-27 investments to remain at similar levels.';
+    assert.equal(historicalAsOf772({ after: 'INR 4,342 Mn', before: null, evidence_text: t, variable: 'capex', value_type: 'ACTUAL' }, 'Q1 FY27'), 'FY26');
+  });
+
+  // ── Rule 8: exports are exports ──
+  test('8 · GOLDIAM: a product share of the export mix is not the export share; exports need export vocabulary', () => {
+    assert.equal(fits772({ variable: 'exports', before: '87.8%', after: '90.7%', unit: null,
+      evidence_text: 'Lab Grown Diamond jewellery exports contributed 90.7% to the overall export sales mix during Q1 FY27, compared to 87.8% in Q1 FY26.' }), false);
+    assert.equal(fits772({ variable: 'exports', before: '87.8%', after: '90.7%', unit: null, evidence_text: 'Lab-grown share rose to 90.7% from 87.8%.' }), false);
+    assert.equal(fits772({ variable: 'exports', before: null, after: '59%', unit: null, evidence_text: 'Exports contributed 59% of revenue in Q1 FY27.' }), true);
+    assert.equal(fits772({ variable: 'exports', before: null, after: 'ROW 94% of revenue, India 6%', unit: null, evidence_text: 'Exports / geography: ROW 94% of revenue, India 6%.' }), true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── zzz772 thesis card — materiality, QoQ-only, rates, contradicted chip, capex earning words ──
+import {
+  ThesisCard as Card772, chipValue as chip772, rowTreatment as treat772, treatmentWord as tword772, isNegligibleDelta as negl772, humanTokens as human772,
+} from '../../components/thesis-card';
+import { buildCapexChain as chain772, revenueAttribution as attr772, spentPhrase as spent772 } from '../thesis/capex-chain';
+
+describe('zzz772 thesis card — UNCHANGED only on ≈0, QoQ-only is a level, rates are never "single reading"', () => {
+  const R = (key: string, verdict: string, extra: any = {}) => ({ key, label: key, weight: 3, verdict, before: null, after: null, delta: null,
+    evidence: '', state: 'FOUND', stateReason: null, absence: null, invalidation: null, why: '', ...extra });
+
+  test('a flat verdict on a real move is "within materiality", with the delta; UNCHANGED needs |Δ| ≈ 0', () => {
+    const redington = R('margin', 'flat', { before: '1.5%', after: '2.0%', delta: '+0.5pp' });
+    assert.equal(treat772(redington as any), 'WITHIN_MATERIALITY');
+    const nrb = R('earnings_growth', 'flat', { before: '3,281 lakhs', after: '3,776 lakhs', delta: '+15.1%' });
+    assert.equal(treat772(nrb as any), 'WITHIN_MATERIALITY');
+    assert.equal(tword772('WITHIN_MATERIALITY', nrb as any), 'within materiality (+15.1%)');
+    // The value beside it already shows the delta → not repeated.
+    assert.equal(tword772('WITHIN_MATERIALITY', nrb as any, chip772(nrb as any)), 'within materiality');
+    assert.equal(treat772(R('margin', 'flat', { before: '17.0%', after: '17.0%', delta: '+0.0pp' }) as any), 'UNCHANGED');
+    assert.equal(treat772(R('margin', 'flat', { before: '17.0%', after: '17.3%', delta: '+0.3pp' }) as any), 'UNCHANGED');
+    assert.equal(treat772(R('earnings_growth', 'flat', { before: '100 Cr', after: '100.5 Cr', delta: '+0.5%' }) as any), 'UNCHANGED');
+    assert.equal(treat772(R('capacity', 'flat', { before: '1.34 MW', after: '1.34 MW' }) as any), 'UNCHANGED');
+    assert.equal(negl772(R('order_book', 'flat', { before: '₹100 Cr', after: '₹130 Cr' }) as any), false);
+    // The status engine's own flag, where it supplies one, is honoured.
+    assert.equal(treat772(R('margin', 'flat', { before: '17.0%', after: '17.0%', delta: '+0.0pp', withinMateriality: true }) as any), 'WITHIN_MATERIALITY');
+  });
+
+  test('a QoQ-only margin prints "{level} · QoQ only ({delta} QoQ) — seasonal, not judged"; a genuinely ambiguous value stays unclear', () => {
+    const qoq = R('margin', 'stated', { after: '10.5%', delta: '+1.2pp QoQ', state: 'UNCLEAR',
+      stateReason: 'only a sequential (QoQ) move is on file, which carries seasonality', unjudged: 'only a sequential (QoQ) move is on file, which carries seasonality' });
+    assert.equal(treat772(qoq as any), 'QOQ_ONLY');
+    assert.equal(chip772(qoq as any), '10.5% · QoQ only (+1.2pp QoQ) — seasonal, not judged');
+    assert.doesNotMatch(chip772(qoq as any), /unclear|validation required/);
+    const amb = R('utilisation', 'stated', { after: '30% or 25%', state: 'UNCLEAR', stateReason: 'two different figures for one period' });
+    assert.equal(treat772(amb as any), 'UNCLEAR');
+    assert.equal(chip772(amb as any), 'unclear — validation required: 30% or 25%');
+  });
+
+  test('a YoY growth rate or margin with a delta is a comparison — never "single reading"; ROCE alone still is', () => {
+    assert.equal(treat772(R('revenue_growth', 'flat', { after: '+8.4%' }) as any), 'WITHIN_MATERIALITY');
+    assert.equal(treat772(R('earnings_growth', 'flat', { after: '+18.5%', delta: '+18.5%' }) as any), 'WITHIN_MATERIALITY');
+    assert.equal(treat772(R('margin', 'flat', { after: '12.0%', delta: '+0.3pp' }) as any), 'WITHIN_MATERIALITY');
+    assert.equal(treat772(R('roce', 'flat', { after: '12.0%' }) as any), 'SINGLE');
+  });
+
+  test('no raw code token survives on a printed reading', () => {
+    assert.equal(human772('161 days vs 145 days · +16 days · ▲ in_text'), '161 days vs 145 days · +16 days · ▲ in the text');
+    assert.doesNotMatch(human772('x · → vs_baseline · vs_prior_read · NOT_COMPARABLE · UNKNOWN_BASIS · undefined'), /in_text|vs_baseline|vs_prior_read|NOT_COMPARABLE|UNKNOWN_|undefined/);
+  });
+
+  describe('rendered card', () => {
+    (globalThis as any).React = ReactNS770;
+    const g = row('INNOVACAP') || row('KMEW');
+    const vars = ev771(g, { order_book: { current: '', prior: '' } });
+    const a: any = assess771({ pattern: 'A', variables: vars, evidenceReviewed: true, hasGraderRow: true } as any);
+    a.checked = a.checked.filter((c: any) => !['margin', 'revenue_growth', 'earnings_growth', 'working_capital'].includes(c.key));
+    a.checked.push(
+      R('margin', 'stated', { label: 'Operating margin', weight: 3, after: '10.5%', delta: '+1.2pp QoQ', state: 'UNCLEAR',
+        stateReason: 'only a sequential (QoQ) move is on file, which carries seasonality', unjudged: 'only a sequential (QoQ) move is on file, which carries seasonality' }),
+      R('revenue_growth', 'flat', { label: 'Revenue growth', weight: 4, after: '+8.4%' }),
+      R('earnings_growth', 'flat', { label: 'Earnings growth', weight: 4, before: '3,281 lakhs', after: '3,776 lakhs', delta: '+15.1%' }),
+      R('working_capital', 'deteriorating', { label: 'Working capital', weight: 3, before: '145 days', after: '161 days', delta: '+11%',
+        reading: { current: { value: '161 days', period: 'Q1 FY27', period_class: 'CURRENT_QUARTER', unit: 'days', numeric: 161, source: 'concall' }, previous: null, baseline: null,
+          delta_abs: '+16 days', delta_pct: null, direction: 'UP', comparison_basis: 'in_text', not_comparable_reason: null, display: '161 days vs 145 days · +16 days · ▲ in_text' } }),
+    );
+    a.verdict = {
+      breakTrigger: { fired: false, conditions: [], text: 'No stated thesis-break condition has been met.' },
+      direction: 'WEAKENING', directionWhy: 'working capital deteriorated',
+      evidence: 'PARTIALLY_CONFIRMED', evidenceWhy: '', coverage: { confirmed: 2, applicable: 4, missing: ['One-offs', 'Working capital', 'Cash conversion'], contradicted: ['Working capital'] },
+    };
+    const html = render770(ReactNS770.createElement(Card772 as any, { symbol: 'CYIENTDLM', market: 'IN', assessment: a, capex: null, defaultOpen: true }));
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+    test('QoQ-only margin renders as a level, never "unclear — validation required: <n>%"', () => {
+      assert.match(text, /Operating margin 10\.5% · QoQ only \(\+1\.2pp QoQ\) — seasonal, not judged/);
+      assert.doesNotMatch(text, /unclear — validation required: 10\.5%/);
+      assert.match(html, /data-treatment="QOQ_ONLY"/);
+    });
+
+    test('growth rates print their treatment, never "single reading"; a real move is never "UNCHANGED (two readings)"', () => {
+      assert.doesNotMatch(text, /Revenue growth \+8\.4% · single reading/);
+      assert.match(text, /Revenue growth \+8\.4% · within materiality/);
+      assert.match(text, /Earnings growth 3,281 lakhs → 3,776 lakhs · \+15\.1% · within materiality/);
+      assert.doesNotMatch(text, /\+15\.1% · UNCHANGED/);
+    });
+
+    test('evidence chip: contradicted in red before missing, and never listed under missing', () => {
+      assert.match(html, /data-testid="evidence-contradicted"/);
+      assert.match(text, /· contradicted: Working capital\s*· missing: One-offs, Cash conversion/);
+      const miss = (/missing: ([^A-Z]*(?:[A-Z][^A-Z·]*)*)/.exec(text) || ['', ''])[1];
+      assert.doesNotMatch(miss.split(/FINANCIAL|CASH/)[0], /Working capital/);
+    });
+
+    test('no code token, undefined, NaN or null in the rendered card', () => {
+      assert.doesNotMatch(text, /\bin_text\b|\bvs_baseline\b|\bvs_prior_read\b|NOT_COMPARABLE|UNKNOWN_|\bundefined\b|\bNaN\b|\bnull\b/);
+    });
+
+    test('fallback: without coverage.contradicted the chip renders exactly as before', () => {
+      const b: any = { ...a, verdict: { ...a.verdict, coverage: { confirmed: 2, applicable: 4, missing: ['One-offs'] } } };
+      const t = render770(ReactNS770.createElement(Card772 as any, { symbol: 'X', market: 'IN', assessment: b, capex: null })).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+      assert.doesNotMatch(t, /contradicted:/);
+      assert.match(t, /EVIDENCE: partially confirmed \(2\/4 structural\)\s*· missing: One-offs/);
+    });
+  });
+});
+
+describe('zzz772 capex earning — "has begun contributing" is revenue, a forecast is a target, junk never prints', () => {
+  const V = (key: string, verdict: string, extra: any = {}) => ({ key, label: key, kind: 'fact', before: null, after: null, delta: null, verdict, evidence: '', source: 'filing', statement: 'ACTUAL', ...extra });
+  const KEI = 'Sanand Phase I has begun contributing; management estimates Sanand will generate INR1,500-2,000 crores in FY27 and INR6,000-7,000 crores annual revenue when fully ramped within 2 years.';
+
+  test('KEI: begun contributing → PARTIAL; the forecast is printed as a target, never as the contribution', () => {
+    const e = chain772(null, [V('capex_earning', 'stated', { after: KEI }), V('capex', 'stated', { after: 'INR 1,722 cr incurred' }), V('utilisation', 'stated', { after: '72%' })] as any, { periods: {} } as any).earning;
+    assert.equal(e.state, 'PARTIAL');
+    assert.match(String(e.revenueContribution), /^begun — Sanand Phase I, amount not stated$/);
+    assert.doesNotMatch(String(e.revenueContribution), /1,500/);
+    assert.match(e.lines[1], /^Revenue contribution: begun — Sanand Phase I, amount not stated · target INR1,500-2,000 crores in FY27$/);
+  });
+
+  test('present / past tense attributes; future tense never does', () => {
+    for (const t of ['The Jammu line started contributing revenue this quarter.', 'Plant 2 is contributing to revenue.', 'Unit III now contributing.',
+      'The Hosur plant contributed ₹42 crore in Q1 FY27.']) assert.ok(attr772(t).actual, t);
+    assert.equal(attr772('The Hosur plant contributed ₹42 crore in Q1 FY27.').actual, '₹42 crore in Q1 FY27');
+    for (const t of ['The plant will contribute from FY28.', 'Phase II is expected to contribute ₹300 crore.', "Jammu capex is expected to start contributing revenue from Mar '27.",
+      'The new line has not yet contributed.']) assert.equal(attr772(t).actual, null, t);
+    assert.equal(attr772('Phase II is expected to contribute ₹300 crore in FY28.').target, '₹300 crore in FY28');
+    // The capex amount in a forward sentence is not a revenue target.
+    assert.equal(attr772('PEC capex of INR150 crores is expected to enable incremental production from October 2026.').target, null);
+  });
+
+  test('"Utilisation:" prints a percentage or a capacity-use word, else "not disclosed"', () => {
+    for (const junk of ['30 days inventory in India', '1587.17 million', 'Civil construction at the CoE is expected to be completed within this fiscal year.', 'tracking similar to other larger parks']) {
+      const e = chain772(null, [V('capex', 'stated', { after: '₹100 cr spent' }), V('utilisation', 'stated', { after: junk })] as any, { periods: {} } as any).earning;
+      assert.match(e.lines.find((l) => l.startsWith('Utilisation:'))!, /^Utilisation: not disclosed$/, junk);
+    }
+    for (const ok of ['72%', 'maximum level', 'optimum utilization', '170-odd percent utilization', 'near-full']) {
+      const e = chain772(null, [V('capex', 'stated', { after: '₹100 cr spent' }), V('utilisation', 'stated', { after: ok })] as any, { periods: {} } as any).earning;
+      assert.ok(e.lines.find((l) => l.startsWith('Utilisation:'))!.includes(ok), ok);
+    }
+  });
+
+  test('"Spent:" past ~70 chars keeps only the amount phrases', () => {
+    const long = 'for quarter 1, we might have spent around INR30 crores -INR35 crores only capex, but overall INR80 crores which is capitalized';
+    assert.equal(spent772(long), 'INR30 crores -INR35 crores; INR80 crores');
+    assert.equal(spent772('INR 1,722 cr'), 'INR 1,722 cr');
   });
 });

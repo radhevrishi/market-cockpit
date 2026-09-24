@@ -41,7 +41,7 @@ import {
   type CompanyLedger, type EvidenceFact, type PeriodRecord,
 } from './evidence-ledger';
 import { judgeEventQuality, verifiedDirection, betterReading, type StructuralEvent } from './evidence-extract';
-import { normalizeEvent, guidanceMove, datesIn, type GuidanceMove } from './fact-normalize';
+import { normalizeEvent, guidanceMove, datesIn, stripPeriodTokens, movePeriodOut, type GuidanceMove } from './fact-normalize';
 import {
   comparability, deltaText, lineageOf, samePeriodPair, factTypeOf, normalizeValue,
   PRIOR_NOT_DISCLOSED, type FactType, type Lineage, type NormalizedValue,
@@ -196,13 +196,16 @@ function unitOf(raw: string): string | null {
 export function quantity(raw: string | null | undefined, unitField?: string | null): Quantity | null {
   const s = String(raw ?? '').trim();
   if (!s) return null;
+  // Period labels are not part of the quantity: "Q1 FY26: 54.80 mmscm" is
+  // 54.80 mmscm, and "q fy mmscm" is not its unit. (zzz772)
+  const p = stripPeriodTokens(s) || s;
   // Magnitude-aware: "1.6 million" is 1,600,000, not 1.6. GPPL's throughput
   // printed as −100% because the two sides were read on different scales.
-  const v = scaledNumber(s);
+  const v = scaledNumber(p);
   return {
     raw: s,
     value: v != null && Number.isFinite(v) ? v : null,
-    unit: unitOf(s) || (unitField ? String(unitField).trim().toLowerCase() || null : null),
+    unit: unitOf(p) || (unitField ? String(unitField).trim().toLowerCase() || null : null),
     isPercent: /%|\bper\s?cent\b/i.test(s),
   };
 }
@@ -477,7 +480,8 @@ function innerPrior(f: EvidenceFact, curQ: Quantity): Quantity | null {
   // of one sentence, which share their scope by construction.
   if (!c.comparable && !/scope|plant|segment|basis|definition/.test(String(c.reason))) return null;
   if (!c.comparable && !sameUnit(innerPrev.raw, curQ.raw, f.unit, f.unit)) return null;
-  return innerPrev;
+  // The period label moves out of the figure: "54.80 mmscm (Q1 FY26)". (zzz772)
+  return { ...innerPrev, raw: movePeriodOut(innerPrev.raw) || innerPrev.raw };
 }
 
 /**

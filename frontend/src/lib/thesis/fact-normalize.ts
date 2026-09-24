@@ -63,6 +63,10 @@ export function datesIn(text: string): Array<{ label: string; end: Date }> {
     const e = periodEnd(`Q${m[1]} FY${m[2]}`);
     if (e) out.push({ label: `Q${m[1]} FY${String(m[2]).slice(-2)}`, end: e });
   }
+  // "FY 2025-26" / "FY25-26" is the year that ENDS in the second figure. (zzz772)
+  for (const m of t.matchAll(/(?<!Q\s?[1-4]\s?)\bFY\s?'?(\d{2}|\d{4})\s*[-–]\s*'?(\d{2}|\d{4})\b/gi)) {
+    out.push({ label: `FY${String(m[2]).slice(-2)}`, end: monthEnd(yy(m[2]), 2) });
+  }
   for (const m of t.matchAll(/(?<!Q\s?[1-4]\s?)\bFY\s?'?(\d{2}|\d{4})\b(?!\s*-?\s*\d)/gi)) {
     out.push({ label: `FY${String(m[1]).slice(-2)}`, end: monthEnd(yy(m[1]), 2) });
   }
@@ -161,6 +165,17 @@ export function historicalAsOf(e: Pick<StructuralEvent, 'after' | 'before' | 'ev
   }
   if (e.variable && EVENT_VARS.has(e.variable)) return null;
   if (e.value_type && e.value_type !== 'ACTUAL') return null;
+  // 0b. A sentence that OPENS by naming its period dates every figure in
+  //     it: "In FY 2025-26, capital expenditure stood at INR 4,342 Mn"
+  //     (EMCURE, read in Q1 FY27) is last year's capex. (zzz772)
+  const opener = /^\s*(?:in|during|for)\s+(?:the\s+)?((?:Q\s?[1-4]\s*)?FY\s?'?\d{2,4}(?:\s*[-–]\s*'?\d{2,4})?)\s*,/i.exec(sent0);
+  if (opener) {
+    const ds = datesIn(opener[1]);
+    if (ds.length) {
+      const d = ds.reduce((a, b) => (b.end > a.end ? b : a));
+      if (d.end < start) return d.label;
+    }
+  }
   const pick = (ds: Array<{ label: string; end: Date }>) => {
     const latest = ds.reduce((a, b) => (b.end > a.end ? b : a));
     return latest.end < start ? latest.label : null;
@@ -172,14 +187,25 @@ export function historicalAsOf(e: Pick<StructuralEvent, 'after' | 'before' | 'ev
   const i = numberAt(clause, e.after);
   if (i >= 0) {
     // 2. Just after the value, up to the next full stop: "1.6 million MT in FY26".
-    const tail = clause.slice(i, i + 45 + String(e.after).length).split(/[.;]/)[0];
+    // The window ends at a word boundary: cut mid-token, EMCURE's "we expect
+    // FY 2026-27 investments" became "FY 20" and dated a current capex to
+    // FY20. (zzz772)
+    let end = Math.min(clause.length, i + 45 + String(e.after).length);
+    while (end < clause.length && /[\w'’-]/.test(clause[end])) end++;
+    // …and at the next clause with its own subject: "INR 4,342 Mn … and we
+    // expect FY 2026-27 investments" — the FY27 belongs to the expectation.
+    const tail = clause.slice(i, end).split(/[.;]|\b(?:and|but|while|whereas)\s+(?:we|the company|it|management)\b/i)[0];
     if (CURRENT_MARK.test(tail)) return null;
     const td = datesIn(tail);
     if (td.length) return pick(td);
     // 3. Just before it — only for a bare level; with a before value the
     //    preceding date belongs to the before ("94 at end of FY26 to 103").
     if (!e.before) {
-      const head = clause.slice(Math.max(0, i - 40), i);
+      // Starts at a word boundary too: "In FY 2025-26, capital expenditure
+      // stood at" cut to "Y 2025-26, …" lost its date. (zzz772)
+      let start1 = Math.max(0, i - 40);
+      while (start1 > 0 && /[\w'’-]/.test(clause[start1 - 1])) start1--;
+      const head = clause.slice(start1, i);
       if (CURRENT_MARK.test(head)) return null;
       // "We closed the year with 94 boutiques" — the year-end figure, not the
       // quarter's (ETHOSLTD's current count is 103 "as on date").
@@ -281,6 +307,44 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
   return out;
 }
 
+// ── A PERIOD LABEL IS NOT A NUMBER.                              (zzz772)
+//
+// IRMENERGY's prior was stated "Q1 FY26: 54.80 mmscm" and the first-number
+// parser read the "1" of "Q1": the card printed "+57.9 MMSCM · +5794%" for a
+// volume that grew 7.6%. Every numeric helper strips the period tokens a
+// filing writes beside a figure — Q1–Q4, H1/H2, 9M/6M/3M with a year, FY26,
+// FY2026, FY2025-26, CY25 and a "Q1 FY26:" prefix — before it looks for the
+// first number. The value string itself is never edited; only the copy
+// that is parsed.
+const PERIOD_WITH_YEAR = /\b(?:Q\s?[1-4]|H\s?[12]|[369]M)\s*[-' ]?\s*(?:FY|CY)\s*'?\d{2,4}(?:\s*[-–/]\s*'?\d{2,4})?\b\s*:?/gi;
+const YEAR_LABEL = /(?<![A-Za-z])(?:FY|CY)\s*'?\d{2,4}(?:\s*[-–/]\s*'?\d{2,4}(?![\d.]))?\b\s*:?/gi;
+const BARE_PERIOD = /\b(?:Q[1-4]|H[12])\b\s*:?|\b[369]M\b\s*:/gi;
+export function stripPeriodTokens(s: string | null | undefined): string {
+  return String(s ?? '')
+    .replace(PERIOD_WITH_YEAR, ' ')
+    .replace(YEAR_LABEL, ' ')
+    .replace(BARE_PERIOD, ' ')
+    .replace(/\(\s*[:,;]?\s*\)/g, ' ')
+    // A leading separator left by a stripped "Q1 FY26:" — never a minus sign.
+    .replace(/^\s*(?:[:,;]|[–-](?!\s*\d))\s*/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    // "58.94 mmscm in Q1 FY27" leaves a dangling "in", which would read as a
+    // unit word beside "58.94 mmscm".
+    .replace(/(?:\s+(?:in|as\s+(?:of|on|at)|at|for|by|during|end\s+of|the|of|vs\.?|versus))+\s*[,;:]?$/i, '')
+    .trim();
+}
+
+/** "Q1 FY26: 54.80 mmscm" → "54.80 mmscm (Q1 FY26)": a figure first, its
+ *  period after it, so the period never sits where a number is read. Only a
+ *  leading period label followed by a separator is moved. (zzz772) */
+export function movePeriodOut(s: string | null | undefined): string | null {
+  if (s == null) return null;
+  const m = /^\s*((?:Q\s?[1-4]|H\s?[12]|[369]M)\s*[-' ]?\s*(?:FY|CY)\s*'?\d{2,4}|(?:FY|CY)\s*'?\d{2,4})\s*[:–—-]\s*(.+?)\s*$/i.exec(String(s));
+  if (!m || !/\d/.test(m[2])) return String(s);
+  return `${m[2]} (${m[1].replace(/\s+/g, ' ').replace(/^(Q[1-4]|H[12]|[369]M)\s*(FY|CY)/i, '$1 $2').trim()})`;
+}
+
 // ── commentary: an expectation with no figure ─────────────────  (zzz770)
 
 /** A quantity. Labels such as "Phase 2" or "Q4 FY26" are not quantities. */
@@ -311,7 +375,8 @@ export function isCommentaryOnly(key: VarKey, value: string | null | undefined, 
 
 /** "20–25%" → {lo:20, hi:25}; "25%" → {lo:25, hi:25}. Null when no number. */
 export function rangeOf(s: string | null | undefined): { lo: number; hi: number; pct: boolean } | null {
-  const t = String(s || '').replace(/,/g, '');
+  // "FY27: 20-25%" is 20–25, not 27–20. (zzz772)
+  const t = (stripPeriodTokens(String(s || '')) || String(s || '')).replace(/,/g, '');
   // A hyphen after a digit or a % is a range dash, not a minus: "20-25%",
   // KIRIINDUS "70%-75%" (read as −75 → "gap +135pp").
   const nums = Array.from(t.matchAll(/(?<![\d.%]\s*)-?\d+(?:\.\d+)?/g)).map((m) => Number(m[0])).filter(Number.isFinite);

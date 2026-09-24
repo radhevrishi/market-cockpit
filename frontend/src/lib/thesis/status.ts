@@ -65,6 +65,7 @@ import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { periodEnd } from './fact-normalize';
+import { scaledNumber } from './evidence-ledger';
 import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason,
   type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile } from './taxonomy';
 
@@ -196,6 +197,10 @@ function tally(vs: Array<{ verdict: string; state?: EvidenceState; readings?: 0 
 const readingsOf = (v: StructuralVar | null | undefined, comparison: MetricComparison | null): 0 | 1 | 2 => {
   if (!v) return 0;
   if (v.before != null || v.delta != null || v.reading?.previous || comparison?.previous) return 2;
+  // A YoY growth rate or a margin move already compares two periods: JINDRILL
+  // printed "Revenue growth +8.4% · single reading" on a figure that IS a
+  // comparison. A signed % on a growth / margin row is two readings. (zzz772)
+  if ((v.key === 'revenue_growth' || v.key === 'earnings_growth' || v.key === 'margin') && outputMove(v) != null) return 2;
   return 1;
 };
 
@@ -255,6 +260,11 @@ export interface CheckedVariable {
   quote?: string | null;
   context?: StructuralVar['context'] | null;
   retyped?: string | null;
+  /** A `flat` row whose stated move is NOT zero — a +4.2% growth rate, a
+   *  −1.2% decline inside the materiality line. It moved; it did not move
+   *  enough to count. The card prints "within materiality", never
+   *  "unchanged" or "flat". Always filled by assessThesis. (zzz772) */
+  withinMateriality?: boolean;
 }
 
 /** ── zzz771 CONTRACT (PC-2 fills, PC-3 renders) ───────────────────────────
@@ -270,7 +280,11 @@ export interface ThesisVerdict {
   evidence: 'CONFIRMED' | 'PARTIALLY_CONFIRMED' | 'NOT_CONTRADICTED' | 'CONTRADICTED' | 'INCOMPLETE' | 'UNCHECKED';
   evidenceWhy: string;
   /** Structural coverage the label rests on: confirmed / applicable core mechanism variables. */
-  coverage: { confirmed: number; applicable: number; missing: string[] };
+  coverage: { confirmed: number; applicable: number; missing: string[];
+    /** Printed variables that moved the WRONG way. Never also in `missing`:
+     *  a contradicted variable was found, it is not absent. Optional so older
+     *  consumers keep compiling. (zzz772) */
+    contradicted?: string[] };
 }
 export interface ThesisAssessment {
   /** zzz771: the three separated dimensions. Optional until PC-2 fills it. */
@@ -500,13 +514,132 @@ export const STALE_EVIDENCE_QUARTERS = 2;
  *  a new sentence. Leaves acronyms and figures alone. */
 /** A margin move smaller than this is shown, never a status mover. (zzz770) */
 export const MARGIN_MATERIAL_PP = 3;
-const isMaterialDown = (c: { key: VarKey; verdict: string; delta: string | null; after: string | null }): boolean => {
-  if (c.verdict !== 'deteriorating') return false;
-  if (c.key !== 'margin') return true;
-  const m = String(c.delta ?? '').match(/[-−]?\d+(?:\.\d+)?(?=\s*pp)/);
-  if (!m) return true;
-  return Math.abs(Number(m[0].replace('−', '-'))) >= MARGIN_MATERIAL_PP;
+// ── ONE MATERIALITY LINE FOR ALL FINANCIAL OUTPUT.                  (zzz772)
+// RISHABH read THESIS WEAKENING on "earnings growth -1.4%" and LLOYDSENT on
+// "revenue growth -1.2%", each with a break trigger fired — while AETHER's
+// −1.0pp margin was already called immaterial two lines further down. A
+// decline inside these lines is noise on one quarter: it is shown, and it
+// never deteriorates the thesis, never fires a break condition and never
+// makes "output improved" false. Beyond them it counts exactly as before.
+export const REVENUE_MATERIAL_PCT = 5;
+export const EARNINGS_MATERIAL_PCT = 10;
+const MATERIAL_LINE: Partial<Record<VarKey, { size: number; unit: '%' | 'pp' }>> = {
+  revenue_growth: { size: REVENUE_MATERIAL_PCT, unit: '%' },
+  earnings_growth: { size: EARNINGS_MATERIAL_PCT, unit: '%' },
+  margin: { size: MARGIN_MATERIAL_PP, unit: 'pp' },
 };
+/** The signed move a financial-output row states: the delta, or — for a
+ *  growth rate, which IS a year-on-year change — its signed % value. For a
+ *  margin with two % levels and no delta, the pp difference. Null when the
+ *  row states no move in a readable form. (zzz772) */
+export function outputMove(c: { key: VarKey; before?: string | null; after?: string | null; delta?: string | null }): number | null {
+  const num = (s: string | null | undefined, unit: '%' | 'pp' | null): number | null => {
+    const re = unit === 'pp' ? /([+\-−])?\s*(\d+(?:\.\d+)?)\s*pp\b/i : unit === '%' ? /([+\-−])?\s*(\d+(?:\.\d+)?)\s*%/ : /([+\-−])?\s*(\d+(?:\.\d+)?)/;
+    const m = re.exec(String(s ?? ''));
+    if (!m) return null;
+    const n = Number(m[2]);
+    return Number.isFinite(n) ? (m[1] === '-' || m[1] === '−' ? -n : n) : null;
+  };
+  if (c.key === 'margin') {
+    const d = num(c.delta, 'pp');
+    if (d != null) return d;
+    const b = num(c.before, '%'), a = num(c.after, '%');
+    return b != null && a != null && /%/.test(String(c.before)) && /%/.test(String(c.after)) ? Math.round((a - b) * 10) / 10 : null;
+  }
+  if (c.key === 'revenue_growth' || c.key === 'earnings_growth') {
+    const d = num(c.delta, '%');
+    if (d != null) return d;
+    return /^\s*[+\-−]\s*\d/.test(String(c.after ?? '')) ? num(c.after, '%') : null;
+  }
+  return num(c.delta, null);
+}
+/** True when a financial-output move is a decline smaller than its
+ *  materiality line. A move that cannot be read is treated as material, the
+ *  conservative side. (zzz772) */
+export function isImmaterialDecline(c: { key: VarKey; before?: string | null; after?: string | null; delta?: string | null }): boolean {
+  const line = MATERIAL_LINE[c.key];
+  if (!line) return false;
+  const m = outputMove(c);
+  return m != null && m < 0 && Math.abs(m) < line.size;
+}
+/** A fall the company itself calls marginal/slight, with no figure for the
+ *  size of the fall, is inside materiality — UNIMECH's order book "marginally
+ *  lower than the level indicated" read as a contradicted mechanism. A stated
+ *  percentage or before→after figure is judged by its size, not its adjective. (zzz772) */
+export function selfDescribedMarginal(c: { before?: string | null; delta?: string | null; evidence?: string | null; after?: string | null }): boolean {
+  if (c.before || /\d/.test(String(c.delta ?? ''))) return false;
+  return /\b(marginal(?:ly)?|slight(?:ly)?|broadly (?:flat|stable)|largely (?:flat|stable)|minor (?:decline|dip))\b/i.test(`${c.evidence ?? ''} ${c.after ?? ''}`);
+}
+const isMaterialDown = (c: { key: VarKey; verdict: string; delta: string | null; after: string | null; before?: string | null }): boolean =>
+  c.verdict === 'deteriorating' && !isImmaterialDecline(c);
+
+// ── A TARGET IS NOT A DRIVER.                                       (zzz772)
+// SHYAMMETL went green with "capacity added: Post-expansion target c.27 MTPA
+// by FY31" counted as a confirmed driver. A plan explains nothing about the
+// quarter just reported. A row is forward-looking when its statement type is
+// TARGET / GUIDANCE, when it is a management claim, or when the leading
+// clause of its value is phrased as a plan. Only the leading clause is read:
+// "80,000 sq. ft. hangar; planned ~100,000 sq. ft." states an actual first.
+// "faster-than-expected break-even" (VIJAYA) and "to meet upcoming
+// regulations" (SONACOMS) describe results already achieved, so the words are
+// the plan-shaped phrases, not any mention of the future.
+const FORWARD_WORDS = /\btarget(?:s|ed|ing)?\b|\bby (?:FY|CY)\s?'?\d{2}\b|\b(?:is|are|was|were)?\s*expected to\b|\bexpects? to\b|(?<!\bas )\bplann(?:ed|ing)\b|\bwill be\b|\bto be (?:added|commissioned|completed|operational|set up)\b|\bguidance\b|\bguided\b|\bcome on stream\b|\bproposed\b/i;
+export function isForwardRow(v: { statement?: string | null; kind?: string | null; after?: string | null }): boolean {
+  if (v.statement === 'TARGET' || v.statement === 'GUIDANCE') return true;
+  if (v.kind === 'claim') return true;
+  const lead = String(v.after ?? '').split(/;\s|\s·\s/)[0] || '';
+  return FORWARD_WORDS.test(lead);
+}
+
+// ── THE SAME FIGURE IS ONE PIECE OF EVIDENCE.                       (zzz772)
+// SANSERA printed "installed capacity: 80k sq. ft.; capacity added: 80,000 sq.
+// ft." — one hangar, counted as two confirmed variables. The normalised
+// leading figure of a row (number × magnitude word, plus its unit) is its
+// identity; two drivers with the same identity count once. A bare number with
+// no unit is not an identity — coincidence is too likely.
+const FIG_MULT: Array<[RegExp, number]> = [[/^k\b/i, 1e3], [/^thousands?\b/i, 1e3], [/^lakhs?\b/i, 1e5], [/^(?:crores?|cr)\b/i, 1e7],
+  [/^(?:mn|million)\b/i, 1e6], [/^(?:bn|billion)\b/i, 1e9]];
+export function figureIdentity(s: string | null | undefined): string | null {
+  const t = String(s ?? '');
+  const m = /(\d[\d,]*(?:\.\d+)?)\s*(k\b|thousands?\b|lakhs?\b|crores?\b|cr\b|mn\b|million\b|bn\b|billion\b)?\.?\s*(%|[A-Za-z]+)?/i.exec(t);
+  if (!m) return null;
+  let n = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  if (m[2]) for (const [re, k] of FIG_MULT) if (re.test(m[2])) { n *= k; break; }
+  const unit = (m[3] || '').toLowerCase();
+  if (!unit) return null;
+  return `${Math.round(n * 1000) / 1000}|${unit}`;
+}
+
+// ── EARNINGS LARGER THAN REVENUE ARE ON DIFFERENT BASES.            (zzz772)
+// LLOYDSENT printed "Revenue 613.01 Crore → 605.44 Crore" beside "Earnings
+// 342.73 Crore → 1,200.65 Crore": profit nearly twice sales for the same
+// period is a consolidated / standalone (or other-income) mix-up, not a
+// reading. Earnings growth is shown and NOT judged until the filing is checked.
+export const EARNINGS_EXCEED_REVENUE = 'earnings figure exceeds revenue — different bases; verify in the filing';
+function earningsExceedRevenue(rev: StructuralVar | undefined, earn: StructuralVar | undefined): boolean {
+  if (!rev || !earn) return false;
+  const abs = (s: string | null | undefined): number | null => (s && !/%/.test(s) ? scaledNumber(s) : null);
+  const pairs: Array<[string | null, string | null]> = [[rev.after, earn.after], [rev.before, earn.before]];
+  return pairs.some(([r, e]) => {
+    const rn = abs(r), en = abs(e);
+    return rn != null && en != null && rn > 0 && Math.abs(en) > Math.abs(rn);
+  });
+}
+
+/** The invalidation text as it applies to THIS row. The unclassified ledger
+ *  writes "Earnings turn negative." — a sentence that reads as "made a loss"
+ *  and was printed as fired on a −1.4% move. Status restates it: a loss fires
+ *  as a loss, a material decline fires as a material decline, and the
+ *  unfired condition says both. (zzz772) */
+export function conditionText(key: VarKey, raw: string, row?: { after?: string | null; before?: string | null; verdict?: string } | null): string {
+  if (key !== 'earnings_growth' || !/^earnings turns? negative\.?$/i.test(raw.trim())) return raw;
+  const loss = /^\s*[-−]\s*\d/.test(String(row?.after ?? '')) && !/%/.test(String(row?.after ?? ''));
+  if (row?.verdict === 'deteriorating') {
+    return loss ? 'Earnings turn into a loss.' : `Earnings decline materially — down ${EARNINGS_MATERIAL_PCT}% or more year on year.`;
+  }
+  return `Earnings turn into a loss, or decline materially (${EARNINGS_MATERIAL_PCT}% or more year on year).`;
+}
 const lcFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 /** "Unchanged" needs a comparison. A risk variable (silence passes) may be
  *  silent or denied ("no customer losses") — that is the check passing, not
@@ -516,7 +649,25 @@ const flatOnTwoReadings = (c: CheckedVariable): boolean =>
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
   const thesis = thesisFor(input.pattern);
-  const found = byKey(input.variables);
+  // ── FINANCIAL OUTPUT, READ AGAINST ITS MATERIALITY LINE FIRST.     (zzz772)
+  // Done once, on the input rows, so every consumer below — the checked rows,
+  // `found`, output-improved, the break conditions, the verdict — sees the
+  // same reading. An immaterial decline becomes `flat` (shown with its move,
+  // flagged withinMateriality); earnings larger than revenue become UNCLEAR.
+  const rawFound = byKey(input.variables || []);
+  const earnBases = earningsExceedRevenue(rawFound.revenue_growth, rawFound.earnings_growth);
+  const immaterialKeys = new Set<VarKey>();
+  const variables: StructuralVar[] = (input.variables || []).map((v) => {
+    if (v.key === 'earnings_growth' && earnBases && !v.unjudged) {
+      return { ...v, verdict: 'stated' as VarVerdict, unjudged: EARNINGS_EXCEED_REVENUE };
+    }
+    if (v.verdict === 'deteriorating' && (isImmaterialDecline(v) || selfDescribedMarginal(v))) {
+      immaterialKeys.add(v.key);
+      return { ...v, verdict: 'flat' as VarVerdict };
+    }
+    return v;
+  });
+  const found = byKey(variables);
   const comps = input.comparisons || {};
 
   const graderMissing = input.hasGraderRow === false;
@@ -560,6 +711,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // A variable the company did not disclose is UNKNOWN, never deteriorating.
     const verdict: VarVerdict = v ? v.verdict : silencePasses ? 'flat' : 'unknown';
     const fired = !!tv.invalidatedWhen && verdict === 'deteriorating';
+    // A flat row that states a non-zero move moved, just not materially. (zzz772)
+    const move = v ? outputMove(v) : null;
+    const withinMateriality = verdict === 'flat' && !!v && (immaterialKeys.has(tv.key) || (move != null && move !== 0));
     return {
       // An undisclosed variable has no extracted row, so `v` is null and the
       // label used to fall back to the raw KEY — the page printed
@@ -593,7 +747,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           : input.evidenceReviewed
             ? 'A document was read and is silent on this. Absence is evidence — a company that stops disclosing a figure has told you something — but it is never counted against the thesis.'
             : 'No evidence document has been read for this holding yet.'),
-      invalidation: fired ? tv.invalidatedWhen : null,
+      invalidation: fired ? conditionText(tv.key, tv.invalidatedWhen, { after: v?.after, before: v?.before, verdict }) : null,
+      withinMateriality,
       state: 'FOUND' as EvidenceState, stateReason: (v?.unjudged ?? null) as string | null,
       readings: readingsOf(v, comparison), silence: silencePasses,
       // The four absences are different facts and only one of them is fixable
@@ -732,8 +887,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // confirmed: a fact of its own that improved. Silence is neither counted
   // nor printed as "checked, nothing material" — that sentence needs two
   // readings and silence has none.
+  // A target / guidance / plan is never structurally confirmed. (zzz772)
   const structurallyEvidenced = (c: CheckedVariable): boolean =>
-    c.kind !== 'claim' && !isFinancialOutput(c.key, c.source) && c.state !== 'UNCLEAR' && c.verdict === 'improving';
+    c.kind !== 'claim' && !isFinancialOutput(c.key, c.source) && c.state !== 'UNCLEAR' && c.verdict === 'improving'
+    && !isForwardRow(c);
   const passesStructuralGate = (c: CheckedVariable): boolean =>
     structurallyEvidenced(c)
     || (c.kind !== 'claim' && !isFinancialOutput(c.key, c.source) && c.state !== 'UNCLEAR'
@@ -741,7 +898,18 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // Required = what the ledger weights 3+. Grader operating leverage is
   // excluded above, so A's gate is the physical one: utilisation and volume.
   const structuralRequired = structuralVars.filter((c) => c.weight >= 3);
-  const structuralConfirmedVars = structuralVars.filter(structurallyEvidenced);
+  // Two structural rows stating the same figure are one piece of evidence:
+  // the second keeps its place in the denominator and is not counted as
+  // confirmed. (zzz772)
+  const structuralConfirmedVars = (() => {
+    const seen = new Set<string>();
+    return structuralVars.filter(structurallyEvidenced).filter((c) => {
+      const id = figureIdentity(c.after);
+      if (!id) return true;
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
+    });
+  })();
   const missingRequired = structuralRequired.filter((c) => !passesStructuralGate(c));
   // ── THE GATE IS THE X/Y ON THE CARD, NOT JUST THE WEIGHTED ROWS. (zzz771)
   // ANTELOPUS, JAMNAAUTO and NRBBEARING passed the gate on a single annual
@@ -767,13 +935,6 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const outputVars = (Object.keys(found) as VarKey[]).filter((k) => VAR_DIMENSION[k] === 'financial').map((k) => found[k]!);
   const outputImproved = outputVars.some((v) => v.verdict === 'improving')
     && !checked.some((c) => c.weight >= 3 && VAR_DIMENSION[c.key] === 'financial' && c.verdict === 'deteriorating');
-  const structuralLine = `Structural evidence reviewed: ${structuralConfirmedVars.length}/${structuralVars.length} variables confirmed.`;
-  const notEstablished = missingRequired.length
-    ? ` Not yet established: ${missingRequired.map((c) => `${c.label.toLowerCase()}${c.state === 'UNCLEAR' ? ' (unclear — validation required)'
-      : c.key === 'cash_conversion' && !cashCritical && c.verdict === 'deteriorating' ? ' (weak — shown as a financial warning, not thesis-critical here)'
-        : c.verdict === 'stated' ? ' (level only)' : c.verdict === 'unknown' ? ` (${c.state === 'NOT_SEARCHED' ? 'not searched' : 'not disclosed'})` : ` (${c.verdict})`}`).join(', ')}.`
-    : '';
-
   // ── STRUCTURAL DRIVERS, FROM ANY FILING ROW.                     (zzz765)
   //
   // One rule for every name. Green needs a document read, output improving,
@@ -794,6 +955,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const isDriver = (v: StructuralVar): boolean => {
     if (!DRIVER_KEYS.has(v.key) || v.source !== 'filing' || v.kind === 'claim' || v.unjudged) return false;
     if (v.statement && v.statement !== 'ACTUAL') return false;
+    // A target is not a driver, however the model labelled it. (zzz772)
+    if (isForwardRow(v)) return false;
     if (v.verdict !== 'improving') return false;
     if (v.key === 'margin_driver') {
       const t = `${v.after || ''} ${v.evidence || ''}`;
@@ -814,7 +977,22 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     G: ['working_capital', 'margin_driver', 'capex_earning', 'product_mix', 'price', 'volume'] as VarKey[],
   };
   const allowed = STRATEGY_DRIVERS[thesis.pattern] ? new Set<VarKey>(STRATEGY_DRIVERS[thesis.pattern]) : null;
-  const drivers = (input.variables || []).filter(isDriver).filter((v) => !allowed || allowed.has(v.key));
+  const driversRaw = variables.filter(isDriver).filter((v) => !allowed || allowed.has(v.key));
+  // ── ONE FIGURE, ONE DRIVER.                                       (zzz772)
+  // A driver whose normalised figure is already counted — by a confirmed
+  // structural variable or by an earlier driver — adds nothing and is dropped,
+  // so it can neither lift the x/y nor count as a second distinct driver.
+  const drivers = (() => {
+    const seen = new Map<string, VarKey>();
+    for (const c of structuralConfirmedVars) { const id = figureIdentity(c.after); if (id) seen.set(id, c.key); }
+    return driversRaw.filter((d) => {
+      const id = figureIdentity(d.after);
+      if (!id) return true;
+      const owner = seen.get(id);
+      if (owner && owner !== d.key) return false;
+      seen.set(id, d.key); return true;
+    });
+  })();
   // A company still losing money is not a confirmed thesis, however fast the
   // loss is shrinking (EXICOM: margin −19% → −7%). (zzz765)
   const lossMaking = /^\s*-/.test(String(found.margin?.after || '')) || /^\s*-/.test(String(found.earnings_growth?.after || ''));
@@ -873,16 +1051,37 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
    *  label is the fallback only. (zzz771) */
   const nm = (c: { key: VarKey; label: string }): string => VAR_LABEL[c.key] || c.label;
   /** The state of an unconfirmed variable, in words the card can print. */
+  // Never a bare verdict word: "cash conversion (flat)" on SFL / BHAGCHEM said
+  // neither what was read nor why it does not count. (zzz772)
+  const confirmedIds = new Set(structuralConfirmedVars.map((c) => figureIdentity(c.after)).filter(Boolean) as string[]);
   const openState = (c: CheckedVariable): string =>
-    c.state === 'UNCLEAR' ? `unclear — validation required: ${c.after || c.before}`
+    // A margin with only a sequential move on file is a level, not an
+    // ambiguous figure — said the way the card says it. (zzz772)
+    c.state === 'UNCLEAR' && /sequential|\bQoQ\b/i.test(String(c.stateReason || c.unjudged || '')) ? `QoQ only — seasonal, not judged: ${c.after || c.before}`
+      : c.state === 'UNCLEAR' ? `unclear — validation required: ${c.after || c.before}`
       : c.state === 'NOT_APPLICABLE' ? 'not applicable'
       : c.verdict === 'unknown' ? (c.state === 'NOT_SEARCHED' ? 'not searched' : 'not disclosed')
-      : c.verdict === 'stated' ? `${(c as any).statement === 'TARGET' || (c as any).statement === 'GUIDANCE' ? 'target only' : 'level only'}: ${c.after || c.before}`
+      : c.kind === 'claim' && c.statement !== 'TARGET' && c.statement !== 'GUIDANCE' && !isForwardRow({ after: c.after }) ? `management statement, not a filed figure: ${c.after || c.before}`
+      : isForwardRow(c) ? `target only: ${c.after || c.before}`
+      : c.verdict === 'stated' ? `level only: ${c.after || c.before}`
       : c.verdict === 'flat' && c.silence ? 'not mentioned in the documents read — silence, not a reading'
+      : c.verdict === 'flat' && c.withinMateriality ? `within materiality: ${c.delta || c.after || c.before}`
       : c.verdict === 'flat' && c.readings < 2 ? `single reading: ${c.after || c.before}`
       : c.verdict === 'flat' ? `unchanged: ${c.before && c.after ? `${c.before} → ${c.after}` : c.after || c.before || c.delta}`
-      : c.kind === 'claim' ? `management statement, not a filed figure: ${c.after || c.before}`
-      : c.verdict;
+      : c.verdict === 'deteriorating' ? `moved the wrong way: ${c.delta || c.after || c.before}`
+      : c.verdict === 'improving' && confirmedIds.has(figureIdentity(c.after) || '') ? `same figure as another confirmed variable — counted once: ${c.after}`
+      : `${c.after || c.before || c.delta || 'not established'}`;
+  // ── THE PRINTED RATIO, EVERYWHERE.                                (zzz772)
+  // UNIMECH read "Structural evidence reviewed: 1/5" in its status line and
+  // "mechanism 4/8 confirmed" in its verdict — two denominators for one
+  // question. The status line now prints the same union the gate and the
+  // verdict use: structural variables plus evidenced drivers.
+  const structuralLine = `Structural evidence reviewed: ${printedConfirmed.size}/${printedKeys.size} variables confirmed.`;
+  const notEstablished = missingRequired.length
+    ? ` Not yet established: ${missingRequired.map((c) => `${nm(c).toLowerCase()} (${
+      c.key === 'cash_conversion' && !cashCritical && c.verdict === 'deteriorating' ? 'weak — shown as a financial warning, not thesis-critical here'
+        : openState(c)})`).join(', ')}.`
+    : '';
   const stillToConfirm = core.filter((c) => !isFinancialOutput(c.key, c.source)
     && c.verdict !== 'improving' && !(c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)))
     .map((c) => `${nm(c).toLowerCase()} (${openState(c)})`);
@@ -949,7 +1148,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const cashRow = downAll.find((c) => c.key === 'cash_conversion');
     because = (onlyCash && outputImproved
       ? `Financial output improved (${outputSummary}), but the structural mechanism is not established `
-        + `(${structuralConfirmedVars.length} of ${structuralVars.length} structural variables confirmed) — this is not thesis failure. `
+        + `(${printedConfirmed.size} of ${printedKeys.size} structural variables confirmed) — this is not thesis failure. `
         + `WEAKENING because cash conversion, thesis-critical for ${thesis.pattern === 'F' ? 'a profit jump (the forensic test)' : 'this strategy'}, reads ${cashRow!.after || cashRow!.delta}: `
         + 'reported profit is not yet converting into operating cash. '
       : `Thesis-critical mechanism deteriorating — `
@@ -1212,6 +1411,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // for a mechanism nobody has looked at since.
   const staleBy = quartersBehind(input.evidencePeriod, input.expectedPeriod);
   const staleEvidence = staleBy != null && staleBy > STALE_EVIDENCE_QUARTERS;
+  const staleWhy = `Evidence is ${input.evidencePeriod}, ${staleBy} quarters older than ${input.expectedPeriod} — too old to confirm or contradict today's mechanism.`;
   if (staleEvidence && (status === 'STRENGTHENING' || status === 'NEUTRAL' || status === 'POSITIVE_EXPECTATION_GAP')) {
     status = 'CONFIRMATION_REQUIRED';
     because = `The evidence on file is ${input.evidencePeriod} — too old to confirm this quarter's mechanism; read the latest filing. `
@@ -1256,17 +1456,35 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           ].filter(Boolean).join(' '),
     };
     const mechX = printedConfirmed.size, mechY = printedKeys.size;
-    const missing = [...printedKeys].filter((k) => !printedConfirmed.has(k))
-      .map((k) => VAR_LABEL[k] || checked.find((c) => c.key === k)?.label || k);
+    // ── MISSING ≠ CONTRADICTED.                                      (zzz772)
+    // MOREPENLAB listed cash conversion under "missing" while it was the very
+    // variable contradicting the thesis. A printed variable that moved the
+    // wrong way was found; it is reported as contradicted, never as missing.
+    const labelOf = (k: VarKey) => VAR_LABEL[k] || checked.find((c) => c.key === k)?.label || k;
+    const openKeys = [...printedKeys].filter((k) => !printedConfirmed.has(k));
+    const contradictedKeys = openKeys.filter((k) => checked.some((c) => c.key === k && c.verdict === 'deteriorating'));
+    const missing = openKeys.filter((k) => !contradictedKeys.includes(k)).map(labelOf);
+    const contradictedLabels = contradictedKeys.map(labelOf);
     const coreContradicted = coreDown.length > 0 || structuralDown;
     const anyConfirmed = mechX > 0 || drivers.length > 0;
     const coreOpen = coreMechanism.filter((c) => c.verdict === 'unknown' || c.state === 'UNCLEAR');
+    // TI: WEAKENING on margin and earnings, while no core MECHANISM variable
+    // moved — say where the deterioration is. (zzz771)
+    const outputDownNote = `No core mechanism variable contradicted; the deterioration is in financial output: ${checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c)).map((c) => `${nm(c).toLowerCase()} ${c.delta || c.after || ''}`.trim()).join(', ')}.`;
 
     let evidence: ThesisVerdict['evidence'];
     let evidenceWhy: string;
     if (!input.evidenceReviewed) {
       evidence = 'UNCHECKED';
       evidenceWhy = 'No filing, concall or announcement has been read for this holding; the core mechanism has not been looked at.';
+    } else if (staleEvidence) {
+      // ── OLD EVIDENCE NEITHER CONFIRMS NOR CONTRADICTS.             (zzz772)
+      // MINDSPACE: one Q4 FY24 document, and the card read "2/4 confirmed …
+      // EVIDENCE: partially confirmed". Drivers describe the business in the
+      // period they were read for; two years on they are history, not
+      // evidence about today's mechanism in either direction.
+      evidence = 'INCOMPLETE';
+      evidenceWhy = staleWhy;
     } else if (coreContradicted) {
       evidence = 'CONTRADICTED';
       const down = checked.filter((c) => c.verdict === 'deteriorating' && mayMoveStatus(c) && (c.weight === 4 || structuralKeys.has(c.key)));
@@ -1281,15 +1499,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       evidenceWhy = `${mechX}/${mechY} structural variables confirmed`
         + (drivers.length ? `; driver${drivers.length > 1 ? 's' : ''} evidenced: ${[...distinctDrivers].map((k) => (VAR_LABEL[k] || k).toLowerCase()).join(', ')}` : '')
         + (missing.length ? `; still open: ${missing.map((l) => l.toLowerCase()).join(', ')}` : '')
-        + (staleEvidence ? `; the evidence is ${input.evidencePeriod}, too old to confirm this quarter` : '')
-        + (anyMaterialDown
-          // TI: WEAKENING on margin and earnings, while no core MECHANISM
-          // variable moved — say where the deterioration is. (zzz771)
-          ? `. No core mechanism variable contradicted; the deterioration is in financial output: ${checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c)).map((c) => `${nm(c).toLowerCase()} ${c.delta || c.after || ''}`.trim()).join(', ')}.`
-          : '. Nothing contradicted.');
+        + (anyMaterialDown ? `. ${outputDownNote}` : '. Nothing contradicted.');
     } else if (coreOpen.length) {
       evidence = 'INCOMPLETE';
-      evidenceWhy = `Documents were read, but ${coreOpen.map((c) => `${nm(c).toLowerCase()} (${openState(c)})`).join(', ')} — core to this thesis — ${coreOpen.length === 1 ? 'is' : 'are'} unknown. Unknown is not neutral evidence.`;
+      evidenceWhy = `Documents were read, but ${coreOpen.map((c) => `${nm(c).toLowerCase()} (${openState(c)})`).join(', ')} — core to this thesis — ${coreOpen.length === 1 ? 'is' : 'are'} unknown. Unknown is not neutral evidence.`
+        // TI lost its only "driver" once a plan stopped counting as one
+        // (zzz772); the card must still say where the deterioration is.
+        + (anyMaterialDown ? ` ${outputDownNote}` : '');
     } else {
       evidence = 'NOT_CONTRADICTED';
       evidenceWhy = mechY
@@ -1325,8 +1541,14 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
                 : `output did not improve (${outputSummary}); mechanism ${mechX}/${mechY} confirmed — nothing read calls a direction`;
     }
     return { breakTrigger, direction, directionWhy, evidence, evidenceWhy,
-      coverage: { confirmed: mechX, applicable: mechY, missing } };
+      coverage: { confirmed: mechX, applicable: mechY, missing, contradicted: contradictedLabels } };
   })();
+  // The card's status sentence opens with the staleness, whatever the status:
+  // the reader must know the evidence is old before reading what it said.
+  // The capped-positive case above already opens with it. (zzz772)
+  if (staleEvidence && input.evidenceReviewed && !because.startsWith('The evidence on file is ')) {
+    because = `${staleWhy} ${because}`;
+  }
   // The words "THESIS STRENGTHENING" require both answers. By construction
   // they agree; if a future branch breaks that, the label yields, never the
   // verdict — the card must not print green over unconfirmed evidence. (zzz771)
@@ -1373,7 +1595,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         c.verdict === 'deteriorating' ? 'fired'
           : c.verdict === 'unknown' || c.verdict === 'stated' ? 'unknown'
             : c.verdict === 'flat' ? 'watch' : 'ok';
-      return { condition: tv.invalidatedWhen, weight: tv.weight, status: st };
+      return { condition: conditionText(tv.key, tv.invalidatedWhen, c), weight: tv.weight, status: st };
     })
     .sort((a, b) => b.weight - a.weight);
 

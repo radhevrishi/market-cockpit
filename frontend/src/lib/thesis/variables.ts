@@ -27,14 +27,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE,
+  VAR_LABEL, VAR_GROUP, GRADER_AVAILABLE, businessProfileOf, isServicesBusiness,
   type VarKey, type VarGroup, type EvidenceKind,
 } from './taxonomy';
 
 import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
 import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf, periodOrdinal, needsVariableSnapshots, withVariableSnapshots, formatDeltaAbs, type CompanyLedger, type VariableSnapshot } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
-import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn } from './fact-normalize';
+import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn, stripPeriodTokens, movePeriodOut } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
 import {
@@ -196,7 +196,8 @@ const pct = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v * 10) / 10}%`;
 /** Percent out of a stated string like "68%", "68.5 per cent", "82". */
 function pctIn(s: unknown): number | null {
   if (!said(s)) return null;
-  const m = String(s).match(/-?\d+(?:\.\d+)?/);
+  // "Q4 FY26: 72%" is 72, not 4. (zzz772)
+  const m = stripPeriodTokens(String(s)).match(/-?\d+(?:\.\d+)?/);
   if (!m) return null;
   const v = Number(m[0]);
   return Number.isFinite(v) ? v : null;
@@ -292,7 +293,8 @@ export function marginDriverPositive(detail: string): boolean {
 
 const numIn = (s: string | null): number | null => {
   if (!s) return null;
-  const m = s.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  // Period labels stripped first: "Q1 FY26: 54.80" is 54.80. (zzz772)
+  const m = stripPeriodTokens(s).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
   return m ? Number(m[0]) : null;
 };
 
@@ -329,6 +331,17 @@ export function inverseByUnit(key: VarKey, text: string): boolean {
   return key === 'working_capital' && /\bdays?\b|cycle/i.test(text);
 }
 
+/** Working-capital DAYS against a plan: fewer days is the better side.
+ *  UNIMECH "approximately 130 days · plan 160 days plus" is 30 days better
+ *  than the plan, not a shortfall. Null unless both sides are day counts. (zzz772) */
+export function daysGap(actual: string | null | undefined, plan: string | null | undefined): string | null {
+  const a = normalizeValue(actual), p = normalizeValue(plan);
+  if (a.dimension !== 'days' || p.dimension !== 'days' || a.normalized_value == null || p.normalized_value == null) return null;
+  const d = Math.round((a.normalized_value - p.normalized_value) * 10) / 10;
+  if (d === 0) return 'on plan';
+  return `${d > 0 ? '+' : '−'}${Math.abs(d)} days, ${d < 0 ? 'better' : 'worse'} than plan`;
+}
+
 /** A figure, not a label: "Phase 1", "Unit 2", "Q3 FY26" carry digits and
  *  measure nothing. (zzz769) */
 function hasFigure(s: string | null | undefined): boolean {
@@ -362,7 +375,10 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
   const live = norm.filter((e) => !(e.historical_as_of && e.value_type === 'ACTUAL'))
     // Commentary carries no figure, so no unit test applies; it is kept and
     // typed as what it is rather than dropped. (zzz770)
-    .filter((e) => e.commentary || judgeEventQuality(e) !== 'unit_mismatch');
+    // …except utilisation: a sentence with no fill rate in it is not a
+    // utilisation commentary either (AZAD's construction schedule, TATATECH's
+    // growth outlook). (zzz772)
+    .filter((e) => (e.commentary && e.variable !== 'utilisation' && e.variable !== 'capex') || judgeEventQuality(e) !== 'unit_mismatch');
   const slots = bestEventPerVariable(live);
   for (const [key, slot] of slots) {
     const a = slot.actual as (StructuralEvent & { flat_stated?: boolean; retyped_because?: string | null }) | null;
@@ -422,7 +438,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
     // mis-filed actual is dropped here; the variable falls through to its
     // forward statement if it has one, and otherwise renders as an absence.
     // The event itself stays in the ledger for audit.
-    const aOk = a && ((a as any).commentary || judgeEventQuality(a) !== 'unit_mismatch') ? a : null;
+    const aOk = a && (((a as any).commentary && key !== 'utilisation' && key !== 'capex') || judgeEventQuality(a) !== 'unit_mismatch') ? a : null;
     if (aOk) {
       const a0 = aOk;
       // A pair that states one number twice is a LEVEL. (zzz764)
@@ -433,7 +449,8 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       // "Q4 FY26: 59 days → 59 days by Q4 FY26"), never a move. (zzz770)
       const a = flatStated ? { ...a0, before: a0.after }
         : restatedPair(a0.before, a0.after) || samePeriodPair(a0.before, a0.after) ? { ...a0, before: null } : a0;
-      const delta = flatStated ? 'FLAT' : deltaOf(a.before, a.after);
+      // Period labels do not take part in the arithmetic. (zzz772)
+      const delta = flatStated ? 'FLAT' : deltaOf(a.before ? (stripPeriodTokens(a.before) || a.before) : a.before, a.after);
       // Re-judged on load, so ledgers written before a rule existed obey it.
       const quality = (a as any).commentary ? 'sentence' as const : judgeEventQuality(a);
       const dir = verifiedDirection(a);
@@ -449,8 +466,11 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       // figure. A fill rate, a one-off and a working-capital AMOUNT are
       // judged only on two stated figures. Working capital in DAYS keeps
       // the inverse reading below.
-      const needsTwoFigures = key === 'utilisation' || key === 'one_offs'
-        || (key === 'working_capital' && !inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`));
+      // Working capital in DAYS joins them (zzz772): UNIMECH "stood at
+      // approximately 130 days, slightly inching up" printed ✕ with no
+      // earlier figure anywhere. A stated move verb still counts, as for
+      // utilisation; a drift word with no prior figure is a level.
+      const needsTwoFigures = key === 'utilisation' || key === 'one_offs' || key === 'working_capital';
       // A stated move verb ("improved to 80%", "fell to 60%") is still a
       // comparison the company made; a state word ("running at", "at full",
       // "approaching") is not.
@@ -463,7 +483,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         && /revenue potential|peak (?:incremental )?(?:annual )?revenue|incremental (?:annual )?(?:revenue|business)|potential revenue/i.test(a.evidence_text);
       const isFact = a.value_type === 'ACTUAL' && !chart && !potential;
       const mayJudge = isFact && key !== 'one_offs'
-        && (flatStated || !needsTwoFigures || (!!a.before && !!delta) || (key === 'utilisation' && namesMove));
+        && (flatStated || !needsTwoFigures || (!!a.before && !!delta) || ((key === 'utilisation' || (key === 'working_capital' && inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`))) && namesMove));
       const inverted = NEGATIVE_VARS.has(key) || inverseByUnit(key, `${a.unit || ''} ${a.before || ''} ${a.after || ''} ${a.evidence_text}`);
       // "No stated delays" / "projects on schedule" read as an execution
       // delay ▼. A denial on a more-is-worse variable is checked and flat. (zzz767)
@@ -489,7 +509,8 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       out.push({
         key, label,
         kind: isFact ? 'fact' : 'claim',
-        before: levelText(a.before), after: levelText(a.after), delta, verdict,
+        // "Q1 FY26: 54.80 mmscm" prints as "54.80 mmscm (Q1 FY26)". (zzz772)
+        before: levelText(movePeriodOut(a.before)), after: levelText(a.after), delta, verdict,
         evidence: (quality === 'unit_mismatch' ? 'Value does not fit this variable (wrong unit or no such statement) — shown as a claim only: '
           : chart ? 'Read from a chart, figures unlabelled — verify on the slide: '
             : a.value_type !== 'ACTUAL' ? `Management ${a.value_type === 'MANAGEMENT_CLAIM' ? 'claim' : a.value_type.toLowerCase()}, not a reported figure: `
@@ -529,7 +550,8 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
             { key, value: String(f.after), unit: f.unit, quote: f.evidence_text, period: null }).comparable) ? {
           value: String(f.after), type: f.value_type === 'GUIDANCE' ? 'GUIDANCE' : 'TARGET',
           quote: f.evidence_text.slice(0, 240), source: f.source,
-          gap: isFact && /%/.test(String(a.after ?? '')) && /%/.test(String(f.after)) ? gapToTarget(a.after, f.after) : null,
+          gap: isFact && /%/.test(String(a.after ?? '')) && /%/.test(String(f.after)) ? gapToTarget(a.after, f.after)
+            : isFact && inverseByUnit(key, `${a.unit || ''} ${a.after || ''}`) ? daysGap(a.after, f.after) : null,
         } : null,
         asOf: period || a.period || null,
         sourceLabel: a.source || null,
@@ -794,7 +816,11 @@ export function extractVariables(
     // variable, so the sentence tests pass; only a value that cannot BE that
     // variable is dropped, and the card then shows the hollow circle, which is
     // the truth: nothing usable was read for it.
-    const commentary = v.source === 'filing' && isCommentaryOnly(v.key, v.after, `${v.after || ''} ${v.evidence || ''}`) && !v.before && !hasQuantity(v.delta);
+    // A commentary row needs words to show; "Management commentary: “”"
+    // (UNIVCABLES) is an empty row. Utilisation is never waved through as
+    // commentary: its value must be a fill rate. (zzz772)
+    const commentary = v.source === 'filing' && v.key !== 'utilisation' && v.key !== 'capex' && !!String(v.after || '').trim()
+      && isCommentaryOnly(v.key, v.after, `${v.after || ''} ${v.evidence || ''}`) && !v.before && !hasQuantity(v.delta);
     if (v.source === 'filing' && !commentary && !valueFitsVariable({
       variable: v.key, before: v.before, after: v.after, unit: null, evidence_text: v.evidence,
     })) return;
@@ -1564,8 +1590,75 @@ export function extractVariables(
     decorate(v, graded, opts?.period ?? null);
   }
   const ctx = readingContext(opts?.ledger ?? null, opts?.period ?? null);
-  return applyComparisons(dropRestatedCapacityAddition(out), comparisons)
+  const cleaned = tidyLevels(out, businessProfileOf(graded, summary));
+  return applyComparisons(dropRestatedCapacityAddition(cleaned), comparisons)
     .map((v) => { const r = readingFor(v, ctx); return { ...v, reading: r, display: rowDisplay({ ...v, reading: r }) }; });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEVELS, AMOUNTS AND WHAT A BUSINESS CAN HAVE.                     (zzz772)
+// ═══════════════════════════════════════════════════════════════════════════
+/** A move the sentence itself states: a real addition or a rise. */
+const POSITIVE_MOVE = /\b(increas\w*|rose|risen|grew|grown|growth|expan\w*|added|addition|adds|commission(?:ed|ing)|scal(?:e|ed|ing)[- ]?up|doubl\w*|tripl\w*|up\s+\d|up from|higher|ramp(?:ed)?[- ]up|enhanc\w*|augment\w*|all[- ]time high|record high|new (?:plant|line|facility|capacity))/i;
+const NOT_DONE = /\b(in progress|under (?:construction|commissioning|development|implementation)|to be (?:commissioned|added|completed)|will be|expected to|planned|plans? to|proposed|approved at|upcoming|being (?:set up|built))\b/i;
+/** Amount phrases in a capex value: "INR30 crores -INR35 crores", "₹80 Cr". */
+const AMOUNT_RE = /(?:~|approx\.?\s*|approximately\s+|around\s+|about\s+|over\s+|nearly\s+)?(?:(?:₹|INR|Rs\.?|USD|US\$|\$|EUR|€)\s*[\d,]+(?:\.\d+)?(?:\s*(?:lakh\s+crores?|lakh\s+cr|crores?|cr|lakhs?|lacs?|mn|million|bn|billion))?|[\d,]+(?:\.\d+)?\s*(?:lakh\s+crores?|crores?|cr|lakhs?|lacs?|mn|million|bn|billion)\b)(?:\s*(?:-|–|to)\s*(?:₹|INR|Rs\.?|USD|\$)?\s*[\d,]+(?:\.\d+)?\s*(?:crores?|cr|lakhs?|lacs?|mn|million|bn|billion)?)?/gi;
+/** A capex value as an amount. Longer than ~60 characters, a spend
+ *  sentence keeps only its amount phrase(s): MTARTECH "for quarter 1, we
+ *  might have spent around INR30 crores -INR35 crores only capex, but
+ *  overall INR80 crores which is capitalized" → "INR30 crores -INR35 crores ·
+ *  INR80 crores". A project list keeps each name with its own amount. */
+export function capexAmountText(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const v = String(value).trim();
+  if (v.length <= 60) return v;
+  const amounts = (x: string) => Array.from(new Set((x.match(AMOUNT_RE) || []).map((m) => m.trim()))).join(' · ');
+  if (/ — /.test(v)) {
+    return v.split(' · ').map((seg) => {
+      const [name, ...rest] = seg.split(' — ');
+      const amt = rest.join(' — ');
+      if (!amt || amt.length <= 60) return seg;
+      const a = amounts(amt);
+      return a ? `${name} — ${a}` : seg;
+    }).join(' · ');
+  }
+  return amounts(v) || v;
+}
+/** A distributor's or a services company's "installed capacity" is not
+ *  production capacity (REDINGTON "100 MW", an IT distributor); nor is a
+ *  captive solar plant at a business that does not sell power. */
+const POWER_BUSINESS = /\b(solar|renewable|wind|power|energy|electricity|module|photovoltaic|pv\b|utility|EPC)\b/i;
+function tidyLevels(vars: StructuralVar[], business: ReturnType<typeof businessProfileOf>): StructuralVar[] {
+  const services = isServicesBusiness(business);
+  const bizText = `${business?.sector || ''} ${business?.industry || ''} ${business?.text || ''}`;
+  return vars.filter((v) => {
+    if (v.key !== 'capacity' || v.source !== 'filing' || v.statement === 'HISTORICAL') return true;
+    if (services) return false;
+    const txt = `${v.after || ''} ${v.quote || v.evidence || ''}`;
+    if (/\b(solar|rooftop|captive)\b/i.test(txt) && /\b(MW|kW|GW)p?\b/i.test(String(v.after || '')) && !POWER_BUSINESS.test(bizText)) return false;
+    return true;
+  }).map((v) => {
+    let out = v;
+    if (v.key === 'capex' && v.after) {
+      const a = capexAmountText(stripTypeTag(v.after));
+      const tag = /\((?:target|guidance)\)\s*$/i.exec(String(v.after))?.[0];
+      if (a && a !== stripTypeTag(v.after)) out = { ...out, after: tag ? `${a} ${tag}` : a };
+    }
+    // ── A LEVEL ALONE IS STATED.                                     (zzz772)
+    // An installed capacity, an order book or a utilisation with no earlier
+    // figure in the text and no stated move is a level; a level is not an
+    // improvement. A real before→after, a disclosed addition ("expanded to",
+    // "commissioned", "grew from 94 to 103") or a stated rise still counts.
+    if ((v.key === 'capacity' || v.key === 'order_book' || v.key === 'utilisation')
+      && v.verdict === 'improving' && !v.before && (!v.delta || v.delta === 'FLAT')
+      && (!v.statement || v.statement === 'ACTUAL')) {
+      const txt = `${v.quote || v.evidence || ''}`;
+      if (!POSITIVE_MOVE.test(txt) || NOT_DONE.test(txt)) {
+        out = { ...out, verdict: 'stated', unjudged: out.unjudged ?? 'a level with no earlier figure and no stated move — shown, not judged' };
+      }
+    }
+    return out;
+  });
 }
 
 /** Every row carries its type, group, validation, normalised value and
@@ -1657,6 +1750,22 @@ const classOf = (from: string | null, to: string | null): PeriodClass => {
   return gap === 1 ? 'PREVIOUS_QUARTER' : gap === 4 ? 'PREVIOUS_FY' : 'HISTORICAL';
 };
 const GLYPH: Record<string, string> = { UP: '▲', DOWN: '▼', FLAT: '→' };
+// ── THE BASIS IN WORDS, NOT CODE.                                  (zzz772)
+// The live page printed "▲ in_text" and "→ vs_baseline": the field value,
+// not a sentence. `comparison_basis` keeps its code for the engine; the
+// display says what it means.
+export const BASIS_WORDS: Record<NonNullable<VariableReading['comparison_basis']>, string> = {
+  QoQ: 'QoQ', YoY: 'YoY', vs_prior_read: 'vs prior read', vs_baseline: 'vs first read', in_text: 'per filing',
+};
+/** An in-text prior whose period the text names ("vs 145 days (Q4 FY26)")
+ *  is a QoQ or YoY comparison when the two periods are one or four quarters
+ *  apart; otherwise it stays "per filing". (zzz772) */
+const inTextBasis = (from: string | null, to: string | null): VariableReading['comparison_basis'] => {
+  if (!from || !to) return 'in_text';
+  const a = periodOrdinal(from), b = periodOrdinal(to);
+  if (a < 0 || b < 0) return 'in_text';
+  return b - a === 1 ? 'QoQ' : b - a === 4 ? 'YoY' : 'in_text';
+};
 
 /** Money as the owner reads it: "INR107 crores" → "₹107 Cr", "₹13,000 Lakhs"
  *  → "₹130 Cr" (exact). Only a plain single-figure amount is rewritten; a
@@ -1692,6 +1801,19 @@ export function quarterOfDate(d: Date): string {
 export function figureAndPeriod(text: string, from: string | null): { value: string; period: string | null } {
   const t = String(text || '').trim();
   const TAIL = /\s+(?:in|as\s+(?:at|on|of)|at|for|by|during|end(?:ing)?\s+of|as\s+of\s+end)\s+(?:the\s+)?(?:end\s+of\s+)?(Q\s?[1-4]\s*[-' ]?\s*FY\s?'?\d{2,4}|FY\s?'?\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(?:\d{1,2}(?:st|nd|rd|th)?,?\s*)?(?:20)?\d{2}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+20\d{2})\s*$/i;
+  // "Q1 FY26: 54.80 mmscm" and "54.80 mmscm (Q1 FY26)": the period written
+  // as a prefix or in brackets is moved out of the value too. (zzz772)
+  const PERIOD_TOKEN = String.raw`Q\s?[1-4]\s*[-' ]?\s*FY\s?'?\d{2,4}|FY\s?'?\d{2,4}`;
+  const pre = new RegExp(`^(${PERIOD_TOKEN})\\s*[:–—-]\\s*(.+)$`, 'i').exec(t);
+  const post = new RegExp(`^(.+?)\\s*\\(\\s*(${PERIOD_TOKEN})\\s*\\)\\s*$`, 'i').exec(t);
+  const lead = pre ? { label: pre[1], rest: pre[2].trim() } : post ? { label: post[2], rest: post[1].trim() } : null;
+  if (lead) {
+    const ds = datesIn(lead.label);
+    if (ds.length && isFigure(lead.rest)) {
+      const d = ds[ds.length - 1];
+      return { value: lead.rest, period: /^FY\d{2}$/.test(d.label) ? d.label : quarterOfDate(d.end) };
+    }
+  }
   const m = TAIL.exec(t);
   if (m) {
     const ds = datesIn(m[1]);
@@ -1767,12 +1889,32 @@ export function readingFor(v: StructuralVar, ctx: ReadingContext): VariableReadi
     const reason = v.validation?.reason || s?.not_comparable_reason || 'validation required';
     return { ...base, not_comparable_reason: reason, display: `unclear — validation required: ${current.value}` };
   }
-  const done = (prev: ReadingPoint, delta_abs: string | null, delta_pct: string | null, direction: VariableReading['direction'], basis: VariableReading['comparison_basis']): VariableReading => {
+  const done = (prev: ReadingPoint, delta_abs: string | null, delta_pct: string | null, direction: VariableReading['direction'], basis0: VariableReading['comparison_basis']): VariableReading => {
     const prevTxt = `${prev.value} (${prev.period || 'earlier, in text'})`;
     const dTxt = direction === 'FLAT' || (!delta_abs && !delta_pct) ? 'unchanged' : [delta_abs, delta_pct].filter(Boolean).join(' · ');
+    // An in-text prior that names its period is QoQ / YoY when that is what
+    // the two periods are. (zzz772)
+    const basis = basis0 === 'in_text' ? inTextBasis(prev.period, period) : basis0;
     return {
       ...base, previous: prev, baseline: baselineOf(prev.period), delta_abs, delta_pct, direction, comparison_basis: basis, not_comparable_reason: null,
-      display: `${curTxt} vs ${prevTxt} · ${dTxt} · ${GLYPH[direction] || '·'} ${basis}`,
+      display: `${curTxt} vs ${prevTxt} · ${dTxt} · ${GLYPH[direction] || '·'} ${basis ? BASIS_WORDS[basis] : ''}`.trimEnd(),
+    };
+  };
+  /** Δ from the two figures as written, in one unit; null when they cannot
+   *  be subtracted. The persisted snapshot's delta was computed by an older
+   *  parser (IRMENERGY "+5794%" from a "Q1 FY26:" label), so the reading
+   *  recomputes it whenever both sides can be read. (zzz772) */
+  const recomputed = (before: string, afterTxt: string): { dAbs: string | null; dPct: string | null; dir: VariableReading['direction'] } | null => {
+    const nb = normalizeValue(before), na = normalizeValue(afterTxt);
+    const b = nb.normalized_value, a = na.normalized_value;
+    if (b == null || a == null || nb.normalized_unit !== na.normalized_unit || nb.dimension !== na.dimension || !na.safe || !nb.safe) return null;
+    const pctUnit = na.dimension === 'percent' || na.dimension === 'percent_points';
+    const noRel = pctUnit || na.dimension === 'days';
+    const dir: VariableReading['direction'] = a > b ? 'UP' : a < b ? 'DOWN' : 'FLAT';
+    return {
+      dir,
+      dAbs: a === b ? null : formatDeltaAbs(a - b, pctUnit ? 'pp' : (na.normalized_unit || null)),
+      dPct: a === b || noRel || b === 0 ? null : formatDeltaAbs(((a - b) / Math.abs(b)) * 100, '%'),
     };
   };
   // ── 1. The persisted series: an earlier period's FOUND snapshot. ──
@@ -1790,6 +1932,8 @@ export function readingFor(v: StructuralVar, ctx: ReadingContext): VariableReadi
   if (matches && s!.previous_value && !s!.previous_period) {
     const pp = figureAndPeriod(s!.previous_value, period);
     const prev = point(pp.value, pp.period, pp.period ? classOf(pp.period, period) : 'HISTORICAL', null, src);
+    const r = recomputed(pp.value, after);
+    if (r) return done(prev, r.dAbs, r.dPct, r.dir, 'in_text');
     const dir = (s!.direction === 'UP' || s!.direction === 'DOWN' || s!.direction === 'FLAT') ? s!.direction : 'UNKNOWN';
     return done(prev, s!.delta_abs, s!.delta_pct, dir, 'in_text');
   }

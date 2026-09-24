@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { extractVariables } from '../thesis/variables';
-import { assessThesis, OUTPUT_ONLY_SENTENCE, STRENGTHENING_SENTENCE } from '../thesis/status';
+import { assessThesis, OUTPUT_ONLY_SENTENCE, STRENGTHENING_SENTENCE, selfDescribedMarginal } from '../thesis/status';
 import { classifyGradedRow } from '../earnings/pattern-abfg';
 import { parseOneOff, oneOffLine } from '../thesis/one-offs';
 
@@ -792,7 +792,10 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
       assert.equal(v.breakTrigger.fired, v.breakTrigger.conditions.length > 0);
       assert.ok(v.breakTrigger.fired ? v.breakTrigger.text.startsWith('Fired: ') : v.breakTrigger.text === 'None fired');
       assert.ok(v.coverage.confirmed <= v.coverage.applicable);
-      assert.equal(v.coverage.missing.length, v.coverage.applicable - v.coverage.confirmed);
+      // zzz772: a contradicted variable is reported under `contradicted`, never
+      // `missing`; the two together are what is not confirmed.
+      assert.equal(v.coverage.missing.length + (v.coverage.contradicted?.length ?? 0), v.coverage.applicable - v.coverage.confirmed);
+      for (const c of v.coverage.contradicted ?? []) assert.ok(!v.coverage.missing.includes(c), `${c} is contradicted, not missing`);
       for (const m of v.coverage.missing) assert.ok(!OUTPUT_LABELS.includes(m), `${m} is output, not core mechanism`);
     }
   });
@@ -807,7 +810,8 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     assert.match(v.directionWhy, /^output improved .*; mechanism 0\/4 confirmed — direction cannot be called from output alone$/);
     assert.equal(v.evidence, 'INCOMPLETE');
     assert.match(v.evidenceWhy, /capacity utilisation \(not disclosed\).*Unknown is not neutral evidence/);
-    assert.deepEqual(v.coverage, { confirmed: 0, applicable: 4, missing: ['Capacity utilisation', 'Volume', 'Capacity added', 'Installed capacity'] });
+    // zzz772: coverage also carries `contradicted` (empty here).
+    assert.deepEqual(v.coverage, { confirmed: 0, applicable: 4, missing: ['Capacity utilisation', 'Volume', 'Capacity added', 'Installed capacity'], contradicted: [] });
   });
 
   test('a fired condition is answer 1 only: WEAKENING carries the fired text; BROKEN says the break is met', () => {
@@ -989,5 +993,184 @@ describe('zzz771 integration · one ratio for label, gate and chip', () => {
     const m = a.because.match(/(\d+)\/(\d+)/);
     assert.ok(m, a.because);
     assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [Number(m![1]), Number(m![2])]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz772 · status-engine defects from the owner's live page, one test per rule.
+// Shapes are the live cards' own figures; nothing here is keyed to a ticker.
+// ═══════════════════════════════════════════════════════════════════════════
+import { EARNINGS_EXCEED_REVENUE, figureIdentity, isForwardRow, isImmaterialDecline, conditionText } from '../thesis/status';
+describe('zzz772 · status engine', () => {
+  const R = (x: Partial<Parameters<typeof assessThesis>[0]>) => assessThesis({ pattern: null, variables: [], evidenceReviewed: true, hasGraderRow: true, ...x } as any);
+  const W = (key: string, verdict: string, o: Record<string, unknown> = {}) => ({ ...V(key, verdict), ...o }) as any;
+  const noTurnNegative = (a: ReturnType<typeof R>) => {
+    for (const c of a.invalidationConditions) assert.doesNotMatch(c.condition, /Earnings turn negative/);
+    for (const c of a.verdict!.breakTrigger.conditions) assert.doesNotMatch(c, /Earnings turn negative/);
+  };
+
+  test('1 · an immaterial decline is shown, never deteriorates, never fires, never makes output "not improved"', () => {
+    // LLOYDSENT: revenue growth −1.2% (the line is −5%).
+    const rev = R({ variables: [W('revenue_growth', 'deteriorating', { delta: '-1.2%', after: '-1.2%', source: 'grader' }),
+      W('earnings_growth', 'improving', { delta: '+45%', source: 'grader' }), W('margin', 'improving', { delta: '+2.0pp', source: 'grader' })] });
+    assert.notEqual(rev.status, 'WEAKENING');
+    assert.equal(rev.verdict!.breakTrigger.fired, false);
+    const rrow = rev.checked.find((c) => c.key === 'revenue_growth')!;
+    assert.equal(rrow.verdict, 'flat'); assert.equal(rrow.withinMateriality, true); assert.equal(rrow.invalidation, null);
+    assert.ok(rev.invalidationConditions.every((c) => c.status !== 'fired'));
+    // RISHABH: earnings growth −1.4% (the line is −10%).
+    const earn = R({ variables: [W('revenue_growth', 'improving', { delta: '+20%', source: 'grader' }),
+      W('earnings_growth', 'deteriorating', { delta: '-1.4%', before: '100 Cr', after: '98.6 Cr', source: 'grader' }), W('margin', 'improving', { delta: '+2.0pp', source: 'grader' })] });
+    assert.notEqual(earn.status, 'WEAKENING');
+    assert.equal(earn.verdict!.breakTrigger.fired, false);
+    noTurnNegative(earn);
+    // AETHER: margin −1.0pp with revenue +27.2% — no trigger, and the direction says output improved.
+    const ae = R({ variables: [W('revenue_growth', 'improving', { delta: '+27.2%', source: 'grader' }),
+      W('earnings_growth', 'improving', { delta: '+34%', before: '47 Cr', after: '63 Cr', source: 'grader' }),
+      W('margin', 'deteriorating', { before: '32.0%', after: '31.0%', delta: '-1.0pp', source: 'filing' })] });
+    assert.equal(ae.verdict!.breakTrigger.fired, false);
+    assert.doesNotMatch(ae.verdict!.directionWhy, /output did not improve/);
+    assert.match(ae.verdict!.directionWhy, /^output improved/);
+    // A material decline still fires — phrased as a material decline, not "turn negative".
+    const mat = R({ variables: [W('revenue_growth', 'improving', { delta: '+20%', source: 'grader' }),
+      W('earnings_growth', 'deteriorating', { delta: '-30.3%', before: '249 Cr', after: '174 Cr', source: 'grader' })] });
+    assert.equal(mat.verdict!.breakTrigger.fired, true);
+    assert.deepEqual(mat.verdict!.breakTrigger.conditions, ['Earnings decline materially — down 10% or more year on year.']);
+    noTurnNegative(mat);
+    assert.equal(conditionText('earnings_growth' as any, 'Earnings turn negative.', { after: '-12 Cr', verdict: 'deteriorating' }), 'Earnings turn into a loss.');
+    // The lines themselves: −5% revenue, −10% earnings, −3pp margin are material.
+    assert.equal(isImmaterialDecline({ key: 'revenue_growth' as any, delta: '-4.9%' }), true);
+    assert.equal(isImmaterialDecline({ key: 'revenue_growth' as any, delta: '-5%' }), false);
+    assert.equal(isImmaterialDecline({ key: 'earnings_growth' as any, delta: '-9.9%' }), true);
+    assert.equal(isImmaterialDecline({ key: 'earnings_growth' as any, delta: '-10%' }), false);
+    assert.equal(isImmaterialDecline({ key: 'margin' as any, delta: '-3.0pp' }), false);
+    assert.equal(isImmaterialDecline({ key: 'margin' as any, delta: '-2.9pp' }), true);
+  });
+
+  test('2 · one ratio: the status line prints the same x/y as the verdict (structural ∪ drivers)', () => {
+    // UNIMECH shape: status line said 1/5, verdict 4/8.
+    const a = R({ variables: [W('revenue_growth', 'improving', { delta: '+71.4%', source: 'grader' }),
+      W('earnings_growth', 'improving', { delta: '+47.4%', source: 'grader' }), W('margin', 'improving', { delta: '+5.0pp', source: 'grader' }),
+      W('cash_conversion', 'flat', { after: '0.97× (last FY)', source: 'grader' }),
+      W('order_book', 'deteriorating', { after: 'approximately INR280 crores' }),
+      W('working_capital', 'deteriorating', { after: 'approximately 130 days' }),
+      W('new_customer', 'improving', { after: 'two new aerospace customers onboarded' }),
+      W('qualification', 'improving', { after: 'AS9100 audit cleared' }),
+      W('margin_driver', 'improving', { after: 'favourable product mix' })] });
+    const m = a.because.match(/Structural evidence reviewed: (\d+)\/(\d+)/);
+    assert.ok(m, a.because);
+    assert.deepEqual([Number(m![1]), Number(m![2])], [a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable]);
+    assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [3, 8]);
+  });
+
+  test('3 · missing ≠ contradicted: a variable that moved the wrong way is listed as contradicted, never missing', () => {
+    // MOREPENLAB: F, profit jump, cash conversion 0.34×.
+    const a = R({ pattern: 'F', variables: [W('revenue_growth', 'improving', { delta: '+34.1%', source: 'grader' }),
+      W('earnings_growth', 'improving', { delta: '+409.1%', source: 'grader' }), W('margin', 'improving', { delta: '+8.0pp', source: 'grader' }),
+      W('cash_conversion', 'deteriorating', { after: '0.34× (last FY)', source: 'grader' })] });
+    const cov = a.verdict!.coverage;
+    assert.equal(a.verdict!.evidence, 'CONTRADICTED');
+    assert.ok(!cov.missing.includes('Cash conversion'), cov.missing.join(', '));
+    assert.deepEqual(cov.contradicted, ['Cash conversion']);
+    assert.equal(cov.missing.length + cov.contradicted!.length, cov.applicable - cov.confirmed);
+  });
+
+  test('4 · a target is never a driver and never structurally confirmed', () => {
+    const OUT = [W('revenue_growth', 'improving', { delta: '+23.4%', source: 'grader' }), W('earnings_growth', 'improving', { delta: '+20.6%', source: 'grader' }),
+      W('margin', 'improving', { delta: '+1.0pp', source: 'grader' }), W('cash_conversion', 'improving', { after: '1.91× (last FY)', source: 'grader' })];
+    const target = W('capacity_addition', 'improving', { after: 'Post-expansion target c.27 MTPA by FY31', statement: 'ACTUAL' });
+    const a = R({ variables: [...OUT, W('capacity', 'improving', { before: '0.25 MT', after: '0.4 MT', delta: '+60%' }),
+      target, W('margin_driver', 'improving', { after: 'improved product mix, more value-added products' })] });
+    assert.notEqual(a.status, 'STRENGTHENING', a.because);
+    assert.ok(!a.because.includes('c.27 MTPA'), 'a target is not listed as an evidenced driver');
+    assert.equal(isForwardRow(target), true);
+    assert.equal(isForwardRow({ after: '80,000 sq. ft. hangar; planned ~100,000 sq. ft.' }), false, 'the leading clause is an actual');
+    assert.equal(isForwardRow({ after: 'faster-than-expected break-even of new hubs' }), false);
+    assert.equal(isForwardRow({ after: '70%', statement: 'TARGET' }), true);
+    assert.equal(isForwardRow({ after: 'Imperial Blue reintroduction expected to reaccess customers' }), true);
+    // Structural confirmation too (A: capacity_addition is structural).
+    const b = R({ pattern: 'A', variables: [...OUT, W('capacity_addition', 'improving', { after: '27 MTPA by FY31' })] });
+    assert.ok(!b.structural.confirmedLabels.includes('capacity_addition'));
+  });
+
+  test('5 · the same figure under two variables counts once', () => {
+    // SANSERA: "80k sq. ft." installed capacity and "80,000 sq. ft." capacity added.
+    const OUT = [W('revenue_growth', 'improving', { delta: '+25%', source: 'grader' }), W('earnings_growth', 'improving', { delta: '+30%', source: 'grader' }),
+      W('margin', 'improving', { delta: '+2.0pp', source: 'grader' })];
+    const both = R({ variables: [...OUT, W('capacity', 'improving', { after: 'Addition of 80k sq. ft. manufacturing capacity' }),
+      W('capacity_addition', 'improving', { after: '80,000 sq. ft. hangar' })] });
+    const one = R({ variables: [...OUT, W('capacity', 'improving', { after: 'Addition of 80k sq. ft. manufacturing capacity' })] });
+    assert.equal(both.verdict!.coverage.confirmed, one.verdict!.coverage.confirmed);
+    assert.equal(both.verdict!.coverage.applicable, one.verdict!.coverage.applicable);
+    assert.equal(figureIdentity('Addition of 80k sq. ft.'), figureIdentity('80,000 sq. ft. hangar'));
+    assert.notEqual(figureIdentity('80,000 sq. ft.'), figureIdentity('80,000 MT'));
+    assert.equal(figureIdentity('80,000'), null, 'a bare number is not an identity');
+  });
+
+  test('6 · a not-established list never prints a bare "(flat)"', () => {
+    // SFL / BHAGCHEM / AETHER: "cash conversion (flat)", "one-offs (flat)".
+    const a = R({ variables: [W('revenue_growth', 'improving', { delta: '+27.2%', source: 'grader' }),
+      W('cash_conversion', 'flat', { after: '0.65× (last FY)', source: 'grader' })] });
+    assert.doesNotMatch(a.because, /\(flat\)/);
+    assert.doesNotMatch(a.verdict!.evidenceWhy, /\(flat\)/);
+    assert.match(a.because, /cash conversion \(single reading: 0\.65× \(last FY\)\)/);
+  });
+
+  test('7 · evidence older than the expected period is INCOMPLETE, and the status line opens with it', () => {
+    // MINDSPACE: Q4 FY24 evidence, card read "2/4 confirmed … partially confirmed".
+    const a = R({ pattern: 'A', evidencePeriod: 'Q4 FY24', expectedPeriod: 'Q1 FY27', variables: [
+      W('revenue_growth', 'improving', { delta: '+27.8%', source: 'grader' }), W('earnings_growth', 'improving', { delta: '+62.9%', source: 'grader' }),
+      W('margin', 'improving', { delta: '+1.0pp', source: 'grader' }),
+      W('capacity_addition', 'improving', { before: '0.24 msf', after: '4.4 msf', delta: '+4.16 msf' }),
+      W('volume', 'improving', { after: '+12%', delta: '+12%' })] });
+    const why = "Evidence is Q4 FY24, 9 quarters older than Q1 FY27 — too old to confirm or contradict today's mechanism.";
+    assert.equal(a.verdict!.evidence, 'INCOMPLETE');
+    assert.equal(a.verdict!.evidenceWhy, why);
+    assert.ok(a.because.startsWith(why) || a.because.startsWith('The evidence on file is Q4 FY24 — too old'), a.because);
+    assert.notEqual(a.status, 'STRENGTHENING');
+  });
+
+  test('8 · earnings larger than revenue for the same period are UNCLEAR, not judged', () => {
+    // LLOYDSENT: revenue 613.01 → 605.44 Crore beside earnings 342.73 → 1,200.65 Crore.
+    const a = R({ variables: [
+      W('revenue_growth', 'deteriorating', { before: '613.01 Crore', after: '605.44 Crore', delta: '-1.2%' }),
+      W('earnings_growth', 'improving', { before: '342.73 Crore', after: '1,200.65 Crore', delta: '+250.3%' }),
+      W('margin', 'improving', { delta: '+9.0pp', source: 'grader' })] });
+    const e = a.checked.find((c) => c.key === 'earnings_growth')!;
+    assert.equal(e.state, 'UNCLEAR');
+    assert.equal(e.stateReason, EARNINGS_EXCEED_REVENUE);
+    assert.notEqual(e.verdict, 'improving');
+    assert.notEqual(a.status, 'WEAKENING');
+    // Ordinary bases are untouched.
+    const ok = R({ variables: [W('revenue_growth', 'improving', { before: '613 Crore', after: '705 Crore', delta: '+15%' }),
+      W('earnings_growth', 'improving', { before: '42 Crore', after: '60 Crore', delta: '+42.9%' })] });
+    assert.equal(ok.checked.find((c) => c.key === 'earnings_growth')!.verdict, 'improving');
+  });
+
+  test('9 · a growth rate is two readings, and a small non-zero move is "within materiality", not flat', () => {
+    // JINDRILL: "Revenue growth +8.4% · single reading".
+    const a = R({ variables: [W('revenue_growth', 'flat', { after: '+8.4%', source: 'grader' }),
+      W('earnings_growth', 'flat', { after: '+18.5%', source: 'grader' }), W('margin', 'flat', { delta: '+0.0pp', source: 'grader' })] });
+    const rev = a.checked.find((c) => c.key === 'revenue_growth')!;
+    const earn = a.checked.find((c) => c.key === 'earnings_growth')!;
+    const mar = a.checked.find((c) => c.key === 'margin')!;
+    assert.equal(rev.readings, 2); assert.equal(earn.readings, 2);
+    assert.equal(rev.withinMateriality, true); assert.equal(earn.withinMateriality, true);
+    assert.equal(mar.withinMateriality, false, 'a zero move is unchanged, not "within materiality"');
+  });
+});
+
+describe('zzz772 integration · a fall the company calls marginal is within materiality', () => {
+  test('UNIMECH shape: "marginally lower" order book with no figure is not a contradiction', () => {
+    const a = assessThesis({ pattern: 'B', evidenceReviewed: true, hasGraderRow: true, variables: [
+      ...GOOD_OUTPUT,
+      { key: 'order_book', label: 'Order book', before: null, after: 'approximately INR280 crores', delta: null, verdict: 'deteriorating',
+        evidence: 'Our consolidated order book stood at approximately INR280 crores, marginally lower than the level indicated earlier.', source: 'filing' } as any,
+    ] });
+    assert.notEqual(a.status, 'WEAKENING', a.because);
+    assert.ok(!(a.verdict!.coverage as any).contradicted?.includes('Order book'));
+  });
+  test('a stated fall with a figure is still judged by its size', () => {
+    assert.equal(selfDescribedMarginal({ before: '300 Cr', after: '280 Cr', evidence: 'marginally lower' }), false);
   });
 });

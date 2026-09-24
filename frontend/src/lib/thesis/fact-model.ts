@@ -34,8 +34,8 @@
 
 import type { VarKey } from './taxonomy';
 import { scaledNumber } from './evidence-ledger';
-import { valueClause, datesIn, hasQuantity, isCommentaryOnly, RECURRING_METRICS } from './fact-normalize';
-export { hasQuantity, isCommentaryOnly, RECURRING_METRICS };
+import { valueClause, datesIn, hasQuantity, isCommentaryOnly, RECURRING_METRICS, stripPeriodTokens } from './fact-normalize';
+export { hasQuantity, isCommentaryOnly, RECURRING_METRICS, stripPeriodTokens };
 
 // ── 1. FACT TYPES ──────────────────────────────────────────────────────────
 
@@ -144,10 +144,14 @@ const firstNumber = (s: string): number | null => {
 /** Read the unit off the value string (and the unit field as a fallback) and
  *  convert only where exact. */
 export function normalizeValue(raw: string | null | undefined, unitField?: string | null): NormalizedValue {
-  const s = String(raw ?? '').trim();
+  const raw0 = String(raw ?? '').trim();
+  // A period label is not a number: "Q1 FY26: 54.80 mmscm" parsed to 1 and
+  // printed IRMENERGY's volume as +5794%. Parse the value with its period
+  // tokens stripped; `raw_value` keeps the text as written. (zzz772)
+  const s = stripPeriodTokens(raw0) || raw0;
   const t = `${s} ${unitField || ''}`;
   const base = (over: Partial<NormalizedValue>): NormalizedValue => ({
-    raw_value: s, raw_unit: null, value: scaledNumber(s), normalized_value: null, normalized_unit: null,
+    raw_value: raw0, raw_unit: null, value: scaledNumber(s), normalized_value: null, normalized_unit: null,
     dimension: null, rate: null, conversion_method: null, safe: false, ...over,
   });
   const n0 = firstNumber(s);

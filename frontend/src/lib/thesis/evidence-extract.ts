@@ -44,6 +44,7 @@
 import type { VarKey } from './taxonomy';
 import { normaliseForQuoteMatch } from '@/lib/ai-gainers/announcement-reader';
 import { anthropicMessages } from '@/lib/anthropic-meter';
+import { stripPeriodTokens } from './fact-normalize';
 
 export type ValueType = 'ACTUAL' | 'GUIDANCE' | 'TARGET' | 'MANAGEMENT_CLAIM';
 export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -409,6 +410,69 @@ const NUMBER_WORD_RE = /\b(one|two|three|four|five|six|seven|eight|nine|ten|elev
 const CONCRETE_ASSET_RE = /\b(lines?|plants?|facilit(y|ies)|units?|blocks?|smelters?|kilns?|reactors?|furnaces?|mills?|vessels?|rigs?|stores?|boutiques?|sheds?|sites?)\b/i;
 const FORWARD_WORD_RE = /\b(expect\w*|guid\w*|target\w*|will|would|aim\w*|plan\w*|outlook|project(ed|ion|ing)|anticipat\w*|going forward|forecast\w*|intend\w*|likely|next (year|quarter|fiscal)|coming (year|quarters?)|by (FY|CY|Q[1-4])\s*'?\d{2})/i;
 
+// ── A UTILISATION IS A UTILISATION.                                (zzz772)
+//
+// The live page still carried AZAD "Civil construction at the Azad Centre of
+// Excellence … is expected to be completed within this fiscal year",
+// TATATECH "strong double-digit organic revenue growth for FY27", IRMENERGY
+// "1587.17 million" (unutilised IPO money), SFL "30 days inventory in India"
+// and WONDERLA "tracking similar to other larger parks" as capacity
+// utilisation. A fill rate is a PERCENTAGE, or an explicit capacity-use
+// word: full, maximum, optimum, near-full, "at capacity", "100% capacity".
+// Days, money, a bare "million" / "units", and sentences about construction
+// or growth are not. Exported so every path that fills a utilisation slot —
+// the board, the summary block, the capex chain — asks the same question.
+const UTIL_WORDS = /\b(full(?:y)?(?:\s+(?:utili[sz]ed|capacity|load|level))?|near[- ]full|nearly\s+full|maximum|max(?:imum)?\s+(?:level|capacity)|optimum|optimal|at\s+(?:full\s+)?capacity|peak\s+(?:capacity|utili[sz]ation|level)|sold\s+out|(?:one|two|three|single|double|triple|\d)\s+shifts?)\b/i;
+const NOT_A_FILL_RATE = /\b(days?|months?|weeks?|years?|hours?|construct\w*|civil|build\w*|growth|grow\w*|revenue|margin|ebitda|profit|order|tracking|similar|inventory|proceeds|unutili[sz]ed|IPO)\b|₹|\bINR\b|\bRs\.?|\bUSD\b|\$|crores?\b|\bcr\b|lakhs?\b/i;
+export function isUtilisationValue(value: string | null | undefined): boolean {
+  const v = String(value ?? '').trim();
+  if (!v) return false;
+  const pct = /-?\d+(?:\.\d+)?(?:\s*-?\s*odd)?\s*(%|per\s?cent|percent)/i.exec(v);
+  if (pct) {
+    const n = parseFloat(pct[0]);
+    // A share of revenue, a growth rate or a margin is a percentage too.
+    if (/\b(growth|grew|revenue|margin|ebitda|profit|share of|contribution|saving|of planned)\b/i.test(v) && !/utili[sz]|capacity|\bCUF\b|\bPLF\b|occupancy/i.test(v)) return false;
+    return n >= 0 && n <= 300;
+  }
+  // Without a percentage: only a capacity-use word, and nothing that makes it
+  // a duration, an amount, a count or a sentence about something else.
+  if (/\b(million|mn|billion|bn|units?|nos)\b/i.test(v) || NOT_A_FILL_RATE.test(v)) return false;
+  return UTIL_WORDS.test(v) && !/doubl|tripl|compared|versus|\bvs\b/i.test(v);
+}
+
+// ── A RESULTS TABLE IS NOT GUIDANCE.                               (zzz772)
+//
+// TBZ printed "Guidance: Revenue from Operations 8,409.74; Gross Profit
+// 1,251.35; Gross Margin % 14.9%; EBITDA 710.23; … EPS (₹) 4.92": the quarter's
+// P&L read off the results table. A value that names three or more financial
+// line items, each with a figure, is a results table whatever it was filed
+// under, and it never stands as a forward statement.
+const LINE_ITEMS: Array<[string, RegExp]> = [
+  ['revenue', /\b(revenue(?:\s+from\s+operations)?|net\s+sales|sales|turnover|total\s+income|topline)\b/i],
+  ['gross_profit', /\bgross\s+profit\b/i],
+  ['ebitda', /\bebitda\b(?!\s+margin)/i],
+  ['ebit', /\bebit\b/i],
+  ['pbt', /\b(pbt|profit\s+before\s+tax)\b/i],
+  ['pat', /\b(pat|profit\s+after\s+tax|net\s+profit)\b(?!\s+margin)/i],
+  ['eps', /\beps\b/i],
+  ['margin', /\bmargins?\b/i],
+];
+export function isResultsTable(value: string | null | undefined): boolean {
+  const v = String(value ?? '');
+  if (!v.trim()) return false;
+  // Split into the value's own clauses; a line item counts when a figure
+  // follows it inside its clause.
+  const parts = v.split(/[;|\n]|,(?!\d)/);
+  const seen = new Set<string>();
+  for (const part of parts) {
+    for (const [name, re] of LINE_ITEMS) {
+      const m = re.exec(part);
+      if (m && /\d/.test(part.slice(m.index + m[0].length, m.index + m[0].length + 30))) seen.add(name);
+    }
+  }
+  return seen.size >= 3;
+}
+
 /** Pure: whether the value fits the variable and the evidence is a sentence. */
 export function judgeEventQuality(e: { variable: string; before: string | null; after: string | null; unit: string | null; evidence_text: string }): 'sentence' | 'chart' | 'unit_mismatch' {
   const ev = e.evidence_text || '';
@@ -495,10 +559,21 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
         return true;
       }
       // Words that state a fill level. "nearly doubling" is not one of them,
-      // and a period label ("Q4 FY26") is not a value at all.
-      return /\b(full|maximum|peak|near|nearly full|sold out|optimum|optimal|shifts?)\b/i.test(valueText)
-        && !/doubl|tripl|growth|compared|versus|\bvs\b/i.test(valueText);
+      // a period label ("Q4 FY26") is not a value at all, and neither is
+      // money, a day count or a sentence about construction. (zzz772)
+      return isUtilisationValue(String(e.after || e.before || '').trim() || valueText);
     }
+    // ── EXPORTS ARE ABOUT EXPORTS.                                  (zzz772)
+    // GOLDIAM "Exports 87.8% → 90.7%" came from "Lab-grown share rose to 90.7%
+    // from 87.8%": a product-mix share. A sentence filed under exports has to
+    // say export / overseas / international / geography; the summary's own
+    // exports slot ("Exports / geography: …") is that slot by construction.
+    if (v === 'exports' && !/^\s*Exports \/ geography:/i.test(ev)
+      && !/export|overseas|international|geograph|foreign|abroad|outside india|domestic (?:and|vs\.?|versus)/i.test(`${valueText} ${ev}`)) return false;
+    // A product's share OF export sales ("lab-grown exports contributed 90.7%
+    // to the overall export sales mix") is a mix inside exports, not the
+    // export share of the business. (zzz772)
+    if (v === 'exports' && /\d\s*%\s*(?:to|of|in)\s+(?:the\s+)?(?:overall\s+|total\s+|our\s+)?export(?:s)?\s*(?:sales\s*)?(?:mix|sales|revenue|basket|portfolio)/i.test(ev)) return false;
     if (PCT_VARS.has(v)) return /%|per ?cent|pp\b|full|maximum|peak|near|shift|high|low|double|single/i.test(valueText) || /%/.test(String(e.unit || ''));
     // A capacity stated only in money is a capex figure filed under the
     // wrong name: EXICOM "installed capacity USD100 million", AZAD
@@ -558,6 +633,13 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
       // is a statement, not a number without a unit.
       const figures = valueText.replace(/\b(FY|CY|H[12]|Q[1-4])\s*'?\d{2,4}\b/gi, ' ');
       if (/\d/.test(figures) && !money && !statusWords) return false;
+      // ── CAPEX IS AN AMOUNT.                                      (zzz772)
+      // EMCURE "(announced) remain at similar levels", ETHOSLTD "City of Time
+      // Gurgaon": a capex value with no amount in it says nothing a capex
+      // row can hold. The status variable keeps its words; capex does not.
+      // A stated absence of capex ("we did not foresee any significant core
+      // business capex during FY27") is an amount — zero — and stays.
+      if (v === 'capex' && !money && !/\b(no|not|nil|zero|without|don'?t|do not|did not)\b[^.]{0,50}\b(capex|capital expenditure|investment)\b/i.test(valueText)) return false;
     }
     // A bottleneck is a constraint, not a sum: VIJAYA "close to INR 10
     // crores" names nothing that is constrained. (zzz769)
@@ -603,6 +685,10 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // A new customer is a name, not a contract window: MOREPENLAB "20 th
     // October 2026 to 19 th October 2029". (zzz769)
     if ((v === 'new_customer' || v === 'guidance') && isDateOnly(valueText)) return false;
+    // A results table filed as guidance or a target (TBZ). (zzz772)
+    // A forward line with three targets ("revenue ₹1,000 Cr, EBITDA ₹200 Cr
+    // and PAT ₹100 Cr by FY28") is still guidance: it says so.
+    if ((v === 'guidance' || v === 'management_target') && isResultsTable(valueText) && !FORWARD_WORD_RE.test(valueText)) return false;
     // ── A RESULT IS NOT GUIDANCE.                                    (zzz769)
     // SAREGAMA "Music Revenue at INR 2,306 Mn registered 39% YoY growth";
     // TBZ "Revenue from Operations at ₹ 8,409.74 million (up 34.8% YoY)" —
@@ -686,8 +772,9 @@ const DOWN_RE = /\bdeclin|\bfell\b|\bfall|\blower\b|\bdown\b|\bcontract(ed|ion)|
  */
 export function verifiedDirection(e: { before: string | null; after: string | null; direction: Direction; evidence_text: string; unit?: string | null }): Direction {
   if (e.direction === 'unknown') return 'unknown';
-  const b = e.before ? numberTokens(e.before)[0] : null;
-  const a = e.after ? numberTokens(e.after)[0] : null;
+  // The first FIGURE, not the "1" of a "Q1 FY26:" label. (zzz772)
+  const b = e.before ? numberTokens(stripPeriodTokens(e.before) || e.before)[0] : null;
+  const a = e.after ? numberTokens(stripPeriodTokens(e.after) || e.after)[0] : null;
   if (b != null && a != null) {
     const nb = parseFloat(b), na = parseFloat(a);
     if (Number.isFinite(nb) && Number.isFinite(na) && nb !== na) return na > nb ? 'up' : 'down';

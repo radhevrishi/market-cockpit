@@ -228,6 +228,89 @@ const MARGIN_STATED = /margin (?:accretive|accretion|expansion|improve\w*|contri
 
 const nz = (s: unknown): string | null => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t && !/^not (?:stated|disclosed)$/i.test(t) ? t : null; };
 
+// ── "HAS BEGUN CONTRIBUTING" IS A CONTRIBUTION; "WILL GENERATE" IS A TARGET. (zzz772)
+//
+// KEI's row read "Sanand Phase I has begun contributing; management estimates
+// Sanand will generate INR1,500-2,000 crores in FY27 …" and the block printed
+// "SPENT — NOT YET EARNING · Revenue contribution: not attributed": the word
+// list knew "already contributing" but not "begun / started / is / now
+// contributing", and the only money in the row was a FORECAST. The row is
+// read clause by clause: a clause in the present or past tense attributes
+// revenue; a clause about the future (will, expected, estimates, when fully
+// ramped) is a target and is printed as one — never as revenue contribution.
+const CONTRIB_NOW = /\b(?:has|have|had)?\s*(?:begun|started|commenced)\s+(?:to\s+)?contribut\w*|\b(?:is|are|was|were|now|already)\s+contributing\b|\bcontributing revenue\b/i;
+const CONTRIB_PAST = /\bcontributed\b/i;
+const CONTRIB_FUTURE = /\bwill\b|\bshall\b|\bwould\b|\bexpected\b|\bexpects?\b|\bestimat\w*|\bgoing to\b|\bpotential\b|\bwhen fully\b|\bonce fully\b|\bat (?:full|peak)\b|\btarget\w*|\bguid\w*|\bplan(?:s|ned)? to\b|\bshould\b/i;
+const CONTRIB_NEGATED = /\bnot yet\b|\byet to\b|\bnot (?:been )?contribut|\bno (?:revenue )?contribution\b/i;
+const MONEY_RANGE = /(?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?(?:\s*(?:-|–|to)\s*(?:₹|INR|Rs\.?)?\s?[\d,]+(?:\.\d+)?)?\s*(?:crores?|cr\b|lakhs?|mn\b|million|bn\b|billion)(?:[^.;\d]{0,24}?\b(?:in|by|for|during)\s+(?:Q[1-4]\s?)?FY\s?'?\d{2,4})?/i;
+// ── "UTILISATION:" PRINTS A UTILISATION, OR NOTHING.                (zzz772)
+// SFL printed "Utilisation: 30 days inventory in India", IRMENERGY "1587.17
+// million", AZAD a construction sentence, WONDERLA "tracking similar to other
+// larger parks". A utilisation figure is a percentage or a capacity-use word;
+// anything else is "not disclosed".
+const UTIL_WORD = /%|\bper ?cent\b|\bpercent|\b(?:full|fully|maximum|max|optimum|optimal|near[- ]full|at capacity|full capacity|peak)\b/i;
+const utOk = (x: unknown): string | null => { const t = nz(x); return t && UTIL_WORD.test(t) ? t : null; };
+// ── "SPENT:" PRINTS THE AMOUNT, NOT THE SENTENCE.                   (zzz772)
+// MTARTECH's whole capex sentence landed in the Spent slot. Past ~70 chars
+// only the amount phrase (with its date, where stated) is kept.
+export function spentPhrase(s: string | null): string | null {
+  const t = nz(s);
+  if (!t || t.length <= 70) return t;
+  // Amount phrases as stated, a range kept as one ("INR30 crores -INR35
+  // crores"), never summed.
+  const U = '(?:crores?|cr\\b|lakhs?|mn\\b|million|bn\\b|billion)';
+  const re = new RegExp(`(?:₹|INR|Rs\\.?)?\\s?[\\d,]+(?:\\.\\d+)?\\+?\\s*${U}(?:\\s*(?:-|–|to)\\s*(?:₹|INR|Rs\\.?)?\\s?[\\d,]+(?:\\.\\d+)?\\+?\\s*${U})?`, 'gi');
+  const parts = Array.from(t.matchAll(re)).map((m) => m[0].replace(/\s+/g, ' ').trim()).filter((x) => /\d/.test(x));
+  if (parts.length) return parts.slice(0, 3).join('; ');
+  return money(t) || short(t, 70);
+}
+/** Per-clause reading of a capex-earning sentence. `actual` is what the
+ *  document says the capex has contributed (an amount, or "begun — <who>"
+ *  when no amount is given); `target` is a forecast amount. Pure. */
+export function revenueAttribution(text: string): { actual: string | null; target: string | null } {
+  let actual: string | null = null, target: string | null = null;
+  for (const raw of String(text || '').split(/;\s*|\.\s+(?=[A-Z])/)) {
+    const c = raw.trim();
+    if (!c || CONTRIB_NEGATED.test(c)) {
+      continue;
+    }
+    const future = CONTRIB_FUTURE.test(c);
+    const m0 = CONTRIB_NOW.exec(c);
+    // "expected to start contributing revenue" (MANINDS) is a plan: a
+    // present-tense match counts in a clause that also speaks about the
+    // future only when it is an explicit "has begun / is / already
+    // contributing" and no "will / expected to" governs it.
+    const governed = m0 ? /(?:will|shall|expect(?:s|ed)? to|going to|plan(?:s|ned)? to|set to|likely to)\s+(?:\w+\s+){0,2}$/i.test(c.slice(0, m0.index + m0[0].length - (/contribut\w*\s*(?:revenue)?$/i.exec(m0[0])?.[0].length || 0))) : false;
+    const strong = !!m0 && /begun|started|commenced|\b(?:is|are|was|were|now|already)\s+contributing/i.test(m0[0]);
+    const now = m0 && !governed && (!future || strong) ? m0 : null;
+    // "contributed" counts only with an amount or a named project — a bare
+    // "contributed" says nothing that can be checked next quarter.
+    const past = !now && CONTRIB_PAST.test(c) && !future && (!!money(c) || /\b[A-Z][a-z]{2,}\b/.test(c.slice(1)));
+    const legacy = !now && !past && !future && EARNING_WORDS.test(c);
+    if (!actual && (now || past || legacy)) {
+      // A clause that also speaks about the future may carry the FORECAST
+      // amount ("has begun contributing and will add ₹500 cr"): no amount is
+      // taken from it.
+      const amt = future ? null : contributionAmount(c) || (past ? money(c) : null);
+      const at = now ? now.index : past ? c.search(CONTRIB_PAST) : -1;
+      const who = at > 0 ? c.slice(0, at)
+        .replace(/^(?:the\s+)?(?:company|management|presentation|release)\s+(?:states?|said|says|notes?d?|mentions?e?d?|confirms?e?d?)\s+(?:that\s+)?/i, '')
+        .replace(/\b(?:the|and|which|that|has|have|had)\s*$/i, '').trim() : '';
+      actual = amt || `${past ? 'contributed' : 'begun'}${who ? ` — ${short(who, 50)}` : ''}, amount not stated`;
+      continue;
+    }
+    // A forecast amount is a target only where it is revenue the capex is
+    // to produce ("will generate INR1,500-2,000 crores") — not the capex
+    // itself ("capex of INR150 crores is expected to enable …").
+    if (!target && future) {
+      const re = new RegExp(`(?:generat\\w*|revenue|sales|turnover|top[- ]?line|contribut\\w*|add\\w*)\\b[^.;]{0,40}?(${MONEY_RANGE.source})`, 'i');
+      const m = re.exec(c);
+      if (m) target = m[1].replace(/\s+/g, ' ').trim();
+    }
+  }
+  return { actual, target };
+}
+
 /** "Capex earning yet?" as a structured state, from the capex rows, the
  *  utilisation row, the summary's utilisation block and the project
  *  lifecycle. Reads only what the filing states; never sums, never infers a
@@ -276,14 +359,17 @@ export function capexEarning(
   const capexRowSpent = capexRowStage === 'SPENDING' && !!money(capexRow!.after) && (saysSpent || bareFigure);
   if (!spent) {
     const cs = get('capex_status');
-    if (cs?.after && SPENT_VERB.test(String(cs.after)) && money(cs.after)) spent = nz(cs.after);
-    else if (capexRowSpent) spent = `${nz(capexRow!.after)} (capex figure as stated; not itemised to a project)`;
-  }
+    if (cs?.after && SPENT_VERB.test(String(cs.after)) && money(cs.after)) spent = spentPhrase(cs.after);
+    else if (capexRowSpent) spent = `${spentPhrase(capexRow!.after)} (capex figure as stated; not itemised to a project)`;
+  } else if (!/\(stated investment; spend implied by commissioning\)$/.test(spent)) spent = spentPhrase(spent);
 
   // ── REVENUE CONTRIBUTION. From the project step, else from the row's words.
   let revenue: string | null = actual('REVENUE_CONTRIBUTION') ? nz(pj!.revenue_contribution) : null;
-  const rowNotYet = !!ceRow && NOT_YET_EARNING.test(ceTxt) && !/already contributing|contributed/i.test(ceTxt);
-  if (!revenue && ceRow && !rowNotYet && EARNING_WORDS.test(ceTxt)) revenue = contributionAmount(ceTxt) || 'disclosed, amount not stated';
+  const attr = ceRow ? revenueAttribution(ceTxt) : { actual: null, target: null };
+  const rowNotYet = !!ceRow && NOT_YET_EARNING.test(ceTxt) && !/already contributing|contributed/i.test(ceTxt) && !attr.actual;
+  if (!revenue && ceRow && !rowNotYet && attr.actual) revenue = attr.actual;
+  // A forecast amount is shown as a target beside the contribution, never as it. (zzz772)
+  const revenueTarget = attr.target && !(revenue && revenue.includes(attr.target)) ? attr.target : null;
 
   // ── UTILISATION. The variable row (as the document worded it), else the
   // summary block. Two readings → from → to; one → a level with the reason
@@ -293,18 +379,18 @@ export function capexEarning(
   let utilisation: CapexEarning['utilisation'] = null;
   const utTarget = !!ut && (ut.statement === 'GUIDANCE' || ut.statement === 'TARGET' || /\((?:target|guidance)\)\s*$/i.test(String(ut.after ?? '')));
   const strip = (x: unknown) => nz(String(x ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, ''));
-  if (ut && nz(ut.after) && utTarget) {
+  if (ut && utOk(ut.after) && utTarget) {
     utilisation = { from: null, to: null, note: `current not disclosed · target ${strip(ut.after)}` };
-  } else if (ut && nz(ut.after) && !(nz(ub.prior) && nz(ub.current) && !nz(ut.before))) {
-    const target = ut.plan?.value ? `target ${ut.plan.value}` : nz(ub.expected) ? `target ${nz(ub.expected)}` : null;
+  } else if (ut && utOk(ut.after) && !(utOk(ub.prior) && utOk(ub.current) && !utOk(ut.before))) {
+    const target = ut.plan?.value && utOk(ut.plan.value) ? `target ${ut.plan.value}` : utOk(ub.expected) ? `target ${nz(ub.expected)}` : null;
     const unclear = ((ut as any).state === 'UNCLEAR' || (ut as any).validation?.state === 'UNCLEAR') ? 'unclear — validation required' : null;
-    utilisation = { from: nz(ut.before), to: nz(ut.after),
-      note: [nz(ut.before) ? null : 'level only; prior not disclosed', unclear, target].filter(Boolean).join(' · ') || null };
-  } else if (nz(ub.current)) {
-    utilisation = { from: nz(ub.prior), to: nz(ub.current),
-      note: [nz(ub.prior) ? null : 'level only; prior not disclosed', nz(ub.expected) ? `target ${nz(ub.expected)}` : null].filter(Boolean).join(' · ') || null };
-  } else if (pj?.utilisation) {
-    utilisation = { from: null, to: pj.utilisation, note: 'level only; prior not disclosed' };
+    utilisation = { from: utOk(ut.before), to: utOk(ut.after),
+      note: [utOk(ut.before) ? null : 'level only; prior not disclosed', unclear, target].filter(Boolean).join(' · ') || null };
+  } else if (utOk(ub.current)) {
+    utilisation = { from: utOk(ub.prior), to: utOk(ub.current),
+      note: [utOk(ub.prior) ? null : 'level only; prior not disclosed', utOk(ub.expected) ? `target ${nz(ub.expected)}` : null].filter(Boolean).join(' · ') || null };
+  } else if (utOk(pj?.utilisation)) {
+    utilisation = { from: null, to: utOk(pj!.utilisation), note: 'level only; prior not disclosed' };
   }
 
   // ── MARGIN. The project step, then the row's words.
@@ -352,11 +438,14 @@ export function capexEarning(
   if (state === 'UNKNOWN') {
     lines.push(CAPEX_EARNING_UNKNOWN_LINE + (pj?.announced || get('capex')?.after ? ` (capex on file: ${pj?.announced || nz(get('capex')?.after)})` : ''));
   } else {
-    const announcedTxt = pj?.announced || (capexRow && !capexRowSpent ? nz(capexRow.after) : null);
+    const announcedRaw = pj?.announced || (capexRow && !capexRowSpent ? nz(capexRow.after) : null);
+    // The same ~70-char rule for the announced amount beside "Spent: not
+    // disclosed": the amount phrase, or nothing when the sentence has none. (zzz772)
+    const announcedTxt = announcedRaw && announcedRaw.length > 70 ? (money(announcedRaw) ? spentPhrase(announcedRaw) : null) : announcedRaw;
     lines.push(`Spent: ${spent || (announcedTxt ? `not disclosed (announced ${announcedTxt})` : 'not disclosed')}`);
     lines.push(`Revenue contribution: ${revenue || (state === 'NOT_STARTED'
       ? (step('REVENUE_CONTRIBUTION')?.state === 'target' && step('REVENUE_CONTRIBUTION')?.value ? `expected ${step('REVENUE_CONTRIBUTION')!.value}` : 'none yet — not commissioned')
-      : 'not attributed in the documents read')}`);
+      : 'not attributed in the documents read')}${revenueTarget ? ` · target ${revenueTarget}` : ''}`);
     // A utilisation figure on a plant that is NOT yet built is the existing
     // capacity's, and says so — it is context for the capex, not its result.
     const utNote = [!built && utilisation?.to ? 'existing capacity' : null, utilisation?.note].filter(Boolean).join('; ');
@@ -398,7 +487,7 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledg
   // separate, later step and is said to be open. (zzz770)
   if (earning.state === 'PARTIAL' && (base.state === 'unverifiable' || base.state === 'commissioned_not_earning')) {
     return { ...base, state: 'starting_to_earn', lifecycle, stage, earning, lifecycleProjects,
-      because: `Revenue contribution ${earning.revenueContribution} is disclosed; margin contribution is a separate step and is ${earning.marginContribution === 'pending' ? 'stated as pending' : 'not yet established'}.`,
+      because: `Revenue contribution is disclosed (${earning.revenueContribution}); margin contribution is a separate step and is ${earning.marginContribution === 'pending' ? 'stated as pending' : 'not yet established'}.`,
       nextCheck: 'Whether utilisation rises and the margin follows the revenue — revenue contribution is not margin contribution.' };
   }
   // Revenue AND margin / ROCE attributed: every link the filing can evidence
