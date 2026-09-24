@@ -175,17 +175,37 @@ function Timeline({ it }: { it: ResearchItem }) {
   );
 }
 
-function PersistenceSection({ it }: { it: ResearchItem }) {
+/** zzz787: the four duration concepts, kept apart — never one number. */
+export function Durations({ it }: { it: ResearchItem }) {
+  const d = it.durations;
+  if (!d) return null;
+  return (
+    <div data-testid="durations" style={{ display: 'flex', flexDirection: 'column', gap: 2, background: C.bg2, borderRadius: 6, padding: '5px 9px' }}>
+      {kv('CONTRACTUAL DURATION', txt(d.contractual, 'No contract term stated'))}
+      {kv('POTENTIAL ECONOMIC DURATION', `${d.potential.text} — ${d.potential.note}`)}
+      {kv('PERSISTENCE EVIDENCE', `${d.evidence.word} — ${d.evidence.text}`)}
+      {d.catalystState && kv('CATALYST STATE', d.catalystState)}
+      {d.revenueVisibility && kv('REVENUE VISIBILITY', d.revenueVisibility)}
+      {d.currentEvidence && kv('CURRENT EVIDENCE', d.currentEvidence)}
+      {d.capacity && kv('CAPACITY', d.capacity.text)}
+      {d.nextEvidence.length > 0 && kv('NEXT EVIDENCE', d.nextEvidence.join(' / '))}
+      {d.missing.length > 0 && kv('MISSING', d.missing.join(' · '))}
+      {d.guard && <div style={{ ...row, color: C.faint }}>{d.guard}</div>}
+    </div>
+  );
+}
+
+export function PersistenceSection({ it }: { it: ResearchItem }) {
   const pt = it.persistenceTest;
   const pc = it.persistentCatalyst;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <Durations it={it} />
       {pt ? (
         <>
           <div style={{ ...row, color: C.text }}><b>{pt.grade}</b> — {pt.why}</div>
-          {kv('POTENTIAL (BY TYPE)', pt.potential)}
-          {kv('SUPPORTED BY EVIDENCE', txt(pt.evidenceSupported, 'Not established'))}
-          {kv('EXPECTED DURATION', pt.expectedDuration)}
+          {kv('EVIDENCE-SUPPORTED RUNWAY', txt(pt.evidenceSupported, 'Not established'))}
+          {kv('DISCLOSED DURATION', pt.expectedDuration)}
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(110px, auto) 1fr', gap: '2px 10px', fontSize: 12.5, color: C.dim }}>
             {([['Mechanism', pt.mechanism], ['Runway', pt.runway], ['Evidence', pt.evidence], ['Repeatability', pt.repeatability], ['Duration', pt.duration], ['Milestone', pt.milestone], ['Invalidation', pt.invalidation]] as Array<[string, string | null]>).map(([k, v]) => (
               <React.Fragment key={k}><span style={{ color: C.faint }}>{k}</span><span style={{ color: v ? C.text : C.faint }}>{txt(v, k === 'Duration' ? 'Not disclosed' : 'Not established')}</span></React.Fragment>
@@ -212,6 +232,8 @@ function PersistenceSection({ it }: { it: ResearchItem }) {
         <div style={{ ...row, color: C.faint }}>
           {it.links.thesis && <a href={it.links.thesis} style={{ color: C.cyan, fontWeight: 800, marginRight: 12 }}>Thesis ledger →</a>}
           {it.links.specialFocus && <a href={it.links.specialFocus} style={{ color: C.amber, fontWeight: 800, marginRight: 12 }}>Special Focus →</a>}
+          {it.links.persistent && <a href={it.links.persistent} style={{ color: C.cyan, fontWeight: 800, marginRight: 12 }}>Persistent catalyst candidate →</a>}
+          {(it.links.catalystId || it.links.persistentId) && <div>Same catalyst in every view — event id {txt(it.links.catalystId, 'n/a')}{it.links.persistentId ? ` · mechanism id ${it.links.persistentId}` : ''}.</div>}
           <div>{it.links.note}</div>
         </div>
       )}
@@ -244,7 +266,7 @@ export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; ra
   const next = (it.researchNext || []).filter(Boolean);
   const count: Partial<Record<SectionKey, number>> = { timeline: (it.timeline || []).length, next: next.length };
   return (
-    <article data-testid="research-card" style={{
+    <article data-testid="research-card" id={it.links?.catalystId ? `ev-${it.links.catalystId}` : it.catalysts?.[0]?.id ? `ev-${it.catalysts[0].id}` : undefined} style={{
       background: C.bg, borderRadius: 10, padding: '11px 13px', minWidth: 0,
       border: `1px ${unverified ? 'dashed' : 'solid'} ${C.border}`,
       borderLeft: `3px ${unverified ? 'dashed' : 'solid'} ${unverified ? C.border : meta.color}`,

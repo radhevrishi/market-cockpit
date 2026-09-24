@@ -66,6 +66,7 @@ import { byKey, type StructuralVar, type VarVerdict } from './variables';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { periodEnd } from './fact-normalize';
 import { scaledNumber } from './evidence-ledger';
+import { checkPasses, SILENT_STATE_WORD, SILENT_PHRASE, explicitNoneStated } from './silent-check';
 import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason,
   type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile,
   THESIS_STATUS_VARS, HISTORICAL_PERSISTENT } from './taxonomy';
@@ -204,7 +205,7 @@ export type MechState = 'confirmed' | 'pending' | 'contradicted' | 'historical' 
   | 'not_applicable' | 'statement_only' | 'duplicate';
 export const MECH_STATE_WORD: Record<MechState, string> = {
   confirmed: 'confirmed', pending: 'pending', contradicted: 'contradicted', historical: 'historical unresolved', watch: 'watch',
-  unclear: 'unclear', level_only: 'level only', flat: 'flat', silent: 'silent (not mentioned — passes, not a reading)',
+  unclear: 'unclear', level_only: 'level only', flat: 'flat', silent: SILENT_STATE_WORD,
   not_applicable: 'n/a', statement_only: 'statement / target only', duplicate: 'same figure counted once',
 };
 export function rowState(c: TallyRow): MechState {
@@ -262,6 +263,8 @@ function tally(vs: TallyRow[], fmt?: (c: TallyRow, kind: 'contradicted' | 'pendi
       pending: pend.map((c) => f(c, 'pending')),
       unclear: unclearRows.map((c) => f(c, 'unclear')),
       watch: watch.map((c) => f(c, 'watch')),
+      // zzz788: a silent check is named as UNKNOWN, never hidden inside a pass.
+      silent: flats.filter((c) => c.readings === 0).map((c) => String(c.label || c.key || '')),
     },
   };
 }
@@ -855,8 +858,10 @@ const lcFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase(
 /** "Unchanged" needs a comparison. A risk variable (silence passes) may be
  *  silent or denied ("no customer losses") — that is the check passing, not
  *  a reading — every other flat needs two readings. (zzz771) */
+// zzz788: silence is UNKNOWN, never a pass — only an explicit "none" from the
+// company passes a risk check without two readings.
 const flatOnTwoReadings = (c: CheckedVariable): boolean =>
-  c.verdict === 'flat' && (c.readings === 2 || SILENCE_IS_A_PASS.has(c.key));
+  c.verdict === 'flat' && (c.readings === 2 || (SILENCE_IS_A_PASS.has(c.key) && checkPasses(c)));
 
 export function assessThesis(input: AssessInput): ThesisAssessment {
   const thesis = thesisFor(input.pattern);
@@ -1075,7 +1080,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           + 'The figure was on file and has stopped being published. That is a decision, not an oversight, '
           + 'and it is recorded here rather than counted as a pass.'
         : silencePasses
-        ? `The documents read disclose no ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()}. For this variable that is the check passing: the condition "${tv.invalidatedWhen || 'it would have been disclosed'}" did not fire on anything that was read.`
+        // zzz788: silence is UNKNOWN — not a pass, not a failure.
+        ? `The documents read say nothing about ${(VAR_LABEL[tv.key] || tv.key).toLowerCase()} — ${SILENT_PHRASE}. It is not counted as passed and not counted against the thesis; only a statement from the company that there were none clears it.`
         : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed
           ? 'This company has no graded or screener row on file, and none of the documents read prints the figure on its results page. A results filing that states it — or a graded row — will fill this; a transcript alone will not.'
           : input.evidenceReviewed
@@ -1232,9 +1238,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   //
   // A structural variable is confirmed only by its own row: a fact (never a
   // management claim) that improved. Financial output can never stand in for
-  // one. The single exception is a risk variable whose silence is a pass —
-  // three documents read and no material one-off is the F forensic check
-  // clearing, and it counts as cleared, never as improving.
+  // one. A risk variable passes only when the company states there were none
+  // (zzz788: silence is UNKNOWN, never a pass).
   const structuralKeys = new Set<VarKey>(STRATEGY_STRUCTURAL[thesis.pattern] || []);
   const structuralVars = applicable.filter((c) => structuralKeys.has(c.key)
     && !isFinancialOutput(c.key, c.source)
@@ -1258,7 +1263,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const passesStructuralGate = (c: CheckedVariable): boolean =>
     structurallyEvidenced(c)
     || (c.kind !== 'claim' && !isFinancialOutput(c.key, c.source) && c.state !== 'UNCLEAR'
-      && c.verdict === 'flat' && c.silence && SILENCE_IS_A_PASS.has(c.key) && !!input.evidenceReviewed);
+      // zzz788: silence no longer passes the gate — only the company stating
+      // "none" does. A silent check is UNKNOWN.
+      && c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key) && checkPasses(c) && !!input.evidenceReviewed);
   // Required = what the ledger weights 3+. Grader operating leverage is
   // excluded above, so A's gate is the physical one: utilisation and volume.
   const structuralRequired = structuralVars.filter((c) => c.weight >= 3);
@@ -1425,8 +1432,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // loss is shrinking (EXICOM: margin −19% → −7%). (zzz765)
   const lossMaking = /^\s*-/.test(String(found.margin?.after || '')) || /^\s*-/.test(String(found.earnings_growth?.after || ''));
   const structuralDown = checked.some((c) => structuralKeys.has(c.key) && c.verdict === 'deteriorating' && mayMoveStatus(c));
-  const oneOffsCleared = !found.one_offs || found.one_offs.verdict === 'flat' || !!found.one_offs.unjudged
-    || (found.one_offs.verdict === 'stated');
+  // zzz788: no one-off row at all is SILENCE — unknown, never cleared.
+  const oneOffsCleared = !!found.one_offs && (found.one_offs.verdict === 'flat' || !!found.one_offs.unjudged
+    || found.one_offs.verdict === 'stated' || explicitNoneStated(found.one_offs.after));
   const cashOk = !found.cash_conversion || found.cash_conversion.verdict !== 'deteriorating';
   // ── A CORE MECHANISM NOBODY HAS SEEN CANNOT BE "CONFIRMED".     (zzz770)
   // GOLDIAM read green on a mix story with capacity utilisation — core to an
@@ -1495,7 +1503,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       : c.kind === 'claim' && c.statement !== 'TARGET' && c.statement !== 'GUIDANCE' && !isForwardRow({ after: c.after }) ? `management statement, not a filed figure: ${c.after || c.before}`
       : isForwardRow(c) ? `${c.key === 'capacity' ? 'target / guidance only — not installed capacity' : c.key === 'capacity_addition' ? 'target / guidance only — not capacity added' : 'target only'}: ${c.after || c.before}`
       : c.verdict === 'stated' ? `level only: ${c.after || c.before}`
-      : c.verdict === 'flat' && c.silence ? 'not mentioned in the documents read — silence, not a reading'
+      : c.verdict === 'flat' && c.silence ? SILENT_PHRASE
       : c.verdict === 'flat' && c.withinMateriality ? `within materiality: ${c.delta || c.after || c.before}`
       : c.verdict === 'flat' && c.readings < 2 ? `single reading: ${c.after || c.before}`
       : c.verdict === 'flat' ? `unchanged: ${c.before && c.after ? `${c.before} → ${c.after}` : c.after || c.before || c.delta}`
@@ -1514,7 +1522,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         : openState(c)})`).join(', ')}.`
     : '';
   const stillToConfirm = core.filter((c) => !isFinancialOutput(c.key, c.source)
-    && c.verdict !== 'improving' && !(c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)))
+    && c.verdict !== 'improving' && !(c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key) && (checkPasses(c) || c.readings === 2)))
     .map((c) => `${nm(c).toLowerCase()} (${openState(c)})`);
   const driverText = (v: StructuralVar) => {
     const val = (v.delta && v.before ? `${v.before} → ${v.after} (${v.delta})` : (v.after || ''))
@@ -1647,7 +1655,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const unionConfirmed = new Set<VarKey>([...structuralConfirmedVars.map((c) => c.key), ...drivers.map((d) => d.key)]);
     // A one-off is "checked, not material" only when an item was disclosed
     // and judged; silence is named as silence. (zzz771)
-    const oneOffText = !found.one_offs ? 'none disclosed in the documents read (silence, not a confirmation)'
+    const oneOffText = !found.one_offs ? SILENT_PHRASE
+      : explicitNoneStated(found.one_offs.after) ? 'none stated by the company — check passes'
       : found.one_offs.unjudged ? 'shown, not material to the call'
         : found.one_offs.verdict === 'flat' ? 'checked, not material'
           : 'disclosed; materiality not established';
@@ -1770,10 +1779,14 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // reading: a level, not "unchanged". Neither strengthening nor neutral —
     // the next read turns the level into a direction. (zzz771)
     status = 'CONFIRMATION_REQUIRED';
-    const once = critical.filter((c) => c.verdict === 'flat' && !c.silence && c.readings < 2);
-    because = `Nothing moved in what was read, but ${once.map((c) => `${nm(c).toLowerCase()} (${c.after || c.before || 'stated'})`).join(', ')} `
-      + `${once.length === 1 ? 'is' : 'are'} a single reading with no earlier figure to compare against — a level, not "unchanged". `
-      + '"No material change" needs two readings on every thesis-critical variable.';
+    const once = critical.filter((c) => c.verdict === 'flat' && !c.silence && c.readings < 2 && !checkPasses(c));
+    // zzz788: a silent check is UNKNOWN — it can never make "no material change".
+    const silentCrit = critical.filter((c) => c.silence);
+    because = `Nothing moved in what was read, but `
+      + [once.length ? `${once.map((c) => `${nm(c).toLowerCase()} (${c.after || c.before || 'stated'})`).join(', ')} ${once.length === 1 ? 'is' : 'are'} a single reading with no earlier figure to compare against — a level, not "unchanged"` : '',
+        silentCrit.length ? `${silentCrit.map((c) => nm(c).toLowerCase()).join(', ')} ${silentCrit.length === 1 ? 'is' : 'are'} ${SILENT_PHRASE}` : '']
+        .filter(Boolean).join('; and ')
+      + '. "No material change" needs two readings on every thesis-critical variable.';
   } else if (coreUp.length >= 1 && weighted >= 6 && allDimsConfirmed && input.evidenceReviewed
       && structuralGate && outputImproved && coreMechanismGaps.length === 0 && topLineOnFile) {
     // ── THE ONLY PATH TO GREEN.                                   (zzz723)
@@ -1804,7 +1817,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         const v = c.delta || c.after;
         return `${c.label.toLowerCase()} ${v && v.length <= 32 ? v : '(confirmed in the documents read)'}`;
       }).join(', ')}.`
-      + (silentPassed.length ? ` Not mentioned in the documents read (silence passes the gate, and is not a confirmation): ${silentPassed.map((c) => c.label.toLowerCase()).join(', ')}.` : '');
+      + (silentPassed.length ? ` ${SILENT_PHRASE}: ${silentPassed.map((c) => c.label.toLowerCase()).join(', ')}.` : '');
   } else if (outputImproved && input.evidenceReviewed && !unestablished.length && !anyMaterialDown
       && !structuralGate) {
     // ── GOOD NUMBERS, THE STRATEGY'S MECHANISM NOT YET SHOWN.     (zzz765c)
@@ -2173,7 +2186,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `Financial output within materiality — ${OUTPUT_SHORT.map(([k]) => k).filter((k) => outRow(k)).map(lineOf).join(', ')}. `
       + 'Nothing thesis-critical deteriorated and no break condition fired. '
       + (mechEvidence.size ? `Mechanism evidence on file (not an output change) — ${evidenceSplit(verdict.coverage.confirmed, verdict.coverage.applicable)}. ` : '')
-      + (openNext.length ? `Open for next quarter: ${openNext.join('; ')}.` : '');
+      + (openNext.length ? `Open for next quarter: ${openNext.join('; ')}.` : '')
+      // zzz788: a silent thesis-critical check is named as UNKNOWN — never passed.
+      + (critical.some((c) => c.silence) ? ` ${SILENT_PHRASE}: ${critical.filter((c) => c.silence).map((c) => nm(c).toLowerCase()).join(', ')}.` : '');
     verdict.direction = 'UNCHANGED';
     verdict.directionWhy = 'financial output moved inside its materiality lines and nothing thesis-critical moved';
   } else if (status === 'CONFIRMATION_REQUIRED') {
@@ -2288,7 +2303,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           + `Next period's read turns it into a direction: above ${known} confirms, below it contradicts.`;
       }
       if (c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)) {
-        return `${c.label} — ${known ? `${known} on file` : 'none found in the documents read'}. The next read has to confirm it does not recur.`;
+        // zzz788: silence is unknown — the next read has to SAY whether there were any.
+        return known ? `${c.label} — ${known} on file. The next read has to confirm it does not recur.`
+          : `${c.label} — NOT DISCLOSED in the documents read (unknown, not passed). The next read has to state whether there were any.`;
       }
       if (c.verdict === 'flat' && known) {
         return `${c.label} — flat at ${known}${k?.basis && k.basis !== 'NONE' ? ` ${BASIS_LABEL[k.basis]}` : ''}. `

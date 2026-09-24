@@ -34,6 +34,7 @@ import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evi
 import { freshnessLine } from '@/lib/thesis/evidence-ledger';
 import { BASIS_LABEL } from '@/lib/thesis/comparison';
 import { validateReading } from '@/lib/thesis/fact-model';
+import { SILENT_CHECK_WORD, NONE_STATED_WORD, SILENT_HINT, silentCountWord, explicitNoneStated } from '@/lib/thesis/silent-check';
 
 // ── THE PALETTE.                                                   (zzz723)
 //
@@ -136,12 +137,22 @@ export const ROW_TREATMENT = {
   // delta, deliberately not judged — never "unclear". (zzz772)
   QOQ_ONLY: { mark: '◐', word: 'QoQ only — seasonal, not judged' },
   SINGLE: { mark: '–', word: 'single reading' },
-  SILENT: { mark: '–', word: 'none disclosed · check passes' },
+  // zzz788: a check the documents are silent on is UNKNOWN, never passed.
+  // "check passes" only when the company itself stated there were none.
+  SILENT: { mark: '?', word: SILENT_CHECK_WORD },
+  NONE_STATED: { mark: '–', word: NONE_STATED_WORD },
   CONFIRMED: { mark: '✓', word: 'CONFIRMED' },
   CONTRADICTED: { mark: '✕', word: 'CONTRADICTED' },
   STATED: { mark: '◐', word: 'level only' },
 } as const;
 export type RowTreatmentKey = keyof typeof ROW_TREATMENT;
+
+/** zzz788: the word beside the first count of a tally row. The output row is a
+ *  CHECK on the reported result — growth "observed", never "confirmed", so it
+ *  is not read as the thesis being confirmed. */
+export function outputCountWord(rowName: string): string {
+  return /^OUTPUT/.test(rowName) ? 'observed' : 'confirmed';
+}
 
 type TreatInput = { key?: string; verdict: VarVerdict; state?: string | null; stateReason?: string | null; unjudged?: string | null;
   before?: string | null; after?: string | null; delta?: string | null; comparison?: any; reading?: VariableReading | null; withinMateriality?: boolean };
@@ -225,6 +236,7 @@ export function rowTreatment(c: TreatInput): RowTreatmentKey {
   // confirms the second case where the status engine supplies it. (zzz772)
   if (twoReadings) return isNegligibleDelta(c) === true && c.withinMateriality !== true ? 'UNCHANGED' : 'WITHIN_MATERIALITY';
   if (isRateRow(c)) return 'WITHIN_MATERIALITY';
+  if (explicitNoneStated(c.after) || explicitNoneStated(c.before)) return 'NONE_STATED';
   if (c.after || c.before) return 'SINGLE';
   return 'SILENT';
 }
@@ -953,7 +965,7 @@ export function ThesisCard(p: ThesisCardProps) {
                               reading", "→ UNCHANGED (two readings)". Confirmed
                               and contradicted are said by the mark and colour;
                               unclear is said by the value text itself. (zzz771) */}
-                          {!un && (stand || tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
+                          {!un && (stand || tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || tr === 'NONE_STATED' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
                             && <span style={{ fontSize: 11 }}> · {tWord}</span>}
                           {tags.map((t) => <ClassTag key={t} word={t} />)}
                           {(c as any).historical?.active && <ClassTag word={`${(c as any).historical.period} · HISTORICAL / UNRESOLVED`} />}
@@ -1033,18 +1045,19 @@ export function ThesisCard(p: ThesisCardProps) {
             // zzz784: the status line's X/Y, as a partition of the same per-variable states.
             ...(a.coverage.structural ? [['STRUCTURAL', a.coverage.structural, 'the X/Y in the status line — the strategy\'s structural variables plus evidenced drivers; every row in exactly one state']] : []),
             ['MECHANISM', a.coverage.mechanism, 'thesis-critical mechanism variables of this ledger (weight 3–4) — the WHY: capacity, utilisation, orders, capex, customers, one-offs'],
-            ['OUTPUT', a.coverage.output, 'the result — revenue, margin, earnings, leverage'],
+            // zzz788: an output CHECK — growth observed in the result, never "thesis confirmed".
+            ['OUTPUT CHECK', a.coverage.output, 'the result — revenue, margin, earnings, leverage. "Observed" = growth seen in the reported figures; it does not confirm the thesis'],
             ['FORWARD', a.coverage.forward, 'what management commits to next'],
           ] as Array<[string, { confirmed: number; pending: number; contradicted: number; stated?: number; flat?: number; unclear?: number; not_applicable?: number; core_variables?: number; total: number;
             watch?: number; historical?: number; silent?: number; statementOnly?: number; duplicate?: number;
-            named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[]; statementOnly?: string[]; confirmed?: string[] } }, string]>)
+            named?: { contradicted: string[]; pending: string[]; unclear: string[]; watch: string[]; historical?: string[]; statementOnly?: string[]; confirmed?: string[]; silent?: string[] } }, string]>)
             .filter(([, t]) => t.total > 0)
             .map(([name, t, hint]) => (
-              <div key={name} title={hint} data-testid={`tally-row-${name.toLowerCase()}`}>
-                <span style={{ display: 'inline-block', minWidth: 78, fontSize: 11, fontWeight: 800, letterSpacing: 0.4,
+              <div key={name} title={hint} data-testid={`tally-row-${name.toLowerCase().split(' ')[0]}`}>
+                <span style={{ display: 'inline-block', minWidth: name === 'OUTPUT CHECK' ? 96 : 78, fontSize: 11, fontWeight: 800, letterSpacing: 0.4,
                   color: name === 'MECHANISM' || name === 'STRUCTURAL' ? C.text : C.faint }}>{name}</span>
                 <span style={{ color: C.faint }}>{t.core_variables ?? t.total} {name === 'STRUCTURAL' ? 'structural (status-line ratio)' : name === 'MECHANISM' ? 'thesis-critical' : 'core'} · </span>
-                <b style={{ color: t.confirmed ? C.up : C.flat }}>{t.confirmed} confirmed</b>
+                <b style={{ color: t.confirmed ? C.up : C.flat }}>{t.confirmed} {outputCountWord(name)}</b>
                 {' · '}
                 <b style={{ color: t.pending ? C.warn : C.flat }}>{t.pending} pending</b>
                 {' · '}
@@ -1055,7 +1068,7 @@ export function ThesisCard(p: ThesisCardProps) {
                 {(t.flat || 0) > 0 && <span style={{ color: C.flat }}> · {t.flat} flat</span>}
                 {(t.not_applicable || 0) > 0 && <span style={{ color: C.faint }} title="Cannot apply to this business — never counted as pending."> · {t.not_applicable} n/a</span>}
                 {(t.watch || 0) > 0 && <span style={{ color: C.warn }} title="Moved the wrong way, but not mapped to this thesis type — context, never status-changing."> · {t.watch} watch</span>}
-                {(t.silent || 0) > 0 && <span style={{ color: C.flat }} title="A risk variable the documents did not mention: the check passes, but silence is not a reading."> · {t.silent} silent (passes, not a reading)</span>}
+                {(t.silent || 0) > 0 && <span style={{ color: C.flat }} title={SILENT_HINT}> · {silentCountWord(t.silent || 0)}</span>}
                 {(t.statementOnly || 0) > 0 && <span style={{ color: C.warn }} title="Read only as a management statement or a target — never confirmed."> · {t.statementOnly} statement / target only</span>}
                 {(t.duplicate || 0) > 0 && <span style={{ color: C.flat }} title="The same figure as another confirmed variable — counted once."> · {t.duplicate} same figure counted once</span>}
                 {/* ── EVERY COUNT NAMES ITS VARIABLES.                    (zzz773)
@@ -1063,12 +1076,13 @@ export function ThesisCard(p: ThesisCardProps) {
                     variable is listed with its figure. */}
                 {t.named && ([
                   ...(name === 'STRUCTURAL' ? [['Confirmed', t.named.confirmed || [], C.up] as [string, string[], string]] : []),
+                  ['Silent (unknown)', t.named.silent || [], C.flat],
                   ['Statement / target only', t.named.statementOnly || [], C.warn],
                   ['Historical unresolved', t.named.historical || [], C.warn],
                   ['Contradicted', t.named.contradicted, C.down], ['Pending', t.named.pending, C.warn],
                   ['Unclear', t.named.unclear, C.flat], ['Watch', t.named.watch, C.warn],
                 ] as Array<[string, string[], string]>).filter(([, xs]) => xs.length > 0).map(([w, xs, col]) => (
-                  <div key={w} data-testid={`tally-${name.toLowerCase()}-${w.toLowerCase().replace(/\s+/g, '-')}`} style={{ paddingLeft: 78, fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
+                  <div key={w} data-testid={`tally-${name.toLowerCase().split(' ')[0]}-${w.toLowerCase().replace(/\s+/g, '-')}`} style={{ paddingLeft: 78, fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
                     <b style={{ color: ink(col) }}>{w}:</b> {xs.map(humanTokens).join(' · ')}
                   </div>
                 ))}
@@ -1147,7 +1161,7 @@ export function ThesisCard(p: ThesisCardProps) {
                         <>
                           <b>{stand ? stand.value : chipValue(cc)}</b>
                           {stand ? <span style={{ color: C.flat, fontSize: 12 }}> · {stand.word}</span>
-                            : (tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {treatmentWord(tr, cc, chipValue(cc))}</span>}
+                            : (tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || tr === 'NONE_STATED') && <span style={{ color: C.flat, fontSize: 12 }}> · {treatmentWord(tr, cc, chipValue(cc))}</span>}
                           {rdTags.map((t) => <ClassTag key={t} word={t} />)}
                           {cc.historical?.active && <ClassTag word={`${cc.historical.period} · HISTORICAL / UNRESOLVED`} />}
                           {cc.watch && <ClassTag word="WATCH — not mapped to this thesis" />}

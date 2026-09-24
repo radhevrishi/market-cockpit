@@ -473,8 +473,9 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     fixtures.G = a;
     assert.equal(a.status, 'NEUTRAL', a.because);
     assert.ok(a.actionLine.startsWith('NO MATERIAL CHANGE — '), a.actionLine);
-    // Execution delay passed by silence: named as not mentioned, never as unchanged.
-    assert.match(a.because, /Not mentioned in the documents read \(silence, not a reading\): execution delay/);
+    // zzz788: UPDATED. Execution delay is silent: named as NOT DISCLOSED ·
+    // unknown — never as unchanged, and never as a check that passed.
+    assert.match(a.because, /NOT DISCLOSED · unknown — silence, not a reading: execution delay/);
     // zzz775: UPDATED. NO MATERIAL CHANGE is now decided on OUTPUT inside its
     // materiality lines. A level or a single reading still never reads as
     // "unchanged": it is named, with its state, as open for next quarter.
@@ -893,24 +894,28 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
   });
 
   // ── 3. UNKNOWN ≠ FLAT ≠ CONFIRMED ──────────────────────────────────────
-  test('silence on a risk variable passes its gate but is never counted as flat or confirmed, and is never printed as "checked, nothing material"', () => {
+  // zzz788: UPDATED. Silence no longer passes the gate: a check the documents
+  // are silent on is UNKNOWN (owner QA — "One-offs · none disclosed · check
+  // passes" was wrong). Only the company stating "none" passes it.
+  test('silence on a risk variable is UNKNOWN — it does not pass its gate, is never counted as flat or confirmed, and is never printed as "checked, nothing material"', () => {
     // F with margin driver + volume + cash confirmed; one-offs never mentioned.
     const a = R({ pattern: 'F', variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'mix and scale' }), V('volume', 'improving', { after: '+9%' }),
       V('cash_conversion', 'improving', { after: '1.4×', delta: '+0.3×', source: 'grader' })] });
     const oo = a.checked.find((c) => c.key === 'one_offs')!;
-    assert.equal(oo.verdict, 'flat', 'the gate still passes by silence');
     assert.equal(oo.silence, true);
     assert.equal(oo.readings, 0);
     assert.ok(!a.structural.confirmedLabels.includes(oo.label), 'silence is not a confirmation');
-    assert.ok(!a.structural.missingRequired.includes(oo.label), 'silence still passes the gate');
-    assert.equal(a.structural.gatePassed, true);
+    assert.ok(a.structural.missingRequired.includes(oo.label), 'silence does not pass the gate (zzz788)');
+    assert.equal(a.structural.gatePassed, false);
+    assert.notEqual(a.status, 'STRENGTHENING', 'unknown is not positive');
+    assert.notEqual(a.status, 'WEAKENING', 'unknown is not negative');
     assert.equal(a.coverage.mechanism.silent, 1);
     assert.equal(a.coverage.mechanism.flat, 0, 'silence is not flat');
     assert.equal(a.coverage.mechanism.confirmed, a.checked.filter((c) => c.weight >= 3 && c.verdict === 'improving' && c.key === 'margin_driver').length, 'only the evidenced margin driver is confirmed; silence is not');
     assert.equal(a.mechanismCheck.find((m) => m.link === oo.label)!.state, 'unchecked', 'a silent link does not hold');
     assert.doesNotMatch(a.because, /checked, nothing material/);
     assert.doesNotMatch(a.because, /one-offs checked, not material/);
-    assert.match(a.because, /one-offs none disclosed in the documents read \(silence, not a confirmation\)/);
+    assert.match(a.because, /one-offs \(NOT DISCLOSED · unknown — silence, not a reading\)/);
     assert.ok(a.verdict!.coverage.missing.includes('One-offs'), 'silence stays in the missing list of the verdict coverage');
   });
 

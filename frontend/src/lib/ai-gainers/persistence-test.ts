@@ -35,6 +35,10 @@ export interface PersistenceTestInput {
   /** research-view persistenceEvidenceOf(). */
   evidenceLevel: 'NOT_PERSISTENT' | 'UNPROVEN' | 'EARLY' | 'EVIDENCE' | 'STRONG' | 'NONE';
   evidenceText: string;
+  /** zzz787: the potential-economic-duration sentence research-view derived
+   *  from the FACTS (contract term, programme words, stated capacity), with
+   *  its basis. When given it replaces the by-type wording. Never evidence. */
+  potentialText?: string | null;
   /** Headline + quote text of the finding (legacy path), for disclosed-period words. */
   hay: string;
   market: 'IN' | 'US';
@@ -58,7 +62,9 @@ function mechanismOf(kind: EventKind | null, f: StructuredFacts | null, m: 'IN' 
     case 'acquisition': return `Adds the target's revenue and profit${e?.targetRevenueNative != null ? ` (target revenue ${money(e.targetRevenueNative, m, e.currency)})` : ' (target economics not disclosed)'} from completion.`;
     case 'new_product': return 'New product → new revenue only once customers order it.';
     case 'partnership': return 'Partnership → revenue only once a binding order or supply starts.';
-    case 'stake_by_strategic': return 'A strategic investor taking a stake — signals interest; not by itself revenue.';
+    case 'stake_by_strategic': case 'strategic_investment': return 'A strategic investor taking a stake — signals interest; not by itself revenue.';
+    case 'strategic_expansion': return 'A new subsidiary / geography → revenue only once it wins orders or starts selling.';
+    case 'merger': return 'Combined business → the merged entity\'s revenue and profit, from the effective date.';
     case 'results': return 'Reported earnings change — persists only if next quarters repeat it.';
     case 'guidance': return 'Management target — a milestone, not evidence.';
     default: return null;   // financing, registrations, demands: no operating mechanism
@@ -121,7 +127,7 @@ export function persistenceTestOf(inp: PersistenceTestInput): PersistenceTestVie
   }
   return {
     mechanism, runway, evidence, repeatability, duration, milestone, invalidation, grade, why,
-    potential: POTENTIAL_WORD[inp.potential],
+    potential: inp.potentialText || POTENTIAL_WORD[inp.potential],
     evidenceSupported: inp.evidenceText,
     expectedDuration: duration ? `${duration} (as disclosed)` : 'Not disclosed',
   };

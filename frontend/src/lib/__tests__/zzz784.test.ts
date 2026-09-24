@@ -64,8 +64,11 @@ describe('zzz784 · 1 — the capacity stage ladder; next evidence never an earl
       fact('Q1 FY27', 'capacity_addition', '344 KL', { quote: 'We added 344 KL of reactor capacity.' }),
       fact('Q1 FY27', 'utilisation', '76.9%', { quote: 'Capacity utilisation was 76.9% for the quarter.' }),
     ]));
-    assert.match(pc.runway.text, /23\.1 percentage points of utilisation headroom/);
-    assert.doesNotMatch(`${pc.runway.text} ${pc.mechanism}`, /\d\.\d{4,}|installed capacity still unused/);
+    // zzz788 (intentional change): headroom is labelled "Capacity headroom",
+    // never runway — and it does not count as runway on its own.
+    assert.match(pc.headroom || '', /Capacity headroom: Utilisation 76\.9% — 23\.1 percentage points available on the current installed-capacity basis/);
+    assert.equal(pc.runway.ok, false);
+    assert.doesNotMatch(`${pc.runway.text} ${pc.mechanism} ${pc.headroom}`, /\d\.\d{4,}|installed capacity still unused/);
   });
 
   test('MILKYMIST shape: 72 → 192 MT/day "commissioned & put to use" is running — next is its first utilisation, not commissioning', () => {

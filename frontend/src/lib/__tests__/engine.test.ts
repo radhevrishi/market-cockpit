@@ -857,7 +857,9 @@ describe('structural evidence extraction', () => {
     ...extra,
   ] as any);
 
-  test('no one-off found in three documents is the forensic test PASSING, not a gap', () => {
+  // zzz788: UPDATED. No one-off found in three documents is UNKNOWN (not
+  // passed) — but still not an evidence gap and not a deterioration.
+  test('no one-off found in three documents is UNKNOWN — not a pass, and not an evidence gap', () => {
     // EMIL / MARKSANS / NEULANDLAB / GNFC shape: F pattern, one_offs core-4,
     // nothing disclosed. Sixteen cards read "Missing: one-offs".
     const a = assessThesis({ pattern: 'F', evidenceReviewed: true, hasGraderRow: true, variables: F_VARS() });
@@ -865,7 +867,10 @@ describe('structural evidence extraction', () => {
     assert.equal(oneOffs.verdict, 'flat');
     assert.equal(oneOffs.absence, null);
     assert.ok(!a.coverage.missingCore.includes('One-offs'));
-    assert.match(oneOffs.evidence, /check passing/);
+    assert.match(oneOffs.evidence, /NOT DISCLOSED · unknown/);
+    assert.doesNotMatch(oneOffs.evidence, /check passing/);
+    assert.notEqual(a.status, 'STRENGTHENING');
+    assert.notEqual(a.status, 'WEAKENING');
     assert.notEqual(a.status, 'EVIDENCE_INCOMPLETE');
   });
 
@@ -1235,16 +1240,17 @@ describe('catalyst research — the brief\'s method as code', () => {
   test('the finding picks the highest-scoring filing and prints why', () => {
     const f = buildFinding({ ticker: 'KMEW', company: 'Knowledge Marine', market: 'IN', movePct: 4.1, marketCap: 7298, turnover: 12, announcements: anns, returns: returnsFromSeries(series), holding: false, sources: ['screener.in'], sourceFailed: false, windowDays: 21, now });
     assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'order_win');
-    assert.equal(f.valueStated, 279.33); assert.equal(f.valuePctMcap, 3.83);
-    // zzz773: a 1Y run is not a pricing assessment. The reaction since the
-    // filing (−0.2% on a 3.8%-of-mcap order) is small; the summary-only
-    // evidence halves nothing but materiality, and caps the rank below P1.
+    // zzz787 (intentional change): the ₹279.33 Cr is STATED by the summary, not
+    // verified in a read document — no materiality % (was 3.83) and no
+    // reaction-vs-size pricing comparison (was REACTION_SMALL_VS_SIZE) is
+    // computed from it until the document is read.
+    assert.equal(f.valueStated, 279.33); assert.equal(f.valuePctMcap, null);
     assert.equal(f.verdict, 'ROOM');
     assert.equal(f.components!.evidence, 'SUMMARY_ONLY');
     assert.equal(f.components!.materialityConfidence, 0.6);
-    assert.equal(f.components!.pricing!.state, 'REACTION_SMALL_VS_SIZE');
+    assert.equal(f.components!.pricing!.state, 'INSUFFICIENT_EVIDENCE');
     assert.ok(f.components!.caps!.some((c) => /summary-only/.test(c)));
-    assert.ok(f.notes.some((n) => /not model-read/.test(n)));
+    assert.ok(f.notes.some((n) => /not model-read/.test(n) && /document verification pending/.test(n)));
   });
 
   test('materiality gate: under 1% of market cap cannot rank above THIN', () => {
@@ -1306,7 +1312,10 @@ describe('catalyst research — the brief\'s method as code', () => {
     // TEGA: denial on the 18th for the 17th's spike, ₹126 Cr contract filed later on the 18th → the contract is the finding, the denial a note.
     const g = buildFinding({ ticker: 'TEGA', company: null, market: 'IN', movePct: 9.6, marketCap: 15978, turnover: 200, announcements: [ann('Clarification sought for increase in volume by BSE', 'Tega says no undisclosed price-sensitive information is pending', 3), { ...ann('Announcement pursuant to Reg. 30', 'Tega McNally Minerals won a Rs 126 crore domestic contract from Kalpataru Projects', 3), dateIso: new Date(now.getTime() - 3 * 86_400_000 + 3600_000).toISOString() }], returns: { m1: 20, m3: 21, m6: 30, y1: 40, history: 247 }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
     assert.equal(g.status, 'catalyst'); assert.equal(g.category, 'order_win');
-    assert.equal(g.verdict, 'THIN', '₹126 Cr on ₹15,978 Cr is 0.79% of market cap');
+    // zzz787 (intentional change): ₹126 Cr is a summary figure — no % of market
+    // cap (was 0.79% → THIN) until the document confirms it; capped below P1.
+    assert.equal(g.valuePctMcap, null); assert.notEqual(g.verdict, 'FIRE');
+    assert.ok(g.notes.some((n) => /document verification pending/.test(n)));
     assert.ok(g.notes.some((n) => /denied any undisclosed information/.test(n)));
   });
 
@@ -4423,12 +4432,16 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     assert.equal(v.top3.map((i) => i.ticker).includes('BIGORD'), true);
   });
 
-  test('small order / large company: CONFIRMED_LOW_MATERIALITY, 0.5% of market cap, expectation-heavy, not in the queue', () => {
+  test('small order, document NOT read: stated value only, materiality pending verification (zzz787 — was SMALL 0.5%)', () => {
     const s = it('SMALLORD');
-    assert.equal(s.eventClass, 'CONFIRMED_LOW_MATERIALITY'); assert.equal(s.materiality.label, 'SMALL'); assert.equal(s.sourceConfidence, 'VERIFIED_FILING');
-    assert.equal(s.materiality.ratios[0].text, '₹5 Cr ÷ ₹1,000 Cr market cap = 0.5%');
-    assert.equal(s.expectationGap.direction, 'EXPECTATION_HEAVY'); assert.match(s.expectationGap.text, /expectation-heavy/);
-    assert.ok(!queued.has('SMALLORD')); assert.ok(v.watch.some((i) => i.ticker === 'SMALLORD'));
+    // zzz787 (intentional change): the ₹5 Cr comes from the filing summary; no
+    // ratio is computed until the document is read, so the class is potential
+    // and the item sits under "Unknown — needs reading".
+    assert.equal(s.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(s.materiality.label, 'UNKNOWN'); assert.equal(s.sourceConfidence, 'VERIFIED_FILING');
+    assert.equal(s.materiality.verification, 'PENDING'); assert.equal(s.materiality.ratios.length, 0);
+    assert.equal(s.whatChanged, 'Stated order value: ₹5 Cr · Source: filing metadata/summary · Document verification: pending');
+    assert.equal(s.expectationGap.level, 'UNKNOWN');
+    assert.ok(v.needsReading!.some((i) => i.ticker === 'SMALLORD'));
   });
 
   test('acquisition completed: EXECUTED, MODERATE vs market cap, NEAR_TERM, multi-year', () => {
@@ -5239,8 +5252,9 @@ describe('zzz771 AG-1 — fundraising is a flagged potential catalyst, not negat
     assert.equal(r.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(r.eventType, 'Fundraising'); assert.equal(r.flags.dilution, true);
     assert.equal(r.eventLabel, 'Fundraising — SBI Mutual Fund');
     // zzz785: materiality is Unknown until amount, price, allottees AND dilution are known; the issue ÷ market cap ratio stays as scale.
-    assert.equal(r.materiality.label, 'UNKNOWN'); assert.match(r.materiality.explanation, /missing: .*dilution/); assert.equal(r.materiality.ratios[0].basis, 'market_cap');
-    assert.equal(r.materiality.ratios[0].text, '₹45 Cr ÷ ₹500 Cr market cap = 9%');
+    assert.equal(r.materiality.label, 'UNKNOWN'); assert.match(r.materiality.explanation, /missing: .*dilution/);
+    // zzz787 (intentional change): the ₹45 Cr is a summary figure — no "scale" ratio (was ₹45 Cr ÷ ₹500 Cr = 9%) until read.
+    assert.equal(r.materiality.ratios.length, 0); assert.match(r.materiality.explanation, /Stated issue size ₹45 Cr — document verification pending/);
     assert.equal(r.transmission, 'WEAK');
     assert.equal(r.scoreDetails!.penalty_dilution, 0.75); assert.ok(r.priorityReasons.includes('Penalty: dilution (named allottee)'));
     assert.match(r.whyResearch, /named allottee \(SBI Mutual Fund\)/);
@@ -5257,7 +5271,8 @@ describe('zzz771 AG-1 — fundraising is a flagged potential catalyst, not negat
     inp.findings.FINANCE = { ...inp.findings.FINANCE, stage: 'enabling', headline: 'Board to consider a proposal for preferential issue of equity shares to Vantage Capital Partners' } as any;
     const x = buildView771(inp);
     const r = find(x, 'ROSSFUND');
-    assert.equal(r.eventClass, 'CONFIRMED_LOW_MATERIALITY'); assert.equal(r.materiality.label, 'UNKNOWN'); assert.equal(r.materiality.ratios[0].pct, 1); assert.equal(r.stage, 'EXECUTED');   // zzz785: dilution not stated → Unknown label
+    // zzz787 (intentional change): an unread 1%-of-mcap figure no longer makes it "low materiality" — potential until the document is read.
+    assert.equal(r.eventClass, 'POTENTIAL_UNVERIFIED'); assert.equal(r.materiality.label, 'UNKNOWN'); assert.equal(r.materiality.ratios.length, 0); assert.equal(r.stage, 'EXECUTED');
     const f = find(x, 'FINANCE');
     assert.equal(f.eventClass, 'POTENTIAL_UNVERIFIED'); assert.match(f.eventLabel || '', /^Fundraising — Vantage Capital Partners \((enabling|proposed), not allotted\)$/);
   });
@@ -5344,8 +5359,8 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION is current (zzz785) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
-    assert.match(RULES771, /zzz785$/);
+  test('RULES_VERSION is current (zzz787) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    assert.match(RULES771, /zzz787$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 

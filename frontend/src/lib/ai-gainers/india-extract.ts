@@ -173,6 +173,8 @@ const RX = {
   capacity: /successful(ly)? commission|has been commissioned|commissioned (the|a|an|its|our|\d)|commissioning of (the |a |an |its |our )?(\d|new|plant|project|unit|facility|line|battery)|commenced commercial (production|operations)|manufacturing facility|capacity (addition|expansion|enhancement)|proposed capacity|setting up (a |an |new )?[a-z ]{0,40}(plant|distillery|facility|unit|warehouse)|new (plant|facility|manufacturing unit)|battery (manufacturing )?plant|\d+\s*mw\s*\/\s*\d+\s*mwh|greenfield|brownfield/i,
   subsidiaryIncorporation: /(incorporat\w+)[^.]{0,120}wholly[- ]owned subsidiary|wholly[- ]owned subsidiary[^.]{0,120}(has been |was )?incorporated|incorporation of (a )?(wholly[- ]owned )?(step[- ]down )?subsidiary/i,
   acquisition: /business transfer agreement|share purchase agreement|acquisition of (the )?[\w\s]{0,60}(portfolio|business|division|brand|stake|shares|equity|ccps)|to acquire|acquire[sd]? (a )?\d|slump sale|investment in [A-Z][\w&.\- ]+ (private limited|limited|llp)|stake (acquisition|purchase)/i,
+  // zzz787: a promoter / promoter-group BUYING shares is insider buying, not an acquisition.
+  promoterBuy: /\bpromoters?\b(?: group)?[^.]{0,80}\b(acquired|acquires|acquisition of|purchased|purchases|bought|buys|increased (its |their )?(shareholding|stake))\b[^.]{0,120}(shares|stake|shareholding|%)|(acquisition|purchase) of [^.]{0,60}(shares|stake)[^.]{0,80}\bby (the |a |its )?(member of (the )?)?promoters?\b/i,
   promoterSale: /sale of (\w+ )?(equity )?shares[^.]{0,160}by (a |the )?(member of (its|the) )?promoter|minimum public shareholding|offer for sale \(ofs\)|promoter[^.]{0,40}(propos\w+ to sell|will sell|to offload)/i,
   merger: /scheme of (amalgamation|arrangement)|merger of [A-Z]|amalgamation of/i,
   partnership: /memorandum of understanding|\bmou\b|joint venture|strategic (partnership|alliance)|teaming agreement|collaboration agreement|technology (transfer|licensing) agreement/i,
@@ -221,6 +223,7 @@ function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: 
   }
   if (RX.governanceFine.test(text)) return { kind: 'governance', polarity: 'negative', sub: 'fine' };
   if (RX.promoterSale.test(text)) return { kind: 'other', polarity: 'negative', sub: 'promoter_sale' };
+  if (RX.promoterBuy.test(text) && !/\b(sold|sale of|disposed|offload|pledg)/i.test(text)) return { kind: 'promoter_buying', polarity: 'positive' };
   if (RX.order.test(text)) return { kind: 'order', polarity: 'positive' };
   if (RX.fundraising.test(text)) return { kind: 'fundraising', polarity: 'neutral' };
   if (RX.merger.test(text)) return { kind: 'other', polarity: 'neutral', sub: 'merger' };
@@ -244,6 +247,7 @@ const TRIGGER: Partial<Record<EventKind, RegExp>> = {
   capacity: new RegExp(RX.capacity.source, 'i'),
   acquisition: new RegExp(RX.acquisition.source, 'i'),
   partnership: new RegExp(RX.partnership.source, 'i'),
+  promoter_buying: new RegExp(RX.promoterBuy.source, 'i'),
   new_product: new RegExp(RX.newProduct.source, 'i'),
   results: new RegExp(RX.results.source, 'i'),
 };
@@ -402,6 +406,7 @@ const STAGE_OF = (kind: EventKind, text: string, sub?: string): EventFacts['stag
   if (kind === 'fundraising') return /allotted|allotment of [\d,]+/i.test(text) && !/proposed allot/i.test(text) ? 'COMPLETED' : /approved/i.test(text) && !/proposed/i.test(text) ? 'APPROVED' : 'PROPOSED';
   if (kind === 'acquisition') return /has completed the acquisition|completed the acquisition|acquisition (is|has been) completed/i.test(text) ? 'COMPLETED' : /entered into|executed|signed|execution of (a |the )?(business transfer|share purchase)/i.test(text) ? 'SIGNED' : 'PROPOSED';
   if (kind === 'qualification') return 'APPROVED';
+  if (kind === 'promoter_buying') return /propos|intend|will acquire/i.test(text) ? 'PROPOSED' : 'COMPLETED';
   if (kind === 'other' && sub === 'subsidiary') return /proposed incorporation|proposes to incorporate/i.test(text) && !/has been incorporated|completed the incorporation/i.test(text) ? 'PROPOSED' : 'COMPLETED';
   if (kind === 'governance') return /paid|payment of the levied|stands concluded|resolved and closed/i.test(text) ? 'COMPLETED' : 'ANNOUNCED';
   if (kind === 'tax_litigation') return sub === 'favourable' ? 'COMPLETED' : 'ANNOUNCED';
@@ -411,6 +416,7 @@ const STAGE_OF = (kind: EventKind, text: string, sub?: string): EventFacts['stag
 const KIND_WORD: Record<string, string> = {
   order: 'Order', capacity: 'Capacity', qualification: 'Licence / approval', acquisition: 'Acquisition', fundraising: 'Fundraise',
   partnership: 'Partnership', tax_litigation: 'Tax matter', governance: 'Exchange fine', new_product: 'New product', results: 'Results', other: 'Update',
+  promoter_buying: 'Promoter stake purchase',
 };
 
 function headlineOf(f: Omit<IndiaFacts, 'headline'>, sub?: string): string {
@@ -441,6 +447,7 @@ function headlineOf(f: Omit<IndiaFacts, 'headline'>, sub?: string): string {
       break;
     case 'qualification': parts.push(`Licence / approval${ev.product ? ` for ${ev.product}` : ''}${e.capacityAfter ? ` (${e.capacityAfter})` : ''}${ev.counterparty ? ` from ${ev.counterparty}` : ''}`); break;
     case 'new_product': parts.push(`New product${ev.product ? `: ${ev.product}` : ''}`); break;
+    case 'promoter_buying': parts.push(`Promoter stake purchase${e.stakePct != null ? ` of ${e.stakePct}%` : ''}${ev.counterparty ? ` by ${ev.counterparty}` : ''} — insider buying, not a business event`); break;
     case 'other':
       if (sub === 'promoter_sale') { parts.push(`Promoter share sale${e.sharesIssued != null ? ` of up to ${e.sharesIssued.toLocaleString('en-IN')} shares` : ''}${e.stakePct != null ? ` (${e.stakePct}%)` : ''} — supply, not a company event`); break; }
       if (sub === 'merger') { parts.push(`Group restructuring${ev.product ? ` — ${ev.product}` : ''}`); break; }
@@ -575,6 +582,11 @@ export function extractIndiaFacts(doc: IndiaDoc, ctx: ExtractContext = {}): DocE
     econ.stakePct = pc ? numberOf(pc[1]) : null;
     unknowns.push('Sale price and buyers not known in advance — an open-market sale.');
   }
+  if (kind === 'promoter_buying') {
+    const pc = /(\d{1,2}(?:\.\d+)?)\s*%/.exec(text);
+    econ.stakePct = pc ? numberOf(pc[1]) : null;
+    unknowns.push('Purchase price and total holding after the purchase are not both stated — capital-allocation signal, not revenue.');
+  }
   if (kind === 'other' && k.sub === 'subsidiary') {
     const st = /(?:percentage of shareholding|shareholding \/ control)[^%]{0,120}?(\d{1,3})\s*%/i.exec(text);
     econ.stakePct = st ? numberOf(st[1]) : null;
@@ -613,7 +625,12 @@ export function extractIndiaFacts(doc: IndiaDoc, ctx: ExtractContext = {}): DocE
     ...(statedPotential != null ? { statedPotentialNative: statedPotential } : {}),
     ...(fundMateriality ? { fundMateriality } : {}),
   };
-  return { facts: [{ ...base, headline: headlineOf(base, k.sub) }], routineReason: null, classified: true, valuesSeen };
+  // zzz787: a new subsidiary is a STRATEGIC EXPANSION and a scheme of
+  // amalgamation a MERGER — their own kinds, never 'acquisition' / 'other'.
+  // (The body was read as 'other' + sub above; the headline keeps its words.)
+  const headline = headlineOf(base, k.sub);
+  const finalKind: EventKind = kind === 'other' && k.sub === 'subsidiary' ? 'strategic_expansion' : kind === 'other' && k.sub === 'merger' ? 'merger' : kind;
+  return { facts: [{ ...base, event: { ...base.event, kind: finalKind }, headline }], routineReason: null, classified: true, valuesSeen };
 }
 
 // ── from facts to the sweep's vocabulary ────────────────────────────────────
@@ -628,7 +645,10 @@ export function catalystTypeOf(f: IndiaFacts): CatalystType | null {
     case 'acquisition': return 'acquisition';
     case 'fundraising': return 'fundraising';
     case 'partnership': return 'joint_venture';
-    case 'stake_by_strategic': return 'strategic_investor';
+    case 'stake_by_strategic': case 'strategic_investment': return 'strategic_investor';
+    case 'strategic_expansion': return 'new_geography';
+    case 'promoter_buying': return 'promoter_purchase';
+    case 'capital_allocation': return 'buyback';
     case 'new_product': return 'new_product';
     case 'guidance': return 'revenue_guidance_increase';
     case 'results': return 'quarterly_result';

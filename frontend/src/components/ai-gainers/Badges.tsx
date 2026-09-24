@@ -104,9 +104,11 @@ export function Fact({ k, v, color, title }: { k: string; v: React.ReactNode; co
   );
 }
 
+// zzz787: "Medium" is one filing period of evidence; "Strong" needs two or more.
 const PERSIST_EV_WORD: Record<string, string> = {
-  STRONG: 'STRONG', EVIDENCE: 'EVIDENCE EXISTS', EARLY: 'EARLY', UNPROVEN: 'UNPROVEN', NOT_PERSISTENT: 'NOT PERSISTENT', NONE: '—',
+  STRONG: 'STRONG', EVIDENCE: 'MEDIUM', EARLY: 'EARLY', UNPROVEN: 'UNPROVEN', NOT_PERSISTENT: 'NOT PERSISTENT', NONE: '—',
 };
+const POT_WORD: Record<string, string> = { YEARS: 'MULTI-YEAR', QUARTER: 'ONE PERIOD', DAYS: 'DAYS', UNKNOWN: 'UNKNOWN' };
 
 export function FactLine({ it }: { it: ResearchItem }) {
   const st = STAGE_META[it.stage] || STAGE_META.UNKNOWN;
@@ -118,12 +120,17 @@ export function FactLine({ it }: { it: ResearchItem }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', alignItems: 'baseline' }}>
       <Fact k="EVENT" v={it.eventLabel || it.eventType} />
       <Fact k="STAGE" v={st.label} title={st.hover} />
-      <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : ''}`} color={MATERIAL_COLOR[ml]} title={materialityHover(it)} />
+      <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : it.materiality?.verification === 'PENDING' ? ' — PENDING DOCUMENT VERIFICATION' : ''}`} color={MATERIAL_COLOR[ml]} title={it.materiality?.verification === 'PENDING' ? it.materiality.explanation : materialityHover(it)} />
       <Fact k="TRANSMIT" v={tr.label} title={tr.hover} />
-      <Fact k="POTENTIAL DURATION" v={pe.label} title={`${pe.hover} This is what an event of this type COULD do — not evidence that it will.`} />
+      {/* zzz787: four duration concepts, never merged — contractual (only when stated),
+          potential economic duration (NOT evidence), persistence evidence, catalyst state. */}
+      {it.durations?.contractual && <Fact k="CONTRACTUAL DURATION" v={/runway: ([^(]+)/i.exec(it.durations.contractual)?.[1]?.trim().toUpperCase() || 'STATED'} color={C.cyan} title={it.durations.contractual} />}
+      <Fact k="POTENTIAL ECONOMIC DURATION" v={`${it.potentialDuration ? POT_WORD[it.potentialDuration.value] || pe.label : pe.label}${it.potentialDuration?.basis === 'TYPE' ? ' (BY TYPE)' : ''}`} color={C.faint}
+        title={`${it.potentialDuration?.text || pe.hover} — what the nature of the event COULD support. Not evidence that it will.${it.durations?.guard ? ` ${it.durations.guard}` : ''}`} />
       {it.persistenceEvidence && it.persistenceEvidence.level !== 'NONE' && (
         <Fact k="PERSISTENCE EVIDENCE" v={PERSIST_EV_WORD[it.persistenceEvidence.level]} color={it.persistenceEvidence.level === 'STRONG' ? C.green : it.persistenceEvidence.level === 'EVIDENCE' ? C.cyan : it.persistenceEvidence.level === 'NOT_PERSISTENT' ? C.faint : C.amber} title={it.persistenceEvidence.text} />
       )}
+      {it.durations?.catalystState && <Fact k="CATALYST STATE" v={it.durations.catalystState.split(' (')[0].split(' — ')[0].toUpperCase()} title={it.durations.catalystState} />}
       {/* zzz785: a pricing assessment only when the event's economics are known. */}
       {it.pricing && ml === 'UNKNOWN'
         ? <Fact k="PRICED" v="NOT ASSESSED" color={C.faint} title="The event's size is unknown, so the price reaction is not compared with anything. Price is context only." />

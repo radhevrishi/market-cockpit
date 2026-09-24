@@ -38,7 +38,7 @@ import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/s
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
-import { evidenceCounts, universeCounts } from '@/lib/thesis/evidence-counts';
+import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -317,7 +317,7 @@ export default function PortfolioCatalystsPage() {
           is in it and none ever will be. */}
       {!evidenceLoading && (() => {
         const ranked = inSource
-          .filter((r) => r.assessment?.catalystRank && (r.assessment.status === 'STRENGTHENING' || r.assessment.status === 'ON_TRACK'))
+          .filter((r) => r.assessment?.catalystRank && researchPriorityEligible(r.assessment.status))
           .sort((a, b) => (b.assessment!.catalystRank!.score - a.assessment!.catalystRank!.score)
             || ((b.assessment!.catalystRank!.drivers.length) - (a.assessment!.catalystRank!.drivers.length)));
         if (!ranked.length) return null;
@@ -329,7 +329,7 @@ export default function PortfolioCatalystsPage() {
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
-              <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 Research priority — {ranked.length} intact theses ranked by evidenced catalyst</span>
+              <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 {researchPriorityTitle(ranked.length)}</span>
               <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning (revenue or margin contribution disclosed) / volume > named contract > commissioned capex (not yet proven earning) > customer remark; a hard figure outranks a management remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). The hierarchy ranks EVIDENCE STRENGTH (how firmly the documents prove the mechanism), not economic value — a small order ranks above a big remark; how much it matters to the P&L is on each card. Which theses deserve research next — not a buy list, no price used.'}</span>
             </div>
             <div style={{ overflowX: 'auto' }}>

@@ -145,3 +145,18 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
   return { total, hiddenLargeCap, shown, book, bench, evaluated, notAssessed, byStatus, statusSum, thesisNotSet: byStatus.THESIS_NOT_SET || 0,
     provisional, exportable, exportableUs, excluded, excludedN, line };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESEARCH PRIORITY — WHO IS ELIGIBLE, AND WHAT THE HEADER SAYS.     (zzz788)
+//
+// "71 intact theses" named a population the owner could not find: the list is
+// strengthening + on-track only, and "intact" also describes neutral and
+// confirmation-required cards. The header says "eligible" and names the rule.
+// ═══════════════════════════════════════════════════════════════════════════
+export const RESEARCH_PRIORITY_STATUSES = ['STRENGTHENING', 'ON_TRACK'] as const;
+export function researchPriorityEligible(status: string | null | undefined): boolean {
+  return !!status && (RESEARCH_PRIORITY_STATUSES as readonly string[]).includes(status);
+}
+export function researchPriorityTitle(n: number): string {
+  return `Research priority — ${n} eligible ${n === 1 ? 'thesis' : 'theses'} ranked by evidenced catalyst`;
+}

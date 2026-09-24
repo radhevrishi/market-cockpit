@@ -48,7 +48,10 @@ import type { StructuredFacts, SourceRef } from './structured-facts';
 import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead, type IndiaFacts } from './india-extract';
 import { isGenericSubject, docSeqOf } from './announcement-reader';
 
-export const RULES_VERSION = '2026-09-24.zzz785';
+export const RULES_VERSION = '2026-09-24.zzz787';
+// zzz787: no materiality % from an unverified (summary / subject) figure;
+// promoter buying and new subsidiaries are their own event types (not
+// acquisitions); SAST promoter purchases are no longer paperwork.
 // zzz785: India filings are read from the attached document (deterministic
 // extraction, no model): generic / unclassified subjects are classified from
 // the body; a soft negative (tax notice, exchange fine) no longer hides a
@@ -269,7 +272,7 @@ const RX = {
   // "Material definitive agreement" / Item 1.01 is the SEC's name for ANY
   // contract — a finance facility, a lease, a merger. It is never by itself
   // an order win (PRTH, NUAI printed "order win" from the item title). (zzz768)
-  order: /award[^.]{0,20}order|receipt of order|bagging|letter of award|\bloa\b|\bloi\b|letter of intent|work order|purchase order|contract (award|win|from|worth|value)|(won|wins|secured|bags|bagged|awarded|receives?|received)[^.]{0,80}(order|contract|project|tender|₹|rs\.?|inr|crore|lakh|usd|\$)|order (worth|valued|of)|supply (agreement|order)|framework agreement|l1 bidder|empanel|\b(epc|epcm|pmc)\b[^.]{0,20}contract|signed[^.]{0,40}\bcontract\b/i,
+  order: /award[^.]{0,20}order|receipt of order|bagging|letter of award|\bloa\b|\bloi\b|letter of intent|work order|purchase order|contract (award|win|from|worth|value)|(won|wins|secured|bags|bagged|awarded|receives?|received)[^.]{0,80}(order|contract|project|tender|₹|rs\.?|inr|crore|lakh|usd|\$)|order (worth|valued|of)|supply (agreement|order)|framework agreement|l1 bidder|empanel|\b(epc|epcm|pmc)\b[^.]{0,20}contract|signed[^.]{0,40}\bcontract\b|(signs|signed|enters? into|entered into|executed|executes)[^.]{0,60}\b(services?|master services|supply|service level|outsourcing|maintenance|long[- ]term) (agreement|contract)\b/i,
   capacity: /enhancement of [^.]{0,40}capacity|capacity (rises|rose|increased|enhanced|augment)|expansion (completed|commissioned)|augmentation of [^.]{0,30}capacity|commission(ed|ing)|inaugurat|starting operations|commenced operations|completion of (the )?(project|construction|expansion|plant|facility)|ready for (leasing|commercial|operation)|commence(ment|d|s)? (of )?(commercial )?(production|operations)|capacity (expansion|addition|enhancement)|new (plant|facility|unit|line)|expansion of|greenfield|brownfield|plant (start|commenc)|trial (run|production)|start of (commercial )?production|first (batch|dispatch)/i,
   certification: /certif|accredit|iso ?\d|as9100|nadcap|(regulatory|product|drug|usfda|fda|dcgi|cdsco|who|epa|ema|mhra) approval|\busfda\b|\bus fda\b|\beir\b|form 483|who[- ]gmp|\bgmp\b|(product|drug|manufacturing|import|export) licen[cs]e|licen[cs]e (granted|received|obtained)|registration (of|granted|received)|marketing authori[sz]ation|\bcep\b|ce mark|\banda\b|\bdmf\b|patent (grant|approv)|qualified (as|by) [^.]{0,40}(supplier|vendor)|(vendor|supplier) (approval|qualification)/i,
   mna: /acquisition consideration|consideration (for|of) (the )?acquisition|share swap|consideration other than cash|completion of acquisition|item 2\.01|\bsc 13d\b|acquisition of|acquire|acquires|acquired|takeover|merger|amalgamation|scheme of arrangement|demerger|joint venture|\bjv\b|memorandum of understanding|\bmou\b|strategic (partnership|alliance|investment|investor)|stake (purchase|sale)|slump sale|divest|open offer|share purchase agreement|\bspa\b/i,
@@ -396,6 +399,12 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
     return /promoter/i.test(hay) && !/sold|disposed/i.test(hay) ? { ...base, kind: 'catalyst', category: 'promoter_purchase', stage: 'executed', valueStated: null } : { ...base, kind: 'routine', valueStated: null, routineReason: 'insider trade' };
   }
   if (/authori[sz]\w*[^.]{0,80}(\bkmps?\b|key managerial personnel)|(\bkmps?\b|key managerial personnel)[^.]{0,80}authori[sz]\w*|regulation 30\s*\(5\)|reg\.? ?30\s*\(5\)/i.test(hay)) return { ...base, kind: 'routine', valueStated: null, routineReason: 'KMP authorisation under Reg 30' };
+  // zzz787: a PROMOTER buying shares is insider buying — its own (small,
+  // capital-allocation) event, even when filed under a SAST / Reg 29 subject
+  // that is otherwise paperwork (GNA: promoter acquires 1.16%).
+  if (RX.promoterBuy.test(hay) && !/\b(sold|sale|disposed|offload|pledg\w*|inter[- ]se|gift|transmission|off-market transfer|buy[- ]?back|allot\w*|preferential|warrants?|open offer)\b/i.test(hay)) {
+    return { ...base, kind: 'catalyst', category: 'promoter_purchase', stage: /propos|intend|will acquire/i.test(hay) ? 'enabling' : 'executed', valueStated: null };
+  }
   const subjectRoutine = RX.routine.test(a.subject) && !RX.order.test(a.subject) && !RX.capacity.test(a.subject) && !RX.certification.test(a.subject) && !RX.mna.test(a.subject) && !RX.rating.test(a.subject);
   if (subjectRoutine) return { ...base, kind: 'routine', valueStated: null, routineReason: (RX.routine.exec(a.subject) || [''])[0].toLowerCase().trim() || 'routine' };
   // An MoU, a letter of intent or anything "non-binding" is ENABLING: nothing
@@ -413,6 +422,12 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   if (RX.capacity.test(hay)) return cat(/commission|commenc|start|first (batch|dispatch)/i.test(hay) ? 'production_ramp' : 'capacity_expansion');
   if (RX.buyback.test(hay)) return cat('buyback');
   if (RX.promoterBuy.test(hay) && !/inter[- ]se|gift|transmission|off-market transfer/i.test(hay)) return cat('promoter_purchase');
+  // zzz787: a new wholly owned subsidiary / step-down entity is a STRATEGIC
+  // EXPANSION (new geography or business line), not an acquisition — even
+  // under an "Updates on Acquisition" subject (ZIMLAB Chile).
+  if (/incorporat\w*[^.]{0,100}\bsubsidiary|\bsubsidiary[^.]{0,100}\bincorporat|incorporation of (a )?(new )?(wholly[- ]owned |step[- ]down )?(subsidiary|company|entity)/i.test(hay) && !/\bacquired\b[^.]{0,40}\b\d+(\.\d+)?\s*%|share purchase agreement/i.test(hay) && !/\bSPA\b/.test(hay)) {   // "SpA" is a Chilean company suffix, not a share purchase agreement
+    return { ...cat('new_geography'), valueStated: null };
+  }
   if (RX.mna.test(hay)) {
     if (/open offer/i.test(hay)) return { ...cat('acquisition'), category: 'open_offer' };
     if (/joint venture|\bjv\b|\bmou\b|memorandum|strategic (partnership|alliance)/i.test(hay)) return cat('joint_venture');
@@ -576,10 +591,19 @@ const r1 = (v: number) => Math.round(v * 10) / 10;
 /** NET = (0.30·F + 0.30·M + 0.25·T + 0.15·P) × source × pricing, then caps.
  *  Every term is returned, so the displayed components reproduce the number.
  *  M is materiality after the evidence-confidence haircut. */
-export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: number | null; returns: Returns | null; sourceTier: Finding['sourceTier']; verifiedQuote: boolean; movePct?: number | null }): { net: number; components: ScoreComponents; verdict: Verdict; valuePctMcap: number | null } {
+export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: number | null; returns: Returns | null; sourceTier: Finding['sourceTier']; verifiedQuote: boolean; movePct?: number | null;
+  /** zzz787: ONLY for ordering one company's candidate filings before any is
+   *  read (which filing to read / lead with). The finding's own score never
+   *  sets it: an unverified figure never becomes a materiality %. */
+  candidateOrder?: boolean }): { net: number; components: ScoreComponents; verdict: Verdict; valuePctMcap: number | null } {
   const freshness = FRESH(c.ageDays);
-  const mat = materialityOf(c, opts.marketCap);
   const evidence = evidenceStateOf(c, opts.verifiedQuote);
+  // zzz787 — NEVER a materiality % from a figure that is not verified in a
+  // read document (VIKRAN "₹154 Cr = 9.8% of market cap" beside "figure not
+  // verified"). Until the document is read the value is stated only; the
+  // materiality term falls back to the event type, capped, and no % exists.
+  const valueVerified = evidence === 'DOCUMENT_VERIFIED';
+  const mat = valueVerified || opts.candidateOrder ? materialityOf(c, opts.marketCap) : materialityOf({ ...c, valueStated: null }, opts.marketCap);
   const conf = MATERIALITY_CONFIDENCE[evidence];
   const materiality = r1(mat.score * conf);
   let transmission = TRANSMISSION[String(c.category || '')] ?? 40;
@@ -597,11 +621,12 @@ export function scoreCatalyst(c: ClassifiedAnnouncement, opts: { marketCap: numb
   let verdict: Verdict;
   if (mat.gated) { cap(17, `item is ${mat.pct!.toFixed(2)}% of market cap (under 1%)`); verdict = 'THIN'; }
   else {
-    // An unmeasured event can never pay what a measured 30%-of-mcap one does.
-    if (mat.pct == null) cap(44.9, 'no stated value');
     // P1 ("research first") needs the document itself: a summary can point
     // at a catalyst, it cannot establish one. (zzz773)
     if (evidence !== 'DOCUMENT_VERIFIED') cap(44.9, `${evidence === 'SUMMARY_ONLY' ? 'summary-only' : 'unverified'} evidence cannot rank P1`);
+    // An unmeasured event can never pay what a measured 30%-of-mcap one does.
+    // zzz787: a figure stated but not verified in a read document is unmeasured too.
+    if (mat.pct == null) cap(44.9, c.valueStated != null && !valueVerified && !opts.candidateOrder ? 'stated value not verified in a read document — no materiality %' : 'no stated value');
     // An appointment or a resignation moves no revenue. (zzz767)
     if (c.category === 'management_change') cap(15, 'management change moves no revenue');
     verdict = net >= 45 ? 'FIRE' : net >= 30 ? 'ROOM' : net >= 18 ? 'PRICED' : net >= 8 ? 'WEAK' : 'NONE';
@@ -644,7 +669,7 @@ export function chooseCandidate(announcements: AnnouncementLite[], market: 'IN' 
     .filter((a) => !filedAfterClose(a.dateIso, opts.sessionCloseIso))
     .map((a) => classifyAnnouncement(a, market));
   const cands = inWindow.filter((a) => a.kind === 'catalyst' && a.category !== 'rating_action')
-    .map((a) => ({ a, s: rankKey(scoreCatalyst(a, { marketCap: opts.marketCap, returns: opts.returns, sourceTier: 'primary', verifiedQuote: false })) }))
+    .map((a) => ({ a, s: rankKey(scoreCatalyst(a, { marketCap: opts.marketCap, returns: opts.returns, sourceTier: 'primary', verifiedQuote: false, candidateOrder: true })) }))
     .sort((x, y) => y.s - x.s);
   return cands.length ? cands[0].a : null;
 }
@@ -742,7 +767,7 @@ export function applyDocument(a: ClassifiedAnnouncement, d: DocRead | null, mark
  *  commissioned or completed is executed. */
 function docStage(f: IndiaFacts): Stage | null {
   const st = f.event.stage;
-  if (f.event.kind === 'other') return 'enabling';
+  if (f.event.kind === 'other' || f.event.kind === 'strategic_expansion' || f.event.kind === 'merger') return 'enabling';
   if (st === 'PROPOSED') return 'enabling';
   if (st === 'APPROVED' && (f.event.kind === 'capacity' || f.event.kind === 'fundraising')) return f.time.expectedCompletion ? 'scheduled' : 'enabling';
   if (st === 'ANNOUNCED' && f.event.kind !== 'order') return 'enabling';
@@ -865,7 +890,7 @@ function buildFindingCore(inp: SweepInput): Finding {
   // same-day rating outlook change, and an executed item beats an enabling
   // one, because the score already says so.
   const cands = inWindow.filter((a) => a.kind === 'catalyst')
-    .map((a) => ({ a, s: rankKey(scoreCatalyst(a, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: false })) }))
+    .map((a) => ({ a, s: rankKey(scoreCatalyst(a, { marketCap: inp.marketCap, returns: inp.returns, sourceTier: 'primary', verifiedQuote: false, candidateOrder: true })) }))
     .sort((x, y) => y.s - x.s)
     .map((x) => x.a);
   // A model read of a filing the form type could not classify (US 8-K Item
@@ -961,8 +986,8 @@ function buildFindingCore(inp: SweepInput): Finding {
   for (const n of alsoNegative) notes.push(`Also filed in the window (negative, does not cancel the event above): ${shorten(n.summary || n.subject, 160)} (${fmtDate(n.dateIso)}).`);
   if (verified && docExtract && c.category === 'quarterly_result') notes.push('Results filed — the revenue sentence is quoted as filed; whether the result was good is not judged here.');
   if (!verified) notes.push(scored.components.evidence === 'SUMMARY_ONLY'
-    ? 'SUMMARY ONLY: the document was not model-read; the headline and any figure come from the source\'s summary, so materiality is counted at 60%.'
-    : 'UNVERIFIED: only the filing subject line was available; materiality is counted at 40%.');
+    ? `SUMMARY ONLY: the document was not model-read; the headline and any figure come from the source's summary${c.valueStated != null ? ` — stated value ${fmtMoney(c.valueStated, inp.market)}, document verification pending, so no materiality % is computed from it` : ''}. The event-type materiality is counted at 60%.`
+    : `UNVERIFIED: only the filing subject line was available${c.valueStated != null ? ` — stated value ${fmtMoney(c.valueStated, inp.market)}, document verification pending, so no materiality % is computed from it` : ''}. The event-type materiality is counted at 40%.`);
   return {
     ...base, status: 'catalyst', category: c.category, stage: c.stage,
     headline: verified && inp.read ? inp.read.headline : shorten(c.summary || c.subject, 400),

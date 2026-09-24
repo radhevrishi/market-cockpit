@@ -23,7 +23,7 @@
 
 import type { Finding } from './catalyst-research';
 import { presentErrorLines } from './research-present';
-import type { CatalystRecord, EventKind, StructuredFacts } from './structured-facts';
+import { contractTermYears, isStrategicStakeKind, type CatalystRecord, type EventKind, type StructuredFacts } from './structured-facts';
 import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
 import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
 
@@ -45,7 +45,13 @@ export type EventType =
   | 'Regulatory approval' | 'Contract' | 'Partnership' | 'Buyback' | 'Fundraising'
   | 'Debt / refinancing' | 'Management change' | 'Governance' | 'Guidance' | 'Rating action'
   | 'Litigation / regulatory' | 'Accident / disruption' | 'Denial' | 'No identified catalyst'
-  | 'Market/technical move';
+  | 'Market/technical move'
+  // zzz787 — ownership / corporate events no longer forced into 'Acquisition':
+  | 'Merger' | 'Strategic expansion' | 'Strategic investment' | 'Promoter buying' | 'Capital allocation';
+
+/** zzz787: event types that are capital-allocation research, never a
+ *  portfolio action and never an operating catalyst. */
+export const CAPITAL_ALLOCATION_TYPES = new Set<EventType>(['Strategic investment', 'Promoter buying', 'Capital allocation', 'Buyback']);
 
 /** Strict stage ladder (spec §19). */
 export type Stage = 'RUMOUR' | 'PROPOSED' | 'ENABLING' | 'SIGNED' | 'AWARDED' | 'EXECUTED' | 'OPERATIONAL' | 'MONETIZING' | 'UNKNOWN';
@@ -75,6 +81,15 @@ export interface Materiality {
   ratios: MaterialityRatio[];
   /** One line: why this label. "Not disclosed" when no value exists. */
   explanation: string;
+  /** zzz787: whether the figure behind the ratio was verified in a READ
+   *  document. PENDING = a figure is stated (summary / subject / filing
+   *  metadata) but the document has not confirmed it — no ratio is computed
+   *  and materiality stays UNKNOWN until it is. */
+  verification?: 'DOCUMENT_VERIFIED' | 'PENDING' | null;
+  /** zzz787: evidence confidence of the ratio (1 = document-verified, 0 = none). */
+  confidence?: number;
+  /** zzz787: the figure as stated, when one was stated (verified or not). */
+  statedValue?: number | null;
 }
 
 export interface EarningsMini {
@@ -159,6 +174,13 @@ export interface ResearchItem {
   persistence: Persistence;
   /** zzz782: evidence that it WILL persist — separate from the potential duration above. */
   persistenceEvidence?: { level: PersistEvidenceLevel; text: string };
+  /** zzz787: the potential duration's plain sentence and its basis — FACTS
+   *  (a stated term, programme, capacity or execution period) or TYPE (only
+   *  the kind of event). Either way it is NOT evidence. */
+  potentialDuration?: PotentialDuration;
+  /** zzz787: the four duration concepts kept apart (contractual / potential /
+   *  evidence-supported / catalyst state) — see DurationView. */
+  durations?: DurationView | null;
   /** zzz782: a tax / penalty demand under 0.25% of market cap. */
   immaterialNegative?: boolean;
   /** zzz780: persistent-catalyst test of the event (never price). */
@@ -221,8 +243,11 @@ export interface ResearchItem {
   economicsUnknown?: { label: string; missing: string[] } | null;
   /** 'Official filing' / 'Secondary · verification required' / … */
   verification?: string | null;
-  /** Links to the thesis ledger and Special Focus — separate views, linked by ticker. */
-  links?: { thesis: string | null; specialFocus: string | null; note: string } | null;
+  /** Links to the thesis ledger and Special Focus — separate views, linked by ticker.
+   *  zzz787: plus the ONE underlying catalyst id (event record) and the
+   *  persistent-mechanism id, so the same event is cross-linked, never listed
+   *  again as a separate item in another view. */
+  links?: { thesis: string | null; specialFocus: string | null; note: string; catalystId?: string | null; persistentId?: string | null; persistent?: string | null } | null;
 }
 
 /** One catalyst record as a card shows it. */
@@ -318,6 +343,10 @@ const money = (v: number, m: 'IN' | 'US') => (m === 'IN'
   ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : r1(v).toString()} Cr`
   : v >= 1000 ? `$${r1(v / 1000)}B` : `$${v >= 100 ? Math.round(v) : r1(v)}M`);
 const up = (s: any) => String(s || '').trim().toUpperCase();
+/** zzz787: a stated event value as stated — "₹153.76 Cr", never rounded to "₹154 Cr". */
+const moneyExact = (v: number, m: 'IN' | 'US') => (m === 'IN'
+  ? `₹${(Math.round(v * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })} Cr`
+  : money(v, m));
 
 /** Source text keeps its words, but a shouted rating token is never passed
  *  through as if it were this page's instruction. */
@@ -453,6 +482,8 @@ function eventTypeOf(category: string | null, hay: string, negative: boolean): {
       if (/memorandum of understanding|\bmou\b|term sheet|non-binding/i.test(hay)) return { type: 'Partnership', label: 'MoU / non-binding (not an order)' };
       if (/\bl1\b|lowest bidder/i.test(hay)) return { type: 'Contract', label: 'L1 bidder (award pending)' };
       if (/framework agreement|empanel/i.test(hay)) return { type: 'Contract', label: 'Framework / empanelment (no committed volume)' };
+      // zzz787: a services / supply agreement is a contract — its term is a runway, not revenue (RNIT).
+      if (/\b(services?|master services|supply|service level|outsourcing|maintenance|long[- ]term) (agreement|contract)\b/i.test(hay) && !/purchase order|work order|letter of award|\bloa\b/i.test(hay)) return { type: 'Contract', label: 'Services / supply agreement (contract, value not stated)' };
       return { type: 'Order win', label: /letter of award|\bloa\b/i.test(hay) ? 'Letter of award received' : null };
     }
     case 'quarterly_result': case 'margin_expansion': return { type: 'Earnings', label: null };
@@ -461,15 +492,20 @@ function eventTypeOf(category: string | null, hay: string, negative: boolean): {
     case 'revenue_guidance_increase': return { type: 'Guidance', label: null };
     case 'regulatory_approval': case 'export_approval': return { type: 'Regulatory approval', label: null };
     case 'product_qualification': return { type: 'Regulatory approval', label: 'Qualification / certification' };
-    case 'new_customer': case 'customer_ramp': case 'new_geography': return { type: 'Customer win', label: null };
+    case 'new_customer': case 'customer_ramp': return { type: 'Customer win', label: null };
+    // zzz787: a new subsidiary / geography is a strategic expansion, never an acquisition or a customer win (ZIMLAB Chile).
+    case 'new_geography': return { type: 'Strategic expansion', label: /subsidiar/i.test(hay) ? 'Strategic expansion — new subsidiary / geography' : 'Strategic expansion — new geography' };
     case 'new_product': return { type: 'New product', label: null };
-    case 'acquisition': case 'open_offer': return { type: 'Acquisition', label: c === 'open_offer' ? 'Open offer / tender' : null };
-    case 'strategic_investor': return { type: 'Acquisition', label: 'Strategic stake (13D / investor)' };
+    case 'acquisition': case 'open_offer':
+      // zzz787: a merger / amalgamation combines businesses; an acquisition buys one.
+      if (c === 'acquisition' && /amalgamat|\bmerger\b|merge with|scheme of amalgamation/i.test(hay) && !/demerger/i.test(hay)) return { type: 'Merger', label: 'Merger / amalgamation' };
+      return { type: 'Acquisition', label: c === 'open_offer' ? 'Open offer / tender' : null };
+    case 'strategic_investor': return { type: 'Strategic investment', label: 'Strategic investment — an outside strategic takes a stake' };
     case 'joint_venture': return /memorandum|\bmou\b|partnership|alliance/i.test(hay) ? { type: 'Partnership', label: null } : { type: 'JV', label: null };
     case 'demerger': case 'divestiture': return { type: 'Divestment', label: c === 'demerger' ? 'Demerger / scheme' : null };
     case 'fundraising': return { type: 'Fundraising', label: 'Financing (supply, not demand)' };
-    case 'buyback': return { type: 'Buyback', label: null };
-    case 'promoter_purchase': return { type: 'Governance', label: 'Promoter purchase' };
+    case 'buyback': return { type: 'Capital allocation', label: 'Capital allocation — buyback' };
+    case 'promoter_purchase': return { type: 'Promoter buying', label: 'Promoter stake purchase (insider buying)' };
     case 'management_change': return { type: 'Management change', label: null };
     case 'rating_action': return { type: 'Rating action', label: null };
     case 'pricing_increase': case 'cost_reduction': return { type: 'Pricing', label: null };
@@ -496,13 +532,15 @@ function stageOf(type: EventType, findingStage: string | null, hay: string): Sta
     if (RX_SIGNED.test(hay)) return 'SIGNED';
     return findingStage === 'executed' || findingStage === 'scheduled' ? 'AWARDED' : 'UNKNOWN';
   }
-  if (type === 'Acquisition' || type === 'Divestment' || type === 'JV' || type === 'Partnership') {
+  if (type === 'Strategic expansion') return RX_EXECUTED.test(hay) || /incorporated|has been set up|commenced operations/i.test(hay) ? 'EXECUTED' : findingStage === 'executed' ? 'EXECUTED' : 'ENABLING';
+  if (type === 'Promoter buying') return /propos|intend|will acquire/i.test(hay) ? 'PROPOSED' : 'EXECUTED';
+  if (type === 'Acquisition' || type === 'Merger' || type === 'Divestment' || type === 'JV' || type === 'Partnership') {
     if (RX_EXECUTED.test(hay)) return 'EXECUTED';
     if (RX_SIGNED.test(hay)) return 'SIGNED';
     return findingStage === 'executed' ? 'SIGNED' : 'UNKNOWN';
   }
   if (type === 'Regulatory approval') return /granted|received|obtained|approv(ed|al)|certif|accredit/i.test(hay) ? 'EXECUTED' : 'UNKNOWN';
-  if (type === 'Fundraising' || type === 'Buyback') return RX_EXECUTED.test(hay) ? 'EXECUTED' : 'ENABLING';
+  if (type === 'Fundraising' || type === 'Buyback' || type === 'Capital allocation') return RX_EXECUTED.test(hay) ? 'EXECUTED' : 'ENABLING';
   if (RX_OPERATIONAL.test(hay)) return 'OPERATIONAL';
   if (RX_EXECUTED.test(hay) || findingStage === 'executed') return 'EXECUTED';
   return 'UNKNOWN';
@@ -562,29 +600,42 @@ function labelFor(pct: number, band: Band): Materiality['label'] {
   return pct >= band[0] ? 'SIGNIFICANT' : pct >= band[1] ? 'MODERATE' : 'SMALL';
 }
 
+/** zzz787 — a figure stated in a summary / subject / filing metadata but not
+ *  verified in a READ document. No ratio is computed from it: "Stated order
+ *  value: ₹153.76 Cr · Source: filing metadata/summary · Document
+ *  verification: pending" and materiality UNKNOWN until it is read. */
+export function pendingMateriality(value: number, market: 'IN' | 'US', what = 'value'): Materiality {
+  return {
+    label: 'UNKNOWN', ratios: [], verification: 'PENDING', confidence: 0, statedValue: value,
+    explanation: `UNKNOWN — pending document verification. Stated ${what}: ${moneyExact(value, market)} · Source: filing metadata/summary · Document verification: pending. No ratio is computed from a figure the document has not confirmed.`,
+  };
+}
+
 function valueMateriality(value: number | null, mcap: number | null, revenue: { v: number; basis: 'ttm_revenue' | 'annual_revenue' } | null, market: 'IN' | 'US', kind: keyof typeof BANDS, verifiedValue: boolean, renewal: boolean): Materiality {
   if (value == null || !(value > 0)) return { label: 'UNKNOWN', ratios: [], explanation: 'Event value: Not disclosed — materiality cannot be measured.' };
+  // zzz787: NEVER a ratio from a figure the read document has not confirmed.
+  if (!verifiedValue) return pendingMateriality(value, market, kind === 'order' ? 'order value' : kind === 'fundraise' ? 'issue size' : kind === 'capex' ? 'capex' : kind === 'acquisition' ? 'deal value' : 'value');
   const ratios: MaterialityRatio[] = [];
   const b = BANDS[kind];
   let label: Materiality['label'] = 'UNKNOWN';
   if (revenue && revenue.v > 0 && kind !== 'buyback') {
     const p = (value / revenue.v) * 100;
-    ratios.push({ basis: revenue.basis, pct: r1(p), text: `${money(value, market)} ÷ ${money(revenue.v, market)} ${revenue.basis === 'ttm_revenue' ? 'TTM' : 'annual'} revenue = ${r1(p)}%` });
+    ratios.push({ basis: revenue.basis, pct: r1(p), text: `${moneyExact(value, market)} ÷ ${money(revenue.v, market)} ${revenue.basis === 'ttm_revenue' ? 'TTM' : 'annual'} revenue = ${r1(p)}%` });
     label = labelFor(p, b.revenue);
   }
   if (mcap && mcap > 0) {
     const p = (value / mcap) * 100;
-    ratios.push({ basis: 'market_cap', pct: r1(p), text: `${money(value, market)} ÷ ${money(mcap, market)} market cap = ${r1(p)}%` });
+    ratios.push({ basis: 'market_cap', pct: r1(p), text: `${moneyExact(value, market)} ÷ ${money(mcap, market)} market cap = ${r1(p)}%` });
     if (label === 'UNKNOWN') label = labelFor(p, b.mcap);
   }
-  if (!ratios.length) return { label: 'UNKNOWN', ratios: [], explanation: `Value ${money(value, market)} stated; market cap and revenue Not disclosed — no denominator.` };
+  if (!ratios.length) return { label: 'UNKNOWN', ratios: [], explanation: `Value ${moneyExact(value, market)} stated (document-verified); market cap and revenue Not disclosed — no denominator.`, verification: 'DOCUMENT_VERIFIED', confidence: 1, statedValue: value };
   const order: Materiality['label'][] = ['SMALL', 'MODERATE', 'SIGNIFICANT'];
   if (renewal && label !== 'UNKNOWN') label = order[Math.max(0, order.indexOf(label) - 1)];
   const basisTxt = ratios[0].basis === 'market_cap' ? 'market cap (no revenue figure on the row)' : 'revenue';
   const explanation = `${label === 'SIGNIFICANT' ? 'Large' : label === 'MODERATE' ? 'Meaningful' : 'Small'} relative to ${basisTxt}: ${ratios[0].text}.`
     + (renewal ? ' Reads as a renewal / re-announcement — one level lower.' : '')
-    + (verifiedValue ? '' : ' Figure from the filing subject/summary — not verified in the document.');
-  return { label, ratios, explanation };
+    + ' Figure verified in the read document (evidence confidence 1.0).';
+  return { label, ratios, explanation, verification: 'DOCUMENT_VERIFIED', confidence: 1, statedValue: value };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -641,7 +692,8 @@ function fundraisingOf(hay: string, stage: Stage, value: number | null, mcap: nu
   // The issue ÷ market cap ratio is kept as SCALE; the label says Unknown
   // while any of amount / price / allottees / dilution is missing. (zzz785)
   const mat: Materiality = missing.length
-    ? { label: 'UNKNOWN', ratios: mat0.ratios, explanation: `Materiality: Unknown — missing: ${missing.join(', ')}.${mat0.ratios.length ? ` Scale only: ${mat0.ratios[0].text}.` : ''}` }
+    ? { label: 'UNKNOWN', ratios: mat0.ratios, verification: mat0.verification ?? null, confidence: mat0.confidence, statedValue: mat0.statedValue ?? null,
+      explanation: `Materiality: Unknown — missing: ${missing.join(', ')}.${mat0.ratios.length ? ` Scale only: ${mat0.ratios[0].text}.` : mat0.verification === 'PENDING' && mat0.statedValue != null ? ` Stated issue size ${moneyExact(mat0.statedValue, market)} — document verification pending, so no ratio.` : ''}` }
     : mat0;
   const label = `Fundraising — ${named ? allottees.join(', ') : 'allottees not stated'}`;
   if (distress) return { cls: 'NEGATIVE', label: `${label} (distress markers)`, mat, allottees, distress, resale, named, missing };
@@ -682,6 +734,13 @@ const NEXT: Record<string, string[]> = {
   strategic: ['Who is the investor — an industry (strategic) or a financial holder?', 'Stake size and price — in an official filing (SAST / 13D / exchange disclosure)?', 'Is the stake confirmed by an official filing, or press only?', 'Any board seat, supply or technology agreement with the investor?', 'Primary shares (money to the company) or bought from existing holders?'],
   resale: ['How many shares are registered for resale versus shares outstanding?', 'Who are the selling holders, and are any shares locked up?', 'At what price did the holders get the shares (incentive to sell)?', 'Form 4 / 144 filings — are holders actually selling?', 'A resale overhang does not by itself mean the price must fall — check volume against sales.'],
   buyback: ['Buyback size versus market cap and free float?', 'Price versus the current market?', 'Tender or open market?', 'Is the promoter participating?'],
+  // zzz787 — questions for the new event types.
+  contract_term: ['Contract value stated — total, or per year? (not yet quantified)', 'Is the revenue recurring across the stated term (fees each year), or billed on milestones?', 'Renewal / extension terms after the stated term?', 'When does execution and billing start, and at what run-rate?', 'Customer named — and a repeat customer?', 'Margin on the contract versus the company average — ask at the next concall'],
+  licence_capacity: ['Demand: orders, offtake agreements or named customers for the licensed / installed volume?', 'Current utilisation of the existing capacity — would the new volume be sold?', 'When does commercial production start?', 'Revenue at full volume — stated or guided?', 'Capex needed to use it, and how it is funded?', 'Conditions attached (renewal, quotas, approvals)?'],
+  merger: ['Swap ratio / consideration and the resulting dilution per share?', 'Combined revenue and profit — stated?', 'Approvals pending (board, shareholders, NCLT, CCI) and the effective date?', 'Why merge: simplification, synergies, or a change in promoter holding?', 'Are minority shareholders better or worse off per share?'],
+  strategic_expansion: ['What will the new entity / geography sell, and to whom?', 'Investment committed and how it is funded?', 'When is the first revenue, order or licence expected?', 'Any customer, partner or distributor named?', 'Regulatory approvals needed in the new market?'],
+  promoter_buying: ['Shares bought and price paid — stated in the SAST / insider-trading disclosure?', 'Promoter holding before and after the purchase?', 'Open-market purchase, or conversion of warrants / a preferential allotment?', 'Is the buying repeated across disclosures, or one-off?', 'Any pledge on the promoter\'s shares?'],
+  capital_allocation: ['Size versus market cap and free float?', 'Funded from free cash flow or from borrowing?', 'Price versus the current market (for a buyback)?', 'Payout as a share of free cash flow (for a dividend)?', 'Is the promoter participating?'],
   guidance: ['What exactly changed versus prior guidance?', 'What drives the new guidance?', 'How has management tracked against past guidance?'],
   management: ['Who joined or left, and from where?', 'Planned succession or abrupt?', 'Does it affect execution of stated plans?'],
   rating: ['Which agency, from what to what?', 'What drove the change — leverage, cash flow, scale?', 'Does it change borrowing cost?'],
@@ -704,24 +763,31 @@ function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Findin
   const hay0 = `${finding?.headline || ''} ${finding?.evidenceQuote || ''} ${(finding?.notes || []).join(' ')}`;
   if (cls === 'NO_CATALYST') return type === 'Fundraising' ? (RX_RESALE.test(hay0) ? 'resale' : 'fundraising') : /not classifiable/i.test(String(finding?.headline || '')) ? 'unclassified' : 'none';
   if (type === 'Fundraising') return 'fundraising';
-  if (finding?.category === 'strategic_investor') return 'strategic';
+  if (finding?.category === 'strategic_investor' || type === 'Strategic investment') return 'strategic';
+  if (type === 'Promoter buying') return 'promoter_buying';
+  if (type === 'Capital allocation' || type === 'Buyback') return cls === 'NEGATIVE' ? 'negative' : 'capital_allocation';
   if (cls === 'NEGATIVE' && type !== 'Earnings') return 'negative';
   const hayK = `${finding?.headline || ''} ${finding?.evidenceQuote || ''}`;
   if ((type === 'Order win' || type === 'Contract' || type === 'Partnership' || type === 'JV') && (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR'))
     return /\bjda\b|joint development|\bgdv\b|gross development|acres?|residential|township|real estate|housing/i.test(hayK) ? 'enabling_realestate' : 'enabling';
   // zzz782: a qualification is not a licence — its questions are about conversion to commercial supply.
   if (type === 'Regulatory approval' && (finding?.category === 'product_qualification' || /qualif|approved (vendor|supplier)|vendor (registration|approval)|\bfai\b|first article|sampl/i.test(hayK))) return 'qualification';
+  // zzz787: a licence / capacity to produce is capability, not demand (ABDL ~4.4 million BL licence).
+  if (type === 'Regulatory approval' && CAPACITY_WORDS.test(hayK) && !DEMAND_WORDS.test(hayK)) return 'licence_capacity';
   switch (type) {
     case 'Order win': case 'Contract':
+      // zzz787: a stated contract TERM (RNIT "five-year services agreement") is a runway, not revenue.
+      if (contractTermYears(hayK) != null && !/\bannual(ly)?\b|per annum|\bprogramm?e?s?\b/i.test(hayK)) return 'contract_term';
       // RAYMOND "multi-programme orders worth about ₹33 crore annually": recurring-programme questions.
       return /\bannual(ly)?\b|per annum|\bp\.?\s?a\.?\b|\bprogramm?e?s?\b|multi-?year|framework|rate contract/i.test(hayK) ? 'order_recurring' : 'order';
+    case 'Merger': return 'merger';
+    case 'Strategic expansion': return 'strategic_expansion';
     case 'Customer win': return 'customer';
     case 'Capacity expansion': case 'Production ramp': return 'capacity';
     case 'Acquisition': case 'JV': case 'Divestment': return 'acquisition';
     case 'Earnings': return 'earnings';
     case 'Regulatory approval': return 'approval';
     case 'New product': return 'product';
-    case 'Buyback': return 'buyback';
     case 'Guidance': return 'guidance';
     case 'Management change': return 'management';
     case 'Rating action': return 'rating';
@@ -734,7 +800,7 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
   const u: string[] = [];
   const say = (k: string, known: boolean, word = 'Not disclosed') => { if (!known) u.push(`${k}: ${word}`); };
   switch (key) {
-    case 'order': case 'order_recurring': case 'customer':
+    case 'order': case 'order_recurring': case 'customer': case 'contract_term':
       say('Order value', hasValue);
       say('Order margin', /margin/i.test(hay));
       say('Revenue timing / execution period', /\b(months?|years?|by (fy|q[1-4]|march|june|september|december)|\d{4})\b/i.test(hay));
@@ -764,6 +830,28 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       if (!e || e.orderBook === 'NOT_STATED') u.push('Order book: Not stated');
       if (!e || e.cfoToPat == null) u.push('CFO/PAT: Not disclosed');
       if (!e || e.marginNow == null) u.push('Operating margin: Not disclosed');
+      break;
+    case 'licence_capacity':
+      u.push('Demand for the new volume (orders, offtake, utilisation, revenue): Absent — not on file');
+      say('Commercial start date', /commercial (production|start)|from (fy|q[1-4]|\w+ \d{4})/i.test(hay));
+      say('Revenue at full volume', false);
+      break;
+    case 'merger':
+      say('Swap ratio / consideration', /swap ratio|share exchange ratio|consideration/i.test(hay));
+      say('Combined revenue / profit', /revenue|turnover|ebitda|profit/i.test(hay));
+      say('Effective date / approvals', /effective date|nclt|approved by/i.test(hay), 'Unknown');
+      break;
+    case 'strategic_expansion':
+      u.push('Revenue, orders or investment in the new entity / geography: Not stated — a step, not business yet');
+      say('Funding committed', /invest|capital of|funded/i.test(hay));
+      break;
+    case 'promoter_buying':
+      say('Shares bought / price paid', /[\d,]+ (equity )?shares|at (an average )?price|₹\s*[\d,.]+ per share/i.test(hay));
+      say('Holding after the purchase', /post[- ]acquisition|after the (acquisition|purchase)|holding (of|at|to) \d/i.test(hay));
+      break;
+    case 'capital_allocation': case 'buyback':
+      say('Size versus market cap', hasValue);
+      say('Funding source', /cash|free cash|internal accruals|borrow/i.test(hay));
       break;
     case 'fundraising':
       say('Issue price / discount', /price|premium|discount/i.test(hay));
@@ -819,6 +907,8 @@ function transmissionOf(type: EventType, cls: EventClass, stage: Stage, mat: Mat
   // not NONE — unless it is a distress raise (NEGATIVE).
   if (type === 'Fundraising') return cls === 'NEGATIVE' ? 'NONE' : 'WEAK';
   if (type === 'Denial' || type === 'Management change' || type === 'Governance' || type === 'No identified catalyst' || type === 'Market/technical move') return 'NONE';
+  // zzz787: capital allocation (stake, promoter buying, buyback) changes who owns the shares, not the business.
+  if (type === 'Strategic investment' || type === 'Promoter buying' || type === 'Capital allocation') return 'WEAK';
   const early = stage === 'RUMOUR' || stage === 'PROPOSED' || stage === 'ENABLING';
   switch (type) {
     case 'Earnings': return 'DIRECT';
@@ -826,7 +916,8 @@ function transmissionOf(type: EventType, cls: EventClass, stage: Stage, mat: Mat
     case 'Order cancellation': return 'DIRECT';
     case 'Capacity expansion': return early ? 'LONG_TERM' : 'NEAR_TERM';
     case 'Production ramp': return 'NEAR_TERM';
-    case 'Acquisition': return stage === 'EXECUTED' ? 'NEAR_TERM' : early ? 'WEAK' : 'LONG_TERM';
+    case 'Acquisition': case 'Merger': return stage === 'EXECUTED' ? 'NEAR_TERM' : early ? 'WEAK' : 'LONG_TERM';
+    case 'Strategic expansion': return early ? 'WEAK' : 'LONG_TERM';
     case 'Pricing': case 'Guidance': case 'Accident / disruption': return 'NEAR_TERM';
     case 'Regulatory approval': case 'New product': case 'JV': case 'Divestment': return early ? 'WEAK' : 'LONG_TERM';
     case 'Partnership': case 'Buyback': case 'Rating action': case 'Debt / refinancing': case 'Litigation / regulatory': return 'WEAK';
@@ -834,67 +925,172 @@ function transmissionOf(type: EventType, cls: EventClass, stage: Stage, mat: Mat
   }
 }
 
-function persistenceOf(type: EventType, cls: EventClass, hay: string): Persistence {
+function persistenceByType(type: EventType, cls: EventClass, hay: string): Persistence {
   if (cls === 'MARKET_MOVE_ONLY') return 'DAYS';
   if (cls === 'NO_CATALYST' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return 'UNKNOWN';
   switch (type) {
     case 'Order win': case 'Contract': case 'Customer win':
       return /multi-?year|\b\d+\s*years?\b|annual|framework|long[- ]term|rate contract/i.test(hay) ? 'YEARS' : 'QUARTER';
-    case 'Capacity expansion': case 'Production ramp': case 'Acquisition': case 'Regulatory approval': case 'JV': case 'New product': case 'Pricing': return 'YEARS';
+    case 'Capacity expansion': case 'Production ramp': case 'Acquisition': case 'Merger': case 'Regulatory approval': case 'JV': case 'New product': case 'Pricing': case 'Strategic expansion': return 'YEARS';
     case 'Earnings': case 'Guidance': return 'QUARTER';
-    case 'Divestment': case 'Buyback': case 'Rating action': case 'Denial': return 'DAYS';
+    case 'Divestment': case 'Buyback': case 'Capital allocation': case 'Promoter buying': case 'Strategic investment': case 'Rating action': case 'Denial': return 'DAYS';
     case 'Order cancellation': case 'Accident / disruption': return /permanent|closure|terminat/i.test(hay) ? 'YEARS' : 'QUARTER';
     default: return 'UNKNOWN';
   }
 }
 
-// ── POTENTIAL DURATION ≠ PERSISTENCE EVIDENCE.                       (zzz782)
-// `persistenceOf` says how long an event of this TYPE could last (a new
-// product: years). This says how much EVIDENCE there is that it will: a new
-// product is long-term possible but unproven; a qualification is early; a
-// commercial order is evidence; a multi-year contract is strong; capacity with
-// utilisation / demand evidence is strong; a one-off tax demand is not persistent.
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz787 — FOUR DURATION CONCEPTS, KEPT APART.
+//   1. Contractual duration      only when a contract term / execution period is STATED
+//   2. Potential economic duration  what the nature of the event COULD support —
+//                                   derived from the facts first (term, programme,
+//                                   capacity, execution period), the type only as a
+//                                   fallback; always labelled NOT evidence
+//   3. Evidence-supported runway    what the filings PROVE (persistenceEvidenceOf)
+//   4. Catalyst state               where the catalyst is now (record state)
+// A consistency guard stops (2) being shorter than what (1) or (3) claims.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** A licence / capacity / plant to produce — capability, not demand. */
+export const CAPACITY_WORDS = /licen[cs]e (to|for) (the )?manufactur|permit(s|ted)? the company to manufacture|\bcapacity\b|\b(mtpa|ktpa|tpa|tpd|klpd|mw|mwh|gw)\b|\bbl\b|bulk lit(re|er)s?|million (bl|litres|tonnes|units)|per annum|commission(ed|ing)|new (plant|facility|unit|line)|distillery|manufacturing facility/i;
+/** Demand evidence: orders, offtake, utilisation, revenue — never "an order FROM the Commissioner granting a licence". */
+export const DEMAND_WORDS = /purchase orders?|order book|order backlog|orders? (worth|valued|of (rs|₹|inr))|orders? in hand|offtake|off-take|supply agreement|customer orders?|\butili[sz]ation\b\s*(of|at|rose|stood|is|was|\d)|revenue (from|of|contribution)|sales (of|grew|rose|increased)|sold out|fully booked|contracted (volume|capacity)/i;
+const PROGRAMME_WORDS = /multi[- ]programme|\bprogramm?es?\b|fighter|aircraft (programme|platform)|\bannual(ly)?\b|per annum|recurring|framework agreement|rate contract|multi-?year|long[- ]term (agreement|contract|supply)/i;
+
+export interface PotentialDuration {
+  value: Persistence;
+  /** Plain sentence: "Multi-year programme (…)". */
+  text: string;
+  /** FACTS = from a stated term / programme / capacity / period; TYPE = only the kind of event. */
+  basis: 'FACTS' | 'TYPE' | 'NONE';
+}
+
+const TYPE_POT_WORD: Record<Persistence, string> = { YEARS: 'Could last years', QUARTER: 'About a quarter / one execution period', DAYS: 'Days — a one-time event', UNKNOWN: 'Unknown' };
+
+/** The text every fact about this catalyst states (titles, quotes, milestones, periods). */
+function factText(facts: StructuredFacts[]): string {
+  return facts.map((x) => [x.source.title, ...x.quotes, ...(x.time?.milestones || []), x.time?.executionPeriod || '', x.event.product || '', (x as any).statedPotentialNative != null ? 'annual business potential' : ''].join(' ')).join(' ');
+}
+
+/** zzz787: POTENTIAL economic duration from the FACTS; the event type only as
+ *  a labelled fallback. Never evidence, never an input to the evidence grade. */
+export function potentialDurationOf(type: EventType, cls: EventClass, hay: string, facts: StructuredFacts[] = []): PotentialDuration {
+  if (cls === 'MARKET_MOVE_ONLY') return { value: 'DAYS', text: 'Days — a price-band / technical move', basis: 'NONE' };
+  if (cls === 'NO_CATALYST' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return { value: 'UNKNOWN', text: 'Unknown — no event', basis: 'NONE' };
+  const ft = `${hay} ${factText(facts)}`;
+  const orderLike = type === 'Order win' || type === 'Contract' || type === 'Customer win';
+  if (cls !== 'NEGATIVE' && !CAPITAL_ALLOCATION_TYPES.has(type) && type !== 'Fundraising') {
+    const term = contractTermYears(ft);
+    if (term != null && term >= 1) return { value: 'YEARS', text: `Multi-year — contract term ${term} year${term === 1 ? '' : 's'} as stated`, basis: 'FACTS' };
+    if (orderLike && PROGRAMME_WORDS.test(ft)) return { value: 'YEARS', text: 'Multi-year programme — programme / annual business stated in the filing', basis: 'FACTS' };
+    const capFact = facts.some((x) => !!x.economics?.capacityAfter) || ((type === 'Capacity expansion' || type === 'Production ramp' || type === 'Regulatory approval') && CAPACITY_WORDS.test(ft));
+    if (capFact && (type === 'Capacity expansion' || type === 'Production ramp' || type === 'Regulatory approval')) return { value: 'YEARS', text: 'Multi-year — a plant / licensed capacity runs for years if demand fills it', basis: 'FACTS' };
+    const per = facts.map((x) => x.time?.executionPeriod).find(Boolean) || (/(?:execut\w*|complet\w*|deliver\w*|suppl\w*)\s+(?:with)?(?:in|over)\s+(?:a period of\s+)?(\d{1,3})\s*months?/i.exec(ft)?.[0] ?? null);
+    const months = per ? Number((/(\d{1,3})\s*months?/i.exec(per) || [])[1]) : NaN;
+    if (orderLike && Number.isFinite(months) && months > 0) return months >= 12
+      ? { value: 'YEARS', text: `One execution period — ${months} months as stated`, basis: 'FACTS' }
+      : { value: 'QUARTER', text: `One execution period — ${months} months as stated`, basis: 'FACTS' };
+  }
+  const v = persistenceByType(type, cls, hay);
+  return { value: v, text: `${TYPE_POT_WORD[v]} (by type of event only)`, basis: v === 'UNKNOWN' ? 'NONE' : 'TYPE' };
+}
+
+/** zzz787: distinct official evidence PERIODS behind the operating facts — two
+ *  filings 12 days apart are one period; ≥60 days apart (or different
+ *  reporting quarters) are two. Press never counts. */
+export function officialEvidencePeriods(facts: StructuredFacts[]): number {
+  const dates = Array.from(new Set(facts
+    .filter((x) => x.source.kind !== 'PRESS' && x.source.date && (x as any).polarity !== 'negative' && !['tax_litigation', 'regulatory_negative', 'fundraising', 'resale_registration', 'debt', 'governance'].includes(x.event.kind))
+    .map((x) => String(x.source.date).slice(0, 10)))).sort();
+  let periods = 0, last = -Infinity;
+  for (const d of dates) { const t = Date.parse(d); if (!Number.isFinite(t)) continue; if (t - last >= 60 * 86_400_000) { periods++; last = t; } }
+  return periods;
+}
+
+// ── EVIDENCE-SUPPORTED PERSISTENCE (zzz782, facts-only since zzz787).
+// What the FILINGS prove — never the event type alone, never the potential
+// duration, never price. STRONG needs ≥2 independent official evidence
+// periods (or a ledger mechanism filed across ≥2 periods). A contract term, a
+// programme or capacity stated once is MEDIUM at best ("EVIDENCE"); capacity,
+// a licence or commissioning without demand evidence is UNPROVEN.
 export type PersistEvidenceLevel = 'NOT_PERSISTENT' | 'UNPROVEN' | 'EARLY' | 'EVIDENCE' | 'STRONG' | 'NONE';
+export const PERSIST_EVIDENCE_WORD: Record<PersistEvidenceLevel, string> = { STRONG: 'Strong', EVIDENCE: 'Medium', EARLY: 'Early', UNPROVEN: 'Unproven', NOT_PERSISTENT: 'Not persistent', NONE: 'None' };
+export interface PersistEvidenceCtx {
+  /** officialEvidencePeriods() of the catalyst's facts. */
+  officialPeriods?: number;
+  /** contractTermYears() of the filing text. */
+  contractYears?: number | null;
+}
 export function persistenceEvidenceOf(type: EventType, cls: EventClass, stage: Stage, key: string, hay: string,
-  pc: { confidence: string; specialFocus: boolean; label: string; kind?: string } | null | undefined): { level: PersistEvidenceLevel; text: string } {
+  pc: { confidence: string; specialFocus: boolean; label: string; kind?: string; periods?: number } | null | undefined,
+  ctx: PersistEvidenceCtx = {}): { level: PersistEvidenceLevel; text: string } {
   if (cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return { level: 'NONE', text: 'No event — nothing to persist.' };
   if (cls === 'NEGATIVE') {
     return /\b(gst|tax|penalt\w*|demand|show[- ]cause|\bscn\b|notice|interest|fine|levy|assessment)\b/i.test(hay)
       ? { level: 'NOT_PERSISTENT', text: 'One-off tax / penalty item — not persistent unless similar demands recur.' }
       : { level: 'UNPROVEN', text: 'Negative development — whether it recurs is not established.' };
   }
-  if (pc && pc.kind !== 'PROJECT_PIPELINE' && (pc.specialFocus || pc.confidence === 'HIGH')) return { level: 'STRONG', text: `Filed mechanism evidence across metrics (${pc.label}).` };
+  if (CAPITAL_ALLOCATION_TYPES.has(type) || type === 'Fundraising' || type === 'Rating action' || type === 'Management change' || type === 'Divestment' || type === 'Denial')
+    return type === 'Strategic investment'
+      ? { level: 'UNPROVEN', text: 'A strategic holder\'s stake — a capital-allocation signal; any commercial link to the business is not on file.' }
+      : { level: 'NOT_PERSISTENT', text: 'Capital allocation / financing — not an operating catalyst.' };
+  const periods = ctx.officialPeriods ?? 0;
+  if (pc && pc.kind !== 'PROJECT_PIPELINE' && (pc.specialFocus || pc.confidence === 'HIGH'))
+    return (pc.periods ?? 0) >= 2 || periods >= 2
+      ? { level: 'STRONG', text: `Filed mechanism evidence across ${Math.max(pc.periods ?? 0, periods)} evidence periods (${pc.label}).` }
+      : { level: 'EVIDENCE', text: `Filed mechanism evidence (${pc.label}) — one evidence period so far; strong needs a second.` };
   if (pc && pc.kind !== 'PROJECT_PIPELINE' && pc.confidence === 'MEDIUM') return { level: 'EVIDENCE', text: `Mechanism evidence on file (${pc.label}), not yet across periods.` };
   if (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR') return { level: 'UNPROVEN', text: 'Enabling step — nothing booked yet; tracked until a definitive step is filed.' };
+  const operating = type !== 'Earnings' && type !== 'Guidance' && type !== 'Pricing';
+  if (operating && periods >= 2) return { level: 'STRONG', text: `${periods} independent official evidence periods on file for this catalyst.` };
+  const demand = DEMAND_WORDS.test(hay);
   switch (type) {
     case 'New product':
       return /\b(orders?|revenue|sales|customers? (signed|onboarded)|subscribers?)\b/i.test(hay) && /\d/.test(hay)
-        ? { level: 'EVIDENCE', text: 'Commercial traction stated with the launch.' }
+        ? { level: 'EVIDENCE', text: 'Commercial traction stated with the launch — one period.' }
         : { level: 'UNPROVEN', text: 'Long-term possible, unproven — no orders or revenue on file yet.' };
     case 'Regulatory approval':
-      return /purchase order|commercial (order|supply|supplies)|supply order/i.test(hay)
-        ? { level: 'EVIDENCE', text: 'Approval with a commercial order on file.' }
-        : { level: 'EARLY', text: key === 'qualification' ? 'Qualification — early; no commercial order on file yet.' : 'Licence / approval — opens a market; no commercial order on file yet.' };
-    case 'Order win': case 'Contract': case 'Customer win':
-      return /multi-?year|\b\d+\s*years?\b|framework|rate contract|\bannual(ly)?\b|per annum|long[- ]term|\bprogramm?e?s?\b/i.test(hay)
-        ? { level: 'STRONG', text: 'Multi-year / recurring programme stated — confirm it is fixed, not an initial award.' }
+      if (/purchase order|commercial (order|supply|supplies)|supply order/i.test(hay) || (key === 'licence_capacity' && demand)) return { level: 'EVIDENCE', text: 'Approval with a commercial order on file.' };
+      if (key === 'licence_capacity' || CAPACITY_WORDS.test(hay)) return { level: 'UNPROVEN', text: 'Licence / capacity to produce — regulatory and production capability, not demand. Demand evidence absent: commercial persistence unproven.' };
+      return { level: 'EARLY', text: key === 'qualification' ? 'Qualification — early; no commercial order on file yet.' : 'Licence / approval — opens a market; no commercial order on file yet.' };
+    case 'Order win': case 'Contract': case 'Customer win': {
+      const yrs = ctx.contractYears ?? contractTermYears(hay);
+      if (yrs != null) return { level: 'EVIDENCE', text: `One contract on file with a stated ${yrs}-year term — medium: revenue visibility not yet quantified; strong needs repeat orders, renewals or billing across periods.` };
+      return PROGRAMME_WORDS.test(hay)
+        ? { level: 'EVIDENCE', text: 'Programme / recurring business stated in one filing period — medium until a later period repeats it (confirm it is fixed, not an initial award).' }
         : { level: 'EVIDENCE', text: 'Commercial order on file — covers one execution period.' };
+    }
     case 'Capacity expansion': case 'Production ramp':
-      return /utili[sz]ation|order book|offtake|\borders?\b|sold out|fully booked|demand/i.test(hay)
-        ? { level: 'STRONG', text: 'Capacity with utilisation / demand evidence.' }
-        : stage === 'EXECUTED' || /commission|operational|commercial production|started production|production (start|commenc)/i.test(hay) ? { level: 'EARLY', text: 'Capacity commissioned — utilisation and demand not yet evidenced.' }
-          : { level: 'UNPROVEN', text: 'Capacity planned — nothing commissioned yet.' };
-    case 'Acquisition': case 'JV':
+      return demand
+        ? { level: 'EVIDENCE', text: 'Capacity with demand / utilisation evidence — one period so far.' }
+        : stage === 'EXECUTED' || stage === 'OPERATIONAL' || /commission|operational|commercial production|started production|production (start|commenc)/i.test(hay)
+          ? { level: 'UNPROVEN', text: 'Capacity commissioned — demand (orders, offtake, utilisation, revenue) not evidenced: commercial persistence unproven.' }
+          : { level: 'UNPROVEN', text: 'Capacity planned — nothing commissioned, no demand evidenced: commercial persistence unproven.' };
+    case 'Acquisition': case 'JV': case 'Merger':
       return stage === 'EXECUTED' && /revenue|ebitda|turnover/i.test(hay)
         ? { level: 'EVIDENCE', text: 'Completed, with the target\'s economics stated.' }
         : { level: 'EARLY', text: 'Deal signed — target economics and integration not yet evidenced.' };
+    case 'Strategic expansion': return { level: 'UNPROVEN', text: 'A new subsidiary / geography — no revenue, orders or investment on file yet.' };
     case 'Earnings': return { level: 'EARLY', text: 'One quarter\'s result — persistence needs the next quarter.' };
     case 'Guidance': return { level: 'EARLY', text: 'Management guidance — a target, not evidence.' };
     case 'Pricing': return { level: 'EARLY', text: 'Price change — persistence depends on the industry holding it.' };
-    case 'Buyback': case 'Rating action': case 'Management change': case 'Divestment': case 'Fundraising': case 'Denial':
-      return { level: 'NOT_PERSISTENT', text: 'Not an operating catalyst.' };
     default: return { level: 'UNPROVEN', text: 'Persistence not established.' };
   }
+}
+
+const PERSIST_RANK: Record<Persistence, number> = { UNKNOWN: -1, DAYS: 0, QUARTER: 1, YEARS: 2 };
+/** zzz787 — CONSISTENCY GUARD. The potential duration can never be shorter
+ *  than what the contract term or the evidence already claims, and "strong
+ *  evidence" never sits beside a one-quarter potential without a sentence
+ *  saying why the potential was raised. */
+export function guardPotential(pot: PotentialDuration, ev: { level: PersistEvidenceLevel; text: string }, contractYears: number | null): { pot: PotentialDuration; note: string | null } {
+  const need: { v: Persistence; why: string } | null = contractYears != null && contractYears >= 1 ? { v: 'YEARS', why: `the stated contract term (${contractYears} year${contractYears === 1 ? '' : 's'})` }
+    : ev.level === 'STRONG' ? { v: 'YEARS', why: 'evidence across two or more periods' } : null;
+  if (!need || PERSIST_RANK[pot.value] >= PERSIST_RANK[need.v]) return { pot, note: null };
+  return {
+    pot: { value: need.v, text: `Multi-year — raised to match ${need.why}`, basis: 'FACTS' },
+    note: `Potential duration raised from "${pot.text}" to multi-year: ${need.why} already claims more than ${pot.value === 'QUARTER' ? 'one quarter' : 'a few days'}.`,
+  };
 }
 
 /** zzz782: all rupee amounts in a negative-event text, in ₹ crore — "₹3.53 crore
@@ -929,20 +1125,24 @@ function chainOf(type: EventType, trans: Transmission, stage: Stage, it: { headl
   const early = stage === 'RUMOUR' || stage === 'PROPOSED' || stage === 'ENABLING';
   const driver = (() => {
     switch (type) {
-      case 'Order win': case 'Contract': case 'Customer win': return early ? 'order book: nothing booked yet (enabling stage)' : it.value != null ? `order book +${money(it.value, it.market)}` : 'order book up — value Not disclosed';
+      case 'Order win': case 'Contract': case 'Customer win': return early ? 'order book: nothing booked yet (enabling stage)' : it.value != null ? `order book +${moneyExact(it.value, it.market)}${it.mat.verification === 'PENDING' ? ' (stated; document verification pending)' : ''}` : 'order book up — value Not disclosed';
       case 'Capacity expansion': case 'Production ramp': return it.cap ? `capacity ${it.cap.before} → ${it.cap.after} (${it.cap.delta}, +${it.cap.pct}%)` : 'installed capacity up — size Not disclosed';
-      case 'Acquisition': return it.value != null ? `acquired business for ${money(it.value, it.market)}` : 'acquired business — price Not disclosed';
+      case 'Acquisition': return it.value != null ? `acquired business for ${moneyExact(it.value, it.market)}${it.mat.verification === 'PENDING' ? ' (stated; document verification pending)' : ''}` : 'acquired business — price Not disclosed';
       case 'Regulatory approval': return 'market access — permits work, books none';
       case 'Order cancellation': return it.value != null ? `order book −${money(it.value, it.market)}` : 'order book down — value Not disclosed';
       case 'Accident / disruption': return 'lost output — size Not disclosed';
-      case 'Buyback': return 'share count down (mechanical EPS effect)';
+      case 'Buyback': case 'Capital allocation': return 'share count / cash change (mechanical per-share effect, not the business)';
+      case 'Strategic investment': return 'a strategic holder takes a stake — no revenue link stated';
+      case 'Promoter buying': return 'promoter holding up — ownership change, not the business';
+      case 'Merger': return 'combined business — terms and dilution per share decide the effect';
+      case 'Strategic expansion': return 'new subsidiary / geography — nothing sold there yet';
       case 'Pricing': return 'realisation change — size Not disclosed';
       default: return 'TBD';
     }
   })();
   const revenue = early ? 'REVENUE: none until converted — TBD'
     : type === 'Order win' || type === 'Contract' || type === 'Customer win'
-      ? `REVENUE: ${it.value != null ? `${money(it.value, it.market)} over the execution period — timing Not disclosed` : 'Not disclosed'}${ratio ? ` (${ratio})` : ''}`
+      ? `REVENUE: ${it.value != null ? `${moneyExact(it.value, it.market)} over the execution period${it.mat.verification === 'PENDING' ? ' (stated; document verification pending)' : ''} — timing Not disclosed` : 'Not disclosed'}${ratio ? ` (${ratio})` : ''}`
       : type === 'Capacity expansion' || type === 'Production ramp' ? 'REVENUE: depends on utilisation and demand — Not disclosed'
         : ratio ? `REVENUE: TBD (${ratio})` : 'REVENUE: TBD';
   return [ev, `DRIVER: ${driver}`, revenue, 'MARGIN: Not disclosed', 'EPS/FCF: TBD', `VALUATION: TBD${ratio ? ` — event = ${it.mat.ratios[0].pct}% of ${it.mat.ratios[0].basis === 'market_cap' ? 'market cap' : 'revenue'}` : ''}`];
@@ -991,7 +1191,9 @@ const gapF = (g: ResearchItem['expectationGap']) => (g.direction === 'UNDER_REFL
 function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: string | null; staleEarnings: boolean; veryStale: boolean; namedAllottee: boolean; clarification: boolean }): { score: number; reasons: string[]; details: Record<string, number> } {
   const d: Record<string, number> = {
     eventQuality: F_CLASS[it.eventClass], materiality: F_MAT[it.materiality.label], transmission: F_TRANS[it.transmission],
-    evidence: F_EVID[it.sourceConfidence], freshness: freshF(it.ageDays ?? null), expectationGap: gapF(it.expectationGap), persistence: F_PERS[it.persistence],
+    // zzz787: a potential duration from the event TYPE alone is wording, never a
+    // ranking input — only a potential the filing's own facts support counts.
+    evidence: F_EVID[it.sourceConfidence], freshness: freshF(it.ageDays ?? null), expectationGap: gapF(it.expectationGap), persistence: it.potentialDuration && it.potentialDuration.basis !== 'FACTS' ? F_PERS.UNKNOWN : F_PERS[it.persistence],
   };
   const reasons: string[] = [];
   const cls = it.eventClass;
@@ -1019,7 +1221,7 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: str
   if (it.transmission === 'NONE') reasons.push('No transmission to earnings');
   if (it.ageDays != null && it.ageDays <= 3 && cls !== 'NO_CATALYST') reasons.push(`Fresh (${it.ageDays === 0 ? 'today' : `${it.ageDays}d`})`);
   if (it.expectationGap.direction === 'UNDER_REFLECTED') reasons.push('Move small against the fundamental change');
-  if (it.persistence === 'YEARS') reasons.push('Multi-year persistence');
+  if (it.persistence === 'YEARS' && (!it.potentialDuration || it.potentialDuration.basis === 'FACTS')) reasons.push('Multi-year potential stated in the filing (not evidence)');
   let pen = 1;
   const penal = (k: string, f: number, why: string) => { d[`penalty_${k}`] = f; pen *= f; reasons.push(why); };
   // zzz771: dilution is a flag on a potential catalyst, not a rejection —
@@ -1065,6 +1267,8 @@ const VAR_OF: Partial<Record<EventType, string>> = {
   'Capacity expansion': 'capacity/utilisation', 'Production ramp': 'capacity/utilisation', 'Accident / disruption': 'capacity/utilisation',
   'Earnings': 'margin', 'Guidance': 'guidance', 'Pricing': 'margin', 'Acquisition': 'capital allocation', 'Buyback': 'capital allocation',
   'Fundraising': 'capital allocation', 'Regulatory approval': 'market access', 'New product': 'market access',
+  'Merger': 'capital allocation', 'Strategic investment': 'capital allocation', 'Promoter buying': 'capital allocation', 'Capital allocation': 'capital allocation',
+  'Strategic expansion': 'market access',
 };
 const NEXT_CHECK: Record<string, string> = {
   'order growth': 'order book ÷ TTM revenue at the next update', 'customer': 'customer concentration in the next disclosure',
@@ -1085,6 +1289,8 @@ function portfolioOf(ticker: string, type: EventType, cls: EventClass, e: Earnin
   const next = v ? (NEXT_CHECK[v] || `the next disclosure on ${v}`) : 'turnover, sector moves and the next filing';
   if (cls === 'NEGATIVE') return { relevance: rel, thesisVariable: v, note: `Challenges thesis variable ${v || 'Not mapped'} — next check ${next}.` };
   if (!v || cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY' || cls === 'DATA_UNAVAILABLE' || cls === 'LISTING') return { relevance: rel, thesisVariable: null, note: `No thesis-relevant event — next check ${next}.` };
+  // zzz787: a stake, a promoter purchase or a buyback is capital-allocation research — never a portfolio action, never a thesis change.
+  if (CAPITAL_ALLOCATION_TYPES.has(type)) return { relevance: rel, thesisVariable: v, note: `Capital-allocation research, not a portfolio action — the thesis status is unchanged; next check ${next}.` };
   return { relevance: rel, thesisVariable: v, note: `${cls === 'POTENTIAL_UNVERIFIED' ? 'May support' : 'Supports'} thesis variable ${v} — next check ${next}.` };
 }
 
@@ -1110,6 +1316,14 @@ function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality,
       ? `A named allottee (${fr.allottees.join(', ')}) taking stock at a stated price can be the catalyst; it also adds supply — check the price against market, size against market cap and use of proceeds.`
       : 'A raise with no named allottee adds supply — check pricing, allottees and use of proceeds before treating it as a catalyst.';
   }
+  // zzz787 — the new event types say what they are.
+  if (key === 'strategic') return 'An outside strategic investor\'s stake — capital-allocation research, not a portfolio action. Confirm it in an official filing and look for any commercial agreement; the stake itself books no revenue.';
+  if (key === 'promoter_buying') return 'The promoter is buying shares — insider buying is a capital-allocation signal, not revenue. Check the size, the price and whether the buying repeats.';
+  if (key === 'capital_allocation') return 'Capital allocation (buyback / payout) — it changes the share count or the cash, not the business.';
+  if (key === 'merger') return 'A merger / scheme — the swap terms, dilution per share and approvals decide what it means.';
+  if (key === 'strategic_expansion') return 'A new subsidiary / geography — an enabling step; nothing is sold there yet.';
+  if (key === 'licence_capacity') return 'A licence / capacity to produce — capability, not demand. Commercial persistence is unproven until orders, offtake, utilisation or revenue are on file.';
+  if (key === 'contract_term' && cls !== 'NEGATIVE') return 'A contract with a stated term — a runway, not proven revenue; its value and billing are not yet quantified.';
   if (cls === 'NEGATIVE') return type === 'Earnings' ? 'Results weakened; the move is not explained by fundamentals.' : type === 'Accident / disruption' ? 'Operational disruption — size the lost output and the insurance cover.' : 'Negative development in the window — check whether it changes the thesis.';
   if (key === 'enabling') return `${stage === 'PROPOSED' ? 'A proposal' : 'An enabling step (LoI / MoU / board approval)'}, not an executed order — nothing is booked yet.`;
   if (cls === 'CONFIRMED_LOW_MATERIALITY') return type === 'Earnings' ? 'Real result, but the change is modest — unlikely to explain the move alone.' : 'Real event, but too small relative to company scale to explain the move.';
@@ -1125,9 +1339,11 @@ function whyOf(cls: EventClass, type: EventType, stage: Stage, mat: Materiality,
   }
 }
 
-function actionOf(cls: EventClass, rel: PortfolioRelevance): ResearchAction {
+function actionOf(cls: EventClass, rel: PortfolioRelevance, type?: EventType): ResearchAction {
   if (cls === 'NEGATIVE') return 'Negative evidence';
   if (cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY') return 'No catalyst';
+  // zzz787: capital-allocation research is never "thesis evidence" / a portfolio action.
+  if (type && CAPITAL_ALLOCATION_TYPES.has(type)) return cls === 'POTENTIAL_UNVERIFIED' ? 'Investigate' : 'Monitor';
   if ((rel === 'HOLDING' || rel === 'WATCHLIST') && (cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED')) return 'Thesis evidence';
   if (cls === 'CONFIRMED_MATERIAL') return 'Review';
   if (cls === 'POTENTIAL_UNVERIFIED' || cls === 'DATA_UNAVAILABLE') return 'Investigate';
@@ -1151,7 +1367,9 @@ export function answerQuestions(qs: string[], ctx: { facts: Record<string, strin
   const pctOf = (v: number, base: number) => Math.round((v / base) * 1000) / 10;
   const sizeAns = (): string | null => {
     if (ctx.value == null) return f.value ? `${f.value} (as stated)` : null;
-    const parts = [money(ctx.value, ctx.market)];
+    // zzz787: an unread figure is stated, never turned into a % of anything.
+    if (!ctx.read) return `${moneyExact(ctx.value, ctx.market)} stated · document verification pending (no % computed)`;
+    const parts = [moneyExact(ctx.value, ctx.market)];
     if (ctx.revenue) parts.push(`≈ ${pctOf(ctx.value, ctx.revenue)}% of TTM revenue`);
     if (ctx.marketCap) parts.push(`≈ ${pctOf(ctx.value, ctx.marketCap)}% of market cap`);
     return parts.join(' · ');
@@ -1170,7 +1388,7 @@ export function answerQuestions(qs: string[], ctx: { facts: Record<string, strin
   };
   return qs.map((q) => {
     const a = pick(q);
-    if (a) return `${q} — ✓ ${a}${ctx.read ? ' (per the filing)' : ' (from the stated value; filing not model-read)'}`;
+    if (a) return `${q} — ✓ ${a}${ctx.read ? ' (per the filing)' : ' (as stated in the filing summary; document not read yet)'}`;
     return ctx.read ? `${q} — not stated in the filing (ask management / next concall)` : q;
   });
 }
@@ -1202,6 +1420,13 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   // zzz785: workstream A/B structured facts, when the finding carries them.
   const sfacts = structuredFactsOf(f);
   const sfFund = sfacts.filter((x) => x.event.kind === 'fundraising').slice(-1)[0] || null;
+  // zzz787 — a figure counts as VERIFIED only when a READ official document
+  // states it: a model-read / verbatim-extracted quote on the finding, or a
+  // DOCUMENT_READ structured fact carrying the same value. A summary, subject
+  // line or filing metadata figure is "stated", never a materiality ratio.
+  const docStates = (v: number | null): boolean => v != null && sfacts.some((x) => x.source.access === 'DOCUMENT_READ' && x.source.kind !== 'PRESS'
+    && [x.economics.valueNative, x.economics.considerationNative, x.economics.capex].some((n) => n != null && Math.abs(n - v) <= Math.max(0.01, v * 0.01)));
+  const isVerifiedValue = (v: number | null): boolean => v != null && (verifiedDoc || docStates(v));
 
   // ── which event does this name carry? ──
   const earningsLead = !!e && (!f || status === 'none' || status === 'source_failed' || status === 'routine_only' || status === 'unresearched' || (status === 'catalyst' && f.category === 'quarterly_result'));
@@ -1253,7 +1478,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     type = 'Fundraising'; dilution = true;
     conf = verifiedDoc ? 'VERIFIED_DOCUMENT' : f!.sourceTier === 'primary' ? 'VERIFIED_FILING' : f!.sourceTier === 'secondary' ? 'SECONDARY_SUMMARY' : 'UNVERIFIED';
     stage = stageOf(type, f!.stage, evHay);
-    fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, true, sfFund);
+    fr = fundraisingOf(evHay, stage, value, marketCap, market, isVerifiedValue(value ?? sfFund?.economics.valueNative ?? null), true, sfFund);
     cls = fr.cls; label = fr.label; mat = fr.mat;
     if (fr.resale) scanNote = `Only a resale / shelf registration in the last ${windowDays} days — ${notScanned}`;
   } else if (status === 'negative') {
@@ -1261,7 +1486,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     dilution = type === 'Fundraising';
     conf = verifiedDoc ? 'VERIFIED_DOCUMENT' : f!.sourceTier === 'primary' ? 'VERIFIED_FILING' : f!.sourceTier === 'secondary' ? 'SECONDARY_SUMMARY' : 'UNVERIFIED';
     stage = stageOf(type, f!.stage, evHay);
-    if (type === 'Order cancellation') mat = valueMateriality(value, marketCap, revenue, market, 'order', verifiedDoc, false);
+    if (type === 'Order cancellation') mat = valueMateriality(value, marketCap, revenue, market, 'order', isVerifiedValue(value), false);
   } else if (status === 'catalyst' && !earningsLead) {
     const t = eventTypeOf(f!.category, evHay, false); type = t.type; label = t.label;
     stage = stageOf(type, f!.stage, evHay);
@@ -1270,14 +1495,17 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     const renewal = notes.some((n) => /renewal or re-announcement/i.test(n));
     if (type === 'Capacity expansion' || type === 'Production ramp') {
       cap = parseCapacityChange(`${quote || ''} ${headline0}`);
-      if (cap) {
+      // zzz787: a capacity change read only from a summary headline is stated, not verified — no % from it.
+      if (cap && !verifiedDoc) mat = { label: 'UNKNOWN', ratios: [], verification: 'PENDING', confidence: 0, statedValue: null, explanation: `UNKNOWN — pending document verification. Stated capacity ${cap.before} → ${cap.after} · Source: filing metadata/summary · Document verification: pending.` };
+      else if (cap) {
         const lab: Materiality['label'] = cap.pct >= 25 ? 'SIGNIFICANT' : cap.pct >= 10 ? 'MODERATE' : 'SMALL';
         mat = { label: lab, ratios: [{ basis: 'current_capacity', pct: cap.pct, text: `${cap.delta} ÷ ${cap.before} current capacity = ${cap.pct}%` }], explanation: `Capacity increment ${cap.before} → ${cap.after} = +${cap.pct}% of current capacity.` };
-        if (value != null) mat.ratios.push(...valueMateriality(value, marketCap, revenue, market, 'capex', verifiedDoc, renewal).ratios);
-      } else mat = valueMateriality(value, marketCap, revenue, market, 'capex', verifiedDoc, renewal);
+        mat.verification = 'DOCUMENT_VERIFIED'; mat.confidence = 1;
+        if (value != null) mat.ratios.push(...valueMateriality(value, marketCap, revenue, market, 'capex', isVerifiedValue(value), renewal).ratios);
+      } else mat = valueMateriality(value, marketCap, revenue, market, 'capex', isVerifiedValue(value), renewal);
     } else {
-      const k: keyof typeof BANDS = type === 'Acquisition' || type === 'JV' || type === 'Divestment' ? 'acquisition' : type === 'Buyback' ? 'buyback' : type === 'Order win' || type === 'Contract' || type === 'Customer win' ? 'order' : 'generic';
-      mat = valueMateriality(value, marketCap, revenue, market, k, verifiedDoc, renewal);
+      const k: keyof typeof BANDS = type === 'Acquisition' || type === 'Merger' || type === 'JV' || type === 'Divestment' ? 'acquisition' : type === 'Buyback' || type === 'Capital allocation' ? 'buyback' : type === 'Order win' || type === 'Contract' || type === 'Customer win' ? 'order' : 'generic';
+      mat = valueMateriality(value, marketCap, revenue, market, k, isVerifiedValue(value), renewal);
     }
     const early = stage === 'RUMOUR' || stage === 'PROPOSED' || stage === 'ENABLING';
     if (early && mat.label !== 'UNKNOWN') {
@@ -1293,11 +1521,11 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
       // zzz771: preferential / QIP / warrants / rights / private placement is
       // a potential catalyst with a dilution flag; NEGATIVE only on distress.
       dilution = true;
-      fr = fundraisingOf(evHay, stage, value, marketCap, market, verifiedDoc, false, sfFund);
+      fr = fundraisingOf(evHay, stage, value, marketCap, market, isVerifiedValue(value ?? sfFund?.economics.valueNative ?? null), false, sfFund);
       cls = fr.cls; label = early ? `${fr.label} (${stage.toLowerCase()}, not allotted)` : fr.label; mat = fr.mat;
     }
     else if (type === 'Management change' && /resign|cessation|steps? down|stepped down|departure/i.test(evHay)) { cls = 'NEGATIVE'; label = 'Management departure'; }
-    else if (type === 'Management change' || type === 'Governance' || type === 'Rating action') cls = 'CONFIRMED_LOW_MATERIALITY';
+    else if (type === 'Management change' || type === 'Governance' || type === 'Rating action' || type === 'Promoter buying') cls = 'CONFIRMED_LOW_MATERIALITY';
     else if (early || conf === 'SECONDARY_SUMMARY' || conf === 'UNVERIFIED') cls = 'POTENTIAL_UNVERIFIED';
     else if (mat.label === 'SMALL') cls = 'CONFIRMED_LOW_MATERIALITY';
     else if (mat.label === 'SIGNIFICANT' || mat.label === 'MODERATE') cls = 'CONFIRMED_MATERIAL';
@@ -1356,8 +1584,8 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     sourceUrl = x.source.url || sourceUrl; filedDate = x.source.date || filedDate; ageDays = ageFrom(x.source.date, input.now) ?? ageDays;
     stage = x.event.stage === 'PROPOSED' || x.event.stage === 'ANNOUNCED' ? 'PROPOSED' : x.event.stage === 'AWARDED' ? 'AWARDED' : x.event.stage === 'SIGNED' ? 'SIGNED' : 'UNKNOWN';
     scanNote = null; routine = false;
-    if (x.economics.valueNative != null) { value = x.economics.valueNative; mat = valueMateriality(value, marketCap, revenue, market, x.event.kind === 'order' ? 'order' : x.event.kind === 'acquisition' ? 'acquisition' : 'generic', officialRead, false); }
-    if (x.event.kind === 'stake_by_strategic') keyOverride = 'strategic';
+    if (x.economics.valueNative != null) { value = x.economics.valueNative; mat = valueMateriality(value, marketCap, revenue, market, x.event.kind === 'order' ? 'order' : x.event.kind === 'acquisition' || x.event.kind === 'merger' ? 'acquisition' : 'generic', officialRead, false); }
+    if (isStrategicStakeKind(x.event.kind)) keyOverride = 'strategic';
   }
 
   // zzz771: can this event be THIS session's catalyst? Only classes that
@@ -1368,8 +1596,24 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const isContext = catalystFor === 'CONTEXT';
 
   const trans = transmissionOf(type, cls, stage, mat.label);
-  const pers = persistenceOf(type, cls, evHay);
-  const persEv = persistenceEvidenceOf(type, cls, stage, nextKey(type, cls, stage, f, clarification), evHay, (f as any)?.persistence ?? null);
+  // zzz787 — potential (facts first, type as labelled fallback), evidence
+  // (facts only), and the consistency guard between them. The facts read are
+  // this catalyst's family (an order thread for an order) — never another
+  // event of the same company.
+  const fam = FAMILY_OF[type] || [];
+  const famFacts = (sfacts.length ? sfacts : factsForFinding(f)).filter((x) => fam.includes(x.event.kind) && (x as any).polarity !== 'negative');
+  const famHay = `${evHay} ${factText(famFacts)}`;
+  const orderLikeT = type === 'Order win' || type === 'Contract' || type === 'Customer win';
+  const contractYears = orderLikeT && cls !== 'NEGATIVE' ? contractTermYears(famHay) : null;
+  const potRaw = potentialDurationOf(type, cls, evHay, famFacts);
+  // zzz787: the thread's facts can say what the headline does not — a programme
+  // (RAYMOND "fighter aircraft programme", "multi-programme … annually") or a term.
+  const refineKey = (k: string): string => (k === 'order' && contractTermYears(famHay) != null && !PROGRAMME_WORDS.test(famHay) ? 'contract_term' : k === 'order' && PROGRAMME_WORDS.test(famHay) ? 'order_recurring' : k);
+  const key0 = refineKey(keyOverride || nextKey(type, cls, stage, f, clarification));
+  const pcSum = (f as any)?.persistence ?? null;
+  const persEv = persistenceEvidenceOf(type, cls, stage, key0, famHay, pcSum, { officialPeriods: officialEvidencePeriods(famFacts), contractYears });
+  const guard = guardPotential(potRaw, persEv, contractYears);
+  const pers: Persistence = guard.pot.value;
   // zzz782: a tax / penalty demand that is a rounding error against the
   // company's size (SEDEMAC ₹40,036; JAMNAAUTO ₹4 Cr) is shown, but as an
   // IMMATERIAL negative — not ranked with real negative evidence.
@@ -1409,9 +1653,14 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     const earlyW = stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR';
     const noun = type === 'Order cancellation' ? 'Order cancelled' : type === 'Acquisition' ? 'Acquisition' : type === 'Buyback' ? 'Buyback' : type === 'Fundraising' ? 'Issue size' : type === 'Capacity expansion' ? 'Capex' : 'Order';
     const ratioTxt = mat.ratios[0] ? ` = ${mat.ratios[0].pct}% of ${mat.ratios[0].basis === 'market_cap' ? 'market cap' : 'revenue'}` : '';
+    // zzz787: a figure the read document has not confirmed is STATED only —
+    // never "= X% of market cap" beside "not verified".
+    const pendingV = mat.verification === 'PENDING' || !isVerifiedValue(value);
     whatChanged = earlyW
-      ? `${label || type}: ${money(value, market)} stated, nothing booked yet (${stage})${ratioTxt ? ` — scale${ratioTxt}` : ''}`
-      : `${noun} ${money(value, market)}${ratioTxt}${conf === 'VERIFIED_DOCUMENT' ? '' : ' (figure not verified in the document)'}`;
+      ? `${label || type}: ${moneyExact(value, market)} stated, nothing booked yet (${stage})${ratioTxt && !pendingV ? ` — scale${ratioTxt}` : pendingV ? ' — document verification pending' : ''}`
+      : pendingV
+        ? `Stated ${noun === 'Issue size' ? 'issue size' : noun === 'Capex' ? 'capex' : noun === 'Order cancelled' ? 'cancelled order value' : `${noun.toLowerCase()} value`}: ${moneyExact(value, market)} · Source: filing metadata/summary · Document verification: pending`
+        : `${noun} ${mat.ratios[0] ? mat.ratios[0].text : moneyExact(value, market)} (document-verified)`;
   }
 
   // zzz776: a GDV / "may unlock" figure is headline SCALE, not the company's
@@ -1422,7 +1671,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     const m = /((?:inr|₹|rs\.?)\s*[\d,.]+(?:\s*[-–]\s*[\d,.]+)?\s*(?:crores?|cr\b|lakh crore|million|billion|bn|mn))[^.;]{0,30}/i.exec(String(headline0 || ''));
     whatChanged = `Headline scale${m ? `: ${m[0].trim()}` : ''} — project / potential scale, not the company's revenue or share; company financial impact not established`;
   }
-  const key = keyOverride || nextKey(type, cls, stage, f, clarification);
+  const key = key0;
   // zzz775: a research question the filing already answers is shown WITH its
   // answer; one the model-read filing is silent on says so. Only a filing
   // that was not read keeps the bare question.
@@ -1444,18 +1693,20 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     eventClass: cls, eventType: type, headline: clean(shownHeadline), whatChanged, before, after, filedDate, stage,
     sourceConfidence: conf, sourceUrl, quote, materiality: mat, transmission: trans,
     transmissionChain: chainOf(type, trans, stage, { headline: clean(headline), value, market, mat, e, f: filed, cap }),
-    persistence: pers, persistenceEvidence: persEv, immaterialNegative, expectationGap: gap, unknowns, researchNext, pricing: pricingOfFinding(f),
+    persistence: pers, persistenceEvidence: persEv, potentialDuration: guard.pot, immaterialNegative, expectationGap: gap, unknowns, researchNext, pricing: pricingOfFinding(f),
     whyResearch: whyOf(cls, type, stage, mat, key, gap, e, fr, clarification),
     portfolio, earnings,
     flags: { band: bandLevel, listing, dilution, denial, turnover: num(f?.turnover) ?? num(b?.turnover) },
     priority: 0, priorityReasons: [], scoreDetails: null,
-    eventLabel: label || type, action: isContext ? 'Monitor' : actionOf(cls, portfolio.relevance), move: mv, findingStatus: status, notes, ageDays,
+    eventLabel: label || type, action: isContext ? 'Monitor' : actionOf(cls, portfolio.relevance, type), move: mv, findingStatus: status, notes, ageDays,
     catalystFor, ...displayNameOf(ticker, company), scanNote,
     persistentCatalyst: f?.persistence ?? null,
     news: f?.news ? { narrative: f.news.narrative ? { label: f.news.narrative.label, days: f.news.narrative.days, firstDate: f.news.narrative.firstDate, lastDate: f.news.narrative.lastDate, lead: f.news.narrative.lead } : null, items: f.news.items.slice(0, 3).map((x) => ({ title: x.title, url: x.url, date: x.date, source: x.source })) } : null,
   };
   // ── zzz785: catalyst records, timeline, persistence test, gaps, links ──
-  Object.assign(item, catalystLayer(item, f, { ticker, market, cls, key, stage, evHay, pers, persEv, mat, fr, conf, verifiedDoc, marketCap, revenue, input, unknowns }));
+  Object.assign(item, catalystLayer(item, f, { ticker, market, cls, key, stage, evHay, pers, persEv, mat, fr, conf, verifiedDoc, marketCap, revenue, input, unknowns, potentialText: guard.pot.text }));
+  // zzz787: the four duration concepts, kept apart, derived from the facts.
+  item.durations = durationsOf(item, { key, famFacts, famHay, contractYears, guardNote: guard.note, valueVerified: isVerifiedValue(value), value });
   const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
   const p = priorityOf(item, { routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
@@ -1470,15 +1721,125 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
 // the three gap labels, evidence breadth, unknown-economics label, links.
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** zzz787: the fact kinds that belong to one event type's catalyst thread. */
+const FAMILY_OF: Partial<Record<EventType, EventKind[]>> = {
+  'Order win': ['order', 'qualification'], 'Contract': ['order', 'qualification', 'partnership'], 'Customer win': ['order', 'qualification'],
+  'Capacity expansion': ['capacity'], 'Production ramp': ['capacity'], 'Regulatory approval': ['qualification', 'order', 'capacity'],
+  'Acquisition': ['acquisition'], 'Merger': ['merger', 'acquisition'], 'New product': ['new_product'], 'Partnership': ['partnership'], 'JV': ['partnership'],
+  'Strategic expansion': ['strategic_expansion'], 'Strategic investment': ['stake_by_strategic', 'strategic_investment'], 'Promoter buying': ['promoter_buying'],
+};
+
+/** zzz787 — the four duration concepts on one card, never merged:
+ *   contractual      only a STATED term / execution period ("Contract runway: 5 years")
+ *   potential        what the nature of the event could support — NOT evidence
+ *   evidence         what the filings prove (Strong needs ≥2 evidence periods)
+ *   catalystState    where the catalyst is now (Identified → validating …)
+ *  plus revenue visibility, the current evidence, the next evidence and what
+ *  is missing — in plain words. A contract term is never phrased as revenue. */
+export interface DurationView {
+  contractual: string | null;
+  potential: { text: string; basis: 'FACTS' | 'TYPE' | 'NONE'; note: string };
+  evidence: { level: PersistEvidenceLevel; word: string; text: string };
+  catalystState: string | null;
+  revenueVisibility: string | null;
+  currentEvidence: string | null;
+  nextEvidence: string[];
+  missing: string[];
+  /** Capacity / licence / commissioning: capability is not demand (ABDL). */
+  capacity: { potential: string; demand: 'present' | 'absent'; commercial: 'supported' | 'unproven'; text: string } | null;
+  /** Consistency guard note, when the potential had to be raised to match a term / the evidence. */
+  guard: string | null;
+}
+
+const STATE_FLOW: Record<CatalystRecord['state'], string> = {
+  IDENTIFIED: 'Identified — not yet in an official filing', DOCUMENTED: 'Identified → validating (one official filing; nothing delivered yet)',
+  EXECUTING: 'Validating → executing (follow-up official filings on file)', CONFIRMED: 'Confirmed — completed / delivering',
+  WEAKENING: 'Weakening — a delay or cut is on file', DISPROVED: 'Disproved — cancelled or denied',
+};
+
+function durationsOf(it: ResearchItem, c: { key: string; famFacts: StructuredFacts[]; famHay: string; contractYears: number | null; guardNote: string | null; valueVerified: boolean; value: number | null }): DurationView | null {
+  const cls = it.eventClass;
+  if (cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return null;
+  const ev = it.persistenceEvidence || { level: 'NONE' as PersistEvidenceLevel, text: 'Not established.' };
+  const pot = it.potentialDuration || { value: it.persistence, text: TYPE_POT_WORD[it.persistence], basis: 'TYPE' as const };
+  const orderLike = it.eventType === 'Order win' || it.eventType === 'Contract' || it.eventType === 'Customer win';
+  const period = c.famFacts.map((x) => x.time?.executionPeriod).find(Boolean) || null;
+  const contractual = c.contractYears != null
+    ? `Contract runway: ${c.contractYears} year${c.contractYears === 1 ? '' : 's'} (as stated). Economic contribution still unquantified.`
+    : orderLike && period ? `Execution period: ${period} (as stated) — a delivery schedule, not proof of revenue.` : null;
+  const statedPotential = c.famFacts.map((x) => (x as any).statedPotentialNative).find((v) => typeof v === 'number') as number | undefined;
+  const revenueVisibility = !orderLike ? null
+    : c.value != null && c.valueVerified ? `${moneyExact(c.value, it.market)} stated in the read document${period ? ` over ${period}` : ''} — billing timing not disclosed`
+      : c.value != null ? `Stated ${moneyExact(c.value, it.market)} — document verification pending`
+        : statedPotential != null ? `Not yet quantified — ~${moneyExact(statedPotential, it.market)} a year is stated only as a POTENTIAL, not a firm value`
+          : 'Revenue visibility not yet quantified';
+  const primary = it.catalysts?.[0];
+  const catalystState = primary ? STATE_FLOW[primary.state] : null;
+  const officialDocs = primary ? (it.timeline || []).filter((t) => t.status === 'official' || t.status === 'official · subject line only').length : 0;
+  const currentEvidence = c.key === 'contract_term' ? `One contract${officialDocs ? ` (${officialDocs} official filing${officialDocs === 1 ? '' : 's'})` : ''}`
+    : primary ? (officialDocs ? `${officialDocs} official filing${officialDocs === 1 ? '' : 's'} on this catalyst` : 'Press / summary only — no official document read') : null;
+  const NEXT_EV: Record<string, string[]> = {
+    contract_term: ['order value', 'recurring revenue', 'renewal', 'execution'],
+    order_recurring: ['a firm annual value (not a potential)', 'programme duration', 'production-rate linkage', 'first deliveries / billing in results'],
+    order: ['execution / billing in the next results', 'repeat order from the same customer', 'order book after this order'],
+    customer: ['first supply / billing', 'repeat order', 'share of revenue from the customer'],
+    capacity: ['orders / offtake for the new capacity', 'first utilisation figure', 'revenue from the new capacity'],
+    licence_capacity: ['orders / offtake for the licensed volume', 'commercial production start', 'utilisation', 'revenue from it'],
+    qualification: ['first commercial purchase order', 'supply start', 'repeat order'],
+    approval: ['first commercial order / supplies', 'revenue attached to the approval'],
+    enabling: ['definitive agreement', 'approvals', 'binding order', 'supply / production start'],
+    enabling_realestate: ['definitive agreement', 'approvals', 'launch', 'bookings', 'collections'],
+    acquisition: ['completion', 'first consolidated quarter with the target', 'target revenue / profit'],
+    merger: ['approvals and the effective date', 'combined revenue / profit', 'swap ratio / dilution'],
+    strategic_expansion: ['first revenue, order or investment in the new entity', 'named customer / partner'],
+    strategic: ['official filing confirming the stake', 'any commercial agreement with the investor'],
+    promoter_buying: ['next shareholding disclosure', 'repeated purchases'],
+    capital_allocation: ['completion', 'share count after it'],
+    product: ['first named customer order', 'revenue from the product'],
+    earnings: ['next quarter repeating the change', 'guidance', 'cash conversion'],
+  };
+  const missing: string[] = [];
+  if (c.key === 'order_recurring') {
+    if (!(c.value != null && c.valueVerified)) missing.push('disclosed annual value (firm, not a potential)');
+    if (!c.contractYears && !period) missing.push('programme duration');
+    missing.push('production-rate linkage (does the value scale with the customer\'s build rate?)');
+  } else if (c.key === 'contract_term') {
+    if (c.value == null) missing.push('contract value');
+    missing.push('recurring revenue per year', 'renewal terms');
+  } else if (orderLike) {
+    if (c.value == null) missing.push('order value');
+    if (!period) missing.push('execution period');
+  }
+  const capLike = it.eventType === 'Capacity expansion' || it.eventType === 'Production ramp' || c.key === 'licence_capacity';
+  let capacity: DurationView['capacity'] = null;
+  if (capLike) {
+    const demand = DEMAND_WORDS.test(c.famHay);
+    capacity = { potential: 'multi-year', demand: demand ? 'present' : 'absent', commercial: demand ? 'supported' : 'unproven',
+      text: `Capacity potential: multi-year · Demand evidence: ${demand ? 'present (orders / offtake / utilisation / revenue on file)' : 'absent'} · Commercial persistence: ${demand ? 'supported in one period' : 'unproven'}` };
+    if (!demand) missing.push('demand evidence (orders, offtake, utilisation or revenue)');
+  }
+  return {
+    contractual,
+    potential: { text: pot.text, basis: pot.basis, note: 'Potential economic duration — the nature of the event, NOT evidence that it will last.' },
+    evidence: { level: ev.level, word: PERSIST_EVIDENCE_WORD[ev.level], text: ev.text },
+    catalystState, revenueVisibility, currentEvidence,
+    nextEvidence: NEXT_EV[c.key] || [], missing: Array.from(new Set(missing)), capacity, guard: c.guardNote,
+  };
+}
+
 const POSITIVE_KIND_TYPE: Partial<Record<EventKind, EventType>> = {
   order: 'Order win', capacity: 'Capacity expansion', qualification: 'Regulatory approval', acquisition: 'Acquisition',
-  new_product: 'New product', partnership: 'Partnership', stake_by_strategic: 'Acquisition',
+  new_product: 'New product', partnership: 'Partnership',
+  // zzz787: a strategic's stake is a strategic INVESTMENT, not an acquisition.
+  stake_by_strategic: 'Strategic investment', strategic_investment: 'Strategic investment', strategic_expansion: 'Strategic expansion',
+  merger: 'Merger', promoter_buying: 'Promoter buying',
 };
 
 function catalystLayer(item: ResearchItem, f: Finding | null, c: {
   ticker: string; market: 'IN' | 'US'; cls: EventClass; key: string; stage: Stage; evHay: string; pers: Persistence;
   persEv: { level: PersistEvidenceLevel; text: string }; mat: Materiality; fr: FundraiseRead | null; conf: SourceConfidence; verifiedDoc: boolean;
   marketCap: number | null; revenue: { v: number; basis: 'ttm_revenue' | 'annual_revenue' } | null; input: ResearchViewInput; unknowns: string[];
+  potentialText?: string | null;
 }): Partial<ResearchItem> {
   const out: Partial<ResearchItem> = {};
   const T = up(c.ticker);
@@ -1501,9 +1862,11 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
     const x = v.facts[v.facts.length - 1];
     const amt = x?.economics.valueNative ?? (v.polarity === 'negative' ? negativeAmountCr(`${x?.source.title || ''} ${(x?.quotes || []).join(' ')}`) : null);
     if (amt == null || !(amt > 0)) return v.polarity === 'negative' ? 'Amount not stated — size against market cap unknown' : null;
-    if (!c.marketCap || !(c.marketCap > 0)) return `${money(amt, c.market)} stated; market cap not available`;
+    // zzz787: only a figure a READ official document states is sized.
+    if (!x || x.source.access !== 'DOCUMENT_READ' || x.source.kind === 'PRESS') return `${moneyExact(amt, c.market)} stated · document verification pending (no ratio)`;
+    if (!c.marketCap || !(c.marketCap > 0)) return `${moneyExact(amt, c.market)} stated; market cap not available`;
     const p = (amt / c.marketCap) * 100;
-    return `${money(amt, c.market)} ÷ ${money(c.marketCap, c.market)} market cap = ${p < 0.01 ? '<0.01' : p < 1 ? (Math.round(p * 100) / 100).toString() : r1(p)}%`;
+    return `${moneyExact(amt, c.market)} ÷ ${money(c.marketCap, c.market)} market cap = ${p < 0.01 ? '<0.01' : p < 1 ? (Math.round(p * 100) / 100).toString() : r1(p)}%`;
   };
   const card = (v: CatalystView): CatalystCard => ({
     id: v.id, kind: v.kind, kindWord: KIND_WORD[v.kind], title: clean(v.title), state: v.state, stateWord: STATE_WORD[v.state], previousState: v.previousState,
@@ -1520,7 +1883,7 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
   if (eventClass && c.cls !== 'NEGATIVE' || (c.cls === 'NEGATIVE' && primary)) {
     out.persistenceTest = persistenceTestOf({
       kind: primary?.kind ?? (c.fr ? 'fundraising' : null), facts: primary?.facts || [], record: primary,
-      potential: c.pers, evidenceLevel: c.persEv.level, evidenceText: c.persEv.text, hay: c.evHay, market: c.market,
+      potential: c.pers, potentialText: c.potentialText ?? null, evidenceLevel: c.persEv.level, evidenceText: c.persEv.text, hay: c.evHay, market: c.market,
     });
   }
   // Three distinct gap labels.
@@ -1542,8 +1905,16 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
   const rel = item.portfolio?.relevance;
   const pc = item.persistentCatalyst;
   const thesis = rel === 'HOLDING' || rel === 'WATCHLIST' ? `/portfolio-catalysts#pc-${encodeURIComponent(T)}` : null;
-  const sf = pc && (pc.specialFocus || pc.kind === 'PROJECT_PIPELINE' || pc.confidence === 'HIGH' || pc.confidence === 'MEDIUM') ? '/portfolio-catalysts#special-focus' : null;
-  out.links = thesis || sf ? { thesis, specialFocus: sf, note: 'Separate views, linked by ticker: this card is today\'s event; the thesis ledger holds why you own it; Special Focus remembers persistent mechanisms.' } : null;
+  // zzz787 — ONE underlying catalyst, three separate views, cross-linked (never
+  // listed again as separate items): Research Priority = what to investigate
+  // now (this card); Persistent Catalyst = could the mechanism continue;
+  // Special Focus = deserves sustained attention. Never merged into one score.
+  const sf = pc && pc.specialFocus ? `/portfolio-catalysts#sf-${encodeURIComponent(pc.id)}` : null;
+  const persistentLink = pc && !pc.specialFocus && (pc.kind === 'PROJECT_PIPELINE' || pc.confidence === 'HIGH' || pc.confidence === 'MEDIUM') ? `/portfolio-catalysts#special-focus` : null;
+  out.links = thesis || sf || persistentLink || primary || pc ? {
+    thesis, specialFocus: sf, persistent: persistentLink, catalystId: primary?.id ?? null, persistentId: pc?.id ?? null,
+    note: 'Same catalyst, separate views — linked, not repeated: this card is what to investigate now; the thesis ledger holds why you own it (its status is never changed by this); the persistent-catalyst memory asks whether the mechanism can continue; Special Focus is only for mechanisms that deserve sustained attention.',
+  } : null;
   return out;
 }
 

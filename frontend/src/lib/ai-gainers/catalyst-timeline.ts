@@ -67,14 +67,22 @@ export function evidenceGapOf(f: any): EvidenceGap | null {
 
 export const KIND_WORD: Record<EventKind, string> = {
   order: 'Order', capacity: 'Capacity', qualification: 'Qualification / approval', acquisition: 'Acquisition',
-  new_product: 'New product', fundraising: 'Fundraising', partnership: 'Partnership', stake_by_strategic: 'Strategic stake',
+  new_product: 'New product', fundraising: 'Fundraising', partnership: 'Partnership', stake_by_strategic: 'Strategic investment',
   guidance: 'Guidance', results: 'Results', regulatory_negative: 'Regulatory action', tax_litigation: 'Tax / legal demand',
   debt: 'Debt', governance: 'Governance', resale_registration: 'Resale registration', other: 'Event',
+  // zzz787 — distinct ownership / corporate kinds.
+  merger: 'Merger', strategic_expansion: 'Strategic expansion', strategic_investment: 'Strategic investment',
+  promoter_buying: 'Promoter stake purchase', capital_allocation: 'Capital allocation',
 };
 
 export const NEGATIVE_KINDS = new Set<EventKind>(['regulatory_negative', 'tax_litigation']);
-/** Kinds that move money around or register stock — not an operating mechanism. */
-export const NON_OPERATING_KINDS = new Set<EventKind>(['fundraising', 'resale_registration', 'debt', 'governance', 'tax_litigation', 'regulatory_negative']);
+/** Kinds that move money around or register stock — not an operating mechanism.
+ *  zzz787: promoter buying and capital allocation (buyback / dividend) are
+ *  capital-allocation research, not an operating mechanism either. */
+export const NON_OPERATING_KINDS = new Set<EventKind>(['fundraising', 'resale_registration', 'debt', 'governance', 'tax_litigation', 'regulatory_negative', 'promoter_buying', 'capital_allocation']);
+/** zzz787: neutral kinds (financing / housekeeping) — never listed as good or bad news. */
+const NEUTRAL_KINDS = new Set<EventKind>(['resale_registration', 'debt', 'governance', 'capital_allocation']);
+export const polarityOfKind = (k: EventKind): 'positive' | 'negative' | 'neutral' => (NEGATIVE_KINDS.has(k) ? 'negative' : NEUTRAL_KINDS.has(k) ? 'neutral' : 'positive');
 
 export const OFFICIAL_KINDS = new Set<SourceKind>(['EXCHANGE_FILING', 'SEC_FILING', 'SUBSIDIARY_FILING', 'COMPANY_IR']);
 export const isOfficial = (s: SourceRef) => OFFICIAL_KINDS.has(s.kind);
@@ -91,6 +99,8 @@ const CATEGORY_KIND: Record<string, EventKind> = {
   capacity_expansion: 'capacity', production_ramp: 'capacity', utilization_increase: 'capacity',
   product_qualification: 'qualification', regulatory_approval: 'qualification', export_approval: 'qualification',
   acquisition: 'acquisition', open_offer: 'acquisition', strategic_investor: 'stake_by_strategic',
+  // zzz787: no longer 'other' / forced into acquisition.
+  new_geography: 'strategic_expansion', promoter_purchase: 'promoter_buying', buyback: 'capital_allocation',
   new_product: 'new_product', fundraising: 'fundraising', dilution: 'fundraising',
   joint_venture: 'partnership', quarterly_result: 'results', margin_expansion: 'results',
   revenue_guidance_increase: 'guidance', guidance_reduction: 'guidance',
@@ -231,6 +241,11 @@ const DEFAULT_NEXT: Partial<Record<EventKind, string>> = {
   partnership: 'Definitive agreement or first binding order under it',
   results: 'Next quarter\'s result — does the change repeat?',
   guidance: 'Next quarter against the guidance',
+  merger: 'Scheme / merger approvals (board, shareholders, NCLT) and the effective date',
+  strategic_expansion: 'First revenue, order or investment figure from the new entity / geography',
+  strategic_investment: 'An official filing (SAST / 13D / exchange disclosure) that confirms the stake, then any commercial agreement',
+  promoter_buying: 'Next shareholding disclosure — does the promoter keep buying?',
+  capital_allocation: 'Completion of the buyback / payout and what it does to the share count',
 };
 const INVALIDATION: Partial<Record<EventKind, string>> = {
   order: 'Order cancelled, cut or delayed, or no revenue from it by the end of the stated execution period.',
@@ -246,6 +261,11 @@ const INVALIDATION: Partial<Record<EventKind, string>> = {
   partnership: 'Agreement lapses without a binding order.',
   results: 'Next quarter does not repeat the change.',
   guidance: 'Next quarter falls short of the guidance.',
+  merger: 'Scheme withdrawn, rejected or delayed by approvals.',
+  strategic_expansion: 'The new entity stays dormant — no revenue, order or investment follows.',
+  strategic_investment: 'Official filings do not confirm the stake, or the investor sells it.',
+  promoter_buying: 'Promoter sells or pledges shares.',
+  capital_allocation: 'Buyback / payout withdrawn or not completed.',
 };
 
 function titleOf(kind: EventKind, facts: StructuredFacts[]): string {
@@ -362,7 +382,7 @@ export function buildCatalystRecords(ticker: string, market: 'IN' | 'US', facts:
       id, ticker: T, market, kind, title: titleOf(kind, list), state, previousState,
       latestEvidence, nextMilestone, invalidation: INVALIDATION[kind] || 'A later filing that contradicts it.',
       sources, firstSeen, lastSeen, timeline,
-      polarity: NEGATIVE_KINDS.has(kind) ? 'negative' : kind === 'resale_registration' || kind === 'debt' || kind === 'governance' ? 'neutral' : 'positive',
+      polarity: polarityOfKind(kind),
       verification: anyOfficial ? (sources.some((s) => !isOfficial(s)) ? 'Official filing on file · press merged into it' : 'Official filing on file') : 'Secondary · verification required',
       facts: [...list].sort((a, b) => dateCmp(a.source.date, b.source.date)), duplicatesMerged: dup,
     });
@@ -437,7 +457,7 @@ export function storedView(r: CatalystRecord): CatalystView {
       date: s.date, title: s.title, kind: s.kind, kindWord: SOURCE_WORD[s.kind] || s.kind, access: s.access, url: s.url || null, eventKind: r.kind, catalystId: r.id,
       status: isOfficial(s) ? (s.access === 'SUMMARY_ONLY' ? 'official · subject line only' : 'official') : anyOfficial ? 'secondary · confirmed by filing' : 'secondary · verification required',
     })),
-    polarity: NEGATIVE_KINDS.has(r.kind) ? 'negative' : r.kind === 'resale_registration' || r.kind === 'debt' || r.kind === 'governance' ? 'neutral' : 'positive',
+    polarity: polarityOfKind(r.kind),
     verification: anyOfficial ? 'Official filing on file (earlier day)' : 'Secondary · verification required',
     facts: [], duplicatesMerged: 0,
   };

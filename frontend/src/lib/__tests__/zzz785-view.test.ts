@@ -143,7 +143,7 @@ describe('zzz785 · VIKRAN — a negative and a positive coexist on one card', (
     const [neg, pos] = it.catalysts!;
     assert.equal(neg.polarity, 'negative'); assert.equal(pos.polarity, 'positive');
     assert.equal(neg.materialityText, '₹2.1 Cr ÷ ₹2,400 Cr market cap = 0.09%');
-    assert.equal(pos.materialityText, '₹154 Cr ÷ ₹2,400 Cr market cap = 6.4%');
+    assert.equal(pos.materialityText, '₹153.76 Cr ÷ ₹2,400 Cr market cap = 6.4%');   // zzz787: the stated value exactly, not rounded to ₹154 Cr
     const t = strip(renderToStaticMarkup(React.createElement(ResearchCard, { it, rank: 1, onOpen: () => {} })));
     assert.ok(t.includes('ALSO ON FILE FOR THIS COMPANY') && t.includes('POWERGRID') && t.includes('▲ Positive'), t);
     assert.equal(it.persistenceTest!.grade, 'TEMPORARY');
@@ -180,7 +180,8 @@ describe('zzz785 · BETA — a strategic stake seen only in the press is Potenti
     const v = view({ BETA: mk({ ticker: 'BETA', status: 'none', facts: [fact('stake_by_strategic', src({ kind: 'PRESS', access: 'SUMMARY_ONLY', issuer: 'BETA', title: 'Strategic investor picks up 9.9% stake in Beta Drugs', url: 'https://news.example/beta' }), { counterparty: 'Strategic Investor' })] as any }) });
     const it = item(v, 'BETA');
     assert.equal(it.eventClass, 'POTENTIAL_UNVERIFIED');
-    assert.equal(it.eventLabel, 'Strategic stake — Potential · verification required');
+    assert.equal(it.eventLabel, 'Strategic investment — Potential · verification required');   // zzz787: its own type (was "Strategic stake", typed Acquisition)
+    assert.equal(it.eventType, 'Strategic investment');
     assert.equal(it.verification, 'Secondary · verification required');
     assert.ok(!v.noCatalyst.some((x) => x.ticker === 'BETA'));
     assert.ok(it.researchNext.some((q) => /official filing \(SAST \/ 13D/.test(q)));

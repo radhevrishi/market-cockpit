@@ -30,8 +30,11 @@
 //   · NO PRICE, NO RECOMMENDATION — Special Focus allocates research time.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { scaledNumber } from '@/lib/thesis/evidence-ledger';
+import { scaledNumber, periodOrdinal } from '@/lib/thesis/evidence-ledger';
+import { VAR_LABEL } from '@/lib/thesis/taxonomy';
 import { forwardSentence, volumeContext } from '@/lib/thesis/fact-normalize';
+import { factsForFinding } from '@/lib/ai-gainers/catalyst-timeline';
+import { catalystIdOf } from '@/lib/ai-gainers/structured-facts';
 export { volumeContext };
 
 export type PersistKind = 'CAPACITY_RAMP' | 'ORDER_VISIBILITY' | 'CUSTOMER_RAMP' | 'GEOGRAPHY' | 'MIX_PRICING' | 'PROJECT_PIPELINE';
@@ -67,6 +70,8 @@ export interface PersistItem {
   origin: 'ledger' | 'assessment' | 'gainer';
   /** zzz784: for capacity rows — production rate, store network, floor space. */
   capClass?: CapacityClass;
+  /** zzz787: the Daily Gainers event this item came from (catalystIdOf) — the cross-view link. */
+  eventId?: string;
 }
 
 export interface BeforeAfterRow { variable: string; before: string; current: string; direction: '↑' | '↓' | '→' | '?'; source: string; date: string | null }
@@ -117,6 +122,61 @@ export interface PersistentCatalyst {
   toQualify: string[];
   /** Not Special Focus yet, but one or two pieces of evidence away. */
   nearMiss: boolean;
+  /** zzz787: independent evidence PERIODS behind the mechanism figures (distinct
+   *  reporting periods, or filings ≥60 days apart). */
+  evidencePeriods?: number;
+  /** zzz787: what the Special Focus gate reads beyond confidence — demand
+   *  (orders / offtake), usage (utilisation / volume / revenue), capacity in
+   *  place, commissioned. Commissioning ALONE never makes Special Focus. */
+  gate?: { inService: boolean; demand: boolean; usage: boolean; capacityInPlace: boolean; orderCoverage?: boolean };
+  /** zzz787: why it qualifies for Special Focus (null = candidate only). */
+  sfBasis?: string | null;
+  /** zzz787: the underlying Daily Gainers event ids (catalystIdOf) behind this
+   *  mechanism — the cross-link, so the same event is never listed twice. */
+  eventIds?: string[];
+  /** zzz788: unused installed capacity, said as headroom — NEVER runway on its
+   *  own. "Capacity headroom: Utilisation 65% — 35 percentage points available
+   *  on the current installed-capacity basis." */
+  headroom?: string | null;
+  /** zzz788: the continuation evidence behind a capacity ramp's runway
+   *  (continuing order book, customer ramp, recurring volume growth, contracted
+   *  demand, utilisation rising) — null when none is on file. */
+  continuation?: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE MONEY FORMAT, THE CARD'S.                                      (zzz788)
+// "INR2,598 crores" in Special Focus beside "₹2,600 Cr" on the card read as
+// two different order books. A crore amount is printed "₹2,598 Cr" wherever
+// the persistence layer writes it. Only the FORMAT changes: the digits are the
+// document's, nothing is rounded, and anything that is not a plain crore
+// amount (USD, million, a range) is left exactly as written.
+// ═══════════════════════════════════════════════════════════════════════════
+export function rupeeCr(s: string | null | undefined): string {
+  const t0 = String(s ?? '').trim();
+  // A trailing period tag ("in Q1 FY27", "(Q1 FY27)") is not part of the amount.
+  const t = t0.replace(/\s*(?:\(\s*)?(?:in|as (?:of|on|at))?\s*Q[1-4]\s*FY\s?'?\d{2,4}\s*\)?\s*$/i, '').trim();
+  const m = /^(~|approx\.?|approximately|about|around|over|nearly)?\s*(₹|inr|rs\.?|`|!)?\s*(\d[\d,]*(?:\.\d+)?)\s*(crores?|crs?\.?|cr\.?|billions?|bn|millions?|mn)$/i.exec(t);
+  if (!m) return t0;
+  const pre = m[1] ? `${m[1]} ` : '';
+  const unit = m[4].toLowerCase();
+  if (/^c/.test(unit)) return `${pre}₹${m[3]} Cr`;
+  // A billion / million converts to crore only when the currency is rupees —
+  // an exact unit change (1 bn = 100 Cr, 1 mn = 0.1 Cr), never a guessed rate.
+  if (!m[2]) return t0;
+  const n = Number(m[3].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return t0;
+  const cr = /^b/.test(unit) ? n * 100 : n / 10;
+  const r = Math.round(cr * 100) / 100;
+  return `${pre}₹${r.toLocaleString('en-IN', { maximumFractionDigits: 2 })} Cr`;
+}
+
+/** zzz788: which of two readings of one figure is the LATER disclosure —
+ *  latest reporting period first, then the latest source date. */
+function laterThan(a: { period: string | null; date: string | null }, b: { period: string | null; date: string | null }): boolean {
+  const pa = a.period ? periodOrdinal(a.period) : -1, pb = b.period ? periodOrdinal(b.period) : -1;
+  if (pa !== pb) return pa > pb;
+  return String(a.date || '') > String(b.date || '');
 }
 
 // ── Metric → mechanism kind ────────────────────────────────────────────────
@@ -133,7 +193,7 @@ const CAPACITY_UNIT = /(?<![a-z])(mtpa|ktpa|tpa|tpd|tpm|mtpd|tons?|tonnes?|mt\b|
 const MONEY = /₹|\binr\b|\brs\.?\s?\d|\bcrores?\b|\bcr\b|\bmn\b|million|billion|\busd\b|\$/i;
 const PCT = /(\d+(?:\.\d+)?)\s*%/;
 /** A currency marker — "37 million sq ft" is not money. */
-const CUR = /₹|\binr\b|\brs\.?|\bcrores?\b|\bcr\b|\busd\b|\$/i;
+const CUR = /₹|\binr(?![a-z])|\brs\.?|\bcrores?\b|\bcr\b|\busd\b|\$/i;
 const LIFECYCLE_METRIC = /^(capex_status|commissioning|new_plant)$/;
 const LIFECYCLE_DONE = /commissioned|commercial production|commenced (commercial )?(production|operations)|started (commercial )?production|operational|production (started|commenced)|now running|went live/i;
 
@@ -343,8 +403,11 @@ export function itemsFromFinding(f: any): PersistItem[] {
   const src = [{ name: f.modelRead ? 'exchange filing (read)' : 'exchange filing (summary)', url: f.sourceUrl || null, date, quote: f.evidenceQuote ? clip(String(f.evidenceQuote), 260) : null }];
   const early = f.stage === 'enabling' || f.stage === 'scheduled';
   const out: PersistItem[] = [];
+  // zzz787: the SAME underlying catalyst id the Daily Gainers card uses.
+  let eventId: string | undefined;
+  try { const x = factsForFinding(f)[0]; if (x && f.ticker) eventId = catalystIdOf(String(f.ticker), x.event.kind, x.event.counterparty, x.event.product); } catch { eventId = undefined; }
   const push = (metric: string, kind: PersistKind, text: string, hard: boolean, after: string | null = null) =>
-    out.push({ metric, kind, cls: hard && !early ? 'HARD' : early ? 'FORWARD' : 'REMARK', text, before: null, after, numeric: scaledNumber(after), numericBefore: null, period: null, date, sources: src, origin: 'gainer' });
+    out.push({ metric, kind, cls: hard && !early ? 'HARD' : early ? 'FORWARD' : 'REMARK', text, before: null, after, numeric: scaledNumber(after), numericBefore: null, period: null, date, sources: src, origin: 'gainer', ...(eventId ? { eventId } : {}) });
   const val = f.valueStated != null ? `₹${f.valueStated} Cr` : said('value');
   if (cat === 'order_win' || cat === 'backlog_increase') {
     push('order_intake', 'ORDER_VISIBILITY', `Order${said('counterparty') ? ` from ${said('counterparty')}` : ''}${val ? `: ${val}` : ''}${said('execution_period') ? ` · execution ${said('execution_period')}` : ''}`, !!val, val);
@@ -362,7 +425,9 @@ export function itemsFromFinding(f: any): PersistItem[] {
 // ── 4. DEDUP — one figure, one item, many sources ──────────────────────────
 function dedupe(items: PersistItem[]): PersistItem[] {
   const byKey = new Map<string, PersistItem>();
-  const norm = (n: number | null) => (n == null ? null : Math.round(n / Math.pow(10, Math.max(0, Math.floor(Math.log10(Math.abs(n) || 1)) - 1))));
+  // Three significant figures (zzz788): "₹2,598 Cr" and "≈₹2,600 Cr" are one
+  // figure; ₹2,550 Cr and ₹2,640 Cr in two quarters are two readings.
+  const norm = (n: number | null) => (n == null ? null : Math.round(n / Math.pow(10, Math.max(0, Math.floor(Math.log10(Math.abs(n) || 1)) - 2))));
   for (const it of items) {
     const n = norm(it.numeric);
     const key = n != null ? `${it.metric}|${n}|${it.numericBefore != null ? norm(it.numericBefore) : ''}` : `${it.metric}|${it.text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60)}`;
@@ -370,9 +435,14 @@ function dedupe(items: PersistItem[]): PersistItem[] {
     if (!prev) { byKey.set(key, { ...it, sources: [...it.sources] }); continue; }
     // Keep the strongest class, the earliest date, and every source.
     const rank = (c: EvidenceClass) => (c === 'HARD' ? 2 : c === 'REMARK' ? 1 : 0);
+    // zzz788: the LATEST disclosure of the figure is the one printed (the card
+    // reads the latest period); a target never replaces a filed value.
+    const newer = it.cls !== 'FORWARD' && laterThan(it, prev);
     if (rank(it.cls) > rank(prev.cls)) { prev.cls = it.cls; prev.text = it.text; }
+    if (newer) { prev.text = it.text; prev.after = it.after; prev.numeric = it.numeric; prev.period = it.period ?? prev.period; if (it.before) { prev.before = it.before; prev.numericBefore = it.numericBefore; } }
     if (it.before && !prev.before) { prev.before = it.before; prev.numericBefore = it.numericBefore; prev.text = it.text; }
     for (const s of it.sources) if (!prev.sources.some((x) => x.name === s.name && x.date === s.date)) prev.sources.push(s);
+    if (!prev.eventId && it.eventId) prev.eventId = it.eventId;
     if (it.date && (!prev.date || it.date > prev.date)) prev.date = it.date;
   }
   return [...byKey.values()];
@@ -388,7 +458,45 @@ interface Ctx { ticker: string; thesisStatus?: string | null; temporary: string[
   capexBuild?: { projects: Array<{ name: string; build: string }> } | null }
 
 function series(items: PersistItem[], metric: string): PersistItem[] {
-  return items.filter((i) => i.metric === metric && i.cls === 'HARD' && i.numeric != null).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  // zzz788: ordered by reporting period, then source date — the last is the
+  // latest disclosure, the same one the card reads.
+  return items.filter((i) => i.metric === metric && i.cls === 'HARD' && i.numeric != null)
+    .sort((a, b) => ((a.period ? periodOrdinal(a.period) : -1) - (b.period ? periodOrdinal(b.period) : -1)) || String(a.date).localeCompare(String(b.date)));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HEADROOM IS NOT RUNWAY.                                            (zzz788)
+// FCL (80,000 → 148,000 MTPA, commissioned, 63%) and EXICOM (3x, commissioned,
+// 65%) read "High persistence evidence" on unused capacity. Commissioned
+// capacity and today's utilisation say nothing about FUTURE demand. A capacity
+// ramp's runway needs CONTINUATION evidence: a continuing / growing order book,
+// a customer ramp (repeat orders), recurring volume growth, utilisation rising
+// on the same basis, or contracted demand. Unused capacity is printed as
+// "Capacity headroom", never as runway, and never lifts a persistence grade.
+// ═══════════════════════════════════════════════════════════════════════════
+const MULTI_YEAR = /\b(\d+|two|three|four|five)[- ](year|yr)s?\b|multi[- ]year|over \d{2,} months|till (fy|20)\d{2}/i;
+const CONTRACTED = /offtake|off-take|sold out|fully booked|contracted (?:demand|volumes?|capacity|sales)|long[- ]term (?:supply |offtake )?(?:contract|agreement)s?|\bPPAs?\b|power purchase agreement|take[- ]or[- ]pay/i;
+export function demandContinuation(all: PersistItem[], quarterRevenueCr?: number | null): string | null {
+  const hard = all.filter((i) => i.cls === 'HARD');
+  const money = (i: PersistItem) => CUR.test(i.before || '') && CUR.test(i.after || '');
+  const obUp = hard.find((i) => i.metric === 'order_book' && money(i) && i.numericBefore != null && i.numeric != null && i.numeric > i.numericBefore * 1.03);
+  if (obUp) return `order book growing ${rupeeCr(obUp.before)} → ${rupeeCr(obUp.after)}`;
+  const ob = series(all, 'order_book').filter((i) => CUR.test(i.after || ''));
+  if (ob.length >= 2 && ob[ob.length - 1].numeric! > ob[0].numeric! * 1.03) return `order book growing ${rupeeCr(ob[0].after)} → ${rupeeCr(ob[ob.length - 1].after)}`;
+  const btb = hard.find((i) => i.metric === 'book_to_bill');
+  const btbX = btb ? Number((/(\d+(?:\.\d+)?)\s*x/i.exec(btb.after || '') || [])[1]) : NaN;
+  if (Number.isFinite(btbX) && btbX >= 1.2) return `book-to-bill ${btbX}x — orders arriving faster than revenue is billed`;
+  const last = ob.length ? ob[ob.length - 1] : null;
+  const obCr = last && last.numeric != null ? last.numeric / 1e7 : null;
+  const cov = obCr && quarterRevenueCr && quarterRevenueCr > 0 ? Math.round((obCr / (quarterRevenueCr * 4)) * 10) / 10 : null;
+  if (cov != null && cov >= 1.5) return `order book ${rupeeCr(last!.after)} ≈ ${cov}× annual revenue`;
+  const multi = hard.find((i) => i.kind === 'ORDER_VISIBILITY' && MULTI_YEAR.test(i.text));
+  if (multi) return `multi-year contracted execution (${clip(multi.text, 80)})`;
+  const cust = hard.find((i) => i.kind === 'CUSTOMER_RAMP' && /repeat|follow[- ]on|additional (order|product)|second (order|product)|expanded/i.test(i.text));
+  if (cust) return `customer ramp — ${clip(cust.text, 80)}`;
+  const contracted = all.find((i) => i.cls !== 'FORWARD' && CONTRACTED.test(`${i.text} ${i.sources.map((x) => x.quote || '').join(' ')}`));
+  if (contracted) return `contracted demand on file (${clip(contracted.text, 80)})`;
+  return null;
 }
 
 function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCatalyst | null {
@@ -458,6 +566,8 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
   let nextEvidence: string | null = null;
   let managementTarget: string | null = null;
   let capexNote: string | null = null;
+  let headroom: string | null = null;
+  let continuation: string | null = null;
   const targetText = (i: PersistItem) => `Management target (milestone, not evidence): ${clip(i.text, 150)} (${i.date || i.period || 'undated'})`;
 
   if (kind === 'CAPACITY_RAMP' && variant === 'NETWORK') {
@@ -582,17 +692,25 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     else if (hr >= stageRank('REVENUE_CONTRIBUTION') || ev.UTILISATION_RAMP) state = 'SCALING';
     else if (ev.VOLUME_RAMP || textRunning) state = 'RAMPING';
     else if (hr >= stageRank('COMMISSIONED')) state = 'VALIDATED';
-    // Runway: unused capacity is the runway — said in percentage points of
-    // utilisation, never converted into physical capacity. (zzz784)
-    const head = utilNow != null ? pp1(100 - utilNow) : null;
-    if (add && (addPct ?? 0) >= 20 && (utilNow == null || utilNow < 85)) runway = { ok: true, text: `Capacity up ${addPct}% (${add.before} → ${add.after})${utilNow != null ? ` with utilisation at ${utilNow}%` : '; utilisation on the new base not yet disclosed'} — the added capacity can still contribute.` };
-    else if (utilNow != null && factor) runway = addOnly
-      ? { ok: true, text: `Capacity added ${addOnly.after}; ${utilNow}% is a load / utilisation FACTOR, bounded by resource availability rather than by 100% — the runway is the added capacity generating over full periods, not headroom to 100%.` }
-      : { ok: false, text: `${utilNow}% is a load / utilisation FACTOR, bounded by resource availability rather than by 100% — no headroom is computed from it, and no capacity addition is evidenced.` };
-    else if (utilNow != null && utilNow < 80 && (ev.VOLUME_RAMP || addOnly)) runway = { ok: true, text: `Utilisation ${utilNow}% ${ev.VOLUME_RAMP ? 'with volume growing' : `with capacity added (${addOnly!.after})`} — ${head} percentage points of utilisation headroom.` };
-    else if (utilNow != null && utilNow < 80) runway = { ok: false, text: `Utilisation ${utilNow}% (${head} percentage points of utilisation headroom), but ${volFlat ? 'volume is flat' : 'no volume growth or capacity addition is evidenced'} — unused capacity without demand is not a catalyst.` };
-    else if (addVsBase != null && addVsBase >= 15 && (utilNow == null || utilNow < 90)) runway = { ok: true, text: `Addition of ${addOnly!.after} ≈ ${addVsBase}% of installed capacity.` };
-    else if (utilNow != null && utilNow >= 90) runway = { ok: false, text: `Utilisation ${utilNow}% — existing capacity is nearly full; the next leg needs new capacity${addOnly ? ` (addition on file: ${addOnly.after}${addVsBase != null ? `, ≈${addVsBase}% of the base` : ''})` : ''}.` };
+    // ── HEADROOM, SAID AS HEADROOM — NEVER AS RUNWAY.               (zzz788)
+    // Unused capacity is said in percentage points of utilisation on the
+    // current installed-capacity basis, never converted into physical
+    // capacity (zzz784), and never counted as runway on its own.
+    const head = utilNow != null && !factor && utilNow < 100 ? pp1(100 - utilNow) : null;
+    headroom = head != null && utilNow! < 90 ? `Capacity headroom: Utilisation ${utilNow}% — ${head} percentage points available on the current installed-capacity basis.`
+      : utilNow == null && add && (addPct ?? 0) >= 20 ? `Capacity headroom: capacity up ${addPct}% (${add.before} → ${add.after}); utilisation on the new base not yet disclosed.`
+        : utilNow == null && addVsBase != null && addVsBase >= 15 ? `Capacity headroom: addition of ${addOnly!.after} ≈ ${addVsBase}% of installed capacity.`
+          : null;
+    // Runway needs CONTINUATION: the capacity's own volume / utilisation rising,
+    // or continuing demand anywhere in the company's filed evidence.
+    const own = ev.VOLUME_RAMP ? `recurring volume growth on the installed base (${clip(items.find((i) => i.metric === 'volume' && isMech(i))?.text || 'volume rising', 80)})`
+      : ev.UTILISATION_RAMP ? `utilisation rising ${utilThen}% → ${utilNow}% on a comparable installed-capacity basis` : null;
+    continuation = own || demandContinuation(all, ctx.quarterRevenueCr);
+    const nearlyFull = utilNow != null && utilNow >= 90 && !factor;
+    if (nearlyFull && !add && !(addVsBase != null && addVsBase >= 15)) runway = { ok: false, text: `Utilisation ${utilNow}% — existing capacity is nearly full; the next leg needs new capacity${addOnly ? ` (addition on file: ${addOnly.after}${addVsBase != null ? `, ≈${addVsBase}% of the base` : ''})` : ''}.` };
+    else if (continuation) runway = { ok: true, text: `Continuation evidence: ${continuation}${factor ? `; ${utilNow}% is a load / utilisation FACTOR, bounded by resource availability — no headroom to 100% is computed from it` : ''}.` };
+    else if (utilNow != null && factor) runway = { ok: false, text: `Not evidenced — ${utilNow}% is a load / utilisation FACTOR, bounded by resource availability rather than by 100%, so no headroom is computed from it${addOnly ? `; capacity added (${addOnly.after}) is capacity in place, not demand` : ''}. No contracted offtake, order book or volume growth is on file.` };
+    else runway = { ok: false, text: `Not evidenced — ${headroom ? 'unused capacity is headroom, not runway' : 'capacity in place is not runway'}: no continuing order book, customer ramp, recurring volume growth or contracted demand is on file${volFlat ? ' (volume is flat)' : ''}.` };
     rowFor('capacity', 'Capacity'); rowFor('capacity_addition', 'Capacity added'); rowFor('utilisation', 'Utilisation'); rowFor('volume', 'Volume');
     // Happened = the evidenced rungs; not yet = LATER rungs only. (zzz784)
     for (const st of reached) happened.push(`${CAPACITY_STAGE_LABEL[st]}: ${ev[st]}`);
@@ -661,16 +779,18 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     const obCr = obLatest && obLatest.numeric != null && MONEY.test(obLatest.after || '') ? obLatest.numeric / 1e7 : null;
     const annualRev = ctx.quarterRevenueCr && ctx.quarterRevenueCr > 0 ? ctx.quarterRevenueCr * 4 : null;
     const coverage = obCr && annualRev ? Math.round((obCr / annualRev) * 10) / 10 : null;
-    mechanism = [ob.length ? `order book ${ob[ob.length - 1].after}` : null, obUp ? `up from ${obUp.before}` : obSeriesUp ? `up from ${ob[0].after}` : null,
-      coverage != null ? `≈${coverage}× annual revenue` : null, Number.isFinite(btbX) ? `book-to-bill ${btbX}x` : null, intake.length ? `order intake ${intake[intake.length - 1].after}` : null, multiYear ? 'multi-year execution' : null, repeat ? 'repeat orders' : null].filter(Boolean).join(' → ') || 'order evidence on file';
+    // zzz788: the LATEST disclosed order book, in the card's format (₹… Cr).
+    const R = rupeeCr;
+    mechanism = [ob.length ? `order book ${R(ob[ob.length - 1].after)}` : null, obUp ? `up from ${R(obUp.before)}` : obSeriesUp ? `up from ${R(ob[0].after)}` : null,
+      coverage != null ? `≈${coverage}× annual revenue` : null, Number.isFinite(btbX) ? `book-to-bill ${btbX}x` : null, intake.length ? `order intake ${R(intake[intake.length - 1].after)}` : null, multiYear ? 'multi-year execution' : null, repeat ? 'repeat orders' : null].filter(Boolean).join(' → ') || 'order evidence on file';
     if (obDown) state = 'WEAKENING';
     else if ((obUp || obSeriesUp) && (repeat || multiPeriod)) state = 'SCALING';
     else if (obUp || obSeriesUp || (Number.isFinite(btbX) && btbX >= 1.2) || (coverage != null && coverage >= 1.5)) state = 'VALIDATED';
     else if (ob.length && ob.length >= 2) state = 'MATURE';
-    if ((Number.isFinite(btbX) && btbX >= 1.2) || obUp || obSeriesUp || multiYear || (coverage != null && coverage >= 1.5)) runway = { ok: true, text: [coverage != null && coverage >= 1.5 ? `order book ${obLatest!.after} ≈ ${coverage}× annual revenue (latest quarter × 4)` : null, Number.isFinite(btbX) ? `Book-to-bill ${btbX}x — orders arriving faster than revenue is billed` : null, obUp ? `order book ${obUp.before} → ${obUp.after}` : obSeriesUp ? `order book ${ob[0].after} → ${ob[ob.length - 1].after}` : null, multiYear ? 'execution spans more than one year' : null].filter(Boolean).join('; ') + '.' };
-    else if (ob.length) runway = { ok: false, text: `Order book ${ob[ob.length - 1].after} on file, but no growth, book-to-bill or execution period that shows visibility beyond the current run-rate.` };
+    if ((Number.isFinite(btbX) && btbX >= 1.2) || obUp || obSeriesUp || multiYear || (coverage != null && coverage >= 1.5)) runway = { ok: true, text: [coverage != null && coverage >= 1.5 ? `order book ${R(obLatest!.after)} ≈ ${coverage}× annual revenue (latest quarter × 4)` : null, Number.isFinite(btbX) ? `Book-to-bill ${btbX}x — orders arriving faster than revenue is billed` : null, obUp ? `order book ${R(obUp.before)} → ${R(obUp.after)}` : obSeriesUp ? `order book ${R(ob[0].after)} → ${R(ob[ob.length - 1].after)}` : null, multiYear ? 'execution spans more than one year' : null].filter(Boolean).join('; ') + '.' };
+    else if (ob.length) runway = { ok: false, text: `Order book ${R(ob[ob.length - 1].after)} on file, but no growth, book-to-bill or execution period that shows visibility beyond the current run-rate.` };
     rowFor('order_book', 'Order book'); rowFor('order_intake', 'Order intake'); rowFor('book_to_bill', 'Book-to-bill');
-    ob.length ? happened.push(`Order book disclosed: ${ob[ob.length - 1].after}`) : notYet.push('Order book disclosed');
+    ob.length ? happened.push(`Order book disclosed: ${R(ob[ob.length - 1].after)}`) : notYet.push('Order book disclosed');
     (obUp || obSeriesUp) ? happened.push('Order book grew') : notYet.push('Order book growth shown over two readings');
     repeat ? happened.push('Repeat / continuing order intake') : notYet.push('Repeat orders');
     notYet.push('Conversion of the order book into revenue shown quarter by quarter');
@@ -678,7 +798,7 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
     // book already is (MTARTECH "INR5,000 cr by year-end" under ₹5,143 cr). (zzz784)
     const f0 = fwdText(/order/i);
     const f = f0 && !(obLatest && obLatest.numeric != null && f0.numeric != null && CUR.test(f0.after || '') && f0.numeric <= obLatest.numeric) ? f0 : null;
-    nextEvidence = ob.length ? `Next order book above ${ob[ob.length - 1].after}, with revenue growth showing conversion` : 'First disclosed order book figure';
+    nextEvidence = ob.length ? `Next disclosed order book above ${R(ob[ob.length - 1].after)}, with revenue conversion` : 'First disclosed order book figure';
     managementTarget = f ? targetText(f) : null;
     confirmWith = 'order book growing while revenue grows (conversion), book-to-bill ≥ 1, repeat orders';
     invalidateIf = 'order book declines, orders are cancelled or deferred, or execution slips';
@@ -744,28 +864,50 @@ function evaluate(kind: PersistKind, all: PersistItem[], ctx: Ctx): PersistentCa
 
   const evidence = [...hard, ...remarks].sort((a, b) => (a.cls === b.cls ? String(b.date).localeCompare(String(a.date)) : a.cls === 'HARD' ? -1 : 1));
   const id = `${ctx.ticker.toUpperCase()}:${kind}`;
+  // ── zzz787: WHAT THE SPECIAL FOCUS GATE READS BEYOND CONFIDENCE ──────────
+  // Commissioning alone (MILKYMIST's commissioned plant) is a persistent
+  // catalyst CANDIDATE, never Special Focus: it needs demand (orders /
+  // offtake), usage (utilisation / volume / revenue), a capacity runway behind
+  // orders, or evidence across two or more independent periods.
+  const hardAll = all.filter((i) => i.cls === 'HARD');
+  const demandEv = hardAll.some((i) => /^(order_book|order_intake|book_to_bill|revenue_visibility)$/.test(i.metric))
+    || hardAll.some((i) => i.metric === 'new_customer' && /order|contract|supply|offtake|off-take/i.test(i.text))
+    || all.some((i) => i.cls !== 'FORWARD' && /offtake|off-take|sold out|fully booked|orders? in hand|order backlog/i.test(`${i.text} ${i.sources.map((x) => x.quote || '').join(' ')}`));
+  const usageEv = hardAll.some((i) => (i.metric === 'utilisation' && isUtilisationReading(i.after, i.sources[0]?.quote)) || i.metric === 'volume'
+    || (i.metric === 'capex_earning' && /revenue|contribut|sales|turnover/i.test(i.text) && !/not yet|yet to|will|expected/i.test(i.text)));
+  const capInPlace = all.some((i) => i.cls === 'HARD' && ((i.metric === 'capacity' || i.metric === 'capacity_addition') && i.capClass !== 'NETWORK' && i.capClass !== 'FLOOR_SPACE' && i.capClass !== 'MONEY' || i.metric === 'utilisation'));
+  const commissionedEv = kind === 'CAPACITY_RAMP' && variant === 'PRODUCTION' && /Commissioned|Production \/ running|Utilisation ramp|Volume ramp|Revenue contribution|Margin contribution|Steady state/.test(stage);
+  const mechPeriods = new Set(mech.map((i) => i.period).filter(Boolean) as string[]).size;
+  let dateClusters = 0; { let last = -Infinity; for (const d of dates) { const t = Date.parse(d); if (Number.isFinite(t) && t - last >= 60 * 86_400_000) { dateClusters++; last = t; } } }
+  const evidencePeriods = Math.max(mechPeriods, dateClusters);
   const pc: PersistentCatalyst = {
     id, ticker: ctx.ticker.toUpperCase(), kind, label: variant === 'NETWORK' ? 'Network expansion (stores)' : variant === 'FLOOR_SPACE' ? 'Facility expansion (floor space)' : KIND_LABEL[kind], mechanism, state, confidence, runway,
     evidence, forward, beforeAfter, happened, notYet, nextMilestone, confirmWith, invalidateIf, duration,
-    stage, nextEvidence, managementTarget, variant, capexNote,
+    stage, nextEvidence, managementTarget, variant, capexNote, headroom, continuation,
     sourceQuality: `${hard.length} filed figure${hard.length === 1 ? '' : 's'} · ${remarks.length} management remark${remarks.length === 1 ? '' : 's'}${forward.length ? ` · ${forward.length} target${forward.length === 1 ? '' : 's'} (milestones, not evidence)` : ''}`,
     firstEvidenceDate: dated[0] || null, latestEvidenceDate: latest, freshness: ageDays <= 200 ? 'CURRENT' : 'HISTORICAL',
     periods, hardCount: mech.length, distinctMetrics: metrics.size, temporarySignals: temporary,
     origins: [...new Set([...ctx.origins, ...(items.some((i) => i.origin === 'gainer') ? ['gainers' as const] : [])])],
     specialFocus: false, why: [], toQualify: [], nearMiss: false,
+    evidencePeriods, gate: { inService: commissionedEv, demand: demandEv, usage: usageEv, capacityInPlace: capInPlace, orderCoverage: kind === 'ORDER_VISIBILITY' && /annual revenue \(latest quarter × 4\)/.test(runway.text) }, sfBasis: null,
+    eventIds: [...new Set(items.map((i) => i.eventId).filter(Boolean) as string[])],
   };
   const sf = specialFocusGate(pc, ctx.thesisStatus);
-  pc.specialFocus = sf.ok; pc.why = sf.why;
+  pc.specialFocus = sf.ok; pc.why = sf.why; pc.sfBasis = sf.ok ? specialFocusBasis(pc) : null;
   if (!pc.specialFocus) {
     const q: string[] = [];
     const where = pc.periods.length <= 1 ? ' — usually in the prior or next quarter\'s documents' : '';
     if (pc.hardCount < 2) q.push(`a second filed mechanism figure (${kind === 'ORDER_VISIBILITY' ? 'order book, order intake or book-to-bill' : kind === 'CUSTOMER_RAMP' ? 'order value or supply volume' : 'utilisation, volume or commissioning'})${where}`);
     if (kind === 'CAPACITY_RAMP' && pc.state === 'IDENTIFIED') q.push('commissioning / production evidence for the added capacity');
     if (kind === 'CUSTOMER_RAMP' && pc.state === 'IDENTIFIED') q.push('a commercial order after the qualification');
-    if (!pc.runway.ok) q.push(kind === 'CAPACITY_RAMP' ? 'utilisation on the new base, or the installed base in the same unit as the addition'
+    if (!pc.runway.ok) q.push(kind === 'CAPACITY_RAMP' ? 'continuation evidence — recurring volume growth, utilisation rising on the same basis, a growing order book, repeat customer orders or contracted demand (unused capacity is headroom, not runway)'
       : kind === 'ORDER_VISIBILITY' ? 'order book growth over two readings, book-to-bill, or order book against revenue' : 'evidence of continuing volume');
     if (pc.freshness === 'HISTORICAL') q.push('a current-period read');
     if (pc.temporarySignals.length) q.push('the same gain repeating without the one-off');
+    // zzz787: what lifts a CANDIDATE to Special Focus.
+    if (!specialFocusBasis(pc)) q.push(kind === 'CAPACITY_RAMP' && variant === 'PRODUCTION' ? 'demand evidence (orders / offtake) or a utilisation / revenue figure for the capacity — a plant in service alone is not enough'
+      : kind === 'ORDER_VISIBILITY' || kind === 'CUSTOMER_RAMP' ? 'capacity in place to execute the orders (installed capacity or utilisation on file), or a second evidence period'
+        : 'the same evidence in a second, independent period');
     if (!q.length) q.push(String(pc.why[pc.why.length - 1] || '').replace(/^Not Special Focus:\s*/, ''));
     pc.toQualify = [...new Set(q)].filter(Boolean);
     // A near miss is a VALIDATED-or-better mechanism (or a medium-evidence one)
@@ -785,6 +927,8 @@ export function specialFocusGate(pc: PersistentCatalyst, thesisStatus?: string |
   why.push(`${CONFIDENCE_LABEL[pc.confidence]} — ${pc.hardCount} filed figure${pc.hardCount === 1 ? '' : 's'} across ${pc.distinctMetrics} independent metric${pc.distinctMetrics === 1 ? '' : 's'}${pc.periods.length > 1 ? `, ${pc.periods.length} periods` : ''}.`);
   if (thesisStatus === 'BROKEN') return no('the thesis is broken.');
   if (pc.hardCount < 1) return no('no hard (filed, quantified) evidence — remarks alone do not qualify.');
+  // zzz788: validated evidence without continuation is a CANDIDATE — said so.
+  if (pc.confidence === 'EARLY' && ['VALIDATED', 'RAMPING', 'SCALING'].includes(pc.state) && !pc.runway.ok) return no(`a persistent catalyst candidate, not Special Focus yet — evidence validated, persistence not shown (${pc.runway.text})`);
   if (pc.confidence === 'EARLY' || pc.confidence === 'TEMPORARY_UNCERTAIN') return no(`${CONFIDENCE_LABEL[pc.confidence].toLowerCase()}.`);
   if (pc.kind === 'MIX_PRICING' && pc.confidence !== 'HIGH') return no('mix / pricing needs repeated, quantified evidence.');
   if (!pc.runway.ok) return no(`no evidence-supported runway (${pc.runway.text})`);
@@ -792,10 +936,27 @@ export function specialFocusGate(pc: PersistentCatalyst, thesisStatus?: string |
   if (pc.state === 'STALLING' || pc.state === 'WEAKENING') return no(`the mechanism is ${pc.state.toLowerCase()} (${pc.mechanism}).`);
   if (pc.state === 'IDENTIFIED') return no('identified but not yet validated — no commissioning, production, order growth or commercial order evidenced yet.');
   if (pc.freshness === 'HISTORICAL') return no('the evidence is historical — nothing current on file.');
+  // zzz787 — STRICTER THAN A PERSISTENT CATALYST CANDIDATE.
+  const basis = specialFocusBasis(pc);
+  if (!basis) return no('a persistent catalyst candidate, not Special Focus yet — Special Focus needs commissioned capacity with demand evidence, commissioned capacity with utilisation / revenue evidence, orders with a capacity runway, or evidence across two or more independent periods.');
+  why.push(`Qualifies because: ${basis}.`);
   why.push(`Mechanism: ${pc.mechanism}.`);
   why.push(`Runway: ${pc.runway.text}`);
   if (pc.nextMilestone) why.push(`Next milestone: ${pc.nextMilestone}.`);
   return { ok: true, why };
+}
+
+/** zzz787: the evidence that lifts a persistent catalyst CANDIDATE to Special
+ *  Focus, or null. Commissioning alone never qualifies. Price never enters. */
+export function specialFocusBasis(pc: PersistentCatalyst): string | null {
+  const g = pc.gate || { inService: false, demand: false, usage: false, capacityInPlace: false, orderCoverage: false };
+  const periods = pc.evidencePeriods ?? pc.periods.length;
+  if (periods >= 2) return `evidence across ${periods} independent periods`;
+  if (pc.kind === 'CAPACITY_RAMP' && g.inService && g.demand) return 'capacity in service with demand evidence (orders / offtake)';
+  if (pc.kind === 'CAPACITY_RAMP' && g.inService && g.usage) return 'capacity in service with utilisation / volume / revenue evidence';
+  if ((pc.kind === 'ORDER_VISIBILITY' || pc.kind === 'CUSTOMER_RAMP') && pc.runway.ok && g.capacityInPlace) return 'orders / contracts with capacity on file to execute them';
+  if (pc.kind === 'ORDER_VISIBILITY' && pc.runway.ok && g.orderCoverage) return 'an order book covering 1.5× or more of filed annual revenue (a multi-period execution runway)';
+  return null;
 }
 
 // ── 7. PUBLIC ENTRY POINT ─────────────────────────────────────────────────
@@ -856,11 +1017,14 @@ export interface PersistSummary {
   specialFocus: boolean; mechanism: string; runway: string; nextMilestone: string | null;
   why: string[]; hardCount: number; ledgerBacked: boolean;
   /** zzz784 */ stage?: string; nextEvidence?: string | null; managementTarget?: string | null;
+  /** zzz787: independent evidence periods (STRONG evidence needs ≥2) and why it is Special Focus, if it is. */
+  periods?: number; sfBasis?: string | null;
 }
 export function summarizePersistence(pc: PersistentCatalyst, ledgerBacked: boolean): PersistSummary {
   return { id: pc.id, kind: pc.kind, label: pc.label, confidence: pc.confidence, state: pc.state, specialFocus: pc.specialFocus,
     mechanism: pc.mechanism, runway: pc.runway.text, nextMilestone: pc.nextMilestone, why: pc.why.slice(0, 4), hardCount: pc.hardCount, ledgerBacked,
-    stage: pc.stage, nextEvidence: pc.nextEvidence, managementTarget: pc.managementTarget };
+    stage: pc.stage, nextEvidence: pc.nextEvidence, managementTarget: pc.managementTarget,
+    periods: pc.evidencePeriods ?? pc.periods.length, sfBasis: pc.sfBasis ?? null };
 }
 // ── TRACKED POTENTIAL CATALYST — an enabling step, never Special Focus. (zzz782)
 // A binding MoU / JDA / LoI (MAXESTATES "binding MoU for Ghaziabad JDA") books
@@ -908,3 +1072,37 @@ export function trackPotentialFromFinding(f: any, today?: string): PersistentCat
 /** Categories where a Daily Gainers event can open a persistence test. */
 export const PERSIST_CATEGORIES = new Set(['order_win', 'backlog_increase', 'capacity_expansion', 'production_ramp', 'utilization_increase',
   'new_customer', 'customer_ramp', 'product_qualification', 'regulatory_approval', 'export_approval', 'new_geography']);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOW A PERSISTENT CATALYST IS SAID — EVIDENCE AND PERSISTENCE APART. (zzz788)
+// "Capacity ramp · High persistence evidence · Validated" read as one verdict.
+// The evidence state (what the filings show happened) and the persistence
+// grade (whether it can continue) are printed as two separate words.
+// ═══════════════════════════════════════════════════════════════════════════
+const STATE_LOWER: Record<PersistState, string> = { IDENTIFIED: 'identified', VALIDATED: 'validated', RAMPING: 'ramping', SCALING: 'scaling', MATURE: 'mature', STALLING: 'stalling', WEAKENING: 'weakening', COMPLETED: 'completed', DISPROVED: 'disproved' };
+export function persistenceWords(pc: Pick<PersistentCatalyst, 'label' | 'state' | 'confidence'>): { evidence: string; persistence: string; line: string } {
+  const evidence = `Evidence ${STATE_LOWER[pc.state] || String(pc.state).toLowerCase()}`;
+  const persistence = pc.confidence === 'HIGH' ? 'Persistence: high'
+    : pc.confidence === 'MEDIUM' ? 'Persistence: medium'
+      : pc.confidence === 'TEMPORARY_UNCERTAIN' ? 'Persistence: uncertain'
+        : ['VALIDATED', 'RAMPING', 'SCALING'].includes(pc.state) ? 'Persistence: candidate' : 'Persistence: early / unproven';
+  return { evidence, persistence, line: `${pc.label} · ${evidence} · ${persistence}` };
+}
+
+/** zzz788: the catalyst state and the thesis status, side by side — never
+ *  merged. "Catalyst: validated · Thesis: weakening (working capital)", so a
+ *  validated catalyst is not read as an overall positive thesis signal. Reads
+ *  the assessment; never changes it. */
+export function catalystThesisLine(pc: Pick<PersistentCatalyst, 'state'>, assessment: any | null | undefined): string {
+  const cat = `Catalyst: ${STATE_LOWER[pc.state] || String(pc.state).toLowerCase()}`;
+  const st = assessment?.status ? String(assessment.status) : null;
+  if (!st) return `${cat} · Thesis: not assessed`;
+  const word = st === 'THESIS_NOT_SET' ? 'not set' : st.replace(/_/g, ' ').toLowerCase();
+  let why = '';
+  if (st === 'WEAKENING' || st === 'BROKEN' || st === 'NEGATIVE_EXPECTATION_GAP') {
+    const bad = ((assessment.checked || []) as any[]).filter((c) => c?.verdict === 'deteriorating' && !c.watch && !c.historical?.active);
+    const names = [...new Set(bad.map((c) => String(VAR_LABEL[c.key as keyof typeof VAR_LABEL] || c.label || c.key).toLowerCase()))];
+    if (names.length) why = ` (${names.slice(0, 2).join(', ')})`;
+  }
+  return `${cat} · Thesis: ${word}${why}`;
+}

@@ -143,7 +143,7 @@ export function companyNameFromPage(html: string): string | null {
 
 const THEME_KIND: Partial<Record<NewsTheme, EventKind>> = {
   order_win: 'order', fundraise: 'fundraising', capacity: 'capacity', acquisition: 'acquisition', regulatory: 'qualification',
-  results: 'results', guidance: 'guidance', rating: 'other', promoter: 'stake_by_strategic',
+  results: 'results', guidance: 'guidance', rating: 'other', promoter: 'promoter_buying',   // zzz787: a promoter buying is not a strategic stake
 };
 
 export interface PressFacts extends StructuredFacts {
@@ -167,7 +167,7 @@ export function pressFacts(news: NewsContext, issuer: string, official: Structur
     const negTax = it.themes.includes('negative') && /\b(gst|tax|demand|show[- ]cause)\b/i.test(it.title);
     const theme = it.themes.find((t) => THEME_KIND[t]) || (negTax ? 'negative' : null);
     const newSub = /\bincorporat\w*[^.]{0,40}subsidiary|subsidiary[^.]{0,40}incorporat/i.test(it.title);
-    const kind: EventKind | null = negTax ? 'tax_litigation' : newSub ? 'other' : theme === 'negative' ? 'regulatory_negative' : theme ? THEME_KIND[theme]! : null;
+    const kind: EventKind | null = negTax ? 'tax_litigation' : newSub ? 'strategic_expansion' : theme === 'negative' ? 'regulatory_negative' : theme ? THEME_KIND[theme]! : null;
     const value = moneyCr(it.title);
     let confirmedBy: PressFacts['confirmedBy'] = null;
     if (kind) {
@@ -190,7 +190,7 @@ export function pressFacts(news: NewsContext, issuer: string, official: Structur
       out.push({
         source: src, event: { kind, counterparty: null, product: null, geography: null, stage: null }, economics, time: emptyTime(),
         quotes: [], unknowns: ['Press report — not verified against an official filing.', ...(confirmedBy ? [] : ['No official filing read that states the same event.'])],
-        verificationRequired: true, polarity: kind === 'tax_litigation' || kind === 'regulatory_negative' ? 'negative' : ['order', 'capacity', 'qualification', 'acquisition', 'partnership', 'stake_by_strategic'].includes(kind) ? 'positive' : 'neutral',
+        verificationRequired: true, polarity: kind === 'tax_litigation' || kind === 'regulatory_negative' ? 'negative' : ['order', 'capacity', 'qualification', 'acquisition', 'partnership', 'stake_by_strategic', 'strategic_investment', 'promoter_buying'].includes(kind) ? 'positive' : 'neutral',
         headline: it.title, secondary: true, confirmedBy,
       });
     }

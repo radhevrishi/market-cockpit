@@ -40,7 +40,36 @@ export type EventKind =
   | 'order' | 'capacity' | 'qualification' | 'acquisition' | 'new_product'
   | 'fundraising' | 'partnership' | 'stake_by_strategic' | 'guidance' | 'results'
   | 'regulatory_negative' | 'tax_litigation' | 'debt' | 'governance' | 'resale_registration'
-  | 'other';
+  | 'other'
+  // zzz787 — ownership / corporate events are no longer forced into
+  // 'acquisition'. The older values stay valid (stored records use them):
+  //   acquisition          buying a business or control of one (M&A)
+  //   merger               two businesses combined (amalgamation / scheme)
+  //   strategic_expansion  a new subsidiary, geography or entity of its own (ZIMLAB Chile)
+  //   strategic_investment an outside strategic buys a stake in the company
+  //                        (stake_by_strategic is the older name — same meaning)
+  //   promoter_buying      the promoter / an insider buys shares (GNA 1.16%)
+  //   capital_allocation   buyback, dividend, use of money already raised
+  | 'merger' | 'strategic_expansion' | 'strategic_investment' | 'promoter_buying' | 'capital_allocation';
+
+/** zzz787: the two names for an outside strategic's stake are one kind. */
+export const isStrategicStakeKind = (k: EventKind | string | null | undefined): boolean => k === 'stake_by_strategic' || k === 'strategic_investment';
+
+/** zzz787: a contract TERM stated in words or digits ("five-year services
+ *  agreement", "for a period of 3 years", "a term of 60 months"). Returns the
+ *  term in years, or null. A term is a contract runway — never revenue. */
+const WORD_NUM: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, fifteen: 15, twenty: 20 };
+export function contractTermYears(text: string | null | undefined): number | null {
+  const t = String(text || '');
+  const n = (s: string) => (WORD_NUM[s.toLowerCase()] ?? Number(s));
+  const y = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty)[- ](?:year|yr)s?\b[^.;]{0,40}?\b(agreement|contract|services?|supply|arrangement|term|licen[cs]e|order|engagement|deal|partnership|mandate|lease|concession)\b/i.exec(t)
+    || /\b(?:term|tenure|period|duration) of (\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty)\s*(?:\(\d+\)\s*)?(?:year|yr)s?\b/i.exec(t)
+    || (/\b(agreement|contract|mandate|engagement)\b/i.test(t) ? /\bfor (?:a period of |a term of )?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty)\s*(?:\(\d+\)\s*)?(?:year|yr)s?\b/i.exec(t) : null);
+  if (y) { const v = n(y[1]); return Number.isFinite(v) && v > 0 && v <= 30 ? v : null; }
+  const m = /\b(?:term|tenure|period|duration) of (\d{2,3})\s*months?\b/i.exec(t) || /\b(\d{2,3})[- ]month\s+(?:agreement|contract|services?|supply|term|engagement)\b/i.exec(t);
+  if (m) { const v = Number(m[1]) / 12; return v >= 1 && v <= 30 ? Math.round(v * 10) / 10 : null; }
+  return null;
+}
 
 export interface EventFacts {
   kind: EventKind;
@@ -133,7 +162,9 @@ export interface PersistenceTest {
 /** Stable id for the underlying catalyst so repeat headlines/press/filings
  *  about the same thing merge. Built from ticker + kind + the most specific
  *  counterparty/product token available. Never includes a date or price. */
-export function catalystIdOf(ticker: string, kind: EventKind, counterparty: string | null, product: string | null): string {
+export function catalystIdOf(ticker: string, kind0: EventKind, counterparty: string | null, product: string | null): string {
+  // zzz787: one id for one strategic stake, whichever name the producer used.
+  const kind: EventKind = kind0 === 'strategic_investment' ? 'stake_by_strategic' : kind0;
   const norm = (s: string | null) => (s || '').toLowerCase().replace(/\b(limited|ltd|inc|corp|corporation|pvt|private|plc|llc|co)\b\.?/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
   const anchor = norm(counterparty) || norm(product) || 'general';
   return `${ticker.toUpperCase()}:${kind}:${anchor}`;

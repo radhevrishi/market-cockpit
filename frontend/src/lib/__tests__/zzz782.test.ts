@@ -6,13 +6,18 @@ import { persistenceEvidenceOf, negativeAmountCr } from '../ai-gainers/research-
 import { trackPotentialFromFinding } from '../catalyst/persistence';
 import { isReserveTonnage } from '../thesis/status';
 
-test('new product = long-term possible but UNPROVEN; qualification = EARLY; order = EVIDENCE; multi-year = STRONG', () => {
+test('new product = long-term possible but UNPROVEN; qualification = EARLY; order = EVIDENCE; one-period programme = EVIDENCE (medium), STRONG only across two periods', () => {
   assert.equal(persistenceEvidenceOf('New product', 'POTENTIAL_UNVERIFIED', 'EXECUTED', 'product', 'ESDS launched SWARAJ Sethu, a DevSecOps platform', null).level, 'UNPROVEN');
   assert.equal(persistenceEvidenceOf('Regulatory approval', 'POTENTIAL_UNVERIFIED', 'EXECUTED', 'qualification', 'Qualified with a global OEM', null).level, 'EARLY');
   assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order', 'Received order worth Rs 22 crore to execute over three months', null).level, 'EVIDENCE');
-  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', 'multi-programme orders worth about ₹33 crore annually', null).level, 'STRONG');
-  assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_LOW_MATERIALITY', 'EXECUTED', 'capacity', 'commissioned plant, capacity up to 150 TPD', null).level, 'EARLY');
-  assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_LOW_MATERIALITY', 'EXECUTED', 'capacity', 'commissioned plant; utilisation 65% with orders in hand', null).level, 'STRONG');
+  // zzz787 (intentional change): a programme stated in ONE filing period is medium (EVIDENCE), not STRONG;
+  // STRONG needs ≥2 independent official evidence periods.
+  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', 'multi-programme orders worth about ₹33 crore annually', null).level, 'EVIDENCE');
+  assert.equal(persistenceEvidenceOf('Order win', 'CONFIRMED_LOW_MATERIALITY', 'AWARDED', 'order_recurring', 'multi-programme orders worth about ₹33 crore annually', null, { officialPeriods: 2 }).level, 'STRONG');
+  // zzz787 (intentional change): commissioning without demand evidence = commercial persistence UNPROVEN (was EARLY);
+  // commissioning + utilisation / orders in one period = EVIDENCE (medium, was STRONG).
+  assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_LOW_MATERIALITY', 'EXECUTED', 'capacity', 'commissioned plant, capacity up to 150 TPD', null).level, 'UNPROVEN');
+  assert.equal(persistenceEvidenceOf('Capacity expansion', 'CONFIRMED_LOW_MATERIALITY', 'EXECUTED', 'capacity', 'commissioned plant; utilisation 65% with orders in hand', null).level, 'EVIDENCE');
   assert.equal(persistenceEvidenceOf('Litigation / regulatory' as any, 'NEGATIVE', 'EXECUTED', 'negative', 'GST demand of Rs 3.53 crore', null).level, 'NOT_PERSISTENT');
   assert.equal(persistenceEvidenceOf('Partnership' as any, 'POTENTIAL_UNVERIFIED', 'ENABLING', 'enabling', 'binding MoU for JDA', null).level, 'UNPROVEN');
 });

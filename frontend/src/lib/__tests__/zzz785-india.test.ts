@@ -30,7 +30,7 @@ const docsFrom = async (issuer: string, map: Record<string, string>, anns: Annou
 const find = (ticker: string, anns: AnnouncementLite[], docs: DocRead[] | null, extra: Partial<Parameters<typeof buildFinding>[0]> = {}) =>
   buildFinding({ ticker, company: ticker, market: 'IN', movePct: 6, marketCap: 2000, turnover: 40, announcements: anns, returns: null, holding: false, sources: ['BSE corporate announcements'], sourceFailed: false, windowDays: 21, now: NOW, sessionCloseIso: '2026-09-24T15:30:00+05:30', docs, ...extra });
 
-test('rules version bumped for zzz785', () => { assert.equal(RULES_VERSION, '2026-09-24.zzz785'); });
+test('rules version bumped (zzz787 supersedes zzz785)', () => { assert.equal(RULES_VERSION, '2026-09-24.zzz787'); });
 
 describe('money and tax words in a PDF text layer (the ₹ sign is usually lost)', () => {
   test('crore / full-rupee / lakh forms; counts are not money', () => {
@@ -164,7 +164,8 @@ describe('ZIMLAB / GLOTTIS — a subsidiary filing under a generic subject is re
   test('ZIMLAB "Updates on Acquisition" is a new Chile subsidiary for LATAM — new geography, enabling, no invented size', async () => {
     const url = B('031cc190-d325-4294-8481-5b829da70d34');
     const anns: AnnouncementLite[] = [{ subject: 'Announcement under Regulation 30 (LODR)-Updates on Acquisition', summary: 'ZIM Laboratories SpA incorporated in Chile on 9 September 2026 as a wholly owned subsidiary for LATAM expansion.', url, dateIso: '2026-09-18T16:00:00+05:30', ageDays: null }];
-    assert.equal(find('ZIMLAB', anns, null).category, 'acquisition');   // subject + summary alone
+    // zzz787 (intentional change): subject + summary alone already read as a new subsidiary / geography — a strategic expansion, not 'acquisition'.
+    assert.equal(find('ZIMLAB', anns, null).category, 'new_geography');
     const f = find('ZIMLAB', anns, await docsFrom('ZIMLAB', { [url]: 'zimlab-chile.txt' }, anns));
     assert.equal(f.category, 'new_geography');
     assert.equal(f.stage, 'enabling');
@@ -365,7 +366,7 @@ describe('press is secondary; an official filing of the same event confirms it',
   test('ZIMLAB: a press story of the Chile subsidiary is confirmed by the read filing', () => {
     const news = buildNewsContext([{ title: 'Zim Laboratories incorporates Chile subsidiary for LATAM expansion - ET Pharma', url: 'https://example.com/z', published_at: '2026-09-19T06:00:00Z' }], { ticker: 'ZIMLAB', company: 'Zim Laboratories', now: NOW });
     const p = pressFacts(news, 'ZIMLAB', [one('zimlab-chile.txt', 'ZIMLAB', '2026-09-18')]);
-    assert.equal(p.facts[0].event.kind, 'other');
+    assert.equal(p.facts[0].event.kind, 'strategic_expansion');   // zzz787: a new subsidiary is a strategic expansion (was 'other')
     assert.ok(p.facts[0].confirmedBy);
     // press adds a source kind, never an event kind
     assert.deepEqual(evidenceBreadthOf([one('zimlab-chile.txt', 'ZIMLAB', '2026-09-18'), ...p.facts], p.refs), { documents: 1, sourceKinds: 2, eventKinds: 1 });

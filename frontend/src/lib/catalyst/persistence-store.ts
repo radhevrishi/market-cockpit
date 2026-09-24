@@ -86,7 +86,10 @@ export function mergeDetections(blob: PersistBlob, list: PersistentCatalyst[], o
     // A gainers detection (one filing) never overwrites a richer portfolio
     // detection (the whole ledger) — it is added to the timeline and origins.
     const richer = origin === 'portfolio' || !prev.origins.includes('portfolio') || pc.hardCount >= prev.latest.hardCount;
+    const eventIds = [...new Set([...(prev.latest.eventIds || []), ...(pc.eventIds || [])])];
     if (richer) prev.latest = trim({ ...pc, origins: [...new Set([...prev.origins, ...pc.origins, origin])] });
+    // zzz787: the Daily Gainers event ids behind this mechanism are kept whichever detection is richer — the cross-link.
+    if (eventIds.length) prev.latest.eventIds = eventIds;
     prev.origins = [...new Set([...prev.origins, origin])];
     prev.lastSeen = now;
     if (pc.specialFocus && !prev.sfId) prev.sfId = ++blob.seq;

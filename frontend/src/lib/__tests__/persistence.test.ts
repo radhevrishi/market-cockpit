@@ -157,7 +157,7 @@ describe('zzz780 persistent catalyst layer', () => {
     assert.doesNotMatch(txt, /\b(buy|sell|price target|multibagger|winner|best stock|upside)\b/i);
   });
 
-  test('zzz781 — a filed commissioning fact is evidence; the added capacity then qualifies', () => {
+  test('zzz781 — a filed commissioning fact is evidence (zzz787: a candidate; demand or utilisation lifts it to Special Focus)', () => {
     const l = ledger({ 'Q1 FY27': [
       fact('Q1 FY27', 'capacity', '9,600 MTPA', { before: '5,000 MTPA' }),
       fact('Q1 FY27', 'capex_status', 'new block commissioned in June', { quote: 'the new block was commissioned in June and is in commercial production' }),
@@ -165,7 +165,21 @@ describe('zzz780 persistent catalyst layer', () => {
     const cap = kind(detect(l), 'CAPACITY_RAMP');
     assert.equal(cap.hardCount, 2);
     assert.notEqual(cap.state, 'IDENTIFIED');
-    assert.ok(cap.specialFocus, cap.why.join(' | '));
+    // zzz787 (intentional change): commissioning alone is a persistent catalyst CANDIDATE, not Special Focus.
+    assert.equal(cap.specialFocus, false);
+    // zzz788 (intentional change): capacity added with no continuation evidence
+    // is headroom, not runway — a candidate (EARLY), no longer MEDIUM.
+    assert.equal(cap.confidence, 'EARLY');
+    assert.ok(cap.toQualify.some((q: string) => /demand evidence|utilisation|continuation/.test(q)), cap.toQualify.join(' | '));
+    // zzz788 (intentional change): commissioned + today's utilisation is
+    // headroom, not future demand — no longer Special Focus on its own.
+    const withUtil = kind(detect(ledger({ 'Q1 FY27': [...l.periods['Q1 FY27'].facts, fact('Q1 FY27', 'utilisation', '62%', { quote: 'capacity utilisation on the enlarged base was 62%' })] })), 'CAPACITY_RAMP');
+    assert.equal(withUtil.specialFocus, false, withUtil.why.join(' | '));
+    assert.match(withUtil.headroom || '', /^Capacity headroom: Utilisation 62% — 38 percentage points available on the current installed-capacity basis\.$/);
+    // …and recurring volume growth on the new base is continuation → Special Focus.
+    const withVol = kind(detect(ledger({ 'Q1 FY27': [...l.periods['Q1 FY27'].facts, fact('Q1 FY27', 'utilisation', '62%', { quote: 'capacity utilisation on the enlarged base was 62%' }), fact('Q1 FY27', 'volume', 'volume grew 24% YoY')] })), 'CAPACITY_RAMP');
+    assert.ok(withVol.specialFocus, withVol.why.join(' | '));
+    assert.match(withVol.sfBasis || '', /utilisation/);
   });
 
   test('zzz781 — a capacity target smaller than today (or another unit) is not the next milestone', () => {

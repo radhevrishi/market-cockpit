@@ -9,7 +9,8 @@
 // the same TICKER:KIND id merges both. No price anywhere in this file.
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { detectPersistentCatalysts, rankOf, CONFIDENCE_LABEL, type PersistentCatalyst } from '@/lib/catalyst/persistence';
+import { detectPersistentCatalysts, rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
+import { specialFocusQueue, nearMissList, focusButtonWords } from '@/lib/catalyst/cross-view';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2, var(--mc-bg-1))', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -47,8 +48,9 @@ export function PersistentStrip({ pcs, onOpenFocus }: { pcs: PersistentCatalyst[
     <div data-testid="persistent-strip" style={{ border: `1px solid ${C.amber}`, borderBottom: 'none', borderRadius: '8px 8px 0 0', padding: '6px 12px', background: C.bg, fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
       <b style={{ color: C.amber }}>🔥 {best.specialFocus ? 'Persistent catalyst detected · Special Focus' : 'Persistent catalyst candidate'}</b>{' '}
       <b style={{ color: C.text }}>{best.label}</b>
-      <span style={{ color: C.faint }}> · {CONFIDENCE_LABEL[best.confidence]} · {STATE_WORD[best.state]}</span>
+      <span style={{ color: C.faint }}> · {persistenceWords(best).evidence} · {persistenceWords(best).persistence}</span>
       <div>{best.stage ? <span style={{ color: C.faint }}>Stage: {best.stage} · </span> : null}{best.mechanism}</div>
+      {best.headroom && <div style={{ color: C.faint }}>{best.headroom}</div>}
       <div style={{ color: C.faint }}>Runway: {best.runway.text}{best.nextEvidence || best.nextMilestone ? ` · Next comparable evidence: ${best.nextEvidence || best.nextMilestone}` : ''}{best.managementTarget ? ` · ${best.managementTarget}` : ''}</div>
       {onOpenFocus && best.specialFocus && <button onClick={onOpenFocus} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.amber }}>Open in Special Focus →</button>}
     </div>
@@ -99,39 +101,26 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
   };
 
   // The queue: live Special Focus detections + stored records still in the queue (gainers, confirmed, decayed).
-  const entries = useMemo(() => {
-    const ids = new Set<string>();
-    for (const [id, x] of live) if (x.pc.specialFocus) ids.add(id);
-    for (const [id, s] of Object.entries(stored)) if (s.focus?.inQueue) ids.add(id);
+  // zzz787: one entry per mechanism; a tracked enabling step of a company
+  // already in the queue is a link on its card, never a second item.
+  const queue = useMemo(() => {
     const rowOf = new Map(rows.map((r) => [r.symbol.toUpperCase(), r] as const));
-    return [...ids].map((id) => {
-      const lv = live.get(id);
-      const st = stored[id];
-      const pc = lv?.pc || st?.latest;
-      if (!pc) return null;
-      const dismissed = st?.user?.state === 'dismissed' || st?.user?.state === 'archived';
-      return { id, pc, st, row: lv?.row || rowOf.get(pc.ticker) || null, dismissed, decayed: !!st?.focus?.decayed && !lv?.pc.specialFocus, note: st?.focus?.note || null };
-    }).filter((x): x is NonNullable<typeof x> => !!x)
-      .sort((a, b) => (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed')) || (Number(a.decayed) - Number(b.decayed)) || (rankOf(b.pc) - rankOf(a.pc)));
+    return specialFocusQueue<FocusRow>(live, stored as any, (t) => rowOf.get(t) || null);
   }, [live, stored, rows]);
+  const entries = useMemo(() => queue.entries.map((e) => ({ ...e, st: e.st as Stored | null }))
+    .sort((a, b) => (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed')) || (Number(a.decayed) - Number(b.decayed)) || (rankOf(b.pc) - rankOf(a.pc))), [queue]);
   const hiddenByUser = Object.values(stored).filter((s) => s.user?.state === 'dismissed' || s.user?.state === 'archived');
   // zzz781 — NEAR MISSES: one or two pieces of evidence away. The research to do
   // is named per name; reading the prior quarter often supplies the second figure.
   const [showNear, setShowNear] = useState(false);
-  const near = useMemo(() => {
-    const inQ = new Set(entries.map((e) => e.pc.ticker));
-    const best = new Map<string, { pc: PersistentCatalyst; row: FocusRow }>();
-    for (const x of live.values()) {
-      if (!x.pc.nearMiss || inQ.has(x.pc.ticker)) continue;
-      const prev = best.get(x.pc.ticker);
-      if (!prev || rankOf(x.pc) > rankOf(prev.pc)) best.set(x.pc.ticker, x);
-    }
-    return [...best.values()].sort((a, b) => rankOf(b.pc) - rankOf(a.pc));
-  }, [live, entries]);
+  // zzz788: ONE list feeds the near-miss count and the near-miss rows, and the
+  // companies already in Special Focus are excluded (and counted) in one place.
+  const nearInfo = useMemo(() => nearMissList<FocusRow>(live, entries), [live, entries]);
+  const near = nearInfo.near;
   // zzz782 — TRACKED POTENTIAL: enabling steps (MoU / JDA / LoI) remembered from
   // Daily Gainers with their conversion chain. Never in the queue on their own.
   const [showTracked, setShowTracked] = useState(false);
-  const tracked = useMemo(() => Object.values(stored).filter((s) => s.latest?.kind === 'PROJECT_PIPELINE' && s.user?.state !== 'dismissed' && s.user?.state !== 'archived'), [stored]);
+  const tracked = queue.tracked as Stored[];
   const priorable = near.filter((x) => (x.row.market || 'IN') !== 'US' && Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
   const shown = entries.filter((e) => !e.dismissed);
   const visible = showAll ? shown : shown.slice(0, 8);
@@ -158,16 +147,19 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
             <button key={label} onClick={() => act(e.id, u === state ? null : state)} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${u === state ? color : C.border}`, background: u === state ? `color-mix(in srgb, ${color} 16%, transparent)` : 'transparent', color }}>{u === state ? `✓ ${label}` : label}</button>
           );
           return (
-            <div key={e.id} data-testid="special-focus-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', opacity: e.decayed ? 0.85 : 1 }}>
+            <div key={e.id} id={`sf-${e.id}`} data-testid="special-focus-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', opacity: e.decayed ? 0.85 : 1 }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
                 <span style={{ fontSize: 12, fontWeight: 900, color: C.amber }}>🔥 {e.st?.sfId ? `#${e.st.sfId}` : 'NEW'}</span>
                 <button onClick={() => onJump(pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontSize: 15, fontWeight: 900, color: C.text }}>{pc.ticker}</button>
                 <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{pc.label}</span>
-                <span style={{ fontSize: 12, fontWeight: 800, color: pc.confidence === 'HIGH' ? C.green : C.cyan }}>{CONFIDENCE_LABEL[pc.confidence]}</span>
-                <span style={{ fontSize: 12, fontWeight: 800, color: pc.state === 'STALLING' || pc.state === 'WEAKENING' ? C.red : pc.state === 'MATURE' ? C.faint : C.cyan }}>{STATE_WORD[pc.state]}</span>
+                {/* zzz788: evidence state and persistence grade, said apart. */}
+                <span data-testid="sf-evidence" style={{ fontSize: 12, fontWeight: 800, color: pc.state === 'STALLING' || pc.state === 'WEAKENING' ? C.red : pc.state === 'MATURE' ? C.faint : C.cyan }}>{persistenceWords(pc).evidence}</span>
+                <span data-testid="sf-persistence" style={{ fontSize: 12, fontWeight: 800, color: pc.confidence === 'HIGH' ? C.green : C.cyan }}>{persistenceWords(pc).persistence}</span>
                 <span style={{ fontSize: 12, color: C.faint }}>{portfolio} · Thesis: {e.row ? thesisLabel(e.row) : 'n/a'}{e.row?.assessment?.status ? ` · status ${String(e.row.assessment.status).replace(/_/g, ' ').toLowerCase()}` : ''}</span>
                 <span style={{ fontSize: 12, color: C.faint }}>Sources: {pc.origins.map((o) => (o === 'gainers' ? 'Daily Gainers' : 'Portfolio Catalysts')).join(' + ')}</span>
               </div>
+              {/* zzz788: the catalyst and the thesis, side by side — never merged. */}
+              <div data-testid="sf-thesis-line" style={{ fontSize: 13, fontWeight: 700, color: /Thesis: (weakening|broken|behind)/.test(catalystThesisLine(pc, e.row?.assessment)) ? C.red : C.dim }}>{catalystThesisLine(pc, e.row?.assessment)}</div>
               {e.decayed && <div style={{ fontSize: 12.5, color: C.amber }}>{e.note}</div>}
               {!e.decayed && e.note && <div style={{ fontSize: 12.5, color: C.faint }}>{e.note}</div>}
               {/* zzz784: stage, source quality and the next COMPARABLE evidence —
@@ -177,15 +169,18 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
                 {' '}· <b style={{ color: C.text }}>Evidence quality:</b> {pc.sourceQuality || `${pc.hardCount} filed mechanism figure${pc.hardCount === 1 ? '' : 's'}`}
               </div>
               <div style={{ fontSize: 13.5, color: C.dim }}><b style={{ color: C.text }}>Mechanism:</b> {pc.mechanism}</div>
+              {pc.headroom && <div data-testid="sf-headroom" style={{ fontSize: 13, color: C.dim }}>{pc.headroom}</div>}
               <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Runway:</b> {pc.runway.text}</div>
               <div style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text }}>Next comparable evidence:</b> {pc.nextEvidence || pc.nextMilestone || 'none evidenced'} · <b style={{ color: C.text }}>{pc.duration}</b></div>
+              {pc.sfBasis && <div style={{ fontSize: 12.5, color: C.green }}>Special Focus because: {pc.sfBasis}</div>}
               {pc.managementTarget && <div style={{ fontSize: 12.5, color: C.faint }}>◌ {pc.managementTarget}</div>}
+              {e.linkedTracked.length > 0 && <div style={{ fontSize: 12.5, color: C.cyan }}>Also tracked for this company (linked, not listed again): {e.linkedTracked.map((t) => t.nextMilestone ? `enabling step — next: ${t.nextMilestone}` : 'enabling step').join(' · ')}</div>}
               {pc.capexNote && <div data-testid="sf-capex-note" style={{ fontSize: 12.5, color: C.faint }}>{pc.capexNote}</div>}
               <div style={{ fontSize: 12, color: C.faint }}>Last evidence: {pc.latestEvidenceDate || 'undated'} · {pc.freshness === 'CURRENT' ? 'current' : 'historical'} · {pc.hardCount} filed mechanism figure{pc.hardCount === 1 ? '' : 's'} across {pc.distinctMetrics} metric{pc.distinctMetrics === 1 ? '' : 's'}{pc.periods.length > 1 ? ` and ${pc.periods.length} periods` : ''}</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
                 <button onClick={() => setOpen((o) => ({ ...o, [e.id]: !isOpen }))} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan }}>{isOpen ? 'Hide evidence' : 'Evidence · timeline · before → after'}</button>
                 {e.row && <button onClick={() => onJump(pc.ticker)} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>Open Portfolio Catalyst</button>}
-                {pc.origins.includes('gainers') && <a href="/ai-gainers" style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none' }}>Open Daily Gainer event</a>}
+                {pc.origins.includes('gainers') && <a href={e.eventIds[0] ? `/ai-gainers#ev-${e.eventIds[0]}` : '/ai-gainers'} title={e.eventIds.length ? `Same catalyst — event id ${e.eventIds.join(', ')}` : undefined} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none' }}>Open Daily Gainer event</a>}
                 {btn('Confirm', 'confirmed', C.green)}{btn('Watch', 'watch', C.cyan)}{btn('Reviewed', 'reviewed', C.dim)}{btn('Dismiss', 'dismissed', C.red)}{btn('Archive', 'archived', C.faint)}
               </div>
               {isOpen && (
@@ -228,15 +223,15 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
         })}
       </div>
       <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
-        {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : `${near.length} near miss${near.length === 1 ? '' : 'es'} — one piece of evidence away`}</button>}
+        {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : focusButtonWords(shown.length, near.length).near}</button>}
         {tracked.length > 0 && <button onClick={() => setShowTracked((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.cyan}`, background: 'transparent', color: C.cyan }}>{showTracked ? 'Hide tracked potential' : `◌ ${tracked.length} tracked potential catalyst${tracked.length === 1 ? '' : 's'} (enabling steps)`}</button>}
-        {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8' : `Show all ${shown.length}`}</button>}
+        {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8 Special Focus' : focusButtonWords(shown.length, near.length).all}</button>}
         {hiddenByUser.length > 0 && <button onClick={() => setShowHidden((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.faint }}>{showHidden ? 'Hide' : `${hiddenByUser.length} dismissed / archived`}</button>}
       </div>
       {showNear && near.length > 0 && (
         <div style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
           <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>
-            Near misses — a validated mechanism is missing one or two pieces of evidence. Not Special Focus; the line says exactly what would qualify it.
+            {near.length} near miss{near.length === 1 ? '' : 'es'} (one line per company{nearInfo.excludedInQueue ? `; ${nearInfo.excludedInQueue} compan${nearInfo.excludedInQueue === 1 ? 'y' : 'ies'} already in Special Focus not repeated` : ''}) — a validated mechanism is missing one or two pieces of evidence. Not Special Focus; the line says exactly what would qualify it.
             {onReadPrior && priorable.length > 0 && (
               <button disabled={priorRunning} onClick={() => onReadPrior(priorable)} title="Reads each name's PRIOR quarter documents (one AI read per name, on this click only). Two periods give the before → after and the second figure most near misses lack."
                 style={{ marginLeft: 8, fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: priorRunning ? 'wait' : 'pointer', border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan }}>
@@ -247,7 +242,8 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
           {near.map(({ pc }) => (
             <div key={pc.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
               <button onClick={() => onJump(pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{pc.ticker}</button>
-              <span style={{ color: C.faint }}> · {pc.label} · {STATE_WORD[pc.state]} · {pc.mechanism}</span>
+              <span style={{ color: C.faint }}> · {persistenceWords(pc).line} · {pc.mechanism}</span>
+              {pc.headroom && <div style={{ color: C.faint }}>{pc.headroom}</div>}
               <div style={{ color: C.amber }}>Needs: {pc.toQualify.join(' · ')}</div>
             </div>
           ))}
