@@ -57,6 +57,9 @@ export const NEGATIVE_CATALYSTS = [
   'margin_compression', 'inventory_buildup', 'receivables_deterioration',
   'auditor_resignation', 'promoter_pledge_increase', 'regulatory_investigation',
   'project_delay', 'capacity_underutilization', 'dilution', 'debt_stress',
+  // zzz775: a tax demand, show-cause notice or appellate order. A "GST order
+  // received" was read as an order win (SEDEMAC, KSCL).
+  'tax_litigation',
 ] as const;
 
 export type CatalystType =

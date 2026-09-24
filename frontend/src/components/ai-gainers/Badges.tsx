@@ -106,7 +106,9 @@ export function FactLine({ it }: { it: ResearchItem }) {
       <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : ''}`} color={MATERIAL_COLOR[ml]} title={materialityHover(it)} />
       <Fact k="TRANSMIT" v={tr.label} title={tr.hover} />
       <Fact k="PERSIST" v={pe.label} title={pe.hover} />
-      <Fact k="PRICED" v={gap.label} color={gap.color} title={txt(it.expectationGap?.text, 'Expectation gap unknown')} />
+      {it.pricing
+        ? <Fact k="PRICED" v={it.pricing.label} color={it.pricing.state === 'REACTION_SMALL_VS_SIZE' ? C.green : it.pricing.state === 'REACTION_EXCEEDS_SIZE' || it.pricing.state === 'RAN_UP_BEFORE_FILING' ? C.amber : undefined} title={it.pricing.text} />
+        : <Fact k="PRICED" v={gap.label} color={gap.color} title={txt(it.expectationGap?.text, 'Expectation gap unknown')} />}
     </div>
   );
 }

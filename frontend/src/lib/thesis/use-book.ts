@@ -27,7 +27,7 @@ import {
   originCounts, type BookOrigin,
 } from './universe';
 import { readConvictionBeats } from '@/lib/conviction-beats';
-import { classifyGradedRow, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
+import { classifyOrNearest, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
 import { rowChangeLines, deepRupeeGlyph } from './variables';
@@ -135,7 +135,9 @@ export function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshne
     discoveryAttempts: p.discovery_attempts || undefined,
     discoveryState: p.discovery_state || null,
     documentOutcomes: p.documents.filter((d) => d.outcome !== 'not_selected').map((d) => ({ label: d.label, kind: d.kind, outcome: d.outcome, chars: d.chars || 0, pages: d.pages || 0, detail: d.detail, url: d.url })),
-    pattern: classifyWithFiling(row.graded, summary) || row.pattern,
+    // zzz775: an exact classification from the filing wins; else the row's
+    // own type; else the nearest fit, labelled as such.
+    pattern: classifyWithFiling(row.graded, summary) || row.pattern || classifyOrNearest(row.graded),
     ledger, freshness: fr, reportingPeriod: p.reporting_period,
     changed: ch.lines, changedFrom: ch.from,
     persisted: true, persistError: null,
@@ -330,7 +332,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         market: g?.market === 'US' ? 'US' : 'IN',
         graded: g,
         tier: g?.tier || null,
-        pattern: g ? classifyGradedRow(g) : null,
+        pattern: g ? classifyOrNearest(g) : null,
         radarScore: null,
         summary: null,
         sourceUrl: g?.filing_url || g?.source_url || null,
@@ -451,7 +453,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
             market: hit.market === 'US' ? 'US' : 'IN',
             graded: hit,
             tier: hit.tier || prev.tier || null,
-            pattern: classifyGradedRow(hit) || prev.pattern,
+            pattern: classifyOrNearest(hit) || prev.pattern,
             sourceUrl: prev.sourceUrl || hit.filing_url || hit.source_url || null,
             dataSource: hit.source,
           });
@@ -577,7 +579,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
             if (hit && (got[sym.toUpperCase()] === hit)) {
               next = {
                 ...next, graded: hit, dataSource: 'screener-live',
-                pattern: classifyGradedRow(hit) || next.pattern,
+                pattern: classifyOrNearest(hit) || next.pattern,
                 sourceUrl: next.sourceUrl || hit.source_url || null,
               };
             }
@@ -745,7 +747,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
           discoveryState: j.discovery_state || null,
           // zzz724 — re-classify with the filing in hand. Order-book growth
           // exists only in the document, so B can only ever fire here.
-          pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern,
+          pattern: classifyWithFiling(prev.graded, j.structured) || prev.pattern || classifyOrNearest(prev.graded),
           ledger: ledger || prev.ledger || null,
           freshness: freshnessOf(ledger || prev.ledger || null),
           reportingPeriod: j.reporting_period || prev.reportingPeriod || null,
@@ -1023,7 +1025,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       const cur = rs[sym];
       if (!cur) return rs;
       // Clearing an override returns to the automatic classification.
-      const auto = p ? cur : { ...cur, pattern: cur.graded ? classifyGradedRow(cur.graded) : null };
+      const auto = p ? cur : { ...cur, pattern: cur.graded ? classifyOrNearest(cur.graded) : null };
       return { ...rs, [sym]: assess(auto) };
     });
     try {

@@ -81,6 +81,8 @@ export interface ClassifiedAnnouncement extends AnnouncementLite {
 }
 
 export interface Returns {
+  /** zzz775: 5-session return. */
+  w1?: number | null;
   m1: number | null; m3: number | null; m6: number | null; y1: number | null; history: number;
   /** zzz772: the last ~140 dated closes, so the reaction to a DATED event can
    *  be measured against the close before it. Absent on inputs stored before
@@ -173,6 +175,8 @@ export interface Finding {
   denialKind?: 'clarification' | 'denial';
   /** Dated press coverage — secondary, never the catalyst, never a number in NET. (zzz773) */
   news?: NewsContext | null;
+  /** zzz775: what the model-read filing states, keyed by fact (value, counterparty, execution period, …). */
+  facts?: Record<string, string> | null;
 }
 
 // ── denial vs clarification (zzz771) ──────────────────────────────────────
@@ -191,6 +195,15 @@ export function denialKindOf(text: string): NonNullable<Finding['denialKind']> {
   const t = String(text || '');
   return (RX_TRUE_DENIAL.test(t) && RX_REPORTED_THING.test(t)) || RX_NO_SUCH.test(t) ? 'denial' : 'clarification';
 }
+
+/** zzz775: a tax demand / notice / appellate order — never an order win. */
+export const isTaxMatter = (hay: string): boolean =>
+  /\b(gst|cgst|sgst|igst|goods and services tax|income[- ]tax|service tax|customs duty|excise|tax demand|demand notice|show[- ]cause|\bscn\b|assessment order|itat|cestat|appellate (authority|tribunal)|commissioner \(appeals\)|tax (order|notice|authorit)|penalty order|dgg?i)\b/i.test(hay)
+  && /\b(order|notice|demand|penalt|appeal|hearing|assessment|levied|imposed|confirmed)\w*/i.test(hay);
+const taxFavourable = (hay: string): boolean => /\b(quashed|dropped (entirely|fully)|set aside|in (our|its|the company'?s) favou?r|allowed the appeal|deleted the (demand|addition)|no (tax )?demand)\b/i.test(hay) && !/confirmed|upheld|levied|imposed/i.test(hay);
+/** zzz775: a developer's gross development value, a "potential" or an
+ *  "up to unlock" figure is not the company's revenue or consideration. */
+export const isPotentialValue = (hay: string): boolean => /\bgdv\b|gross development value|revenue potential|top ?line potential|sales potential|peak (revenue|sales) potential|may unlock|potential (revenue|value|topline)|market (size|opportunity) of/i.test(hay);
 
 // ── 1. CLASSIFY A FILING BY ITS SUBJECT (+ the source's summary) ──────────
 
@@ -312,6 +325,19 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
   const confirms = /confirm(s|ed)? (the |that )?[^.]{0,40}(receipt|order|contract|acquisition|agreement|approval)|has (received|won|bagged|secured|signed)/i.test(hay);
   if (RX.denial.test(hay) && !confirms) return { ...base, kind: 'denial', valueStated: null };
   if (RX.exchangeQuery.test(hay) && !confirms) return { ...base, kind: 'exchange_query', valueStated: null };
+  // zzz775: officer paperwork and scheme housekeeping are not events.
+  if (/(company secretary|compliance officer|\bcs\b)[^.]{0,80}(resign|cessation|appoint|stepped down)|(resign|cessation|appoint)\w*[^.]{0,80}(company secretary|compliance officer)/i.test(hay) && !/(ceo|cfo|managing director|\bmd\b|whole[- ]time director|chairman)/i.test(hay)) {
+    return { ...base, kind: 'routine', valueStated: null, routineReason: 'company secretary / compliance officer change' };
+  }
+  if (/fractional (entitlement|share)|compensation to[^.]{0,60}shareholders[^.]{0,60}(fraction|scheme)/i.test(hay)) {
+    return { ...base, kind: 'routine', valueStated: null, routineReason: 'fractional-entitlement settlement under a scheme' };
+  }
+  // zzz775: TAX IS NOT AN ORDER. "GST order received" matched the order rule.
+  if (isTaxMatter(hay)) {
+    return taxFavourable(hay)
+      ? { ...base, kind: 'routine', valueStated: null, routineReason: 'tax matter decided in the company\'s favour' }
+      : { ...base, kind: 'negative', category: 'tax_litigation', valueStated: parseStatedValue(hay, market) };
+  }
   if (RX.opsNegative.test(hay) && !/insurance claim (received|settled)|resumed|restored|back to normal/i.test(hay)) return { ...base, kind: 'negative', category: null, valueStated: null };
   if (RX.negative.test(hay)) return { ...base, kind: 'negative', category: /auditor/i.test(hay) ? 'auditor_resignation' : /sebi|penalt|search|raid|fraud|investigat/i.test(hay) ? 'regulatory_investigation' : /order (cancell|terminat)|cancellation|loss of/i.test(hay) ? 'order_cancellation' : null, valueStated: null };
   // THE SUBJECT DECIDES WHETHER A FILING IS PAPERWORK. An AGM notice whose
@@ -391,7 +417,7 @@ export function returnsFromSeries(series: Array<[string, number]>): Returns {
   // A year of trading is ~247–252 sessions; a series of 247 points IS a year.
   const y1 = v.length >= 240 ? back(Math.min(247, v.length - 1)) : null;
   const tail = series.filter(([, c]) => Number.isFinite(c) && c > 0).slice(-90).map(([d, c]) => [String(d).slice(0, 10), c] as [string, number]);
-  return { m1: back(21), m3: back(63), m6: back(126), y1, history: v.length, tail };
+  return { w1: back(5), m1: back(21), m3: back(63), m6: back(126), y1, history: v.length, tail };
 }
 
 /** Indian exchanges band small caps at 2/5/10/20%. A close within 0.15pp of a
@@ -583,7 +609,7 @@ export interface SweepInput {
    *  explanation of the move — they post-date it. (zzz766) */
   sessionCloseIso?: string | null;
   /** A model-verified read of the chosen announcement, when one was made. */
-  read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null } | null;
+  read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null; facts?: Record<string, string> | null } | null;
   /** Press coverage read for this name (zzz773). */
   news?: NewsContext | null;
   /** The graders hold a filed quarterly result behind this move (the scan's
@@ -607,7 +633,7 @@ export function buildFinding(inp: SweepInput): Finding {
     ticker: inp.ticker, company: inp.company, market: inp.market, movePct: inp.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
     status: 'none', category: null, stage: null, headline: null, evidenceQuote: null, sourceUrl: null, sourceDate: null, sourceTier: 'unsourced',
     ageDays: null, valueStated: null, valuePctMcap: null, net: null, components: null, verdict: null,
-    returns: inp.returns ? { m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
+    returns: inp.returns ? { w1: inp.returns.w1 ?? null, m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
     routine: inWindow.filter((a) => a.kind === 'routine').map((a) => a.subject).slice(0, 6),
     filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read,
     researchedAt: now, sources: inp.sources, news: inp.news ?? null,
@@ -712,8 +738,24 @@ export function buildFinding(inp: SweepInput): Finding {
     if (inp.market === 'US' && isNegCat(inp.read.category)) {
       return { ...base, status: 'negative', category: inp.read.category, headline: inp.read.headline, evidenceQuote: inp.read.quote, sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays, notes: [...base.notes, 'Model-read filing; the quote was found verbatim in the document. The filing is negative.'] };
     }
-    c = { ...c, category: inp.read.category, valueStated: inp.read.valueStated ?? c.valueStated };
+    c = { ...c, category: inp.read.category, valueStated: inp.read.valueStated ?? c.valueStated ?? parseStatedValue(`${inp.read.headline} ${inp.read.quote}`, inp.market) };
   }
+  // zzz775: whatever a reader or a subject line called it, a tax demand is a
+  // tax matter (SEDEMAC's "GST order received" was scored as an order win).
+  const taxHay = `${c.subject} ${c.summary || ''} ${verified && inp.read ? `${inp.read.headline} ${inp.read.quote}` : ''}`;
+  if (isTaxMatter(taxHay) && c.category !== 'tax_litigation') {
+    const v = parseStatedValue(taxHay, inp.market);
+    const pctM = v != null && inp.marketCap ? Math.round((v / inp.marketCap) * 10000) / 100 : null;
+    if (taxFavourable(taxHay)) {
+      return { ...base, status: 'routine_only', headline: verified && inp.read ? inp.read.headline : shorten(c.summary || c.subject, 400), sourceUrl: c.url, sourceDate: c.dateIso, ageDays: c.ageDays, sourceTier: 'primary', notes: [...base.notes, 'A tax matter decided in the company\'s favour — not an operating catalyst.'] };
+    }
+    return { ...base, status: 'negative', category: 'tax_litigation', headline: verified && inp.read ? inp.read.headline : shorten(c.summary || c.subject, 400), evidenceQuote: verified && inp.read ? inp.read.quote : null, sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays, valueStated: v, valuePctMcap: pctM,
+      notes: [...base.notes, `Tax demand / notice, not an order${v != null ? ` — ${fmtMoney(v, inp.market)}${pctM != null ? ` (${pctM}% of market cap)` : ''}` : ''}${pctM != null && pctM < 1 ? ': immaterial to the company' : ''}. Contested tax is a contingent liability until the appeal ends.`] };
+  }
+  // zzz775: a GDV / "potential" figure is not the company's value.
+  const potentialHay = `${c.subject} ${c.summary || ''} ${verified && inp.read ? `${inp.read.headline} ${inp.read.quote}` : ''}`;
+  const potential = c.valueStated != null && isPotentialValue(potentialHay);
+  if (potential) c = { ...c, valueStated: null };
   // Debt is financing, whichever reader filed it as a raise. (zzz768 — KUANTUM NCDs)
   const cHay = `${c.subject} ${c.summary || ''} ${verified && inp.read ? inp.read.headline : ''}`;
   if (c.category === 'fundraising' && RX.debtOnly.test(cHay) && !RX.equityWords.test(cHay)) {
@@ -723,6 +765,7 @@ export function buildFinding(inp: SweepInput): Finding {
   // An offering into the move caps the verdict below FIRE (zzz766).
   if (dilution && scored.net > 44.9) { scored.net = 44.9; scored.verdict = 'ROOM'; scored.components.caps = [...(scored.components.caps || []), 'offering filed into the move → capped at 44.9']; }
   const notes = [...base.notes];
+  if (potential) notes.push('The figure stated is a gross development value / potential, not the company\'s revenue, share or consideration — materiality is not measured from it.');
   if (c.stage === 'enabling') notes.push('ENABLING, not executed: a board considering something has no size, no price and no counterparty yet.');
   if (c.stage === 'scheduled') notes.push('SCHEDULED, not executed: dated in the future. Nothing has been produced yet.');
   if (!c.incremental) notes.push('Reads as a renewal or re-announcement, not an increment — materiality capped.');
@@ -743,7 +786,7 @@ export function buildFinding(inp: SweepInput): Finding {
     evidenceQuote: verified && inp.read ? inp.read.quote : null,
     sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays,
     valueStated: c.valueStated, valuePctMcap: scored.valuePctMcap, net: scored.net, components: scored.components, verdict: scored.verdict,
-    notes,
+    notes, facts: verified && inp.read ? (inp.read.facts ?? null) : null,
   };
 }
 

@@ -50,7 +50,8 @@ const C = {
 // have been cleared is how it stays unchecked. (zzz717)
 const ORDER: ThesisStatus[] = [
   'BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP', 'POSITIVE_EXPECTATION_GAP',
-  'CONFIRMATION_REQUIRED', 'EVIDENCE_INCOMPLETE', 'STRENGTHENING', 'NEUTRAL',
+  // zzz775: ON TRACK sits between CONFIRMATION REQUIRED and STRENGTHENING.
+  'EVIDENCE_INCOMPLETE', 'CONFIRMATION_REQUIRED', 'ON_TRACK', 'STRENGTHENING', 'NEUTRAL',
 ];
 
 export default function PortfolioCatalystsPage() {
@@ -245,6 +246,7 @@ export default function PortfolioCatalystsPage() {
       {(() => {
         const KEEP: Array<[string, string, string]> = [
           ['STRENGTHENING', 'Strengthening', '🟢'],
+          ['ON_TRACK', 'Thesis intact — on track', '🔵'],
           ['CONFIRMATION_REQUIRED', 'Confirmation required', '🟡'],
           ['POSITIVE_EXPECTATION_GAP', 'Running ahead of plan', '🟣'],
         ];
@@ -454,11 +456,22 @@ export default function PortfolioCatalystsPage() {
       {(() => {
         // zzz774: a holding with no thesis type has no variable that can move
         // its status — it can only ever read CONFIRMATION REQUIRED.
+        // zzz775: only a truly null type counts as "no thesis type"; a nearest
+        // fit (auto) is counted separately, as a type the owner may confirm.
         const untyped = list.filter((r) => !r.pattern);
-        return untyped.length > 0 ? (
+        const nearest = list.filter((r) => r.pattern?.fit === 'nearest' && !thesisTypes[r.symbol.toUpperCase()]);
+        return untyped.length > 0 || nearest.length > 0 ? (
           <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
-            <b style={{ color: '#F59E0B' }}>{untyped.length} holding{untyped.length === 1 ? '' : 's'} have no thesis type.</b> The quarter&apos;s figures did not classify them automatically, so no thesis variable can move their status. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
-            <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{untyped.map((r) => r.symbol).join(' · ')}</div>
+            {untyped.length > 0 && <>
+              <b style={{ color: '#F59E0B' }}>{untyped.length} holding{untyped.length === 1 ? '' : 's'} have no thesis type.</b> The quarter&apos;s figures fit none of the four, even loosely, so no thesis variable can move their status. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
+              <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{untyped.map((r) => r.symbol).join(' · ')}</div>
+            </>}
+            {nearest.length > 0 && (
+              <div style={{ marginTop: untyped.length ? 6 : 0 }}>
+                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto)</b> — no exact test fired, and the figures fit the type loosely. You may want to confirm or change each with the <b>thesis</b> picker.
+                <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern})`).join(' · ')}</div>
+              </div>
+            )}
           </div>
         ) : null;
       })()}

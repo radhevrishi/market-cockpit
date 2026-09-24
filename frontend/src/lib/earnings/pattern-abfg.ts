@@ -79,6 +79,11 @@ export interface AbfgResult {
   because: string;
   /** What ends this pattern. Never a price. */
   exitCondition: string;
+  /** zzz775: how the type was reached. 'exact' — the classifier's own test
+   *  fired; 'nearest' — nothing fitted exactly and the figures fit this type
+   *  loosely (auto, labelled as such); 'manual' — set by the owner. Absent
+   *  on older results means exact. */
+  fit?: 'exact' | 'nearest' | 'manual';
 }
 
 export const ABFG_META: Record<AbfgPattern, {
@@ -105,7 +110,7 @@ const EXIT: Record<AbfgPattern, string> = {
  *  the owner holds the name for a different reason). Same exit condition,
  *  and the card says it was set by hand. */
 export function manualPattern(p: AbfgPattern): AbfgResult {
-  return { pattern: p, ratio: null, because: 'Thesis type set by you — the quarter\'s figures did not classify it automatically (or you hold it for this reason).', exitCondition: EXIT[p] };
+  return { pattern: p, ratio: null, because: 'Thesis type set by you — the quarter\'s figures did not classify it automatically (or you hold it for this reason).', exitCondition: EXIT[p], fit: 'manual' };
 }
 
 const num = (v: unknown): number | null =>
@@ -128,7 +133,7 @@ export function classifyAbfg(input: AbfgInput): AbfgResult | null {
   const ratio = (salesY != null && epsY != null && salesY >= 1) ? epsY / salesY : null;
 
   const out = (pattern: AbfgPattern, because: string): AbfgResult =>
-    ({ pattern, ratio: ratio == null ? null : Math.round(ratio * 10) / 10, because, exitCondition: EXIT[pattern] });
+    ({ pattern, ratio: ratio == null ? null : Math.round(ratio * 10) / 10, because, exitCondition: EXIT[pattern], fit: 'exact' });
 
   // ── 1. F — the forensics gate, evaluated FIRST ────────────────────────
   if (ratio != null && epsY != null && ratio > 3 && epsY > 100) {
@@ -226,5 +231,60 @@ export function classifyGradedRow(row: any): AbfgResult | null {
     // structurally unavailable and the classifier says so by never returning
     // it rather than by guessing from revenue.
     orderGrowth: n(row.order_book_growth_pct),
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEAREST FIT — A LOOSE TYPE FOR A HOLDING NOTHING CLASSIFIED.       (zzz775)
+//
+// 56 of 115 held names had no thesis type, so no thesis variable could move
+// their status and every one of them sat at CONFIRMATION REQUIRED. The owner
+// holds each for a reason; the figures usually point at one of the four. When
+// the exact classifier returns null, the nearest type is assigned from the
+// SAME graded figures and labelled as such — never passed off as an exact
+// fit — and the owner's own choice (the picker) always wins.
+//
+//   F  earnings ≥ 2.5× revenue growth AND earnings ≥ +60%   (a profit jump)
+//   A  revenue ≥ +15%, earnings growing faster than revenue  (volume-led,
+//      (earnings ÷ revenue growth ≥ 1.1 — clear of the 1.0×   with leverage)
+//      line the A ledger's own leverage test reads as failing)
+//   G  revenue +5% to +15% with cash conversion above 1×    (quiet, cash-backed)
+//   else none — a holding with falling earnings on rising revenue, or with
+//   no figures, fits nothing even loosely, and is left untyped.
+//
+// Refined on the live book: A requires earnings to keep pace with revenue
+// (ratio ≥ 1). TI (revenue +156%, earnings −72%) and LLOYDSENT (+70% / −74%)
+// are not an operating inflection by any reading, and fourteen names with
+// revenue up 15%+ but earnings lagging (WONDERLA +45% / +38%, TATATECH +34% /
+// +6%) were typed A only to read THESIS WEAKENING on the very test that
+// defines A ("earnings grow slower than revenue") — a type that contradicts
+// the figures it was fitted from is not a fit. They stay untyped.
+// ═══════════════════════════════════════════════════════════════════════════
+export const NEAREST_FIT_NOTE = 'set your own with the picker';
+export function nearestFit(input: AbfgInput): AbfgResult | null {
+  const salesY = num(input.salesY);
+  const epsY = num(input.epsY);
+  const cfo = num(input.cfoToPat);
+  const ratio = (salesY != null && epsY != null && salesY >= 1) ? epsY / salesY : null;
+  const fmt = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v * 10) / 10}%`;
+  const out = (pattern: AbfgPattern, figures: string): AbfgResult => ({
+    pattern, ratio: ratio == null ? null : Math.round(ratio * 10) / 10, fit: 'nearest', exitCondition: EXIT[pattern],
+    because: `Nearest fit (auto) — the figures fit ${pattern} · ${ABFG_META[pattern].name.toLowerCase()} loosely (${figures}); no exact test fired. ${NEAREST_FIT_NOTE[0].toUpperCase()}${NEAREST_FIT_NOTE.slice(1)}.`,
+  });
+  if (ratio != null && epsY != null && ratio >= 2.5 && epsY >= 60) return out('F', `earnings ${fmt(epsY)}, ${ratio.toFixed(1)}× revenue ${fmt(salesY!)}`);
+  if (salesY != null && epsY != null && ratio != null && salesY >= 15 && ratio >= 1.1) return out('A', `revenue ${fmt(salesY)}, earnings ${fmt(epsY)} (${ratio.toFixed(1)}×)`);
+  if (salesY != null && salesY >= 5 && salesY < 15 && cfo != null && cfo > 1 && (epsY == null || epsY >= 0)) return out('G', `revenue ${fmt(salesY)}, cash conversion ${cfo.toFixed(2)}×`);
+  return null;
+}
+/** The exact classification of a graded row, else its nearest fit. For the
+ *  thesis book only — the screening pages keep the exact classifier. */
+export function classifyOrNearest(row: any): AbfgResult | null {
+  const exact = classifyGradedRow(row);
+  if (exact || !row || typeof row !== 'object') return exact;
+  const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return nearestFit({
+    salesY: n(row.sales_yoy_pct),
+    epsY: n(row.eps_yoy_pct) ?? n(row.net_profit_yoy_pct),
+    cfoToPat: n(row.cfo_to_pat_ratio) ?? n(row.ocf_to_pat_ratio),
   });
 }

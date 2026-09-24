@@ -68,7 +68,7 @@ export const maxDuration = 60;
 
 const WINDOW_DAYS = 21;
 const DEFAULT_BUDGET_MS = 40_000;
-const MODEL_READS_PER_CALL = 4;
+const MODEL_READS_PER_CALL = 6;
 
 interface ResearchState {
   market: 'IN' | 'US';
@@ -112,7 +112,7 @@ const SAVE_EVERY_MS = 10_000;
 // — only the verbatim-quote read is skipped (the response counts them in
 // reads_skipped_for_ceiling). The
 // ceiling counts PAID reads: a cached read is free and does not consume it.
-const MAX_MODEL_READS_PER_DAY: Record<'IN' | 'US', number> = { IN: 40, US: 20 };
+const MAX_MODEL_READS_PER_DAY: Record<'IN' | 'US', number> = { IN: 70, US: 30 };
 
 /** The store is keyed by the SESSION the screen describes, not the calendar
  *  day: after midnight IST, on a weekend or on a holiday the 1-day return is
@@ -421,7 +421,7 @@ async function research(req: NextRequest, body: any) {
 
       // Model-read the best catalyst candidate when the budget allows: a
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
-      let read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null } | null = null;
+      let read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null; facts?: Record<string, string> | null } | null = null;
       // The SAME candidate the finding will score — the first version chose
       // "first catalyst in list order" here and "highest-scoring" in the
       // finding, so every verified quote was attached to the wrong filing
@@ -437,7 +437,7 @@ async function research(req: NextRequest, body: any) {
           ? await withDeadline(cachedRead(market, u.ticker, cand), usLeft() - 5_000, { read: null, cached: false })
           : await cachedRead(market, u.ticker, cand);
         if (!cached) modelReads++;
-        if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst };
+        if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst, facts: r.facts ?? null };
       }
 
       st.findings[u.ticker] = { ...buildFinding({
@@ -531,7 +531,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
         if (inputs.read && inputs.read.url === cand.url) read = inputs.read;
         else {
           const { read: r } = await cachedRead(market, u.ticker, cand, { cacheOnly: true });
-          if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst };
+          if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst, facts: r.facts ?? null };
         }
       }
       inputs = { ...inputs, read };

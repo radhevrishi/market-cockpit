@@ -26,6 +26,7 @@ import { screenerSymbol, parseBseCode } from '@/lib/earnings/screener-documents'
 import type { AnnouncementLite, Returns } from './catalyst-research';
 import { returnsFromSeries } from './catalyst-research';
 import { companyNameFromPage } from './news-context';
+import { yahooChart } from '@/lib/us-prices';
 
 export function parseCompanyId(html: string): string | null {
   const m = /data-company-id="(\d+)"/.exec(html) || /\/company\/(\d+)\/chart/.exec(html) || /\/announcements\/recent\/(\d+)\//.exec(html);
@@ -96,11 +97,35 @@ export interface CompanyResearch {
   errors: string[];
 }
 
+async function yahooFallback(out: CompanyResearch, sym: string): Promise<void> {
+  // zzz775: screener.in's chart is the first choice, not the only one. When
+  // it fails, the NSE (.NS) or BSE (.BO) daily closes stand in, so 1W/1M/3M
+  // and the reaction to the filing are measured instead of printed "—".
+  if (out.returns) return;
+  {
+    const tries = [`${sym}.NS`, out.bseCode ? `${out.bseCode}.BO` : null, /^\d{6}$/.test(sym) ? `${sym}.BO` : null].filter((x): x is string => !!x);
+    for (const y of tries) {
+      try {
+        const bars = await Promise.race([yahooChart(y, '1y'), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
+        if (bars && bars.close.length > 20) {
+          const series = bars.dates.map((d, k) => [d, bars.close[k]] as [string, number]);
+          out.returns = returnsFromSeries(series);
+          out.lastClose = series[series.length - 1][1];
+          out.prevClose = series.length > 1 ? series[series.length - 2][1] : null;
+          out.sources.push(`price history (Yahoo ${y})`);
+          out.errors = out.errors.filter((e) => !/^chart:/.test(e));
+          break;
+        }
+      } catch { /* next */ }
+    }
+  }
+}
+
 export async function fetchCompanyResearch(ticker: string, now = new Date()): Promise<CompanyResearch> {
   const sym = screenerSymbol(ticker);
   const out: CompanyResearch = { ticker, companyId: null, marketCapCr: null, price: null, pe: null, announcements: [], returns: null, lastClose: null, prevClose: null, sources: [], errors: [] };
   const page = await fetchScreenerHtml(`https://www.screener.in/company/${encodeURIComponent(sym)}/`);
-  if (!page.html) { out.errors.push(`company page: ${page.error || 'unreachable'}`); return out; }
+  if (!page.html) { out.errors.push(`company page: ${page.error || 'unreachable'}`); await yahooFallback(out, sym); out.sources = out.sources.filter((x) => !/^price history/.test(x)); return out; }
   out.sources.push('screener.in company page');
   out.companyId = parseCompanyId(page.html);
   out.companyName = companyNameFromPage(page.html);
@@ -122,5 +147,6 @@ export async function fetchCompanyResearch(ticker: string, now = new Date()): Pr
       } catch (e: any) { out.errors.push(`chart: ${String(e?.message || e)}`); }
     } else out.errors.push(`chart: ${ch.error || 'unreachable'}`);
   }
+  await yahooFallback(out, sym);
   return out;
 }

@@ -637,7 +637,11 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
     const why = capacityMismatch({ value: String(inst.after), quote: inst.quote }, { value: String(add.after), quote: add.quote });
     if (why) {
       for (const [row, other] of [[inst, add], [add, inst]] as const) {
-        row.evidence = `${row.evidence} ⓘ ${why} (${other.key === 'capacity' ? 'installed' : 'added'}: ${other.after}).`;
+        const note = ` ⓘ ${why} (${other.key === 'capacity' ? 'installed' : 'added'}: ${other.after}).`;
+        row.evidence = `${row.evidence}${note}`;
+        // zzz775: remembered, so a row that later gets a like-for-like
+        // cross-period pair of its own sheds a note that was never about it.
+        (row as any)._capMismatch = { why, note };
         // A row whose own before → after is one measure and one scope keeps
         // its move (AARTIPHARM 5,000 → 9,600+ MTPA of one product); only a
         // bare level, read against the other figure, is not judgeable.
@@ -1600,14 +1604,14 @@ export function extractVariables(
     push({
       key: 'margin_driver', label: VAR_LABEL.margin_driver,
       before: null,
-      after: drivers.map((d) => String(d?.detail || '')).filter(Boolean).slice(0, 2).join('; '),
+      after: drivers.map((d) => String(d?.detail || '').replace(/[.\s]+$/, '')).filter(Boolean).slice(0, 2).join('; '),
       delta: null,
       verdict: positiveN > 0 ? 'improving' : structuralN > 0 ? 'stated' : 'flat',
       unjudged: positiveN === 0 && structuralN > 0 ? 'the structural drivers disclosed describe pressure or name no positive mechanism' : null,
       evidence: positiveN > 0
         ? `${positiveN} of ${drivers.length} disclosed margin drivers are structural improvements — that part repeats.`
         : structuralN > 0
-          ? `${structuralN} of ${drivers.length} disclosed margin drivers are structural, but none names a mechanism that lifts the margin (${drivers.map((d) => String(d?.detail || '')).filter(Boolean).slice(0, 2).join('; ').slice(0, 200)}). Shown, not counted as an improvement.`
+          ? `${structuralN} of ${drivers.length} disclosed margin drivers are structural, but none names a mechanism that lifts the margin (${drivers.map((d) => String(d?.detail || '').replace(/[.\s]+$/, '')).filter(Boolean).slice(0, 2).join('; ').slice(0, 200)}). Shown, not counted as an improvement.`
           : 'Every disclosed margin driver is cyclical or one-off. This margin does not repeat on its own.',
       source: 'filing', kind: 'fact',
     });
@@ -1624,7 +1628,68 @@ export function extractVariables(
   const ctx = readingContext(opts?.ledger ?? null, opts?.period ?? null);
   const cleaned = tidyLevels(out, businessProfileOf(graded, summary));
   return applyComparisons(dropRestatedCapacityAddition(cleaned), comparisons)
-    .map((v) => { const r = readingFor(v, ctx); return { ...v, reading: r, display: rowDisplay({ ...v, reading: r }) }; });
+    .map(scopeCapacityMismatch)
+    .map(unitlessPriorGuard)
+    .map((v) => { const r = readingFor(v, ctx); return { ...v, reading: r, display: rowDisplay({ ...v, reading: r }) }; })
+    // ── THE PERIOD'S OWN SERIES OUTRANKS AN OLD IN-TEXT MOVE.        (zzz775)
+    // VADILALIND's capacity read "270,000 → 380,000 (+40.7%)" — a move the
+    // document dated "over past few years" — beside a series that holds
+    // 380,000 in Q3 FY26 and 380,000 now. Against the previous period it did
+    // not move, so this period it is unchanged, not improving.
+    .map((v) => (v.source === 'filing' && v.reading?.previous && v.reading.direction === 'FLAT'
+      && v.reading.comparison_basis && v.reading.comparison_basis !== 'in_text'
+      && (v.verdict === 'improving' || v.verdict === 'deteriorating')
+      ? { ...v, verdict: 'flat' as VarVerdict, before: v.reading.previous.value, delta: null } : v))
+    .map((v, _i, all) => {
+      // …and a capacity ADDITION cannot be this period's evidence when the
+      // installed capacity it would have added to has not moved since the
+      // previous period: the addition predates the quarter. (zzz775)
+      if (v.key !== 'capacity_addition' || v.verdict !== 'improving') return v;
+      const inst = all.find((x) => x.key === 'capacity' && x.statement !== 'HISTORICAL');
+      const r = inst?.reading;
+      if (!r || !r.previous || r.direction !== 'FLAT' || !r.comparison_basis || r.comparison_basis === 'in_text') return v;
+      const why = `history — installed capacity is unchanged since ${r.previous.period || 'the previous period'} (${r.previous.value}), so this addition predates ${opts?.period || 'the current period'}; not current-period evidence`;
+      return { ...v, verdict: 'stated' as VarVerdict, unjudged: why };
+    });
+}
+
+// ── A MISMATCH NOTE BELONGS TO THE PAIR THAT WAS COMPARED.          (zzz775)
+// SPECTRUM printed "Installed capacity: 1.34 MW (Q1 FY27) vs 1.34 MW (Q3
+// FY26) · unchanged · … — Not comparable — power capacity vs production
+// capacity (1.34 MW vs around 40,000 sq. ft.)". The installed row had its own
+// like-for-like pair across periods; the note was about the sq ft addition.
+// A row whose cross-period comparison is the same measure and scope keeps
+// that comparison and loses the note; the other row stays UNCLEAR on its own.
+export function scopeCapacityMismatch(v: StructuralVar): StructuralVar {
+  const cm = (v as any)._capMismatch as { why: string; note: string } | undefined;
+  if (!cm) return v;
+  const { _capMismatch, ...rest } = v as any;
+  const c = v.comparison;
+  const prev = c?.previous?.raw;
+  const ownPair = !!prev && !!v.after && c!.basis !== 'NONE' && c!.basis !== 'WITHIN_DOCUMENT'
+    && ['INCREASED', 'DECREASED', 'UNCHANGED'].includes(c!.change_type)
+    && isCapacityFigure(prev) && isCapacityFigure(v.after) && !capacityMismatch({ value: String(prev) }, { value: String(v.after) });
+  if (!ownPair || v.unjudged !== cm.why) return rest as StructuralVar;
+  return { ...rest, unjudged: null, evidence: String(v.evidence || '').replace(cm.note, '') } as StructuralVar;
+}
+
+// ── A PRIOR WITH NO UNIT CANNOT BE COMPARED.                        (zzz775)
+// CYIENTDLM: "Installed capacity: 15,000 sq ft (Q1 FY27) vs 6,000 (earlier,
+// in text) · +150%". The prior figure carries no unit, so what it measured is
+// not established: UNCLEAR, no delta — the same rule as a unit/scope mismatch.
+const PHYSICAL_QTY = new Set<VarKey>(['capacity', 'capacity_addition', 'volume']);
+const BARE_NUMBER = /^\s*[~≈]?\s*\d[\d,]*(?:\.\d+)?\s*\+?\s*$/;
+const HAS_UNIT = /\d[\d,.]*\+?\s*(?:k\b|lakh|million|mn\b|thousand)?\s*[A-Za-z]{1,}/;
+export function unitlessPrior(before: string | null | undefined, after: string | null | undefined): boolean {
+  return !!before && !!after && BARE_NUMBER.test(String(before)) && HAS_UNIT.test(String(after)) && !/%|×|\bx\b/i.test(String(after));
+}
+function unitlessPriorGuard(v: StructuralVar): StructuralVar {
+  if (!PHYSICAL_QTY.has(v.key) || v.statement === 'HISTORICAL' || !unitlessPrior(v.before, v.after)) return v;
+  const reason = `UNCLEAR — unit/scope mismatch: the earlier figure ${v.before} carries no unit and ${v.after} does, so they cannot be compared; no delta calculated`;
+  return {
+    ...v, delta: null, verdict: v.verdict === 'unknown' ? 'unknown' : 'stated', unjudged: reason,
+    validation: { state: 'UNCLEAR', flags: ['UNIT_MISSING'], reason, metric_definition: null },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2202,6 +2267,10 @@ function isRealChange(v: StructuralVar, cls: ChangeClass): boolean {
   if (cls === 'GUIDANCE_CHANGE') return true;
   if (cls !== 'PERIOD_CHANGE' || v.unjudged) return false;
   const r = v.reading;
+  // An unchanged value is not a change, whatever the row's own in-text
+  // before → after said: VADILALIND printed "WHAT CHANGED + Installed
+  // capacity: 380,000 (Q1 FY27) vs 380,000 (Q3 FY26) · unchanged". (zzz775)
+  if (r && r.previous && r.direction === 'FLAT') return false;
   if (r && r.previous && (r.direction === 'UP' || r.direction === 'DOWN') && !r.not_comparable_reason) return true;
   const c = v.comparison;
   if (c && c.previous && c.basis !== 'NONE' && (c.change_type === 'INCREASED' || c.change_type === 'DECREASED')) return true;

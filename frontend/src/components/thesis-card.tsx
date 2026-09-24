@@ -279,7 +279,20 @@ export function readingText(r: VariableReading): { text: string; tags: string[];
 // "No thesis action triggered" answers "did a break trigger fire?"; it says
 // nothing about direction or about whether the mechanism was checked. The
 // three are printed as separate chips so one cannot be read as another.
-const DIRECTION_WORD: Record<ThesisVerdict['direction'], string> = { STRENGTHENING: 'strengthening', WEAKENING: 'weakening', UNCHANGED: 'unchanged', UNKNOWN: 'unknown' };
+const DIRECTION_WORD: Record<ThesisVerdict['direction'], string> = { STRENGTHENING: 'strengthening', INTACT: 'intact — on track', WEAKENING: 'weakening', UNCHANGED: 'unchanged', UNKNOWN: 'unknown' };
+/** The period the evidence describes, or an honest "latest period" when the
+ *  ledger names none — never "CURRENT PERIOD — CURRENT-PERIOD EVIDENCE" or
+ *  "this period: 1.44× (last FY)". (zzz775) */
+export const periodHead = (cur: string | null | undefined): string => (cur ? `${cur.toUpperCase()} — CURRENT-PERIOD EVIDENCE` : 'LATEST PERIOD — EVIDENCE');
+/** A satisfied standing test (the F / G cash test on the latest annual
+ *  figure — India files no Q1/Q3 cash-flow statement): the value is the FY
+ *  figure, labelled as the standing test, never as this quarter's. (zzz775) */
+export function standingText(c: { historical?: { standing?: boolean; period: string; value: string } | null }, cur: string | null | undefined): { value: string; word: string } | null {
+  const h = c.historical;
+  if (!h || !h.standing) return null;
+  const q = /^Q[1-4]/i.exec(String(cur || ''))?.[0]?.toUpperCase();
+  return { value: `${h.period} ${h.value}`, word: `standing test (no ${q ? `${q} ` : 'quarterly '}cash-flow statement)` };
+}
 const EVIDENCE_WORD: Record<ThesisVerdict['evidence'], string> = {
   CONFIRMED: 'confirmed', PARTIALLY_CONFIRMED: 'partially confirmed', NOT_CONTRADICTED: 'not contradicted',
   CONTRADICTED: 'contradicted', INCOMPLETE: 'incomplete', UNCHECKED: 'unchecked',
@@ -481,15 +494,20 @@ function CapexEarningBlock({ e, inline }: { e: CapexEarning; inline: boolean }) 
 /** Every earlier-period figure on the assessment, with the engine's decision:
  *  the historical items it separated out, plus historical context a filing
  *  row carries beside its current value. (zzz773) */
-export function historyItems(a: ThesisAssessment, reportingPeriod?: string | null): Array<{ label: string; period: string; value: string; active: boolean; decision: string; current: string | null }> {
-  const cur = a.currentPeriod || reportingPeriod || 'this period';
-  const out: Array<{ label: string; period: string; value: string; active: boolean; decision: string; current: string | null }> = [];
+export function historyItems(a: ThesisAssessment, reportingPeriod?: string | null): Array<{ label: string; period: string; value: string; active: boolean; standing?: boolean; decision: string; current: string | null }> {
+  const cur = a.currentPeriod || reportingPeriod || 'Latest period';
+  const out: Array<{ label: string; period: string; value: string; active: boolean; standing?: boolean; decision: string; current: string | null }> = [];
   for (const h of a.historicalContext || []) {
     const row = a.checked.find((c) => c.key === h.key);
     const lc = /^[A-Z]{2,}\b/.test(h.label) ? h.label : h.label.toLowerCase();
-    const current = row && row.verdict === 'unknown' ? `${cur} ${lc}: NOT DISCLOSED`
-      : row && !h.active && row.verdict !== 'unknown' ? `${cur}: ${row.delta || row.after || 'stated'}` : h.active ? `${cur} ${lc}: NOT DISCLOSED` : null;
-    out.push({ label: h.label, period: h.period, value: h.value, active: h.active, decision: h.decision, current });
+    // A standing test's figure IS the FY figure: the current slot says the
+    // quarter's figure is not disclosed and names the standing test, never
+    // "Q1 FY27: 0.74× (last FY)". (zzz775)
+    const current = h.standing ? `${cur} ${lc}: NOT DISCLOSED — ${h.period} ${h.value} is the standing test`
+      : row && row.verdict === 'unknown' ? `${cur} ${lc}: NOT DISCLOSED`
+      : row && !h.active && row.verdict !== 'unknown' && !/\(last FY\)\s*$/i.test(String(row.after || '')) ? `${cur}: ${row.delta || row.after || 'stated'}`
+        : `${cur} ${lc}: NOT DISCLOSED`;
+    out.push({ label: h.label, period: h.period, value: h.value, active: h.active, standing: !!h.standing, decision: h.decision, current });
   }
   for (const c of a.checked) {
     for (const x of (Array.isArray(c.context) ? c.context : []) as Array<{ value: string; asOf: string }>) {
@@ -565,10 +583,12 @@ export function ThesisCard(p: ThesisCardProps) {
               border: `1px solid ${C.border}`, color: C.dim }}>conviction · {p.tier}</span>
         )}
         {pm && p.pattern && (
-          <span title={p.pattern.because} style={{
+          // zzz775: a nearest fit says so — "nearest A", dashed — and is never
+          // shown as if the classifier's own test had fired.
+          <span data-testid="pattern-badge" data-fit={p.pattern.fit || 'exact'} title={p.pattern.because} style={{
             fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
-            border: `1px solid ${pm.color}`, background: `${pm.color}18`, color: ink(pm.color),
-          }}>{pm.icon} {p.pattern.pattern} · {pm.name}</span>
+            border: `1px ${p.pattern.fit === 'nearest' ? 'dashed' : 'solid'} ${pm.color}`, background: p.pattern.fit === 'nearest' ? 'transparent' : `${pm.color}18`, color: ink(pm.color),
+          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto)' : ''}</span>
         )}
         {p.radarScore != null && (
           <span style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
@@ -576,11 +596,11 @@ export function ThesisCard(p: ThesisCardProps) {
         {p.onThesisType && (
           <select
             aria-label="Thesis type"
-            title={p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No thesis type fits automatically, so no variable can move this card. Set why you hold it.'}
+            title={p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern?.fit === 'nearest' ? `${p.pattern.because}` : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No thesis type fits automatically, so no variable can move this card. Set why you hold it.'}
             value={p.thesisType || ''}
             onChange={(e) => p.onThesisType!((e.target.value || null) as any)}
             style={{ fontSize: 12, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'transparent', color: p.pattern ? C.dim : '#F59E0B', border: `1px solid ${p.pattern ? C.border : '#F59E0B'}`, cursor: 'pointer' }}>
-            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.pattern})` : 'thesis: not set — pick'}</option>
+            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern})` : 'thesis: not set — pick'}</option>
             <option value="A">A · Operating inflection</option>
             <option value="B">B · Demand explosion</option>
             <option value="F">F · Profit jump</option>
@@ -690,7 +710,8 @@ export function ThesisCard(p: ThesisCardProps) {
           everything else is EVIDENCE FOUND for the period. Deteriorations
           first. (zzz740) */}
       {p.changed && p.changed.length > 0 && (() => {
-        const isChange = (c: ChangeLine) => (c.kind ? c.kind === 'change' : !!p.changedFrom && c.sign !== '·');
+        // An unchanged value is never a change, whatever the line's kind. (zzz775)
+        const isChange = (c: ChangeLine) => (c.kind ? c.kind === 'change' : !!p.changedFrom && c.sign !== '·') && !/·\s*unchanged\b/i.test(c.text);
         const moves = p.changed.filter(isChange);
         const found = p.changed.filter((c) => !isChange(c));
         const lineOf = (c: ChangeLine, i: number) => {
@@ -754,7 +775,7 @@ export function ThesisCard(p: ThesisCardProps) {
         // is a financial warning, not a break signal: amber, and said so. (zzz771)
         const warnOnly = bt.fired && /financial warning only/i.test(bt.text) && !/^Fired: /.test(bt.text);
         const btColor = warnOnly ? C.warn : bt.fired ? C.alarm : C.up;
-        const dirColor = v.direction === 'STRENGTHENING' ? C.up : v.direction === 'WEAKENING' ? C.down : v.direction === 'UNCHANGED' ? C.flat : C.absent;
+        const dirColor = v.direction === 'STRENGTHENING' ? C.up : v.direction === 'INTACT' ? '#3B82F6' : v.direction === 'WEAKENING' ? C.down : v.direction === 'UNCHANGED' ? C.flat : C.absent;
         const evColor = v.evidence === 'CONFIRMED' ? C.up : v.evidence === 'PARTIALLY_CONFIRMED' ? C.cyan : v.evidence === 'CONTRADICTED' ? C.down
           : v.evidence === 'NOT_CONTRADICTED' ? C.flat : C.absent;
         // ── A CONTRADICTED VARIABLE IS NOT A MISSING ONE.            (zzz772)
@@ -793,7 +814,7 @@ export function ThesisCard(p: ThesisCardProps) {
           variable that was checked and did not move. */}
       {a && (
         <div data-testid="current-period-head" style={{ marginTop: 8, fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.dim }}>
-          {(a.currentPeriod || p.reportingPeriod || 'CURRENT PERIOD').toUpperCase()} — CURRENT-PERIOD EVIDENCE
+          {periodHead(a.currentPeriod || p.reportingPeriod)}
         </div>
       )}
       {a && (() => {
@@ -842,8 +863,9 @@ export function ThesisCard(p: ThesisCardProps) {
                       const T = ROW_TREATMENT[tr];
                       // A QoQ-only level is read and shown, not unclear. (zzz772)
                       const unclear = (c as any).state === 'UNCLEAR' && tr !== 'QOQ_ONLY';
-                      const shownVal = !un && (c.before || c.after || c.delta) ? chipValue(c as any) : '';
-                      const tWord = treatmentWord(tr, c as any, shownVal);
+                      const stand = standingText(c as any, a.currentPeriod || p.reportingPeriod);
+                      const shownVal = stand ? stand.value : !un && (c.before || c.after || c.delta) ? chipValue(c as any) : '';
+                      const tWord = stand ? stand.word : treatmentWord(tr, c as any, shownVal);
                       const rd: VariableReading | null = (c as any).reading || null;
                       const tags = rd && rd.display ? readingText(rd).tags : [];
                       if (lifecycle) {
@@ -900,7 +922,7 @@ export function ThesisCard(p: ThesisCardProps) {
                               reading", "→ UNCHANGED (two readings)". Confirmed
                               and contradicted are said by the mark and colour;
                               unclear is said by the value text itself. (zzz771) */}
-                          {!un && (tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
+                          {!un && (stand || tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT' || (tr === 'UNCLEAR' && !(c.before || c.after || c.delta)))
                             && <span style={{ fontSize: 11 }}> · {tWord}</span>}
                           {tags.map((t) => <ClassTag key={t} word={t} />)}
                           {(c as any).historical?.active && <ClassTag word={`${(c as any).historical.period} · HISTORICAL / UNRESOLVED`} />}
@@ -953,7 +975,7 @@ export function ThesisCard(p: ThesisCardProps) {
             <div key={i} data-testid="historical-item" data-active={h.active ? 'true' : 'false'} style={{ color: C.dim }} title={h.decision}>
               <span style={{ color: C.text }}>{h.label} — {h.period}: <b>{humanTokens(rupee(h.value))}</b> · historical</span>
               {h.current && <span style={{ color: C.faint }}> · {h.current}</span>}
-              <span style={{ color: h.active ? ink(C.warn) : C.faint, fontWeight: h.active ? 700 : 500 }}> · {h.active ? 'active thesis condition — historical / unresolved' : 'context only — not an active thesis condition'}</span>
+              <span style={{ color: h.active ? ink(C.warn) : h.standing ? ink(C.up) : C.faint, fontWeight: h.active || h.standing ? 700 : 500 }}> · {h.active ? 'active thesis condition — historical / unresolved' : h.standing ? `standing test — satisfied (${h.period} figure)` : 'context only — not an active thesis condition'}</span>
               <div style={{ fontSize: 12, color: C.faint, paddingLeft: 10 }}>{h.decision}</div>
             </div>
           ))}
@@ -1032,7 +1054,7 @@ export function ThesisCard(p: ThesisCardProps) {
       {a && open && (
         <>
           {/* ── WHAT CHANGED — facts only. ─────────────────────────────── */}
-          <Section label={`${a.currentPeriod || p.reportingPeriod || 'CURRENT PERIOD'} — CURRENT-PERIOD EVIDENCE · ${changed.length} variable${changed.length === 1 ? '' : 's'} read from the evidence`}>
+          <Section label={`${periodHead(a.currentPeriod || p.reportingPeriod)} · ${changed.length} variable${changed.length === 1 ? '' : 's'} read from the evidence`}>
             {changed.length === 0 && (
               <div style={{ fontSize: 13.5, color: C.dim }}>
                 Nothing structural was disclosed. That is silence, not bad news.
@@ -1065,10 +1087,12 @@ export function ThesisCard(p: ThesisCardProps) {
                       const tag = STATEMENT_TAG[cc.statement || (cc.source === 'grader' ? 'ACTUAL' : '')];
                       const note = priorNote(cc, a.historyDepth);
                       const doc = (p.documentsRead || []).find((d) => d.label === cc.sourceLabel);
+                      const stand = standingText(cc, a.currentPeriod || p.reportingPeriod);
                       return (
                         <>
-                          <b>{chipValue(cc)}</b>
-                          {(tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {treatmentWord(tr, cc, chipValue(cc))}</span>}
+                          <b>{stand ? stand.value : chipValue(cc)}</b>
+                          {stand ? <span style={{ color: C.flat, fontSize: 12 }}> · {stand.word}</span>
+                            : (tr === 'UNCHANGED' || tr === 'WITHIN_MATERIALITY' || tr === 'SINGLE' || tr === 'SILENT') && <span style={{ color: C.flat, fontSize: 12 }}> · {treatmentWord(tr, cc, chipValue(cc))}</span>}
                           {rdTags.map((t) => <ClassTag key={t} word={t} />)}
                           {cc.historical?.active && <ClassTag word={`${cc.historical.period} · HISTORICAL / UNRESOLVED`} />}
                           {cc.watch && <ClassTag word="WATCH — not mapped to this thesis" />}

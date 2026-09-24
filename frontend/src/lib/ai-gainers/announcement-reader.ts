@@ -70,6 +70,8 @@ export interface ReadAnnouncement {
   filingDate: string | null;
   /** True when the reader concluded this is routine housekeeping. */
   administrative: boolean;
+  /** zzz775: the answers the filing itself gives — only what it states. */
+  facts?: Record<string, string> | null;
 }
 
 /**
@@ -142,6 +144,14 @@ const TOOL = {
         enum: ['high', 'medium', 'low', 'unknown'],
         description: 'Potential effect on EARNINGS, judged only from what the announcement quantifies. An unquantified announcement is "unknown", never "high" — an order with no value attached tells you nothing about earnings.',
       },
+      facts: {
+        type: 'object',
+        description: 'Answers the announcement itself gives, copied from its text with units. Use the exact string "not stated" for anything the text does not say — never infer. Keys: value (order / deal / capex / issue size with currency and unit), counterparty (customer, target, partner or allottee named), execution_period (delivery or completion period), revenue_start (when it starts contributing), funding (cash, debt, internal accruals, shares), price_terms (price per share, valuation, consideration terms), capacity (capacity or volume stated), conditions (approvals or conditions still pending), margin (margin, pricing or profitability stated).',
+        properties: {
+          value: { type: 'string' }, counterparty: { type: 'string' }, execution_period: { type: 'string' }, revenue_start: { type: 'string' },
+          funding: { type: 'string' }, price_terms: { type: 'string' }, capacity: { type: 'string' }, conditions: { type: 'string' }, margin: { type: 'string' },
+        },
+      },
       structural_duration: {
         type: 'string',
         enum: ['long', 'medium', 'short', 'unknown'],
@@ -204,7 +214,7 @@ export async function readAnnouncement(
     // 24 000 chars, the quote gate below rejects the read the same as before.
     const resp = await anthropicMessages('gainers-read', {
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: 1600,
       system: SYSTEM,
       tools: [TOOL],
       tool_choice: { type: 'tool', name: TOOL.name },
@@ -242,6 +252,15 @@ export async function readAnnouncement(
       sourceUrl: url,
       filingDate: a.filing_date || null,
       administrative: false,
+      facts: (() => {
+        const f: Record<string, string> = {};
+        const raw = d.facts && typeof d.facts === 'object' ? d.facts : {};
+        for (const [k, v] of Object.entries(raw)) {
+          const t = String(v ?? '').replace(/\s+/g, ' ').trim();
+          if (t && !/^(not stated|n\/?a|none|unknown|not (mentioned|disclosed|specified|available))\.?$/i.test(t)) f[k] = t.slice(0, 220);
+        }
+        return Object.keys(f).length ? f : null;
+      })(),
     };
   } catch {
     return null;
@@ -266,7 +285,8 @@ function urlHash(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-export const readCacheKey = (url: string) => `ai-gainers:annread:v1:${urlHash(url)}`;
+// v2 (zzz775): reads carry `facts`; a v1 read is re-read once.
+export const readCacheKey = (url: string) => `ai-gainers:annread:v2:${urlHash(url)}`;
 
 export interface CachedRead { read: ReadAnnouncement | null; cached: boolean; skipped?: boolean }
 
@@ -282,8 +302,14 @@ export async function readAnnouncementCached(
     const hit = await kvGet<{ read: ReadAnnouncement | null }>(k);
     if (hit && 'read' in hit) return { read: hit.read, cached: true };
   } catch { /* a cold cache is a normal cache */ }
+  // A v1 read (no facts) still answers a free re-score; a paid pass re-reads
+  // it once to collect the filing's own answers. (zzz775)
+  let v1: { read: ReadAnnouncement | null } | null = null;
+  try { v1 = await kvGet<{ read: ReadAnnouncement | null }>(`ai-gainers:annread:v1:${urlHash(url)}`); } catch { v1 = null; }
   // A page open answers from what was already read; only a click pays. (zzz768)
-  if (opts.cacheOnly) return { read: null, cached: false, skipped: true };
+  if (opts.cacheOnly) return v1 && 'read' in v1 ? { read: v1.read, cached: true } : { read: null, cached: false, skipped: true };
+  // An administrative / unreadable v1 verdict does not become readable by paying again.
+  if (v1 && 'read' in v1 && v1.read === null) return { read: null, cached: true };
   const read = await readAnnouncement(a, fetchText);
   try { await kvSet(k, { read, at: new Date().toISOString() }, READ_CACHE_TTL_S); } catch { /* the read still counts; only the next one pays again */ }
   return { read, cached: false };

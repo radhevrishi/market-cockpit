@@ -131,16 +131,19 @@ describe('zzz765c · status sentences', () => {
     assert.equal(a.status, 'STRENGTHENING');
   });
 
-  test('A · zzz771: two drivers but 2/5 structural on the card is CONFIRMATION REQUIRED — one ratio for label, gate and chip', () => {
+  // zzz775: UPDATED. Still not green on 2/5 — but a decision, not an open
+  // question: ON TRACK, with the open variables as next quarter's watch list.
+  test('A · zzz771: two drivers but 2/5 structural on the card is not green — ON TRACK (zzz775), one ratio for label, gate and chip', () => {
     const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
       ...GOOD_OUTPUT,
       V('operating_leverage', 'improving', { delta: '1.5×', source: 'grader' }),
       V('utilisation', 'improving', { after: '84%', delta: '+12pp' }),
       V('margin_driver', 'improving', { after: 'better product mix and operating leverage' }),
     ] });
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.equal(a.status, 'ON_TRACK');
     assert.deepEqual([a.verdict!.coverage.confirmed, a.verdict!.coverage.applicable], [2, 5]);
-    assert.match(a.because, /^Evidence incomplete — financial output strengthening; structural mechanism not yet fully confirmed \(2\/5/);
+    assert.match(a.because, /^Financial output materially improved \(revenue \+30% · earnings \+45% · margin \+2\.0pp\)\. Mechanism evidenced in the documents[^:]*: .*utilisation/);
+    assert.match(a.because, /Open for next quarter: .*volume \(not disclosed\)/);
   });
 
   test('A · output up with only levels and targets (no driver evidenced) is CONFIRMATION REQUIRED', () => {
@@ -158,7 +161,7 @@ describe('zzz765c · status sentences', () => {
   // as the failure: one evidenced driver with the core mechanism unconfirmed
   // is CONFIRMATION REQUIRED, in his words. A target-only utilisation still
   // does not BLOCK the assessment — it is listed as still to confirm.
-  test('A · MANINDS shape: target-only utilisation + one stated margin driver is CONFIRMATION REQUIRED, naming what is open', () => {
+  test('A · MANINDS shape: target-only utilisation + one stated margin driver is not green (ON TRACK, zzz775), naming what is open', () => {
     const a = assessThesis({ pattern: 'A', evidenceReviewed: true, hasGraderRow: true, variables: [
       ...GOOD_OUTPUT,
       V('operating_leverage', 'improving', { delta: '2.8×', source: 'grader' }),
@@ -167,9 +170,11 @@ describe('zzz765c · status sentences', () => {
       V('capacity_addition', 'stated', { after: '22,000 MTPA' }),
       V('margin_driver', 'improving', { after: "optimized product and geographic mix and higher share of value-added/coated orders" }),
     ] });
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED', a.because);
-    assert.ok(a.because.startsWith('Evidence incomplete — financial output strengthening; structural mechanism not yet fully confirmed (1/5: margin driver).'), a.because);
-    assert.match(a.because, /Still to confirm: .*utilisation \(target only/);
+    // zzz775: one evidenced driver, nothing falling → ON TRACK, not green;
+    // the target-only utilisation is named as open for next quarter.
+    assert.equal(a.status, 'ON_TRACK', a.because);
+    assert.match(a.because, /Mechanism evidenced in the documents[^:]*: margin driver/);
+    assert.match(a.because, /Open for next quarter: .*utilisation \(target only/);
   });
 
   test('a temporary-only margin driver (refund, forex) is not a structural driver', () => {
@@ -210,12 +215,12 @@ describe('zzz765c · status sentences', () => {
   // zzz771: UPDATED. One driver (capacity added) with the margin driver not
   // disclosed is no longer green — it is CONFIRMATION REQUIRED, and the
   // driver is still named as confirmed.
-  test('F · live GIPCL: margin driver not disclosed, 600 MW commissioned capacity is ONE driver → CONFIRMATION REQUIRED, driver named', () => {
+  // zzz775: UPDATED — ON TRACK (a decision), still not green, driver named.
+  test('F · live GIPCL: margin driver not disclosed, 600 MW commissioned capacity is ONE driver → ON TRACK, not green, driver named', () => {
     const a = liveAssess('GIPCL', 'F');
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED', a.because);
-    assert.ok(a.because.startsWith('Evidence incomplete — financial output strengthening'), a.because);
-    assert.match(a.because, /capacity added/i);
-    assert.match(a.because, /margin driver \(not disclosed\)/);
+    assert.equal(a.status, 'ON_TRACK', a.because);
+    assert.match(a.because, /Mechanism evidenced in the documents[^:]*: .*capacity added/i);
+    assert.match(a.because, /Open for next quarter: .*margin driver \(not disclosed\)/);
   });
 
   test('F · an approval or new product does not explain a profit jump on its own', () => {
@@ -470,11 +475,16 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.ok(a.actionLine.startsWith('NO MATERIAL CHANGE — '), a.actionLine);
     // Execution delay passed by silence: named as not mentioned, never as unchanged.
     assert.match(a.because, /Not mentioned in the documents read \(silence, not a reading\): execution delay/);
+    // zzz775: UPDATED. NO MATERIAL CHANGE is now decided on OUTPUT inside its
+    // materiality lines. A level or a single reading still never reads as
+    // "unchanged": it is named, with its state, as open for next quarter.
     const levelOnly = R({ pattern: 'B', variables: flatB.map((v) => (v.key === 'revenue_visibility' ? V('revenue_visibility', 'stated', { after: '2.1 years' }) : v)) });
-    assert.notEqual(levelOnly.status, 'NEUTRAL', 'a level with nothing to compare is not "nothing changed"');
+    assert.equal(levelOnly.status, 'NEUTRAL', levelOnly.because);
+    assert.match(levelOnly.because, /^Financial output within materiality — revenue \+2%/);
+    assert.doesNotMatch(levelOnly.because, /revenue visibility \(unchanged/);
     const singleReading = R({ pattern: 'B', variables: flatB.map((v) => (v.key === 'order_book' ? V('order_book', 'flat', { after: '₹1,200 Cr' }) : v)) });
-    assert.notEqual(singleReading.status, 'NEUTRAL', 'a flat on one reading is a level, not "unchanged"');
-    assert.match(singleReading.because, /order book \(₹1,200 Cr\) is a single reading/);
+    assert.equal(singleReading.status, 'NEUTRAL', singleReading.because);
+    assert.match(singleReading.because, /Open for next quarter: .*order book \(single reading: ₹1,200 Cr\)/);
   });
 
   test('H · required evidence not read → EVIDENCE INCOMPLETE, stated as unknown not bad', () => {
@@ -574,7 +584,9 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
     assert.match(a.because, /this is not thesis failure/);
     // zzz773: UPDATED — the F cash test is a persistent condition: active, labelled historical / unresolved.
     assert.match(a.because, /cash conversion, thesis-critical for a profit jump \(the forensic test\), is an unresolved historical condition: last FY: 0\.59× \(historical \/ unresolved\)/);
-    assert.match(a.because, /the current period cash conversion: NOT DISCLOSED/);
+    // zzz775: no evidence period → "Current period …", never "the the current period".
+    assert.match(a.because, /Current period cash conversion: NOT DISCLOSED/);
+    assert.doesNotMatch(a.because, /\bthe the\b|a the current/);
     assert.equal(a.checked.find((c) => c.key === 'cash_conversion')!.historical!.active, true);
     assert.equal(a.coverage.mechanism.confirmed, 0, 'output never counts as mechanism confirmation');
     assert.notEqual(exitReasonOf(a), null);
@@ -582,17 +594,19 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
 
   test('GOLDIAM shape (A: utilisation core, read and not disclosed, only a mix driver) — the gap is named as UNKNOWN, not negative', () => {
     const a = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('margin_driver', 'improving', { after: 'higher lab-grown jewellery mix' })] });
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    // zzz775: UPDATED — one evidenced driver with nothing falling is ON TRACK
+    // (a decision); the unknown core variable is still named, as open.
+    assert.equal(a.status, 'ON_TRACK', a.because);
     assert.deepEqual(a.coreMechanismGaps, ['Capacity utilisation']);
-    assert.match(a.because, /capacity utilisation — core to this thesis, so it is UNKNOWN\. Unknown, not negative/);
+    assert.match(a.because, /Open for next quarter: .*capacity utilisation \(not disclosed\)/);
     // Volume (the same absorption mechanism) evidenced lifts the UNKNOWN gap —
     // zzz771: UPDATED — but one driver with utilisation itself unconfirmed is
     // CONFIRMATION REQUIRED, not green. Volume AND a margin driver, with
     // utilisation confirmed, is.
     const withVolume = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('volume', 'improving', { after: '+18% tonnage' })] });
     assert.deepEqual(withVolume.coreMechanismGaps, []);
-    assert.equal(withVolume.status, 'CONFIRMATION_REQUIRED');
-    assert.ok(withVolume.because.startsWith('Evidence incomplete — financial output strengthening'), withVolume.because);
+    assert.equal(withVolume.status, 'ON_TRACK', withVolume.because);
+    assert.match(withVolume.because, /Mechanism evidenced in the documents[^:]*: volume/);
   });
 
   test('evidence-state lines never print a bare dash once evidence was read', () => {
@@ -735,21 +749,22 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
   assert.ok(OUTPUT_STRENGTHENING_BECAUSE.startsWith(OPENING));
 
   // ── 1. STRICT GREEN ────────────────────────────────────────────────────
-  test('EMCURE / MANINDS shape (A: output up, one margin driver, 1/5 confirmed) → CONFIRMATION REQUIRED with the exact opening sentence', () => {
+  // zzz775: UPDATED — still not green; now the decision status ON TRACK, with
+  // every open variable named with its state as next quarter's watch list.
+  test('EMCURE / MANINDS shape (A: output up, one margin driver, 1/5 confirmed) → ON TRACK, not green, open items named', () => {
     const a = R({ pattern: 'A', variables: [
       ...GOOD_OUTPUT, LEV,
       { ...V('utilisation', 'stated', { after: '50% to 60% (target)', kind: 'claim' }), statement: 'TARGET' },
       V('capacity_addition', 'stated', { after: '22,000 MTPA' }),
       V('margin_driver', 'improving', { after: 'optimised product mix and higher value-added share' }),
     ] });
-    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
-    assert.equal(a.because.slice(0, OPENING.length), OPENING);
-    assert.match(a.because, /\(1\/5: margin driver\)\. Still to confirm: /);
-    assert.match(a.because, /capacity utilisation \(target only: 50% to 60% \(target\)\)/);
+    assert.equal(a.status, 'ON_TRACK');
+    assert.match(a.because, /Mechanism evidenced in the documents[^:]*: margin driver/);
+    assert.match(a.because, /Open for next quarter: .*capacity utilisation \(target only: 50% to 60% \(target\)\)/);
     assert.match(a.because, /volume \(not disclosed\)/);
     assert.match(a.because, /capacity added \(level only: 22,000 MTPA\)/);
-    assert.equal(a.headline, OUTPUT_STRENGTHENING_SENTENCE);
-    assert.ok(a.actionLine.startsWith('CONFIRMATION REQUIRED — evidence incomplete — financial output strengthening'), a.actionLine);
+    assert.equal(a.headline, 'THESIS INTACT — ON TRACK');
+    assert.ok(a.actionLine.startsWith('THESIS INTACT — ON TRACK — financial output materially improved'), a.actionLine);
     assert.doesNotMatch(a.actionLine, /THESIS STRENGTHENING/);
     assert.equal(a.structural.gatePassed, false);
   });
@@ -779,7 +794,7 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     const below = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV,
       V('utilisation', 'stated', { after: '74%' }), V('volume', 'improving', { after: '+12%' }), V('margin_driver', 'improving', { after: 'operating leverage and better mix' })] });
     assert.notEqual(below.status, 'STRENGTHENING', below.because);
-    assert.equal(below.status, 'CONFIRMATION_REQUIRED');
+    assert.equal(below.status, 'ON_TRACK'); // zzz775: the decision short of green
     assert.equal(below.verdict!.coverage.confirmed, 2);
     assert.equal(below.verdict!.coverage.applicable, 5);
     assert.ok(below.verdict!.coverage.missing.includes('Capacity utilisation'));
@@ -793,7 +808,9 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     const fBelow = R({ pattern: 'F', variables: [...GOOD_OUTPUT, V('margin_driver', 'improving', { after: 'mix and scale' }), V('volume', 'improving', { after: '+9%' }),
       V('cash_conversion', 'stated', { after: '0.9×', source: 'grader' }), V('one_offs', 'stated', { after: '1 item' })] });
     assert.notEqual(fBelow.status, 'STRENGTHENING', fBelow.because);
-    assert.equal(fBelow.verdict!.direction, 'UNKNOWN');
+    // zzz775: short of green, output up, drivers evidenced → INTACT (ON TRACK).
+    assert.equal(fBelow.status, 'ON_TRACK', fBelow.because);
+    assert.equal(fBelow.verdict!.direction, 'INTACT');
   });
 
   // ── 2. THE VERDICT: THREE SEPARATE QUESTIONS ───────────────────────────
@@ -806,7 +823,9 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     for (const a of all) {
       const v = a.verdict!;
       assert.ok(v, 'verdict filled');
-      assert.ok(['STRENGTHENING', 'WEAKENING', 'UNCHANGED', 'UNKNOWN'].includes(v.direction));
+      assert.ok(['STRENGTHENING', 'INTACT', 'WEAKENING', 'UNCHANGED', 'UNKNOWN'].includes(v.direction));
+      // zzz775: INTACT belongs to ON TRACK alone.
+      assert.equal(v.direction === 'INTACT', a.status === 'ON_TRACK');
       assert.ok(v.directionWhy.length > 10);
       assert.ok(v.evidenceWhy.length > 10);
       assert.equal(v.breakTrigger.fired, v.breakTrigger.conditions.length > 0);
@@ -857,8 +876,9 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     assert.equal(level.verdict!.direction, 'UNKNOWN');
     const one = R({ pattern: 'A', variables: [...GOOD_OUTPUT, LEV, V('volume', 'improving', { after: '+18% tonnage' })] });
     assert.equal(one.verdict!.evidence, 'PARTIALLY_CONFIRMED');
-    assert.equal(one.verdict!.direction, 'UNKNOWN');
-    assert.equal(one.status, 'CONFIRMATION_REQUIRED');
+    // zzz775: one driver, output up, nothing falling → ON TRACK / INTACT.
+    assert.equal(one.verdict!.direction, 'INTACT');
+    assert.equal(one.status, 'ON_TRACK');
     // UNCHANGED belongs to NEUTRAL alone.
     const F2 = (key: string, before: string, after: string, source?: 'grader' | 'filing') => ({ ...V(key, 'flat', { after, source }), before, delta: 'FLAT' });
     const neutral = R({ pattern: 'B', variables: [
@@ -1144,7 +1164,8 @@ describe('zzz772 · status engine', () => {
     assert.doesNotMatch(a.because, /\(flat\)/);
     assert.doesNotMatch(a.verdict!.evidenceWhy, /\(flat\)/);
     // zzz773: UPDATED — last FY's ratio is history; the current slot is not disclosed.
-    assert.match(`${a.because} ${a.verdict!.evidenceWhy}`, /cash conversion \(the current period not disclosed — last FY: 0\.65× is historical context only\)/);
+    // zzz775: no evidence period → "current-period figure", never "the current period not disclosed".
+    assert.match(`${a.because} ${a.verdict!.evidenceWhy}`, /cash conversion \(current-period figure not disclosed — last FY: 0\.65× is historical context only\)/);
   });
 
   test('7 · evidence older than the expected period is INCOMPLETE, and the status line opens with it', () => {
@@ -1401,5 +1422,189 @@ describe('zzz773 · owner audit (Q1 FY27)', () => {
     assert.match(text, /Cash conversion — FY26: 0\.34× · historical · Q1 FY27 cash conversion: NOT DISCLOSED · active thesis condition — historical \/ unresolved/);
     assert.match(text, /ROCE — FY26: 8\.0% · historical · Q1 FY27 ROCE: NOT DISCLOSED · context only — not an active thesis condition/);
     assert.ok(!/\b(BUY|SELL)\b/.test(text));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz775 · DECISION STATUSES, NEAREST-FIT TYPES, AND THE OWNER'S CARD BUGS.
+// "101 in confirmation required — mostly should be in decision type status."
+// ═══════════════════════════════════════════════════════════════════════════
+import { nearestFit, classifyOrNearest, manualPattern, classifyAbfg } from '../earnings/pattern-abfg';
+import { unitlessPrior, scopeCapacityMismatch } from '../thesis/variables';
+import { periodHead, standingText } from '../../components/thesis-card';
+describe('zzz775 · decision statuses', () => {
+  const R = (x: Partial<Parameters<typeof assessThesis>[0]>) => assessThesis({ pattern: null, variables: [], evidenceReviewed: true, hasGraderRow: true, ...x } as any);
+  const W = (key: string, verdict: string, o: Record<string, unknown> = {}) => ({ ...V(key, verdict), ...o }) as any;
+  const UP = [W('revenue_growth', 'improving', { delta: '+38.9%', after: '+38.9%', source: 'grader' }),
+    W('earnings_growth', 'improving', { delta: '+52%', source: 'grader' }), W('margin', 'improving', { delta: '+1.0pp', source: 'grader' })];
+
+  test('ON TRACK: output up beyond materiality, one mechanism driver from the documents, nothing down → a decision, open items named', () => {
+    const a = R({ pattern: 'A', variables: [...UP, W('capacity_addition', 'improving', { before: '5000MTPA', after: '9,600+MTPA', delta: '+92%' })] });
+    assert.equal(a.status, 'ON_TRACK', a.because);
+    assert.equal(a.action, 'THESIS INTACT — ON TRACK');
+    assert.equal(STATUS_META.ON_TRACK.label, 'THESIS INTACT — ON TRACK');
+    assert.equal(STATUS_META.ON_TRACK.dot, '🔵');
+    assert.ok(!['#10B981', '#F59E0B', '#FBBF24', '#C084FC', '#818CF8'].includes(STATUS_META.ON_TRACK.color), 'distinct from green, amber and violet');
+    assert.match(a.actionLine, /^THESIS INTACT — ON TRACK — financial output materially improved \(revenue \+38\.9% · earnings \+52% · margin \+1\.0pp\)\. Mechanism evidenced in the documents[^:]*: capacity added 5000MTPA → 9,600\+MTPA \(\+92%\)\. Nothing thesis-critical deteriorated and no break condition fired/);
+    assert.match(a.because, /Open for next quarter: .*capacity utilisation \(not disclosed\).*volume \(not disclosed\)/);
+    assert.equal(a.verdict!.direction, 'INTACT');
+    assert.equal(a.verdict!.breakTrigger.fired, false);
+    assert.equal(exitReasonOf(a), null);
+    assert.ok(!/\b(BUY|SELL|hold)\b/i.test(a.actionLine + a.verdict!.directionWhy));
+  });
+
+  test('STRENGTHENING outranks ON TRACK and is exactly as strict: the gate passed stays green', () => {
+    const g = R({ pattern: 'A', variables: [...GOOD_OUTPUT, V('utilisation', 'improving', { after: '84%', delta: '+12pp' }), V('volume', 'improving', { after: '+12%' })] });
+    assert.equal(g.status, 'STRENGTHENING');
+  });
+
+  test('ON TRACK is blocked by a material output fall even when it is only WATCH, by staleness, and by zero mechanism evidence', () => {
+    // Earnings −12% on an unclassified ledger is watch — and still blocks: mixed output.
+    const mixed = R({ variables: [W('revenue_growth', 'improving', { delta: '+40%', source: 'grader' }), W('earnings_growth', 'deteriorating', { delta: '-12%', source: 'grader' }),
+      W('new_customer', 'improving', { after: 'two new OEMs' })] });
+    assert.equal(mixed.status, 'CONFIRMATION_REQUIRED', mixed.because);
+    assert.match(mixed.because, /^Mixed output — revenue \+40% up, earnings -12% down beyond materiality\./);
+    assert.match(mixed.because, /Resolves with: next quarter's earnings: back inside its materiality line with revenue still up reads ON TRACK; a second material decline reads WEAKENING\./);
+    assert.match(mixed.verdict!.directionWhy, /^output mixed/);
+    // Margin down 3pp blocks too.
+    const margin = R({ pattern: 'A', variables: [UP[0], UP[1], W('margin', 'deteriorating', { delta: '-3.0pp', source: 'grader' }), W('volume', 'improving', { after: '+18%' })] });
+    assert.notEqual(margin.status, 'ON_TRACK');
+    const stale = R({ pattern: 'A', evidencePeriod: 'Q4 FY24', expectedPeriod: 'Q1 FY27', variables: [...UP, W('volume', 'improving', { after: '+18%' })] });
+    assert.equal(stale.status, 'CONFIRMATION_REQUIRED');
+    assert.match(stale.because, /Resolves with: reading the Q1 FY27 filing — the evidence on file is Q4 FY24\./);
+    const noMech = R({ pattern: 'A', variables: [...UP, W('utilisation', 'stated', { after: '74%' })] });
+    assert.equal(noMech.status, 'CONFIRMATION_REQUIRED');
+    assert.match(noMech.because, /Resolves with: one mechanism figure in the filings — capacity utilisation \(now level only: 74%\)\./);
+    const unread = R({ pattern: 'A', evidenceReviewed: false, variables: [...UP, W('volume', 'improving', { after: '+18%' })] });
+    assert.notEqual(unread.status, 'ON_TRACK');
+  });
+
+  test('an UNCLEAR unit/scope item as the only mechanism evidence stays CONFIRMATION REQUIRED and names what resolves it', () => {
+    const a = R({ pattern: 'A', variables: [...UP, W('capacity_addition', 'stated', { after: 'around 40,000 sq. ft.', unjudged: 'Not comparable — power capacity vs production capacity (1.34 MW vs around 40,000 sq. ft.); no delta calculated' })] });
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.match(a.because, /Resolves with: capacity added stated in a comparable unit and scope — it is the only mechanism evidence, and it is UNCLEAR/);
+  });
+
+  test('RISHABH / JAMNAAUTO: output inside materiality, nothing down → NO MATERIAL CHANGE, and never "output improved"', () => {
+    const rishabh = R({ pattern: 'B', variables: [W('revenue_growth', 'flat', { delta: '+4.2%', after: '+4.2%', source: 'grader' }),
+      W('earnings_growth', 'deteriorating', { delta: '-5%', source: 'grader' }), W('margin', 'improving', { before: '15.0%', after: '17.0%', delta: '+2.0pp', source: 'grader' }),
+      W('order_intake', 'improving', { after: 'Domestic order bookings up ~20% YoY' })] });
+    assert.equal(rishabh.status, 'NEUTRAL', rishabh.because);
+    assert.match(rishabh.because, /^Financial output within materiality — revenue \+4\.2% \(material beyond \+15% \/ −5%\), earnings -5% \(material beyond \+20% \/ −10%\), margin \+2\.0pp \(material beyond ±3pp\)\./);
+    assert.equal(rishabh.verdict!.direction, 'UNCHANGED');
+    for (const t of [rishabh.because, rishabh.verdict!.directionWhy, ...rishabh.logicChain.map((x) => x.text)]) assert.doesNotMatch(t, /output improved/i);
+    const jamna = R({ variables: [W('revenue_growth', 'flat', { delta: '+6.6%', source: 'grader' }), W('earnings_growth', 'flat', { delta: '+6.5%', source: 'grader' }),
+      W('margin', 'flat', { delta: '+1.0pp', source: 'grader' })] });
+    assert.equal(jamna.status, 'NEUTRAL', jamna.because);
+    assert.equal(jamna.action, 'NO MATERIAL CHANGE');
+  });
+
+  test('LCL: margin +8.4pp with revenue and earnings NOT DISCLOSED is neither green nor ON TRACK', () => {
+    const a = R({ variables: [W('margin', 'improving', { after: '20.0%', delta: '+8.4pp', source: 'grader' }),
+      W('order_book', 'improving', { after: '₹1,200 Cr', before: '₹900 Cr', delta: '+33%' }), W('margin_driver', 'improving', { after: 'better product mix and operating leverage' }),
+      W('cash_conversion', 'improving', { after: '1.68×', source: 'grader' }), W('working_capital', 'improving', { after: '81 days', before: '84 days' })] });
+    assert.ok(!['STRENGTHENING', 'ON_TRACK'].includes(a.status), a.status);
+    assert.match(a.because, /Resolves with: the current-period results figures — revenue or earnings growth — on file\./);
+  });
+
+  test('a weight-1 context row moving the wrong way is named, never a reason to withhold ON TRACK', () => {
+    const a = R({ pattern: 'A', variables: [...UP, W('volume', 'improving', { after: '+18%' }), W('capacity_bottleneck', 'deteriorating', { after: 'Sanand ramp-up taking time' })] });
+    assert.equal(a.status, 'ON_TRACK', a.because);
+    assert.match(a.because, /capacity bottleneck \(moved the wrong way, not thesis-critical: Sanand ramp-up taking time\)/);
+  });
+});
+
+describe('zzz775 · nearest-fit thesis types', () => {
+  test('F / A / G / none, from the same graded figures; the exact classifier still returns null', () => {
+    const f = nearestFit({ salesY: 30, epsY: 91.3, cfoToPat: 1.33 });
+    assert.deepEqual([f?.pattern, f?.fit], ['F', 'nearest']);
+    assert.match(f!.because, /^Nearest fit \(auto\) — the figures fit F · profit jump · forensics loosely .*Set your own with the picker\.$/);
+    assert.equal(nearestFit({ salesY: 26.8, epsY: 39, cfoToPat: 4.9 })?.pattern, 'A');
+    assert.equal(nearestFit({ salesY: 6.6, epsY: 5.2, cfoToPat: 2.21 })?.pattern, 'G');
+    // Earnings lagging or falling on rising revenue is not an operating inflection.
+    assert.equal(nearestFit({ salesY: 155.7, epsY: -72, cfoToPat: -21 }), null);
+    assert.equal(nearestFit({ salesY: 44.6, epsY: 38.4, cfoToPat: 1.32 }), null);
+    assert.equal(nearestFit({ salesY: 4.2, epsY: -4.1, cfoToPat: 1.32 }), null);
+    assert.equal(nearestFit({ salesY: 8.3, epsY: -28.7, cfoToPat: 0.84 }), null);
+    assert.equal(nearestFit({ salesY: null, epsY: null }), null);
+    assert.equal(classifyAbfg({ salesY: 26.8, epsY: 39, cfoToPat: 4.9, d1Reaction: 5 }), null, 'exact classifier unchanged');
+  });
+  test('exact beats nearest, and the owner\'s choice beats both', () => {
+    const exact = classifyOrNearest({ sales_yoy_pct: 30, eps_yoy_pct: 60 });
+    assert.deepEqual([exact?.pattern, exact?.fit], ['A', 'exact']);
+    assert.equal(classifyOrNearest({ sales_yoy_pct: 20, eps_yoy_pct: 30 })?.fit, 'nearest');
+    assert.equal(manualPattern('G').fit, 'manual');
+    assert.equal(classifyGradedRow({ sales_yoy_pct: 20, eps_yoy_pct: 30 }), null, 'the screening pages keep the exact classifier');
+  });
+  test('the card badge and picker say "nearest A", never a bare "A"', () => {
+    (globalThis as any).React = React773;
+    const p = classifyOrNearest({ sales_yoy_pct: 20, eps_yoy_pct: 30 })!;
+    const html = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', pattern: p, assessment: null, onThesisType() {}, thesisType: null }));
+    assert.match(html, /data-fit="nearest"/);
+    assert.match(html.replace(/<[^>]+>/g, ' '), /nearest A · OPERATING INFLECTION · nearest fit \(auto\)/);
+    assert.match(html, /thesis: auto \(nearest A\)/);
+  });
+});
+
+describe('zzz775 · owner card bugs', () => {
+  const R = (x: Partial<Parameters<typeof assessThesis>[0]>) => assessThesis({ pattern: null, variables: [], evidenceReviewed: true, hasGraderRow: true, ...x } as any);
+  const W = (key: string, verdict: string, o: Record<string, unknown> = {}) => ({ ...V(key, verdict), ...o }) as any;
+  test('1 · an F standing test is labelled satisfied, never "context only", and its FY figure never sits in the Q1 slot', () => {
+    const a = R({ pattern: 'F', evidencePeriod: 'Q1 FY27', variables: [...GOOD_OUTPUT, W('cash_conversion', 'flat', { after: '0.74× (last FY)', source: 'grader' })] });
+    const h = a.historicalContext!.find((x) => x.key === 'cash_conversion')!;
+    assert.equal(h.standing, true);
+    assert.equal(h.active, false);
+    const item = historyItems(a, 'Q1 FY27').find((x) => x.label === 'Cash conversion')!;
+    assert.equal(item.current, 'Q1 FY27 cash conversion: NOT DISCLOSED — FY26 0.74× is the standing test');
+    assert.deepEqual(standingText(a.checked.find((c) => c.key === 'cash_conversion')!, 'Q1 FY27'), { value: 'FY26 0.74×', word: 'standing test (no Q1 cash-flow statement)' });
+    (globalThis as any).React = React773;
+    const text = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', assessment: a, reportingPeriod: 'Q1 FY27', defaultOpen: true })).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    assert.match(text, /Cash conversion — FY26: 0\.74× · historical · Q1 FY27 cash conversion: NOT DISCLOSED — FY26 0\.74× is the standing test · standing test — satisfied \(FY26 figure\)/);
+    assert.match(text, /[Cc]ash[ _]conversion FY26 0\.74× · standing test \(no Q1 cash-flow statement\)/);
+    assert.match(a.because, /cash conversion \(standing test satisfied: FY26 0\.74× \(no newer cash-flow statement\)\)/);
+    assert.equal(a.invalidationConditions.find((x) => /operating cash flow/.test(x.condition))!.status, 'ok');
+    assert.doesNotMatch(text, /Q1 FY27: 0\.74× \(last FY\)|0\.74× \(last FY\) · single reading|standing test.{0,80}context only — not an active thesis condition/);
+  });
+  test('2 · no evidence period: "LATEST PERIOD — EVIDENCE", "the current-period status", never "the the"', () => {
+    assert.equal(periodHead(null), 'LATEST PERIOD — EVIDENCE');
+    assert.equal(periodHead('Q1 FY27'), 'Q1 FY27 — CURRENT-PERIOD EVIDENCE');
+    const a = R({ pattern: 'A', variables: [...GOOD_OUTPUT, W('cash_conversion', 'flat', { after: '1.44× (last FY)', source: 'grader' }), W('roce', 'flat', { after: '14% (last FY)', source: 'grader' })] });
+    const all = [a.because, ...a.historicalContext!.map((h) => h.decision), ...a.checked.map((c) => c.evidence)].join(' ');
+    assert.doesNotMatch(all, /\bthe the\b|\ba the current\b/);
+    assert.match(a.historicalContext!.find((h) => h.key === 'roce')!.decision, /does not change the current-period status\.$/);
+    (globalThis as any).React = React773;
+    const text = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', assessment: a, defaultOpen: true })).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    assert.match(text, /LATEST PERIOD — EVIDENCE/);
+    assert.doesNotMatch(text, /CURRENT PERIOD — CURRENT-PERIOD EVIDENCE|this period: 1\.44× \(last FY\)/);
+  });
+  test('3 · an unchanged value is never WHAT CHANGED (VADILALIND)', () => {
+    const v: any = { key: 'capacity', label: 'Installed capacity', verdict: 'improving', before: '270,000 liters per day', after: '380,000 liters per day', delta: '+40.7%',
+      source: 'filing', sourceLabel: 'Investor presentation', statement: 'ACTUAL', evidence: '', comparison: null,
+      reading: { current: { value: '380,000 liters per day', period: 'Q1 FY27' }, previous: { value: '380,000 liters per day', period: 'Q3 FY26' }, direction: 'FLAT', comparison_basis: 'vs_prior_read', not_comparable_reason: null,
+        display: '380,000 liters per day (Q1 FY27) vs 380,000 liters per day (Q3 FY26) · unchanged' } };
+    const [line] = rowChangeLines([v], 'Q1 FY27');
+    assert.equal(line.kind, 'evidence');
+    (globalThis as any).React = React773;
+    const html = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', assessment: null, reportingPeriod: 'Q1 FY27', changedFrom: 'Q3 FY26',
+      changed: [{ sign: '+', text: 'Installed capacity: 380,000 (Q1 FY27) vs 380,000 (Q3 FY26) · unchanged', metric: 'capacity', period: 'Q1 FY27', source: 'x', kind: 'change' }] }));
+    assert.doesNotMatch(html, /data-testid="what-changed"/);
+    assert.match(html, /data-testid="evidence-found"/);
+  });
+  test('4 · a mismatch note annotates only the pair compared across dimensions (SPECTRUM)', () => {
+    const why = 'Not comparable — power capacity vs production capacity (1.34 MW vs around 40,000 sq. ft.); no delta calculated';
+    const note = ` ⓘ ${why} (added: around 40,000 sq. ft.).`;
+    const inst: any = { key: 'capacity', verdict: 'flat', after: '1.34 MW', before: '1.34 MW', unjudged: why, evidence: `own${note}`, _capMismatch: { why, note },
+      comparison: { previous: { raw: '1.34 MW' }, basis: 'SINCE_LAST_DISCLOSURE', change_type: 'UNCHANGED' } };
+    const out = scopeCapacityMismatch(inst);
+    assert.equal(out.unjudged, null);
+    assert.equal(out.evidence, 'own');
+    assert.ok(!('_capMismatch' in out));
+    const add: any = { key: 'capacity_addition', verdict: 'stated', after: 'around 40,000 sq. ft.', unjudged: why, evidence: 'x', _capMismatch: { why, note }, comparison: null };
+    assert.equal(scopeCapacityMismatch(add).unjudged, why, 'the sq ft item stays its own UNCLEAR line');
+  });
+  test('5 · a prior with no unit is UNCLEAR, no delta (CYIENTDLM)', () => {
+    assert.equal(unitlessPrior('6,000', '15,000 sq ft'), true);
+    assert.equal(unitlessPrior('6,000 sq ft', '15,000 sq ft'), false);
+    assert.equal(unitlessPrior('72%', '80%'), false);
   });
 });

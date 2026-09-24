@@ -123,6 +123,9 @@ export function displayNameOf(ticker: string, company: string | null): { display
 }
 
 export interface ResearchItem {
+  /** zzz775: the pricing assessment from the finding (reaction since the
+   *  filing vs the event's size) — shown as PRICED instead of "UNKNOWN". */
+  pricing?: { state: string; label: string; text: string } | null;
   /** Press coverage for the name — secondary, never scored. (zzz773) */
   news?: { narrative: { label: string; days: number; firstDate: string; lastDate: string; lead: string } | null; items: Array<{ title: string; url: string; date: string; source: string }> } | null;
   ticker: string;
@@ -377,6 +380,7 @@ function eventTypeOf(category: string | null, hay: string, negative: boolean): {
     if (c === 'dilution') return { type: 'Fundraising', label: 'Offering / dilution' };
     if (c === 'auditor_resignation') return { type: 'Governance', label: 'Auditor change' };
     if (c === 'regulatory_investigation') return { type: 'Litigation / regulatory', label: null };
+    if (c === 'tax_litigation') return { type: 'Litigation / regulatory', label: 'Tax demand / notice' };
     if (c === 'debt_stress') return { type: 'Debt / refinancing', label: 'Debt stress' };
     if (c === 'guidance_reduction') return { type: 'Guidance', label: 'Guidance cut' };
     if (c === 'project_delay') return { type: 'Accident / disruption', label: 'Project delay' };
@@ -953,13 +957,54 @@ function actionOf(cls: EventClass, rel: PortfolioRelevance): ResearchAction {
   return 'Monitor';
 }
 
+
+const PRICING_LABEL: Record<string, string> = {
+  INSUFFICIENT_EVIDENCE: 'INSUFFICIENT EVIDENCE', RAN_UP_BEFORE_FILING: 'RAN UP BEFORE FILING', REACTION_SMALL_VS_SIZE: 'SMALL VS SIZE',
+  REACTION_IN_LINE: 'IN LINE WITH SIZE', REACTION_EXCEEDS_SIZE: 'EXCEEDS SIZE', FELL_AFTER_FILING: 'FELL AFTER FILING',
+};
+function pricingOfFinding(f: Finding | null): ResearchItem['pricing'] {
+  const p = (f?.components as any)?.pricing;
+  if (!p || !p.state) return null;
+  return { state: String(p.state), label: PRICING_LABEL[String(p.state)] || String(p.state), text: String(p.text || '') };
+}
+
+/** zzz775: answer each research question from what the filing states. */
+export function answerQuestions(qs: string[], ctx: { facts: Record<string, string> | null; read: boolean; value: number | null; marketCap: number | null; market: 'IN' | 'US'; revenue: number | null; headline: string; quote: string | null }): string[] {
+  const f = ctx.facts || {};
+  const pctOf = (v: number, base: number) => Math.round((v / base) * 1000) / 10;
+  const sizeAns = (): string | null => {
+    if (ctx.value == null) return f.value ? `${f.value} (as stated)` : null;
+    const parts = [money(ctx.value, ctx.market)];
+    if (ctx.revenue) parts.push(`≈ ${pctOf(ctx.value, ctx.revenue)}% of TTM revenue`);
+    if (ctx.marketCap) parts.push(`≈ ${pctOf(ctx.value, ctx.marketCap)}% of market cap`);
+    return parts.join(' · ');
+  };
+  const pick = (q: string): string | null => {
+    const l = q.toLowerCase();
+    if (/% of fy revenue|price was paid|capex was invested|what exactly changed|issue size|how much.*invest/.test(l)) return sizeAns() || f.price_terms || null;
+    if (/over what period|when does revenue start|when do commercial|revenue timing|by when|conversion to an order/.test(l)) return [f.execution_period, f.revenue_start].filter(Boolean).join(' · ') || null;
+    if (/margin|pricing/.test(l)) return f.margin || null;
+    if (/funded|funding/.test(l)) return f.funding || null;
+    if (/counterparty|who is the|customer|repeat customer|which competitors/.test(l)) return f.counterparty || null;
+    if (/approval|binding|definitive agreement|conditions/.test(l)) return f.conditions || null;
+    if (/utilisation|capacity/.test(l)) return f.capacity || null;
+    if (/target's revenue|ebitda|dilution/.test(l)) return f.price_terms || null;
+    return null;
+  };
+  return qs.map((q) => {
+    const a = pick(q);
+    if (a) return `${q} — ✓ ${a}${ctx.read ? ' (per the filing)' : ' (from the stated value; filing not model-read)'}`;
+    return ctx.read ? `${q} — not stated in the filing (ask management / next concall)` : q;
+  });
+}
+
 export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow | null, filed: FiledRow | null, input: ResearchViewInput, sets: { held: Set<string>; watch: Set<string>; theme: Set<string> }): ResearchItem {
   const market = input.market;
   const perf = (b?.perf && typeof b.perf === 'object') ? b.perf : {};
   const moveRaw = num(f?.movePct) ?? num(b?.move_pct);
   const mv = { pct: moveRaw == null ? null : r1(moveRaw), window: (market === 'US' ? '1W' : '1D') as '1D' | '1W' };
   const returns = {
-    w1: market === 'US' ? mv.pct : num(perf.w1 ?? perf.week),
+    w1: market === 'US' ? mv.pct : num(f?.returns?.w1) != null ? r1(f!.returns!.w1 as number) : num(perf.w1 ?? perf.week),
     m1: num(f?.returns?.m1) != null ? r1(f!.returns!.m1 as number) : num(perf.m1) != null ? r1(num(perf.m1)!) : null,
     m3: num(f?.returns?.m3) != null ? r1(f!.returns!.m3 as number) : num(perf.m3) != null ? r1(num(perf.m3)!) : null,
   };
@@ -1146,7 +1191,13 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   }
 
   const key = nextKey(type, cls, stage, f, clarification);
-  const researchNext = (NEXT[key] || NEXT.generic).slice(0, 5);
+  // zzz775: a research question the filing already answers is shown WITH its
+  // answer; one the model-read filing is silent on says so. Only a filing
+  // that was not read keeps the bare question.
+  const researchNext = answerQuestions((NEXT[key] || NEXT.generic).slice(0, 5), {
+    facts: f?.facts || null, read: verifiedDoc, value, marketCap, market,
+    revenue: revenue ? revenue.v : null, headline: headline0, quote,
+  });
   // A clarification's unknowns are a no-catalyst row's (cause of the move), not a negative event's impact. (zzz771)
   const unknowns = unknownsFor(clarification ? 'none' : key, hay, value != null, e);
   const portfolio = portfolioOf(ticker, type, cls, e, { ...sets, vars: input.thesisVariables, findingHeld: !!f?.holding });
@@ -1159,7 +1210,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     eventClass: cls, eventType: type, headline: clean(shownHeadline), whatChanged, before, after, filedDate, stage,
     sourceConfidence: conf, sourceUrl, quote, materiality: mat, transmission: trans,
     transmissionChain: chainOf(type, trans, stage, { headline: clean(headline), value, market, mat, e, f: filed, cap }),
-    persistence: pers, expectationGap: gap, unknowns, researchNext,
+    persistence: pers, expectationGap: gap, unknowns, researchNext, pricing: pricingOfFinding(f),
     whyResearch: whyOf(cls, type, stage, mat, key, gap, e, fr, clarification),
     portfolio, earnings,
     flags: { band: bandLevel, listing, dilution, denial, turnover: num(f?.turnover) ?? num(b?.turnover) },

@@ -3528,9 +3528,11 @@ describe('zzz769 gainers — classification the stored day still showed wrong', 
       'Intimation of Change in Senior Management Personnel',
       'Changes in Key Managerial Personnel of the Company',
       'Appointment of Chief Business Officer',
-      'Resignation of Company Secretary and Compliance Officer',
       'Chemplast Sanmar appoints Mr. R Kumar as Chief Financial Officer',
     ]) assert.equal(classifyAnnouncement(A('General Updates', s), 'IN').category, 'management_change', s);
+    // zzz775: a company secretary / compliance officer change is paperwork
+    // (JAYBARMARU read as NEGATIVE), still never "not classifiable".
+    assert.equal(classifyAnnouncement(A('General Updates', 'Resignation of Company Secretary and Compliance Officer'), 'IN').kind, 'routine');
   });
   test('KMPs authorised to determine materiality is Reg 30(5) paperwork (LCCPROJECT, CELLECOR)', () => {
     for (const s of [
@@ -5849,5 +5851,39 @@ describe('zzz774 gainers — BSE list merged with screener', () => {
     const m = mergeAnnouncements(scr as any, bse as any);
     assert.deepEqual(m.map((x) => x.url), ['b3', 's1', 'b2']);
     assert.equal(m[1].summary, 'Order worth ₹22 crore');
+  });
+});
+
+describe('zzz775 gainers — tax is not an order, GDV is not value, answers from the filing', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const cr = require('../ai-gainers/catalyst-research') as typeof import('../ai-gainers/catalyst-research');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const rv = require('../ai-gainers/research-view') as typeof import('../ai-gainers/research-view');
+  const A2 = (subject: string, summary: string | null = null) => ({ subject, summary, url: 'https://x/a.pdf', dateIso: '2026-09-22T10:00:00+05:30', ageDays: 2 });
+  test('a GST / ITAT order is a tax matter, never an order win (SEDEMAC, KSCL, VIKRAN)', () => {
+    for (const s of ['Tamil Nadu GST order received on 8 Sep 2026; ₹40,036 demand confirmed for FY23', 'Kaveri Seed received ITAT hearing notice for Rs56.21 crore AY2022-23 tax demand', 'Received GST show cause notice demanding Rs. 5.34 crore tax and penalty']) {
+      const c = cr.classifyAnnouncement(A2('Announcement under Regulation 30 (LODR)-Updates', s) as any, 'IN');
+      assert.equal(c.kind, 'negative', s); assert.equal(c.category, 'tax_litigation', s);
+    }
+    const ok = cr.classifyAnnouncement(A2('Updates', 'CESTAT set aside the demand and allowed the appeal in the company\'s favour') as any, 'IN');
+    assert.equal(ok.kind, 'routine');
+  });
+  test('fractional-entitlement compensation under a scheme is paperwork (CELLO)', () => {
+    assert.equal(cr.classifyAnnouncement(A2('Updates', 'Audit Committee certify compensation to Wim Plast shareholders for fractional entitlements under the amalgamation scheme') as any, 'IN').kind, 'routine');
+  });
+  test('a gross development value is not the company\'s value (MAXESTATES)', () => {
+    assert.ok(cr.isPotentialValue('9.76-acre project may unlock INR 2,500-3,000 crore GDV'));
+  });
+  test('research questions carry the filing\'s answers; silence on a read filing is said', () => {
+    const out = rv.answerQuestions(['What % of FY revenue is this order?', 'Over what period is it executed, and when does revenue start?', 'What margin does it carry versus the company average?'],
+      { facts: { execution_period: 'within 15 working days' }, read: true, value: 50, marketCap: 1000, market: 'IN', revenue: 400, headline: '', quote: null });
+    assert.match(out[0], /12\.5% of TTM revenue/); assert.match(out[0], /5% of market cap/);
+    assert.match(out[1], /✓ within 15 working days/);
+    assert.match(out[2], /not stated in the filing/);
+  });
+  test('returns carry a 1-week move', () => {
+    const series: Array<[string, number]> = Array.from({ length: 30 }, (_, i) => [`2026-08-${String(i + 1).padStart(2, '0')}`, 100 + i]);
+    const r = cr.returnsFromSeries(series);
+    assert.equal(Math.round((r.w1 as number) * 10) / 10, Math.round(((129 / 124) - 1) * 1000) / 10);
   });
 });
