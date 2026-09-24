@@ -90,7 +90,13 @@ export default function UsPortfolioBookPage() {
   const holdingOf = (t: string, x: string) => book?.holdings.find((h) => h.ticker === t && h.exchange === x);
   const nonUs = book?.holdings.filter((h) => h.listing !== 'US') || [];
 
-  const onFile = async (f: File | null | undefined) => { if (f) setText(await f.text()); };
+  // zzz792 — say what was loaded, right where the buttons are.
+  const [fileNote, setFileNote] = useState<string | null>(null);
+  const onFile = async (f: File | null | undefined) => {
+    if (!f) return;
+    try { const t = await f.text(); setText(t); setFileNote(`Loaded ${f.name} — ${t.split(/\r?\n/).filter((l) => l.trim()).length} lines. Click Import (or Preview first).`); setMsg(null); }
+    catch (e: any) { setFileNote(`✗ could not read ${f.name}: ${String(e?.message || e)}`); }
+  };
 
   return (
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -248,13 +254,17 @@ export default function UsPortfolioBookPage() {
           <label style={{ fontSize: 13, color: C.dim }}><input type="radio" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Replace positions &amp; cash</label>
           <label style={{ fontSize: 13, color: C.dim }}><input type="radio" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Merge (upsert by ticker + venue)</label>
           <button disabled={!text.trim() || !!busy} style={btn(C.cyan)} onClick={async () => { const j = await post({ action: 'preview', text }, 'preview'); if (j?.parsed) setPreview(j.parsed); }}>Preview</button>
-          <button disabled={!text.trim() || !!busy || !preview} style={btn(C.green, true)} onClick={async () => {
+          {/* zzz792 — Import no longer silently disabled until Preview: the server parses the text itself. */}
+          <button disabled={!text.trim() || !!busy} title={!text.trim() ? 'Paste or upload your holdings first' : ''} style={btn(C.green, true)} onClick={async () => {
             if (mode === 'replace' && book?.holdings.length && !confirm(`Replace the ${book.holdings.length} holdings and the cash on file with this import?`)) return;
             const j = await post({ action: 'import', text, mode }, 'import');
-            if (j?.ok) { setMsg(`✓ imported ${j.parsed?.holdings?.length || 0} holdings${Object.keys(j.parsed?.cash || {}).length ? ` + cash ${Object.keys(j.parsed.cash).join(', ')}` : ''} (${mode})`); setText(''); setPreview(null); }
+            if (j?.ok) { setFileNote(null); setMsg(`✓ imported ${j.parsed?.holdings?.length || 0} holdings${Object.keys(j.parsed?.cash || {}).length ? ` + cash ${Object.keys(j.parsed.cash).join(', ')}` : ''} (${mode})`); setText(''); setPreview(null); }
           }}>Import</button>
           {busy && <span style={{ fontSize: 12.5, color: C.faint }}>{busy}…</span>}
         </div>
+        {fileNote && <div style={{ fontSize: 13, color: fileNote.startsWith('✗') ? C.red : C.dim, marginTop: 6 }}>{fileNote}</div>}
+        {msg && <div style={{ fontSize: 13.5, fontWeight: 700, color: msg.startsWith('✗') ? C.red : C.green, marginTop: 6 }}>{msg}</div>}
+        {!text.trim() && !msg && <div style={{ fontSize: 12.5, color: C.faint, marginTop: 6 }}>Paste your holdings in the box above or choose the CSV file — the Import button turns on once there is text.</div>}
         {preview && (
           <div data-testid="us-import-preview" style={{ marginTop: 8, fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
             <b style={{ color: C.text }}>Preview ({preview.format}):</b> {preview.holdings.length} holdings ({preview.holdings.filter((h) => h.listing === 'US').length} US-listed, {preview.holdings.filter((h) => h.listing !== 'US').length} non-US) · cash {Object.entries(preview.cash).map(([k, v]) => `${k} ${v.toLocaleString('en-US')}`).join(', ') || 'none'} · {preview.rejected.length} rejected
