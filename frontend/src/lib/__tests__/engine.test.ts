@@ -5330,8 +5330,8 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION is current (zzz773) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
-    assert.match(RULES771, /zzz773$/);
+  test('RULES_VERSION is current (zzz776) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    assert.match(RULES771, /zzz776$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 
@@ -5886,4 +5886,15 @@ describe('zzz775 gainers — tax is not an order, GDV is not value, answers from
     const r = cr.returnsFromSeries(series);
     assert.equal(Math.round((r.w1 as number) * 10) / 10, Math.round(((129 / 124) - 1) * 1000) / 10);
   });
+});
+
+test('zzz776 — consideration "for up to ₹X" is a value, honorific stops, bare-rupee tax sums, 1W from the stored tail', () => {
+  const cls = (h: string) => classify768({ subject: 'General Updates', summary: h, url: 'x', dateIso: '2026-09-20', ageDays: 3 } as any, 'IN');
+  assert.equal(cls('Jagsonpal signs BTA to acquire Group Pharma wellness portfolio for up to ₹46.7 crore, closing by 1 Nov 2026.').valueStated, 46.7);
+  assert.equal(cls('Milky Mist commissioned plant; capacity up to 150 TPD, Rs.40 crore.').valueStated, 40);
+  assert.equal(cls('Max Estates signs binding MoU; project may unlock INR 2,500-3,000 crore GDV.').valueStated, null);
+  assert.equal(cls('Company Secretary and Compliance Officer Ms. Shubha Singh resigned effective September 19, 2026.').kind, 'routine');
+  assert.equal(cls('Kaveri Seed received ITAT hearing notice for Rs56.21 crore AY2022-23 tax demand').category, 'tax_litigation');
+  assert.equal(fmtMoney(0.0040036, 'IN'), '₹40,036');
+  assert.equal(fmtMoney(0.0353, 'IN'), '₹3.5 lakh');
 });

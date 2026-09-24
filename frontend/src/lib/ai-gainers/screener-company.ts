@@ -97,6 +97,14 @@ export interface CompanyResearch {
   errors: string[];
 }
 
+/** zzz776: Yahoo daily closes → returns, for a re-score whose stored inputs
+ *  have no price history (the screener.in chart failed on the first pass). */
+export async function yahooReturns(ticker: string): Promise<{ returns: Returns; lastClose: number; source: string } | null> {
+  const out = { returns: null, lastClose: null, prevClose: null, sources: [] as string[], errors: [] as string[], bseCode: null } as unknown as CompanyResearch;
+  await yahooFallback(out, screenerSymbol(ticker));
+  return out.returns && out.lastClose != null ? { returns: out.returns, lastClose: out.lastClose, source: out.sources[out.sources.length - 1] } : null;
+}
+
 async function yahooFallback(out: CompanyResearch, sym: string): Promise<void> {
   // zzz775: screener.in's chart is the first choice, not the only one. When
   // it fails, the NSE (.NS) or BSE (.BO) daily closes stand in, so 1W/1M/3M

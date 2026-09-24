@@ -353,10 +353,25 @@ export interface ThesisVerdict {
      *  consumers keep compiling. (zzz772) */
     contradicted?: string[] };
 }
+export interface CatalystRank {
+  score: number;                       // 0–100
+  output: { revenue: number | null; earnings: number | null; marginPp: number | null; points: number };
+  drivers: Array<{ key: string; group: CatalystGroup; text: string; quantified: boolean; points: number }>;
+  driverPoints: number;
+  statusPoints: number;
+  why: string;
+}
+export type CatalystGroup = 'Demand' | 'Capacity' | 'Volume' | 'Capex earning' | 'Customers' | 'Approvals' | 'Margin mechanism' | 'Balance sheet';
 export interface ThesisAssessment {
   /** zzz771: the three separated dimensions. Optional until PC-2 fills it. */
   verdict?: ThesisVerdict;
   status: ThesisStatus;
+  /** zzz776: how strong the EVIDENCED catalyst is, for ranking the book's
+   *  intact theses against each other. Output growth plus the mechanism
+   *  drivers the documents evidence (order book, capacity, volume, capex
+   *  earning, customers, approvals). Never price, never an instruction.
+   *  Null unless the thesis is STRENGTHENING or ON TRACK. */
+  catalystRank?: CatalystRank | null;
   thesis: Thesis;
   /** Every variable the thesis rests on, disclosed or not. */
   checked: CheckedVariable[];
@@ -1155,18 +1170,50 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     'book_to_bill', 'new_customer', 'capex_earning', 'working_capital', 'product_mix', 'margin_driver', 'exports',
     'commissioning', 'qualification', 'regulatory_approval', 'price'] as VarKey[]);
   const STRUCTURAL_WORDS = /mix|value[- ]add|premium|operating leverage|utili[sz]|volume|capacity|scale|pric|realis|realiz|efficien|cost (reduction|saving)|procurement|integration|new (plant|product|customer)|export/i;
+  const STRUCTURAL_WORDS_STRICT = /mix|value[- ]add|premium|operating leverage|utili[sz]|volume|capacity|scale|efficien|cost (reduction|saving)|procurement|integration|new (plant|product|customer)|export/i;
+  const INPUT_COST = /\b(steel|commodit\w*|raw[- ]materials?|input|maize|corn|crude|coal|metals?|copper|alumin\w*|cotton|polymers?|resin|freight|fuel|gas|power|energy|rm)\b[^.;]{0,25}\b(prices?|costs?)\b/i;
+  const MARGIN_HEADWIND = /\bmargins?\b[^.;]{0,40}\b(lower|declin\w*|contract\w*|compress\w*|down|pressure\w*|dipp?\w*)\b|\b(impact(ed|ing)|hurt\w*|weigh(ed|ing)? on|dragg?\w*|squeez\w*|eroded?)\b[^.;]{0,40}\bmargins?\b|\bcontraction\b/i;
+  const PENDING_WORDS = /being pursued|in process|in progress|progressing|pursu\w*|under (evaluation|discussion|review)|discussions?|trials?|samples?|evaluat\w*|to be (audited|filed|approved|submitted)|awaited|pending|can take|expected|planned|applied for|filed for|advancing|in the works/i;
+  const ACHIEVED_WORDS = /\b(cleared|approved|approval (received|granted)|granted|received|won|signed|added|onboarded|qualified|certified|awarded|commissioned|completed|delivered|secured|obtained|passed|registered|empanel\w*|endorse\w*|validated|accredited)\b/i;
+  const APPROVAL_WORDS = /approv|licen[cs]|certif|cleared|clearance|registr|accredit|designat|endors|validat|qualif|gmp|\bfda\b|\beir\b|patent|grant|empanel|audit|pic\/s|dgqa|as9100|iso|who|cdsco|\bbis\b|vendor/i;
   const TEMPORARY_ONLY = /one[- ]off|one[- ]time|exceptional|forex|currency|inventory gain|refund|write[- ]?back|reversal|raw material (price )?spike|provision/i;
+  const driverTextOk = (v: StructuralVar): boolean => {
+    // zzz776: a pipeline is not a customer and a pursuit is not an approval
+    // (MENONBE "RFQs and NDAs received", DIVGIITTS "discussions started",
+    // WENDT "hires sales/service", KEI "approvals being pursued", NGLFINE
+    // "customers running trials", SCI "first Indian ship owner to clear").
+    const a = String(v.after || '');
+    if (v.key === 'new_customer' && /\bno (named |large |new |major )*(new )?customers?\b|\bnone\b|not (named|disclosed)/i.test(a) && !/\d+\s+(new\s+)?(\w+\s+)?(customers?|clients?|logos?)/i.test(a)) return false;
+    if (v.key === 'new_customer' && /\brfqs?\b|\bndas?\b|enquir|inquir|discussions?|in talks|negotiat|hires?\b|hiring|recruit|pipeline|prospect/i.test(a)) return false;
+    if ((v.key === 'qualification' || v.key === 'approval' || v.key === 'new_customer') && PENDING_WORDS.test(a) && !ACHIEVED_WORDS.test(a)) return false;
+    if ((v.key === 'qualification' || v.key === 'approval') && (!APPROVAL_WORDS.test(a) || /\bfirst (indian|in india|company|ever)\b[^.;]{0,40}\bto\b/i.test(a))) return false;
+    // A mixed volume line ("Shunt volumes down 11%; Bimetal up 5%") is not volume growth.
+    if ((v.key === 'volume' || v.key === 'utilisation') && /\b(down|declin\w*|fell|lower|drop\w*)\b/i.test(a)) return false;
+    // "installed capacity Phase I", "capacity added ten" — no measurable capacity.
+    if ((v.key === 'capacity' || v.key === 'capacity_addition') && !/\d/.test(a) && !/commission|new (plant|facility|line|unit)|doubl|tripl/i.test(a)) return false;
+    return true;
+  };
   const isDriver = (v: StructuralVar): boolean => {
     if (!DRIVER_KEYS.has(v.key) || v.source !== 'filing' || v.kind === 'claim' || v.unjudged) return false;
     if (v.statement && v.statement !== 'ACTUAL') return false;
     // A target is not a driver, however the model labelled it. (zzz772)
     if (isForwardRow(v)) return false;
     if (v.verdict !== 'improving') return false;
+    const t = `${v.after || ''} ${v.evidence || ''}`;
     if (v.key === 'margin_driver') {
-      const t = `${v.after || ''} ${v.evidence || ''}`;
+      // zzz776: a margin HEADWIND is not a driver (SHILPAMED "raw material
+      // prices increased, impacting gross margins"; MTARTECH "gross margin
+      // lower due to revenue mix"), and an input cost moving is the cycle,
+      // not the company (ACE "steel prices up nearly 20%", GAEL "moderation
+      // in maize prices"). Selling prices outrunning costs is pricing — kept.
+      const a = String(v.after || '');
+      if (MARGIN_HEADWIND.test(a)) return false;
+      const noInput = a.replace(new RegExp(INPUT_COST.source, 'gi'), ' ');
+      if (INPUT_COST.test(a) && !/selling price|realis|realiz|price (increase|hike)s?|pass(ed)?[- ]on|pricing power/i.test(a) && !STRUCTURAL_WORDS_STRICT.test(noInput)) return false;
+      if (/\(cyclical\)/i.test(a) && !/\(structural\)/i.test(a)) return false;
       return STRUCTURAL_WORDS.test(t) && !(TEMPORARY_ONLY.test(t) && !STRUCTURAL_WORDS.test(t.replace(TEMPORARY_ONLY, '')));
     }
-    return true;
+    return driverTextOk(v);
   };
   // F · PROFIT JUMP asks WHY PROFIT jumped: only a driver that explains a
   // margin or volume move counts there — an order book or an approval does
@@ -1293,7 +1340,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     && c.verdict !== 'improving' && !(c.verdict === 'flat' && SILENCE_IS_A_PASS.has(c.key)))
     .map((c) => `${nm(c).toLowerCase()} (${openState(c)})`);
   const driverText = (v: StructuralVar) => {
-    const val = v.delta && v.before ? `${v.before} → ${v.after} (${v.delta})` : (v.after || '');
+    const val = (v.delta && v.before ? `${v.before} → ${v.after} (${v.delta})` : (v.after || ''))
+      // zzz776: "including a richer specialty product mix' and 'architectural business" — a quoted fragment.
+      .replace(/^\s*(including|such as|and|with)\s+/i, '').replace(/['"]\s+and\s+['"]/g, ' and ').replace(/^['"]+|['"]+$/g, '');
     const label = v.key === 'capex_earning' ? 'capex earning' : (VAR_LABEL[v.key] || v.label).toLowerCase();
     if (val && val.length <= 60) return `${label} ${val}`;
     // The clause of a long statement that names the mechanism, never a
@@ -1824,7 +1873,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     if (ON_TRACK_EXTRA.has(v.key)) {
       return v.source === 'filing' && v.kind !== 'claim' && !v.unjudged && (!v.statement || v.statement === 'ACTUAL')
         && v.verdict === 'improving' && !isForwardRow(v)
-        && (v.key !== 'capex_status' || /commission|commercial[_ ]production|operational|completed/i.test(String(v.after || '')));
+        && (v.key !== 'capex_status' || /commission|commercial[_ ]production|operational|completed/i.test(String(v.after || '')))
+        && driverTextOk(v);
     }
     return isDriver(v);
   };
@@ -1832,13 +1882,14 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const m = new Map<VarKey, string>();
     for (const d of drivers) if (d.key !== 'cash_conversion') m.set(d.key, driverText(d));
     for (const d of variables.filter(onTrackDriver)) if (d.key !== 'cash_conversion' && !m.has(d.key)) {
-      m.set(d.key, d.key === 'capex_status' ? `capex status: ${String(d.after).replace(/_/g, ' ')}` : driverText(d));
+      m.set(d.key, d.key === 'capex_status' ? `capex status: ${[...new Set(String(d.after).replace(/_/g, ' ').split(/\s*;\s*/).filter(Boolean))].join('; ')}` : driverText(d));
     }
     // One list, one punctuation: "(management remark).; qualification" and
     // "presentation.." were the joins of sentences that already ended. (zzz775)
     for (const [k, t] of m) m.set(k, t.replace(/[\s.;,]+$/, ''));
     for (const c of structuralConfirmedVars) {
       if (c.key === 'cash_conversion' || c.source !== 'filing' || m.has(c.key)) continue;
+      if (!driverTextOk(c as unknown as StructuralVar)) continue;   // zzz776: same text rules as a driver
       m.set(c.key, `${nm(c).toLowerCase()} ${c.delta && c.before ? `${c.before} → ${c.after} (${c.delta})` : c.after || c.delta || ''}`.trim());
     }
     return m;
@@ -2162,8 +2213,43 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     if (kind === 'unclear') return `${name} — ${c.stateReason || c.unjudged || 'validation required'}${fig ? `: ${fig}` : ''}`;
     return `${name} — ${c.historical ? `${curNot} (${c.historical.period}: ${c.historical.value} · historical)` : c.state === 'NOT_SEARCHED' ? 'not searched' : c.state === 'SOURCE_UNAVAILABLE' ? 'source unavailable' : 'not disclosed'}`;
   };
+  // ── CATALYST RANK — which intact theses carry the strongest evidenced
+  // catalyst. (zzz776) Output growth is capped so a base-effect quarter
+  // cannot outrank a real order book; each mechanism group counts once;
+  // a quantified driver (a figure, a % change) counts more than a remark.
+  const catalystRank: CatalystRank | null = (() => {
+    if (status !== 'STRENGTHENING' && status !== 'ON_TRACK') return null;
+    const mv = (k: VarKey): number | null => { const r = outRow(k); if (!r || r.verdict !== 'improving') return null; const m = outputMove(r); return m == null || !Number.isFinite(m) ? null : Math.round(m * 10) / 10; };
+    const rev = mv('revenue_growth' as VarKey), earn = mv('earnings_growth' as VarKey), mpp = mv('margin' as VarKey);
+    const outPts = Math.round((Math.min(Math.max(rev ?? 0, 0), 60) / 60) * 18 + (Math.min(Math.max(earn ?? 0, 0), 100) / 100) * 14 + Math.min(Math.max(mpp ?? 0, 0), 8) * 1);
+    const GROUP: Partial<Record<string, [CatalystGroup, number]>> = {
+      order_book: ['Demand', 14], order_intake: ['Demand', 14], book_to_bill: ['Demand', 14], revenue_visibility: ['Demand', 10], exports: ['Demand', 9],
+      capacity_addition: ['Capacity', 12], capacity: ['Capacity', 10], new_plant: ['Capacity', 10], commissioning: ['Capex earning', 9], capex_status: ['Capex earning', 7], capex_earning: ['Capex earning', 12],
+      volume: ['Volume', 12], utilisation: ['Volume', 12],
+      new_customer: ['Customers', 9], qualification: ['Approvals', 6], approval: ['Approvals', 6],
+      margin_driver: ['Margin mechanism', 8], product_mix: ['Margin mechanism', 8], price: ['Margin mechanism', 6],
+      working_capital: ['Balance sheet', 5],
+    };
+    const best = new Map<CatalystGroup, CatalystRank['drivers'][number]>();
+    for (const [k, text] of mechEvidence) {
+      const g = GROUP[k as string]; if (!g) continue;
+      const pct = /([\d.]+)\s*%/.exec(text);
+      const smallMove = (g[0] === 'Volume') && pct != null && Number(pct[1]) < 5;   // "1.7% YoY" volume is a remark, not a catalyst
+      const quantified = !smallMove && /\d/.test(text) && /%|→|\+|₹|inr|rs\.?|crore|cr\b|mn\b|million|mtpa|tpd|mw|units|kl|tons?|tonnes/i.test(text);
+      const points = Math.round(g[1] * (quantified ? 1.25 : 0.8));
+      const prev = best.get(g[0]);
+      if (!prev || points > prev.points) best.set(g[0], { key: k as string, group: g[0], text, quantified, points });
+    }
+    const drivers = [...best.values()].sort((a, b) => b.points - a.points);
+    const driverPoints = Math.min(50, drivers.reduce((a, d) => a + d.points, 0));
+    const statusPoints = status === 'STRENGTHENING' ? 10 : 0;
+    const score = Math.max(0, Math.min(100, outPts + driverPoints + statusPoints));
+    const outBits = [rev != null ? `revenue +${rev}%` : null, earn != null ? `earnings +${earn}%` : null, mpp != null && mpp > 0 ? `margin +${mpp}pp` : null].filter(Boolean).join(' · ');
+    return { score, output: { revenue: rev, earnings: earn, marginPp: mpp, points: outPts }, drivers, driverPoints, statusPoints,
+      why: `${outBits || 'output improved'}; ${drivers.length} evidenced catalyst group${drivers.length === 1 ? '' : 's'} (${drivers.map((d) => d.group).join(', ') || 'none'})` };
+  })();
   return {
-    verdict,
+    verdict, catalystRank,
     status, thesis, checked, triggered, invalidationConditions, nextConfirmation, because, financialWarning,
     historicalContext, currentPeriod: curPeriod,
     logicChain, coreMechanismGaps: coreMechanismGaps.map((c) => c.label),

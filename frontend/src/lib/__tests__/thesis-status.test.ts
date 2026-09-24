@@ -1608,3 +1608,9 @@ describe('zzz775 · owner card bugs', () => {
     assert.equal(unitlessPrior('72%', '80%'), false);
   });
 });
+
+test('zzz776 — "65%-70%" utilisation is a range, not a negative utilisation', async () => {
+  const { validateReading } = await import('../thesis/fact-model');
+  const v = validateReading('utilisation' as any, '65%-70%', 'utilisation at 65%-70%');
+  assert.notEqual(v.flags.includes('IMPOSSIBLE_VALUE'), true);
+});

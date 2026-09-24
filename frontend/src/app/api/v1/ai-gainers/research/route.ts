@@ -27,7 +27,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
-import { fetchCompanyResearch } from '@/lib/ai-gainers/screener-company';
+import { fetchCompanyResearch, yahooReturns } from '@/lib/ai-gainers/screener-company';
 import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
 import { mergeAnnouncements, buildFinding, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
@@ -535,6 +535,12 @@ async function rescoreOnly(req: NextRequest, body: any) {
         }
       }
       inputs = { ...inputs, read };
+      // zzz776: a first pass whose price history failed is not left blank —
+      // the re-score fills it from Yahoo daily closes (free, no model).
+      if (market === 'IN' && !inputs.returns && Date.now() - t0 < budget - 10_000) {
+        const y = await yahooReturns(u.ticker).catch(() => null);
+        if (y) inputs = { ...inputs, returns: y.returns, sources: [...(inputs.sources || []), y.source] };
+      }
       st.inputs[u.ticker] = inputs;
       const f = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
       st.findings[u.ticker] = f;

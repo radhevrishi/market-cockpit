@@ -543,7 +543,8 @@ const OK: Validation = { state: 'OK', flags: [], reason: null, metric_definition
 
 /** Percent figures in a value, including "170-odd percent". */
 function percents(s: string): number[] {
-  return Array.from(String(s).replace(/(?<=\d),(?=\d)/g, '').matchAll(/(-?\d+(?:\.\d+)?)(?:\s*-?\s*odd)?\s*(?:%|per\s?cent|percent)/gi)).map((m) => Number(m[1]));
+  // "65%-70%" is a range, not minus seventy (zzz776 — SBCL).
+  return Array.from(String(s).replace(/(?<=\d),(?=\d)/g, '').replace(/(\d\s*(?:%|per\s?cent|percent)?)\s*[-–]\s*(?=\d)/gi, '$1 to ').matchAll(/(-?\d+(?:\.\d+)?)(?:\s*-?\s*odd)?\s*(?:%|per\s?cent|percent)/gi)).map((m) => Number(m[1]));
 }
 
 /** Suspicious or ambiguous values become a validation state, not a verdict. */

@@ -42,7 +42,7 @@ import { evidenceCounts } from '@/lib/thesis/evidence-counts';
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
   // High-contrast text levels shared with the thesis card (zzz765).
-  dim: 'var(--tc-dim, #D5DEE9)', faint: 'var(--tc-faint, #AEBBCB)', amber: 'var(--mc-verdict-warn, #FBBF24)', cyan: 'var(--tc-accent, #22D3EE)',
+  dim: 'var(--tc-dim, #D5DEE9)', faint: 'var(--tc-faint, #AEBBCB)', amber: 'var(--mc-verdict-warn, #FBBF24)', green: 'var(--mc-verdict-up, #34D399)', cyan: 'var(--tc-accent, #22D3EE)',
 };
 
 // EVIDENCE_INCOMPLETE ranks ABOVE strengthening and neutral: an unchecked
@@ -71,6 +71,7 @@ export default function PortfolioCatalystsPage() {
   // it — a size filter is allowed to be opinionated, not allowed to be quiet.
   // A HOLDING IS NEVER HIDDEN BY IT.
   const [smallMidOnly, setSmallMidOnly] = useState(true);
+  const [showAllTop, setShowAllTop] = useState(false);
 
   const all = useMemo(() => Object.values(rows), [rows]);
 
@@ -267,6 +268,82 @@ export default function PortfolioCatalystsPage() {
               {usLeft > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: C.faint }}> · {usLeft} US name{usLeft === 1 ? '' : 's'} in these statuses not included (NSE list)</span>}
             </div>
             <TickerExportToolbar tickers={all} groups={groups} exchange="NSE" filenameHint="portfolio-catalysts-constructive" compact />
+          </div>
+        );
+      })()}
+
+      {/* ── TOP CATALYSTS. (zzz776) The intact theses ranked by how strong the
+          EVIDENCED catalyst is — output growth plus the mechanism drivers the
+          documents show (order book, capacity, volume, capex earning,
+          customers, approvals). A research order, not a buy list: no price
+          is in it and none ever will be. */}
+      {!evidenceLoading && (() => {
+        const ranked = inSource
+          .filter((r) => r.assessment?.catalystRank && (r.assessment.status === 'STRENGTHENING' || r.assessment.status === 'ON_TRACK'))
+          .sort((a, b) => (b.assessment!.catalystRank!.score - a.assessment!.catalystRank!.score)
+            || ((b.assessment!.catalystRank!.drivers.length) - (a.assessment!.catalystRank!.drivers.length)));
+        if (!ranked.length) return null;
+        const shown = showAllTop ? ranked : ranked.slice(0, 15);
+        const tv = (sym: string) => sym.toUpperCase().replace(/-(BE|SM|ST|BZ|E1)$/i, '');
+        const top = ranked.slice(0, 15).filter((r) => r.market !== 'US').map((r) => tv(r.symbol));
+        const GC: Record<string, string> = { Demand: C.green, Capacity: C.cyan, Volume: C.cyan, 'Capex earning': C.cyan, Customers: C.amber, Approvals: C.amber, 'Margin mechanism': C.dim, 'Balance sheet': C.dim };
+        const fmt = (n: number | null, unit: string) => n == null ? '—' : `+${n}${unit}`;
+        return (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 Top catalysts — {ranked.length} intact theses ranked</span>
+              <span style={{ fontSize: 12.5, color: C.faint }}>Catalyst score = output growth (≤40) + evidenced mechanism drivers, one per group (≤50, a quantified figure counts more than a remark) + strengthening (10). Research order, not a buy list — no price is used.</span>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: C.faint, textAlign: 'left', fontSize: 11.5, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    <th style={{ padding: '4px 6px' }}>#</th><th style={{ padding: '4px 6px' }}>Name</th><th style={{ padding: '4px 6px' }}>Status</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Score</th><th style={{ padding: '4px 6px', textAlign: 'right' }}>Rev</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Earn</th><th style={{ padding: '4px 6px', textAlign: 'right' }}>Margin</th>
+                    <th style={{ padding: '4px 6px' }}>Evidenced catalysts (from the documents)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((r, i) => {
+                    const cr = r.assessment!.catalystRank!;
+                    const st = r.assessment!.status === 'STRENGTHENING';
+                    return (
+                      <tr key={r.symbol} style={{ borderTop: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                        <td style={{ padding: '5px 6px', color: C.faint, fontWeight: 800 }}>{i + 1}</td>
+                        <td style={{ padding: '5px 6px', fontWeight: 900, whiteSpace: 'nowrap' }}>
+                          <a href={`#pc-${r.symbol}`} onClick={(e) => { e.preventDefault(); setFilter(null); setTimeout(() => document.getElementById(`pc-${r.symbol}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}
+                            style={{ color: C.text, textDecoration: 'none' }}>{r.symbol}</a>
+                          {r.origin === 'bench' && <span style={{ fontSize: 11, color: C.faint, fontWeight: 700 }}> · bench</span>}
+                        </td>
+                        <td style={{ padding: '5px 6px', whiteSpace: 'nowrap', color: st ? C.green : C.cyan, fontWeight: 800, fontSize: 12 }}>{st ? '🟢 Strengthening' : '🔵 On track'}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontWeight: 900, color: cr.score >= 60 ? C.green : cr.score >= 40 ? C.text : C.dim }} title={`output ${cr.output.points} + drivers ${cr.driverPoints} + status ${cr.statusPoints}`}>{cr.score}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right' }}>{fmt(cr.output.revenue, '%')}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right' }}>{fmt(cr.output.earnings, '%')}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right' }}>{cr.output.marginPp != null && cr.output.marginPp > 0 ? fmt(cr.output.marginPp, 'pp') : '—'}</td>
+                        <td style={{ padding: '5px 6px' }}>
+                          {cr.drivers.slice(0, 3).map((d) => (
+                            <div key={d.group} style={{ lineHeight: 1.35 }} title={d.text}>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: GC[d.group] || C.dim, marginRight: 5 }}>{d.group.toUpperCase()}{d.quantified ? '' : ' · remark'}</span>
+                              <span style={{ color: C.dim }}>{d.text.length > 110 ? `${d.text.slice(0, 109)}…` : d.text}</span>
+                            </div>
+                          ))}
+                          {cr.drivers.length > 3 && <div style={{ fontSize: 11.5, color: C.faint }}>+{cr.drivers.length - 3} more on the card</div>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+              {ranked.length > 15 && (
+                <button onClick={() => setShowAllTop((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>
+                  {showAllTop ? 'Show top 15' : `Show all ${ranked.length}`}
+                </button>
+              )}
+              {top.length > 0 && <TickerExportToolbar tickers={top} exchange="NSE" filenameHint="portfolio-top-catalysts" compact />}
+            </div>
           </div>
         );
       })()}
@@ -476,7 +553,8 @@ export default function PortfolioCatalystsPage() {
         ) : null;
       })()}
       {list.map((r) => (
-        <ThesisCard key={r.symbol}
+        <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
+        <ThesisCard
           thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
           onThesisType={(t) => setThesisType(r.symbol, t)}
           symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
@@ -504,6 +582,7 @@ export default function PortfolioCatalystsPage() {
           dataPeriod={r.graded?.period || null}
           sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
         />
+        </div>
       ))}
     </div>
   );

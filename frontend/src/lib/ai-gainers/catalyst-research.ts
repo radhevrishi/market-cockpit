@@ -44,7 +44,7 @@ import { classifyUsFiling, fmtUsdM } from './us-gainers';
  *  by default, US resale/shelf registrations told apart from a new raise. */
 import type { NewsContext } from './news-context';
 
-export const RULES_VERSION = '2026-09-24.zzz773';
+export const RULES_VERSION = '2026-09-24.zzz776';
 
 export type ResearchStatus =
   | 'catalyst'          // a dated, sourced event survived the reject gates
@@ -269,7 +269,7 @@ export function parseStatedValue(text: string, market: 'IN' | 'US'): number | nu
   // "implying ₹42.84 crore annual revenue", "estimating ₹500 crore opportunity",
   // "potential of up to ₹1,000 crore" — an inference is not a stated event
   // value. The figure is dropped so the item is scored as unmeasured.
-  const t = text.replace(/,/g, '').replace(/(impl(y|ies|ying)|estimat(e|ed|es|ing)|potential(ly)?|opportunity|could|may|might|expected to|up to|targeting|aims?|envisag|projected|likely)[^.]{0,60}?(₹|rs\.?|inr|usd|\$)\s*[\d.]+\s*(crore|cr\b|crores|lakh|lacs?|million|mn|billion|bn|m\b)/gi, ' ');
+  const t = text.replace(/,/g, '').replace(/(impl(y|ies|ying)|estimat(e|ed|es|ing)|potential(ly)?|opportunity|could|may|might|expected to|targeting|aims?|envisag|projected|likely)[^.]{0,60}?(₹|rs\.?|inr|usd|\$)\s*[\d.]+(\s*[-–]\s*[\d.]+)?\s*(crore|cr\b|crores|lakh|lacs?|million|mn|billion|bn|m\b)/gi, ' ');
   if (market === 'IN') {
     // A bare "1.2 crore equity shares" / "2 crore users" is a COUNT: without a
     // currency mark a crore is money only when no counted noun follows. (zzz769)
@@ -301,7 +301,8 @@ export function parseStatedValue(text: string, market: 'IN' | 'US'): number | nu
 }
 
 export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 'IN'): ClassifiedAnnouncement {
-  const hay = `${a.subject} ${a.summary || ''}`;
+  // zzz776: "Ms. Shubha Singh" — an honorific's full stop is not a sentence end.
+  const hay = `${a.subject} ${a.summary || ''}`.replace(/\b(Mr|Ms|Mrs|Dr|Shri|Smt|Sri)\./g, '$1');
   const base = { ...a, category: null as ClassifiedAnnouncement['category'], stage: null as Stage | null, valueStated: parseStatedValue(hay, market), incremental: !RX.renewal.test(hay), routineReason: null as string | null };
   // US: the SEC form type and 8-K item code decide the KIND of event (zzz766).
   // Item 1.01 is not an order, a 424B is not a positive "fundraising", and an
@@ -410,6 +411,13 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
 // ── 2. PRICE-HISTORY DERIVED FLAGS ─────────────────────────────────────────
 
 /** Returns and history length from a daily close series [dateIso, close]. */
+/** zzz776: inputs stored before 1W existed still carry the 90-day tail. */
+function w1FromTail(tail?: Array<[string, number]>): number | null {
+  if (!tail || tail.length < 6) return null;
+  const last = tail[tail.length - 1][1], prev = tail[tail.length - 6][1];
+  return prev > 0 ? ((last / prev) - 1) * 100 : null;
+}
+
 export function returnsFromSeries(series: Array<[string, number]>): Returns {
   const v = series.map(([, c]) => c).filter((c) => Number.isFinite(c) && c > 0);
   const last = v[v.length - 1];
@@ -633,7 +641,7 @@ export function buildFinding(inp: SweepInput): Finding {
     ticker: inp.ticker, company: inp.company, market: inp.market, movePct: inp.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
     status: 'none', category: null, stage: null, headline: null, evidenceQuote: null, sourceUrl: null, sourceDate: null, sourceTier: 'unsourced',
     ageDays: null, valueStated: null, valuePctMcap: null, net: null, components: null, verdict: null,
-    returns: inp.returns ? { w1: inp.returns.w1 ?? null, m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
+    returns: inp.returns ? { w1: inp.returns.w1 ?? w1FromTail(inp.returns.tail), m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
     routine: inWindow.filter((a) => a.kind === 'routine').map((a) => a.subject).slice(0, 6),
     filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read,
     researchedAt: now, sources: inp.sources, news: inp.news ?? null,
@@ -744,7 +752,9 @@ export function buildFinding(inp: SweepInput): Finding {
   // tax matter (SEDEMAC's "GST order received" was scored as an order win).
   const taxHay = `${c.subject} ${c.summary || ''} ${verified && inp.read ? `${inp.read.headline} ${inp.read.quote}` : ''}`;
   if (isTaxMatter(taxHay) && c.category !== 'tax_litigation') {
-    const v = parseStatedValue(taxHay, inp.market);
+    // "₹40,036 demand" is rupees, not crores (SEDEMAC) — a bare rupee sum.
+    const bare = inp.market === 'IN' ? /(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)(?![\d,.]*\s*(?:crores?|cr\b|lakhs?|lacs?|million|mn\b|billion|bn\b))/i.exec(taxHay) : null;
+    const v = parseStatedValue(taxHay, inp.market) ?? (bare ? Math.round((parseFloat(bare[1].replace(/,/g, '')) / 1e7) * 1e6) / 1e6 : null);
     const pctM = v != null && inp.marketCap ? Math.round((v / inp.marketCap) * 10000) / 100 : null;
     if (taxFavourable(taxHay)) {
       return { ...base, status: 'routine_only', headline: verified && inp.read ? inp.read.headline : shorten(c.summary || c.subject, 400), sourceUrl: c.url, sourceDate: c.dateIso, ageDays: c.ageDays, sourceTier: 'primary', notes: [...base.notes, 'A tax matter decided in the company\'s favour — not an operating catalyst.'] };
@@ -825,7 +835,7 @@ export function shorten(s: string, max = 110): string {
 const short = (s: string) => shorten(s, 80);
 export function fmtPct(v: number | null): string { return v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`; }
 export function fmtDate(iso: string | null): string { return iso ? iso.slice(0, 10) : 'undated'; }
-export function fmtMoney(v: number, market: 'IN' | 'US'): string { return market === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)} Cr` : fmtUsdM(v); }
+export function fmtMoney(v: number, market: 'IN' | 'US'): string { if (market === 'IN' && v > 0 && v < 0.1) return v < 0.01 ? `₹${Math.round(v * 1e7).toLocaleString('en-IN')}` : `₹${(v * 100).toFixed(1)} lakh`; return market === 'IN' ? `₹${v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(1)} Cr` : fmtUsdM(v); }
 
 /** Coverage line, computed from findings so it cannot lie. */
 export function coverage(findings: Record<string, Finding>, universe: string[]): { researched: number; total: number; pct: number; byStatus: Record<string, number> } {
