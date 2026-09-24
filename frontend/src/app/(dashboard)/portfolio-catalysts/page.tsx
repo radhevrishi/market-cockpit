@@ -291,8 +291,8 @@ export default function PortfolioCatalystsPage() {
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
-              <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 Top catalysts — {ranked.length} intact theses ranked</span>
-              <span style={{ fontSize: 12.5, color: C.faint }}>Catalyst score = output growth (≤40) + evidenced mechanism drivers, one per group (≤50, a quantified figure counts more than a remark) + strengthening (10). Research order, not a buy list — no price is used.</span>
+              <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 Research priority — {ranked.length} intact theses ranked by evidenced catalyst</span>
+              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning / volume > named contract > customer remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). Which theses deserve research next — not a buy list, no price used.'}</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

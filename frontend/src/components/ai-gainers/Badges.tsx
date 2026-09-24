@@ -28,6 +28,14 @@ export function StatusPill({ it }: { it: ResearchItem }) {
   if (it.eventClass === 'NO_CATALYST' && it.flags?.denial) {
     return <Pill color={C.faint} title="The company told the exchange it has no undisclosed information behind the price move. A clarification, not negative evidence.">⚪ COMPANY: NO UNDISCLOSED INFO</Pill>;
   }
+  // zzz776: the event can be verified while its SIGNIFICANCE is not — say
+  // which of the two is open instead of calling a filed award "unverified".
+  if (it.eventClass === 'POTENTIAL_UNVERIFIED') {
+    const filed = it.sourceConfidence === 'VERIFIED_DOCUMENT' || it.sourceConfidence === 'VERIFIED_FILING';
+    return filed
+      ? <Pill color={m.color} title="The event is on file with the exchange; its size / materiality — and whether it explains the move — is not established.">🟡 EVENT FILED · IMPACT UNKNOWN</Pill>
+      : <Pill color={m.color} title="Only a secondary summary or subject line — the event itself is not verified from a primary document.">🟡 POTENTIAL · SOURCE UNVERIFIED</Pill>;
+  }
   return <Pill color={m.color} title={m.meaning}>{denial ? '🔴 COMPANY DENIAL' : m.pill}</Pill>;
 }
 

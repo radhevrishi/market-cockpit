@@ -21,7 +21,7 @@ export function WhatChanged({ it, noLabel }: { it: ResearchItem; noLabel?: boole
         <span style={{ color: C.text, fontWeight: 800 }}>{txt(it.after, 'After: not disclosed')}</span>
       </span>
     )
-    : <span style={{ color: it.whatChanged ? C.text : C.faint, fontWeight: it.whatChanged ? 700 : 500 }}>{txt(it.whatChanged, 'Not established from the source')}</span>;
+    : <span style={{ color: it.whatChanged ? C.text : C.faint, fontWeight: it.whatChanged ? 700 : 500 }}>{txt(it.whatChanged, 'Financial impact not established from the filing')}</span>;
   return (
     <div style={{ background: C.bg2, borderRadius: 6, padding: '7px 10px', fontSize: 14, lineHeight: 1.5 }}>
       {!noLabel && <span style={{ ...label, marginRight: 8 }}>WHAT CHANGED</span>}
@@ -155,7 +155,7 @@ export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; ra
       )}
       {reasons.length > 0 && (
         <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.5 }}>
-          <span style={{ ...label, marginRight: 6 }}>WHY THIS IS HIGH PRIORITY</span>{reasons.join(' · ')}
+          <span style={{ ...label, marginRight: 6 }}>WHY RESEARCH PRIORITY #{rank}</span>{reasons.join(' · ')}
         </div>
       )}
 

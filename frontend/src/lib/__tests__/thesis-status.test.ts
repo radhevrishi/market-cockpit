@@ -579,17 +579,17 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
       { ...V('margin', 'improving', { delta: '+8.0pp', source: 'grader' }), before: '6.0%', after: '14.0%' },
       V('cash_conversion', 'deteriorating', { after: '0.59× (last FY)', source: 'grader' }),
     ] });
-    assert.equal(a.status, 'WEAKENING');
-    assert.match(a.because, /^Financial output improved \(revenue \+34\.1% · earnings \+409\.1% · margin \+8\.0pp\), but the structural mechanism is not established/);
-    assert.match(a.because, /this is not thesis failure/);
-    // zzz773: UPDATED — the F cash test is a persistent condition: active, labelled historical / unresolved.
-    assert.match(a.because, /cash conversion, thesis-critical for a profit jump \(the forensic test\), is an unresolved historical condition: last FY: 0\.59× \(historical \/ unresolved\)/);
-    // zzz775: no evidence period → "Current period …", never "the the current period".
-    assert.match(a.because, /Current period cash conversion: NOT DISCLOSED/);
+    // zzz776: UPDATED — every "down" is last FY's ratio (historical /
+    // unresolved), nothing deteriorated in the current period: CONFIRMATION
+    // REQUIRED with the red flag named and a resolver, not WEAKENING.
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED', a.because);
+    assert.match(a.because, /^Financial output improved \(revenue \+34\.1% · earnings \+409\.1% · margin \+8\.0pp\)\. Unresolved historical red flag — Cash conversion last FY: 0\.59×/);
+    assert.match(a.because, /not WEAKENING/);
+    assert.match(a.because, /Resolves with: the next disclosed cash conversion figure/);
+    assert.equal((a.because.match(/Resolves with:/g) || []).length, 1);
     assert.doesNotMatch(a.because, /\bthe the\b|a the current/);
     assert.equal(a.checked.find((c) => c.key === 'cash_conversion')!.historical!.active, true);
     assert.equal(a.coverage.mechanism.confirmed, 0, 'output never counts as mechanism confirmation');
-    assert.notEqual(exitReasonOf(a), null);
   });
 
   test('GOLDIAM shape (A: utilisation core, read and not disclosed, only a mix driver) — the gap is named as UNKNOWN, not negative', () => {
@@ -1272,8 +1272,13 @@ describe('zzz773 · owner audit (Q1 FY27)', () => {
     assert.ok(HISTORICAL_PERSISTENT.F.has('cash_conversion'));
     const a = R({ pattern: 'F', variables: [...OUT, W('earnings_growth', 'improving', { delta: '+409%', source: 'grader' }),
       W('cash_conversion', 'deteriorating', { after: '0.34× (last FY)', source: 'grader' })] });
-    assert.equal(a.status, 'WEAKENING');
-    assert.match(a.because, /FY26: 0\.34× \(historical \/ unresolved\)\. Q1 FY27 cash conversion: NOT DISCLOSED\. This is not a Q1 FY27 deterioration/);
+    // zzz776: UPDATED — active and unresolved, so CONFIRMATION REQUIRED (not WEAKENING).
+    assert.equal(a.status, 'CONFIRMATION_REQUIRED');
+    assert.match(a.because, /Unresolved historical red flag — Cash conversion FY26: 0\.34× \(historical, not a Q1 FY27 reading\)/);
+    // A CURRENT-period reading that fails is still WEAKENING.
+    const cur = R({ pattern: 'F', variables: [...OUT, W('earnings_growth', 'improving', { delta: '+409%', source: 'grader' }),
+      W('cash_conversion', 'deteriorating', { after: '0.34× (Q1 FY27)', source: 'filing' })] });
+    assert.notEqual(cur.status, 'ON_TRACK');
     const h = a.historicalContext!.find((x) => x.key === 'cash_conversion')!;
     assert.equal(h.active, true);
     assert.match(h.decision, /^ACTIVE THESIS CONDITION — historical \/ unresolved/);

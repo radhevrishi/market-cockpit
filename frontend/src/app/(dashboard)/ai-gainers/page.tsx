@@ -396,7 +396,7 @@ export default function AiGainersPage() {
         </span>
       )}
       {covShown && covShown.total > 0 && !sweeping && (
-        <span style={{ fontSize: 12, color: C.faint }} title="Names on this board with a catalyst finding.">Catalyst coverage {covShown.researched}/{covShown.total}</span>
+        <span style={{ fontSize: 12, color: C.faint }} title={`Research completion, not catalysts found: ${covShown.researched} of the ${covShown.total} small/mid-cap gainers have had their filings researched. ${board.length > covShown.total ? `The other ${board.length - covShown.total} of the ${board.length} scanned are large caps (≥ ₹${(research?.large_cap_min_cr ?? 100000).toLocaleString('en-IN')} Cr), excluded from catalyst research.` : ''}`}>Catalyst research {covShown.researched}/{covShown.total} small/mid caps{board.length > covShown.total ? ` · ${board.length - covShown.total} large caps excluded` : ''}</span>
       )}
       {!sweeping && rescored && (
         <span title="Findings stored under older rules were re-classified and re-scored from filings already fetched and model reads already cached. No model read was made." style={{ fontSize: 12, color: C.faint }}>
@@ -781,7 +781,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <style>{'@media (max-width: 760px) { .mc-gainer-card { grid-template-columns: 1fr !important; } }'}</style>
       <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
-        <b style={{ color: C.text }}>Catalyst coverage {cov.researched}/{cov.total} ({cov.pct}%)</b>
+        <b style={{ color: C.text }} title="Research completion — names whose filings were checked — not the number with a catalyst.">Catalyst research {cov.researched}/{cov.total} small/mid caps researched ({cov.pct}%)</b>
         {research.date && <span style={{ color: C.faint }}> · session {research.date}</span>}
         {sweeping ? <span style={{ color: C.cyan }}> · researching…</span>
           : pendingOnBoard > 0 ? <button onClick={onResume} title="Reads the filings behind each move with the AI model. Runs only when you click." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>▶ Research · {pendingOnBoard} not yet researched (uses AI)</button>

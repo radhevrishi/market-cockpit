@@ -690,7 +690,9 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       u.push('Financial impact: Not disclosed');
       break;
     default:
-      say('Event value', hasValue);
+      // zzz776: a product launch or a licence has no "event value" — what is
+      // unknown is its commercial impact.
+      say('Commercial impact', hasValue);
       u.push('Revenue impact: Not disclosed');
   }
   u.push('Consensus expectations: Unknown');
@@ -820,7 +822,7 @@ function priorityOf(it: ResearchItem, ctx: { routine: boolean; pricingState: str
   const cls = it.eventClass;
   if (cls === 'CONFIRMED_MATERIAL') reasons.push('Confirmed, economically material event');
   else if (cls === 'CONFIRMED_LOW_MATERIALITY') reasons.push('Real event, low materiality');
-  else if (cls === 'POTENTIAL_UNVERIFIED') reasons.push(/ENABLING|PROPOSED|RUMOUR/.test(it.stage) ? `Not executed (${it.stage})` : 'Not yet verified');
+  else if (cls === 'POTENTIAL_UNVERIFIED') reasons.push(/ENABLING|PROPOSED|RUMOUR/.test(it.stage) ? `Not executed (${it.stage})` : it.sourceConfidence === 'VERIFIED_DOCUMENT' || it.sourceConfidence === 'VERIFIED_FILING' ? 'Event on file; financial impact not established' : 'Source not verified');
   else if (cls === 'NEGATIVE') reasons.push('Negative evidence');
   else if (cls === 'NO_CATALYST') reasons.push('No identified catalyst');
   else if (cls === 'MARKET_MOVE_ONLY') reasons.push('Technical / band move only');
@@ -1190,6 +1192,14 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
       : `${noun} ${money(value, market)}${ratioTxt}${conf === 'VERIFIED_DOCUMENT' ? '' : ' (figure not verified in the document)'}`;
   }
 
+  // zzz776: a GDV / "may unlock" figure is headline SCALE, not the company's
+  // financial impact — shown as such rather than "not established".
+  // (the same test as catalyst-research's isPotentialValue — kept local: this module stays client-safe)
+  const isPotentialValue = (h: string): boolean => /\bgdv\b|gross development value|revenue potential|top ?line potential|sales potential|peak (revenue|sales) potential|may unlock|potential (revenue|value|topline)|market (size|opportunity) of/i.test(h);
+  if (!whatChanged && isPotentialValue(`${headline0 || ''} ${(f?.notes || []).join(' ')}`)) {
+    const m = /((?:inr|₹|rs\.?)\s*[\d,.]+(?:\s*[-–]\s*[\d,.]+)?\s*(?:crores?|cr\b|lakh crore|million|billion|bn|mn))[^.;]{0,30}/i.exec(String(headline0 || ''));
+    whatChanged = `Headline scale${m ? `: ${m[0].trim()}` : ''} — project / potential scale, not the company's revenue or share; company financial impact not established`;
+  }
   const key = nextKey(type, cls, stage, f, clarification);
   // zzz775: a research question the filing already answers is shown WITH its
   // answer; one the model-read filing is silent on says so. Only a filing

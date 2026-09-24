@@ -65,7 +65,7 @@ export const CLASS_META: Record<EventClass, { pill: string; short: string; color
   CONFIRMED_MATERIAL: { pill: '🟢 CONFIRMED MATERIAL EVENT', short: 'Confirmed', color: C.green, meaning: 'Verified, economically meaningful event.' },
   CONFIRMED_LOW_MATERIALITY: { pill: '🔵 CONFIRMED · LOW MATERIALITY', short: 'Confirmed · small', color: C.cyan, meaning: 'Real event, too small on its own to explain the move.' },
   POTENTIAL_UNVERIFIED: { pill: '🟡 POTENTIAL · UNVERIFIED', short: 'Potential', color: C.amber, meaning: 'Something exists, but it is not verified from a primary document.' },
-  NEGATIVE: { pill: '🔴 NEGATIVE EVIDENCE', short: 'Negative', color: C.red, meaning: 'Negative, contrary or denied — the move is not supported by the filings.' },
+  NEGATIVE: { pill: '🔴 NEGATIVE EVIDENCE', short: 'Negative', color: C.red, meaning: 'A genuine negative filing (tax demand, departure, cancellation, denial) — kept even though the stock rose.' },
   NO_CATALYST: { pill: '⚪ NO IDENTIFIED CATALYST', short: 'No catalyst', color: C.faint, meaning: 'Checked: no credible event in the window.' },
   MARKET_MOVE_ONLY: { pill: '⚪ MARKET MOVE ONLY', short: 'Band / technical', color: C.faint, meaning: 'Price-band or technical movement. Does not establish demand.' },
   LISTING: { pill: '⚪ RECENT LISTING', short: 'Listing', color: C.faint, meaning: 'Too little price history — excluded from fundamental comparison.' },

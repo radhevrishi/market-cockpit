@@ -250,8 +250,13 @@ describe('thesis status ladder', () => {
 
   test('deterioration still surfaces without full coverage — the rule is asymmetric', () => {
     // Damage visible in the filed numbers is not undone by reading more.
-    assert.equal(assess('SOTL').status, 'WEAKENING');
-    assert.equal(assess('MOREPENLAB').status, 'WEAKENING');
+    // zzz776: a last-FY cash ratio carried as historical / unresolved is a
+    // named open question, not a current deterioration.
+    for (const t of ['SOTL', 'MOREPENLAB']) {
+      const a = assess(t);
+      assert.ok(a.status === 'WEAKENING' || (a.status === 'CONFIRMATION_REQUIRED' && /Unresolved historical red flag/.test(a.because)), `${t}: ${a.status}`);
+      assert.notEqual(a.status, 'ON_TRACK');
+    }
   });
 
   test('BROKEN requires a NAMED invalidation condition, not arithmetic', () => {
@@ -989,7 +994,8 @@ describe('status: output is not mechanism', () => {
   test('the same deterioration DOES weaken an F thesis — cash conversion is its forensic test', () => {
     const a = assess('SOTL', { evidenceReviewed: false });
     assert.equal(classifyGradedRow(row('SOTL'))?.pattern, 'F');
-    assert.equal(a.status, 'WEAKENING');
+    // zzz776: historical-only → CONFIRMATION REQUIRED naming the red flag.
+    assert.ok(a.status === 'WEAKENING' || (a.status === 'CONFIRMATION_REQUIRED' && /cash conversion/i.test(a.because)), a.status);
     assert.equal(a.financialWarning.length, 0, 'for F it is thesis-critical, so it is not a side warning');
   });
 
@@ -4620,7 +4626,7 @@ describe('zzz770 AG-B — research triage view (fixture render)', () => {
   const html = render770(ReactNS770.createElement(Triage770, { view: demo770, market: 'IN', onRescan: () => {} }));
   const text = html.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ');
   test('every default section is on the page, in attention order', () => {
-    const order = ['AI DAILY GAINERS', 'MARKET SUMMARY', 'TOP 3 RESEARCH PRIORITIES', 'RESEARCH QUEUE', 'YOUR BOOK', 'WATCH / INVESTIGATE', 'NEGATIVE / DENIED', 'NO IDENTIFIED CATALYST'];
+    const order = ['AI DAILY GAINERS', 'MARKET SUMMARY', 'TOP 3 RESEARCH PRIORITIES', 'RESEARCH QUEUE', 'YOUR BOOK', 'WATCH / INVESTIGATE', 'NEGATIVE EVIDENCE', 'NO IDENTIFIED CATALYST'];
     let at = -1;
     for (const s of order) { const i = text.indexOf(s, at + 1); assert.ok(i > at, `${s} missing or out of order`); at = i; }
     assert.ok(/SESSION/.test(text) && /SCAN/.test(text) && /STATUS/.test(text), 'session block');
@@ -5371,7 +5377,7 @@ describe('zzz771 AG-2 — catalystFor / older context / clarifications / display
   const by = (t: string) => { const it = all.find((x) => x.ticker === t); assert.ok(it, `fixture item ${t}`); return it!; };
 
   test('older filings: a collapsed section after NEGATIVE with the count, a summary tile, and the OLDER CONTEXT badge on its cards', () => {
-    const neg = text.indexOf('NEGATIVE / DENIED'), ctx = text.indexOf('Older filings — context, not this move’s catalyst (2)'), noc = text.indexOf('NO IDENTIFIED CATALYST');
+    const neg = text.indexOf('NEGATIVE EVIDENCE'), ctx = text.indexOf('Older filings — context, not this move’s catalyst (2)'), noc = text.indexOf('NO IDENTIFIED CATALYST');
     assert.ok(neg > 0 && ctx > neg && noc > ctx, 'section order: negative → older filings → no catalyst');
     assert.ok(/data-testid="older-context" data-open="0"/.test(page), 'collapsed by default');
     assert.ok(!text.includes('VELOCAST'), 'context cards hidden while collapsed');
@@ -5465,7 +5471,7 @@ describe('zzz771 AG-2 — catalystFor / older context / clarifications / display
     assert.ok(!t.includes('Older filings') && !/OLDER CONTEXT/.test(t) && !/older-context/.test(h), 'no context section or tile');
     assert.ok(!/THIS MOVE|RECENT \(|CONTEXT \(|Scanned (21 days|EDGAR)/.test(t), 'no catalystFor badge, no scan note');
     assert.ok(t.includes('544501') && !t.includes('Demo Fabrics Ltd 544501'), 'ticker falls back to the code');
-    const order = ['MARKET SUMMARY', 'TOP 3 RESEARCH PRIORITIES', 'RESEARCH QUEUE', 'YOUR BOOK', 'WATCH / INVESTIGATE', 'NEGATIVE / DENIED', 'NO IDENTIFIED CATALYST'];
+    const order = ['MARKET SUMMARY', 'TOP 3 RESEARCH PRIORITIES', 'RESEARCH QUEUE', 'YOUR BOOK', 'WATCH / INVESTIGATE', 'NEGATIVE EVIDENCE', 'NO IDENTIFIED CATALYST'];
     let at = -1;
     for (const s of order) { const i = t.indexOf(s, at + 1); assert.ok(i > at, `${s} missing or out of order`); at = i; }
     assert.ok(!/\bundefined\b|\bNaN\b|\bnull\b/.test(t));

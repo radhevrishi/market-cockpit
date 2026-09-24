@@ -1184,6 +1184,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // "customers running trials", SCI "first Indian ship owner to clear").
     const a = String(v.after || '');
     if (v.key === 'new_customer' && /\bno (named |large |new |major )*(new )?customers?\b|\bnone\b|not (named|disclosed)/i.test(a) && !/\d+\s+(new\s+)?(\w+\s+)?(customers?|clients?|logos?)/i.test(a)) return false;
+    if (v.key === 'new_customer' && /brand ambassador|endorse|sponsor|celebrity|cricketer|\bactor\b/i.test(a)) return false;
     if (v.key === 'new_customer' && /\brfqs?\b|\bndas?\b|enquir|inquir|discussions?|in talks|negotiat|hires?\b|hiring|recruit|pipeline|prospect/i.test(a)) return false;
     if ((v.key === 'qualification' || v.key === 'approval' || v.key === 'new_customer') && PENDING_WORDS.test(a) && !ACHIEVED_WORDS.test(a)) return false;
     if ((v.key === 'qualification' || v.key === 'approval') && (!APPROVAL_WORDS.test(a) || /\bfirst (indian|in india|company|ever)\b[^.;]{0,40}\bto\b/i.test(a))) return false;
@@ -1394,6 +1395,20 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `Plan: ${input.promiseGap.plan} · Actual: ${input.promiseGap.actual}`
       + `${input.promiseGap.variance ? ` · Variance: ${input.promiseGap.variance}` : ''}. `
       + input.promiseGap.detail;
+  } else if ((coreDown.length >= 1 || supportDown.length >= 2 || supportDown.some(isMaterialDown))
+      && weakeningDown.some((c) => !!c.invalidation)
+      && weakeningDown.every((c) => c.historical?.active)) {
+    // ── UNRESOLVED IS NOT DETERIORATING.                              (zzz776)
+    // MOREPENLAB / SOTL: every "down" on the card is last FY's cash ratio,
+    // carried as historical / unresolved while this quarter's figure is not
+    // disclosed. Nothing deteriorated in the current period, so this is a
+    // question with a named resolver, not a weakening thesis. A current-
+    // period figure that repeats the failure turns it WEAKENING.
+    status = 'CONFIRMATION_REQUIRED';
+    const h = weakeningDown.map((c) => `${VAR_LABEL[c.key] || c.label} ${c.historical!.period}: ${c.historical!.value}`).join('; ');
+    because = `${outputImproved ? `Financial output improved (${outputSummary}). ` : ''}Unresolved historical red flag — ${h} (historical, not a ${curAdj} reading). `
+      + `Nothing deteriorated in the current period and no stated thesis-break condition has been met on a current figure, so this is not WEAKENING. `
+      + `Resolves with: the next disclosed ${weakeningDown.map((c) => (VAR_LABEL[c.key] || c.label).toLowerCase()).join(' / ')} figure (for Indian companies usually the half-year cash-flow statement) — below the thesis line again → WEAKENING; recovered → the red flag closes.`;
   } else if ((coreDown.length >= 1 || supportDown.length >= 2 || supportDown.some(isMaterialDown))
       && weakeningDown.some((c) => !!c.invalidation)) {
     // ── WEAKENING NAMES THE CONDITION THAT FIRED.                    (zzz773)
@@ -1961,7 +1976,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     if (mixed && upKeys.length) {
       verdict.directionWhy = `output mixed (${outputSummary}) — ${upKeys.map((k) => OUT_NAME[k]).join(' and ')} up, ${downKeys.map((k) => OUT_NAME[k]).join(' and ')} down beyond materiality; mechanism ${verdict.coverage.confirmed}/${verdict.coverage.applicable} confirmed — direction cannot be called`;
     }
-    because = `${mixed}${because.replace(/\s+$/, '')} Resolves with: ${resolve}.`;
+    because = /Resolves with:/.test(because) ? `${mixed}${because.replace(/\s+$/, '')}` : `${mixed}${because.replace(/\s+$/, '')} Resolves with: ${resolve}.`;
   }
   // WATCH, appended to whatever the status is. (zzz773)
   {
@@ -2221,27 +2236,55 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     if (status !== 'STRENGTHENING' && status !== 'ON_TRACK') return null;
     const mv = (k: VarKey): number | null => { const r = outRow(k); if (!r || r.verdict !== 'improving') return null; const m = outputMove(r); return m == null || !Number.isFinite(m) ? null : Math.round(m * 10) / 10; };
     const rev = mv('revenue_growth' as VarKey), earn = mv('earnings_growth' as VarKey), mpp = mv('margin' as VarKey);
-    const outPts = Math.round((Math.min(Math.max(rev ?? 0, 0), 60) / 60) * 18 + (Math.min(Math.max(earn ?? 0, 0), 100) / 100) * 14 + Math.min(Math.max(mpp ?? 0, 0), 8) * 1);
-    const GROUP: Partial<Record<string, [CatalystGroup, number]>> = {
-      order_book: ['Demand', 14], order_intake: ['Demand', 14], book_to_bill: ['Demand', 14], revenue_visibility: ['Demand', 10], exports: ['Demand', 9],
-      capacity_addition: ['Capacity', 12], capacity: ['Capacity', 10], new_plant: ['Capacity', 10], commissioning: ['Capex earning', 9], capex_status: ['Capex earning', 7], capex_earning: ['Capex earning', 12],
-      volume: ['Volume', 12], utilisation: ['Volume', 12],
-      new_customer: ['Customers', 9], qualification: ['Approvals', 6], approval: ['Approvals', 6],
-      margin_driver: ['Margin mechanism', 8], product_mix: ['Margin mechanism', 8], price: ['Margin mechanism', 6],
-      working_capital: ['Balance sheet', 5],
+    // Output is the RESULT, not the evidence: capped at 25 so a spectacular
+    // quarter cannot outrank a documented mechanism. (zzz776 review)
+    const outPts = Math.round((Math.min(Math.max(rev ?? 0, 0), 60) / 60) * 12 + (Math.min(Math.max(earn ?? 0, 0), 100) / 100) * 9 + Math.min(Math.max(mpp ?? 0, 0), 8) * 0.5);
+    const GROUP: Partial<Record<string, CatalystGroup>> = {
+      order_book: 'Demand', order_intake: 'Demand', book_to_bill: 'Demand', revenue_visibility: 'Demand', exports: 'Demand',
+      capacity_addition: 'Capacity', capacity: 'Capacity', new_plant: 'Capacity', commissioning: 'Capex earning', capex_status: 'Capex earning', capex_earning: 'Capex earning',
+      volume: 'Volume', utilisation: 'Volume', new_customer: 'Customers', qualification: 'Approvals', approval: 'Approvals',
+      margin_driver: 'Margin mechanism', product_mix: 'Margin mechanism', price: 'Margin mechanism', working_capital: 'Balance sheet',
+    };
+    // EVIDENCE HIERARCHY — an order book outranks a customer remark, capex
+    // earning outranks capex announced, an approval granted outranks a
+    // qualification in progress. (zzz776 review)
+    const FIG = /\d/;
+    const MONEY_OR_UNIT = /%|→|₹|inr|rs\.?|crore|cr\b|mn\b|million|billion|mtpa|tpd|tpa|mw|units|kl|kilolit|tons?|tonnes|mt\b|days/i;
+    const CHANGE = /→|\+\d|\d\s*%|doubl|tripl|\d(\.\d+)?x\b|increased|grew|added/i;
+    const strength = (k: string, g: CatalystGroup, t: string): { pts: number; quantified: boolean } => {
+      const q = FIG.test(t) && MONEY_OR_UNIT.test(t);
+      const pct = /([\d.]+)\s*%/.exec(t);
+      switch (g) {
+        case 'Demand':
+          if (k === 'exports') return { pts: q ? 10 : 4, quantified: q };           // export growth is demand breadth, not backlog
+          return { pts: q ? (CHANGE.test(t) ? 18 : 16) : 6, quantified: q };
+        case 'Capacity': return { pts: q && CHANGE.test(t) ? 12 : q ? 6 : 4, quantified: q && CHANGE.test(t) };
+        case 'Capex earning':
+          if (k === 'capex_earning') return { pts: 12, quantified: q };
+          return /commission|commercial production|operational|completed/i.test(t) ? { pts: 7, quantified: false } : { pts: 0, quantified: false };
+        case 'Volume': { const big = q && !(pct && Number(pct[1]) < 5); return { pts: big ? 12 : 4, quantified: big }; }
+        case 'Customers':
+          if (/\b(contract|order|lta|long[- ]term agreement|supplies (started|commenced)|supply agreement|awarded)\b/i.test(t)) return { pts: 9, quantified: q };
+          if (/\b(multiple|several|various|many|some|new)\s+(\w+\s+)?(customers?|clients?)\b/i.test(t) && !/\b[A-Z][a-z]+ [A-Z]|\b[A-Z]{2,}\b/.test(t.replace(/^[a-z ]+:?\s*/, ''))) return { pts: 4, quantified: false };
+          return { pts: 6, quantified: q };
+        case 'Approvals':
+          return /approved|granted|certified|approval received|received (the )?approval|cleared|licen[cs]e (granted|received)|pre-?qualification/i.test(t) ? { pts: 6, quantified: false } : { pts: 3, quantified: false };
+        case 'Margin mechanism': return { pts: q ? 8 : 5, quantified: q };
+        case 'Balance sheet': return { pts: q && /→/.test(t) ? 6 : 3, quantified: q && /→/.test(t) };
+      }
     };
     const best = new Map<CatalystGroup, CatalystRank['drivers'][number]>();
     for (const [k, text] of mechEvidence) {
       const g = GROUP[k as string]; if (!g) continue;
-      const pct = /([\d.]+)\s*%/.exec(text);
-      const smallMove = (g[0] === 'Volume') && pct != null && Number(pct[1]) < 5;   // "1.7% YoY" volume is a remark, not a catalyst
-      const quantified = !smallMove && /\d/.test(text) && /%|→|\+|₹|inr|rs\.?|crore|cr\b|mn\b|million|mtpa|tpd|mw|units|kl|tons?|tonnes/i.test(text);
-      const points = Math.round(g[1] * (quantified ? 1.25 : 0.8));
-      const prev = best.get(g[0]);
-      if (!prev || points > prev.points) best.set(g[0], { key: k as string, group: g[0], text, quantified, points });
+      const { pts, quantified } = strength(k as string, g, text);
+      if (pts <= 0) continue;
+      const prev = best.get(g);
+      if (!prev || pts > prev.points) best.set(g, { key: k as string, group: g, text, quantified, points: pts });
     }
     const drivers = [...best.values()].sort((a, b) => b.points - a.points);
-    const driverPoints = Math.min(50, drivers.reduce((a, d) => a + d.points, 0));
+    // Breadth: independent mechanisms moving together is stronger evidence than one.
+    const breadth = drivers.filter((d) => d.points >= 6).length >= 4 ? 8 : drivers.filter((d) => d.points >= 6).length >= 3 ? 5 : 0;
+    const driverPoints = Math.min(65, drivers.reduce((a, d) => a + d.points, 0) + breadth);
     const statusPoints = status === 'STRENGTHENING' ? 10 : 0;
     const score = Math.max(0, Math.min(100, outPts + driverPoints + statusPoints));
     const outBits = [rev != null ? `revenue +${rev}%` : null, earn != null ? `earnings +${earn}%` : null, mpp != null && mpp > 0 ? `margin +${mpp}pp` : null].filter(Boolean).join(' · ');

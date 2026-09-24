@@ -278,7 +278,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
 
           {(view.negative || []).length > 0 && (
             <section aria-label="Negative / denied" style={{ ...box, borderColor: tint(C.red, 45) }}>
-              <SectionHead title="⚠ NEGATIVE / DENIED" count={view.negative.length} sub="Findings, not omissions." />
+              <SectionHead title="⚠ NEGATIVE EVIDENCE" count={view.negative.length} sub="Findings, not omissions." />
               {view.negative.map((it) => (
                 <div key={it.ticker} style={{ padding: '5px 0', borderTop: `1px solid ${C.border}`, minWidth: 0 }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 9px', alignItems: 'baseline' }}>
