@@ -194,16 +194,33 @@ export async function readAnnouncement(
   a: AnnouncementItem,
   fetchText: (url: string) => Promise<string>,
 ): Promise<ReadAnnouncement | null> {
-  if (!modelConfigured()) return null;
+  return (await readAnnouncementDetailed(a, fetchText)).read;
+}
+
+/**
+ * zzz782 — `definitive` says whether a null is the DOCUMENT's answer
+ * (administrative, no verbatim quote, a scanned image with no text layer) or
+ * a failure to ask (no model key, the fetch failed or came back empty — an
+ * SEC 403/429 returns '' — the model call errored). Only a definitive answer
+ * may be cached: a null cached for 30 days after a transient SEC refusal
+ * kept PRTH's merger 8-K "document not parsed" for a month.
+ */
+export async function readAnnouncementDetailed(
+  a: AnnouncementItem,
+  fetchText: (url: string) => Promise<string>,
+): Promise<{ read: ReadAnnouncement | null; definitive: boolean }> {
+  const fail = { read: null, definitive: false };
+  if (!modelConfigured()) return fail;
   const url = String(a.attachment_url || '');
-  if (!url) return null;
+  if (!url) return fail;
 
   let text = '';
-  try { text = await fetchText(url); } catch { return null; }
+  try { text = await fetchText(url); } catch { return fail; }
+  if (!text) return fail;
   // A very short extraction is usually a scanned PDF with no text layer. It is
   // better to return nothing than to have the model reason from a subject line
   // and call that a reading of the document.
-  if (!text || text.length < 400) return null;
+  if (text.length < 400) return { read: null, definitive: true };
 
   try {
     // 24 000 chars, not 60 000 (zzz747). A Reg 30 order/contract intimation
@@ -223,24 +240,25 @@ export async function readAnnouncement(
         content: `${a.symbol}${a.subject ? ` — ${a.subject}` : ''}\n\n${text.slice(0, READ_CHARS)}`,
       }],
     }, { signal: AbortSignal.timeout(40_000) });
-    if (!resp.ok) return null;
+    if (!resp.ok) return fail;
     const j = await resp.json();
     const use = (j?.content || []).find((c: any) => c?.type === 'tool_use');
     const d = use?.input;
-    if (!d) return null;
+    if (!d) return fail;
+    const none = { read: null, definitive: true };
 
-    if (d.is_administrative || d.catalyst === 'none_identified') return null;
+    if (d.is_administrative || d.catalyst === 'none_identified') return none;
 
     // ── THE QUOTE GATE. A claim with no verbatim sentence behind it, or a
     //    quote that is not actually in the document, is discarded. The second
     //    check matters more than the first: a model asked for a quote will
     //    produce something quote-shaped whether or not it read one.
     const quote = String(d.evidence_quote || '').trim();
-    if (!quoteIsInDocument(text, quote)) return null;
+    if (!quoteIsInDocument(text, quote)) return none;
 
-    if (!String(d.headline || '').trim()) return null;
+    if (!String(d.headline || '').trim()) return none;
 
-    return {
+    return { definitive: true, read: {
       symbol: a.symbol,
       catalyst: d.catalyst as CatalystType,
       materiality: (d.materiality || 'unknown') as Materiality,
@@ -261,9 +279,9 @@ export async function readAnnouncement(
         }
         return Object.keys(f).length ? f : null;
       })(),
-    };
+    } };
   } catch {
-    return null;
+    return fail;
   }
 }
 
@@ -310,7 +328,12 @@ export async function readAnnouncementCached(
   if (opts.cacheOnly) return v1 && 'read' in v1 ? { read: v1.read, cached: true } : { read: null, cached: false, skipped: true };
   // An administrative / unreadable v1 verdict does not become readable by paying again.
   if (v1 && 'read' in v1 && v1.read === null) return { read: null, cached: true };
-  const read = await readAnnouncement(a, fetchText);
-  try { await kvSet(k, { read, at: new Date().toISOString() }, READ_CACHE_TTL_S); } catch { /* the read still counts; only the next one pays again */ }
+  // No model key: nothing is read, nothing is paid, nothing is cached — the
+  // filing is read the day a key is set, not 30 days later. (zzz782)
+  if (!modelConfigured()) return { read: null, cached: true };
+  const { read, definitive } = await readAnnouncementDetailed(a, fetchText);
+  if (definitive) {
+    try { await kvSet(k, { read, at: new Date().toISOString() }, READ_CACHE_TTL_S); } catch { /* the read still counts; only the next one pays again */ }
+  }
   return { read, cached: false };
 }

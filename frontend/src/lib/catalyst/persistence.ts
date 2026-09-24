@@ -32,7 +32,7 @@
 
 import { scaledNumber } from '@/lib/thesis/evidence-ledger';
 
-export type PersistKind = 'CAPACITY_RAMP' | 'ORDER_VISIBILITY' | 'CUSTOMER_RAMP' | 'GEOGRAPHY' | 'MIX_PRICING';
+export type PersistKind = 'CAPACITY_RAMP' | 'ORDER_VISIBILITY' | 'CUSTOMER_RAMP' | 'GEOGRAPHY' | 'MIX_PRICING' | 'PROJECT_PIPELINE';
 export type PersistState = 'IDENTIFIED' | 'VALIDATED' | 'RAMPING' | 'SCALING' | 'MATURE' | 'STALLING' | 'WEAKENING' | 'COMPLETED' | 'DISPROVED';
 export type PersistConfidence = 'HIGH' | 'MEDIUM' | 'EARLY' | 'TEMPORARY_UNCERTAIN';
 export type EvidenceClass = 'HARD' | 'REMARK' | 'FORWARD';
@@ -43,6 +43,7 @@ export const KIND_LABEL: Record<PersistKind, string> = {
   CUSTOMER_RAMP: 'Customer qualification → ramp',
   GEOGRAPHY: 'New geography / exports',
   MIX_PRICING: 'Pricing / mix',
+  PROJECT_PIPELINE: 'Tracked potential — enabling step (MoU / JDA / LoI)',
 };
 export const CONFIDENCE_LABEL: Record<PersistConfidence, string> = {
   HIGH: 'High persistence evidence', MEDIUM: 'Medium persistence evidence',
@@ -574,6 +575,48 @@ export function summarizePersistence(pc: PersistentCatalyst, ledgerBacked: boole
   return { id: pc.id, kind: pc.kind, label: pc.label, confidence: pc.confidence, state: pc.state, specialFocus: pc.specialFocus,
     mechanism: pc.mechanism, runway: pc.runway.text, nextMilestone: pc.nextMilestone, why: pc.why.slice(0, 4), hardCount: pc.hardCount, ledgerBacked };
 }
+// ── TRACKED POTENTIAL CATALYST — an enabling step, never Special Focus. (zzz782)
+// A binding MoU / JDA / LoI (MAXESTATES "binding MoU for Ghaziabad JDA") books
+// nothing yet. It is remembered as a POTENTIAL catalyst with its conversion
+// chain, so the next filing (definitive agreement, approvals, launch…) can be
+// checked against it. Confidence is always EARLY and it never enters the queue
+// on its own: a headline project value (GDV) is never company evidence.
+const CHAIN_REAL_ESTATE = ['MoU / JDA signed', 'Definitive agreement executed', 'Approvals received', 'Execution / construction start', 'Project launch', 'Bookings (pre-sales)', 'Collections', 'Revenue recognised', 'Profit'];
+const CHAIN_GENERIC = ['MoU / LoI signed', 'Definitive agreement executed', 'Approvals received', 'Binding order / contract', 'Supply or production start', 'Revenue', 'Profit'];
+export function trackPotentialFromFinding(f: any, today?: string): PersistentCatalyst | null {
+  if (!f || f.status !== 'catalyst' || f.stage !== 'enabling') return null;
+  const head = String(f.headline || '');
+  const hay = `${head} ${f.evidenceQuote || ''}`;
+  if (!/\bmou\b|memorandum|\bjda\b|joint development|letter of intent|\bloi\b|term sheet|in-principle|framework agreement|binding|non-binding|partnership|joint venture|\bjv\b/i.test(hay)) return null;
+  const realEstate = /\bjda\b|joint development|\bgdv\b|gross development|acres?|sq\.?\s*ft|residential|township|real estate|plotted|housing/i.test(hay);
+  const chain = realEstate ? CHAIN_REAL_ESTATE : CHAIN_GENERIC;
+  let done = 1;
+  if (/definitive agreement (signed|executed)|executed (the )?definitive/i.test(hay)) done = 2;
+  if (done >= 2 && /approval(s)? (received|granted|obtained)/i.test(hay)) done = 3;
+  const date = iso(f.sourceDate) || today || null;
+  const src = [{ name: f.modelRead ? 'exchange filing (read)' : 'exchange filing (summary)', url: f.sourceUrl || null, date, quote: f.evidenceQuote ? clip(String(f.evidenceQuote), 260) : null }];
+  const item: PersistItem = { metric: 'enabling_step', kind: 'PROJECT_PIPELINE', cls: 'FORWARD', text: clip(head, 170), before: null, after: null, numeric: null, numericBefore: null, period: null, date, sources: src, origin: 'gainer' };
+  const ticker = String(f.ticker || '').toUpperCase();
+  const next = chain[done] || null;
+  return {
+    id: `${ticker}:PROJECT_PIPELINE`, ticker, kind: 'PROJECT_PIPELINE', label: KIND_LABEL.PROJECT_PIPELINE,
+    mechanism: chain.map((c, i) => (i < done ? `✓ ${c}` : c)).join(' → '),
+    state: 'IDENTIFIED', confidence: 'EARLY',
+    runway: { ok: false, text: 'Nothing booked yet — an enabling step. A project / headline value (e.g. GDV) is not the company\'s revenue or share.' },
+    evidence: [], forward: [item], beforeAfter: [],
+    happened: chain.slice(0, done), notYet: chain.slice(done),
+    nextMilestone: next, confirmWith: next ? `${next} filed` : 'Revenue filed',
+    invalidateIf: 'The MoU / agreement lapses or is terminated, or no definitive step is filed.',
+    duration: 'Duration: Unknown',
+    firstEvidenceDate: date, latestEvidenceDate: date, freshness: 'CURRENT', periods: [],
+    hardCount: 0, distinctMetrics: 1, temporarySignals: [], origins: ['gainers'],
+    specialFocus: false,
+    why: ['Tracked potential, not Special Focus: an enabling step with no booked revenue and no filed company economics.'],
+    toQualify: chain.slice(done, done + 3),
+    nearMiss: false,
+  };
+}
+
 /** Categories where a Daily Gainers event can open a persistence test. */
 export const PERSIST_CATEGORIES = new Set(['order_win', 'backlog_increase', 'capacity_expansion', 'production_ramp', 'utilization_increase',
   'new_customer', 'customer_ramp', 'product_qualification', 'regulatory_approval', 'export_approval', 'new_geography']);

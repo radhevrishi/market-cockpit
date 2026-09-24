@@ -155,7 +155,15 @@ export function ResearchCard({ it, rank, onOpen, older }: { it: ResearchItem; ra
       )}
       {/* zzz780 — PERSISTENCE TEST. The move only triggered it; the filing
           and the company's evidence ledger decide it. Never price. */}
-      {it.persistentCatalyst && (it.persistentCatalyst.confidence === 'HIGH' || it.persistentCatalyst.confidence === 'MEDIUM' || it.persistentCatalyst.specialFocus) && (
+      {it.persistentCatalyst && it.persistentCatalyst.kind === 'PROJECT_PIPELINE' && (
+        <div data-testid="tracked-potential" style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.cyan}`, borderRadius: 6, padding: '6px 9px', lineHeight: 1.5 }}>
+          <b style={{ color: C.cyan }}>◌ Tracked potential catalyst — enabling step, not a persistent catalyst yet</b>
+          <div>{it.persistentCatalyst.mechanism}</div>
+          {it.persistentCatalyst.nextMilestone && <div style={{ color: C.text }}>Next milestone to watch for: <b>{it.persistentCatalyst.nextMilestone}</b></div>}
+          <div style={{ color: C.faint }}>{it.persistentCatalyst.runway} Remembered in Special Focus memory; each later filing is checked against this chain.</div>
+        </div>
+      )}
+      {it.persistentCatalyst && it.persistentCatalyst.kind !== 'PROJECT_PIPELINE' && (it.persistentCatalyst.confidence === 'HIGH' || it.persistentCatalyst.confidence === 'MEDIUM' || it.persistentCatalyst.specialFocus) && (
         <div data-testid="persistent-catalyst" style={{ fontSize: 13, color: C.dim, border: `1px solid ${C.amber}`, borderRadius: 6, padding: '6px 9px', lineHeight: 1.5 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
             <b style={{ color: C.amber }}>🔥 {it.persistentCatalyst.specialFocus ? 'Special Focus · persistent catalyst' : 'Persistent catalyst candidate'}</b>

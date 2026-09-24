@@ -154,6 +154,10 @@ export interface ResearchItem {
   /** EVENT → DRIVER → REVENUE → MARGIN → EPS/FCF → VALUATION; unsupported steps say "TBD" / "Not disclosed". */
   transmissionChain: string[];
   persistence: Persistence;
+  /** zzz782: evidence that it WILL persist — separate from the potential duration above. */
+  persistenceEvidence?: { level: PersistEvidenceLevel; text: string };
+  /** zzz782: a tax / penalty demand under 0.25% of market cap. */
+  immaterialNegative?: boolean;
   /** zzz780: persistent-catalyst test of the event (never price). */
   persistentCatalyst?: import('@/lib/catalyst/persistence').PersistSummary | null;
   expectationGap: { level: GapLevel; text: string; direction?: 'EXPECTATION_HEAVY' | 'UNDER_REFLECTED' | 'ALIGNED' | null };
@@ -219,6 +223,8 @@ export interface ResearchView {
   /** Watch / investigate, 10–20. */
   watch: ResearchItem[];
   negative: ResearchItem[];
+  /** zzz782: tax / penalty items under 0.25% of market cap — shown, not ranked as negative evidence. */
+  immaterialNegative?: ResearchItem[];
   noCatalyst: ResearchItem[];
   /** Recent listings and other data-quality exclusions. */
   dataQuality: ResearchItem[];
@@ -592,14 +598,19 @@ function earningsMateriality(e: EarningsMini | null, f: FiledRow | null, market:
 // ═══════════════════════════════════════════════════════════════════════════
 
 const NEXT: Record<string, string[]> = {
-  order: ['What % of FY revenue is this order?', 'What margin does it carry versus the company average?', 'Over what period is it executed, and when does revenue start?', 'What working capital or advances does it need?', 'Is it repeatable (framework, repeat customer) or one-off?'],
-  enabling: ['What has to happen before this becomes a binding order (definitive agreement, approvals)?', 'Is a value, volume or price disclosed anywhere?', 'Who is the counterparty and how firm is its commitment?', 'By when is conversion to an order expected?'],
-  capacity: ['How much capex was invested, and how was it funded?', 'What is utilisation now, and what is expected on the new capacity?', 'Is demand secured (offtake, orders) for the added capacity?', 'What revenue can the new capacity contribute at full ramp?', 'What steady-state ROCE does the expansion earn?'],
-  acquisition: ['What price was paid (EV/EBITDA, EV/sales)?', 'How is it funded — cash, debt or new shares?', 'What are the target\'s revenue and EBITDA?', 'Which synergies are claimed, and are they costed?', 'How much dilution, and what is the integration plan?'],
+  // zzz782: research questions per EVENT TYPE — what the owner needs to know
+  // next for that kind of event, not one generic list.
+  order: ['What is the order value, and what % of FY revenue is this order?', 'Over what period is revenue recognised, and when does revenue start?', 'What margin does it carry versus the company average?', 'What is the total order book after this order (order book ÷ revenue)?', 'Is capacity in place to execute it, or is new capex needed?', 'Is it repeatable (framework, repeat customer) or one-off?', 'How concentrated is revenue on this client (client concentration)?', 'What working capital or advances does it need?'],
+  order_recurring: ['Is the stated annual value recurring for the full programme life — how many years does the programme run?', 'Are these fixed contracts, or initial awards that scale up or down with the customer\'s build rate?', 'What % of FY revenue does the annual value add?', 'What margin do the programmes carry versus the company average?', 'What capacity is needed, and is it already in place?', 'When does production start, and when does it reach the full annual run-rate?', 'Are further programmes being qualified with the same customer or new ones?', 'What working capital or advances does it need?'],
+  enabling: ['Chain: MoU / LoI → definitive agreement → approvals → binding order → supply start → revenue — which step is next?', 'What has to happen before this becomes a binding order (definitive agreement, approvals)?', 'Is a value, volume or price disclosed anywhere?', 'Who is the counterparty and how firm is its commitment?', 'By when is conversion to an order expected?'],
+  enabling_realestate: ['Chain: MoU / JDA → definitive agreement → approvals → execution → launch → bookings → collections → revenue → profit — which step is next?', 'What is the company\'s own share of revenue or profit (the project GDV is not the company\'s revenue)?', 'Which approvals are needed before a definitive agreement or launch, and by when?', 'When is the project launch expected?', 'What bookings and collections are expected in the first year after launch?', 'Who is the land owner / partner, and how firm is the commitment?'],
+  capacity: ['How much capex was invested, and how was it funded?', 'When is (or was) the capacity commissioned?', 'What is current utilisation of the existing capacity?', 'How much incremental capacity does it add (before → after)?', 'Is demand secured (orders, offtake) for the added capacity?', 'What utilisation is expected on the new capacity, and by when?', 'What revenue and operating profit can it contribute at full ramp?', 'How long is the ramp-up to full utilisation?'],
+  qualification: ['What stage is it — sample, pilot, approved vendor or commercial supply?', 'Which customer, and for which product?', 'Is there a commercial order yet, and of what size?', 'When do commercial supplies start?', 'Is it repeatable — does the qualification cover future orders from the same buyer?', 'How many customers has the company now qualified with?', 'Is capacity in place to serve it?'],
+  acquisition: ['What price was paid (EV/EBITDA, EV/sales)?', 'What are the target\'s revenue and EBITDA?', 'How is it funded — cash, debt or new shares?', 'What is the integration plan, and what could delay it?', 'When does it start contributing to consolidated revenue and profit?', 'What is the strategic rationale — capability, customers, geography?', 'Is the contribution recurring, or a one-off gain?', 'How much dilution, if any?'],
   earnings: ['Did management raise, hold or cut guidance?', 'What is the order book / pipeline after this quarter?', 'Does CFO track PAT (cash conversion)?', 'Which drivers explain the change — volume, price, mix or one-offs?', 'Is the margin change repeatable next quarter?'],
   approval: ['What products or markets does it open, and how large are they?', 'When do commercial supplies start?', 'Which competitors already hold the same approval?', 'What revenue has management attached to it?'],
   customer: ['How large is the customer\'s annual spend with the company?', 'What margin and payment terms apply?', 'When does supply start, and at what run-rate?', 'Does it raise customer concentration?'],
-  product: ['What is the addressable market and pricing?', 'When does revenue start, and at what scale?', 'What margin does the product carry?'],
+  product: ['Which market does it target, and how large is it?', 'How is it priced (pricing)?', 'When is (or was) the launch, and is it commercially available?', 'What adoption so far — named users or orders?', 'When does revenue start, and at what scale?', 'What gross margin does the product carry?', 'Is revenue repeatable (subscriptions, repeat orders) or one-time?'],
   fundraising: ['At what price and discount versus the market?', 'Who are the allottees (promoter, institutions, public)?', 'What is the stated use of proceeds?', 'How much dilution per share?'],
   buyback: ['Buyback size versus market cap and free float?', 'Price versus the current market?', 'Tender or open market?', 'Is the promoter participating?'],
   guidance: ['What exactly changed versus prior guidance?', 'What drives the new guidance?', 'How has management tracked against past guidance?'],
@@ -624,9 +635,15 @@ function nextKey(type: EventType, cls: EventClass, stage: Stage, finding: Findin
   if (cls === 'NO_CATALYST') return type === 'Fundraising' ? 'fundraising' : /not classifiable/i.test(String(finding?.headline || '')) ? 'unclassified' : 'none';
   if (type === 'Fundraising') return 'fundraising';
   if (cls === 'NEGATIVE' && type !== 'Earnings') return 'negative';
-  if ((type === 'Order win' || type === 'Contract' || type === 'Partnership') && (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR')) return 'enabling';
+  const hayK = `${finding?.headline || ''} ${finding?.evidenceQuote || ''}`;
+  if ((type === 'Order win' || type === 'Contract' || type === 'Partnership' || type === 'JV') && (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR'))
+    return /\bjda\b|joint development|\bgdv\b|gross development|acres?|residential|township|real estate|housing/i.test(hayK) ? 'enabling_realestate' : 'enabling';
+  // zzz782: a qualification is not a licence — its questions are about conversion to commercial supply.
+  if (type === 'Regulatory approval' && (finding?.category === 'product_qualification' || /qualif|approved (vendor|supplier)|vendor (registration|approval)|\bfai\b|first article|sampl/i.test(hayK))) return 'qualification';
   switch (type) {
-    case 'Order win': case 'Contract': return 'order';
+    case 'Order win': case 'Contract':
+      // RAYMOND "multi-programme orders worth about ₹33 crore annually": recurring-programme questions.
+      return /\bannual(ly)?\b|per annum|\bp\.?\s?a\.?\b|\bprogramm?e?s?\b|multi-?year|framework|rate contract/i.test(hayK) ? 'order_recurring' : 'order';
     case 'Customer win': return 'customer';
     case 'Capacity expansion': case 'Production ramp': return 'capacity';
     case 'Acquisition': case 'JV': case 'Divestment': return 'acquisition';
@@ -646,14 +663,14 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
   const u: string[] = [];
   const say = (k: string, known: boolean, word = 'Not disclosed') => { if (!known) u.push(`${k}: ${word}`); };
   switch (key) {
-    case 'order': case 'customer':
+    case 'order': case 'order_recurring': case 'customer':
       say('Order value', hasValue);
       say('Order margin', /margin/i.test(hay));
       say('Revenue timing / execution period', /\b(months?|years?|by (fy|q[1-4]|march|june|september|december)|\d{4})\b/i.test(hay));
       say('Customer concentration', false, 'Unknown');
       say('Working capital terms', /advance|payment terms|working capital/i.test(hay));
       break;
-    case 'enabling':
+    case 'enabling': case 'enabling_realestate':
       say('Binding order', false, 'Not yet — enabling stage');
       say('Company economics (value / revenue share)', hasValue && !/\bgdv\b|gross development value|potential|may unlock/i.test(hay));
       say('Conversion timing', false, 'Unknown');
@@ -694,6 +711,11 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       say('Financial exposure', hasValue);
       say('Cash impact (paid / deposited / provided)', /paid|deposit|provision|pre-?deposit/i.test(hay));
       say('Recurrence (one-off or repeating)', /one[- ]off|one[- ]time|recurring|similar (notice|demand)s?/i.test(hay), 'Unknown');
+      break;
+    case 'qualification':
+      say('Commercial order', /purchase order|commercial (order|supply)|supply order/i.test(hay), 'Not yet on file');
+      say('Commercial start date', /commercial|supplies|launch|from (fy|q[1-4]|\w+ \d{4})/i.test(hay));
+      say('Number of qualified customers', false, 'Unknown');
       break;
     case 'approval':
       // zzz777: a licence / approval opens a market; the unknown is its size.
@@ -753,6 +775,71 @@ function persistenceOf(type: EventType, cls: EventClass, hay: string): Persisten
     case 'Order cancellation': case 'Accident / disruption': return /permanent|closure|terminat/i.test(hay) ? 'YEARS' : 'QUARTER';
     default: return 'UNKNOWN';
   }
+}
+
+// ── POTENTIAL DURATION ≠ PERSISTENCE EVIDENCE.                       (zzz782)
+// `persistenceOf` says how long an event of this TYPE could last (a new
+// product: years). This says how much EVIDENCE there is that it will: a new
+// product is long-term possible but unproven; a qualification is early; a
+// commercial order is evidence; a multi-year contract is strong; capacity with
+// utilisation / demand evidence is strong; a one-off tax demand is not persistent.
+export type PersistEvidenceLevel = 'NOT_PERSISTENT' | 'UNPROVEN' | 'EARLY' | 'EVIDENCE' | 'STRONG' | 'NONE';
+export function persistenceEvidenceOf(type: EventType, cls: EventClass, stage: Stage, key: string, hay: string,
+  pc: { confidence: string; specialFocus: boolean; label: string; kind?: string } | null | undefined): { level: PersistEvidenceLevel; text: string } {
+  if (cls === 'NO_CATALYST' || cls === 'MARKET_MOVE_ONLY' || cls === 'LISTING' || cls === 'DATA_UNAVAILABLE') return { level: 'NONE', text: 'No event — nothing to persist.' };
+  if (cls === 'NEGATIVE') {
+    return /\b(gst|tax|penalt\w*|demand|show[- ]cause|\bscn\b|notice|interest|fine|levy|assessment)\b/i.test(hay)
+      ? { level: 'NOT_PERSISTENT', text: 'One-off tax / penalty item — not persistent unless similar demands recur.' }
+      : { level: 'UNPROVEN', text: 'Negative development — whether it recurs is not established.' };
+  }
+  if (pc && pc.kind !== 'PROJECT_PIPELINE' && (pc.specialFocus || pc.confidence === 'HIGH')) return { level: 'STRONG', text: `Filed mechanism evidence across metrics (${pc.label}).` };
+  if (pc && pc.kind !== 'PROJECT_PIPELINE' && pc.confidence === 'MEDIUM') return { level: 'EVIDENCE', text: `Mechanism evidence on file (${pc.label}), not yet across periods.` };
+  if (stage === 'ENABLING' || stage === 'PROPOSED' || stage === 'RUMOUR') return { level: 'UNPROVEN', text: 'Enabling step — nothing booked yet; tracked until a definitive step is filed.' };
+  switch (type) {
+    case 'New product':
+      return /\b(orders?|revenue|sales|customers? (signed|onboarded)|subscribers?)\b/i.test(hay) && /\d/.test(hay)
+        ? { level: 'EVIDENCE', text: 'Commercial traction stated with the launch.' }
+        : { level: 'UNPROVEN', text: 'Long-term possible, unproven — no orders or revenue on file yet.' };
+    case 'Regulatory approval':
+      return /purchase order|commercial (order|supply|supplies)|supply order/i.test(hay)
+        ? { level: 'EVIDENCE', text: 'Approval with a commercial order on file.' }
+        : { level: 'EARLY', text: key === 'qualification' ? 'Qualification — early; no commercial order on file yet.' : 'Licence / approval — opens a market; no commercial order on file yet.' };
+    case 'Order win': case 'Contract': case 'Customer win':
+      return /multi-?year|\b\d+\s*years?\b|framework|rate contract|\bannual(ly)?\b|per annum|long[- ]term|\bprogramm?e?s?\b/i.test(hay)
+        ? { level: 'STRONG', text: 'Multi-year / recurring programme stated — confirm it is fixed, not an initial award.' }
+        : { level: 'EVIDENCE', text: 'Commercial order on file — covers one execution period.' };
+    case 'Capacity expansion': case 'Production ramp':
+      return /utili[sz]ation|order book|offtake|\borders?\b|sold out|fully booked|demand/i.test(hay)
+        ? { level: 'STRONG', text: 'Capacity with utilisation / demand evidence.' }
+        : stage === 'EXECUTED' || /commission|operational|commercial production|started production|production (start|commenc)/i.test(hay) ? { level: 'EARLY', text: 'Capacity commissioned — utilisation and demand not yet evidenced.' }
+          : { level: 'UNPROVEN', text: 'Capacity planned — nothing commissioned yet.' };
+    case 'Acquisition': case 'JV':
+      return stage === 'EXECUTED' && /revenue|ebitda|turnover/i.test(hay)
+        ? { level: 'EVIDENCE', text: 'Completed, with the target\'s economics stated.' }
+        : { level: 'EARLY', text: 'Deal signed — target economics and integration not yet evidenced.' };
+    case 'Earnings': return { level: 'EARLY', text: 'One quarter\'s result — persistence needs the next quarter.' };
+    case 'Guidance': return { level: 'EARLY', text: 'Management guidance — a target, not evidence.' };
+    case 'Pricing': return { level: 'EARLY', text: 'Price change — persistence depends on the industry holding it.' };
+    case 'Buyback': case 'Rating action': case 'Management change': case 'Divestment': case 'Fundraising': case 'Denial':
+      return { level: 'NOT_PERSISTENT', text: 'Not an operating catalyst.' };
+    default: return { level: 'UNPROVEN', text: 'Persistence not established.' };
+  }
+}
+
+/** zzz782: all rupee amounts in a negative-event text, in ₹ crore — "₹3.53 crore
+ *  … ₹46.58 lakh" = 4.00; a bare "₹40,036" is rupees. Null when none. */
+export function negativeAmountCr(text: string): number | null {
+  const t = String(text || '');
+  let sum = 0, any = false;
+  const rx = /(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|lacs?|million|mn\b)?/gi;
+  for (const m of t.matchAll(rx)) {
+    const n = Number(m[1].replace(/,/g, ''));
+    if (!Number.isFinite(n)) continue;
+    const u = (m[2] || '').toLowerCase();
+    sum += /^cr/.test(u) ? n : /^la|^lac/.test(u) ? n / 100 : /^m/.test(u) ? n / 10 : n / 1e7;
+    any = true;
+  }
+  return any ? Math.round(sum * 10000) / 10000 : null;
 }
 
 function chainOf(type: EventType, trans: Transmission, stage: Stage, it: { headline: string; value: number | null; market: 'IN' | 'US'; mat: Materiality; e: EarningsMini | null; f: FiledRow | null; cap: ReturnType<typeof parseCapacityChange> }): string[] {
@@ -1036,7 +1123,9 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const quote = f?.evidenceQuote ? clean(f.evidenceQuote) : null;
   const evHay = `${headline0} ${quote || ''}`;
   const hay = `${evHay} ${notes.join(' ')}`;
-  const verifiedDoc = !!(f && f.modelRead && quote);
+  // zzz782: a sentence copied verbatim from the filed document (US press
+  // release, no model) is as verified as a model-read quote.
+  const verifiedDoc = !!(f && (f.modelRead || f.docExtract) && quote);
   const revenue = filed?.ttmRevenue ? { v: filed.ttmRevenue, basis: 'ttm_revenue' as const } : filed?.annualRevenue ? { v: filed.annualRevenue, basis: 'annual_revenue' as const } : null;
 
   // ── which event does this name carry? ──
@@ -1064,6 +1153,10 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
 
   if (status === 'source_failed' && !e) {
     cls = 'DATA_UNAVAILABLE'; type = 'No identified catalyst'; label = 'Source unavailable'; headline = 'Filing source could not be reached — not "no catalyst"';
+    // zzz782: say WHICH failure — a ticker EDGAR does not list is not an
+    // outage, and neither is "checked, nothing filed".
+    if (market === 'US' && notes.some((n) => /not in the SEC company list/i.test(n))) { label = 'Not in SEC EDGAR'; headline = 'Ticker not found in the SEC company list (CIK not found) — filings not checked, not "no catalyst"'; }
+    else if (market === 'US') headline = 'SEC EDGAR could not be reached for this name — filings not checked, not "no catalyst"';
   } else if (listing) {
     cls = 'LISTING'; type = 'No identified catalyst'; label = 'Recent listing'; conf = f?.sourceTier === 'primary' ? 'VERIFIED_FILING' : 'UNVERIFIED';
   } else if (status === 'denied') {
@@ -1162,7 +1255,10 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     type = cls === 'MARKET_MOVE_ONLY' ? 'Market/technical move' : 'No identified catalyst';
     conf = 'UNVERIFIED';
     if (f) {
-      scanNote = `No ${scanScope} filing in the last ${windowDays} days — ${notScanned}`;
+      // zzz782 (US): "EDGAR checked, only insider Form 4s" is said as such.
+      const insider = market === 'US' ? /SEC EDGAR checked[^:]*: (\d+) insider ownership report/.exec(notes.join(' ')) : null;
+      const checked = insider ? ` (EDGAR checked; ${insider[1]} insider Form 3/4/5/144 report${insider[1] === '1' ? '' : 's'} not counted as events)` : '';
+      scanNote = `No ${scanScope} filing in the last ${windowDays} days${checked} — ${notScanned}`;
       if (!headline) headline = `No ${scanScope} filing in the last ${windowDays} days`;
       // "No filing in the last 21 days" reads as "nothing happened": it names
       // what was scanned instead. (zzz771)
@@ -1180,6 +1276,22 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
 
   const trans = transmissionOf(type, cls, stage, mat.label);
   const pers = persistenceOf(type, cls, evHay);
+  const persEv = persistenceEvidenceOf(type, cls, stage, nextKey(type, cls, stage, f, clarification), evHay, (f as any)?.persistence ?? null);
+  // zzz782: a tax / penalty demand that is a rounding error against the
+  // company's size (SEDEMAC ₹40,036; JAMNAAUTO ₹4 Cr) is shown, but as an
+  // IMMATERIAL negative — not ranked with real negative evidence.
+  let immaterialNegative = false;
+  if (cls === 'NEGATIVE' && market === 'IN' && /\b(gst|tax|penalt\w*|demand|show[- ]cause|\bscn\b|notice|interest|fine)\b/i.test(evHay)) {
+    const amt = negativeAmountCr(evHay);
+    if (amt != null && marketCap && marketCap > 0) {
+      const p = (amt / marketCap) * 100;
+      if (p < 0.25) {
+        immaterialNegative = true;
+        mat = { label: 'SMALL', ratios: [{ basis: 'market_cap', pct: Math.round(p * 1000) / 1000, text: `${money(amt, market)} ÷ ${money(marketCap, market)} market cap = ${p < 0.01 ? '<0.01' : r1(p)}%` }],
+          explanation: `Immaterial: the stated amounts total ${money(amt, market)}, ${p < 0.01 ? 'under 0.01' : r1(p)}% of market cap — a one-off tax / penalty item, recorded but not treated as negative evidence.` };
+      }
+    }
+  }
   const fc = (() => {
     if (type === 'Earnings' && e?.revenueYoY != null) return { pct: Math.abs(e.revenueYoY), text: `revenue ${pctS(e.revenueYoY)} YoY` };
     const r0 = mat.ratios[0];
@@ -1221,7 +1333,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   // zzz775: a research question the filing already answers is shown WITH its
   // answer; one the model-read filing is silent on says so. Only a filing
   // that was not read keeps the bare question.
-  const researchNext = answerQuestions((NEXT[key] || NEXT.generic).slice(0, 5), {
+  const researchNext = answerQuestions((NEXT[key] || NEXT.generic).slice(0, 8), {
     facts: f?.facts || null, read: verifiedDoc, value, marketCap, market,
     revenue: revenue ? revenue.v : null, headline: headline0, quote,
   });
@@ -1233,11 +1345,13 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const earnings = e && isContext ? { ...e, stale: true } : e;
   const shownHeadline = isContext ? `Older context (${ageDays}d): ${headline}` : headline;
   const item: ResearchItem = {
-    ticker, company, market, move1d: market === 'US' ? null : mv.pct, returns, marketCap,
+    // zzz782: the US export carries 1W only; the 1D is the last daily bar
+    // against the close before it, from the dated closes the sweep fetched.
+    ticker, company, market, move1d: market === 'US' ? (num((f?.returns as any)?.d1) != null ? r1(num((f?.returns as any)?.d1)!) : null) : mv.pct, returns, marketCap,
     eventClass: cls, eventType: type, headline: clean(shownHeadline), whatChanged, before, after, filedDate, stage,
     sourceConfidence: conf, sourceUrl, quote, materiality: mat, transmission: trans,
     transmissionChain: chainOf(type, trans, stage, { headline: clean(headline), value, market, mat, e, f: filed, cap }),
-    persistence: pers, expectationGap: gap, unknowns, researchNext, pricing: pricingOfFinding(f),
+    persistence: pers, persistenceEvidence: persEv, immaterialNegative, expectationGap: gap, unknowns, researchNext, pricing: pricingOfFinding(f),
     whyResearch: whyOf(cls, type, stage, mat, key, gap, e, fr, clarification),
     portfolio, earnings,
     flags: { band: bandLevel, listing, dilution, denial, turnover: num(f?.turnover) ?? num(b?.turnover) },
@@ -1299,7 +1413,8 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const inQ = new Set(queue.map((i) => i.ticker));
   const watch = eligible.filter((i) => !inQ.has(i.ticker)).slice(0, 20);
   const top3 = queue.filter((i) => i.priority >= 25).slice(0, 3);
-  const negative = live.filter((i) => i.eventClass === 'NEGATIVE');
+  const negative = live.filter((i) => i.eventClass === 'NEGATIVE' && !i.immaterialNegative);
+  const immaterialNegative = live.filter((i) => i.eventClass === 'NEGATIVE' && i.immaterialNegative);
   const noCatalyst = live.filter((i) => i.eventClass === 'NO_CATALYST' || i.eventClass === 'MARKET_MOVE_ONLY');
   const dataQuality = items.filter((i) => i.eventClass === 'LISTING' || i.eventClass === 'DATA_UNAVAILABLE');
   const portfolio = items.filter((i) => i.portfolio.relevance === 'HOLDING' || i.portfolio.relevance === 'WATCHLIST');
@@ -1344,6 +1459,6 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
       lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
       context: context.length,
     },
-    top3, queue, watch, negative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context,
+    top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context,
   };
 }

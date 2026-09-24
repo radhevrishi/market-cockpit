@@ -588,7 +588,7 @@ export function ThesisCard(p: ThesisCardProps) {
           <span data-testid="pattern-badge" data-fit={p.pattern.fit || 'exact'} title={p.pattern.because} style={{
             fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
             border: `1px ${p.pattern.fit === 'nearest' ? 'dashed' : 'solid'} ${pm.color}`, background: p.pattern.fit === 'nearest' ? 'transparent' : `${pm.color}18`, color: ink(pm.color),
-          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto)' : ''}</span>
+          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto, provisional)' : ''}</span>
         )}
         {p.radarScore != null && (
           <span style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
@@ -628,7 +628,7 @@ export function ThesisCard(p: ThesisCardProps) {
             <span title={sm.meaning} style={{
               fontSize: 12.5, fontWeight: 900, padding: '2px 9px', borderRadius: 3,
               border: `1px solid ${sm.color}`, background: `${sm.color}18`, color: ink(sm.color),
-            }}>{sm.dot} {sm.label}</span>
+            }}>{sm.dot} {sm.label}{p.pattern?.fit === 'nearest' && !p.thesisType && a?.status !== 'THESIS_NOT_SET' ? ' (provisional thesis)' : ''}</span>
           )}
           {p.needsRead && !p.reading && (
             <button onClick={p.onRead} style={{
@@ -774,7 +774,7 @@ export function ThesisCard(p: ThesisCardProps) {
         // A condition on a variable this strategy does not rest on (cash for A)
         // is a financial warning, not a break signal: amber, and said so. (zzz771)
         const warnOnly = bt.fired && /financial warning only/i.test(bt.text) && !/^Fired: /.test(bt.text);
-        const btColor = warnOnly ? C.warn : bt.fired ? C.alarm : C.up;
+        const btColor = warnOnly ? C.warn : bt.fired ? C.alarm : (bt as any).unresolved?.length ? C.warn : C.up;
         const dirColor = v.direction === 'STRENGTHENING' ? C.up : v.direction === 'INTACT' ? '#3B82F6' : v.direction === 'WEAKENING' ? C.down : v.direction === 'UNCHANGED' ? C.flat : C.absent;
         const evColor = v.evidence === 'CONFIRMED' ? C.up : v.evidence === 'PARTIALLY_CONFIRMED' ? C.cyan : v.evidence === 'CONTRADICTED' ? C.down
           : v.evidence === 'NOT_CONTRADICTED' ? C.flat : C.absent;
@@ -798,7 +798,7 @@ export function ThesisCard(p: ThesisCardProps) {
         );
         return (
           <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
-            {chip(btColor, false, bt.text, <>BREAK TRIGGER: <b>{!bt.fired ? 'none fired' : warnOnly ? `none — financial warning only: ${bt.conditions.join('; ') || bt.text}` : `fired: ${bt.conditions.join('; ') || bt.text}`}</b>
+            {chip(btColor, false, bt.text, <>BREAK TRIGGER: <b>{!bt.fired ? ((bt as any).unresolved?.length ? `none fired now — unresolved from prior period: ${(bt as any).unresolved.join('; ')}` : 'none fired') : warnOnly ? `none — financial warning only: ${bt.conditions.join('; ') || bt.text}` : `fired: ${bt.conditions.join('; ') || bt.text}`}</b>
               {/* zzz773: a condition on a variable not mapped to this thesis is WATCH — named, not fired. */}
               {/Watch — /.test(bt.text) && <span data-testid="verdict-watch" style={{ fontWeight: 600, color: ink(C.warn) }}> · watch (not mapped to this thesis, status unchanged): {bt.text.split(/Watch — [^:]*: /)[1]?.replace(/\.$/, '')}</span>}</>, 'verdict-break')}
             {chip(dirColor, v.direction === 'UNKNOWN', v.directionWhy, <>DIRECTION: <b>{DIRECTION_WORD[v.direction]}</b>{v.directionWhy ? <span style={{ fontWeight: 500 }}> — {v.directionWhy}</span> : null}</>, 'verdict-direction')}
@@ -981,7 +981,7 @@ export function ThesisCard(p: ThesisCardProps) {
               <span style={{ color: C.text }}>{h.label} — {h.period}: <b>{humanTokens(rupee(h.value))}</b> · historical</span>
               {h.current && <span style={{ color: C.faint }}> · {h.current}</span>}
               <span style={{ color: h.active ? ink(C.warn) : h.standing ? ink(C.up) : C.faint, fontWeight: h.active || h.standing ? 700 : 500 }}> · {h.active ? 'active thesis condition — historical / unresolved' : h.standing ? `standing test — satisfied (${h.period} figure)` : 'context only — not an active thesis condition'}</span>
-              <div style={{ fontSize: 12, color: C.faint, paddingLeft: 10 }}>{h.decision}</div>
+              <div style={{ fontSize: 12, color: C.faint, paddingLeft: 10 }}>{(h.active || h.standing) && <b data-testid="standing-rule" style={{ color: C.dim }}>STANDING-CONDITION RULE — a policy, not current evidence: </b>}{h.decision}</div>
             </div>
           ))}
         </div>

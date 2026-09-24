@@ -28,7 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch, yahooReturns } from '@/lib/ai-gainers/screener-company';
-import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
+import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, type EdgarResearch } from '@/lib/ai-gainers/edgar-research';
 import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
@@ -41,7 +41,7 @@ import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
 import { yahooChart } from '@/lib/us-prices';
 import { fetchBseAnnouncementsLite } from '@/lib/thesis/evidence-discovery';
 import { buildNewsContext, type NewsContext } from '@/lib/ai-gainers/news-context';
-import { detectPersistentCatalysts, summarizePersistence, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
+import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFinding, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { upsertDetections } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
 
@@ -50,6 +50,14 @@ import { loadLedger } from '@/lib/thesis/evidence-store';
 // it plus the company's evidence ledger (when there is one). Price never
 // enters. Detections worth remembering go to the shared persistence memory.
 async function withPersistence(f: Finding, sink: PersistentCatalyst[], announcements?: AnnouncementLite[] | null): Promise<Finding> {
+  // zzz782: an enabling step (MoU / JDA / LoI) is remembered as a TRACKED
+  // potential catalyst with its conversion chain — never Special Focus.
+  if (f && f.status === 'catalyst' && (f as any).stage === 'enabling') {
+    try {
+      const tp = trackPotentialFromFinding(f);
+      if (tp) { sink.push(tp); return { ...f, persistence: summarizePersistence(tp, false) }; }
+    } catch { /* tracking is best-effort */ }
+  }
   if (!f || f.status !== 'catalyst' || !PERSIST_CATEGORIES.has(String(f.category || ''))) return f;
   try {
     const ledger = f.market === 'IN' ? await loadLedger(f.ticker).catch(() => null) : null;
@@ -170,6 +178,30 @@ function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
     const t = setTimeout(() => resolve(fallback), ms);
     p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(fallback); });
   });
+}
+
+/** zzz782: what EDGAR said about a name, as a finding note — so "the ticker
+ *  is not in the SEC list" / "EDGAR refused" is never read as "checked,
+ *  nothing filed", and "only insider Form 4s" is not "nothing at all". */
+function edgarNote(er: Pick<EdgarResearch, 'failure' | 'cik' | 'insiderForms' | 'filingsInWindow'>, windowDays: number): string | null {
+  if (er.failure === 'cik_not_found') return 'SEC EDGAR not checked: the ticker is not in the SEC company list (CIK not found — often a new listing or a foreign issuer filing under another symbol). This is not "no filing".';
+  if (er.failure === 'ticker_map_failed') return 'SEC EDGAR not checked: the SEC ticker list could not be loaded. This is not "no filing".';
+  if (er.failure === 'submissions_failed') return 'SEC EDGAR not checked: the company\'s filing list could not be fetched (SEC refused or timed out). This is not "no filing".';
+  if (er.cik && er.insiderForms) return `SEC EDGAR checked (CIK ${String(parseInt(er.cik, 10))}): ${er.insiderForms} insider ownership report${er.insiderForms === 1 ? '' : 's'} (Form 3/4/5/144) in the last ${windowDays} days — counted, not scanned as events.`;
+  if (er.cik) return `SEC EDGAR checked (CIK ${String(parseInt(er.cik, 10))}).`;
+  return null;
+}
+
+/** zzz782: a free read of the candidate's own press release when no model
+ *  read was made. A form-classified filing gets a verbatim document read; an
+ *  item only a reader can classify gets the release's lead as its summary
+ *  (written into the announcement, so a re-score reads it too). */
+async function usDocFallback(announcements: AnnouncementLite[], cand: ReturnType<typeof pickReadCandidate>, ms: number): Promise<{ read: { url: string; headline: string; quote: string; category: any; valueStated?: number | null; facts?: Record<string, string> | null; source?: 'model' | 'document_extract' } | null; announcements: AnnouncementLite[] }> {
+  if (!cand || ms < 3_000) return { read: null, announcements };
+  const r = await withDeadline(readUsFilingDocument(cand, Math.min(8_000, ms)), ms, null);
+  if (!r) return { read: null, announcements };
+  if (r.summary) announcements = announcements.map((a) => (a.url === cand.url && !a.summary ? { ...a, summary: r.summary } : a));
+  return { read: r.read, announcements };
 }
 
 /** Small/mid caps only on the India side: a large cap registered before the
@@ -403,6 +435,7 @@ async function research(req: NextRequest, body: any) {
     try {
       let announcements: AnnouncementLite[] = [];
       let marketCap = u.marketCap, turnover: number | null = null, returns = null as any, sources: string[] = [], sourceFailed = false, fullName: string | null = null;
+      let usNote: string | null = null;
       if (market === 'IN') {
         const cr = await fetchCompanyResearch(u.ticker, now);
         // zzz773: BSE's full filing list for the window, beside screener's
@@ -430,6 +463,7 @@ async function research(req: NextRequest, body: any) {
         announcements = er.announcements;
         sources = er.sources;
         sourceFailed = !er.sources.length;
+        usNote = edgarNote(er, WINDOW_DAYS);
         returns = u.perf ? { m1: u.perf.m1 ?? null, m3: u.perf.m3 ?? null, m6: u.perf.m6 ?? null, y1: u.perf.y1 ?? null, history: 999 } : null;
         // zzz773: dated closes, so the reaction to a DATED filing can be
         // measured (the export carries trailing returns only). Best-effort:
@@ -467,13 +501,20 @@ async function research(req: NextRequest, body: any) {
         if (!cached) modelReads++;
         if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst, facts: r.facts ?? null };
       }
+      // US, no model read: read the press release's own words (free). (zzz782)
+      let docTried = false;
+      if (market === 'US' && cand && !read && usLeft() > 14_000) {
+        const fb = await usDocFallback(announcements, cand, Math.min(10_000, usLeft() - 10_000));
+        announcements = fb.announcements; read = fb.read; docTried = true;
+      }
 
       st.findings[u.ticker] = { ...buildFinding({
         ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap, turnover,
         announcements, returns, holding: holdings.has(u.ticker), sources, sourceFailed, windowDays: WINDOW_DAYS, now, read, sessionCloseIso, filedResult: !!u.filedResult, news,
       }), rulesVersion: RULES_VERSION };
+      if (usNote) st.findings[u.ticker] = { ...st.findings[u.ticker], notes: [...st.findings[u.ticker].notes, usNote] };
       st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements);
-      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news }, WINDOW_DAYS, now);
+      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}) }, WINDOW_DAYS, now);
       done++;
     } catch (e: any) {
       st.errors.push(`${u.ticker}: ${String(e?.message || e)}`);
@@ -549,7 +590,8 @@ async function rescoreOnly(req: NextRequest, body: any) {
           const er = await fetchEdgarResearch(u.ticker, WINDOW_DAYS, now, { timeoutMs: 8_000 });
           if (!er.sources.length) { failed++; continue; }
           const returns: Returns | null = u.perf ? { m1: u.perf.m1 ?? null, m3: u.perf.m3 ?? null, m6: u.perf.m6 ?? null, y1: u.perf.y1 ?? null, history: 999 } : null;
-          inputs = compactInputs({ announcements: er.announcements, returns, marketCap: u.marketCap, turnover: u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null, sources: er.sources, sourceFailed: false, fetchedAt: now.toISOString() }, WINDOW_DAYS, now);
+          const usNote = edgarNote(er, WINDOW_DAYS);
+          inputs = compactInputs({ announcements: er.announcements, returns, marketCap: u.marketCap, turnover: u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null, sources: er.sources, sourceFailed: false, fetchedAt: now.toISOString(), ...(usNote ? { usNote } : {}) }, WINDOW_DAYS, now);
         }
       }
       // The read for the filing the CURRENT rules choose: the stored one if
@@ -565,7 +607,23 @@ async function rescoreOnly(req: NextRequest, body: any) {
           if (r) read = { url: cand.url, headline: r.headline, quote: r.evidenceQuote, category: r.catalyst, facts: r.facts ?? null };
         }
       }
+      // zzz782 (US): no read of the chosen filing — read its press release's
+      // own words (free, no model), once; the result is stored with the inputs.
+      if (market === 'US' && cand && !read && !inputs.docTried && Date.now() - t0 < budget - 12_000) {
+        const fb = await usDocFallback(inputs.announcements, cand, Math.min(9_000, budget - (Date.now() - t0) - 10_000));
+        inputs = { ...inputs, announcements: fb.announcements, docTried: true };
+        read = fb.read;
+      }
       inputs = { ...inputs, read };
+      // zzz782 (US): a first pass that skipped the daily chart (the function
+      // clock ran short) gets it here — it is what the 1D column is built from.
+      if (market === 'US' && inputs.returns && !inputs.returns.tail && Date.now() - t0 < budget - 10_000) {
+        const bars = await withDeadline(yahooChart(u.ticker, '6mo'), 8_000, null);
+        if (bars && bars.close.length > 25) {
+          const tail = bars.dates.map((d, k) => [d, bars.close[k]] as [string, number]).slice(-90);
+          inputs = { ...inputs, returns: { ...inputs.returns, tail } };
+        }
+      }
       // zzz776: a first pass whose price history failed is not left blank —
       // the re-score fills it from Yahoo daily closes (free, no model).
       if (market === 'IN' && !inputs.returns && Date.now() - t0 < budget - 10_000) {
@@ -573,7 +631,8 @@ async function rescoreOnly(req: NextRequest, body: any) {
         if (y) inputs = { ...inputs, returns: y.returns, sources: [...(inputs.sources || []), y.source] };
       }
       st.inputs[u.ticker] = inputs;
-      const f = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
+      const f0 = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
+      const f = inputs.usNote ? { ...f0, notes: [...f0.notes, inputs.usNote] } : f0;
       st.findings[u.ticker] = await withPersistence(f, persistSink, inputs.announcements);
       rescored++;
     } catch { failed++; }

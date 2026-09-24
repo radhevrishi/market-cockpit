@@ -126,6 +126,10 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
     }
     return [...best.values()].sort((a, b) => rankOf(b.pc) - rankOf(a.pc));
   }, [live, entries]);
+  // zzz782 — TRACKED POTENTIAL: enabling steps (MoU / JDA / LoI) remembered from
+  // Daily Gainers with their conversion chain. Never in the queue on their own.
+  const [showTracked, setShowTracked] = useState(false);
+  const tracked = useMemo(() => Object.values(stored).filter((s) => s.latest?.kind === 'PROJECT_PIPELINE' && s.user?.state !== 'dismissed' && s.user?.state !== 'archived'), [stored]);
   const priorable = near.filter((x) => (x.row.market || 'IN') !== 'US' && Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
   const shown = entries.filter((e) => !e.dismissed);
   const visible = showAll ? shown : shown.slice(0, 8);
@@ -215,6 +219,7 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
       </div>
       <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
         {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : `${near.length} near miss${near.length === 1 ? '' : 'es'} — one piece of evidence away`}</button>}
+        {tracked.length > 0 && <button onClick={() => setShowTracked((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.cyan}`, background: 'transparent', color: C.cyan }}>{showTracked ? 'Hide tracked potential' : `◌ ${tracked.length} tracked potential catalyst${tracked.length === 1 ? '' : 's'} (enabling steps)`}</button>}
         {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8' : `Show all ${shown.length}`}</button>}
         {hiddenByUser.length > 0 && <button onClick={() => setShowHidden((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.faint }}>{showHidden ? 'Hide' : `${hiddenByUser.length} dismissed / archived`}</button>}
       </div>
@@ -234,6 +239,22 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
               <button onClick={() => onJump(pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{pc.ticker}</button>
               <span style={{ color: C.faint }}> · {pc.label} · {STATE_WORD[pc.state]} · {pc.mechanism}</span>
               <div style={{ color: C.amber }}>Needs: {pc.toQualify.join(' · ')}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {showTracked && tracked.length > 0 && (
+        <div style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+          <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>Tracked potential catalysts — an MoU / JDA / LoI books nothing yet. Each is kept with its chain so the next filing (definitive agreement, approvals, launch…) can be checked against it. Not Special Focus.</div>
+          {tracked.map((t) => (
+            <div key={t.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
+              <b style={{ color: C.text }}>{t.latest.ticker}</b> <span style={{ color: C.faint }}>· first seen {String(t.latest.firstEvidenceDate || '').slice(0, 10) || 'n/a'} · from Daily Gainers</span>
+              <div>{t.latest.mechanism}</div>
+              {t.latest.nextMilestone && <div style={{ color: C.cyan }}>Next milestone: {t.latest.nextMilestone}</div>}
+              <span style={{ display: 'inline-flex', gap: 8 }}>
+                <button onClick={() => act(t.id, 'watch')} style={{ all: 'unset', cursor: 'pointer', color: C.cyan, fontWeight: 800, fontSize: 12 }}>Watch</button>
+                <button onClick={() => act(t.id, 'dismissed')} style={{ all: 'unset', cursor: 'pointer', color: C.faint, fontWeight: 800, fontSize: 12 }}>Dismiss</button>
+              </span>
             </div>
           ))}
         </div>

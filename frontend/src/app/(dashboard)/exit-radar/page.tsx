@@ -51,6 +51,8 @@ const ORDER: ThesisStatus[] = [
   'BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP', 'POSITIVE_EXPECTATION_GAP',
   // zzz775: ON TRACK sits between CONFIRMATION REQUIRED and STRENGTHENING.
   'EVIDENCE_INCOMPLETE', 'CONFIRMATION_REQUIRED', 'ON_TRACK', 'STRENGTHENING', 'NEUTRAL',
+  // zzz782: no thesis set is its own state, not a thesis-status bucket.
+  'THESIS_NOT_SET',
 ];
 // What belongs on the radar. EVIDENCE_INCOMPLETE is deliberately NOT here:
 // the radar answers "what has deteriorated", and an unchecked holding has not

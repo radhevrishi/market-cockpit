@@ -4419,7 +4419,7 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     assert.match(b.expectationGap.text, /order = 47\.8% of revenue → the move is small against the change/);
     assert.ok(b.transmissionChain.length === 6 && /^EVENT/.test(b.transmissionChain[0]) && /^VALUATION/.test(b.transmissionChain[5]));
     assert.ok(b.unknowns.includes('Order margin: Not disclosed'));
-    assert.ok(b.researchNext.length >= 3 && b.researchNext.length <= 5);
+    assert.ok(b.researchNext.length >= 3 && b.researchNext.length <= 8);
     assert.equal(v.top3.map((i) => i.ticker).includes('BIGORD'), true);
   });
 
@@ -5336,8 +5336,8 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION is current (zzz776) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
-    assert.match(RULES771, /zzz776$/);
+  test('RULES_VERSION is current (zzz782) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+    assert.match(RULES771, /zzz782$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 
@@ -5903,4 +5903,140 @@ test('zzz776 — consideration "for up to ₹X" is a value, honorific stops, bar
   assert.equal(cls('Kaveri Seed received ITAT hearing notice for Rs56.21 crore AY2022-23 tax demand').category, 'tax_litigation');
   assert.equal(fmtMoney(0.0040036, 'IN'), '₹40,036');
   assert.equal(fmtMoney(0.0353, 'IN'), '₹3.5 lakh');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz782 — US gainers: plain 8-K subjects, 1D from daily closes, the press
+// release read without a model, and "not checked" ≠ "nothing filed".
+// ═══════════════════════════════════════════════════════════════════════════
+import { usPlainSubject as plain782, usEightKLead as lead782, extractUsPressRelease as pr782, classifyUsFiling as cls782, announcementsFromSubmissions as subs782 } from '../ai-gainers/us-gainers';
+import { buildFinding as build782, d1FromTail as d1782, returnsFromSeries as rfs782, classifyAnnouncement as ca782 } from '../ai-gainers/catalyst-research';
+import { usDocumentReadFromText as docRead782 } from '../ai-gainers/edgar-research';
+import { buildResearchView as view782 } from '../ai-gainers/research-view';
+import { fixtureInputUS as fxUS782 } from './fixtures/gainers-view.fixture';
+
+describe('zzz782 US gainers — plain 8-K subjects, 1D, press release, EDGAR not-checked', () => {
+  const now = new Date('2026-09-22T20:30:00Z');
+  const edgar: Record<string, any> = JSON.parse(fx('edgar-submissions-us-20260922.json'));
+
+  test('an 8-K subject leads with what happened, keeps item codes as a tag, and is idempotent', () => {
+    const old = '8-K: Business combination agreement (also filed as merger communication) — Item 1.01 Entry into a Material Definitive Agreement; Item 9.01 Financial Statements and Exhibits · filed 07:40 ET before the open';
+    const p = plain782(old);
+    assert.equal(p, '8-K: Business combination agreement signed (also filed as merger communication) [Item 1.01, Item 9.01] · filed 07:40 ET before the open');
+    assert.equal(plain782(p), p, 'idempotent');
+    assert.equal(cls782({ subject: p })?.category, 'acquisition', 'the classifier still reads the codes');
+    assert.equal(plain782('8-K: Item 2.02 Results of Operations and Financial Condition; Item 9.01 Financial Statements and Exhibits'), '8-K: Quarterly results released (results of operations) [Item 2.02, Item 9.01]');
+    assert.equal(plain782('10-Q: 10-Q'), '10-Q: 10-Q', 'other forms untouched');
+    assert.match(lead782(['7.01', '8.01', '9.01'], false), /^Other events \(company press release\); also Regulation FD/);
+    assert.equal(lead782(['9.01'], false), 'Financial statements and exhibits only');
+    // Live EDGAR JSON: the PRTH subject is short, plain, and never a raw item-title list.
+    const prth = subs782(edgar.PRTH, edgar.PRTH.cik, 21, now).find((a) => /^8-K/.test(a.subject))!;
+    assert.ok(!/Entry into a Material Definitive Agreement|Financial Statements and Exhibits/.test(prth.subject), prth.subject);
+    assert.ok(prth.subject.length < 240, prth.subject);
+  });
+
+  test('insider Forms 3/4/5/144 are counted, not listed', () => {
+    const stats = { insiderForms: 0, inWindow: 0 };
+    const out = subs782(edgar.PRTH, edgar.PRTH.cik, 21, now, stats);
+    assert.ok(stats.inWindow >= out.length);
+    assert.equal(stats.inWindow - out.length >= stats.insiderForms - 0, true);
+  });
+
+  test('buildFinding normalises a stored old-style 8-K subject into the plain headline', () => {
+    const a = { subject: '8-K: Business combination agreement (also filed as merger communication) — Item 1.01 Entry into a Material Definitive Agreement; Item 9.01 Financial Statements and Exhibits · filed 07:40 ET before the open', summary: null, url: 'https://www.sec.gov/a.htm', dateIso: '2026-09-21T07:40:34-04:00', ageDays: 1 };
+    const f = build782({ ticker: 'PRTH', company: null, market: 'US', movePct: 31, marketCap: 643, turnover: 70, announcements: [a], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.category, 'acquisition');
+    assert.match(f.headline || '', /^8-K: Business combination agreement signed/);
+    assert.ok(!/Financial Statements and Ex/.test(f.headline || ''));
+  });
+
+  test('1D is the last daily bar against the close before it — from the series, or a stored tail', () => {
+    assert.deepEqual(d1782([['2026-09-22', 10], ['2026-09-23', 11]]), { d1: 10, d1Date: '2026-09-23' });
+    assert.deepEqual(d1782([['2026-09-23', 11]]), { d1: null, d1Date: null });
+    const series: Array<[string, number]> = Array.from({ length: 30 }, (_, i) => [`2026-08-${String(i + 1).padStart(2, '0')}`, 100 + i]);
+    assert.equal(rfs782(series).d1, Math.round(((129 / 128) - 1) * 1000) / 10);
+    const f = build782({ ticker: 'X', company: null, market: 'US', movePct: 20, marketCap: 500, turnover: 10, announcements: [], returns: { m1: 1, m3: 1, m6: 1, y1: 1, history: 999, tail: [['2026-09-22', 20], ['2026-09-23', 21]] }, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.returns?.d1, 5); assert.equal(f.returns?.d1Date, '2026-09-23');
+    // The view shows it as the US 1D; without a daily series it stays "—" (null), never the 1W.
+    const inp = fxUS782();
+    inp.findings.TENQ = { ...inp.findings.TENQ, returns: { d1: 4.26, d1Date: '2026-09-23', w1: null, m1: null, m3: null, m6: null, y1: null, history: 999 } } as any;
+    const v = view782(inp);
+    const all = [...v.queue, ...v.watch, ...v.negative, ...v.noCatalyst, ...(v.context || [])];
+    assert.equal(all.find((i) => i.ticker === 'TENQ')!.move1d, 4.3);
+    assert.equal(all.find((i) => i.ticker === 'OFFR')!.move1d, null);
+  });
+
+  const MERGER_PR = 'Exhibit 99.1 NEW YORK, Sept. 21, 2026 (GLOBE NEWSWIRE) -- Priority Technology Holdings, Inc. today announced that it has entered into a definitive merger agreement to be acquired by Acme Capital. '
+    + 'Under the terms of the agreement, Acme will acquire all outstanding shares for $9.50 per share in cash, a premium of approximately 38% to the closing price on September 19, 2026. '
+    + 'The transaction is valued at approximately $1.3 billion, including net debt. '
+    + 'The transaction is expected to close in the first quarter of 2027, subject to customary closing conditions including stockholder approval. '
+    + 'The combined company could generate revenue of up to $2 billion over time.';
+  const cand = (subject: string, kind: any, category: any) => ({ subject, summary: null, url: 'https://www.sec.gov/Archives/edgar/data/1/2/ex99-1.htm', dateIso: '2026-09-21T07:40:34-04:00', ageDays: 1, kind, category, stage: 'executed', valueStated: null, incremental: true, routineReason: null } as any);
+
+  test('press release: a stated deal value, per-share terms and closing conditions are quoted verbatim; a hedged figure is dropped', () => {
+    const p = pr782(MERGER_PR);
+    assert.equal(p.valueM, 1300);
+    assert.equal(p.valueSentence, 'The transaction is valued at approximately $1.3 billion, including net debt.');
+    assert.match(p.facts.price_terms, /^\$9\.50 per share in cash, a 38% premium/);
+    assert.match(p.facts.conditions, /expected to close in the first quarter of 2027/);
+    assert.equal(pr782('The agreement could be worth up to $500 million over five years if all options are exercised by the customer.').valueM, null, 'up to / could is not a value');
+    assert.equal(pr782('').valueM, null);
+  });
+
+  test('a merger 8-K read from its press release carries the stated value as a verbatim document quote — no model', () => {
+    const c = cand('8-K: Business combination agreement signed (also filed as merger communication) [Item 1.01, Item 9.01] · filed 07:40 ET before the open', 'catalyst', 'acquisition');
+    const { read } = docRead782(c, MERGER_PR);
+    assert.ok(read); assert.equal(read!.source, 'document_extract'); assert.equal(read!.valueStated, 1300);
+    assert.ok(MERGER_PR.includes(read!.quote));
+    const f = build782({ ticker: 'PRTH', company: null, market: 'US', movePct: 31, marketCap: 643, turnover: 70, announcements: [c], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now, read: read! });
+    assert.equal(f.status, 'catalyst'); assert.equal(f.category, 'acquisition');
+    assert.equal(f.valueStated, 1300); assert.equal(f.docExtract, true); assert.equal(f.modelRead, false, 'not a model read');
+    assert.ok(f.notes.some((n) => /Read without a model/.test(n)));
+    const v = view782({ ...fxUS782(), findings: { PRTH: f }, board: [{ ticker: 'PRTH', company: null, move_pct: 31, market_cap: 643 }] });
+    const it = [...v.queue, ...v.watch, ...v.negative, ...v.noCatalyst, ...(v.context || [])].find((i) => i.ticker === 'PRTH')!;
+    assert.equal(it.sourceConfidence, 'VERIFIED_DOCUMENT');
+    assert.notEqual(it.materiality.label, 'UNKNOWN');
+    assert.ok(!it.priorityReasons.includes('SEC filing (document not parsed)'));
+  });
+
+  test('an earnings release: the revenue sentence is quoted, but its dollar figure is never a deal value', () => {
+    const c = cand('8-K: Quarterly results released (results of operations) [Item 2.02, Item 9.01]', 'catalyst', 'quarterly_result');
+    const text = 'ACME Corp. today reported financial results for its second quarter ended August 31, 2026. Total revenue was $412.5 million, an increase of 24% year over year. The company raised its full-year guidance for fiscal 2027 revenue.';
+    const { read } = docRead782(c, text);
+    assert.ok(read); assert.equal(read!.valueStated, null);
+    assert.match(read!.headline, /^Results released — Total revenue was \$412\.5 million/);
+    assert.match(read!.facts!.guidance, /raised its full-year guidance/);
+    const f = build782({ ticker: 'ACME', company: null, market: 'US', movePct: 18, marketCap: 900, turnover: 40, announcements: [c], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now, read: read! });
+    assert.equal(f.category, 'quarterly_result'); assert.equal(f.valueStated, null);
+    assert.ok(f.notes.some((n) => /whether the result was good is not judged/.test(n)));
+  });
+
+  test('an item only a reader can classify gets the release lead as its SUMMARY — never a verified read', () => {
+    const c = cand('8-K: Other events (company press release) [Item 8.01, Item 9.01]', 'unclassified', null);
+    const text = 'Exhibit 99.1 AUSTIN, Texas, Sept. 18, 2026 -- Widget Inc. today announced it has been awarded a $45 million contract by the U.S. Army to supply tactical radios over three years. Deliveries begin in 2027.';
+    const r = docRead782(c, text);
+    assert.equal(r.read, null);
+    assert.match(r.summary || '', /awarded a \$45 million contract/);
+    const cl = ca782({ ...c, summary: r.summary }, 'US');
+    assert.equal(cl.kind, 'catalyst'); assert.equal(cl.category, 'order_win'); assert.equal(cl.valueStated, 45);
+    const f = build782({ ticker: 'WID', company: null, market: 'US', movePct: 22, marketCap: 300, turnover: 10, announcements: [{ ...c, summary: r.summary }], returns: null, holding: false, sources: ['x'], sourceFailed: false, windowDays: 21, now });
+    assert.equal(f.status, 'catalyst'); assert.equal(f.components?.evidence, 'SUMMARY_ONLY');
+    assert.ok((f.net ?? 0) <= 44.9, 'a summary never ranks P1');
+    // Boilerplate only → nothing.
+    assert.deepEqual(docRead782(c, 'x'.repeat(300)), { read: null, summary: null });
+  });
+
+  test('"ticker not in the SEC list" is DATA_UNAVAILABLE with its own words, not "no SEC filing"', () => {
+    const f = build782({ ticker: 'NEWCO', company: null, market: 'US', movePct: 30, marketCap: 700, turnover: 10, announcements: [], returns: null, holding: false, sources: [], sourceFailed: true, windowDays: 21, now });
+    const f2 = { ...f, notes: [...f.notes, 'SEC EDGAR not checked: the ticker is not in the SEC company list (CIK not found — often a new listing or a foreign issuer filing under another symbol). This is not "no filing".'] };
+    const v = view782({ ...fxUS782(), findings: { NEWCO: f2 }, board: [{ ticker: 'NEWCO', company: null, move_pct: 30, market_cap: 700 }] });
+    const it = [...v.queue, ...v.watch, ...v.negative, ...v.noCatalyst, ...(v.context || []), ...v.dataQuality].find((i) => i.ticker === 'NEWCO')!;
+    assert.equal(it.eventClass, 'DATA_UNAVAILABLE'); assert.match(it.headline, /not found in the SEC company list/);
+    // Checked, only insider forms: said as such.
+    const n = build782({ ticker: 'BETA', company: null, market: 'US', movePct: 12, marketCap: 5000, turnover: 10, announcements: [], returns: null, holding: false, sources: ['SEC EDGAR submissions'], sourceFailed: false, windowDays: 21, now });
+    const n2 = { ...n, notes: [...n.notes, 'SEC EDGAR checked (CIK 1234): 3 insider ownership reports (Form 3/4/5/144) in the last 21 days — counted, not scanned as events.'] };
+    const v2 = view782({ ...fxUS782(), findings: { BETA: n2 }, board: [{ ticker: 'BETA', company: null, move_pct: 12, market_cap: 5000 }] });
+    const b = [...v2.queue, ...v2.watch, ...v2.negative, ...v2.noCatalyst, ...(v2.context || [])].find((i) => i.ticker === 'BETA')!;
+    assert.match(b.scanNote || '', /^No SEC filing in the last 21 days \(EDGAR checked; 3 insider Form 3\/4\/5\/144 reports not counted as events\) — news/);
+  });
 });

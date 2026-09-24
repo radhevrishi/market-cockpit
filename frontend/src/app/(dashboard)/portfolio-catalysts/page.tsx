@@ -53,6 +53,8 @@ const ORDER: ThesisStatus[] = [
   'BROKEN', 'WEAKENING', 'NEGATIVE_EXPECTATION_GAP', 'POSITIVE_EXPECTATION_GAP',
   // zzz775: ON TRACK sits between CONFIRMATION REQUIRED and STRENGTHENING.
   'EVIDENCE_INCOMPLETE', 'CONFIRMATION_REQUIRED', 'ON_TRACK', 'STRENGTHENING', 'NEUTRAL',
+  // zzz782: no thesis set is its own state, not a thesis-status bucket.
+  'THESIS_NOT_SET',
 ];
 
 export default function PortfolioCatalystsPage() {
@@ -265,11 +267,21 @@ export default function PortfolioCatalystsPage() {
         if (evidenceLoading) return null;
         const usLeft = inSource.filter((r) => r.market === 'US' && KEEP.some(([k]) => r.assessment?.status === k)).length;
         if (!all.length) return null;
+        // zzz782: reconcile the export with the analysed count, by status.
+        const analysed = inSource.filter((r) => r.assessment).length;
+        const excluded = ORDER.filter((s) => !KEEP.some(([k]) => k === s))
+          .map((s) => [s, inSource.filter((r) => r.assessment?.status === s).length] as const)
+          .filter(([, n]) => n > 0);
+        const exclN = excluded.reduce((t, [, n]) => t + n, 0);
+        const exportable = analysed - exclN;
         return (
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', background: C.bg }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, marginBottom: 6 }}>
               📋 Copy to TradingView · India (NSE) — {all.length} names: {groups.map((g) => `${g.emoji} ${g.label} ${g.tickers.length}`).join(' · ')}
               {usLeft > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: C.faint }}> · {usLeft} US name{usLeft === 1 ? '' : 's'} in these statuses not included (NSE list)</span>}
+            </div>
+            <div style={{ fontSize: 12.5, color: C.dim, marginBottom: 6 }}>
+              {analysed} analysed · {exportable} in constructive statuses{exclN > 0 ? ` · ${exclN} not in the constructive export (${excluded.map(([s, n]) => `${n} ${STATUS_META[s].label.toLowerCase()}`).join(', ')})` : ''}{usLeft > 0 ? ` · ${usLeft} of the ${exportable} are US names (not on an NSE list)` : ''}.
             </div>
             <TickerExportToolbar tickers={all} groups={groups} exchange="NSE" filenameHint="portfolio-catalysts-constructive" compact />
           </div>
@@ -309,7 +321,7 @@ export default function PortfolioCatalystsPage() {
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 Research priority — {ranked.length} intact theses ranked by evidenced catalyst</span>
-              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning (revenue or margin contribution disclosed) / volume > named contract > commissioned capex (not yet proven earning) > customer remark; a hard figure outranks a management remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). Which theses deserve research next — not a buy list, no price used.'}</span>
+              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning (revenue or margin contribution disclosed) / volume > named contract > commissioned capex (not yet proven earning) > customer remark; a hard figure outranks a management remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). The hierarchy ranks EVIDENCE STRENGTH (how firmly the documents prove the mechanism), not economic value — a small order ranks above a big remark; how much it matters to the P&L is on each card. Which theses deserve research next — not a buy list, no price used.'}</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -557,12 +569,12 @@ export default function PortfolioCatalystsPage() {
         return untyped.length > 0 || nearest.length > 0 ? (
           <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
             {untyped.length > 0 && <>
-              <b style={{ color: '#F59E0B' }}>{untyped.length} holding{untyped.length === 1 ? '' : 's'} have no thesis type.</b> The quarter&apos;s figures fit none of the four, even loosely, so no thesis variable can move their status. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
+              <b style={{ color: '#A78BFA' }}>◇ Thesis setup required — {untyped.length} holding{untyped.length === 1 ? '' : 's'}.</b> The quarter&apos;s figures fit none of the four types, even loosely, so they sit in their own <b>THESIS NOT SET</b> state — not intact, not weakening, not a thesis status at all. The evidence on their cards is shown as read. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
               <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{untyped.map((r) => r.symbol).join(' · ')}</div>
             </>}
             {nearest.length > 0 && (
               <div style={{ marginTop: untyped.length ? 6 : 0 }}>
-                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto)</b> — no exact test fired, and the figures fit the type loosely. You may want to confirm or change each with the <b>thesis</b> picker.
+                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto, PROVISIONAL)</b> — no exact test fired, and the figures fit the type loosely. Their status is provisional: it cannot read strengthening or on-track until you confirm the type (or set another) with the <b>thesis</b> picker.
                 <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern})`).join(' · ')}</div>
               </div>
             )}

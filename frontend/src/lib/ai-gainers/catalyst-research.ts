@@ -32,7 +32,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NEGATIVE_CATALYSTS, type CatalystType } from './events';
-import { classifyUsFiling, fmtUsdM } from './us-gainers';
+import { classifyUsFiling, fmtUsdM, usPlainSubject } from './us-gainers';
 
 /** The version of the classification + scoring rules a finding was built
  *  under. BUMP IT whenever classifyAnnouncement / parseStatedValue /
@@ -44,7 +44,9 @@ import { classifyUsFiling, fmtUsdM } from './us-gainers';
  *  by default, US resale/shelf registrations told apart from a new raise. */
 import type { NewsContext } from './news-context';
 
-export const RULES_VERSION = '2026-09-24.zzz776';
+export const RULES_VERSION = '2026-09-24.zzz782';
+// zzz782: US 8-K subjects in plain words; 1D from the daily closes; the
+// press release read without a model (document_extract).
 
 export type ResearchStatus =
   | 'catalyst'          // a dated, sourced event survived the reject gates
@@ -81,6 +83,10 @@ export interface ClassifiedAnnouncement extends AnnouncementLite {
 }
 
 export interface Returns {
+  /** zzz782: the last daily bar against the close before it (%), and that
+   *  bar's date — the 1D a US row lacked (the export carries 1W only). */
+  d1?: number | null;
+  d1Date?: string | null;
   /** zzz775: 5-session return. */
   w1?: number | null;
   m1: number | null; m3: number | null; m6: number | null; y1: number | null; history: number;
@@ -179,6 +185,9 @@ export interface Finding {
   news?: NewsContext | null;
   /** zzz775: what the model-read filing states, keyed by fact (value, counterparty, execution period, …). */
   facts?: Record<string, string> | null;
+  /** zzz782: the quote and figures were extracted VERBATIM from the filed
+   *  document (US press release) without a model. */
+  docExtract?: boolean;
 }
 
 // ── denial vs clarification (zzz771) ──────────────────────────────────────
@@ -413,6 +422,14 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
 // ── 2. PRICE-HISTORY DERIVED FLAGS ─────────────────────────────────────────
 
 /** Returns and history length from a daily close series [dateIso, close]. */
+/** zzz782: the last daily move from the stored tail, with its date. */
+export function d1FromTail(tail?: Array<[string, number]>): { d1: number | null; d1Date: string | null } {
+  if (!tail || tail.length < 2) return { d1: null, d1Date: null };
+  const [d, last] = tail[tail.length - 1], prev = tail[tail.length - 2][1];
+  if (!(prev > 0) || !(last > 0)) return { d1: null, d1Date: null };
+  return { d1: Math.round(((last / prev) - 1) * 1000) / 10, d1Date: String(d).slice(0, 10) };
+}
+
 /** zzz776: inputs stored before 1W existed still carry the 90-day tail. */
 function w1FromTail(tail?: Array<[string, number]>): number | null {
   if (!tail || tail.length < 6) return null;
@@ -427,7 +444,7 @@ export function returnsFromSeries(series: Array<[string, number]>): Returns {
   // A year of trading is ~247–252 sessions; a series of 247 points IS a year.
   const y1 = v.length >= 240 ? back(Math.min(247, v.length - 1)) : null;
   const tail = series.filter(([, c]) => Number.isFinite(c) && c > 0).slice(-90).map(([d, c]) => [String(d).slice(0, 10), c] as [string, number]);
-  return { w1: back(5), m1: back(21), m3: back(63), m6: back(126), y1, history: v.length, tail };
+  return { ...d1FromTail(tail), w1: back(5), m1: back(21), m3: back(63), m6: back(126), y1, history: v.length, tail };
 }
 
 /** Indian exchanges band small caps at 2/5/10/20%. A close within 0.15pp of a
@@ -619,7 +636,10 @@ export interface SweepInput {
    *  explanation of the move — they post-date it. (zzz766) */
   sessionCloseIso?: string | null;
   /** A model-verified read of the chosen announcement, when one was made. */
-  read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null; facts?: Record<string, string> | null } | null;
+  read?: { url: string; headline: string; quote: string; category: CatalystType; valueStated?: number | null; facts?: Record<string, string> | null;
+    /** zzz782: 'document_extract' = verbatim sentences pulled from the filed
+     *  document without a model; absent = a model read. */
+    source?: 'model' | 'document_extract' } | null;
   /** Press coverage read for this name (zzz773). */
   news?: NewsContext | null;
   /** The graders hold a filed quarterly result behind this move (the scan's
@@ -628,8 +648,12 @@ export interface SweepInput {
   filedResult?: boolean;
 }
 
-export function buildFinding(inp: SweepInput): Finding {
+export function buildFinding(inp0: SweepInput): Finding {
+  // zzz782: US 8-K subjects stored in the old item-title form read the same
+  // as new ones (plain words, item codes as a tag).
+  const inp: SweepInput = inp0.market === 'US' ? { ...inp0, announcements: inp0.announcements.map((a) => ({ ...a, subject: usPlainSubject(a.subject) })) } : inp0;
   const now = inp.now.toISOString();
+  const docExtract = inp.read?.source === 'document_extract';
   const allInWindow = inp.announcements
     .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, inp.now) }))
     .filter((a) => a.ageDays == null || a.ageDays <= inp.windowDays)
@@ -643,9 +667,9 @@ export function buildFinding(inp: SweepInput): Finding {
     ticker: inp.ticker, company: inp.company, market: inp.market, movePct: inp.movePct, marketCap: inp.marketCap, turnover: inp.turnover,
     status: 'none', category: null, stage: null, headline: null, evidenceQuote: null, sourceUrl: null, sourceDate: null, sourceTier: 'unsourced',
     ageDays: null, valueStated: null, valuePctMcap: null, net: null, components: null, verdict: null,
-    returns: inp.returns ? { w1: inp.returns.w1 ?? w1FromTail(inp.returns.tail), m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
+    returns: inp.returns ? { ...(inp.returns.d1 != null ? { d1: inp.returns.d1, d1Date: inp.returns.d1Date ?? null } : d1FromTail(inp.returns.tail)), w1: inp.returns.w1 ?? w1FromTail(inp.returns.tail), m1: inp.returns.m1, m3: inp.returns.m3, m6: inp.returns.m6, y1: inp.returns.y1, history: inp.returns.history } : null, bandPrint: band.band, bandLevel: band.level, listingDays,
     routine: inWindow.filter((a) => a.kind === 'routine').map((a) => a.subject).slice(0, 6),
-    filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read,
+    filingsInWindow: inWindow.length, windowDays: inp.windowDays, holding: inp.holding, notes: [], modelRead: !!inp.read && !docExtract,
     researchedAt: now, sources: inp.sources, news: inp.news ?? null,
   };
   if (band.band) base.notes.push(`Closed at the ${band.level}% band${inp.turnover != null ? ` (avg daily value ~${fmtMoney(inp.turnover, inp.market)}, 1-week average)` : ''} — a band print measures the band, not demand.`);
@@ -748,7 +772,9 @@ export function buildFinding(inp: SweepInput): Finding {
     if (inp.market === 'US' && isNegCat(inp.read.category)) {
       return { ...base, status: 'negative', category: inp.read.category, headline: inp.read.headline, evidenceQuote: inp.read.quote, sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays, notes: [...base.notes, 'Model-read filing; the quote was found verbatim in the document. The filing is negative.'] };
     }
-    c = { ...c, category: inp.read.category, valueStated: inp.read.valueStated ?? c.valueStated ?? parseStatedValue(`${inp.read.headline} ${inp.read.quote}`, inp.market) };
+    // A document extract states its value or none: a revenue sentence's
+    // dollar figure is not a deal value (zzz782).
+    c = { ...c, category: inp.read.category, valueStated: inp.read.valueStated ?? c.valueStated ?? (docExtract ? null : parseStatedValue(`${inp.read.headline} ${inp.read.quote}`, inp.market)) };
   }
   // zzz775: whatever a reader or a subject line called it, a tax demand is a
   // tax matter (SEDEMAC's "GST order received" was scored as an order win).
@@ -789,6 +815,8 @@ export function buildFinding(inp: SweepInput): Finding {
   if (c.category === 'quarterly_result' && !verified) notes.push('Results filed — the filing is the dated event; whether the numbers were good was not read here.');
   if (dilution) notes.push(`⚠ Offering filed in the window (${shorten(dilution.subject, 60)}, ${fmtDate(dilution.dateIso)}) — supply into the move.`);
   if (scored.valuePctMcap != null && inp.movePct != null && scored.valuePctMcap < 2 && Math.abs(inp.movePct) >= 8) notes.push(`Item is ${scored.valuePctMcap}% of market cap against a ${fmtPct(inp.movePct)} move — look for the real driver.`);
+  if (verified && docExtract) notes.push('Read without a model: the quote and any figure are sentences copied verbatim from the filed document (press release); the category comes from the SEC form / item code, not from a reading of the text.');
+  if (verified && docExtract && c.category === 'quarterly_result') notes.push('Results filed — the revenue sentence is quoted as filed; whether the result was good is not judged here.');
   if (!verified) notes.push(scored.components.evidence === 'SUMMARY_ONLY'
     ? 'SUMMARY ONLY: the document was not model-read; the headline and any figure come from the source\'s summary, so materiality is counted at 60%.'
     : 'UNVERIFIED: only the filing subject line was available; materiality is counted at 40%.');
@@ -799,6 +827,7 @@ export function buildFinding(inp: SweepInput): Finding {
     sourceUrl: c.url, sourceDate: c.dateIso, sourceTier: 'primary', ageDays: c.ageDays,
     valueStated: c.valueStated, valuePctMcap: scored.valuePctMcap, net: scored.net, components: scored.components, verdict: scored.verdict,
     notes, facts: verified && inp.read ? (inp.read.facts ?? null) : null,
+    ...(verified && docExtract ? { docExtract: true } : {}),
   };
 }
 
@@ -867,6 +896,11 @@ export interface StoredSweepInputs {
   fetchedAt: string;
   read?: SweepInput['read'];
   news?: NewsContext | null;
+  /** zzz782 (US): what EDGAR said about the name (not checked / checked +
+   *  insider-form count), re-attached to the finding on every re-score. */
+  usNote?: string | null;
+  /** zzz782 (US): the free press-release read was already attempted. */
+  docTried?: boolean;
 }
 
 /** Keeps only what a finding can use (the window, a bounded summary): the

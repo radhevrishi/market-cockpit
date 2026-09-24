@@ -335,13 +335,85 @@ function phrase(p: UsPhase): string {
   return p === 'pre_market' ? 'before the open' : p === 'regular' ? 'during the session' : p === 'after_hours' ? 'after the close' : 'on a non-trading day';
 }
 
+// ── 8-K ITEMS IN PLAIN ENGLISH                                    (zzz782) ──
+// The subject used to be the SEC item titles strung together — "8-K: Business
+// combination agreement … — Item 1.01 Entry into a Material Definitive
+// Agreement; Item 9.01 Financial Statements and Ex…" — which the page cut off
+// mid-word. The subject now leads with what happened, in plain words, and
+// keeps the item codes as a short bracket tag ("[Item 1.01, Item 9.01]") so
+// the classifier and anyone checking the filing still see them. Item 9.01
+// (exhibits) is never the event; it stays in the tag only.
+const EIGHT_K_PLAIN: Record<string, string> = {
+  '1.01': 'Material agreement signed (terms not stated in the item — open the filing)',
+  '1.02': 'Material agreement terminated',
+  '1.05': 'Material cybersecurity incident',
+  '2.01': 'Acquisition or disposition completed',
+  '2.02': 'Quarterly results released (results of operations)',
+  '2.03': 'New debt or financing obligation',
+  '2.04': 'Financial obligation accelerated',
+  '2.05': 'Exit / restructuring costs',
+  '2.06': 'Material impairment',
+  '3.01': 'Notice of delisting / listing-rule deficiency',
+  '3.02': 'Unregistered sale of equity (private placement)',
+  '3.03': 'Change to shareholder rights',
+  '4.01': 'Change of certifying accountant (auditor)',
+  '4.02': 'Non-reliance on previously issued financial statements (restatement)',
+  '5.01': 'Change in control',
+  '5.02': 'Director / officer change',
+  '5.03': 'Charter or bylaw amendment',
+  '5.07': 'Shareholder vote results',
+  '7.01': 'Regulation FD disclosure (press release / investor materials)',
+  '8.01': 'Other events (company press release)',
+};
+// Which item leads when several are filed together: the one that is the
+// event, not the paperwork around it.
+const EIGHT_K_LEAD_ORDER = ['2.02', '2.01', '5.01', '1.01', '1.02', '3.01', '4.02', '4.01', '2.04', '2.06', '1.05', '3.02', '2.05', '2.03', '8.01', '7.01', '3.03', '5.02', '5.03', '5.07'];
+
+/** "Business combination agreement signed", "Quarterly results released"… —
+ *  the leading event of an 8-K, then at most two other substantive items. */
+export function usEightKLead(items: string[], merger: boolean): string {
+  const subst = items.filter((i) => i !== '9.01');
+  const ordered = [
+    ...EIGHT_K_LEAD_ORDER.filter((i) => subst.includes(i)),
+    ...subst.filter((i) => !EIGHT_K_LEAD_ORDER.includes(i)),
+  ];
+  const parts: string[] = [];
+  if (merger && items.includes('1.01')) parts.push(`Business combination agreement signed (${MERGER_MARKER})`);
+  for (const i of ordered) {
+    if (merger && i === '1.01') continue;
+    parts.push(EIGHT_K_PLAIN[i] ? (parts.length ? EIGHT_K_PLAIN[i].replace(/ \(terms not stated in the item — open the filing\)$/, '') : EIGHT_K_PLAIN[i]) : `Item ${i}`);
+    if (parts.length >= 3) break;
+  }
+  if (!parts.length) return items.includes('9.01') ? 'Financial statements and exhibits only' : 'no items listed';
+  return parts.join('; also ');
+}
+
+/** Any 8-K subject — the old item-title list or the new plain form — in the
+ *  plain form. Idempotent; non-8-K subjects are returned unchanged. Stored
+ *  sweep inputs carry the old form, so findings re-scored from them are
+ *  normalised here rather than refetched. */
+export function usPlainSubject(subject: string): string {
+  const s = String(subject || '');
+  const m = /^(8-K(?:\/A)?):\s*([\s\S]*)$/i.exec(s);
+  if (!m) return s;
+  const rest = m[2];
+  if (/\[Item \d\.\d\d/.test(rest)) return s;          // already plain
+  const filedIdx = rest.indexOf(' · filed ');
+  const filed = filedIdx >= 0 ? rest.slice(filedIdx) : '';
+  const body = filedIdx >= 0 ? rest.slice(0, filedIdx) : rest;
+  const items = usItemsOf(body);
+  const merger = body.includes(MERGER_MARKER);
+  if (!items.length && !merger) return s;
+  return `${m[1].toUpperCase()}: ${usEightKLead(items, merger)}${items.length ? ` [${items.map((i) => `Item ${i}`).join(', ')}]` : ''}${filed}`;
+}
+
 /**
  * The submissions JSON → dated announcements, newest first. Pure: the fetch
  * lives in edgar-research.ts. `acceptanceDateTime` is UTC (a Form 4/A
  * accepted 01:17Z carries the PREVIOUS filing date, which is only possible if
  * the stamp is UTC), so the session a filing landed in is exact.
  */
-export function announcementsFromSubmissions(sub: any, cik: string, windowDays: number, now: Date): AnnouncementLite[] {
+export function announcementsFromSubmissions(sub: any, cik: string, windowDays: number, now: Date, stats?: { insiderForms: number; inWindow: number }): AnnouncementLite[] {
   const rec = sub?.filings?.recent || {};
   const n = Array.isArray(rec.form) ? rec.form.length : 0;
   const at = (k: string, i: number) => (Array.isArray(rec[k]) ? rec[k][i] : undefined);
@@ -352,7 +424,10 @@ export function announcementsFromSubmissions(sub: any, cik: string, windowDays: 
     if (!form || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
     const age = Math.floor((now.getTime() - Date.parse(`${date}T00:00:00Z`)) / 86_400_000);
     if (!Number.isFinite(age) || age > windowDays) continue;
-    if (EDGAR_SKIP_FORMS.test(form)) continue;
+    if (stats) stats.inWindow++;
+    // Insider ownership reports are counted, not listed: "nothing filed" and
+    // "only Form 4s filed" are different statements. (zzz782)
+    if (EDGAR_SKIP_FORMS.test(form)) { if (stats) stats.insiderForms++; continue; }
     rows.push({
       form, date,
       acc: String(at('accessionNumber', i) || ''),
@@ -373,9 +448,10 @@ export function announcementsFromSubmissions(sub: any, cik: string, windowDays: 
     const companion = isCurrent && r.items.includes('1.01') && rows.some((o) => o !== r && MERGER_COMPANION.test(o.form) && o.doc && o.doc === r.doc && o.date === r.date);
     // The same document re-filed as DEFA14A/425 beside its 8-K is one event.
     if (MERGER_COMPANION.test(r.form) && rows.some((o) => o !== r && /^8-K/.test(o.form) && o.doc && o.doc === r.doc && o.date === r.date)) continue;
-    const itemText = r.items.map((it) => (EDGAR_8K_ITEMS[it] ? `Item ${it} ${EDGAR_8K_ITEMS[it]}` : `Item ${it}`)).join('; ');
-    // The merger lead goes FIRST so a shortened headline still says it.
-    const base = isCurrent ? `${r.form}: ${companion ? `Business combination agreement (${MERGER_MARKER}) — ` : ''}${itemText || 'no items listed'}` : `${r.form}${r.desc && r.desc.toUpperCase() !== r.form ? `: ${r.desc}` : ''}`;
+    // zzz782: plain words first, item codes as a short tag (see usEightKLead).
+    // The merger lead still goes FIRST so a shortened headline still says it.
+    const itemTag = r.items.length ? ` [${r.items.map((it) => `Item ${it}`).join(', ')}]` : '';
+    const base = isCurrent ? `${r.form}: ${usEightKLead(r.items, companion)}${itemTag}` : `${r.form}${r.desc && r.desc.toUpperCase() !== r.form ? `: ${r.desc}` : ''}`;
     const subject = `${base}${when ? ` · filed ${etParts(when).hhmm} ET ${phrase(usPhaseAt(when))}` : ''}`;
     out.push({ subject, summary: null, url: edgarFilingUrl(cik, r.acc, r.doc), dateIso, ageDays });
   }
@@ -462,4 +538,88 @@ export function classifyUsFiling(a: Pick<AnnouncementLite, 'subject'>): UsClass 
     return unclassified;
   }
   return null;
+}
+
+// ── 6. THE PRESS RELEASE, READ WITHOUT A MODEL                    (zzz782) ──
+//
+// An 8-K's substance is in its EX-99.1 press release, and the sweep used to
+// leave it unopened unless a paid model read was available ("document not
+// parsed" on PRTH's merger). This reads the text for a few narrowly defined
+// statements and returns them VERBATIM, each with the sentence it came from:
+//   · a stated deal / contract value ("transaction valued at approximately
+//     $1.2 billion", "a $45 million contract"),
+//   · a per-share cash price and a stated premium (merger terms),
+//   · the revenue sentence of an earnings release, and a raised outlook,
+//   · the closing conditions / expected timing.
+// Nothing is inferred: a figure hedged as potential / up to / expected /
+// estimated is dropped, and when no sentence matches the answer is null —
+// never a guess. The lead sentence is returned too, for a filing the item
+// code cannot classify (7.01 / 8.01 / 1.01 / 6-K).
+
+export interface UsPressReleaseFacts {
+  /** The first substantive sentence of the release (dateline stripped). */
+  lead: string | null;
+  /** $ M, only when a sentence states a deal / contract value outright. */
+  valueM: number | null;
+  /** The verbatim sentence the value came from. */
+  valueSentence: string | null;
+  /** The verbatim revenue sentence of an earnings release. */
+  revenueSentence: string | null;
+  facts: Record<string, string>;
+}
+
+const HEDGED = /\b(potential(ly)?|could|may|might|up to|ceiling|idiq|estimated|expected to (generate|be worth|reach)|anticipat\w+ (revenue|value)|opportunity|addressable|pipeline|target(ed|ing)?)\b/i;
+const DEAL_NOUN = /\b(transaction|merger|acquisition|deal|agreement|contract|award|order|purchase|take-private|buyout|financing|offering|investment)\b/i;
+const MONEY = String.raw`(?:US)?\$\s?([\d][\d,]*(?:\.\d+)?)\s*(billion|million|bn|mm|mn|b|m)\b`;
+const VALUE_AFTER = new RegExp(String.raw`\b(valued at|valuing|value of|worth|total consideration of|aggregate consideration of|(?:aggregate )?purchase price of|total (?:cash )?consideration of|enterprise value of|equity value of|transaction value of|for a total of|in exchange for|in the amount of|totaling|totalling)\s+(?:approximately |about |roughly |an aggregate of |a total of )?` + MONEY, 'i');
+const VALUE_BEFORE = new RegExp(MONEY + String.raw`\s+(?:all-cash |cash |all-stock |stock |multi-year |multiyear |\w+-year )?(transaction|acquisition|merger|deal|contract|award|order|take-private|buyout|agreement)\b`, 'i');
+const PER_SHARE = /\$\s?(\d+(?:\.\d+)?)\s+per share(?:\s+in cash| in cash)?/i;
+const PREMIUM = /premium of (?:approximately |about )?(\d+(?:\.\d+)?)\s?%/i;
+const REVENUE = /\b(total |net )?(revenues?|net sales|sales)\b[^.]{0,60}?\b(of|was|were|totaled|totalled|reached|increased|grew|rose|decreased|declined|fell)\b[^.]{0,40}?\$\s?[\d][\d,]*(?:\.\d+)?\s*(billion|million)/i;
+const OUTLOOK_UP = /\b(rais(es|ed|ing)|increas(es|ed|ing)|lift(s|ed)?)\b[^.]{0,40}\b(full[- ]year|fiscal(?: year)? ?\d{0,4}|annual|\d{4})?\s*(guidance|outlook)\b/i;
+const CLOSING = /\b(expected to close|anticipated to close|subject to (customary|shareholder|stockholder|regulatory))\b/i;
+
+function toM(n: string, unit: string): number | null {
+  const v = parseFloat(n.replace(/,/g, ''));
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return /^b/i.test(unit) ? v * 1000 : v;
+}
+
+/** Sentences of a filing's text, without the SEC cover-page noise. */
+function sentencesOf(text: string): string[] {
+  return String(text || '').slice(0, 40_000)
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+(?=[A-Z“"($])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 40 && s.length <= 700)
+    .filter((s) => !/securities and exchange commission|check the appropriate box|commission file number|pursuant to section 13 or 15\(d\)|emerging growth company|forward-looking statements?|safe harbor|incorporated by reference|signature|exhibit (no\.|number)/i.test(s));
+}
+
+export function extractUsPressRelease(text: string): UsPressReleaseFacts {
+  const out: UsPressReleaseFacts = { lead: null, valueM: null, valueSentence: null, revenueSentence: null, facts: {} };
+  const ss = sentencesOf(text);
+  if (!ss.length) return out;
+  // The lead: the first sentence that reads like news — a dateline'd
+  // announcement verb — else the first sentence after the cover page.
+  const leadRaw = ss.find((s) => /\b(announce[sd]?|today|entered into|signed|completed|reported|received|awarded|launch(ed|es)|approv(ed|al))\b/i.test(s)) || null;
+  out.lead = leadRaw ? leadRaw.replace(/^[A-Z][A-Za-z .,'-]{2,40},\s*[A-Z][a-z]{2,9}\.? \d{1,2},? \d{4}\s*(\([^)]{0,40}\))?\s*[-–—]+\s*/, '').slice(0, 400) : null;
+  for (const s of ss) {
+    if (out.valueM == null && DEAL_NOUN.test(s) && !HEDGED.test(s)) {
+      const m = VALUE_AFTER.exec(s);
+      const b = m ? null : VALUE_BEFORE.exec(s);
+      const v = m ? toM(m[2], m[3]) : b ? toM(b[1], b[2]) : null;
+      if (v != null) { out.valueM = v; out.valueSentence = s; out.facts.value = s.slice(0, 220); }
+    }
+    if (!out.facts.price_terms) {
+      const p = PER_SHARE.exec(s);
+      if (p && /\b(merger|acquir\w*|acquisition|transaction|tender offer|holders|stockholders|shareholders)\b/i.test(s)) {
+        const prem = PREMIUM.exec(s);
+        out.facts.price_terms = `$${p[1]} per share${/in cash/i.test(p[0]) ? ' in cash' : ''}${prem ? `, a ${prem[1]}% premium` : ''} — “${s.slice(0, 180)}”`;
+      }
+    }
+    if (!out.revenueSentence && REVENUE.test(s) && !HEDGED.test(s)) { out.revenueSentence = s; out.facts.revenue = s.slice(0, 220); }
+    if (!out.facts.guidance && OUTLOOK_UP.test(s)) out.facts.guidance = s.slice(0, 220);
+    if (!out.facts.conditions && CLOSING.test(s)) out.facts.conditions = s.slice(0, 220);
+  }
+  return out;
 }

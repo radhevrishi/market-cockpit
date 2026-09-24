@@ -144,6 +144,27 @@ export function applyLedger(row: BookRow, ledger0: CompanyLedger | null, freshne
   });
 }
 
+/** zzz782 — THESIS NOT SET. With no thesis type (none fits, none chosen) no
+ *  thesis variable can move a status, so none is implied: no "intact", no
+ *  "strengthening". A deterioration found in the figures is still named in
+ *  the text so it is never hidden. */
+function withThesisSet(row: BookRow, a: ThesisAssessment): ThesisAssessment {
+  if (row.pattern) return a;
+  const seen = a.status === 'BROKEN' || a.status === 'WEAKENING'
+    ? ` ⚠ The figures show a deterioration worth a look: ${String(a.because).slice(0, 260)}`
+    : '';
+  const because = `THESIS NOT SET — no thesis type fits these figures and none is set, so no thesis variable can move a status: no intact, strengthening or weakening is implied. The evidence below is shown as read. Set why you hold it with the thesis picker (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.${seen}`;
+  return {
+    ...a,
+    actionLine: `THESIS NOT SET — ${because.replace(/^THESIS NOT SET — /, '')}`,
+    status: 'THESIS_NOT_SET',
+    action: 'THESIS NOT SET',
+    because,
+    catalystRank: null,
+    verdict: a.verdict ? { ...a.verdict, direction: 'UNKNOWN', directionWhy: 'no thesis set — a direction is measured against a thesis' } : a.verdict,
+  };
+}
+
 /** Record the status the engine assigned, so history accrues server-side.
  *  Best-effort and deduplicated: the store appends only on change. */
 async function postStatus(row: BookRow): Promise<void> {
@@ -203,8 +224,9 @@ function assess(row0: BookRow): BookRow {
   return {
     ...row,
     comparisons,
-    assessment: assessThesis({
+    assessment: withThesisSet(row, assessThesis({
       pattern: row.pattern?.pattern ?? null,
+      patternFit: (row.pattern as any)?.fit ?? null,
       variables: vars,
       comparisons,
       historyDepth: hist.depth,
@@ -226,7 +248,7 @@ function assess(row0: BookRow): BookRow {
       // Evidence two years old must not confirm today's mechanism. (zzz769)
       evidencePeriod: row.ledger?.latest_period || row.reportingPeriod || null,
       expectedPeriod: latestExpectedPeriod().period,
-    }),
+    })),
     capex: buildCapexChain(row.summary, vars, row.ledger || null),
     promiseNote: check ? check.detail : null,
     // WHAT CHANGED comes from the same rows as the board. (zzz765)
@@ -345,12 +367,18 @@ export function useBook(opts?: { includeBench?: boolean }) {
       const localHeld = readHoldingSymbols();
       const paint = (universe: Map<string, BookOrigin>) => {
         if (cancelled) return;
-        const next: Record<string, BookRow> = { ...rowsRef.current };
+        // zzz782: the rows ARE the universe — a name that left it (a bench
+        // candidate that failed the second preset pass) is dropped, so "All",
+        // the size filter and "N of N shown" count the same population
+        // (130 − 12 hidden was printing 119 because of one stale row).
+        const next: Record<string, BookRow> = {};
         for (const [sym, origin] of universe) {
-          if (next[sym]) { next[sym] = { ...next[sym], origin }; continue; }
+          const had = rowsRef.current[sym];
+          if (had) { next[sym] = { ...had, origin }; continue; }
           const g = byNorm.get(sym) || null;
           next[sym] = { ...build(sym, g, g ? 'graded' : null), origin };
         }
+        rowsRef.current = next;
         setRows(next);
         setSymbols(Array.from(universe.keys()));
         setOrigins(Object.fromEntries(universe));

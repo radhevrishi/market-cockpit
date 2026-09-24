@@ -279,6 +279,14 @@ export function ResearchTriage(props: ResearchTriageProps) {
             </section>
           )}
 
+          {(view.immaterialNegative || []).length > 0 && (
+            <div style={{ fontSize: 12.5, color: C.faint, padding: '2px 4px' }}>
+              ⚪ Immaterial tax / penalty items (under 0.25% of market cap — recorded, not ranked as negative evidence):{' '}
+              {view.immaterialNegative!.map((it, i) => (
+                <span key={it.ticker}>{i ? ' · ' : ''}<button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 800, color: C.dim }}>{it.ticker}</button> ({it.materiality?.ratios?.[0]?.text || 'size not stated'})</span>
+              ))}
+            </div>
+          )}
           {(view.negative || []).length > 0 && (
             <section aria-label="Negative / denied" style={{ ...box, borderColor: tint(C.red, 45) }}>
               <SectionHead title="⚠ NEGATIVE EVIDENCE" count={view.negative.length} sub="Findings, not omissions." />

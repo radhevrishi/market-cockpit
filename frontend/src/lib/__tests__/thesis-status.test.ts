@@ -1552,7 +1552,7 @@ describe('zzz775 · nearest-fit thesis types', () => {
     const p = classifyOrNearest({ sales_yoy_pct: 20, eps_yoy_pct: 30 })!;
     const html = render773(React773.createElement(Card773 as any, { symbol: 'X', market: 'IN', pattern: p, assessment: null, onThesisType() {}, thesisType: null }));
     assert.match(html, /data-fit="nearest"/);
-    assert.match(html.replace(/<[^>]+>/g, ' '), /nearest A · OPERATING INFLECTION · nearest fit \(auto\)/);
+    assert.match(html.replace(/<[^>]+>/g, ' '), /nearest A · OPERATING INFLECTION · nearest fit \(auto(, provisional)?\)/);
     assert.match(html, /thesis: auto \(nearest A\)/);
   });
 });

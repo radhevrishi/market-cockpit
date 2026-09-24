@@ -25,6 +25,9 @@ export function StatusPill({ it }: { it: ResearchItem }) {
   // company answering the exchange, not a denial of anything. It sits under
   // NO_CATALYST with flags.denial and is shown neutral — the owner read the
   // red NEGATIVE/DENIAL pill as bad news about the company.
+  if (it.eventClass === 'NEGATIVE' && it.immaterialNegative) {
+    return <Pill color={C.faint} title={it.materiality?.explanation || 'A tax / penalty item under 0.25% of market cap.'}>⚪ IMMATERIAL NEGATIVE</Pill>;
+  }
   if (it.eventClass === 'NO_CATALYST' && it.flags?.denial) {
     return <Pill color={C.faint} title="The company told the exchange it has no undisclosed information behind the price move. A clarification, not negative evidence.">⚪ COMPANY: NO UNDISCLOSED INFO</Pill>;
   }
@@ -101,6 +104,10 @@ export function Fact({ k, v, color, title }: { k: string; v: React.ReactNode; co
   );
 }
 
+const PERSIST_EV_WORD: Record<string, string> = {
+  STRONG: 'STRONG', EVIDENCE: 'EVIDENCE EXISTS', EARLY: 'EARLY', UNPROVEN: 'UNPROVEN', NOT_PERSISTENT: 'NOT PERSISTENT', NONE: '—',
+};
+
 export function FactLine({ it }: { it: ResearchItem }) {
   const st = STAGE_META[it.stage] || STAGE_META.UNKNOWN;
   const tr = TRANSMIT_META[it.transmission] || TRANSMIT_META.NONE;
@@ -113,7 +120,10 @@ export function FactLine({ it }: { it: ResearchItem }) {
       <Fact k="STAGE" v={st.label} title={st.hover} />
       <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : ''}`} color={MATERIAL_COLOR[ml]} title={materialityHover(it)} />
       <Fact k="TRANSMIT" v={tr.label} title={tr.hover} />
-      <Fact k="PERSIST" v={pe.label} title={pe.hover} />
+      <Fact k="POTENTIAL DURATION" v={pe.label} title={`${pe.hover} This is what an event of this type COULD do — not evidence that it will.`} />
+      {it.persistenceEvidence && it.persistenceEvidence.level !== 'NONE' && (
+        <Fact k="PERSISTENCE EVIDENCE" v={PERSIST_EV_WORD[it.persistenceEvidence.level]} color={it.persistenceEvidence.level === 'STRONG' ? C.green : it.persistenceEvidence.level === 'EVIDENCE' ? C.cyan : it.persistenceEvidence.level === 'NOT_PERSISTENT' ? C.faint : C.amber} title={it.persistenceEvidence.text} />
+      )}
       {it.pricing
         ? <Fact k="PRICED" v={it.pricing.label} color={it.pricing.state === 'REACTION_SMALL_VS_SIZE' ? C.green : it.pricing.state === 'REACTION_EXCEEDS_SIZE' || it.pricing.state === 'RAN_UP_BEFORE_FILING' ? C.amber : undefined} title={it.pricing.text} />
         : <Fact k="PRICED" v={gap.label} color={gap.color} title={txt(it.expectationGap?.text, 'Expectation gap unknown')} />}
