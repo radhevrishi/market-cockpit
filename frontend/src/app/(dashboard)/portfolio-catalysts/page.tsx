@@ -54,7 +54,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch } = useBook();
+  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
@@ -451,8 +451,21 @@ export default function PortfolioCatalystsPage() {
         </div>
       )}
 
+      {(() => {
+        // zzz774: a holding with no thesis type has no variable that can move
+        // its status — it can only ever read CONFIRMATION REQUIRED.
+        const untyped = list.filter((r) => !r.pattern);
+        return untyped.length > 0 ? (
+          <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
+            <b style={{ color: '#F59E0B' }}>{untyped.length} holding{untyped.length === 1 ? '' : 's'} have no thesis type.</b> The quarter&apos;s figures did not classify them automatically, so no thesis variable can move their status. Set why you hold each one with the <b>thesis</b> picker on its card (A operating inflection · B demand explosion · F profit jump · G silent quality); it is saved and applies from then on.
+            <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{untyped.map((r) => r.symbol).join(' · ')}</div>
+          </div>
+        ) : null;
+      })()}
       {list.map((r) => (
         <ThesisCard key={r.symbol}
+          thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
+          onThesisType={(t) => setThesisType(r.symbol, t)}
           symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
           radarScore={r.radarScore} assessment={r.assessment} capex={r.capex}
           origin={r.origin}

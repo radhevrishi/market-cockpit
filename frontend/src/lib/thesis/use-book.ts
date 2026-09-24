@@ -27,7 +27,7 @@ import {
   originCounts, type BookOrigin,
 } from './universe';
 import { readConvictionBeats } from '@/lib/conviction-beats';
-import { classifyGradedRow, classifyWithFiling, type AbfgResult } from '@/lib/earnings/pattern-abfg';
+import { classifyGradedRow, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
 import { rowChangeLines, deepRupeeGlyph } from './variables';
@@ -159,7 +159,14 @@ async function postStatus(row: BookRow): Promise<void> {
   } catch { /* history is best-effort; the status itself is recomputed deterministically */ }
 }
 
-function assess(row: BookRow): BookRow {
+/** zzz774: thesis types the owner set by hand, keyed by symbol. Loaded from
+ *  the server once per page; every assessment reads it, so an assignment
+ *  survives every later re-classification. */
+const THESIS_OVERRIDES: Record<string, AbfgPattern | null> = {};
+
+function assess(row0: BookRow): BookRow {
+  const ov = THESIS_OVERRIDES[String(row0.symbol || '').toUpperCase()];
+  const row: BookRow = ov ? { ...row0, pattern: manualPattern(ov) } : row0;
   // ── THE LONGITUDINAL JOIN HAPPENS HERE.                          (zzz758)
   //
   // Every period this holding has ever had read is in `row.ledger`, and until
@@ -991,5 +998,38 @@ export function useBook(opts?: { includeBench?: boolean }) {
     }
   }, [readAll]);
 
-  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch };
+  // ── THESIS TYPES SET BY THE OWNER.                               (zzz774)
+  const [thesisTypes, setThesisTypes] = useState<Record<string, AbfgPattern>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/portfolio/evidence?thesis_types=1', { cache: 'no-store' });
+        const j = await readJson(r);
+        const map: Record<string, AbfgPattern> = j?.thesis_types || {};
+        if (cancelled) return;
+        for (const [k, v] of Object.entries(map)) THESIS_OVERRIDES[k.toUpperCase()] = v;
+        setThesisTypes(map);
+        if (Object.keys(map).length) setRows((rs) => { const out: Record<string, BookRow> = {}; for (const [k, v] of Object.entries(rs)) out[k] = assess(v); return out; });
+      } catch { /* the automatic classification stands */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const setThesisType = useCallback(async (sym: string, p: AbfgPattern | null) => {
+    const key = sym.toUpperCase();
+    if (p) THESIS_OVERRIDES[key] = p; else delete THESIS_OVERRIDES[key];
+    setThesisTypes((m) => { const n = { ...m }; if (p) n[key] = p; else delete n[key]; return n; });
+    setRows((rs) => {
+      const cur = rs[sym];
+      if (!cur) return rs;
+      // Clearing an override returns to the automatic classification.
+      const auto = p ? cur : { ...cur, pattern: cur.graded ? classifyGradedRow(cur.graded) : null };
+      return { ...rs, [sym]: assess(auto) };
+    });
+    try {
+      await fetch('/api/v1/portfolio/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'thesis_type', ticker: key, pattern: p }) });
+    } catch { /* kept locally for this session */ }
+  }, []);
+
+  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType };
 }

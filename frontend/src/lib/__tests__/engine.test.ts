@@ -203,15 +203,16 @@ describe('structural variables', () => {
     // cash against a loss is the company funding itself through a bad quarter.
     const loss = { ...row('KMEW'), cfo_to_pat_ratio: -3.2, pat_curr_cr: -50 };
     const v = extractVariables(loss, null).find((x) => x.key === 'cash_conversion');
-    assert.equal(v!.verdict, 'flat');
-    assert.match(v!.evidence, /loss-making/);
+    // zzz774: the ratio is annual and the loss is this quarter's — never a deterioration.
+    assert.notEqual(v!.verdict, 'deteriorating');
+    assert.match(String(v!.after), /\(last FY\)$/);
   });
 
   test('a negative cash ratio with an unknown profit sign is STATED (shown, not judged), never a guess', () => {
     const unknown = { ...row('KMEW'), cfo_to_pat_ratio: -21.3, pat_curr_cr: null };
     const v = extractVariables(unknown, null).find((x) => x.key === 'cash_conversion');
     assert.equal(v!.verdict, 'stated');
-    assert.equal(v!.after, '-21.30×');
+    assert.equal(v!.after, '-21.30× (last FY)');
   });
 
   test('operating leverage is not computed off a trivial revenue base', () => {
@@ -982,7 +983,7 @@ describe('status: output is not mechanism', () => {
     const a = assess('HAPPYFORGE', { pattern: null, graded: { cfo_to_pat_ratio: 0.32 }, evidenceReviewed: false });
     assert.notEqual(a.status, 'WEAKENING');
     assert.notEqual(a.status, 'BROKEN');
-    assert.ok(a.financialWarning.some((w) => /cash conversion/i.test(w.label)), 'the warning is still shown');
+    assert.ok(a.financialWarning.some((w) => /cash conversion/i.test(w.label)) || (a.historicalContext || []).some((h: any) => h.key === 'cash_conversion'), 'the figure is still shown (as history)');
   });
 
   test('the same deterioration DOES weaken an F thesis — cash conversion is its forensic test', () => {
@@ -998,7 +999,7 @@ describe('status: output is not mechanism', () => {
     const a = assess('HAPPYFORGE', { pattern: null, graded: { cfo_to_pat_ratio: 0.32 }, evidenceReviewed: true, summary: { positives: [] } });
     assert.notEqual(a.status, 'WEAKENING');
     assert.notEqual(a.status, 'BROKEN');
-    assert.ok(a.financialWarning.some((w) => /cash conversion/i.test(w.label)));
+    assert.ok(a.financialWarning.some((w) => /cash conversion/i.test(w.label)) || (a.historicalContext || []).some((h: any) => h.key === 'cash_conversion'));
   });
 
   test('the three tallies partition the thesis-critical set', () => {
@@ -5832,5 +5833,21 @@ describe('zzz773 gainers — press context, exclusive counts, source failures', 
     assert.ok(/retry_failed: true/.test(src));
     assert.ok(!/A stock that is down has not priced/.test(src));
     assert.ok(!/label: '[^']*(not yet priced in|largely priced)/.test(src));
+  });
+});
+
+describe('zzz774 gainers — BSE list merged with screener', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { mergeAnnouncements } = require('../ai-gainers/catalyst-research') as typeof import('../ai-gainers/catalyst-research');
+  test('one row per filing; screener row wins a tie; BSE-only filings are added, newest first', () => {
+    const scr = [{ subject: 'Announcement under Regulation 30 (LODR)-Award_of_Order_Receipt_of_Order', summary: 'Order worth ₹22 crore', url: 's1', dateIso: '2026-09-17T10:00:00+05:30', ageDays: 7 }];
+    const bse = [
+      { subject: 'Announcement under Regulation 30 (LODR)-Award_of_Order_Receipt_of_Order', summary: 'longer BSE headline', url: 'b1', dateIso: '2026-09-17T10:00:00+05:30', ageDays: null },
+      { subject: 'Board Meeting Outcome', summary: 'Approved merger', url: 'b2', dateIso: '2026-09-06T18:00:00+05:30', ageDays: null },
+      { subject: 'Press Release', summary: null, url: 'b3', dateIso: '2026-09-22T09:00:00+05:30', ageDays: null },
+    ];
+    const m = mergeAnnouncements(scr as any, bse as any);
+    assert.deepEqual(m.map((x) => x.url), ['b3', 's1', 'b2']);
+    assert.equal(m[1].summary, 'Order worth ₹22 crore');
   });
 });

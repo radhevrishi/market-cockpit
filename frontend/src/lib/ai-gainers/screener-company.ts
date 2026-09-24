@@ -22,7 +22,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
-import { screenerSymbol } from '@/lib/earnings/screener-documents';
+import { screenerSymbol, parseBseCode } from '@/lib/earnings/screener-documents';
 import type { AnnouncementLite, Returns } from './catalyst-research';
 import { returnsFromSeries } from './catalyst-research';
 import { companyNameFromPage } from './news-context';
@@ -86,6 +86,8 @@ export interface CompanyResearch {
   pe: number | null;
   /** Full legal name from the page title — the press search uses it. */
   companyName?: string | null;
+  /** BSE scrip code from the page's BSE link — the sweep asks BSE for the full filing list with it. */
+  bseCode?: string | null;
   announcements: AnnouncementLite[];
   returns: Returns | null;
   lastClose: number | null;
@@ -102,6 +104,7 @@ export async function fetchCompanyResearch(ticker: string, now = new Date()): Pr
   out.sources.push('screener.in company page');
   out.companyId = parseCompanyId(page.html);
   out.companyName = companyNameFromPage(page.html);
+  out.bseCode = parseBseCode(page.html);
   const tr = parseTopRatios(page.html);
   out.marketCapCr = tr.marketCapCr; out.price = tr.price; out.pe = tr.pe;
   out.announcements = parseAnnouncements(page.html, now);

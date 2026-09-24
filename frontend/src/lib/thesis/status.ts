@@ -758,7 +758,14 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // a failed condition: it is unreadable history. (zzz770 / zzz773)
     const unreadable = !!v.unjudged || v.verdict === 'stated' || (v.key === 'cash_conversion' && isNegativeRatio(v.after));
     const active = persistent && v.verdict === 'deteriorating' && !unreadable;
-    const decision = active
+    // zzz774: Indian companies publish no Q1 (or Q3) cash-flow statement, so
+    // for a thesis whose PERSISTENT test this is, the latest annual figure is
+    // the standing test in BOTH directions until a newer one is filed: a
+    // failing one stays open (above), a passing one stays satisfied.
+    const standing = persistent && !active && !unreadable && (v.verdict === 'improving' || v.verdict === 'flat');
+    const decision = standing
+      ? `Standing test satisfied — ${lcl(label)} is a persistent condition of the ${thesis.name} thesis; the ${period} reading (${value}) passes, and no newer cash-flow statement has been filed (Indian companies publish none for Q1/Q3). It counts until a newer figure replaces it.`
+      : active
       ? `ACTIVE THESIS CONDITION — historical / unresolved: ${lcl(label)} is a persistent condition of the ${thesis.name} thesis, and the ${period} reading (${value}) fails it. It stays open until a ${curName} figure resolves it; it is not a ${curName} deterioration.`
       : persistent
         ? `Not an active condition — the ${period} reading (${value}) ${unreadable ? 'cannot be read either way' : 'does not fail the test'}; it is history and can neither confirm nor contradict ${curName}.`
@@ -768,7 +775,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // One historical item per variable on the row itself; a live row keeps
     // its own value, the history sits beside it.
     if (!historicalByKey.has(v.key)) historicalByKey.set(v.key, item);
-    if (active) variables.push(v);
+    if (active || standing) variables.push(v);
   }
   // A historical row never shadows a current one for the same variable.
   for (const k of [...historicalByKey.keys()]) {

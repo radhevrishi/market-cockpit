@@ -101,6 +101,13 @@ const EXIT: Record<AbfgPattern, string> = {
   G: 'The named catalyst passes its date with no effect, or cash conversion breaks (CFO below PAT for two quarters). Not boredom.',
 };
 
+/** zzz774: a thesis type the OWNER assigned (the classifier found no fit, or
+ *  the owner holds the name for a different reason). Same exit condition,
+ *  and the card says it was set by hand. */
+export function manualPattern(p: AbfgPattern): AbfgResult {
+  return { pattern: p, ratio: null, because: 'Thesis type set by you — the quarter\'s figures did not classify it automatically (or you hold it for this reason).', exitCondition: EXIT[p] };
+}
+
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
 

@@ -375,6 +375,10 @@ function priorNote(c: RowLike, depth: number): string | null {
 }
 
 export interface ThesisCardProps {
+  /** zzz774: the thesis type the owner set by hand (null = automatic), and
+   *  the setter. Absent → no picker is shown. */
+  thesisType?: 'A' | 'B' | 'F' | 'G' | null;
+  onThesisType?: (p: 'A' | 'B' | 'F' | 'G' | null) => void;
   symbol: string;
   market: 'IN' | 'US';
   tier?: string | null;
@@ -568,6 +572,20 @@ export function ThesisCard(p: ThesisCardProps) {
         )}
         {p.radarScore != null && (
           <span style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
+        )}
+        {p.onThesisType && (
+          <select
+            aria-label="Thesis type"
+            title={p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No thesis type fits automatically, so no variable can move this card. Set why you hold it.'}
+            value={p.thesisType || ''}
+            onChange={(e) => p.onThesisType!((e.target.value || null) as any)}
+            style={{ fontSize: 12, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'transparent', color: p.pattern ? C.dim : '#F59E0B', border: `1px solid ${p.pattern ? C.border : '#F59E0B'}`, cursor: 'pointer' }}>
+            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.pattern})` : 'thesis: not set — pick'}</option>
+            <option value="A">A · Operating inflection</option>
+            <option value="B">B · Demand explosion</option>
+            <option value="F">F · Profit jump</option>
+            <option value="G">G · Silent quality</option>
+          </select>
         )}
         {p.dataSource === 'screener' && (
           <span title="These figures are screener.in's, not read from the filing by this portal's own engine. Wider coverage, one step further from the document."

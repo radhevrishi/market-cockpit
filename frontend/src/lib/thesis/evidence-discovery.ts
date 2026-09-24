@@ -571,3 +571,44 @@ export function resolveDiscovery(
 /** Kept so the old single-document path keeps compiling while callers move
  *  over. Prefer `discoverEvidence` + `selectForReading`. */
 export { pickDocument };
+
+/** zzz773 — every BSE announcement a company filed in the last `days`, as the
+ *  AI Daily Gainers sweep reads them: subject, BSE's longer headline as the
+ *  summary, the PDF, and the IST timestamp. screener.in shows only the five
+ *  newest filings (in AGM season, eight days of paperwork); BSE has them all,
+ *  and it answers when screener.in does not. */
+export async function fetchBseAnnouncementsLite(ticker: string, scripHint: string | null | undefined, days = 21): Promise<{ items: Array<{ subject: string; summary: string | null; url: string; dateIso: string | null }>; code: string | null; error: string | null }> {
+  const hint = scripHint || (/^\d{6}$/.test(bareSymbol(ticker)) ? bareSymbol(ticker) : null);
+  const sc = await bseScripCode(ticker, hint);
+  if (!sc.code) return { items: [], code: null, error: sc.error };
+  const ymd = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const to = new Date(Date.now() + 86_400_000), from = new Date(Date.now() - days * 86_400_000);
+  const rows: BseAnnouncement[] = [];
+  for (let page = 1; page <= 2; page++) {
+    const got = await bseGet(`https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w?pageno=${page}&strCat=-1&strPrevDate=${ymd(from)}&strScrip=${sc.code}&strSearch=P&strToDate=${ymd(to)}&strType=C&subcategory=-1`, 12_000);
+    if (!got.body) { if (page === 1) return { items: [], code: sc.code, error: `BSE scrip ${sc.code}: ${got.outcome}` }; break; }
+    let j: any = null;
+    try { j = JSON.parse(got.body); } catch { j = null; }
+    const table: BseAnnouncement[] = Array.isArray(j?.Table) ? j.Table : [];
+    if (!table.length) break;
+    rows.push(...table);
+    const total = Number(j?.Table1?.[0]?.ROWCNT || 0);
+    if (!total || rows.length >= total) break;
+  }
+  const items = rows.map((r) => {
+    const subject = String(r?.NEWSSUB || '').trim() || String(r?.HEADLINE || '').trim();
+    const head = String(r?.HEADLINE || '').replace(/\s+/g, ' ').trim();
+    const file = String(r?.ATTACHMENTNAME || '').trim();
+    const live = String(r?.PDFFLAG ?? '0') === '0';
+    const raw = String(r?.NEWS_DT || r?.DT_TM || '').trim();
+    // BSE prints IST without a zone.
+    const dateIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) ? (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw.replace(/\.\d+$/, '')}+05:30`) : null;
+    return {
+      subject,
+      summary: head && head.toLowerCase() !== subject.toLowerCase() ? head.slice(0, 600) : null,
+      url: file ? `https://www.bseindia.com/xml-data/corpfiling/${live ? 'AttachLive' : 'AttachHis'}/${file}` : `https://www.bseindia.com/stock-share-price/x/x/${sc.code}/corp-announcements/`,
+      dateIso,
+    };
+  }).filter((x) => x.subject);
+  return { items, code: sc.code, error: null };
+}

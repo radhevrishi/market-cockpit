@@ -1065,7 +1065,13 @@ export function extractVariables(
     // full year's profit — an annual figure sitting on a card about this
     // quarter, and its sign is being checked against the latest QUARTER's
     // profit. Both are said on the row so a −21× is read for what it is.
-    const annual = ['screener', 'screener-live'].includes(String(graded?.source || ''));
+    // zzz774: EVERY cash-conversion figure on file is annual. The graded rows
+    // carry ocf_to_pat_ratio = ocf_annual_cr / pat_annual_cr, and Indian
+    // companies file no Q1 cash-flow statement at all. Treating the graded
+    // ratio as this quarter's let last FY's cash confirm (AETHER, GAEL) or
+    // weaken (SOTL) a Q1 FY27 card. An explicitly quarterly/half-year figure
+    // would carry its own period; none does today.
+    const annual = !graded?.cfo_period_is_current;
     const basis = annual ? ' (last full year, screener figure — not this quarter\'s)' : '';
     // ── A NEGATIVE RATIO WHOSE DENOMINATOR IS ANOTHER PERIOD.        (zzz770)
     // LLOYDSENGG −3.72×: an annual ratio whose sign was "read" against the

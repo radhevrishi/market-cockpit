@@ -747,6 +747,23 @@ export function buildFinding(inp: SweepInput): Finding {
   };
 }
 
+/** zzz773: screener.in's five newest filings plus BSE's complete list for the
+ *  window, one row per filing. The screener row wins a tie (it carries
+ *  screener's summary); a BSE row the screener list lacks is added. */
+export function mergeAnnouncements(primary: AnnouncementLite[], extra: AnnouncementLite[]): AnnouncementLite[] {
+  const norm = (a: AnnouncementLite) => `${String(a.dateIso || '').slice(0, 10)}|${String(a.subject || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60)}`;
+  const seen = new Map<string, AnnouncementLite>();
+  const out: AnnouncementLite[] = [];
+  for (const a of primary) { const k = norm(a); if (!seen.has(k)) { seen.set(k, a); out.push(a); } }
+  for (const b of extra) {
+    const k = norm(b);
+    const hit = seen.get(k);
+    if (hit) { if (!hit.summary && b.summary) hit.summary = b.summary; continue; }
+    seen.set(k, b); out.push(b);
+  }
+  return out.sort((x, y) => String(y.dateIso || '').localeCompare(String(x.dateIso || '')));
+}
+
 /** A finding keeps its research but takes the latest move: the band flag and
  *  its note are recomputed from the new close. (zzz766) */
 export function refreshFindingMove(f: Finding, movePct: number | null): Finding {

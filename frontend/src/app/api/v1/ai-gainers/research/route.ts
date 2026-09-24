@@ -29,7 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch } from '@/lib/ai-gainers/screener-company';
 import { fetchEdgarResearch, fetchEdgarText } from '@/lib/ai-gainers/edgar-research';
-import { buildFinding, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
+import { mergeAnnouncements, buildFinding, coverage, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
@@ -38,6 +38,8 @@ import { readBookState } from '@/lib/book-store';
 import { etToday, capTierUs } from '@/lib/ai-gainers/us-gainers';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
+import { yahooChart } from '@/lib/us-prices';
+import { fetchBseAnnouncementsLite } from '@/lib/thesis/evidence-discovery';
 import { buildNewsContext, type NewsContext } from '@/lib/ai-gainers/news-context';
 
 /** Press coverage for one gainer, cached for the day. Secondary evidence
@@ -367,21 +369,26 @@ async function research(req: NextRequest, body: any) {
     stampRules(st);
     try { await kvSet(KEY(market, date), st, STATE_TTL_S); unsaved = 0; lastSave = Date.now(); } catch { /* the next call re-does these names */ }
   };
-  for (const u of todo) {
-    if (Date.now() - t0 > budget) break;
-    if (market === 'US' && usLeft() < 8_000) break;
+  // zzz774: names are researched a few at a time (India) — one slow
+  // screener.in answer no longer holds up the rest of the board.
+  const one = async (u: typeof todo[number]): Promise<void> => {
     try {
       let announcements: AnnouncementLite[] = [];
       let marketCap = u.marketCap, turnover: number | null = null, returns = null as any, sources: string[] = [], sourceFailed = false, fullName: string | null = null;
       if (market === 'IN') {
         const cr = await fetchCompanyResearch(u.ticker, now);
-        announcements = cr.announcements;
+        // zzz773: BSE's full filing list for the window, beside screener's
+        // five newest — and the filing source when screener.in is down.
+        const bse = await withDeadline(fetchBseAnnouncementsLite(u.ticker, cr.bseCode, WINDOW_DAYS + 1), 20_000, { items: [], code: null, error: 'BSE timed out' });
+        announcements = mergeAnnouncements(cr.announcements, bse.items.map((b) => ({ subject: b.subject, summary: b.summary, url: b.url, dateIso: b.dateIso, ageDays: null })) as AnnouncementLite[]);
+        if (bse.items.length || (bse.code && !bse.error)) cr.sources.push('BSE corporate announcements');
+        else if (bse.error) cr.errors.push(bse.error);
         marketCap = cr.marketCapCr ?? u.marketCap;
         if (isLargeCap(marketCap)) {
           // The screen's cap was missing or stale; the company page says large.
           st.universe = st.universe.filter((x) => x.ticker !== u.ticker);
           exclude(u.ticker);
-          continue;
+          return;
         }
         returns = cr.returns;
         fullName = cr.companyName ?? null;
@@ -396,11 +403,21 @@ async function research(req: NextRequest, body: any) {
         sources = er.sources;
         sourceFailed = !er.sources.length;
         returns = u.perf ? { m1: u.perf.m1 ?? null, m3: u.perf.m3 ?? null, m6: u.perf.m6 ?? null, y1: u.perf.y1 ?? null, history: 999 } : null;
+        // zzz773: dated closes, so the reaction to a DATED filing can be
+        // measured (the export carries trailing returns only). Best-effort:
+        // no series leaves the pricing assessment at INSUFFICIENT EVIDENCE.
+        if (usLeft() > 20_000) {
+          const bars = await withDeadline(yahooChart(u.ticker, '6mo'), 8_000, null);
+          if (bars && bars.close.length > 25) {
+            const tail = bars.dates.map((d, k) => [d, bars.close[k]] as [string, number]).slice(-90);
+            returns = { ...(returns || { m1: null, m3: null, m6: null, y1: null, history: bars.close.length }), tail };
+          }
+        }
         turnover = u.volume != null && u.price != null ? (u.volume * u.price) / 1e6 : null;  // $ M
         if (er.errors.length) st.errors.push(`${u.ticker}: ${er.errors.join('; ')}`);
       }
 
-      const news = await newsFor(market, u.ticker, fullName || u.company, date, now);
+      const news = market === 'US' && usLeft() < 15_000 ? null : await newsFor(market, u.ticker, fullName || u.company, date, now);
 
       // Model-read the best catalyst candidate when the budget allows: a
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
@@ -436,7 +453,16 @@ async function research(req: NextRequest, body: any) {
     st.model_reads += modelReads; modelReads = 0;
     unsaved++;
     if (unsaved >= SAVE_EVERY_NAMES || Date.now() - lastSave > SAVE_EVERY_MS) await save();
-  }
+  };
+  const queue = [...todo];
+  const workers = Array.from({ length: market === 'IN' ? 3 : 1 }, async () => {
+    while (queue.length) {
+      if (Date.now() - t0 > budget) break;
+      if (market === 'US' && usLeft() < 8_000) break;
+      await one(queue.shift()!);
+    }
+  });
+  await Promise.all(workers);
   // Always persist at the end — also when only the universe or moves changed.
   await save();
 

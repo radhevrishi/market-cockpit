@@ -15,6 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { kvGet, kvSet } from '@/lib/kv';
 import { loadLedgers, persistStatus, loadBatch, saveBatch, type BatchHeader } from '@/lib/thesis/evidence-store';
 import { freshnessOf, batchProgress, type CompanyLedger, type CompanyEvidenceState } from '@/lib/thesis/evidence-ledger';
 
@@ -23,8 +24,16 @@ export const maxDuration = 60;
 
 const TICKER_RE = /^[A-Z0-9&.\-]{1,24}$/;
 
+// zzz774: the thesis type the owner assigned per holding (A/B/F/G).
+const THESIS_TYPES_KEY = 'pc-thesis-types:v1';
+const PATTERNS = new Set(['A', 'B', 'F', 'G']);
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+  if (searchParams.get('thesis_types')) {
+    const map = (await kvGet<Record<string, string>>(THESIS_TYPES_KEY).catch(() => null)) || {};
+    return NextResponse.json({ ok: true, thesis_types: map });
+  }
   const raw = (searchParams.get('tickers') || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => TICKER_RE.test(s));
   const tickers = Array.from(new Set(raw)).slice(0, 400);
   const [ledgers, batch, priorBatch] = await Promise.all([tickers.length ? loadLedgers(tickers) : Promise.resolve({} as Record<string, CompanyLedger>), loadBatch(), loadBatch('prior')]);
@@ -66,6 +75,16 @@ export async function POST(req: NextRequest) {
   let body: any = null;
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, error: 'invalid JSON' }, { status: 400 }); }
   const action = String(body?.action || '');
+
+  if (action === 'thesis_type') {
+    const ticker = String(body?.ticker || '').toUpperCase();
+    const pattern = body?.pattern == null ? null : String(body.pattern).toUpperCase();
+    if (!TICKER_RE.test(ticker) || (pattern !== null && !PATTERNS.has(pattern))) return NextResponse.json({ ok: false, error: 'ticker and pattern (A/B/F/G or null) are required' }, { status: 400 });
+    const map = (await kvGet<Record<string, string>>(THESIS_TYPES_KEY).catch(() => null)) || {};
+    if (pattern) map[ticker] = pattern; else delete map[ticker];
+    await kvSet(THESIS_TYPES_KEY, map);
+    return NextResponse.json({ ok: true, thesis_types: map });
+  }
 
   if (action === 'status') {
     const ticker = String(body?.ticker || '').toUpperCase();

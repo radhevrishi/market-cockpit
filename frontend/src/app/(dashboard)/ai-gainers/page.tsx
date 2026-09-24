@@ -816,7 +816,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
         )}
         <div style={{ fontSize: 12, color: C.faint }}>
           Every name is swept against its exchange filings of the last 21 days and a year of price history; a name with nothing is an explicit <i>none</i>, never a silence.
-          {market === 'IN' ? ' Source: the five most recent announcements per company on screener.in (in AGM season that can be eight days of paperwork) — the finding says how many filings were in the window.' : ' Source: SEC EDGAR submissions, classified by form and 8-K item. Offerings (424B, S-1/S-3, Item 3.02, Form D) are flagged as dilution, never as a catalyst; Item 2.02/10-Q are results; Item 1.01/7.01/8.01 are read before they are called anything. Forms 3/4/144 are excluded. Universe: US-listed small/mid caps ($50M–$10B); the move is the 1-week export column.'}
+          {market === 'IN' ? ' Sources: BSE\'s complete announcement list for the window, plus screener.in\'s five newest with their summaries; dated press coverage is shown beside each finding as secondary context and never scores. A name is SOURCE UNAVAILABLE only when every filing source failed.' : ' Source: SEC EDGAR submissions, classified by form and 8-K item. Offerings (424B, S-1/S-3, Item 3.02, Form D) are flagged as dilution, never as a catalyst; Item 2.02/10-Q are results; Item 1.01/7.01/8.01 are read before they are called anything. Forms 3/4/144 are excluded. Universe: US-listed small/mid caps ($50M–$10B); the move is the 1-week export column.'}
         </div>
       </div>
 

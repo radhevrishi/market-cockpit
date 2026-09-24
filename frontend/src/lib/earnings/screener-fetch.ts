@@ -37,6 +37,8 @@
  * Example (Cloudflare Worker route):
  *   SCREENER_PROXY_URL=https://<worker>.workers.dev/page?url=
  */
+import { kvGet } from '@/lib/kv';
+
 const PROXY = (process.env.SCREENER_PROXY_URL || '').trim();
 
 /**
@@ -58,7 +60,7 @@ const FALLBACK_PROXY = 'https://mc-proxy.radhev-232.workers.dev/page?url=';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
   + 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
-export type ProxyHop = 'proxy' | 'mc-proxy' | 'direct';
+export type ProxyHop = 'proxy' | 'mc-proxy' | 'direct' | 'kv';
 
 export interface HtmlFetch {
   html: string | null;
@@ -94,7 +96,10 @@ Promise<{ html: string | null; outcome: string; ageMs?: number | null; cache?: s
     const html = await r.text();
     // A proxy that answers 200 with an error page is worse than one that
     // fails: it looks like a successful read of an empty screen.
-    if (html.length < 500) return { html: null, outcome: `answered ${html.length} bytes — too short to be a page` };
+    // A JSON API answer (the price chart of a recent listing) can be short and
+    // still whole; only an HTML page under 500 bytes is an error page.
+    const isJsonApi = /\/api\//.test(url) && (() => { try { JSON.parse(html); return true; } catch { return false; } })();
+    if (html.length < 500 && !isJsonApi) return { html: null, outcome: `answered ${html.length} bytes — too short to be a page` };
     // zzz736 — the proxy caches, so a 200 is not proof of freshness. Its age
     // travels with the answer, because a gainers screen whose entire content
     // is today's move must never be presented as live when it is an hour old.
@@ -123,8 +128,12 @@ const TRANSIENT = /^HTTP (408|425|429|500|502|503|504|520|521|522|524)\b|too sho
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function tryWithRetry(hop: ProxyHop, url: string, timeoutMs: number, attempts: HtmlFetch['attempts']) {
   const waits = [800, 2000];
+  const t0 = Date.now();
   let r = await tryFetch(hop, url, timeoutMs);
-  for (let k = 0; !r.html && k < waits.length && TRANSIENT.test(r.outcome); k++) {
+  // An upstream timeout already cost ~10s: one more try, not two. The whole
+  // retry sequence stops at 15s so one name cannot eat the caller's budget.
+  const maxTries = (o: string) => (/upstream timeout|HTTP 504/.test(o) ? 1 : waits.length);
+  for (let k = 0; !r.html && k < maxTries(r.outcome) && TRANSIENT.test(r.outcome) && Date.now() - t0 < 15_000; k++) {
     attempts.push({ hop, outcome: `${r.outcome} — retrying in ${(waits[k] / 1000).toFixed(1)}s` });
     await sleep(waits[k] + Math.floor(Math.random() * 400));
     r = await tryFetch(hop, url, timeoutMs);
@@ -150,6 +159,17 @@ export async function fetchScreenerHtml(url: string, timeoutMs = 20_000): Promis
   }
 
   const attempts: HtmlFetch['attempts'] = [];
+
+  // zzz773: a page the daily GitHub job fetched directly from screener.in
+  // (a network screener answers) and filed in KV. Used while under 10h old.
+  try {
+    const hit = await kvGet<{ html: string; at: string }>(`scr-page:v1:${url}`);
+    const age = hit?.at ? Date.now() - Date.parse(hit.at) : NaN;
+    if (hit?.html && Number.isFinite(age) && age < 10 * 3600_000) {
+      attempts.push({ hop: 'kv', outcome: `ok, ${hit.html.length} bytes (pre-fetched ${Math.round(age / 60000)}m ago)` });
+      return { html: hit.html, via: 'kv', attempts, error: null, ageMs: age, cache: 'prefetched' };
+    }
+  } catch { /* the cache is optional */ }
 
   if (PROXY) {
     const r = await tryWithRetry('proxy', `${PROXY}${encodeURIComponent(url)}`, timeoutMs, attempts);

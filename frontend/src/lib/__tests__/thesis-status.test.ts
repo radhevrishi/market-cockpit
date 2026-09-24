@@ -1256,11 +1256,15 @@ describe('zzz773 · owner audit (Q1 FY27)', () => {
     const h = a.historicalContext!.find((x) => x.key === 'cash_conversion')!;
     assert.equal(h.active, true);
     assert.match(h.decision, /^ACTIVE THESIS CONDITION — historical \/ unresolved/);
-    // A PASSING FY26 reading is history too: it cannot confirm Q1 FY27.
+    // zzz774: no Q1/Q3 cash-flow statement exists in India, so for F the
+    // latest annual figure is the STANDING test both ways: a passing FY26
+    // reading stays satisfied (labelled as such) until a newer one is filed.
     const ok = R({ pattern: 'F', variables: [...OUT, W('cash_conversion', 'improving', { after: '1.40× (last FY)', source: 'grader' })] });
     assert.equal(ok.historicalContext![0].active, false);
-    assert.match(ok.historicalContext![0].decision, /^Not an active condition — the FY26 reading \(1\.40×\) does not fail the test/);
-    assert.ok(!ok.structural.confirmedLabels.some((l) => /cash/i.test(l)), 'history never confirms the current mechanism');
+    assert.match(ok.historicalContext![0].decision, /^Standing test satisfied — .*FY26 reading \(1\.40×\) passes/);
+    // For a thesis where cash is NOT persistent, history still never confirms.
+    const a2 = R({ pattern: 'B', variables: [...OUT, W('cash_conversion', 'improving', { after: '1.40× (last FY)', source: 'grader' })] });
+    assert.ok(!a2.structural.confirmedLabels.some((l) => /cash/i.test(l)), 'history never confirms a non-persistent mechanism');
   });
 
   // ── 2. ONLY MAPPED VARIABLES MOVE THE STATUS ──────────────────────────

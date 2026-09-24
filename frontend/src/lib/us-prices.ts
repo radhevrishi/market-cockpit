@@ -57,7 +57,7 @@ const BARS_FAIL_TTL_MS = 60_000;
  *  production price outage is diagnosable without a redeploy. */
 export const yahooLastError = new Map<string, string>();
 
-async function yahooChart(symbol: string, range = '1y'): Promise<Bars | null> {
+export async function yahooChart(symbol: string, range = '1y'): Promise<Bars | null> {
   const key = `${symbol}|${range}`;
   const hit = _bars.get(key);
   if (hit && Date.now() - hit.at < (hit.data ? BARS_TTL_MS : BARS_FAIL_TTL_MS)) return hit.data;
