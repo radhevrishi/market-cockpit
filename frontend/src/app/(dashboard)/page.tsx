@@ -5963,8 +5963,18 @@ function FavouritesGrid() {
       if (Array.isArray(saved) && saved.length) {
         const known = new Set(FAVS.map((f) => f.href));
         const kept = saved.filter((h: string) => known.has(h));
-        const missing = FAVS.map((f) => f.href).filter((h) => !kept.includes(h));
-        setOrder([...kept, ...missing]);
+        // zzz791 — a new favourite is placed right after its neighbour in the
+        // default list (e.g. US Portfolio Book beside My Book), not at the end
+        // of a saved order where it is easy to miss.
+        const next = [...kept];
+        const defaults = FAVS.map((f) => f.href);
+        defaults.forEach((h, i) => {
+          if (next.includes(h)) return;
+          const prev = defaults.slice(0, i).reverse().find((d) => next.includes(d));
+          const at = prev ? next.indexOf(prev) + 1 : 0;
+          next.splice(at, 0, h);
+        });
+        setOrder(next);
       }
     } catch { /* default order */ }
   }, []);
