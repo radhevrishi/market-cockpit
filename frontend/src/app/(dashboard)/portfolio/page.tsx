@@ -1233,8 +1233,8 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
         const riskAdjRet = stdPnl > 0 ? wtdRet / stdPnl : null;
         // Dollar attribution — who moved the needle?
         const attrSorted = [...priced2].sort((a, b) => (b.pnl || 0) - (a.pnl || 0));
-        const topContribs = attrSorted.slice(0, 5);
-        const worstDrags = [...attrSorted].reverse().slice(0, 5).filter(r => (r.pnl || 0) < 0);
+        const topContribs = attrSorted.filter(r => (r.pnl || 0) > 0).slice(0, 10);
+        const worstDrags = [...attrSorted].reverse().filter(r => (r.pnl || 0) < 0).slice(0, 10);
         const topSumP = topContribs.reduce((a, r) => a + (r.pnl || 0), 0);
         const dragSumP = worstDrags.reduce((a, r) => a + (r.pnl || 0), 0);
         // Winner dollars vs loser dollars
@@ -1355,7 +1355,7 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
                   );
                 }) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>Not enough data yet</div>}
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--mc-bg-2)', fontSize: 11, color: 'var(--mc-text-4)' }}>
-                  Top 5 drove {totalPnl !== 0 ? Math.round((topSumP / totalPnl) * 100) : 0}% of total P&amp;L
+                  Top {topContribs.length} drove {totalPnl !== 0 ? Math.round((topSumP / totalPnl) * 100) : 0}% of total P&amp;L
                 </div>
               </div>
               {/* Loser drag */}
@@ -1375,7 +1375,7 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
                   );
                 }) : <div style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>No losers — clean sheet</div>}
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--mc-bg-2)', fontSize: 11, color: 'var(--mc-text-4)' }}>
-                  Losers hold {loserValPct.toFixed(0)}% of current value · dragging {fmtRs(Math.abs(dragSumP))}
+                  Losers hold {loserValPct.toFixed(0)}% of current value · the {worstDrags.length} shown are dragging {fmtRs(Math.abs(dragSumP))}
                 </div>
               </div>
             </div>

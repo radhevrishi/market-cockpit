@@ -4,7 +4,7 @@
 
 import React, { useEffect } from 'react';
 import type { ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill } from './Badges';
+import { Btn, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, materialWord } from './Badges';
 import { EarningsStrip, ScoreDetails, WhatChanged } from './ResearchCard';
 import { C, GAP_META, MATERIAL_COLOR, PERSIST_META, SOURCE_META, STAGE_META, TRANSMIT_META, money, pct, txt } from './tokens';
 
@@ -76,7 +76,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
 
         <H>EVENT</H>
         <P><b>{it.eventLabel || it.eventType}</b> · stage <b title={(STAGE_META[it.stage] || STAGE_META.UNKNOWN).hover}>{(STAGE_META[it.stage] || STAGE_META.UNKNOWN).label}</b> · filed {it.filedDate ? it.filedDate.slice(0, 10) : 'date not disclosed'}</P>
-        <P dim>Source: {src.label} — {src.hover} {it.sourceUrl && <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.cyan }}>Open source ↗</a>}</P>
+        <P dim>Source: {it.market === 'US' && it.usCard ? `${it.usCard.source.label}${it.usCard.source.doc ? ` — figures from ${it.usCard.source.doc}` : ''}.` : `${src.label} — ${src.hover}`} {it.sourceUrl && <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.cyan }}>Open source ↗</a>}</P>
 
         <H>WHAT HAPPENED</H>
         <P>{txt(it.headline, 'Not available')}</P>
@@ -97,7 +97,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
         <TransmissionChain chain={it.transmissionChain || []} />
 
         <H>MATERIALITY</H>
-        <P><b style={{ color: MATERIAL_COLOR[ml] }}>{ml}</b> — {txt(m?.explanation)}</P>
+        <P><b style={{ color: MATERIAL_COLOR[ml] }}>{materialWord(it)}</b> — {txt(m?.explanation)}</P>
         {(m?.ratios || []).length > 0 && (
           <div style={{ marginTop: 4, fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
             {m.ratios.map((x, i) => <div key={i}>{x.text}</div>)}

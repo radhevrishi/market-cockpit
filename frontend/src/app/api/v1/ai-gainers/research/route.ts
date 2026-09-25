@@ -45,6 +45,9 @@ import { buildNewsContext, newsQueryFor, type NewsContext } from '@/lib/ai-gaine
 import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFinding, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { upsertDetections, loadCatalystRecords, rememberGainerCatalysts, catalystRecordsFor } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
+import { fetchUsCard } from '@/lib/ai-gainers/us-card-fetch';
+import { buildUsCard, US_CARD_VERSION, type UsCard } from '@/lib/ai-gainers/us-card';
+import { boardHash, droppedFromBoard } from '@/lib/ai-gainers/us-board-sync';
 
 // ── zzz780: DAILY GAINER → EVENT → EVIDENCE → PERSISTENCE TEST ───────────
 // The move is only the discovery trigger: the test reads the filing behind
@@ -168,6 +171,18 @@ interface ResearchState {
   updated_at: string;
   model_reads: number;
   errors: string[];
+  /** zzz798 (US): per-name timed-out attempts today — a name that times out
+   *  is retried once on the next call, then recorded as failed with the reason. */
+  attempts?: Record<string, number>;
+  /** zzz799 (US): the board this state was registered from — a hash of its
+   *  tickers, the scan time, and the board rows themselves (so the summary
+   *  counts the same board the page shows). Research is tied to a scan, not
+   *  just a date. */
+  board_hash?: string | null;
+  scan_at?: string | null;
+  board_rows?: Array<{ ticker: string; company: string | null; move_pct: number | null; market_cap: number | null; perf: any }>;
+  /** zzz799 (US): names researched on an earlier scan today that are no longer on the board. */
+  dropped?: Array<{ ticker: string; company: string | null }>;
 }
 
 interface UniverseEntry { ticker: string; company: string | null; movePct: number | null; volume: number | null; price: number | null; marketCap: number | null; perf: any; filedResult?: boolean }
@@ -215,6 +230,10 @@ const usOutOfScope = (u: { marketCap: number | null }) => {
 /** Hard ceiling for one POST — the function limit is 60 s and the proxy
  *  answers a non-JSON "upstream error" past it. (zzz766) */
 const US_HARD_DEADLINE_MS = 52_000;
+/** zzz798: one US name's clock (listing + SEC card + press + chart + read), and
+ *  two names at a time — every SEC request is still spaced ≤10/s process-wide. */
+const US_PER_NAME_MS = 30_000;
+const US_WORKERS = 2;
 
 function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   if (ms <= 0) return Promise.resolve(fallback);
@@ -300,6 +319,29 @@ async function cachedRead(market: 'IN' | 'US', ticker: string, a: AnnouncementLi
   );
 }
 
+/** zzz798: findings to re-score for free — older rules, and (US) findings
+ *  built before the SEC-document card existed (or under an older card). */
+function staleTickers(st: ResearchState): string[] {
+  const tickers = st.universe.map((u) => u.ticker);
+  const base = staleRuleTickers(st.findings, tickers);
+  if (st.market !== 'US') return base;
+  const more = tickers.filter((t) => { const f = st.findings[t]; return !!f && f.status !== 'unresearched' && f.status !== 'source_failed' && f.usCardV !== US_CARD_VERSION; });
+  return Array.from(new Set([...base, ...more]));
+}
+
+/** zzz798 (US): how the sweep ended — researched, failed and why. */
+function usProgress(st: ResearchState) {
+  const tickers = st.universe.map((u) => u.ticker);
+  const cov = coverage(st.findings, tickers);
+  const lines = presentErrorLines(st.errors, st.universe, 60);
+  const why = new Map(lines.filter((l) => l.ticker).map((l) => [l.ticker!, l.short.replace(/^[A-Z0-9.&-]+:\s*/, '')] as const));
+  const failed = tickers.filter((t) => st.findings[t]?.status === 'source_failed').map((t) => ({ ticker: t, reason: why.get(t) || 'source could not be reached' }));
+  const cards = tickers.filter((t) => st.findings[t]?.usCard).length;
+  const quantified = tickers.filter((t) => st.findings[t]?.usCard?.quantified).length;
+  const retrying = Object.entries(st.attempts || {}).filter(([t, n]) => n > 0 && !st.findings[t]).map(([t]) => t);
+  return { researched: cov.researched, total: cov.total, failed, retrying, cards, quantified };
+}
+
 /** The response every handler answers with: findings decoded, errors as
  *  one short line per ticker, coverage, and the rules-version state. */
 function statePayload(st: ResearchState, excluded: string[]) {
@@ -311,7 +353,8 @@ function statePayload(st: ResearchState, excluded: string[]) {
     excluded_large_caps: Array.from(new Set([...excluded, ...(st.excluded || [])])), large_cap_min_cr: st.market === 'IN' ? LARGE_CAP_MIN_CR : null,
     updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[st.market],
     errors: errs.map((e) => e.short), error_details: errs.map((e) => e.full),
-    rules_version: st.rules_version ?? null, rules_version_current: RULES_VERSION, stale_rules: staleRuleTickers(st.findings, tickers).length,
+    rules_version: st.rules_version ?? null, rules_version_current: RULES_VERSION, stale_rules: staleTickers(st).length,
+    ...(st.market === 'US' ? { progress: usProgress(st), board_hash: st.board_hash ?? null, scan_at: st.scan_at ?? null, dropped: st.dropped || [] } : {}),
   };
 }
 
@@ -319,6 +362,11 @@ function statePayload(st: ResearchState, excluded: string[]) {
 function stampRules(st: ResearchState) {
   const stale = staleRuleTickers(st.findings, st.universe.map((u) => u.ticker)).length;
   if (!stale) st.rules_version = RULES_VERSION;
+}
+
+/** zzz798: press items for a press-only US card (news context first). */
+function pressItemsOf(news: NewsContext | null | undefined): Array<{ title: string; url: string; date: string | null; source: string | null }> {
+  return (news?.items || []).slice(0, 12).map((x: any) => ({ title: String(x.title || ''), url: String(x.url || ''), date: x.date ? String(x.date) : null, source: x.source ? String(x.source) : null }));
 }
 
 // Both handlers answer JSON even when they throw. (zzz766)
@@ -332,8 +380,14 @@ export async function GET(req: NextRequest) {
     if (!raw) return NextResponse.json({ ok: true, market, date, session, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, universe: [], errors: [], error_details: [], rules_version: null, rules_version_current: RULES_VERSION, stale_rules: 0 });
     const { st, excluded } = smallMidOnly(raw);
     const payload = statePayload(st, excluded);
-    const view = await viewFor(st, market, date, session);
-    return NextResponse.json({ ok: true, market, date, session, ...payload, view });
+    // zzz799 (US): the page sends the hash of the board it shows. A state
+    // registered from another scan answers without a view (the page builds
+    // it from the board on screen) and says so — never an older board's
+    // summary under a newer board.
+    const wantBoard = market === 'US' ? searchParams.get('board') : null;
+    const boardMatch = wantBoard ? (st.board_hash ?? null) === wantBoard : null;
+    const view = boardMatch === false ? null : await viewFor(st, market, date, session);
+    return NextResponse.json({ ok: true, market, date, session, ...payload, ...(market === 'US' ? { board_match: boardMatch } : {}), view });
   } catch (e) { return jsonError(e); }
 }
 
@@ -380,7 +434,9 @@ async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, ses
       moveWindow: market === 'US' ? (st.moveWindow || '1D') : '1D',
       market,
       findings: presentFindings(st.findings),
-      board: st.universe.map((u) => ({ ticker: u.ticker, company: u.company, move_pct: u.movePct, market_cap: u.marketCap, perf: u.perf })),
+      // zzz799 (US): the board the page sent (same names, same count as on screen); India unchanged.
+      board: market === 'US' && st.board_rows?.length ? st.board_rows.map((b) => { const u = st.universe.find((x) => x.ticker === b.ticker); return { ...b, move_pct: u?.movePct ?? b.move_pct }; })
+        : st.universe.map((u) => ({ ticker: u.ticker, company: u.company, move_pct: u.movePct, market_cap: u.marketCap, perf: u.perf })),
       filedResults: filed.rows,
       holdings: book.held,
       watchlist: book.watch,
@@ -434,6 +490,12 @@ async function research(req: NextRequest, body: any) {
   // that remain keep their findings and take the fresh move below. (zzz766)
   if (market === 'US' && rows.length) {
     const sent = new Set(rows.map((r) => String(r?.ticker || '').toUpperCase()));
+    // zzz799: remember which scan this state now describes, and which names
+    // were researched on an earlier scan today but are no longer on the board.
+    st.dropped = droppedFromBoard(st.universe, sent, st.dropped || []);
+    st.board_hash = boardHash(sent);
+    st.scan_at = typeof body?.scan_at === 'string' ? body.scan_at.slice(0, 40) : nowIso;
+    st.board_rows = rows.map((r) => ({ ticker: String(r?.ticker || '').toUpperCase(), company: r?.company ?? null, move_pct: typeof r?.move_pct === 'number' ? r.move_pct : null, market_cap: typeof r?.market_cap === 'number' ? r.market_cap : null, perf: r?.perf ?? null })).filter((r) => r.ticker).slice(0, 500);
     st.universe = st.universe.filter((u) => sent.has(u.ticker));
     st.findings = Object.fromEntries(Object.entries(st.findings).filter(([t]) => sent.has(t)));
     st.inputs = Object.fromEntries(Object.entries(st.inputs).filter(([t]) => sent.has(t)));
@@ -496,6 +558,7 @@ async function research(req: NextRequest, body: any) {
       let bseCode: string | null = null;
       let usListing: EdgarResearch | null = null;   // zzz785
       let usDoc: UsDocReadResult | null = null;
+      let usCard: UsCard | null = null;              // zzz798
       if (market === 'IN') {
         const cr = await fetchCompanyResearch(u.ticker, now);
         // zzz773: BSE's full filing list for the window, beside screener's
@@ -533,13 +596,17 @@ async function research(req: NextRequest, body: any) {
         turnover = u.volume != null && px != null ? (u.volume * px) / 1e7 : null;   // ₹ Cr
         if (cr.errors.length) st.errors.push(`${u.ticker}: ${cr.errors.join('; ')}`);
       } else {
-        const er = await fetchEdgarResearch(u.ticker, WINDOW_DAYS, now, { timeoutMs: Math.max(2_000, Math.min(10_000, usLeft() / 3)), pressFallback: true, company: u.company });
+        const er = await fetchEdgarResearch(u.ticker, WINDOW_DAYS, now, { timeoutMs: Math.round(Math.max(2_000, Math.min(10_000, usLeft() / 3))), pressFallback: true, company: u.company });
         usListing = er;
         announcements = er.announcements;
         sources = er.sources;
         sourceFailed = !er.sources.length;
         usNote = edgarNote(er, WINDOW_DAYS);
         returns = u.perf ? { m1: u.perf.m1 ?? null, m3: u.perf.m3 ?? null, m6: u.perf.m6 ?? null, y1: u.perf.y1 ?? null, history: 999 } : null;
+        // zzz798: SEC FIRST — the filed documents are read (no model) before
+        // anything else, so the card carries the figures even when the price
+        // chart, the press search or the model read run out of time.
+        usCard = await withDeadline(fetchUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap, listing: er, now, deadlineMs: Math.max(3_000, Math.min(14_000, usLeft() - 16_000)), windowDays: WINDOW_DAYS }), Math.max(3_500, Math.min(15_000, usLeft() - 15_000)), null);
         // zzz773: dated closes, so the reaction to a DATED filing can be
         // measured (the export carries trailing returns only). Best-effort:
         // no series leaves the pricing assessment at INSUFFICIENT EVIDENCE.
@@ -555,6 +622,8 @@ async function research(req: NextRequest, body: any) {
       }
 
       const news = market === 'US' && usLeft() < 15_000 ? null : await newsFor(market, u.ticker, fullName || u.company, date, now);
+      // zzz798: no SEC event document read → a PRESS-ONLY card, said plainly.
+      if (market === 'US' && !usCard) usCard = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap, filing: null, docs: [], press: [...pressItemsOf(news), ...((usListing?.press?.items || []) as any[]).map((p) => ({ title: String(p.title || ''), url: String(p.url || ''), date: p.date ?? null, source: p.source ?? null }))], latestSec: usListing?.recentFilings?.[0] ? { form: usListing.recentFilings[0].form, date: usListing.recentFilings[0].date, items: usListing.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!usListing && !usListing.failure, windowDays: WINDOW_DAYS });
       if (market === 'IN') docs = await indiaDocuments(u.ticker, announcements, { now, sessionCloseIso, marketCap, returns, bseCode, companyName: fullName || u.company, msLeft: budget - (Date.now() - t0) });
 
       // Model-read the best catalyst candidate when the budget allows: a
@@ -565,8 +634,11 @@ async function research(req: NextRequest, body: any) {
       // finding, so every verified quote was attached to the wrong filing
       // and dropped: 22 model reads, zero verified rows.
       const cand = pickReadCandidate(announcements, market, { marketCap, returns, windowDays: WINDOW_DAYS, now, sessionCloseIso });
-      const underDailyCeiling = st.model_reads + modelReads < MAX_MODEL_READS_PER_DAY[market];
-      if (cand && !underDailyCeiling) readsSkippedForCeiling++;
+      // zzz799 (US): `no_model` = the free SEC pass the page runs on its own
+      // when a newer scan brings new names — never a model read.
+      const noModel = market === 'US' && body?.no_model === true;
+      const underDailyCeiling = !noModel && st.model_reads + modelReads < MAX_MODEL_READS_PER_DAY[market];
+      if (cand && !underDailyCeiling && !noModel) readsSkippedForCeiling++;
       if (cand && underDailyCeiling && modelReads < MODEL_READS_PER_CALL && Date.now() - t0 < budget - 12_000
         && (market !== 'US' || usLeft() > 25_000)) {
         // US: the read is raced against the function ceiling. A read that
@@ -594,8 +666,10 @@ async function research(req: NextRequest, body: any) {
         extraFacts: usEv?.extraFacts ?? null, extraRefs: usEv?.extraRefs ?? null,
       }), rulesVersion: RULES_VERSION };
       if (usNote) st.findings[u.ticker] = { ...st.findings[u.ticker], notes: [...st.findings[u.ticker].notes, usNote] };
+      if (market === 'US') st.findings[u.ticker] = { ...st.findings[u.ticker], usCard, usCardV: US_CARD_VERSION };
       st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements);
-      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}) }, WINDOW_DAYS, now);
+      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}), ...(market === 'US' ? { usCard, usCardV: US_CARD_VERSION } : {}) }, WINDOW_DAYS, now);
+      if (market === 'US' && st.attempts) delete st.attempts[u.ticker];
       done++;
     } catch (e: any) {
       st.errors.push(`${u.ticker}: ${String(e?.message || e)}`);
@@ -606,11 +680,29 @@ async function research(req: NextRequest, body: any) {
     if (unsaved >= SAVE_EVERY_NAMES || Date.now() - lastSave > SAVE_EVERY_MS) await save();
   };
   const queue = [...todo];
-  const workers = Array.from({ length: market === 'IN' ? 3 : 1 }, async () => {
+  // zzz798 (US): every name has its own clock. A name that overruns it is
+  // retried once on the next call; a second overrun is recorded as failed
+  // with the reason — the sweep always finishes ("43/58 running…" stuck).
+  st.attempts = st.attempts || {};
+  const oneUs = async (u: typeof todo[number]): Promise<void> => {
+    const perName = Math.max(6_000, Math.min(US_PER_NAME_MS, usLeft() - 4_000));
+    const ok = await withDeadline(one(u).then(() => true), perName, false);
+    if (ok || st.findings[u.ticker]) return;
+    const n = (st.attempts![u.ticker] || 0) + 1;
+    st.attempts![u.ticker] = n;
+    if (n >= 2) {
+      st.errors.push(`${u.ticker}: timed out twice (SEC / price / press sources slow) — press ↻ Retry research`);
+      st.findings[u.ticker] = { ...buildFinding({ ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap: u.marketCap, turnover: null, announcements: [], returns: null, holding: holdings.has(u.ticker), sources: [], sourceFailed: true, windowDays: WINDOW_DAYS, now }), rulesVersion: RULES_VERSION, usCardV: US_CARD_VERSION };
+      delete st.attempts![u.ticker];
+    } else st.errors.push(`${u.ticker}: timed out after ${Math.round(perName / 1000)}s — will retry once`);
+    unsaved++;
+  };
+  const workers = Array.from({ length: market === 'IN' ? 3 : US_WORKERS }, async () => {
     while (queue.length) {
       if (Date.now() - t0 > budget) break;
       if (market === 'US' && usLeft() < 8_000) break;
-      await one(queue.shift()!);
+      const next = queue.shift()!;
+      if (market === 'US') await oneUs(next); else await one(next);
     }
   });
   await Promise.all(workers);
@@ -651,7 +743,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
     if (typeof r?.move_pct === 'number') u.movePct = r.move_pct;
   }
   const holdings = await loadHoldings(origin);
-  const stale = new Set(staleRuleTickers(st.findings, st.universe.map((u) => u.ticker)));
+  const stale = new Set(staleTickers(st));
   let rescored = 0, failed = 0;
   const persistSink: PersistentCatalyst[] = [];   // zzz780
   for (const u of st.universe) {
@@ -702,6 +794,17 @@ async function rescoreOnly(req: NextRequest, body: any) {
         }
       }
       inputs = { ...inputs, read };
+      // zzz798 (US): the SEC-document card, built once per card version (free,
+      // no model): the stored findings of the day get their figures on open.
+      if (market === 'US' && inputs.usCardV !== US_CARD_VERSION && Date.now() - t0 < budget - 10_000) {
+        const now2 = new Date();
+        const er2 = await withDeadline(fetchEdgarResearch(u.ticker, WINDOW_DAYS, now2, { timeoutMs: 6_000, readOwnership: false }), 8_000, null);
+        let card: UsCard | null = null;
+        if (er2 && !er2.failure) card = await withDeadline(fetchUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, listing: er2, now: new Date(inputs.fetchedAt), deadlineMs: Math.min(12_000, budget - (Date.now() - t0) - 6_000), windowDays: WINDOW_DAYS }), Math.min(13_000, budget - (Date.now() - t0) - 5_000), null);
+        if (!card) card = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, filing: null, docs: [], press: pressItemsOf(inputs.news), latestSec: er2?.recentFilings?.[0] ? { form: er2.recentFilings[0].form, date: er2.recentFilings[0].date, items: er2.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!er2 && !er2.failure, windowDays: WINDOW_DAYS });
+        // an EDGAR outage is not "no card" — try again on the next open
+        inputs = { ...inputs, usCard: card, usCardV: er2 && !er2.failure ? US_CARD_VERSION : inputs.usCardV };
+      }
       // zzz782 (US): a first pass that skipped the daily chart (the function
       // clock ran short) gets it here — it is what the 1D column is built from.
       if (market === 'US' && inputs.returns && !inputs.returns.tail && Date.now() - t0 < budget - 10_000) {
@@ -719,7 +822,8 @@ async function rescoreOnly(req: NextRequest, body: any) {
       }
       st.inputs[u.ticker] = inputs;
       const f0 = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
-      const f = inputs.usNote ? { ...f0, notes: [...f0.notes, inputs.usNote] } : f0;
+      const f1 = inputs.usNote ? { ...f0, notes: [...f0.notes, inputs.usNote] } : f0;
+      const f = market === 'US' ? { ...f1, usCard: inputs.usCard ?? null, usCardV: inputs.usCardV } : f1;
       st.findings[u.ticker] = await withPersistence(f, persistSink, inputs.announcements);
       rescored++;
     } catch { failed++; }

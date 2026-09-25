@@ -26,6 +26,9 @@ import { presentErrorLines } from './research-present';
 import { contractTermYears, debtActionOf, isStrategicStakeKind, type CatalystRecord, type EventKind, type StructuredFacts } from './structured-facts';
 import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
 import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
+// zzz798: the US card is a type-only reference (inline import type below) —
+// this module keeps its client-safe import list.
+type UsCard = import('./us-card').UsCard;
 
 /** The six states every gainer ends in (spec §4), plus data states. */
 export type EventClass =
@@ -259,6 +262,10 @@ export interface ResearchItem {
    *  persistent-mechanism id, so the same event is cross-linked, never listed
    *  again as a separate item in another view. */
   links?: { thesis: string | null; specialFocus: string | null; note: string; catalystId?: string | null; persistentId?: string | null; persistent?: string | null } | null;
+  /** zzz798 (US only): the card read from the SEC documents without a model —
+   *  source label, the extra stated lines (outlook, earn-out, funding …), the
+   *  materiality arithmetic. Absent on India items. */
+  usCard?: UsCard | null;
 }
 
 /** One catalyst record as a card shows it. */
@@ -2056,14 +2063,87 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   Object.assign(item, catalystLayer(item, f, { ticker, market, cls, key, stage, evHay, pers, persEv, mat, fr, conf, verifiedDoc, marketCap, revenue, input, unknowns, potentialText: guard.pot.text, quantified }));
   // zzz787: the four duration concepts, kept apart, derived from the facts.
   item.durations = durationsOf(item, { key, famFacts, famHay, contractYears, guardNote: guard.note, valueVerified: isVerifiedValue(value), value });
-  const staleEarnings = type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
-  const p = priorityOf(item, { routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification, quantified });
+  // zzz798 (US only): the SEC-document card replaces the subject-line reading.
+  const usc = market === 'US' && f?.usCard ? applyUsCard(item, f.usCard, { mv, returns, now: input.now ?? null }) : null;
+  const staleEarnings = !usc && type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
+  const p = priorityOf(item, { routine: usc ? false : routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification, quantified: usc ? usc.quantified || quantified : quantified });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
   const penaltyWords = Object.keys(p.details).filter((k) => k.startsWith('penalty_')).map((k) => ({ dilution: 'dilution flag', denial: 'company denial', lowMateriality: 'too small to explain the move', pricing: 'move already ahead of the change', unverified: 'unverified source', listing: 'listing artifact', routine: 'routine filings only', technical: 'technical move only', staleResult: 'older result' } as Record<string, string>)[k.slice(8)] || k.slice(8));
   item.whyRank = [...p.dims.words, ...penaltyWords.map((w) => `penalty: ${w}`)].join(' + ');
+  if (usc?.earnings) item.whyRank = item.whyRank.replace(/material vs size \([^)]*\)/, `material change (${[usc.earnings.revenueGrowthPct != null ? `revenue ${pctS(usc.earnings.revenueGrowthPct)}` : null, usc.earnings.profitChange ? `net income ${usc.earnings.profitChange}` : null].filter(Boolean).join(', ')})`);
   // zzz785: unknown economics are said, not silently ranked low.
   if (item.economicsUnknown) item.priorityReasons.push(`${UNKNOWN_NEEDS_READING}${item.economicsUnknown.missing.length ? ` (${item.economicsUnknown.missing.join(', ')})` : ''}`);
   return item;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz798 — THE US CARD ON THE ITEM (US only; India never reaches this).
+// The card (us-card.ts) was read from the SEC documents without a model:
+// the figures, the materiality arithmetic, the source label. It sets the
+// item's WHAT CHANGED / MATERIAL / SOURCE / WHY RESEARCH and the class those
+// imply; one source label per card (a VERIFIED SEC document never also
+// carries "secondary · verification required").
+// ═══════════════════════════════════════════════════════════════════════════
+
+const US_EVENT_TYPES = new Set<string>(['Earnings', 'Order win', 'Contract', 'Acquisition', 'Merger', 'Divestment', 'Regulatory approval', 'Fundraising', 'Buyback', 'Guidance', 'Rating action', 'Strategic investment', 'Litigation / regulatory', 'Capacity expansion', 'No identified catalyst']);
+const US_TRANSMIT: Partial<Record<UsCard['kind'], Transmission>> = { earnings: 'DIRECT', order: 'NEAR_TERM', acquisition: 'NEAR_TERM', merger: 'NEAR_TERM', divestiture: 'NEAR_TERM', fda: 'LONG_TERM', clinical: 'LONG_TERM', buyback: 'WEAK', offering: 'WEAK', guidance: 'NEAR_TERM', index: 'NONE', analyst: 'NONE' };
+
+function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | null; window: '1D' | '1W' }; returns: { w1: number | null; m1: number | null; m3: number | null }; now: string | null }): UsCard {
+  const sec = c.source.tier === 'SEC';
+  const keepClass = item.eventClass === 'DATA_UNAVAILABLE' || item.eventClass === 'LISTING';
+  if (!sec && keepClass) { item.usCard = c; return c; }
+  const mat = c.material.label;
+  let cls: EventClass;
+  if (sec) {
+    if (c.kind === 'other' && c.eventType === 'No identified catalyst' && /no new (?:operating )?event/i.test(c.kindWord)) cls = 'NO_CATALYST';
+    else if (c.polarity === 'negative' && c.kind !== 'offering') cls = 'NEGATIVE';
+    else if (c.kind === 'offering' || c.stage === 'PROPOSED' || c.stage === 'RUMOUR') cls = 'POTENTIAL_UNVERIFIED';
+    else cls = mat === 'SIGNIFICANT' || mat === 'MODERATE' ? 'CONFIRMED_MATERIAL' : mat === 'SMALL' ? 'CONFIRMED_LOW_MATERIALITY' : 'POTENTIAL_UNVERIFIED';
+  } else {
+    // press only: an analyst opinion, commentary or an old results write-up is
+    // not a company event; a reported deal / order / approval / opening is a
+    // potential one, to verify.
+    const fresh = (ageFrom(c.source.date, ctx.now) ?? 99) <= 3;
+    cls = c.kind === 'other' || c.kind === 'analyst' || (c.kind === 'earnings' && !fresh) ? 'NO_CATALYST' : 'POTENTIAL_UNVERIFIED';
+  }
+  item.eventClass = cls;
+  if (US_EVENT_TYPES.has(c.eventType)) item.eventType = c.eventType as EventType;
+  item.eventLabel = c.kindWord;
+  item.stage = c.stage as Stage;
+  item.headline = clean(c.headline) || item.headline;
+  item.whatChanged = c.whatChanged; item.before = null; item.after = null;
+  item.impact = c.kind === 'earnings' || !sec ? null
+    : c.unknowns.length ? `Not established — ${c.unknowns.filter((u) => !/^Official filing|^Figure:/i.test(u)).map((u) => u.split(':')[0].toLowerCase()).join(', ') || 'the economics'} still open` : null;
+  item.materiality = {
+    label: mat, ratios: c.material.ratios.map((r) => ({ basis: r.basis, pct: r.pct, text: r.text })), explanation: c.material.how,
+    verification: sec && c.quantified ? 'DOCUMENT_VERIFIED' : null, confidence: sec && c.quantified ? 1 : 0,
+  };
+  item.sourceConfidence = sec ? 'VERIFIED_DOCUMENT' : 'SECONDARY_SUMMARY';
+  item.verification = sec ? `Official filing read — ${c.source.label.replace(/^VERIFIED DOCUMENT \(/, '').replace(/\)(?= \+|$)/, '')}` : 'Press only — no SEC filing found yet';
+  if (c.source.url) item.sourceUrl = c.source.url;
+  if (c.source.date) {
+    item.filedDate = c.source.date;
+    const a = ageFrom(c.source.date, ctx.now);
+    if (a != null) item.ageDays = a;
+    const dated = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || cls === 'NEGATIVE';
+    item.catalystFor = dated ? catalystForOf('US', item.ageDays ?? null) : undefined;
+  }
+  item.quote = c.quote ? clean(c.quote) : item.quote;
+  item.whyResearch = c.whyResearch;
+  item.unknowns = c.unknowns;
+  if (sec && c.quantified) { item.evidenceGap = null; item.economicsUnknown = null; }
+  else if (sec) item.economicsUnknown = { label: UNKNOWN_NEEDS_READING, missing: c.unknowns.map((u) => u.split(':')[0].toLowerCase()).slice(0, 4) };
+  else { item.economicsUnknown = null; item.evidenceGap = null; }
+  if (cls === 'NO_CATALYST') { item.catalystFor = undefined; item.scanNote = c.extra[0] || null; }
+  if (c.kind === 'earnings') item.earnings = null;
+  if (c.kind === 'offering') item.flags = { ...item.flags, dilution: true };
+  item.transmission = (sec ? US_TRANSMIT[c.kind] : null) ?? (sec ? item.transmission : 'WEAK');
+  const fc = c.earnings?.revenueGrowthPct != null ? { pct: Math.abs(c.earnings.revenueGrowthPct), text: `revenue ${pctS(c.earnings.revenueGrowthPct)} YoY` }
+    : c.material.ratios[0] && sec && c.stage !== 'PROPOSED' ? { pct: c.material.ratios[0].pct, text: `${c.kind === 'order' ? 'order' : c.kind === 'buyback' ? 'buyback' : 'deal'} = ${c.material.ratios[0].pct}% of market cap` } : null;
+  item.expectationGap = gapOf(cls, ctx.mv, ctx.returns, fc);
+  item.action = item.catalystFor === 'CONTEXT' ? 'Monitor' : actionOf(cls, item.portfolio.relevance, item.eventType);
+  item.usCard = c;
+  return c;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2318,7 +2398,9 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const eligible = live.filter((i) => i.eventClass === 'CONFIRMED_MATERIAL' || i.eventClass === 'CONFIRMED_LOW_MATERIALITY' || i.eventClass === 'POTENTIAL_UNVERIFIED');
   const queue = eligible.filter((i) => i.priority >= 12).slice(0, 15);
   const inQ = new Set(queue.map((i) => i.ticker));
-  const watch = eligible.filter((i) => !inQ.has(i.ticker)).slice(0, 20);
+  // zzz798 (US): every US event card stays visible — the 20-card cap dropped
+  // names from the page entirely once the SEC reader found more events.
+  const watch = eligible.filter((i) => !inQ.has(i.ticker)).slice(0, market === 'US' ? 500 : 20);
   const top3 = queue.filter((i) => i.priority >= 25).slice(0, 3);
   const negative = live.filter((i) => i.eventClass === 'NEGATIVE' && !i.immaterialNegative);
   const immaterialNegative = live.filter((i) => i.eventClass === 'NEGATIVE' && i.immaterialNegative);

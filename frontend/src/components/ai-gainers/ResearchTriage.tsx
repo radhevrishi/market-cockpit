@@ -15,7 +15,7 @@
 
 import React, { useCallback, useState } from 'react';
 import type { ResearchItem, ResearchView } from '@/lib/ai-gainers/research-view';
-import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill } from './Badges';
+import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, materialWord } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
 import { C, CLASS_META, MATERIAL_COLOR, istClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
@@ -123,7 +123,7 @@ function Top3({ items, onOpen }: { items: ResearchItem[]; onOpen: (it: ResearchI
             <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.45 }}>{txt(it.whyResearch, '')}</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 2 }}>
               <TriagePill it={it} />
-              <Pill color={MATERIAL_COLOR[it.materiality?.label || 'UNKNOWN']} title={it.materiality?.explanation || ''}>{it.materiality?.label || 'UNKNOWN'}</Pill>
+              <Pill color={MATERIAL_COLOR[it.materiality?.label || 'UNKNOWN']} title={it.materiality?.explanation || ''}>{materialWord(it)}</Pill>
               <span style={{ marginLeft: 'auto' }}><Btn onClick={() => onOpen(it)} color={C.cyan}>OPEN</Btn></span>
             </div>
           </div>
@@ -202,7 +202,7 @@ function Book({ items, onOpen }: { items: ResearchItem[]; onOpen: (it: ResearchI
                 <td style={{ ...td, color: moveColor(it.move1d), fontWeight: 800 }}>{pct(it.move1d)}</td>
                 <td style={{ ...td, minWidth: 220 }}><div style={{ color: C.text }}>{txt(it.headline, 'No event')}</div><div style={{ marginTop: 3 }}><StatusPill it={it} /></div><AlsoIn it={it} here="Your book" /></td>
                 <td style={td}>{txt(it.portfolio?.thesisVariable, 'Not mapped')}</td>
-                <td style={{ ...td, color: MATERIAL_COLOR[it.materiality?.label || 'UNKNOWN'], fontWeight: 800 }} title={it.materiality?.explanation}>{it.materiality?.label || 'UNKNOWN'}</td>
+                <td style={{ ...td, color: MATERIAL_COLOR[it.materiality?.label || 'UNKNOWN'], fontWeight: 800 }} title={it.materiality?.explanation}>{materialWord(it)}</td>
                 <td style={{ ...td, minWidth: 200 }}>{(it.researchNext || []).slice(0, 2).map((q, i) => <div key={i}>→ {q}</div>)}{!(it.researchNext || []).length && <span style={{ color: C.faint }}>—</span>}</td>
               </tr>
             ))}

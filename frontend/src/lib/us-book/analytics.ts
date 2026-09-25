@@ -211,6 +211,21 @@ export function buildUsBookView({ book, quotes, fx, profiles = {}, now = Date.no
 
 // ── ANALYTICS ──────────────────────────────────────────────────────────────
 
+/** How many names each "who moved" / "today's movers" list shows (zzz799: 10, was 5). */
+export const MOVERS_TOP_N = 10;
+
+/**
+ * Short venue + currency tag for a line that is NOT a US listing, so a
+ * Frankfurt euro line is never mistaken for a US name in a mixed list:
+ * K3R on FWB2 in EUR → "FWB, EUR". US lines → null.
+ */
+export function nonUsTag(r: Pick<UsBookRow, 'listing' | 'exchange' | 'currency'>): string | null {
+  if (r.listing === 'US') return null;
+  const x = (r.exchange || '').toUpperCase();
+  const venue = /^(FWB|FRA|XETRA|GER)/.test(x) ? 'FWB' : x || 'non-US';
+  return `${venue}, ${r.currency}`;
+}
+
 export interface SectorStat { sector: string; count: number; valued: number; valueUsd: number; weightPct: number; shareOfHoldingsPct: number; costUsd: number; pnlUsd: number; pnlPct: number | null }
 export interface BucketStat { label: string; count: number; valueUsd: number; weightPct: number }
 
@@ -274,8 +289,8 @@ export function usBookAnalytics(v: UsBookView): UsBookAnalytics {
   const sizeBuckets = sizeDefs.map(([label, lo, hi]) => bucket(label, valued.filter((r) => (r.weightPct as number) >= lo && (r.weightPct as number) < hi)));
 
   const byPnl = [...withPnl].sort((a, b) => (b.pnlUsd as number) - (a.pnlUsd as number));
-  const contributors = byPnl.filter((r) => (r.pnlUsd as number) > 0).slice(0, 5);
-  const drags = [...byPnl].reverse().filter((r) => (r.pnlUsd as number) < 0).slice(0, 5);
+  const contributors = byPnl.filter((r) => (r.pnlUsd as number) > 0).slice(0, MOVERS_TOP_N);
+  const drags = [...byPnl].reverse().filter((r) => (r.pnlUsd as number) < 0).slice(0, MOVERS_TOP_N);
   const dayRows = v.rows.filter((r) => r.dayChangePct != null).sort((a, b) => (b.dayChangePct as number) - (a.dayChangePct as number));
 
   const notes: string[] = [];
@@ -291,8 +306,8 @@ export function usBookAnalytics(v: UsBookView): UsBookAnalytics {
     top5Pct, largest: byVal[0] || null, effectivePositions,
     sectors, listingSplit, currencySplit, sizeBuckets, contributors, drags,
     winnerUsd: r2(winners.reduce((s, r) => s + (r.pnlUsd as number), 0)), loserUsd: r2(losers.reduce((s, r) => s + Math.abs(r.pnlUsd as number), 0)),
-    dayUp: dayRows.filter((r) => (r.dayChangePct as number) > 0).slice(0, 5),
-    dayDown: [...dayRows].reverse().filter((r) => (r.dayChangePct as number) < 0).slice(0, 5),
+    dayUp: dayRows.filter((r) => (r.dayChangePct as number) > 0).slice(0, MOVERS_TOP_N),
+    dayDown: [...dayRows].reverse().filter((r) => (r.dayChangePct as number) < 0).slice(0, MOVERS_TOP_N),
     notes, cashPct: T > 0 ? v.totals.weightsCashPct : null,
   };
 }

@@ -11,6 +11,20 @@ import { C, CLASS_META, pctND, tint, txt } from './tokens';
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
 
 export function WhatChanged({ it, noLabel }: { it: ResearchItem; noLabel?: boolean }) {
+  // zzz798 (US): the card read from the SEC documents — the numbers line,
+  // then the other stated lines (outlook, earn-out, funding, stage).
+  const us = it.market === 'US' ? it.usCard : null;
+  if (us) {
+    return (
+      <div data-testid="us-what-changed" style={{ background: C.bg2, borderRadius: 6, padding: '7px 10px', fontSize: 14, lineHeight: 1.5 }}>
+        {!noLabel && <span style={{ ...label, marginRight: 8 }}>WHAT CHANGED</span>}
+        <span style={{ color: C.text, fontWeight: 700 }}>{txt(it.whatChanged, 'Not stated in the filing')}</span>
+        {(us.extra || []).map((x, i) => <div key={i} style={{ fontSize: 12.5, color: C.dim, marginTop: 2 }}>{x}</div>)}
+        {(us.flags || []).map((x, i) => <div key={`f${i}`} style={{ fontSize: 12.5, color: C.amber, marginTop: 2 }}>⚠ {x}</div>)}
+        {it.impact && <div data-testid="impact" style={{ fontSize: 12.5, color: C.dim, marginTop: 3 }}><span style={{ ...label, marginRight: 6 }}>IMPACT</span>{it.impact}</div>}
+      </div>
+    );
+  }
   if (it.earnings) return <EarningsStrip e={it.earnings} />;
   const hasBA = !!(it.before || it.after);
   const body = hasBA
@@ -102,7 +116,9 @@ const kv = (k: string, v: React.ReactNode) => (
 
 /** zzz789: the SAME event surfaced in other sections — referenced, never a second card. */
 export function AlsoIn({ it, here }: { it: ResearchItem; here?: string }) {
-  const other = (it.surfacedIn || []).filter((s) => s !== here);
+  // zzz798 (US): "Unknown — needs reading" is a to-do list, not another view
+  // of the event — naming it here said nothing ("SAME EVENT · ALSO IN: Unknown — needs reading").
+  const other = (it.surfacedIn || []).filter((s) => s !== here && !(it.market === 'US' && s === 'Unknown — needs reading'));
   if (!other.length) return null;
   return (
     <div data-testid="also-in" style={{ fontSize: 12, color: C.faint }} title={`Same event (${it.canonicalId || it.ticker}) — one record, referenced from each view.`}>

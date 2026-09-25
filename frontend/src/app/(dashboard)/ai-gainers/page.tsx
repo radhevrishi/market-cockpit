@@ -35,6 +35,7 @@ import { boardCoverage } from '@/lib/ai-gainers/research-present';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 import { ResearchTriage } from '@/components/ai-gainers/ResearchTriage';
 import { parseScreenerLink, US_SCAN_EXCHANGES, type UsScanCriteria as UsCriteria } from '@/lib/ai-gainers/us-scan-criteria';
+import { boardHash, serverViewMatchesBoard, needsBoardSync, usSessionPhrase, sweepStopReason } from '@/lib/ai-gainers/us-board-sync';
 
 type Mkt = 'IN' | 'US';
 type TechTab = 'sweep' | 'scanned' | 'filed' | 'notes';
@@ -181,6 +182,11 @@ export default function AiGainersPage() {
   // current rules (no model read). (zzz769)
   const [rescored, setRescored] = useState<{ n: number; failed: number } | null>(null);
   const [rescoring, setRescoring] = useState(false);
+  // zzz799 (US): which kind of sweep is running (the free SEC pass after a newer
+  // scan, or the AI research the owner clicked), and why a sweep stopped.
+  const [sweepKind, setSweepKind] = useState<'ai' | 'sec'>('ai');
+  const [sweepNote, setSweepNote] = useState<string | null>(null);
+  const scanAtRef = useRef<string | null>(null);
 
   // ── AUTOMATIC RE-SCORE — NO AI.                                  (zzz769)
   // Findings stored under older rules are re-classified and re-scored from
@@ -223,14 +229,20 @@ export default function AiGainersPage() {
     }
   }, []);
 
-  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number, reprocess = false, retryFailed = false) => {
+  const sweep = useCallback(async (m: Mkt, scanned: Payload['scanned'], gen: number, reprocess = false, retryFailed = false, noModel = false) => {
     if (sweepGenRef.current === gen) return;          // this generation is already sweeping
     sweepGenRef.current = gen;
     setSweeping(true);
+    setSweepKind(noModel ? 'sec' : 'ai');
+    setSweepNote(null);
+    // zzz799 (US): a sweep always ends — finished, or stopped with the reason.
+    let stopReason: string | null = null;
     try {
       const rows = boardRows(scanned);
+      const started = Date.now();
       const pass = async (retry: boolean, first: boolean): Promise<ResearchPayload | null> => {
         let last: ResearchPayload | null = null;
+        let stalled = 0, prevDone = -1;
         // A retry of failed sources is bounded to two calls: a source still
         // refusing after that is reported again, not hammered. (zzz773)
         for (let i = 0; i < (retry ? 2 : 40) && genRef.current === gen; i++) {
@@ -238,7 +250,8 @@ export default function AiGainersPage() {
           try {
             r = await fetch('/api/v1/ai-gainers/research', {
               method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store',
-              body: JSON.stringify({ market: m, rows: first && i === 0 ? rows : [], budget_ms: 40_000, move_window: moveWindowRef.current, ...(first && i === 0 && reprocess ? { reprocess: true } : {}), ...(retry ? { retry_failed: true } : {}) }),
+              body: JSON.stringify({ market: m, rows: first && i === 0 ? rows : [], budget_ms: 40_000, move_window: moveWindowRef.current, ...(first && i === 0 && reprocess ? { reprocess: true } : {}), ...(retry ? { retry_failed: true } : {}),
+                ...(m === 'US' ? { scan_at: scanAtRef.current, ...(noModel ? { no_model: true } : {}) } : {}) }),
               signal: AbortSignal.timeout(75_000),
             });
           } catch (e) { throw new Error(describeFetchError(e, 'The research service')); }
@@ -248,7 +261,22 @@ export default function AiGainersPage() {
           setResearch(res.json);
           last = res.json;
           const failedLeft = Object.values(res.json.findings || {}).some((f) => f.status === 'source_failed');
-          if (retry ? (res.json.researched_now === 0 || !failedLeft) : (!res.json.remaining || res.json.researched_now === 0)) break;
+          // zzz798 (US): a call whose names timed out researched nothing but
+          // retries them on the next call — keep going; stop after 15 minutes.
+          const retrying = m === 'US' && (res.json.progress?.retrying?.length ?? 0) > 0 && Date.now() - started < 15 * 60_000;
+          if (m === 'US') {
+            const doneNow = res.json.coverage?.researched ?? 0;
+            stalled = doneNow > prevDone || (res.json.researched_now ?? 0) > 0 ? 0 : stalled + 1;
+            prevDone = doneNow;
+            const why = sweepStopReason({ calls: i + 1, maxCalls: retry ? 2 : 40, stalledCalls: stalled, retrying: res.json.progress?.retrying?.length ?? 0, elapsedMs: Date.now() - started, maxMs: 15 * 60_000, remaining: res.json.remaining ?? 0 });
+            if (why && !retry) { stopReason = why; break; }
+          }
+          if (retry ? (res.json.researched_now === 0 || !failedLeft) : (!res.json.remaining || (res.json.researched_now === 0 && !retrying))) {
+            if (m === 'US' && !retry && (res.json.remaining ?? 0) > 0 && !stopReason) {
+              stopReason = `stopped with ${res.json.remaining} name${res.json.remaining === 1 ? '' : 's'} not yet researched — the last round researched nothing new (SEC / price sources slow or refusing); press ▶ Research to try again`;
+            }
+            break;
+          }
         }
         return last;
       };
@@ -263,10 +291,11 @@ export default function AiGainersPage() {
     } catch (e: any) {
       if (genRef.current !== gen) return;
       const msg = String(e?.message || e);
+      stopReason = null;
       setResearch((cur) => cur ? { ...cur, error: msg } : { ok: false, coverage: { researched: 0, total: 0, pct: 0, byStatus: {} }, findings: {}, remaining: 0, error: msg });
     } finally {
       if (sweepGenRef.current === gen) sweepGenRef.current = -1;
-      if (genRef.current === gen) setSweeping(false);
+      if (genRef.current === gen) { setSweeping(false); if (m === 'US' && stopReason) setSweepNote(stopReason); }
     }
   }, []);
 
@@ -283,17 +312,32 @@ export default function AiGainersPage() {
       if (genRef.current !== gen) return;
       const j = res.json;
       moveWindowRef.current = j?.market === 'US' && j?.source_list?.move_window === '1W' ? '1W' : '1D';
+      scanAtRef.current = j?.generated_at || null;
       setData(j);
       // What is already researched for this session shows immediately; the
       // sweep then fills the rest. A "Rescan" does not re-research.
       try {
-        const rr = await fetch(`/api/v1/ai-gainers/research?market=${m}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
+        // zzz799 (US): say which board is on screen, so research from an older scan is never shown as this one.
+        const hashNow = m === 'US' ? boardHash((j.scanned || []).map((g) => g.ticker)) : null;
+        const rr = await fetch(`/api/v1/ai-gainers/research?market=${m}${hashNow ? `&board=${encodeURIComponent(hashNow)}` : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
         const rres = await readJsonResponse<ResearchPayload>(rr, 'The research service');
         if (genRef.current !== gen) return;
         if (rres.ok && rres.json) {
           setResearch(rres.json);
-          // Stored under older rules → re-score now, free (zzz769).
-          if ((rres.json.stale_rules ?? 0) > 0) void autoRescore(m, j.scanned || [], gen);
+          const stale = (rres.json.stale_rules ?? 0) > 0;
+          // zzz799 (US): research exists for this session but was built from an
+          // older scan, or names on the new board have none → the free SEC pass
+          // (no AI) registers the new board, researches the new names and drops
+          // the ones that fell off; then the free re-score if one is due.
+          const ex = new Set((rres.json.excluded_large_caps || []).map((t) => String(t).toUpperCase()));
+          const missingNow = (j.scanned || []).filter((g) => { const t = String(g.ticker).toUpperCase(); return !ex.has(t) && !rres.json?.findings?.[t]; }).length;
+          if (m === 'US' && hashNow && (rres.json.coverage?.total ?? 0) > 0
+            && needsBoardSync({ serverHash: rres.json.board_hash ?? null, currentHash: hashNow, missing: missingNow, boardSize: (j.scanned || []).length })) {
+            void (async () => {
+              await sweep(m, j.scanned || [], gen, false, false, true);
+              if (stale && genRef.current === gen) await autoRescore(m, j.scanned || [], gen);
+            })();
+          } else if (stale) void autoRescore(m, j.scanned || [], gen);
         } else {
           // A store that could not be read is said, not shown as "nothing
           // researched yet". (zzz769)
@@ -309,14 +353,14 @@ export default function AiGainersPage() {
       setErr(String(e?.message || 'The gainers pipeline did not answer.'));
       setData(null);
     } finally { if (genRef.current === gen) setLoading(false); }
-  }, [autoRescore]);
+  }, [autoRescore, sweep]);
 
   // A market switch clears the previous market's board at once: showing US
   // rows under the India chip while India loads is a wrong answer, not a
   // loading state. (zzz766)
   useEffect(() => {
     if (!ready || demo) return;
-    setData(null); setResearch(null); setSweeping(false); setRescored(null); setRescoring(false); load(market);
+    setData(null); setResearch(null); setSweeping(false); setRescored(null); setRescoring(false); setSweepNote(null); load(market);
   }, [market, load, ready, demo]);
 
   // The filed-result rows as the API ranked them — never re-sorted here.
@@ -324,6 +368,7 @@ export default function AiGainersPage() {
 
   // ── COVERAGE OF THE CURRENT BOARD.                               (zzz769)
   const board = useMemo(() => (data?.scanned || []).map((g) => String(g.ticker).toUpperCase()), [data]);
+  const boardH = useMemo(() => (market === 'US' && board.length ? boardHash(board) : null), [market, board]);
   const bcov = useMemo(
     () => (board.length ? boardCoverage(board, research?.findings || {}, research?.excluded_large_caps || []) : null),
     [board, research],
@@ -353,7 +398,11 @@ export default function AiGainersPage() {
   const built = useMemo((): { view: ResearchView | null; error: string | null } => {
     if (demo) return { view: demo, error: null };
     if (!data) return { view: null, error: null };
-    if (research?.view && research.view.summary) return { view: { ...research.view, session: session || research.view.session }, error: null };
+    // zzz799 (US): the server's view only when it was built from THIS board (same
+    // tickers); otherwise the view is built here from the board on screen, so the
+    // summary counts always match it. India unchanged.
+    const serverViewOk = market !== 'US' || serverViewMatchesBoard(research?.board_hash, boardH);
+    if (research?.view && research.view.summary && serverViewOk) return { view: { ...research.view, session: session || research.view.session }, error: null };
     try {
       const findings = Object.fromEntries(Object.entries(research?.findings || {})
         .filter(([, f]) => !boardSet || boardSet.has(String(f.ticker).toUpperCase()))) as any;
@@ -375,7 +424,7 @@ export default function AiGainersPage() {
     } catch (e: any) {
       return { view: null, error: String(e?.message || e) };
     }
-  }, [demo, data, research, session, boardSet, market, rows]);
+  }, [demo, data, research, session, boardSet, market, rows, boardH]);
   const view = built.view;
 
   const researched = Object.keys(research?.findings || {}).length > 0;
@@ -412,10 +461,22 @@ export default function AiGainersPage() {
       )}
       {sweeping && (
         <span style={{ fontSize: 12, color: C.cyan, fontWeight: 700 }}>
-          {rescoring ? 'SCAN ✓ complete · re-scoring with current rules (no AI)…' : `SCAN ✓ complete · AI research ${covShown ? `${covShown.researched}/${covShown.total}` : ''} running…`}
+          {rescoring ? 'SCAN ✓ complete · re-scoring with current rules (no AI)…'
+            : market === 'US' && sweepKind === 'sec' ? `Newer scan · researching the new names from SEC filings (no AI) ${covShown ? `${covShown.researched}/${covShown.total}` : ''}…`
+            : `SCAN ✓ complete · AI research ${covShown ? `${covShown.researched}/${covShown.total}` : ''} running…`}
         </span>
       )}
-      {covShown && covShown.total > 0 && !sweeping && (
+      {market === 'US' && !sweeping && research?.progress && research.progress.total > 0 && (() => {
+        // zzz798 (US): how the sweep ended, in words — never a silent stop.
+        const pg = research.progress!;
+        const done = pg.researched >= pg.total && !pg.retrying.length;
+        return (
+          <span data-testid="us-sweep-summary" style={{ fontSize: 12, color: pg.failed.length ? C.amber : C.faint }} title={pg.failed.map((x) => `${x.ticker}: ${x.reason}`).join('\n') || undefined}>
+            {done ? '✓ done' : 'stopped'} · {pg.researched} of {pg.total} researched{pg.failed.length ? ` · ${pg.failed.length} failed (${pg.failed.slice(0, 3).map((x) => `${x.ticker}: ${x.reason}`).join('; ')}${pg.failed.length > 3 ? '; …' : ''})` : ''}{pg.retrying.length ? ` · ${pg.retrying.length} timed out, retry pending` : ''} · {pg.quantified} with figures read from SEC filings (no AI)
+          </span>
+        );
+      })()}
+      {covShown && covShown.total > 0 && !sweeping && !(market === 'US' && research?.progress) && (
         <span style={{ fontSize: 12, color: C.faint }} title={`Research completion, not catalysts found: ${covShown.researched} of the ${covShown.total} small/mid-cap gainers have had their filings researched. ${board.length > covShown.total ? `The other ${board.length - covShown.total} of the ${board.length} scanned are large caps (≥ ₹${(research?.large_cap_min_cr ?? 100000).toLocaleString('en-IN')} Cr), excluded from catalyst research.` : ''}`}>{covShown.researched >= covShown.total ? '✓ ' : ''}AI research {covShown.researched}/{covShown.total} small/mid caps{board.length > covShown.total ? ` · ${board.length - covShown.total} large caps excluded` : ''}</span>
       )}
       {!sweeping && rescored && (
@@ -449,6 +510,20 @@ export default function AiGainersPage() {
           )}
         </div>
       )}
+      {market === 'US' && !demo && !sweeping && sweepNote && (
+        <div data-testid="us-sweep-stopped" style={{ fontSize: 13, color: C.amber, background: C.bg, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '8px 12px' }}>
+          Research {sweepNote}.
+        </div>
+      )}
+      {market === 'US' && !demo && (() => {
+        const onBoard = new Set(board);
+        const gone = (research?.dropped || []).filter((d) => !onBoard.has(String(d.ticker).toUpperCase()));
+        return gone.length ? (
+          <div data-testid="us-dropped" style={{ fontSize: 12.5, color: C.faint, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 12px' }}>
+            No longer in today’s list ({gone.length}): {gone.slice(0, 20).map((d) => d.ticker).join(', ')}{gone.length > 20 ? '…' : ''} — they were on an earlier scan this session and are not counted in the summary above.
+          </div>
+        ) : null;
+      })()}
       {built.error && (
         <div role="alert" style={{ fontSize: 13, color: C.amber, background: C.bg, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '8px 12px' }}>
           The research view could not be built: {built.error}. The raw tables are under “Evidence / technical details” below.
@@ -500,8 +575,11 @@ export default function AiGainersPage() {
 
   const asOf = data?.source_list?.as_of;
   const usWeekly = market === 'US' && data?.source_list?.move_window === '1W';
+  // zzz799 (US): the US session in plain words, in New York time — at 02:24 IST
+  // Friday the US "today" is still Thursday's session, and the page says so.
+  const usPhrase = market === 'US' && !usWeekly ? usSessionPhrase(session?.date || (asOf as any)?.session || null) : null;
   const sessionNote = market === 'US' && asOf
-    ? `${asOf.stale ? '⚠ ' : ''}${asOf.label}${usWeekly ? ' — the US move is the 1-week export column (live scan unavailable).' : ''}`
+    ? `${usPhrase ? `${usPhrase}. ` : ''}${asOf.stale ? '⚠ ' : ''}${asOf.label}${usWeekly ? ' — the US move is the 1-week export column (live scan unavailable).' : ''}`
     : market === 'IN' && data?.session && data.session.state === 'open' ? 'Moves are intraday and will change until 15:30 IST.' : null;
 
   return (
@@ -573,6 +651,12 @@ interface ResearchPayload {
   rules_version?: string | null; rules_version_current?: string; stale_rules?: number;
   /** The research view, when the server builds it (zzz770). */
   view?: ResearchView | null;
+  /** zzz798 (US): how the sweep stands — researched, failed (with the reason),
+   *  names being retried after a timeout, cards with figures from SEC filings. */
+  progress?: { researched: number; total: number; failed: Array<{ ticker: string; reason: string }>; retrying: string[]; cards: number; quantified: number };
+  /** zzz799 (US): the board (scan) this research was registered from, and the names that fell off a later scan. */
+  board_hash?: string | null; scan_at?: string | null; board_match?: boolean | null;
+  dropped?: Array<{ ticker: string; company: string | null }>;
 }
 type BoardCov = ReturnType<typeof boardCoverage>;
 

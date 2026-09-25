@@ -216,6 +216,12 @@ export interface Finding {
   evidenceGap?: 'NO_CATALYST' | 'EVIDENCE_INCOMPLETE' | 'UNCLASSIFIED' | null;
   /** zzz785: independent dimensions, not a raw item count. */
   evidenceBreadth?: { documents: number; sourceKinds: number; eventKinds: number };
+  /** zzz798 (US only): the card built from the SEC documents without a model
+   *  (us-card.ts) — null when nothing could be read; absent on India. */
+  usCard?: import('./us-card').UsCard | null;
+  /** zzz798 (US only): US_CARD_VERSION the card was built under (set even
+   *  when no card could be built, so a re-score does not retry forever). */
+  usCardV?: number;
 }
 
 // ── denial vs clarification (zzz771) ──────────────────────────────────────
@@ -1165,6 +1171,9 @@ export interface StoredSweepInputs {
   /** zzz785 (US): facts / refs read from SEC documents and press, already compact. */
   extraFacts?: StructuredFacts[] | null;
   extraRefs?: SourceRef[] | null;
+  /** zzz798 (US): the SEC-document card and the version it was built under. */
+  usCard?: import('./us-card').UsCard | null;
+  usCardV?: number;
 }
 
 /** Keeps only what a finding can use (the window, a bounded summary): the

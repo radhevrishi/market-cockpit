@@ -59,7 +59,9 @@ async function secFetch(url: string, timeoutMs: number): Promise<Response> {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   return fetch(url, {
     headers: { 'User-Agent': UA, 'Accept-Encoding': 'gzip, deflate', Accept: 'application/json, text/html;q=0.9, */*;q=0.5' },
-    signal: AbortSignal.timeout(timeoutMs), cache: 'no-store',
+    // zzz798: AbortSignal.timeout takes a whole number of ms — "usLeft() / 3"
+    // was a fraction and threw "The value of "delay" is out of range".
+    signal: AbortSignal.timeout(Math.max(1, Math.round(timeoutMs))), cache: 'no-store',
   });
 }
 
@@ -126,7 +128,12 @@ export interface EdgarResearch {
   /** Secondary (press / IR) items, fetched only when every SEC route failed
    *  and `pressFallback` allowed it. Never counted as a filing. */
   press?: UsPressFallback | null;
+  /** zzz798: the company's non-insider filings of the last ~200 days (from the
+   *  submissions list) — how an 8-K/A finds the 8-K it amends, and what the
+   *  "latest SEC filing" is on a press-only card. */
+  recentFilings?: UsRecentFiling[];
 }
+export interface UsRecentFiling { form: string; date: string; items: string[]; url: string }
 
 /** Filings for the ticker in the last `windowDays`, as announcements. */
 export async function fetchEdgarResearch(ticker: string, windowDays: number, now = new Date(), opts: { timeoutMs?: number; readOwnership?: boolean; pressFallback?: boolean; company?: string | null } = {}): Promise<EdgarResearch> {
@@ -183,6 +190,7 @@ export async function fetchEdgarResearch(ticker: string, windowDays: number, now
   out.sources.push(routed.value.label);
   const stats = { insiderForms: 0, inWindow: 0 };
   out.announcements = announcementsFromSubmissions(sub, cik, windowDays, now, stats);
+  out.recentFilings = recentFilingsOf(sub, cik, now);
   out.filingsInWindow = stats.inWindow;
   out.insiderForms = stats.insiderForms;
   const refs = out.announcements.map((a) => sourceRefFromAnnouncement(ticker, a));
@@ -211,6 +219,26 @@ export async function fetchEdgarResearch(ticker: string, windowDays: number, now
   }
   out.sourceRefs = dedupeSources(refs);
   if (facts.length) out.facts = facts;
+  return out;
+}
+
+/** zzz798: the non-insider filings of the last `days` days, newest first. Pure. */
+export function recentFilingsOf(sub: any, cik: string, now: Date, days = 200): UsRecentFiling[] {
+  const rec = sub?.filings?.recent || {};
+  const n = Array.isArray(rec.form) ? rec.form.length : 0;
+  const out: UsRecentFiling[] = [];
+  const cikNum = String(parseInt(cik, 10));
+  for (let i = 0; i < n && out.length < 60; i++) {
+    const form = String(rec.form[i] || '').toUpperCase();
+    const date = String(rec.filingDate?.[i] || '');
+    if (!form || /^(3|4|5|144)(\/A)?$/.test(form) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    if ((now.getTime() - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 > days) continue;
+    const acc = String(rec.accessionNumber?.[i] || '');
+    const doc = String(rec.primaryDocument?.[i] || '');
+    if (!acc) continue;
+    out.push({ form, date, items: String(rec.items?.[i] ?? '').split(',').map((x) => x.trim()).filter((x) => /^\d\.\d\d$/.test(x)),
+      url: `https://www.sec.gov/Archives/edgar/data/${cikNum}/${acc.replace(/-/g, '')}/${doc}` });
+  }
   return out;
 }
 
@@ -245,7 +273,7 @@ export interface UsPressFallback {
  *  release is the company's words (COMPANY_IR) but not a filing; a news
  *  article is PRESS (verification required). */
 export async function fetchUsPressFallback(ticker: string, company: string | null, o: { timeoutMs?: number; now?: Date; windowDays?: number } = {}): Promise<UsPressFallback> {
-  const timeoutMs = Math.max(2_000, Math.min(10_000, o.timeoutMs ?? 6_000));
+  const timeoutMs = Math.round(Math.max(2_000, Math.min(10_000, o.timeoutMs ?? 6_000)));
   const now = o.now ?? new Date();
   const windowMs = (o.windowDays ?? 21) * 86_400_000;
   const get = async (url: string, accept: string) => withRetry(() => fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (MarketCockpit research)', Accept: accept }, signal: AbortSignal.timeout(timeoutMs), cache: 'no-store' }), { retries: 1, baseMs: 500, retryOn: (r) => retryableStatus(r.status) });
@@ -519,6 +547,34 @@ async function getDocText(url: string, timeoutMs: number): Promise<string> {
   return text;
 }
 
+// ── zzz798: SEC helpers for the US card reader (us-card-fetch.ts) ─────────
+// Same User-Agent, same ≤10 requests/s spacing, same retry, same 6 h text
+// cache. Raw HTML (for the EX-99.1 tables) and very long exhibits (a scheme
+// booklet) sit in their own small caches so they cannot crowd out the rest.
+const RAW_MAX = 24;
+const rawCache = new Map<string, { at: number; html: string }>();
+/** Raw HTML of one SEC document ('' on failure). Never throws. */
+export async function secRawHtml(url: string, timeoutMs: number, maxBytes = 8_000_000): Promise<string> {
+  const hit = rawCache.get(url);
+  if (hit && Date.now() - hit.at < DOC_TTL_MS) return hit.html;
+  try {
+    const r = await secFetchRetry(url, timeoutMs, 1);
+    if (!r.ok) return '';
+    const html = (await r.text()).slice(0, maxBytes);
+    if (rawCache.size >= RAW_MAX) rawCache.delete(rawCache.keys().next().value as string);
+    rawCache.set(url, { at: Date.now(), html });
+    return html;
+  } catch { return ''; }
+}
+/** JSON from sec.gov / data.sec.gov (null on failure). Never throws. */
+export async function secJson<T = any>(url: string, timeoutMs: number): Promise<T | null> {
+  try { const r = await secFetchRetry(url, timeoutMs, 1); return r.ok ? ((await r.json()) as T) : null; } catch { return null; }
+}
+/** Filing text through the shared 6 h cache ('' on failure). Never throws. */
+export async function secDocText(url: string, timeoutMs: number): Promise<string> {
+  try { return await getDocText(url, timeoutMs); } catch { return ''; }
+}
+
 /** The documents of one filing: the primary (8-K body), EX-99.1 (press
  *  release) and — only when asked, it is often very long — EX-10.1. */
 export async function fetchEdgarDocuments(url: string, timeoutMs = 12_000, o: { exhibit10?: boolean } = {}): Promise<UsDocText[]> {
@@ -562,6 +618,8 @@ export async function fetchEdgarText(url: string, timeoutMs = 12_000): Promise<s
 const NAMED: Record<string, string> = {
   nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", rsquo: '’', lsquo: '‘',
   ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', bull: '•', reg: '®', trade: '™',
+  // zzz798: EX-99.1 bullets ("&middot; Total revenue was …") stayed literal.
+  middot: '·',
 };
 
 /** Filing HTML → text. Entities are DECODED, not blanked: "company&#8217;s"

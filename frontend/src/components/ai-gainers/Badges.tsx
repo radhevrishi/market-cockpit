@@ -66,9 +66,22 @@ export function TriagePill({ it }: { it: ResearchItem }) {
 }
 
 export function SourceBadge({ it }: { it: ResearchItem }) {
+  // zzz798 (US): one source label per card, read from the SEC documents —
+  // "VERIFIED DOCUMENT (SEC 8-K, filed …)" or "PRESS ONLY — no SEC filing found yet".
+  const us = it.market === 'US' ? it.usCard : null;
+  if (us && us.source.tier !== 'NONE') {
+    const sec = us.source.tier === 'SEC';
+    return <Pill color={sec ? C.green : C.amber} title={sec ? `Read from the SEC filing itself (no AI).${us.source.doc ? ` Figures from: ${us.source.doc}.` : ''}` : 'Only press / news coverage. No 8-K, 6-K, 10-Q, offering or 13D was found on SEC EDGAR for this event yet.'}>SOURCE: {us.source.label}</Pill>;
+  }
   const s = SOURCE_META[it.sourceConfidence] || SOURCE_META.UNVERIFIED;
   return <Pill color={s.color} title={s.hover}>SOURCE: {s.label}</Pill>;
 }
+
+/** zzz798: the materiality word the owner reads — HIGH / MODERATE / SMALL on US cards. */
+export const materialWord = (it: ResearchItem): string => {
+  const l = it.materiality?.label || 'UNKNOWN';
+  return it.market === 'US' && it.usCard && l === 'SIGNIFICANT' ? 'HIGH' : l;
+};
 
 export function RelevanceBadge({ it }: { it: ResearchItem }) {
   const r = RELEVANCE_META[it.portfolio?.relevance || 'UNRELATED'];
@@ -116,11 +129,14 @@ export function FactLine({ it }: { it: ResearchItem }) {
   const pe = PERSIST_META[it.persistence] || PERSIST_META.UNKNOWN;
   const gap = GAP_META[it.expectationGap?.level || 'UNKNOWN'] || GAP_META.UNKNOWN;
   const ml = it.materiality?.label || 'UNKNOWN';
+  const usCard = it.market === 'US' ? it.usCard : null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', alignItems: 'baseline' }}>
       <Fact k="EVENT" v={it.eventLabel || it.eventType} />
-      <Fact k="STAGE" v={st.label} title={st.hover} />
-      <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : it.materiality?.verification === 'PENDING' ? ' — PENDING DOCUMENT VERIFICATION' : ''}`} color={MATERIAL_COLOR[ml]} title={it.materiality?.verification === 'PENDING' ? it.materiality.explanation : materialityHover(it)} />
+      <Fact k="STAGE" v={usCard?.stageText ? `${st.label} · ${usCard.stageText.toUpperCase()}` : st.label} title={st.hover} />
+      {usCard
+        ? <Fact k="MATERIAL" v={`${materialWord(it)} · ⓘ how computed`} color={MATERIAL_COLOR[ml]} title={materialityHover(it)} />
+        : <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : it.materiality?.verification === 'PENDING' ? ' — PENDING DOCUMENT VERIFICATION' : ''}`} color={MATERIAL_COLOR[ml]} title={it.materiality?.verification === 'PENDING' ? it.materiality.explanation : materialityHover(it)} />}
       <Fact k="TRANSMIT" v={tr.label} title={tr.hover} />
       {/* zzz787: four duration concepts, never merged — contractual (only when stated),
           potential economic duration (NOT evidence), persistence evidence, catalyst state. */}
@@ -210,7 +226,7 @@ export function CatalystChips({ it }: { it: ResearchItem }) {
   const pt = it.persistenceTest;
   return (
     <>
-      {it.verification && /verification required/i.test(it.verification) && <Pill color={C.amber} title="Only a secondary source (press / summary) says this. It becomes evidence when an official filing confirms it.">SECONDARY · VERIFICATION REQUIRED</Pill>}
+      {it.verification && /verification required/i.test(it.verification) && !(it.market === 'US' && it.usCard) && <Pill color={C.amber} title="Only a secondary source (press / summary) says this. It becomes evidence when an official filing confirms it.">SECONDARY · VERIFICATION REQUIRED</Pill>}
       {it.evidenceGap && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
       {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'The size of this event is not stated.'}>{it.economicsUnknown.label.toUpperCase()}</Pill>}
       {primary && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${primary.stateWord}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}

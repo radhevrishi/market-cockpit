@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from 'react';
 import type { UsBookView, UsBookRow, UsBookAnalytics, UsCashRow, SectorStat, BucketStat } from '@/lib/us-book/analytics';
-import { ageInWords, fmtUsdShort, STALE_PRICE_DAYS, BROKER_BASE_CURRENCY } from '@/lib/us-book/analytics';
+import { ageInWords, fmtUsdShort, STALE_PRICE_DAYS, BROKER_BASE_CURRENCY, MOVERS_TOP_N, nonUsTag } from '@/lib/us-book/analytics';
 import { SortableTable, type Col } from './sortable-table';
 import { C, money, signedMoney, pct, wt, tone, fmtEt, card, cardTitle, Tile, Bar } from './ui';
 
@@ -135,13 +135,23 @@ export function AnalyticsTab({ view, a }: { view: UsBookView; a: UsBookAnalytics
   const Mini = ({ title, rows, field }: { title: string; rows: UsBookRow[]; field: 'pnlUsd' | 'dayChangePct' }) => (
     <div>
       <div style={{ fontSize: 11, fontWeight: 900, color: C.faint, marginBottom: 4 }}>{title}</div>
-      {rows.length ? rows.map((r) => (
-        <div key={r.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '1px 0' }}>
-          <span style={{ color: C.dim, fontWeight: 700 }}>{r.ticker}</span>
-          <span style={{ color: tone(r[field]), fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{field === 'pnlUsd' ? signedMoney(r.pnlUsd, 'USD', 0) : pct(r.dayChangePct)}</span>
-        </div>)) : <div style={{ fontSize: 12, color: C.faint }}>none</div>}
+      {rows.length ? rows.map((r) => {
+        const tag = nonUsTag(r);
+        // A non-US line's $ figure is its own-currency move × the live FX rate (analytics.ts); no rate → "—".
+        const usd = field === 'pnlUsd' ? r.pnlUsd : r.dayChangeUsd;
+        const fxNote = tag ? (r.fxToUsd != null ? `${r.currency} line — $ converted at ${r.currency}/USD ${r.fxToUsd.toFixed(4)}` : (r.fxReason || `no live ${r.currency}/USD rate`)) : undefined;
+        return (
+          <div key={r.key} title={fxNote} style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 12.5, padding: '1px 0' }}>
+            <span style={{ color: C.dim, fontWeight: 700, minWidth: 0 }}>{r.ticker}{tag ? <span style={{ fontSize: 10.5, fontWeight: 800, color: C.amber }}> ({tag})</span> : null}</span>
+            <span style={{ color: tone(r[field]), fontWeight: 800, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              {field === 'pnlUsd' ? signedMoney(r.pnlUsd, 'USD', 0) : <>{pct(r.dayChangePct)}<span style={{ fontSize: 10.5, fontWeight: 700, color: C.faint }}> {usd == null ? '$—' : signedMoney(usd, 'USD', 0)}</span></>}
+            </span>
+          </div>);
+      }) : <div style={{ fontSize: 12, color: C.faint }}>none</div>}
     </div>
   );
+  const capStyle: React.CSSProperties = { fontSize: 11, color: C.faint, marginTop: 6, lineHeight: 1.45, whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', overflowWrap: 'break-word' };
+  const hasNonUs = [...a.dayUp, ...a.dayDown, ...a.contributors, ...a.drags].some((r) => nonUsTag(r));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -189,6 +199,7 @@ export function AnalyticsTab({ view, a }: { view: UsBookView; a: UsBookAnalytics
             <Mini title="▲ BIGGEST GAINS ($)" rows={a.contributors} field="pnlUsd" />
             <Mini title="▼ BIGGEST LOSSES ($)" rows={a.drags} field="pnlUsd" />
           </div>
+          <div style={capStyle}>Up to {MOVERS_TOP_N} each way, ranked by profit or loss in US dollars against your average cost.{hasNonUs ? ' Lines marked (FWB, EUR) trade in Frankfurt in euros; their dollar figures use the live EUR/USD rate.' : ''}</div>
         </div>
         <div style={card}>
           <div style={cardTitle}>Today’s movers</div>
@@ -196,7 +207,7 @@ export function AnalyticsTab({ view, a }: { view: UsBookView; a: UsBookAnalytics
             <Mini title="▲ UP MOST" rows={a.dayUp} field="dayChangePct" />
             <Mini title="▼ DOWN MOST" rows={a.dayDown} field="dayChangePct" />
           </div>
-          <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>Since the previous close; only holdings with a previous close are ranked.</div>
+          <div style={capStyle} data-testid="us-movers-caption">Up to {MOVERS_TOP_N} each way. Change since the previous close; only holdings with a previous close are ranked. The small figure is the day’s change in US dollars.{hasNonUs ? ' Lines marked (FWB, EUR) trade in Frankfurt in euros and are converted at the live EUR/USD rate.' : ''}</div>
         </div>
         <div style={card}>
           <div style={cardTitle}>Concentration — worth knowing</div>

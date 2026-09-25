@@ -18,6 +18,9 @@ import {
 } from '@/lib/screener-data-loader';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import PortfolioQualityHeader from '@/components/PortfolioQualityHeader'; // zzz514
+// zzz799 — the Portfolio Fundamentals list = this country's Portfolio Book + Conviction Beats (server lists).
+import { buildUniverseRows, ORIGIN_CHIP, type FundUniverse, type FundSourceFilter } from '@/lib/fundamentals/universe';
+import { loadFundUniverse, loadFundPool } from '@/lib/fundamentals/load-universe';
 
 // PATCH 1101rrr — IndexedDB fallback for when localStorage hits its 5MB
 // quota. Same key namespace so loads/saves transparently move between the
@@ -555,6 +558,57 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLoadScope, syncStatus]);
 
+  // ── zzz799 — WHICH STOCKS: Portfolio Book + Conviction Beats, per country ──
+  // Portfolio scope only (the Watchlist analyzer keeps its own lists). The
+  // lists come from the server, so a fresh phone shows the same names as the
+  // laptop. Figures still come from the synced exports; "📄 Synced file" is
+  // the old view, exactly as it was.
+  const universeOn = scope === 'portfolio';
+  const SRC_KEY = 'mc:fundamentals:portfolio' + marketSuffix + ':source:v1';
+  const [srcFilter, setSrcFilterState] = useState<FundSourceFilter>('both');
+  useEffect(() => {
+    try { const v = localStorage.getItem(SRC_KEY) as FundSourceFilter | null; setSrcFilterState(v && ['both', 'book', 'cb', 'file'].includes(v) ? v : 'both'); } catch { setSrcFilterState('both'); }
+  }, [SRC_KEY]);
+  const setSrcFilter = (f: FundSourceFilter) => { setSrcFilterState(f); try { localStorage.setItem(SRC_KEY, f); } catch {} };
+  const [universe, setUniverse] = useState<FundUniverse | null>(null);
+  const [uniLoading, setUniLoading] = useState(false);
+  const [uniError, setUniError] = useState<string>('');
+  const [pool, setPool] = useState<{ market: string; pool: Array<{ file: string; rows: Row[] }>; files: number; failed: number } | null>(null);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [uniTick, setUniTick] = useState(0);
+  useEffect(() => {
+    if (!universeOn) return;
+    let cancelled = false;
+    setUniverse(null); setUniError(''); setUniLoading(true); setPool(null);
+    loadFundUniverse(market)
+      .then((u) => { if (!cancelled) setUniverse(u); })
+      .catch((e: any) => { if (!cancelled) setUniError(String(e?.message || e)); })
+      .finally(() => { if (!cancelled) setUniLoading(false); });
+    return () => { cancelled = true; };
+  }, [universeOn, market, uniTick]);
+  // Names the synced portfolio file does not carry → look in the other synced exports (once per visit).
+  const missingFromFile = useMemo(() => {
+    if (!universe || universe.market !== market) return 0;
+    return buildUniverseRows(market, universe.names, data, [], 'both').blank.length;
+  }, [universe, market, data]);
+  useEffect(() => {
+    if (!universeOn || srcFilter === 'file' || !missingFromFile || poolLoading) return;
+    if (pool && pool.market === market) return;
+    // Not cancelled on re-render: the result is tagged with its market and only
+    // used for that market, and the loading flag always clears.
+    setPoolLoading(true);
+    loadFundPool(market, (t) => toObjects(parseCSV(t)).filter((r) => rowKey(r) !== ''))
+      .then((p) => setPool({ market, ...p }))
+      .catch(() => setPool({ market, pool: [], files: 0, failed: 1 }))
+      .finally(() => setPoolLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [universeOn, srcFilter, missingFromFile, market, pool, poolLoading]);
+  const uniView = useMemo(() => {
+    if (!universeOn || !universe || universe.market !== market || srcFilter === 'file' || !universe.names.length) return null;
+    return buildUniverseRows(market, universe.names, data, pool && pool.market === market ? pool.pool : [], srcFilter);
+  }, [universeOn, universe, market, srcFilter, data, pool]);
+  const shownData: Row[] = uniView ? (uniView.rows as Row[]) : data;
+
   // Accept one or many files (multi-select or multi-drop); each merges in.
   const onFile = useCallback((files?: FileList | File[] | null) => {
     if (!files) return;
@@ -675,8 +729,42 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
 
         {error ? <div style={{ color: COL.red, marginTop: 14, fontSize: 12 }}>{error}</div> : null}
 
+        {/* zzz799 — which stocks: my book / Conviction Beats / both / the synced file as before */}
+        {universeOn ? (
+          <div data-testid="fund-universe" style={{ marginTop: 14, padding: '10px 12px', border: `1px solid ${COL.line2}`, borderRadius: 10, background: COL.panel2 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: COL.muted, marginRight: 4 }}>SHOW {market === 'USA' ? '🇺🇸 USA' : '🇮🇳 INDIA'}:</span>
+              {([
+                ['both', `📗🏆 Book + Conviction Beats${universe ? ` (${universe.counts.total})` : ''}`],
+                ['book', `📗 My book${universe ? ` (${universe.counts.book})` : ''}`],
+                ['cb', `🏆 Conviction Beats${universe ? ` (${universe.counts.cb})` : ''}`],
+                ['file', `📄 Synced file only (${data.length})`],
+              ] as Array<[FundSourceFilter, string]>).map(([k, l]) => (
+                <button key={k} onClick={() => setSrcFilter(k)} style={{ fontSize: 12, fontWeight: 800, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${srcFilter === k ? COL.cyan : COL.line2}`, background: srcFilter === k ? `${COL.cyan}1f` : 'transparent', color: srcFilter === k ? COL.cyan : COL.muted }}>{l}</button>
+              ))}
+              <button onClick={() => setUniTick((n) => n + 1)} disabled={uniLoading} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: `1px solid ${COL.line2}`, background: 'transparent', color: COL.muted, cursor: uniLoading ? 'wait' : 'pointer' }}>{uniLoading ? 'Reading lists…' : '↻ Re-read lists'}</button>
+            </div>
+            <div style={{ fontSize: 11.5, color: COL.muted, marginTop: 6, lineHeight: 1.5 }}>
+              {uniLoading && !universe ? 'Reading your book and Conviction Beats from the server…' : null}
+              {universe ? (
+                <>
+                  {universe.sources.join(' · ')}.{' '}
+                  {universe.counts.both ? `${universe.counts.both} name${universe.counts.both === 1 ? ' is' : 's are'} in both, counted once. ` : ''}
+                  {uniView ? `Showing ${uniView.rows.length}: ${uniView.withFigures} with figures${uniView.fromOtherFiles ? ` (${uniView.fromOtherFiles} taken from another synced export, named on the row)` : ''}${uniView.blank.length ? `, ${uniView.blank.length} with no row in any synced ${market === 'USA' ? 'TradingView' : 'screener.in'} export yet (listed with blank figures)` : ''}. ` : ''}
+                  {poolLoading ? 'Looking for the missing names in the other synced exports… ' : ''}
+                  {srcFilter === 'file' ? `Showing the synced / uploaded file as it is (${data.length} rows), the old view. ` : ''}
+                  {universe.leftOut.map((l) => l.reason).join(' · ')}
+                  {!universe.names.length && !universe.errors.length ? ' Both lists are empty on the server, so the synced file is shown instead.' : ''}
+                </>
+              ) : null}
+              {universe?.errors.length ? <div style={{ color: COL.amber, marginTop: 4 }}>⚠ {universe.errors.join(' · ')}. {universe.names.length ? 'The list below is what could be read.' : 'The synced file is shown instead.'}</div> : null}
+              {uniError ? <div style={{ color: COL.amber, marginTop: 4 }}>⚠ The lists could not be read ({uniError}). The synced file is shown instead.</div> : null}
+            </div>
+          </div>
+        ) : null}
+
         {/* Empty state / dropzone */}
-        {!data.length ? (
+        {!shownData.length ? (
           <div
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
@@ -760,9 +848,9 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
                 USA tab it was showing Indian names (GOODLUCK) out of context. */}
             {scope === 'portfolio' && market !== 'USA' && <div style={{ marginBottom: 16 }}><PortfolioQualityHeader /></div>}{/* zzz514 */}
             {market === 'USA' ? (
-              <UsaFundamentalsDashboard data={data} onRemove={removeRow} onClear={clearAll} />
+              <UsaFundamentalsDashboard data={shownData} onRemove={removeRow} onClear={clearAll} />
             ) : (
-              <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} onClear={clearAll} />
+              <Dashboard data={shownData} onRemove={removeRow} onAdd={addTickers} onClear={clearAll} />
             )}
           </>
         )}
@@ -971,7 +1059,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           .sort((a, b) => (b.pctVsEma200 ?? 0) - (a.pctVsEma200 ?? 0));
         const renderTable = (title: string, sub: string, items: any[], maKey: 'ema50' | 'ema200', pctKey: 'pctVsEma50' | 'pctVsEma200', titleColor: string) => (
           <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
-            <div style={{ fontSize: 13, fondWeight: 800, color: titleColor, marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: titleColor, marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
             <div style={{ fontSize: 12, color: COL.muted, marginBottom: 10 }}>{sub}</div>
             {items.length === 0 ? (
               <div style={{ color: COL.muted, fontSize: 11 }}>None — all stocks trading above this MA. 🟢</div>
@@ -1243,7 +1331,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           <tbody>
             {sortedRows.map((r) => (
               <tr key={r.symbol}>
-                <td style={{ ...cell, fontWeight: 800, color: COL.cyan }}>{r.symbol}</td>
+                <td style={{ ...cell, fontWeight: 800, color: COL.cyan }}>{r.symbol}{(r.raw as any)._origin && ORIGIN_CHIP[(r.raw as any)._origin as keyof typeof ORIGIN_CHIP] ? <span title={`${ORIGIN_CHIP[(r.raw as any)._origin as keyof typeof ORIGIN_CHIP].label}${(r.raw as any)._blank ? ` — ${(r.raw as any)._blank}` : ''}`} style={{ marginLeft: 4, fontSize: 10.5 }}>{ORIGIN_CHIP[(r.raw as any)._origin as keyof typeof ORIGIN_CHIP].icon}</span> : null}</td>
                 <td style={{ ...cell, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company}</td>
                 <td style={{ ...cell, color: COL.muted, fontSize: 10 }}>{r.sector}</td>
                 <td style={cell}>{r.mcapB?.toLocaleString() ?? '—'}</td>
@@ -1302,9 +1390,16 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
     const t = (d['NSE Code'] || d['BSE Code'] || d['Symbol'] || d['Ticker'] || '').trim().toUpperCase();
     return !!t && benchSet.has(t);
   }, [benchSet]);
-  const BenchChip = ({ d }: { d: Row }) => onBenchRow(d)
-    ? <span title="On your conviction bench" style={{ marginLeft: 5, fontSize: 10.5 }}>🏆</span>
-    : null;
+  const BenchChip = ({ d }: { d: Row }) => {
+    // zzz799 — the row's own origin (Portfolio Book / Conviction Beats) when the analyzer built the list.
+    const o = (d as any)._origin as keyof typeof ORIGIN_CHIP | undefined;
+    if (o && ORIGIN_CHIP[o]) {
+      return <span title={`${ORIGIN_CHIP[o].label}${(d as any)._blank ? ` — ${(d as any)._blank}` : ''}`} style={{ marginLeft: 5, fontSize: 10.5 }}>{ORIGIN_CHIP[o].icon}{(d as any)._blank ? <span style={{ color: COL.amber, fontSize: 10 }}> · no figures yet</span> : null}</span>;
+    }
+    return onBenchRow(d)
+      ? <span title="On your conviction bench" style={{ marginLeft: 5, fontSize: 10.5 }}>🏆</span>
+      : null;
+  };
 
   // zzz107 — Live CMP overlay. Screener CSV "Current Price" is a daily
   // snapshot (whatever screener.in had when the GH Action ran). The DMA
@@ -1743,7 +1838,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
           );
         })}
         {/* zzz125 — Operating Leverage KPI card (computed: profit growth ÷ sales growth) */}
-        <div style={{ ...kpiCard, border: `1px solid ${COL.lime || '#84CC16'}40` }} title="Operating Leverage = Profit growth ÷ Sales growth (TTM YoY). >1 = margins expanding · >2 = strong">
+        <div style={{ ...kpiCard, border: '1px solid #84CC1640' }} title="Operating Leverage = Profit growth ÷ Sales growth (TTM YoY). >1 = margins expanding · >2 = strong">
           <div style={{ fontSize: 10.5, letterSpacing: .4, textTransform: 'uppercase', color: '#84CC16', marginBottom: 7, fontWeight: 700 }}>
             ⚡ Op Leverage<span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
           </div>
@@ -1905,7 +2000,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
 function SecTitle({ children }: { children: any }) {
   return <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, margin: '22px 0 10px', fontWeight: 700 }}>{children}</div>;
 }
-function Card({ title, dot, hint, children }: { title: string; dot: string; hint?: string; children: any }) {
+function Card({ title, dot, hint, children }: { title: string; dot?: string; hint?: string; children: any }) {
   return (
     <div style={{ background: COL.panel, border: `1px solid ${COL.line}`, borderRadius: 10, padding: 14, marginTop: 16 }}>
       <h3 style={{ margin: '0 0 10px', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
