@@ -89,6 +89,21 @@ export function specialFocusQueue<R>(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// IN THE LIST MEANS IT MEETS THE GATE.                                (zzz802)
+// CYIENTDLM sat in the Special Focus list under the words "No longer meets the
+// Special Focus gate" — a list entry contradicting itself. A record that once
+// qualified and has decayed is still never silently removed (the reason is
+// kept), but it is shown in its own DROPPED OUT section with that reason. An
+// entry the owner chose to keep (confirmed / watch) stays in the list — the
+// owner's choice is the reason, and its note says so.
+// ═══════════════════════════════════════════════════════════════════════════
+export function splitDroppedOut<E extends { dismissed: boolean; decayed: boolean; st: { user: { state: string } | null } | null }>(entries: E[]): { inFocus: E[]; droppedOut: E[] } {
+  const kept = (e: E) => e.st?.user?.state === 'confirmed' || e.st?.user?.state === 'watch';
+  const live = entries.filter((e) => !e.dismissed);
+  return { inFocus: live.filter((e) => !e.decayed || kept(e)), droppedOut: live.filter((e) => e.decayed && !kept(e)) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // NEAR MISSES — ONE LIST FOR THE COUNT AND THE ROWS.                 (zzz788)
 // The owner read "29 near misses — one piece of evidence away" beside "Show
 // all 27" and could not reconcile them: the 27 was the Special Focus queue,

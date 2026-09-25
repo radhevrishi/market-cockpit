@@ -236,3 +236,61 @@ export function CatalystChips({ it }: { it: ResearchItem }) {
     </>
   );
 }
+
+// ── zzz801 (US only): CATALYSTS FOUND ─────────────────────────────────────
+// The event taxonomy's list: label · category · source (SEC / press only) ·
+// date, the evidence sentence, and a figure only when the sentence states it.
+// The arrow is a direction HINT for the reader, never a trade instruction.
+// v1 cards (no list) render nothing; an empty list says so plainly.
+
+const DIR_MARK: Record<string, { mark: string; color: string; word: string }> = {
+  positive: { mark: '▲', color: C.green, word: 'reads positive' },
+  negative: { mark: '▼', color: C.red, word: 'reads negative' },
+  mixed: { mark: '◆', color: C.amber, word: 'mixed' },
+  neutral: { mark: '◆', color: C.faint, word: 'neutral' },
+};
+
+export function UsCatalystList({ it, compact, max = 5 }: { it: ResearchItem; compact?: boolean; max?: number }) {
+  const us = it.market === 'US' ? it.usCard : null;
+  if (!us || !Array.isArray(us.catalysts)) return null;
+  const cs = us.catalysts;
+  const k: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
+  if (!cs.length) {
+    return <div data-testid="us-catalysts-none" style={{ fontSize: 12, color: C.faint }}>No catalyst found in filings or news.</div>;
+  }
+  if (compact) {
+    return (
+      <div data-testid="us-catalysts-compact" style={{ fontSize: 12, color: C.dim }}>
+        <span style={{ ...k, marginRight: 6 }}>FOUND</span>
+        {cs.slice(0, 3).map((c, i) => (
+          <span key={c.id} title={`“${c.sentence}”`}>{i ? ' · ' : ''}<b style={{ color: C.text }}>{c.label}</b> ({c.source === 'SEC' ? 'SEC' : 'press only'}{c.figures[0] ? `, ${c.figures[0]}` : ''})</span>
+        ))}
+        {cs.length > 3 && <span style={{ color: C.faint }}> · +{cs.length - 3} more</span>}
+      </div>
+    );
+  }
+  return (
+    <div data-testid="us-catalysts" style={{ background: C.bg2, borderRadius: 6, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={k}>CATALYSTS FOUND ({cs.length})</div>
+      {cs.slice(0, max).map((c) => {
+        const d = DIR_MARK[c.direction] || DIR_MARK.neutral;
+        return (
+          <div key={c.id} style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 7px', alignItems: 'baseline' }}>
+              <span title={`Direction hint: ${d.word} — not a trade instruction.`} style={{ color: d.color, fontWeight: 900 }}>{d.mark}</span>
+              <b style={{ color: C.text }}>{c.label}{c.planned ? ' (planned)' : ''}</b>
+              <span style={{ color: C.faint }}>{c.category}</span>
+              <Pill color={c.source === 'SEC' ? C.cyan : C.amber} title={c.sourceLabel}>{c.source === 'SEC' ? 'SEC' : 'PRESS ONLY — NOT VERIFIED IN A FILING'}</Pill>
+              {c.date && <span style={{ color: C.faint, fontSize: 11 }}>{c.date}</span>}
+              {c.figures.length > 0 && <span style={{ color: C.text, fontWeight: 700 }}>stated: {c.figures.join(', ')}</span>}
+            </div>
+            <div style={{ fontStyle: 'italic', overflowWrap: 'anywhere' }}>
+              {c.url ? <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ color: C.dim, textDecoration: 'none' }}>“{c.sentence}”</a> : <>“{c.sentence}”</>}
+            </div>
+          </div>
+        );
+      })}
+      {cs.length > max && <div style={{ fontSize: 11.5, color: C.faint }}>+{cs.length - max} more in OPEN EVENT</div>}
+    </div>
+  );
+}

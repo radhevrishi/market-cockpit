@@ -34,6 +34,7 @@ import { readJsonResponse, describeFetchError } from '@/lib/ai-gainers/client-fe
 import { boardCoverage } from '@/lib/ai-gainers/research-present';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 import { ResearchTriage } from '@/components/ai-gainers/ResearchTriage';
+import { GainersPdfButton } from '@/components/ai-gainers/GainersPdfButton';
 import { parseScreenerLink, US_SCAN_EXCHANGES, type UsScanCriteria as UsCriteria } from '@/lib/ai-gainers/us-scan-criteria';
 import { boardHash, serverViewMatchesBoard, needsBoardSync, usSessionPhrase, sweepStopReason } from '@/lib/ai-gainers/us-board-sync';
 
@@ -611,7 +612,13 @@ export default function AiGainersPage() {
       {view && (
         <ResearchTriage view={view} market={demo ? 'IN' : market} toolbar={toolbar} notice={notice}
           onRescan={demo ? undefined : () => load(market, true)} rescanning={loading}
-          sessionNote={sessionNote} technical={technical} />
+          sessionNote={sessionNote} technical={technical}
+          pdfAction={(
+            // zzz800: the page's current view for this market as a research PDF. Disabled, with the reason, while it is still loading.
+            <GainersPdfButton view={view} market={demo ? 'IN' : market} sessionNote={sessionNote} demo={!!demo}
+              criteria={market === 'US' && !demo && data?.source_list?.move_window !== '1W' ? data?.source_list?.criteria_summary || null : null}
+              disabledReason={demo ? null : loading ? 'Wait — the scan is still loading.' : sweeping ? (rescoring ? 'Wait — the re-score is still running.' : 'Wait — the research is still running.') : null} />
+          )} />
       )}
       {!view && data && (<>{notice}{technical}</>)}
     </div>

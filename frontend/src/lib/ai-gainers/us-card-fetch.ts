@@ -61,6 +61,12 @@ async function readFiling(url: string, left: () => number, opts: { earnings: boo
     if (role) want.push({ role, url: `${dir}${it.name}`, size });
   }
   if (!want.some((w) => w.role === 'primary') && primaryName) want.unshift({ role: 'primary', url, size: 0 });
+  // zzz801: an index URL names no primary document — the 8-K body is the
+  // "…8k.htm" / "form8-k.htm" file of the directory (its Item text is read).
+  if (!want.some((w) => w.role === 'primary') && !primaryName) {
+    const body = items.find((it) => /(?:^|[-_.d])(?:form)?8-?k(?:a)?\.htm$/i.test(String(it?.name || '')));
+    if (body) want.unshift({ role: 'primary', url: `${dir}${body.name}`, size: Number(body.size || 0) });
+  }
   const order: Record<string, number> = { primary: 0, ex99: 1, ex992: 2, proforma: 3, booklet: 4, other: 5 };
   want.sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9));
   const out: UsCardDoc[] = [];

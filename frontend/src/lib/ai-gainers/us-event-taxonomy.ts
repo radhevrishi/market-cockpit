@@ -1,0 +1,453 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// US CATALYST TAXONOMY — ~60 FUNDAMENTAL EVENT TYPES, KEYWORD RULES.  (zzz801)
+//
+// The owner's complaint on the US board: "fundamental catalyst is missing —
+// new product, new segment, product mix, capex, acquisition, all such
+// events". Two thirds of the names said "no identified catalyst" because the
+// card only knew a handful of event kinds (earnings / deal / order / FDA /
+// offering / buyback / guidance / index) and an 8-K Item 7.01 / 8.01 press
+// release that announced a launch, a new plant or a partnership fell through
+// to "Reg FD disclosure — no amount stated".
+//
+// This module reads plain text (an EX-99.1 press release body, an 8-K item,
+// a press headline) sentence by sentence and returns every catalyst it can
+// name, each with:
+//   · a plain-English label and one of eight categories,
+//   · a direction HINT (positive / negative / mixed / neutral) — a hint for
+//     the reader, never a trade instruction,
+//   · the evidence sentence exactly as written,
+//   · the figures ($ amounts, %, units, vote tallies) LITERALLY present in
+//     that sentence. A figure is never computed, rounded or borrowed from
+//     another sentence — if the sentence does not state it, it is not shown.
+//
+// Boilerplate never triggers: forward-looking-statement / safe-harbor text,
+// risk-factor language ("could adversely affect", "no assurance", "if we
+// fail to"), legal furnishing language, and the "About <Company>" paragraph
+// are cut before any rule runs.
+//
+// Pure: no fetch, no clock, no model.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type UsEventCategory =
+  | 'Earnings' | 'Product & segment' | 'Capital & capacity' | 'Corporate action'
+  | 'Deals & customers' | 'Regulatory & clinical' | 'Capital structure' | 'Market & ownership';
+
+export const US_EVENT_CATEGORIES: UsEventCategory[] = [
+  'Earnings', 'Product & segment', 'Capital & capacity', 'Corporate action',
+  'Deals & customers', 'Regulatory & clinical', 'Capital structure', 'Market & ownership',
+];
+
+export type UsEventDirection = 'positive' | 'negative' | 'mixed' | 'neutral';
+
+export interface UsEventHit {
+  /** Stable rule id ("product_launch"). */
+  id: string;
+  /** Plain-English label ("New product launch"). */
+  label: string;
+  category: UsEventCategory;
+  /** A hint for the reader — never a trade instruction. */
+  direction: UsEventDirection;
+  /** The evidence sentence, as written in the source (trimmed, clipped). */
+  sentence: string;
+  /** Figures literally present in that sentence ("$120 million", "99%", "10-2"). */
+  figures: string[];
+  /** The sentence speaks of a plan / expectation ("plans to", "expects to"). */
+  planned: boolean;
+}
+
+interface Rule {
+  id: string;
+  label: string;
+  category: UsEventCategory;
+  direction: UsEventDirection;
+  /** Any of these matching the sentence fires the rule. */
+  any: RegExp[];
+  /** Nothing of this may appear in the sentence. */
+  not?: RegExp;
+  /** Direction override by sentence content. */
+  dir?: (s: string) => UsEventDirection;
+  /** Same-sentence hits of these rule ids are dropped (a more specific rule wins). */
+  hides?: string[];
+  /** Rank inside the card: lower = the lead catalyst. */
+  rank: number;
+}
+
+// ── the rules ─────────────────────────────────────────────────────────────
+
+const MONEYISH = String.raw`(?:US)?\$\s?\d`;
+const GOV = String.raw`(?:U\.?S\.?|United States|federal|government|Department of (?:Defense|Energy|Homeland Security|Health|Veterans Affairs|Transportation|the (?:Army|Navy|Air Force))|DoD|DOE|DHS|NASA|DARPA|BARDA|NIH|Army|Navy|Air Force|Space Force|Marine Corps|Missile Defense Agency|Space Development Agency|CHIPS)`;
+
+const RULES: Rule[] = [
+  // ── EARNINGS ──
+  { id: 'earnings_beat', label: 'Results beat expectations', category: 'Earnings', direction: 'positive', rank: 10,
+    any: [/\b(?:beat|beats|beating|exceed(?:s|ed|ing)?|surpass(?:es|ed)?|topp(?:ed|ing)|tops)\b[^.]{0,60}\b(?:consensus|expectations|estimates|analysts?'? (?:estimates|expectations)|guidance|the high end of)/i, /\bEPS\b(?:[^.]|\.\d){0,40}\bbeats?\b/i, /\babove (?:the )?(?:consensus|analyst (?:estimates|expectations)|high end of (?:its |our )?guidance)\b/i],
+    not: /\bmiss(?:es|ed)?\b|\bbelow (?:consensus|expectations)\b/i, hides: ['eps_reported'] },
+  { id: 'earnings_miss', label: 'Results below expectations', category: 'Earnings', direction: 'negative', rank: 10,
+    any: [/\b(?:miss(?:es|ed)?|fell short of|came in below|below)\b[^.]{0,40}\b(?:consensus|expectations|estimates)\b/i] },
+  { id: 'record_results', label: 'Record revenue / results', category: 'Earnings', direction: 'positive', rank: 11,
+    any: [/\brecord (?:quarterly |annual |full[- ]year |(?:first|second|third|fourth)[- ]quarter |(?:first|second|third|fourth) quarter (?:and full[- ]year )?(?:fiscal )?(?:\d{4} )?)?(?:total |net )?(?:revenues?|sales|net sales|bookings|earnings|net income|gross profit|adjusted ebitda|deliveries|shipments|production|results|financial results)\b/i, /\b(?:revenues?|sales|earnings)\b[^.]{0,30}\b(?:all-time high|highest in (?:the )?company'?s? history)\b/i] },
+  { id: 'revenue_growth', label: 'Revenue growth', category: 'Earnings', direction: 'positive', rank: 12,
+    any: [/\b(?:total |net |product |quarterly |consolidated )?(?:revenues?|sales|net sales)\b[^.;]{0,80}?\b(?:increas(?:ed|es|ing)|grew|grows|rose|rising|up|jump(?:ed|s)?|soar(?:ed|s)?|surg(?:ed|es)|climb(?:ed|s)?|gain(?:ed|s)?)\b[^.;]{0,40}?\d+(?:\.\d+)?\s?(?:%|percent)/i,
+      /\d+(?:\.\d+)?\s?(?:%|percent)\s+(?:year[- ]over[- ]year |yoy |sequential )?(?:increase|growth|rise|jump|gain)\s+in\s+(?:total |net |product )?(?:revenues?|sales)\b/i,
+      /\b(?:revenues?|sales)\b[^.;]{0,20}\+\s?\d+(?:\.\d+)?\s?%/i,
+      /\b(?:revenues?|sales)\b[^.;]{0,40}\b(?:doubled|tripled|more than doubled)\b/i],
+    not: /\b(?:decreas|declin|fell|down \d)/i },
+  { id: 'revenue_decline', label: 'Revenue decline', category: 'Earnings', direction: 'negative', rank: 13,
+    any: [/\b(?:total |net )?(?:revenues?|sales)\b[^.;]{0,60}?\b(?:decreas(?:ed|es)|declin(?:ed|es)|fell|dropped|down)\b[^.;]{0,30}?\d+(?:\.\d+)?\s?(?:%|percent)/i] },
+  { id: 'growth_acceleration', label: 'Growth acceleration', category: 'Earnings', direction: 'positive', rank: 12,
+    any: [/\baccelerat(?:ed|ing|ion (?:in|of))\b[^.]{0,40}\b(?:revenue|sales|growth|demand|bookings)\b/i, /\b(?:revenue|sales) growth accelerated\b/i, /\bsequential (?:revenue |sales )?growth of\b/i] },
+  { id: 'margin_expansion', label: 'Margin expansion', category: 'Earnings', direction: 'positive', rank: 13,
+    any: [/\b(?:gross|operating|ebitda|adjusted ebitda|net|contribution|segment) margins?\b[^.;]{0,60}?\b(?:expand(?:ed|s)?|improv(?:ed|es)|increas(?:ed|es)|widen(?:ed|s)?|rose|up)\b/i, /\bmargin expansion\b/i, /\b(?:expand(?:ed|s)?|improv(?:ed|es)|increas(?:ed|es))\b[^.;]{0,30}\b(?:gross|operating|ebitda) margins?\b/i, /\b\d+\s?basis[- ]points?\b[^.;]{0,30}\b(?:improvement|expansion|increase)\b/i],
+    not: /\b(?:compress|contract(?:ed|ion)|declin|decreas|lower)\w*\b[^.;]{0,20}\bmargin/i },
+  { id: 'margin_compression', label: 'Margin compression', category: 'Earnings', direction: 'negative', rank: 14,
+    any: [/\b(?:gross|operating|ebitda|net) margins?\b[^.;]{0,50}?\b(?:compress(?:ed|ion)|contract(?:ed|ion)|declin(?:ed|es)|decreas(?:ed|es)|narrow(?:ed|s)?)\b/i, /\bmargin (?:compression|pressure|contraction)\b/i] },
+  { id: 'turned_profitable', label: 'Turned profitable / cash-flow positive', category: 'Earnings', direction: 'positive', rank: 11,
+    any: [/\b(?:first|inaugural)\b[^.]{0,30}\b(?:profitable quarter|quarter of (?:gaap |net )?profitability|positive (?:adjusted )?ebitda|positive (?:free |operating )?cash flow|(?:gaap )?net income)\b/i, /\b(?:achiev(?:ed|es)|reach(?:ed|es)|turn(?:ed|s)) (?:gaap |adjusted ebitda |net )?(?:profitability|profitable|cash[- ]flow positive|breakeven|break-even)\b/i, /\bswung to (?:a )?(?:net )?(?:profit|income)\b/i] },
+  { id: 'eps_reported', label: 'Earnings per share reported', category: 'Earnings', direction: 'neutral', rank: 16,
+    any: [/\b(?:GAAP |adjusted |non-GAAP |diluted )*(?:EPS|earnings per (?:diluted )?share|(?:net )?(?:income|loss) per (?:diluted )?share)\b[^.;]{0,40}?(?:of|was|were|at|:)?\s*\(?-?\$\s?\d/i, /\bQ[1-4]\b[^.;]{0,40}\bEPS\b/i],
+    dir: (s) => (/\bbeat|exceed|above/i.test(s) ? 'positive' : /\bmiss|below/i.test(s) ? 'negative' : 'neutral') },
+  { id: 'guidance_raise', label: 'Guidance raised', category: 'Earnings', direction: 'positive', rank: 10,
+    any: [/\b(?:rais(?:es|ed|ing)|increas(?:es|ed|ing)|lift(?:s|ed|ing)|boost(?:s|ed|ing)|upgrad(?:es|ed|ing)|hik(?:es|ed))\b[^.;]{0,70}\b(?:guidance|outlook|forecast|full[- ]year (?:revenue |sales |eps |earnings )?(?:target|expectations))\b/i, /\b(?:guidance|outlook|forecast)\b[^.;]{0,30}\b(?:raised|increased|lifted)\b/i],
+    not: /\b(?:not|no longer|does not|did not)\s+(?:rais|increas)/i },
+  { id: 'guidance_cut', label: 'Guidance cut', category: 'Earnings', direction: 'negative', rank: 10,
+    any: [/\b(?:lower(?:s|ed|ing)|reduc(?:es|ed|ing)|cut(?:s|ting)?|withdr(?:aws|ew|awn)|trim(?:s|med)?|slash(?:es|ed)?)\b[^.;]{0,60}\b(?:guidance|outlook|forecast)\b/i, /\b(?:guidance|outlook|forecast)\b[^.;]{0,20}\b(?:lowered|reduced|cut|withdrawn)\b/i] },
+  { id: 'guidance_issued', label: 'Outlook issued / reaffirmed', category: 'Earnings', direction: 'neutral', rank: 17,
+    any: [/\b(?:initiat(?:es|ed|ing)|introduc(?:es|ed)|issu(?:es|ed)|provid(?:es|ed)|reaffirm(?:s|ed)|reiterat(?:es|ed)|maintain(?:s|ed))\b[^.;]{0,50}\b(?:guidance|outlook)\b/i],
+    hides: [] },
+
+  // ── PRODUCT & SEGMENT ──
+  { id: 'product_launch', label: 'New product launch', category: 'Product & segment', direction: 'positive', rank: 20,
+    any: [/\b(?:launch(?:es|ed|ing)|unveil(?:s|ed|ing)?|introduc(?:es|ed|ing)|debut(?:s|ed)?|roll(?:s|ed)? out|rolling out)\b[^.;]{0,60}\b(?:new|next[- ]generation|its|the|a|an|first)\b/i, /\b(?:the |its |a |commercial )launch of\b/i, /\b(?:to|will) launch\b[^.;]{0,40}\b(?:new|its|the|a|an)\b/i, /^[A-Z][^.;]{0,80}\bLaunch(?:es)?\b/,
+      /\b(?:commercial|full|national|global|nationwide|U\.?S\.?) (?:launch|rollout|availability)\b/i, /\bgeneral(?:ly)? availab(?:le|ility)\b/i, /\bnow (?:commercially )?available\b/i, /\b(?:began|begins|started|starts|commenced) (?:commercial )?(?:shipping|shipments|selling|sales of)\b/i],
+    not: /\blaunch\w* (?:of )?(?:a |an |its |the )?(?:[\w-]+ ){0,3}(?:offering|placement|tender)\b|\binvestigation\b|\blawsuit\b|\blaunch(?:ed|es)? a (?:review|process|search)\b|\bstrategic alternatives\b|\bwebsite\b|\bwebcast\b/i },
+  { id: 'first_commercial', label: 'First commercial sale / shipment', category: 'Product & segment', direction: 'positive', rank: 20,
+    any: [/\bfirst (?:commercial |customer |production )?(?:sale|sales|shipment|shipments|order|orders|deliver(?:y|ies)|revenue|units?)\b/i, /\b(?:initial|first) (?:product )?revenue\b/i] ,
+    not: /\bfirst (?:quarter|half)\b[^.]{0,5}$/i },
+  { id: 'new_segment', label: 'New segment / market entry', category: 'Product & segment', direction: 'positive', rank: 20,
+    any: [/\bnew (?:business |reporting |operating )?(?:segment|business line|line of business|vertical|division|business unit)\b/i, /\b(?:enter(?:s|ed|ing)?|entry into|expan(?:ds?|ded|ding|sion) into)\b[^.;]{0,50}\b(?:market|markets|sector|industry|segment|vertical|space|business)\b/i, /\bdiversif(?:y|ies|ied|ying|ication) into\b/i],
+    not: /\bentered into\b(?![^.;]{0,50}\bmarket)/i },
+  { id: 'product_mix', label: 'Product mix shift', category: 'Product & segment', direction: 'neutral', rank: 22,
+    any: [/\b(?:product|sales|revenue|business|customer|favorable|richer|improved|higher[- ]margin) mix\b/i, /\bmix shift\b/i, /\bshift (?:toward|towards|to) (?:higher[- ]margin|premium|recurring|subscription)\b/i],
+    dir: (s) => (/\bfavorable|richer|improved|higher[- ]margin|premium|recurring/i.test(s) ? 'positive' : /\bunfavorable|lower[- ]margin|weaker/i.test(s) ? 'negative' : 'neutral') },
+  { id: 'pricing_action', label: 'Pricing action', category: 'Product & segment', direction: 'positive', rank: 22,
+    any: [/\bprice (?:increase|increases|hike|hikes|realization)\b/i, /\b(?:rais(?:ed|es|ing)|increas(?:ed|es|ing)) (?:its |our )?(?:list |average |selling )?prices\b/i, /\bpricing (?:action|actions|power|increase)\b/i, /\baverage selling prices? (?:increas|rose|grew|improv)/i],
+    dir: (s) => (/\bprice (?:cut|reduction|decrease)s?\b|\blower(?:ed)? prices\b/i.test(s) ? 'negative' : 'positive') },
+  { id: 'tech_milestone', label: 'Product / technical milestone', category: 'Product & segment', direction: 'positive', rank: 23,
+    any: [/\b(?:achiev(?:es|ed|ing)|reach(?:es|ed)|complet(?:es|ed))\b[^.;]{0,30}\b(?:key |major |significant |critical |technical |development |commercial |regulatory )?milestones?\b/i, /\bsuccessfully (?:completed|demonstrated|tested|launched|validated|deployed)\b/i, /\b(?:product|system|platform|device|chip|design|technology|module)s?\b[^.;]{0,40}\b(?:qualified|certified) by\b/i, /\bdesign[- ]ins?\b/i] },
+  { id: 'ai_datacenter', label: 'AI / data-centre move', category: 'Product & segment', direction: 'positive', rank: 21,
+    any: [/\b(?:AI|artificial intelligence|data cent(?:er|re)s?|HPC|high[- ]performance computing|GPUs?|AI factory|AI cloud|inference)\b[^.;]{0,80}\b(?:launch|enter|expan|agreement|contract|partner|deploy|build|pivot|transition|acqui|lease|capacity|MW|megawatts?|campus|colocation|customer|order)/i,
+      /\b(?:launch|enter|expan|agreement|contract|partner|deploy|build|pivot|transition|acqui|lease|campus|colocation)\w*\b[^.;]{0,80}\b(?:AI|artificial intelligence|data cent(?:er|re)s?|HPC|high[- ]performance computing|GPUs?)\b/],
+    not: /\b(?:may|could|might) (?:be )?(?:affect|impact|disrupt)/i },
+  { id: 'crypto_strategy', label: 'Crypto / digital-asset strategy', category: 'Product & segment', direction: 'mixed', rank: 21,
+    any: [/\b(?:bitcoin|ethereum|ether|BTC|ETH|solana|SOL|XRP|crypto(?:currency|currencies)?|digital assets?|tokens?|stablecoin)\b[^.;]{0,60}\b(?:treasury|reserve|purchase|purchased|acquire|acquired|strategy|holdings|mining|miners|hashrate|staking)\b/i,
+      /\b(?:treasury|reserve) (?:strategy|asset)\b[^.;]{0,40}\b(?:bitcoin|ethereum|crypto|digital asset|token)/i] },
+
+  // ── CAPITAL & CAPACITY ──
+  { id: 'capacity_expansion', label: 'Capex / capacity expansion', category: 'Capital & capacity', direction: 'positive', rank: 30,
+    any: [/\b(?:expand(?:s|ed|ing)?|increas(?:es|ed|ing)|doubl(?:es|ed|ing)|tripl(?:es|ed|ing)|add(?:s|ed|ing)?|scal(?:es|ed|ing) up)\b[^.;]{0,40}\b(?:manufacturing|production|processing|fabrication|generation|mining|compute|installed) capacity\b/i,
+      /\bcapacity expansion\b/i, /\bcapital (?:expenditures?|investment|spending|program)\b[^.;]{0,40}(?:of|totaling|approximately)\s+(?:approximately\s+)?\$/i,
+      /\binvest(?:s|ed|ing|ment of)?\b[^.;]{0,30}\$\s?\d[^.;]{0,60}\b(?:expand|build|construct|upgrade|capacity|facility|plant|factory|line)/i],
+    not: /\b(?:may|could|might) not\b/i },
+  { id: 'new_facility', label: 'New facility / plant', category: 'Capital & capacity', direction: 'positive', rank: 30,
+    any: [/\b(?:open(?:s|ed|ing)?|break(?:s)? ground|broke ground|groundbreaking|construct(?:s|ed|ing|ion of)?|build(?:s|ing)?|built|complet(?:es|ed|ion of))\b[^.;]{0,50}\b(?:new |second |third |additional |expanded |state-of-the-art )?(?:manufacturing |production |processing |assembly |research |R&D |distribution |fulfillment )?(?:facility|facilities|plant|factory|fab|campus|warehouse|distribution cent(?:er|re)|headquarters|data cent(?:er|re)|site|mine|refinery|line)\b/i],
+    not: /\bclos(?:e|es|ed|ing|ure)\b|\bstock opens\b|\bmarket open/i },
+  { id: 'production_start', label: 'Production start / ramp', category: 'Capital & capacity', direction: 'positive', rank: 31,
+    any: [/\b(?:commenc(?:es|ed|ing)|beg(?:an|ins|un)|start(?:s|ed|ing)|initiat(?:es|ed))\b[^.;]{0,20}\b(?:commercial |full[- ]scale |volume |serial )?(?:production|operations|manufacturing|mining|output)\b/i, /\bramp(?:ed|s|ing)?(?: up)?\b[^.;]{0,20}\bproduction\b/i, /\bproduction ramp\b/i, /\benergi[sz](?:ed|ation)\b/i, /\bfirst (?:gold|oil|gas|power|pour|production)\b/i],
+    not: /\bclinical\b|\bphase [123]\b|\b(?:not|never|yet to)\s+(?:\w+\s+)?(?:commenced|begun|started)\b/i },
+  { id: 'facility_closure', label: 'Facility closure / capacity cut', category: 'Capital & capacity', direction: 'negative', rank: 32,
+    any: [/\b(?:clos(?:e|es|ed|ing)|shut(?:s|ting)? down|idl(?:e|es|ed|ing)|consolidat(?:e|es|ed|ing))\b[^.;]{0,40}\b(?:facility|facilities|plant|plants|factory|site|mine|stores?|locations?)\b/i] },
+
+  // ── CORPORATE ACTION ──
+  { id: 'takeover_bid', label: 'Takeover bid / going-private', category: 'Corporate action', direction: 'positive', rank: 5,
+    any: [/\b(?:to be acquired by|will be acquired by|agreed to be acquired|acquired by [A-Z])\b/, /\b(?:take[- ]private|go(?:ing)?[- ]private)\b/i, /\bunsolicited (?:proposal|offer|bid)\b/i, /\bnon-binding (?:proposal|offer|indication of interest) to acquire\b/i, /\btender offer\b/i, /\$\s?\d+(?:\.\d+)?\s+per share in cash\b/i],
+    hides: ['acquisition', 'merger_agreement'] },
+  { id: 'merger_agreement', label: 'Merger agreement', category: 'Corporate action', direction: 'positive', rank: 6,
+    any: [/\b(?:agreement and plan of merger|merger agreement|definitive merger|to merge with|merg(?:e|er|ing) with|business combination agreement|all-stock merger|scheme of arrangement)\b/i],
+    not: /\bwould\b[^.]{0,30}\bif\b/i, hides: ['acquisition'] },
+  { id: 'acquisition', label: 'Acquisition', category: 'Corporate action', direction: 'positive', rank: 7,
+    any: [/\b(?:definitive agreement to acquire|agreed to acquire|completed (?:the |its )?(?:previously announced )?acquisition|completes (?:the |its )?acquisition|closed (?:the |its )?acquisition)\b/i,
+      /\b(?:to acquire|will acquire|has acquired|have acquired|acquires|acquired)\s+(?:all (?:of )?(?:the )?(?:outstanding |issued )?|substantially all |a majority |a controlling |[A-Z])/,
+      /\bacquisition of\s+(?:all (?:of )?|substantially all |a majority |a controlling |[A-Z]|the (?:business|assets|operations|company))/i],
+    not: /\bcustomer acquisition\b|\bacqui(?:re|red|sition of) (?:additional |the )?(?:shares|stock|common stock|units|bitcoin|ethereum|tokens?|digital assets?|data)\b|\bacquisition (?:cost|costs|strategy)\b|\bacquired by\b|\bto be acquired\b|\bacquired in-process\b|\bacqui\w+ (?:of )?(?:land|equipment|miners)\b|\bordinary course\b|\bacquire, explore\b/i },
+  { id: 'divestiture', label: 'Divestiture / spin-off', category: 'Corporate action', direction: 'mixed', rank: 8,
+    any: [/\bdivest(?:s|ed|iture|ment|ing)?\b/i, /\bspin[- ]?off\b|\bspinoff\b|\bspin(?:s|ning)? off\b/i, /\b(?:sale|sell|sold|sells)\b[^.;]{0,40}\b(?:its|the|our)\b[^.;]{0,40}\b(?:business|division|segment|unit|subsidiary|portfolio|assets)\b/i, /\bseparation of\b[^.;]{0,40}\b(?:business|segment|into two)\b/i],
+    not: /\bsale of (?:\d|common|shares|stock|units|notes|securities)\b|\bsold (?:\d|shares|stock)\b/i },
+  { id: 'strategic_review', label: 'Strategic review', category: 'Corporate action', direction: 'mixed', rank: 9,
+    any: [/\bstrategic alternatives\b/i, /\bstrategic review\b/i, /\bexplor(?:e|es|ed|ing) (?:a )?(?:potential )?(?:sale|strategic options|merger)\b/i] },
+  { id: 'restructuring', label: 'Restructuring / cost cuts', category: 'Corporate action', direction: 'mixed', rank: 24,
+    any: [/\brestructuring (?:plan|program|initiative|actions?)\b/i, /\b(?:reduction in force|workforce reduction|headcount reduction|reduc(?:e|es|ed|ing) (?:its )?(?:workforce|headcount))\b/i, /\bcost[- ](?:reduction|savings|optimization|cutting) (?:plan|program|initiatives?|actions?)\b/i, /\bannuali[sz]ed (?:cost )?savings\b/i] },
+  { id: 'management_change', label: 'Management change (CEO / CFO)', category: 'Corporate action', direction: 'neutral', rank: 40,
+    any: [/\b(?:appoint(?:s|ed|ment of)?|nam(?:es|ed)|hir(?:es|ed)|promot(?:es|ed))\b[^.;]{0,80}\b(?:Chief Executive Officer|CEO|Chief Financial Officer|CFO|President|Chief Operating Officer|COO|Chairman)\b/i, /\b(?:Chief Executive Officer|CEO|Chief Financial Officer|CFO)\b[^.;]{0,60}\b(?:resign(?:s|ed|ation)|step(?:s|ped)? down|retire(?:s|d|ment)|depart(?:s|ed|ure)|terminat(?:ed|ion))\b/i] ,
+    dir: (s) => (/\bresign|step(?:s|ped)? down|depart|terminat/i.test(s) ? 'mixed' : 'neutral') },
+
+  // ── DEALS & CUSTOMERS ──
+  { id: 'gov_contract', label: 'Government contract / award', category: 'Deals & customers', direction: 'positive', rank: 14,
+    any: [new RegExp(String.raw`\b${GOV}\b[^.;]{0,80}\b(?:contract|award|awarded|task order|grant|funding|selected|delivery order|OTA|other transaction)\b`, 'i'),
+      new RegExp(String.raw`\b(?:contract|award|awarded|task order|grant|delivery order)\b[^.;]{0,80}\b(?:from|by|with) (?:the )?${GOV}`, 'i')],
+    not: /\bFDA\b|\bFood and Drug\b/i, hides: ['major_contract', 'customer_win'] },
+  { id: 'major_contract', label: 'Major contract / order', category: 'Deals & customers', direction: 'positive', rank: 15,
+    any: [/\b(?:award(?:ed|s)?|won|wins|win|secur(?:es|ed)|receiv(?:es|ed)|land(?:s|ed)|sign(?:s|ed)|book(?:s|ed))\b[^.;]{0,60}\b(?:contract|order|purchase order|task order|master services agreement|framework agreement|multi-year agreement)\b/i,
+      /\b(?:contract|order|agreement)\b[^.;]{0,40}\b(?:valued at|worth|with a (?:total |aggregate )?value of|totaling)\b/i, new RegExp(String.raw`\b(?:a|an)\s+${MONEYISH}[\d.,]*\s*(?:million|billion|M|B)?\s+(?:multi-year |follow-on |firm )?(?:contract|order|award)\b`, 'i')],
+    not: /\bpurchase agreement\b[^.;]{0,30}\b(?:shares|stock|securities)\b|\bunderwriting agreement\b|\bmerger agreement\b/i, hides: ['customer_win'] },
+  { id: 'backlog', label: 'Backlog / bookings growth', category: 'Deals & customers', direction: 'positive', rank: 16,
+    any: [/\b(?:record )?(?:backlog|order book|bookings|remaining performance obligations|RPO)\b[^.;]{0,60}\b(?:increas|grew|rose|record|up|reached|of \$|totaled|expanded)/i, /\bbook[- ]to[- ]bill\b/i],
+    dir: (s) => (/\b(?:decreas|declin|fell|down)\w*/i.test(s) ? 'negative' : 'positive') },
+  { id: 'customer_win', label: 'Customer win', category: 'Deals & customers', direction: 'positive', rank: 17,
+    any: [/\bnew (?:enterprise |strategic |major |key |OEM |hyperscale )?customers?\b[^.;]{0,40}\b(?:signed|added|won|including|wins?)\b/i, /\b(?:signed|added|won|onboarded|secured)\b[^.;]{0,30}\b(?:new )?(?:customers?|clients?|accounts?|logos?)\b/i, /\b(?:selected|chosen) (?:by|as)\b[^.;]{0,60}\b(?:supplier|provider|partner|vendor|platform)\b/i, /\bdesign win\b/i] },
+  { id: 'partnership', label: 'Partnership / collaboration', category: 'Deals & customers', direction: 'positive', rank: 18,
+    any: [/\b(?:strategic |commercial |technology |exclusive |multi-year )?(?:partnership|collaboration|alliance)\b[^.;]{0,20}\b(?:with|between|agreement)\b/i, /\bpartner(?:s|ed|ing)? with\b/i, /\bteam(?:s|ed) (?:up )?with\b/i, /\b(?:memorandum of understanding|MOU|co-development agreement|co-marketing agreement|reseller agreement|distribution agreement)\b/i],
+    not: /\bpublic[- ]private partnership\b[^.;]{0,20}\bmay\b|\bthe Partnership\b|\bPartnership['’]s\b|\bLimited Partnership\b|\bpartnership (?:units|interests)\b/ },
+  { id: 'joint_venture', label: 'Joint venture', category: 'Deals & customers', direction: 'positive', rank: 18,
+    any: [/\bjoint venture\b|\bJV\b/], hides: ['partnership'] },
+  { id: 'licensing', label: 'Licensing deal', category: 'Deals & customers', direction: 'positive', rank: 18,
+    any: [/\b(?:exclusive |global |worldwide |non-exclusive )?licen[cs](?:e|ing) (?:agreement|deal)\b/i, /\b(?:in-?licens|out-?licens)\w*/i, /\bupfront payment\b/i, /\bmilestone payments?\b[^.;]{0,40}\broyalt/i, /\broyalt(?:y|ies)\b[^.;]{0,40}\b(?:agreement|on net sales)\b/i],
+    hides: ['partnership'] },
+  { id: 'supply_agreement', label: 'Supply / offtake agreement', category: 'Deals & customers', direction: 'positive', rank: 18,
+    any: [/\b(?:supply|offtake|off-take|purchase and supply|long-term supply|master supply|capacity reservation|take-or-pay|power purchase) (?:agreement|contract|deal)\b/i, /\bPPA\b/],
+    hides: ['major_contract', 'partnership'] },
+  { id: 'strategic_investment', label: 'Strategic investment by a larger company', category: 'Deals & customers', direction: 'positive', rank: 12,
+    any: [/\bstrategic (?:equity )?investment\b/i, /\b(?:equity )?investment (?:from|by) [A-Z]/, /\b(?:led by|anchored by) [A-Z][\w&.-]+(?: [A-Z][\w&.-]+){0,3}\b[^.;]{0,30}\b(?:investment|financing|round)\b/, /\b(?:acquire|acquired|take|took|purchase|purchased) (?:a )?(?:\d+(?:\.\d+)?% )?(?:minority )?(?:equity )?stake in (?:the Company|us|[A-Z])/] },
+
+  // ── REGULATORY & CLINICAL ──
+  { id: 'fda_crl', label: 'FDA setback (CRL / clinical hold)', category: 'Regulatory & clinical', direction: 'negative', rank: 3,
+    any: [/\bcomplete response letter\b/i, /\bCRL\b/, /\brefus(?:e|al) to file\b/i, /\bclinical hold\b/i],
+    not: /\blift(?:ed|s)? (?:the |a )?(?:partial )?clinical hold\b|\bremov(?:ed|es) (?:the )?clinical hold\b/i, hides: ['fda_approval', 'fda_submission'] },
+  { id: 'fda_adcom', label: 'FDA advisory committee', category: 'Regulatory & clinical', direction: 'neutral', rank: 3,
+    any: [/\badvisory committee\b|\bAdCom\b|\b(?:FDA|advisory) panel\b|\bpanel (?:voted|backs?|backed|recommend)/i],
+    dir: (s) => (/\bvoted\b[^.;]{0,40}\b(?:in favou?r|to (?:recommend|support)|that the benefits)\b|\bback(?:s|ed)?\b|\bsupport(?:s|ed)?\b|\bfavorabl|\bpositive vote\b|\brecommend(?:s|ed)? approval\b/i.test(s) ? 'positive' : /\bvoted against\b|\bunfavorabl|\bagainst approval\b|\bnegative vote\b/i.test(s) ? 'negative' : 'neutral'),
+    hides: ['fda_approval'] },
+  { id: 'fda_approval', label: 'FDA approval / clearance', category: 'Regulatory & clinical', direction: 'positive', rank: 2,
+    any: [/\b(?:FDA|Food and Drug Administration)\b[^.;]{0,80}\b(?:approv(?:ed|al|es)|clear(?:ed|ance)|authori[sz](?:ed|ation)|grant(?:ed|s) (?:marketing|approval|clearance))\b/i, /\b(?:approv(?:ed|al)|clearance|cleared)\b[^.;]{0,40}\b(?:by|from) the (?:U\.?S\.? )?(?:FDA|Food and Drug Administration)\b/i, /\b510\(k\) clearance\b|\bDe Novo (?:clearance|authorization|classification)\b|\bPMA approval\b/i, /\bFDA (?:approves|clears)\b/i],
+    not: /\bnot (?:yet )?(?:been )?approved\b|\bprior to (?:FDA )?approval\b|\bseek(?:s|ing)? (?:FDA )?approval\b|\bpending (?:FDA )?approval\b|\bsubject to (?:FDA )?approval\b|\bapproved (?:drugs?|products?|therapies) (?:for|in)\b/i },
+  { id: 'fda_submission', label: 'Regulatory filing / acceptance', category: 'Regulatory & clinical', direction: 'positive', rank: 4,
+    any: [/\b(?:submit(?:s|ted)|fil(?:es|ed)|complet(?:es|ed) (?:the )?submission of)\b[^.;]{0,40}\b(?:NDA|BLA|sNDA|sBLA|PMA|510\(k\)|MAA|IND|New Drug Application|Biologics License Application|Premarket Approval)\b/i, /\baccept(?:s|ed|ance)?\b[^.;]{0,40}\b(?:for (?:filing|review)|NDA|BLA|MAA)\b/i, /\bpriority review\b(?! voucher)/i, /\bIND (?:clearance|cleared|is now in effect)\b|\bcleared (?:the |its )?IND\b/i] },
+  { id: 'pdufa', label: 'PDUFA date set', category: 'Regulatory & clinical', direction: 'neutral', rank: 4,
+    any: [/\bPDUFA\b/, /\b(?:target action date|goal date)\b/i] },
+  { id: 'designation', label: 'Breakthrough / fast-track designation', category: 'Regulatory & clinical', direction: 'positive', rank: 5,
+    any: [/\bbreakthrough (?:therapy |device )?designation\b/i, /\bfast[- ]track (?:designation|status)\b/i, /\borphan (?:drug )?designation\b/i, /\bRMAT designation\b|\bregenerative medicine advanced therapy\b/i, /\brare pediatric disease designation\b/i, /\bpriority review voucher\b/i, /\bPRIME (?:designation|eligibility)\b/] },
+  { id: 'trial_results', label: 'Clinical trial results / topline data', category: 'Regulatory & clinical', direction: 'positive', rank: 3,
+    any: [/\btopline (?:results|data)\b/i, /\b(?:met|achieved|meets|achieves|did not meet|failed to meet|missed)\b[^.;]{0,40}\b(?:primary|secondary|co-primary) (?:efficacy )?endpoints?\b/i, /\bstatistically significant\b/i, /\b(?:positive|encouraging|compelling|interim|final|pivotal) (?:clinical |interim |final |topline |Phase [123][ab]? )?(?:results|data)\b[^.;]{0,60}\b(?:trial|study|Phase|cohort)\b/i, /\bp\s?[<=]\s?0?\.\d+/i],
+    dir: (s) => (/\bdid not (?:meet|achieve)|failed to (?:meet|achieve)|missed (?:its |the )?(?:co-)?primary|not statistically significant|discontinu/i.test(s) ? 'negative' : 'positive'),
+    not: /\bwill (?:present|report)\b[^.;]{0,40}\b(?:at|during) (?:the )?[A-Z]/ },
+  { id: 'trial_milestone', label: 'Trial start / enrolment milestone', category: 'Regulatory & clinical', direction: 'positive', rank: 6,
+    any: [/\bfirst (?:patient|participant|subject)s? (?:has been |was |were )?(?:dosed|enrolled|randomi[sz]ed|treated)\b/i, /\bdosed (?:the )?first (?:patient|participant|subject)\b/i, /\b(?:initiat(?:es|ed|ing)|launch(?:es|ed)|start(?:s|ed)|commenc(?:es|ed))\b[^.;]{0,30}\b(?:Phase [123][ab]?|pivotal|registrational|clinical) (?:trial|study|program)\b/i, /\b(?:complet(?:es|ed|ion of)) (?:patient )?enrol(?:l)?ment\b|\benrol(?:l)?ment (?:is |was |has been )?complete\b/i] ,
+    hides: ['product_launch'] },
+  { id: 'intl_approval', label: 'CE mark / international approval', category: 'Regulatory & clinical', direction: 'positive', rank: 5,
+    any: [/\bCE[- ]?[Mm]ark(?:ed|ing)?\b/, /\bEuropean Commission\b[^.;]{0,40}\b(?:approv|authori[sz]|grant)/i, /\bCHMP\b[^.;]{0,30}\b(?:positive opinion|recommend)/i, /\b(?:EMA|Health Canada|PMDA|NMPA|MHRA|TGA|ANVISA|Swissmedic|Japan(?:ese)? Ministry of Health)\b[^.;]{0,60}\b(?:approv(?:ed|al)|authori[sz](?:ed|ation)|clear(?:ed|ance)|grant(?:ed|s))\b/i],
+    not: /\bseek(?:s|ing)?\b|\bplans? to (?:seek|file)\b/i },
+  { id: 'patent_litigation_win', label: 'Patent / litigation win', category: 'Regulatory & clinical', direction: 'positive', rank: 25,
+    any: [/\b(?:patent|patents)\b[^.;]{0,30}\b(?:granted|issued|allowed|upheld)\b/i, /\b(?:issued|granted) (?:a |an |two |three )?(?:new )?(?:U\.?S\.? |European |Japanese |Chinese )?patents?\b/i, /\bnotice of allowance\b/i, /\b(?:won|wins|prevail(?:s|ed)?|favorable)\b[^.;]{0,40}\b(?:ruling|verdict|judgment|decision|appeal|arbitration|lawsuit|litigation|case|PTAB|inter partes review)\b/i, /\bjury (?:verdict|awarded)\b/i, /\b(?:dismiss(?:ed|al) of|court dismissed)\b[^.;]{0,40}\b(?:lawsuit|complaint|case|claims)\b/i],
+    dir: (s) => (/\badverse|unfavorabl|against the Company|lost\b/i.test(s) ? 'negative' : 'positive') },
+  { id: 'settlement', label: 'Legal / regulatory settlement', category: 'Regulatory & clinical', direction: 'neutral', rank: 26,
+    any: [/\bsettlement agreement\b/i, /\b(?:settled|settles|resolv(?:ed|es))\b[^.;]{0,40}\b(?:litigation|lawsuit|dispute|claims|investigation|case|arbitration)\b/i],
+    hides: ['patent_litigation_win'] },
+  { id: 'regulatory_probe', label: 'Regulatory investigation / action', category: 'Regulatory & clinical', direction: 'negative', rank: 26,
+    any: [/\b(?:SEC|DOJ|Department of Justice|FTC|CFPB|attorney general)\b[^.;]{0,60}\b(?:subpoena|investigation|charges|complaint|enforcement)\b/i, /\b(?:subpoena|civil investigative demand|Wells notice|formal investigation)\b[^.;]{0,40}\b(?:SEC|DOJ|Department of Justice|FTC|Securities and Exchange Commission)\b/i, /\bWells notice\b/i, /\bwarning letter\b/i, /\b(?:recall|recalls|recalled)\b[^.;]{0,30}\b(?:product|products|devices?|units|lots?)\b/i],
+    not: /\bclos(?:ed|es|ing) (?:its|the) investigation\b|\bno (?:further )?action\b/i },
+
+  // ── CAPITAL STRUCTURE ──
+  { id: 'buyback', label: 'Share buyback', category: 'Capital structure', direction: 'positive', rank: 27,
+    any: [/\b(?:share |stock )?(?:repurchase|buyback|buy-back) (?:program|programme|plan|authori[sz]ation)\b/i, /\bauthori[sz](?:ed|es)\b[^.;]{0,40}\b(?:repurchase|buyback|buy back)\b/i, /\brepurchas(?:ed|es|ing)\b[^.;]{0,30}\b(?:shares|of (?:its|our) (?:common )?stock)\b/i, /\baccelerated share repurchase\b/i] },
+  { id: 'dividend', label: 'Special dividend / dividend raise', category: 'Capital structure', direction: 'positive', rank: 27,
+    any: [/\bspecial (?:cash )?dividend\b/i, /\b(?:increas(?:es|ed|ing)|rais(?:es|ed|ing)|boost(?:s|ed))\b[^.;]{0,30}\b(?:quarterly |annual |regular )?(?:cash )?dividend\b/i, /\bdividend increase\b/i, /\b(?:initiat(?:es|ed|ing)|reinstat(?:es|ed)|declar(?:es|ed) (?:its |the )?first)\b[^.;]{0,30}\b(?:quarterly |regular )?(?:cash )?dividend\b/i],
+    dir: (s) => (/\b(?:suspend|cut|reduc|eliminat)\w*\b[^.;]{0,20}\bdividend/i.test(s) ? 'negative' : 'positive') },
+  { id: 'debt_refinancing', label: 'Debt refinancing / new credit facility', category: 'Capital structure', direction: 'neutral', rank: 35,
+    any: [/\b(?:new |amended (?:and restated )?|senior secured |revolving )?(?:credit (?:agreement|facility)|revolving credit|term loan(?: facility)?|loan agreement|financing facility)\b/i, /\brefinanc(?:e|es|ed|ing)\b/i, /\b(?:repaid|repay(?:s|ment of)?|retire(?:d|s)?|extinguish(?:ed|es)?|redeem(?:ed|s)?|redemption of)\b[^.;]{0,40}\b(?:debt|notes|loan|borrowings|term loan)\b/i, /\b(?:became|is now|now) debt[- ]free\b/i, /\bsenior (?:secured |unsecured )?notes\b/i],
+    not: /\bconvertible\b|\bdebt[- ]free basis\b/i,
+    dir: (s) => (/\bdebt[- ]free\b|\brepaid|extinguish|retire[ds]?\b|lower(?:s|ed)? (?:its )?(?:interest|cost of)|extend(?:s|ed) (?:the )?maturit/i.test(s) ? 'positive' : 'neutral') },
+  { id: 'convertible', label: 'Convertible financing', category: 'Capital structure', direction: 'mixed', rank: 34,
+    any: [/\bconvertible (?:senior |secured |unsecured )?(?:notes|debentures|preferred|bonds|note)\b/i] },
+  { id: 'equity_offering', label: 'Equity offering / ATM (dilution)', category: 'Capital structure', direction: 'negative', rank: 33,
+    any: [/\b(?:underwritten |registered direct |public |follow-on |secondary |confidentially marketed )(?:offering|placement)\b/i, /\bprivate placement\b|\bPIPE\b/, /\bat[- ]the[- ]market (?:offering|program|facility|equity|sales)\b|\bATM (?:program|facility|offering)\b/i, /\bequity (?:line|purchase agreement|distribution agreement)\b/i, /\bpric(?:es|ed|ing) (?:of )?(?:its |an |a |the )?(?:upsized )?(?:\$[\d.,]+\s*(?:million|billion) )?(?:offering|public offering)\b/i],
+    not: /\binitial public offering\b[^.;]{0,20}\b(?:in|of) (?:19|20)\d\d\b|\bconvertible\b|\b(?:Registrable )?Notes\b/ },
+  { id: 'reverse_split', label: 'Reverse stock split', category: 'Capital structure', direction: 'negative', rank: 36,
+    any: [/\breverse (?:stock |share )?split\b/i] },
+  { id: 'warrant_exercise', label: 'Warrant exercise / inducement', category: 'Capital structure', direction: 'mixed', rank: 36,
+    any: [/\bwarrant (?:inducement|exercise)\b|\bexercise of (?:outstanding )?warrants\b|\binducement (?:letter|agreement)\b/i] },
+
+  // ── MARKET & OWNERSHIP ──
+  { id: 'index_inclusion', label: 'Index inclusion', category: 'Market & ownership', direction: 'positive', rank: 38,
+    any: [/\b(?:added to|join(?:s|ing)?|inclusion in|included in|will replace|to replace)\b[^.;]{0,60}\b(?:S&P (?:SmallCap|MidCap|500)|S&P \d{3}|Russell (?:1000|2000|3000|Microcap)|Nasdaq-100|Nasdaq Biotechnology Index|MSCI)\b/i] },
+  { id: 'uplisting', label: 'Uplisting / new exchange listing', category: 'Market & ownership', direction: 'positive', rank: 38,
+    any: [/\buplist(?:ing|ed|s)?\b/i, /\bapproved (?:for|to) list(?:ing)? on (?:the )?(?:Nasdaq|NYSE|New York Stock Exchange)\b/i, /\b(?:begin|began|commence[sd]?|will begin) trading on (?:the )?(?:Nasdaq|NYSE|New York Stock Exchange)\b/i, /\btransfer(?:s|red)? (?:its )?(?:stock )?listing to (?:the )?(?:Nasdaq|NYSE)\b/i] },
+  { id: 'listing_deficiency', label: 'Listing deficiency notice', category: 'Market & ownership', direction: 'negative', rank: 39,
+    any: [/\b(?:deficiency|delisting|non-?compliance) (?:notice|letter|determination)\b/i, /\bminimum bid price (?:requirement|rule)\b/i],
+    dir: (s) => (/\bregain(?:s|ed)? compliance\b/i.test(s) ? 'positive' : 'negative') },
+  { id: 'activist_stake', label: 'Activist / large stake (13D)', category: 'Market & ownership', direction: 'positive', rank: 19,
+    any: [/\bSchedule 13D\b|\b13D\b/, /\bactivist\b/i, /\b(?:beneficial(?:ly)? own(?:s|ership)? of|stake of|owns?)\s+(?:approximately\s+)?\d+(?:\.\d+)?%\s+of\b/i, /\b(?:nominat(?:e|es|ed|ing)|board seats?)\b[^.;]{0,40}\b(?:directors?|board)\b/i, /\bcooperation agreement\b/i],
+    not: /\bSchedule 13G\b/i },
+  { id: 'insider_buying', label: 'Insider buying', category: 'Market & ownership', direction: 'positive', rank: 37,
+    any: [/\binsider (?:buying|purchases?|bought)\b/i, /\b(?:CEO|Chief Executive|CFO|Chairman|director|directors|officer|officers|founder|insiders?)\b[^.;]{0,40}\b(?:bought|purchased|acquired|buys|purchases)\b[^.;]{0,30}\bshares\b/i, /\bopen[- ]market purchases?\b/i, /\bForm 4\b[^.;]{0,40}\bpurchas/i],
+    not: /\bsold\b|\bsales? of\b/i },
+  { id: 'analyst_action', label: 'Analyst upgrade / initiation (opinion)', category: 'Market & ownership', direction: 'positive', rank: 50,
+    any: [/\bupgrad(?:e|es|ed|ing)\b[^.;]{0,40}\b(?:to|rating|shares|stock)\b/i, /\binitiat(?:es|ed|ing) coverage\b/i, /\b(?:raises?|raised|lifts?|lifted|boosts?) (?:its |the )?price target\b/i, /\bprice target\b[^.;]{0,30}\b(?:raised|increased|to \$)/i, /\bdowngrad(?:e|es|ed|ing)\b/i],
+    dir: (s) => (/\bdowngrad|\bcuts? (?:its |the )?price target|\blower(?:s|ed) (?:its |the )?price target/i.test(s) ? 'negative' : 'positive') },
+  { id: 'short_report', label: 'Short report / company rebuttal', category: 'Market & ownership', direction: 'negative', rank: 19,
+    any: [/\bshort[- ]sell(?:er|ers|ing) (?:report|firm|attack|allegations?)\b/i, /\bshort report\b/i, /\b(?:Hindenburg|Muddy Waters|Spruce Point|Culper|Fuzzy Panda|Grizzly Research|Kerrisdale|Wolfpack|Iceberg Research|Blue Orca|Bleecker Street|J Capital)\b/],
+    dir: (s) => (/\b(?:respond(?:s|ed)? to|refut(?:es|ed)|rebut(?:s|ted)?|rejects?|denies|denied|false and misleading|baseless)\b/i.test(s) ? 'positive' : 'negative') },
+];
+
+export const US_EVENT_RULE_IDS: string[] = RULES.map((r) => r.id);
+const RULE_BY_ID = new Map(RULES.map((r) => [r.id, r] as const));
+/** Label + category of a rule id (for renderers). */
+export function usEventMeta(id: string): { label: string; category: UsEventCategory; rank: number } | null {
+  const r = RULE_BY_ID.get(id);
+  return r ? { label: r.label, category: r.category, rank: r.rank } : null;
+}
+
+// ── boilerplate / sentences ────────────────────────────────────────────────
+
+/** Sentences that are legal / risk / furnishing language — never an event. */
+export const BOILERPLATE = /\b(?:forward[- ]looking (?:statements?|information)|safe harbou?r|private securities litigation reform act|risks? and uncertainties|could cause (?:our |the Company'?s? )?actual|actual results (?:may|could|to) differ|there (?:can|may) be no assurance|no assurance (?:can be given|that)|undertakes? no (?:obligation|duty)|does not undertake|risk factors|could (?:materially )?(?:and )?adversely|adverse(?:ly)? (?:affect|impact)|if we (?:are unable|fail|do not|cannot)|we may not be able|may not (?:be able to|achieve|realize|obtain|succeed)|might not|not be deemed ["“]?filed|incorporated by reference|furnished (?:pursuant|herewith|as Exhibit)|shall not be deemed|Securities Exchange Act of 1934|non-GAAP financial measures? (?:should|are|is) not|reconciliation of (?:GAAP|non-GAAP)|this press release (?:contains|includes|may contain)|words such as|such as ["“]?(?:may|will|expect|anticipate)|shall (?:mean|be deemed|have the meaning)|hereunder|hereby|herein|hereto|thereof|thereunder|as defined (?:in|below|herein)|pursuant to (?:Section|this Agreement|the terms of this)|the undersigned|in witness whereof|representations(?:,| and) warranties|voting results?|results of (?:the )?voting|to consider and (?:approve|vote)|broker non-votes?|initial Business Combination|Sponsor has agreed|trust account)\b|\((?:i|ii|iii|iv|a|b|c)\)[^.]{0,240}\((?:ii|iii|iv|v|b|c|d)\)/i;
+
+/** Hedged plan / expectation — kept, but marked "planned". */
+const PLANNED = /\b(?:plans? to|planning to|intends? to|expects? to|expected to|anticipates?|aims? to|seeks? to|targets? (?:to|a)|is evaluating|proposed|will seek|potential(?:ly)?)\b/i;
+
+/** Cut the text at the forward-looking / safe-harbor section and at the
+ *  "About <Company>" boilerplate paragraph (when they come after the lead). */
+export function eventBodyOf(text: string): string {
+  let t = String(text || '').replace(/\s+/g, ' ')
+    // the exhibit's own header ("EX-99.1 2 d168737dex991.htm EX-99.1 Exhibit 99.1 Document")
+    .replace(/^\s*(?:EX-\d+(?:\.\d+)?\s+\d+\s+\S+\.html?\s+)?(?:(?:EX-\d+(?:\.\d+)?|Exhibit\s+\d+(?:\.\d+)?|Document)\s+)*/i, '');
+  const cutAt = (re: RegExp, min: number) => { const m = re.exec(t); if (m && m.index >= min) t = t.slice(0, m.index); };
+  cutAt(/\b(?:Forward[- ]Looking Statements|Cautionary (?:Note|Statement)s?(?: Regarding| Concerning)?|Safe Harbou?r Statement|Special Note Regarding Forward)\b/i, 80);
+  cutAt(/\b(?:About|ABOUT) [A-Z][\w.&'’-]*(?: [A-Z][\w.&'’-]*){0,4}\s*(?::|\s(?=[A-Z][\w.&'’-]*(?: [A-Z][\w.&'’-]*){0,4},? (?:Inc\.|Corp\.|Ltd\.|plc|N\.V\.|is (?:a|an|the)|\(|headquartered|founded)))/, 150);
+  cutAt(/\b(?:Investor (?:Relations )?Contacts?|Media Contacts?|Contacts?):/i, 300);
+  return t;
+}
+
+/** Sentences (bullets split). */
+export function eventSentences(text: string): string[] {
+  return eventBodyOf(text)
+    .replace(/&middot;|·|•|●|▪|■/g, ' • ')
+    .split(/(?<=[.!?])(?<!\b(?:U\.S|U\.K|Inc|Corp|Co|Ltd|No|Nos|Mr|Ms|Mrs|Dr|St|Jr|Sr|vs|etc|approx|N\.A|S\.A|N\.V|L\.P|p\.m|a\.m|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.)\s+(?=[A-Z"“(•$0-9])|\s•\s|\s+[-–—]{1,2}\s+(?=[A-Z])|(?<=\b(?:19|20)\d\d)\s*[-–—]{1,2}\s*(?=\(?[A-Z])|(?<=(?:BUSINESS WIRE|GLOBE NEWSWIRE|PRNewswire|ACCESSWIRE|ACCESS Newswire|Newsfile)\)?)\s*[-–—]{1,2}\s*/)
+    .map((s) => s.replace(/^[•.\s]+/, '').trim())
+    .filter((s) => s.length >= 12);
+}
+
+// ── figures (literal only) ─────────────────────────────────────────────────
+
+const FIG_RES: RegExp[] = [
+  /[-−]?(?:US)?\$\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:billion|million|thousand|bn|mn|[MBK])\b)?/gi,
+  /[-+]?\d[\d,]*(?:\.\d+)?\s?(?:%|percent\b)/gi,
+  /\b\d[\d,]*(?:\.\d+)?\s?(?:basis points|bps)\b/gi,
+  /\b\d[\d,]*(?:\.\d+)?\s?(?:MW|GW|MWh|GWh|megawatts?|gigawatts?|square feet|sq\.? ?ft\.?|acres|tons|tonnes|barrels|boe\/d|bpd|units|vehicles|aircraft|systems|patients|participants|subjects|customers|employees|stores|locations|beds|wafers|EH\/s|exahash)\b/gi,
+  /\bvoted\s+(\d{1,2}\s?(?:-|–|to)\s?\d{1,2})\b/gi,
+  /\b\d{1,2}\s?(?:-|–)\s?\d{1,2}\s+(?:vote|in favou?r)\b/gi,
+];
+
+/** Figures literally present in one sentence, in order, de-duplicated. */
+export function figuresIn(sentence: string): string[] {
+  const s = String(sentence || '');
+  const hits: Array<{ at: number; v: string }> = [];
+  for (const re of FIG_RES) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s))) {
+      const v = (m[1] && /voted/i.test(m[0]) ? m[1] : m[0]).trim().replace(/[,.]$/, '');
+      const at = m[1] && /voted/i.test(m[0]) ? m.index + m[0].indexOf(m[1]) : m.index;
+      if (!v || !/\d/.test(v)) continue;
+      // a bare year / a percent inside a $ span already taken is skipped
+      if (hits.some((h) => at >= h.at && at < h.at + h.v.length)) continue;
+      hits.push({ at, v });
+    }
+  }
+  hits.sort((a, b) => a.at - b.at);
+  const out: string[] = [];
+  for (const h of hits) if (!out.includes(h.v) && s.includes(h.v)) out.push(h.v);
+  return out.slice(0, 6);
+}
+
+// ── the classifier ────────────────────────────────────────────────────────
+
+/** The form rules match on: abbreviation dots removed ("Inc." "U.S." "Sept.")
+ *  so a "[^.;]" window is not cut by them. The evidence and the figures are
+ *  always taken from the ORIGINAL sentence. */
+function matchForm(s: string): string {
+  return s
+    .replace(/\bU\.S\.(?=\W|$)/g, 'US').replace(/\bU\.K\.(?=\W|$)/g, 'UK')
+    .replace(/\b(Inc|Corp|Co|Ltd|LLC|Mr|Ms|Mrs|Dr|St|Jr|Sr|vs|etc|approx|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|Tenn|Calif|Mass|Ave|Blvd)\.(?=\s|,)/g, '$1')
+    .replace(/\b([A-Z])\.([A-Z])\.(?=\s|,)/g, '$1$2');
+}
+/** A "[^.;]" / "[^.]" window also crosses a decimal point ("$31.2 million"). */
+const decimalTolerant = (re: RegExp) => new RegExp(re.source.replace(/\[\^\.;\]/g, '(?:[^.;]|\\.(?=\\d))').replace(/\[\^\.\]/g, '(?:[^.]|\\.(?=\\d))'), re.flags);
+for (const r of RULES) { r.any = r.any.map(decimalTolerant); if (r.not) r.not = decimalTolerant(r.not); }
+
+/** A long sentence is shown around the words that fired the rule. */
+function clipAround(s: string, at: number, n = 320): string {
+  if (s.length <= n) return s;
+  const start = Math.max(0, Math.min(at - 110, s.length - n));
+  const a = start > 0 ? s.slice(start).replace(/^\S*\s/, '') : s;
+  const out = a.length > n - 1 ? `${a.slice(0, n - 2).replace(/\s\S*$/, '')}…` : a;
+  return `${start > 0 ? '…' : ''}${out}`;
+}
+
+export interface ClassifyOptions {
+  /** Max hits returned (default 12). */
+  max?: number;
+  /** Only the first N sentences are read (default 400). */
+  maxSentences?: number;
+  /** Max characters of text read (default 120 000). */
+  maxChars?: number;
+  /** Text is a single headline — no sentence split, no boilerplate cut. */
+  headline?: boolean;
+}
+
+/** Every catalyst named in the text: one hit per event type (the first
+ *  sentence that states it), lead catalyst first. Figures are only those
+ *  literally present in the evidence sentence. */
+export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEventHit[] {
+  const raw = String(text || '').slice(0, opts.maxChars ?? 120_000);
+  if (!raw.trim()) return [];
+  const sents = opts.headline ? [raw.replace(/\s+/g, ' ').trim()] : eventSentences(raw).slice(0, opts.maxSentences ?? 400);
+  const byId = new Map<string, UsEventHit & { order: number }>();
+  const dirs = new Map<string, Set<UsEventDirection>>();
+  sents.forEach((s, order) => {
+    if (BOILERPLATE.test(s)) return;
+    const m = matchForm(s);
+    const here: Array<{ r: Rule; hit: UsEventHit }> = [];
+    for (const r of RULES) {
+      const had = byId.get(r.id);
+      if (had && !r.dir && (had.figures.length || order - had.order > 10)) continue;
+      if (!r.any.some((re) => re.test(m))) continue;
+      if (r.not && r.not.test(m)) continue;
+      // a rule whose direction reads from the sentence remembers every
+      // direction it saw — a title "topline results" and a bullet "missed
+      // the primary endpoint" make the hint MIXED, never just positive
+      if (r.dir) { const d = dirs.get(r.id) || new Set<UsEventDirection>(); d.add(r.dir(m)); dirs.set(r.id, d); }
+      // a later sentence replaces a figure-less first one (a release title)
+      // only when it states a figure and sits close to it
+      if (had && (had.figures.length || order - had.order > 10)) continue;
+      const at = Math.min(...r.any.map((re) => { const x = re.exec(m); return x ? x.index : Infinity; }));
+      const shown = clipAround(s, Number.isFinite(at) ? at : 0);
+      const figures = figuresIn(shown);
+      if (had && !figures.length) continue;
+      here.push({ r, hit: { id: r.id, label: r.label, category: r.category, direction: r.dir ? r.dir(m) : r.direction, sentence: shown, figures, planned: PLANNED.test(shown) } });
+    }
+    // a more specific rule hides a generic one fired by the same sentence
+    const hidden = new Set(here.flatMap((x) => x.r.hides || []));
+    for (const x of here) {
+      if (hidden.has(x.r.id)) continue;
+      const had = byId.get(x.r.id);
+      byId.set(x.r.id, { ...x.hit, order: had ? had.order : order });
+    }
+  });
+  for (const [id, h] of Array.from(byId.entries())) {
+    const d = dirs.get(id);
+    if (d && d.has('positive') && d.has('negative')) byId.set(id, { ...h, direction: 'mixed' });
+  }
+  const rank = (id: string) => RULE_BY_ID.get(id)?.rank ?? 99;
+  // the lead catalyst: an event stated early (the release's lead) and of a
+  // strong kind first; a planned event after a done one of the same rank.
+  return Array.from(byId.values())
+    .sort((a, b) => (Math.min(a.order, 6) - Math.min(b.order, 6)) * 4 + (rank(a.id) - rank(b.id)) || (Number(a.planned) - Number(b.planned)) || a.order - b.order)
+    .slice(0, opts.max ?? 12)
+    .map(({ order: _o, ...h }) => h);
+}
+
+/** Counts of hits by category (every category present, zero when none). */
+export function countByCategory(hits: Array<Pick<UsEventHit, 'category'>>): Record<UsEventCategory, number> {
+  const out = Object.fromEntries(US_EVENT_CATEGORIES.map((c) => [c, 0])) as Record<UsEventCategory, number>;
+  for (const h of hits) out[h.category] = (out[h.category] || 0) + 1;
+  return out;
+}

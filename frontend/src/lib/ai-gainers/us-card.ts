@@ -35,12 +35,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { StrictFigures } from '@/lib/us-thesis/xbrl';
+import { classifyUsEvents, type UsEventCategory, type UsEventDirection, type UsEventHit } from './us-event-taxonomy';
 
-export const US_CARD_VERSION = 1;
+// v2 (zzz801): every card carries the catalyst list read by the US event
+// taxonomy (us-event-taxonomy.ts) — cards cached at v1 are re-read.
+export const US_CARD_VERSION = 2;
 
 export type UsCardKind =
   | 'earnings' | 'acquisition' | 'merger' | 'divestiture' | 'order' | 'fda' | 'clinical' | 'offering' | 'buyback'
-  | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'other';
+  | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'catalyst' | 'other';
 export type UsMatLabel = 'SIGNIFICANT' | 'MODERATE' | 'SMALL' | 'UNKNOWN';
 
 export interface UsFigure { cur: number | null; prev: number | null }
@@ -121,6 +124,28 @@ export interface UsCard {
   quote: string | null;
   earnings?: UsEarnings | null;
   deal?: UsDeal | null;
+  /** zzz801: every catalyst the event taxonomy found in the documents read
+   *  (SEC first) and in the press headlines — label, category, the evidence
+   *  sentence, the figures literally in it, source and date. Empty = none
+   *  found (said plainly on the card). Absent on v1 cards. */
+  catalysts?: UsCatalyst[];
+}
+
+/** zzz801 — one catalyst found by the taxonomy, with where it was read. */
+export interface UsCatalyst {
+  id: string;
+  label: string;
+  category: UsEventCategory;
+  direction: UsEventDirection;
+  sentence: string;
+  /** Figures literally present in the sentence — never computed. */
+  figures: string[];
+  planned: boolean;
+  source: 'SEC' | 'PRESS';
+  /** "SEC 8-K · EX-99.1 press release" / "press · Reuters — not verified in a filing". */
+  sourceLabel: string;
+  date: string | null;
+  url: string | null;
 }
 
 // ── small helpers ──────────────────────────────────────────────────────────
@@ -157,8 +182,10 @@ export function moneyToM(num: string, scale: string | null | undefined): number 
 const MONEY = String.raw`(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(billion|million|bn|mn|thousand)\b`;
 
 /** Sentences of a text (bullets split). */
+/** zzz801: the exhibit's EDGAR header ("EX-99 2 pressrelease.htm EX-99.1 Document"). */
+const EXHIBIT_HEADER = /^\s*EX-\d+(?:\.\d+)?\s+\d+\s+\S+\.html?\s+(?:(?:EX-\d+(?:\.\d+)?|Document)\s+)*/i;
 export function sentencesOf(t: string): string[] {
-  return String(t || '').replace(/^\s*(?:.{0,160}?\bExhibit\s+99\.\d+\s*)+/i, '').replace(/&middot;|·|•|●|▪/g, ' • ').replace(/\s+/g, ' ')
+  return String(t || '').replace(EXHIBIT_HEADER, '').replace(/^\s*(?:.{0,160}?\bExhibit\s+99\.\d+\s*)+/i, '').replace(/&middot;|·|•|●|▪/g, ' • ').replace(/\s+/g, ' ')
     // no split after an abbreviation ("U.S. Army", "Naveris, Inc., a Delaware …", "Zeta Inc. in the S&P 600")
     .split(/(?<=[.!?])(?<!\b(?:U\.S|U\.K|Inc|Corp|Co|Ltd|No|Nos|Mr|Ms|Mrs|Dr|St|Jr|Sr|vs|etc|approx|Tenn|Calif|Mass|N\.A|S\.A|N\.V|L\.P|p\.m|a\.m)\.)\s+(?=[A-Z"“(•$])|\s•\s/).map((s) => s.replace(/^[•.\s]+/, '').trim()).filter((s) => s.length >= 12);
 }
@@ -506,7 +533,7 @@ function sentenceAround(t: string, i: number): string {
  *  read from the top of the exhibit: exhibit label, contacts and the dateline
  *  removed; an all-caps title put in sentence case. Null when not found. */
 export function releaseTitle(text: string): string | null {
-  let t = sq(text).slice(0, 1500);
+  let t = sq(text).replace(EXHIBIT_HEADER, '').slice(0, 1500);
   t = t.replace(/^(?:.{0,160}?\bExhibit\s+99\.\d+\s*)+/i, '').replace(/\b(?:Investor|Media|Press)(?: Relations)? Contacts?:?[^A-Z]{0,4}(?:[A-Z][a-z]+ ){1,3}(?:\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}|\S+@\S+)\s*/g, '').trim();
   const words = t.split(' ');
   const isCaps = (w: string) => /[A-Z]/.test(w) && w === w.toUpperCase();
@@ -843,6 +870,174 @@ export function pressKindOf(title: string): { kind: UsCardKind; word: string; po
   return none;
 }
 
+/** zzz801: the press kind, sharpened by the event taxonomy — the old kinds
+ *  first (analyst / short report / index keep their meaning), then a
+ *  taxonomy hit for a headline the old kinds called "press coverage only". */
+function pressKindOfX(title: string): { kind: UsCardKind; word: string; polarity: UsCard['polarity']; tx: UsEventHit | null } {
+  const k = pressKindOf(title);
+  const tx = OPINION.test(String(title || '')) ? null : classifyUsEvents(title, { headline: true, max: 1 })[0] || null;
+  if (!tx) return { ...k, tx: null };
+  if (k.kind === 'analyst' || k.kind === 'short_report') return { ...k, tx: null };
+  if (k.kind !== 'other') return { ...k, word: `${tx.label} (press only)`, polarity: tx.direction === 'negative' ? 'negative' : k.polarity, tx };
+  return { kind: pressKindForHit(tx.id), word: `${tx.label} (press only)`, polarity: POLARITY_OF(tx.direction), tx };
+}
+function pressKindForHit(id: string): UsCardKind {
+  const t = US_EVENT_TYPE_OF[id];
+  if (t === 'Earnings') return 'earnings';
+  if (t === 'Guidance') return 'guidance';
+  if (id === 'analyst_action') return 'analyst';
+  if (id === 'index_inclusion') return 'index';
+  if (id === 'short_report') return 'short_report';
+  if (id === 'activist_stake') return 'activist';
+  if (/^(equity_offering|convertible|warrant_exercise)$/.test(id)) return 'offering';
+  if (id === 'buyback') return 'buyback';
+  if (/^trial_/.test(id)) return 'clinical';
+  if (t === 'Regulatory approval') return 'fda';
+  if (t === 'Acquisition' || t === 'Merger') return 'acquisition';
+  if (t === 'Order win' || id === 'supply_agreement') return 'order';
+  return 'catalyst';
+}
+
+// ── zzz801: THE CATALYST TAXONOMY ON THE CARD ─────────────────────────────
+// Every document read (EX-99.1 first, then EX-99.2, the 8-K item text, the
+// original 8-K an amendment points to) and every press headline is run
+// through the ~60-type US event taxonomy. The card lists what was found —
+// label, category, the evidence sentence, the figures literally in it, and
+// SEC vs press — and an 8-K whose readers found nothing to size (Item 7.01 /
+// 8.01 / 1.01 / 5.02) is named by its lead catalyst instead of "Reg FD
+// disclosure — no amount stated".
+
+const CAT_ROLE_ORDER: Record<string, number> = { ex99: 0, release: 0, ex992: 1, primary: 2, original: 3 };
+
+/** The 8-K body from its first "Item x.xx" on — the cover page is not an event. */
+function itemBodyOf(t: string): string {
+  const i = String(t || '').search(/\bItem\s+[1-9]\.\d\d\b/);
+  return i >= 0 ? t.slice(i) : String(t || '');
+}
+
+/** Catalysts in the documents of one SEC filing (SEC-sourced, lead first). */
+export function catalystsFromDocs(docs: Array<{ role: string; text: string; url?: string | null }>, meta: { form: string; date: string | null; url: string | null }): UsCatalyst[] {
+  const out: UsCatalyst[] = [];
+  const seen = new Set<string>();
+  const ds = docs.filter((d) => d && d.text && d.role in CAT_ROLE_ORDER).sort((a, b) => CAT_ROLE_ORDER[a.role] - CAT_ROLE_ORDER[b.role]);
+  for (const d of ds) {
+    const text = d.role === 'primary' || d.role === 'original' ? itemBodyOf(d.text) : d.text;
+    for (const h of classifyUsEvents(text.slice(0, 80_000), { max: 12 })) {
+      if (seen.has(h.id)) continue;
+      seen.add(h.id);
+      out.push({ ...h, source: 'SEC', sourceLabel: `SEC ${meta.form} · ${ROLE_WORD[d.role] || d.role}`, date: meta.date ? meta.date.slice(0, 10) : null, url: d.url || meta.url });
+    }
+  }
+  return out.slice(0, 12);
+}
+
+/** Catalysts named in press headlines (PRESS-sourced — never verified here).
+ *  Opinion / price-chatter headlines are skipped. */
+export function catalystsFromPress(press: Array<{ title: string; url: string; date: string | null; source: string | null }> | null | undefined, skipIds: Iterable<string> = []): UsCatalyst[] {
+  const out: UsCatalyst[] = [];
+  const seen = new Set<string>(Array.from(skipIds));
+  for (const p of press || []) {
+    const title = String(p?.title || '').trim();
+    if (!title || OPINION.test(title)) continue;
+    for (const h of classifyUsEvents(title, { headline: true, max: 3 })) {
+      if (seen.has(h.id)) continue;
+      seen.add(h.id);
+      out.push({ ...h, source: 'PRESS', sourceLabel: `press${p.source ? ` · ${p.source}` : ''} — not verified in a filing`, date: p.date ? String(p.date).slice(0, 10) : null, url: p.url || null });
+    }
+  }
+  return out.slice(0, 8);
+}
+
+/** Add the press headlines' catalysts to a card built from a filing (the
+ *  news is fetched after the SEC read). SEC catalysts stay first; a press
+ *  catalyst of a type the filing already states is not repeated. */
+export function withPressCatalysts(card: UsCard, press: Array<{ title: string; url: string; date: string | null; source: string | null }> | null | undefined): UsCard {
+  const sec = (card.catalysts || []).filter((c) => c.source === 'SEC');
+  const have = (card.catalysts || []).filter((c) => c.source === 'PRESS');
+  const add = catalystsFromPress(press, [...sec, ...have].map((c) => c.id));
+  const catalysts = [...sec, ...have, ...add].slice(0, 14);
+  const next: UsCard = { ...card, catalysts };
+  if (card.source.tier === 'SEC' && card.eventType === 'No identified catalyst' && !sec.length && add.length) {
+    next.extra = [...card.extra, `Press reports (not verified in a filing): ${add.slice(0, 3).map((c) => c.label.toLowerCase()).join(', ')}.`];
+  }
+  return next;
+}
+
+/** The research-view event type a taxonomy hit maps to. */
+export const US_EVENT_TYPE_OF: Record<string, string> = {
+  earnings_beat: 'Earnings', earnings_miss: 'Earnings', record_results: 'Earnings', revenue_growth: 'Earnings', revenue_decline: 'Earnings', growth_acceleration: 'Earnings',
+  margin_expansion: 'Earnings', margin_compression: 'Earnings', turned_profitable: 'Earnings', eps_reported: 'Earnings',
+  guidance_raise: 'Guidance', guidance_cut: 'Guidance', guidance_issued: 'Guidance',
+  product_launch: 'New product', first_commercial: 'New product', tech_milestone: 'New product', new_segment: 'Strategic expansion', ai_datacenter: 'Strategic expansion',
+  crypto_strategy: 'Strategic expansion', product_mix: 'Pricing', pricing_action: 'Pricing',
+  capacity_expansion: 'Capacity expansion', new_facility: 'Capacity expansion', production_start: 'Production ramp', facility_closure: 'Capital allocation',
+  takeover_bid: 'Acquisition', merger_agreement: 'Merger', acquisition: 'Acquisition', divestiture: 'Divestment', strategic_review: 'Governance',
+  restructuring: 'Capital allocation', management_change: 'Management change',
+  gov_contract: 'Order win', major_contract: 'Order win', backlog: 'Order win', customer_win: 'Customer win', partnership: 'Partnership', joint_venture: 'JV',
+  licensing: 'Contract', supply_agreement: 'Contract', strategic_investment: 'Strategic investment',
+  fda_crl: 'Regulatory approval', fda_adcom: 'Regulatory approval', fda_approval: 'Regulatory approval', fda_submission: 'Regulatory approval', pdufa: 'Regulatory approval',
+  designation: 'Regulatory approval', trial_results: 'Regulatory approval', trial_milestone: 'Regulatory approval', intl_approval: 'Regulatory approval',
+  patent_litigation_win: 'Litigation / regulatory', settlement: 'Litigation / regulatory', regulatory_probe: 'Litigation / regulatory',
+  buyback: 'Buyback', dividend: 'Capital allocation', debt_refinancing: 'Debt / refinancing', convertible: 'Fundraising', equity_offering: 'Fundraising',
+  reverse_split: 'Governance', warrant_exercise: 'Fundraising',
+  index_inclusion: 'Rating action', uplisting: 'Governance', listing_deficiency: 'Governance', activist_stake: 'Strategic investment',
+  insider_buying: 'Promoter buying', analyst_action: 'Rating action', short_report: 'Litigation / regulatory',
+};
+
+const WHY_BY_CATEGORY: Record<UsEventCategory, string> = {
+  'Earnings': 'A results figure named in the release — check it against the same quarter a year earlier and whether it repeats.',
+  'Product & segment': 'A new product, segment or mix change — what matters is how much revenue it can add, at what margin and how soon; the filing does not size that.',
+  'Capital & capacity': 'New capacity or capex — what matters is the demand behind it (orders, customers) and when it starts earning; capacity is not demand.',
+  'Corporate action': 'A corporate action — check the terms (price, how paid, stage) and what it changes in the business.',
+  'Deals & customers': 'A deal or customer — what matters is its value against the company\'s size, its duration and margin, and whether it repeats.',
+  'Regulatory & clinical': 'A regulatory or clinical step — what matters is the path and time to revenue and the size of the market; the filing does not size it.',
+  'Capital structure': 'A financing action — it changes the share count or the balance sheet, not the business; check its size against market cap and its terms.',
+  'Market & ownership': 'An ownership or market event — a flow of buying or an opinion, not a change in the business by itself.',
+};
+
+const SIZE_BAND: Record<string, keyof typeof US_BANDS> = {
+  acquisition: 'acquisition', merger_agreement: 'acquisition', takeover_bid: 'acquisition', divestiture: 'acquisition', strategic_investment: 'acquisition',
+  major_contract: 'order', gov_contract: 'order', supply_agreement: 'order', licensing: 'order',
+  capacity_expansion: 'generic', new_facility: 'generic', buyback: 'buyback', equity_offering: 'offering', convertible: 'offering',
+};
+
+/** The one $ amount a sentence states (null when none, or more than one — which is the event's value would be a guess). */
+function singleAmountM(sentence: string): { m: number; text: string } | null {
+  const xs = Array.from(String(sentence || '').matchAll(new RegExp(MONEY, 'gi'))).map((m) => ({ m: moneyToM(m[1], m[2]), text: m[0] })).filter((x) => x.m != null) as Array<{ m: number; text: string }>;
+  const uniq = xs.filter((x, i) => xs.findIndex((y) => y.m === x.m) === i);
+  return uniq.length === 1 ? uniq[0] : null;
+}
+
+const POLARITY_OF = (d: UsEventDirection): UsCard['polarity'] => (d === 'positive' ? 'positive' : d === 'negative' ? 'negative' : 'neutral');
+const catWord = (c: Pick<UsCatalyst, 'label' | 'planned'>) => `${c.label}${c.planned ? ' (planned / expected)' : ''}`;
+
+/** A filed 8-K the size readers could not quantify, named by its lead catalyst. */
+function taxonomyCard(top: UsCatalyst, cats: UsCatalyst[], ctx: { mcap: number | null; title: string | null; source: UsCardSource }): UsCard {
+  const band = SIZE_BAND[top.id];
+  const amt = band ? singleAmountM(top.sentence) : null;
+  const hedged = /\bup to\b|\bpotential(?:ly)?\b|\bceiling\b/i.test(top.sentence);
+  const r = amt && band ? ratioVsMcap(amt.m, ctx.mcap, band, `Stated amount (${amt.text})`) : null;
+  const label: UsMatLabel = r ? (hedged && r.label !== 'UNKNOWN' ? 'UNKNOWN' : r.label) : 'UNKNOWN';
+  const kind: UsCardKind = /^(equity_offering|convertible|warrant_exercise)$/.test(top.id) ? 'offering' : 'catalyst';
+  const others = cats.filter((c) => c.id !== top.id && c.source === 'SEC').slice(0, 3);
+  const stated = top.figures.length ? ` · stated: ${top.figures.join(', ')}` : '';
+  const sized = r?.ratio ? ` · ${r.ratio.text}${hedged ? ' (a ceiling — scale only)' : ''}` : '';
+  return {
+    v: US_CARD_VERSION, kind, kindWord: catWord(top), eventType: US_EVENT_TYPE_OF[top.id] || 'No identified catalyst',
+    stage: top.planned ? 'PROPOSED' : /\b(?:completed|closed|consummated|commenced|began|opened|launched|received|was awarded|has been awarded|approved)\b/i.test(top.sentence) ? 'EXECUTED' : 'UNKNOWN', stageText: top.planned ? 'planned / expected — not done yet' : null,
+    headline: clip(ctx.title || `${top.label}: ${top.sentence}`, 170),
+    whatChanged: `${catWord(top)} — “${clip(top.sentence, 220)}”${stated}${sized}`,
+    extra: others.length ? [`Also in the filing: ${others.map((c) => c.label.toLowerCase()).join(' · ')}`] : [],
+    material: r ? { label, how: hedged ? `${r.how} The figure is a ceiling ("up to") — scale only, not a committed amount.` : r.how, ratios: r.ratio ? [r.ratio] : [] }
+      : { label: 'UNKNOWN', how: top.figures.length ? `Figures are stated in the sentence (${top.figures.join(', ')}), but none is a single event value that can be sized against market cap.` : 'No amount is stated in the filing, so it cannot be sized against the company.', ratios: [] },
+    polarity: kind === 'offering' ? 'negative' : POLARITY_OF(top.direction), source: ctx.source,
+    whyResearch: WHY_BY_CATEGORY[top.category],
+    unknowns: [...(amt ? [] : ['Amount: not stated in the filing']), 'Revenue / profit effect: not stated in the filing'],
+    flags: kind === 'offering' ? ['A rise on the day of a share sale is unusual — check the price against the market and who bought (a strategic buyer can explain it).'] : [],
+    quantified: !!(r?.ratio && !hedged), quote: top.sentence, earnings: null, deal: null, catalysts: cats,
+  };
+}
+
 // ── THE CARD ──────────────────────────────────────────────────────────────
 
 export interface UsCardDoc { role: string; url: string; text: string; html?: string | null; name?: string | null }
@@ -879,6 +1074,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
     const allDocs = [...inp.docs, ...(inp.original?.docs || []).map((d) => ({ ...d, role: d.role === 'primary' ? 'original' : d.role }))];
     const allText = allDocs.map((d) => d.text).join(' \n ');
     const date = f.date ? f.date.slice(0, 10) : null;
+    const cats = catalystsFromDocs(allDocs, { form, date, url: f.url });   // zzz801
     const baseSource = (doc: string | null, url?: string | null): UsCardSource => ({ tier: 'SEC', label: secLabel(form, date, doc), form, date, url: url || release?.url || f.url, doc });
     const earningsForm = items.has('2.02') || /^(10-Q|10-K|20-F|40-F)(\/A)?$/.test(form) || (form === '6-K' && /\b(?:financial results|results for the|reports? (?:first|second|third|fourth|q[1-4])|quarter(?:ly)? results|half[- ]year results)\b/i.test(release?.text.slice(0, 3000) || ''));
     const dealForm = items.has('2.01') || items.has('1.01') || /^(425|S-4|S-4\/A|F-4|DEFM14A|PREM14A|SC TO-T|SC 14D9)$/.test(form) || (/^(6-K|8-K|8-K\/A)$/.test(form) && /\b(?:acquisition of|to acquire|acquires|merger|scheme of arrangement|schemes of arrangement|business combination|scheme implementation)\b/i.test(allText.slice(0, 12000)));
@@ -909,7 +1105,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
           whyResearch: weak
             ? `Results weakened (${[e.revenueGrowthPct != null ? `revenue ${pctTxt(e.revenueGrowthPct)}` : null, e.profitChange ? `profit ${e.profitChange}` : null].filter(Boolean).join(', ')}) — the move is not explained by these figures; check the outlook and one-off items.`
             : `Filed results show ${[e.revenueGrowthPct != null ? `revenue ${pctTxt(e.revenueGrowthPct)}` : null, e.profitChange ? `net income ${e.profitChange}` : null].filter(Boolean).join(' and ') || 'the figures above'}${e.guidance === 'RAISED' ? ' and a raised outlook' : e.outlook.length ? ' with a stated outlook' : ''} — check whether it repeats and what one-off items are in it.`,
-          unknowns, flags: [], quantified: numbersRead, quote: e.basis === 'release text' ? revenueSentence(release?.text || '')?.sentence || null : null, earnings: e, deal: null,
+          unknowns, flags: [], quantified: numbersRead, quote: e.basis === 'release text' ? revenueSentence(release?.text || '')?.sentence || null : null, earnings: e, deal: null, catalysts: cats,
         };
       }
     }
@@ -974,7 +1170,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
             ? `Paid in new shares — what matters is how many shares are issued (dilution per share), what the target brings, and the holder vote${d.stageText ? ` (${d.stageText})` : ''}.`
             : kind === 'divestiture' ? 'A sale of a business — what matters is the cash received vs what the business earned, and what the cash is used for.'
               : `${d.structure === 'cash' ? 'A cash purchase' : 'An acquisition'} sized against the company — what matters is what the target earns (revenue / profit) and how it is paid for${d.targetRevenueM != null ? '' : ' (target revenue not stated)'}.`,
-          unknowns, flags: [], quantified: price != null || d.ownershipPct != null, quote: d.quotes[0] || null, earnings: null, deal: d,
+          unknowns, flags: [], quantified: price != null || d.ownershipPct != null, quote: d.quotes[0] || null, earnings: null, deal: d, catalysts: cats,
         };
       }
     }
@@ -1000,7 +1196,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
         headline: clip(other.line, 160), whatChanged: wc, extra: [],
         material: r ? { label: r.label, how: r.how, ratios: r.ratio ? [r.ratio] : [] } : { label: 'UNKNOWN', how: other.kind === 'fda' || other.kind === 'clinical' ? 'A binary event — its size is the revenue the product can earn, which the filing does not state.' : 'No amount stated in the filing — it cannot be sized.', ratios: [] },
         polarity: other.polarity, source: baseSource(ROLE_WORD[release?.role || 'primary'] || null), whyResearch: why[other.kind] || 'Read the filing for the size of the event.',
-        unknowns: other.valueM == null ? ['Amount: not stated in the filing'] : [], flags: other.flags, quantified: other.valueM != null, quote: other.quote, earnings: null, deal: null,
+        unknowns: other.valueM == null ? ['Amount: not stated in the filing'] : [], flags: other.flags, quantified: other.valueM != null, quote: other.quote, earnings: null, deal: null, catalysts: cats,
       };
     }
     const ord = readUsOrder(releaseFirst);
@@ -1016,11 +1212,11 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
         material: { label, how: hedged ? `${r.how} The figure is a ceiling ("up to") — scale only, not a committed amount.` : r.how, ratios: r.ratio ? [r.ratio] : [] },
         polarity: 'positive', source: baseSource(ROLE_WORD[release?.role || 'primary'] || null),
         whyResearch: 'An order sized against the company — what is open is the margin, how fast it is billed and whether it repeats.',
-        unknowns: ['Margin: not stated in the filing', ...(ord.duration ? [] : ['Execution period: not stated in the filing'])], flags: [], quantified: true, quote: ord.quote, earnings: null, deal: null,
+        unknowns: ['Margin: not stated in the filing', ...(ord.duration ? [] : ['Execution period: not stated in the filing'])], flags: [], quantified: true, quote: ord.quote, earnings: null, deal: null, catalysts: cats,
       };
     }
     // ── A filed event the readers cannot size: said as filed, with its source ──
-    const materialItem = f.items.some((i) => ['1.01', '1.02', '2.01', '2.02', '2.03', '3.02', '5.01', '7.01', '8.01'].includes(i)) || /^(6-K|8-K\/A|425|DEFM14A|PREM14A|S-4|F-4|SC 13D|SCHEDULE 13D|SC TO-T|10-Q|10-K|20-F|424B\d|S-1|F-1)/.test(form);
+    const materialItem = f.items.some((i) => ['1.01', '1.02', '2.01', '2.02', '2.03', '3.02', '5.01', '5.02', '7.01', '8.01'].includes(i)) || /^(6-K|8-K\/A|425|DEFM14A|PREM14A|S-4|F-4|SC 13D|SCHEDULE 13D|SC TO-T|10-Q|10-K|20-F|424B\d|S-1|F-1)/.test(form);
     if (materialItem) {
       // a real title names an action; a slide-deck cover ("The Ai Infrastructure Company 1") does not
       const title = allDocs.filter((d) => /^(ex99|release|ex992)$/.test(d.role)).map((d) => releaseTitle(d.text))
@@ -1036,15 +1232,25 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
         || /\bappoint(?:s|ed|ment)\b[^.]{0,80}\b(?:board|director|officer)\b|\bannual (?:general )?meeting\b/i.test(whatTxt);
       const clinical = /\bclinical data\b|\bPhase [123][ab]?\b[^.]{0,60}\b(?:data|results)\b/i.test(whatTxt);
       const debtOnly = /\b(?:senior |convertible )?notes? due\b|\bredemption\b|\bpromissory note\b|\bcredit (?:agreement|facility)\b|\bterm loan\b|\bindenture\b|\brevolving\b/i.test(whatTxt) && !/\bacqui|merger|contract|order\b/i.test(whatTxt);
+      // zzz801: the release names its catalyst (launch, new plant, partnership,
+      // FDA step, …) — the card says which, with the sentence, instead of
+      // "press release — no amount stated". A presentation / debt-only filing
+      // keeps its routine reading (a deck restates the story); a CEO / CFO
+      // change is an event, a board appointment is not.
+      const lead = cats.find((c) => c.id !== 'management_change') || cats.find((c) => c.id === 'management_change' && /\b(?:CEO|Chief Executive|CFO|Chief Financial|President)\b/.test(c.sentence)) || null;
+      if (lead && !debtOnly && (!deck || (lead.id === 'management_change' && !/\b(?:presentation|conference|webcast|fireside)\b/i.test(whatTxt)))) {
+        return taxonomyCard(lead, cats, { mcap, title, source: baseSource(ROLE_WORD[allDocs.find((d) => d.url === lead.url)?.role || release?.role || 'primary'] || null, lead.url) });
+      }
       const kindWord = deck ? 'Routine update (presentation / appointment) — no new event' : debtOnly ? 'Debt financing / redemption — no new operating event' : clinical ? 'Clinical data presented (size not stated)' : f.items.includes('1.01') ? 'Material agreement signed (terms not sized)' : f.items.includes('8.01') ? 'Company announcement (8-K Item 8.01)' : f.items.includes('7.01') ? 'Press release (8-K Item 7.01)' : /^6-K/.test(form) ? 'Foreign-filer report (6-K)' : `${form} filing`;
       return {
         v: US_CARD_VERSION, kind: 'other', kindWord, eventType: deck || debtOnly ? 'No identified catalyst' : f.items.includes('1.01') ? 'Contract' : 'No identified catalyst', stage: f.items.includes('1.01') && !debtOnly ? 'SIGNED' : 'UNKNOWN', stageText: null,
         headline: clip(what || kindWord, 170),
         whatChanged: `${what ? `As filed: “${clip(what, 220)}”` : kindWord}${what && /\$\s?\d/.test(what) ? ' — not sized against the company' : ' — no amount stated in the filing'}`,
-        extra: [], material: { label: 'UNKNOWN', how: 'No amount is stated in the filing, so it cannot be sized against the company.', ratios: [] },
+        extra: cats.length ? [`Mentioned in the filing: ${cats.slice(0, 4).map((c) => c.label.toLowerCase()).join(' · ')}`] : ['Catalyst scan: no catalyst found in the filing text (about 60 event types checked).'],
+        material: { label: 'UNKNOWN', how: 'No amount is stated in the filing, so it cannot be sized against the company.', ratios: [] },
         polarity: 'neutral', source: baseSource(ROLE_WORD[release?.role || 'primary'] || null),
         whyResearch: deck ? 'A presentation or appointment restates the story — read it for any new figure; it is not by itself an event.' : debtOnly ? 'Borrowing or repaying debt is financing, not an operating event — it does not explain a move by itself.' : clinical ? 'Clinical data were presented — what matters is the size of the effect, safety, and the path and time to approval; the filing does not size it.' : 'A filed event with no amount stated — read the filing for its terms (value, counterparty, timing) before judging it.',
-        unknowns: ['Amount: not stated in the filing'], flags: [], quantified: false, quote: itemLead, earnings: null, deal: null,
+        unknowns: ['Amount: not stated in the filing'], flags: [], quantified: false, quote: itemLead, earnings: null, deal: null, catalysts: cats,
       };
     }
     return null;
@@ -1052,7 +1258,11 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
 
   // ── PRESS ONLY (no SEC event document in the window) ──
   const press0 = (inp.press || []).filter((p) => p.title);
-  const press = press0.filter((p) => pressKindOf(p.title).kind !== 'other');
+  // zzz801: a headline the old press kinds could not place ("revenue up 99%",
+  // "FDA panel backs …", "signs 40 MW colocation agreement") is classified by
+  // the event taxonomy; the honesty label stays "press only".
+  const pcats = catalystsFromPress(press0);
+  const press = press0.filter((p) => pressKindOfX(p.title).kind !== 'other');
   const latestWord = inp.latestSec ? `latest SEC filing: ${inp.latestSec.form}${inp.latestSec.items?.length ? ` (Item ${inp.latestSec.items.join(', ')})` : ''} on ${inp.latestSec.date}` : null;
   if (!press.length && press0.length) {
     // only price chatter / opinion pieces — no company event at all
@@ -1060,17 +1270,17 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
     return {
       v: US_CARD_VERSION, kind: 'other', kindWord: 'No company event found (market commentary only)', eventType: 'No identified catalyst', stage: 'UNKNOWN', stageText: null,
       headline: 'No SEC filing and no company news — only market commentary in the press',
-      whatChanged: `No company event found. The press has only market commentary (e.g. “${clip(p.title, 120)}”) — no SEC filing found yet.`,
+      whatChanged: `No company event found. The press has only market commentary (e.g. “${clip(p.title, 120)}”) — no SEC filing found yet. No catalyst found in filings or news.`,
       extra: [inp.secChecked ? `SEC EDGAR checked: no results, deal, contract, offering or 13D filing in the last ${inp.windowDays ?? 21} days${latestWord ? ` (${latestWord})` : ''}.` : 'SEC EDGAR could not be checked for this name.'],
       material: { label: 'UNKNOWN', how: 'Nothing to size — no event was found.', ratios: [] }, polarity: 'neutral',
       source: { tier: 'PRESS', label: 'PRESS ONLY — no SEC filing found yet', form: null, date: p.date ? String(p.date).slice(0, 10) : null, url: p.url, doc: p.source },
       whyResearch: 'No filing and no company news explain the move — only price commentary. Check sector moves, peers or a filing that has not reached EDGAR yet.',
-      unknowns: ['Official filing: none found yet'], flags: [], quantified: false, quote: null, earnings: null, deal: null,
+      unknowns: ['Official filing: none found yet'], flags: [], quantified: false, quote: null, earnings: null, deal: null, catalysts: [],
     };
   }
   if (!press.length) return null;
-  const RANK: Partial<Record<UsCardKind, number>> = { acquisition: 0, order: 0, fda: 0, clinical: 0, short_report: 0, facility: 1, index: 1, activist: 1, earnings: 2, analyst: 3 };
-  const scored = press.map((p, i) => ({ p, i, k: pressKindOf(p.title) })).sort((a, b) => ((RANK[a.k.kind] ?? 5) - (RANK[b.k.kind] ?? 5)) || (a.i - b.i));
+  const RANK: Partial<Record<UsCardKind, number>> = { acquisition: 0, order: 0, fda: 0, clinical: 0, short_report: 0, facility: 1, index: 1, activist: 1, catalyst: 1, guidance: 1, offering: 1, buyback: 2, earnings: 2, analyst: 3 };
+  const scored = press.map((p, i) => ({ p, i, k: pressKindOfX(p.title) })).sort((a, b) => ((RANK[a.k.kind] ?? 5) - (RANK[b.k.kind] ?? 5)) || (a.i - b.i));
   const top = scored[0];
   const mm = new RegExp(MONEY, 'i').exec(top.p.title) || /\$(\d+(?:\.\d+)?)\s?(m|bn|b)\b/i.exec(top.p.title);
   const v = mm ? moneyToM(mm[1], mm[2]) : null;
@@ -1078,7 +1288,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
   const latest = latestWord;
   const wd = inp.windowDays ?? 21;
   return {
-    v: US_CARD_VERSION, kind: top.k.kind, kindWord: top.k.word, eventType: top.k.kind === 'analyst' || top.k.kind === 'index' ? 'Rating action' : top.k.kind === 'acquisition' ? 'Acquisition' : top.k.kind === 'order' ? 'Order win' : top.k.kind === 'facility' ? 'Capacity expansion' : top.k.kind === 'fda' ? 'Regulatory approval' : top.k.kind === 'short_report' ? 'Litigation / regulatory' : top.k.kind === 'earnings' ? 'Earnings' : 'No identified catalyst',
+    v: US_CARD_VERSION, kind: top.k.kind, kindWord: top.k.word, eventType: top.k.tx && US_EVENT_TYPE_OF[top.k.tx.id] ? US_EVENT_TYPE_OF[top.k.tx.id] : top.k.kind === 'analyst' || top.k.kind === 'index' ? 'Rating action' : top.k.kind === 'acquisition' ? 'Acquisition' : top.k.kind === 'order' ? 'Order win' : top.k.kind === 'facility' ? 'Capacity expansion' : top.k.kind === 'fda' ? 'Regulatory approval' : top.k.kind === 'short_report' ? 'Litigation / regulatory' : top.k.kind === 'earnings' ? 'Earnings' : 'No identified catalyst',
     stage: 'RUMOUR', stageText: null,
     headline: clip(top.p.title, 160),
     whatChanged: `Press report: “${clip(top.p.title, 150)}”${top.p.source ? ` (${top.p.source}${top.p.date ? `, ${String(top.p.date).slice(0, 10)}` : ''})` : ''} — press only, no SEC filing found yet${scale}`,
@@ -1087,7 +1297,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
     polarity: top.k.polarity,
     source: { tier: 'PRESS', label: 'PRESS ONLY — no SEC filing found yet', form: null, date: top.p.date ? String(top.p.date).slice(0, 10) : null, url: top.p.url, doc: top.p.source },
     whyResearch: `Press only — no SEC filing found yet. ${top.k.kind === 'analyst' ? 'An analyst view is an opinion, not a company event.' : top.k.kind === 'index' ? 'Index inclusion is a one-time flow of buying, not a change in the business.' : top.k.kind === 'short_report' ? 'A short-seller report is an allegation — look for the company\'s answer in a filing.' : 'Look for the company\'s own 8-K / press release before treating it as fact.'}`,
-    unknowns: ['Official filing: none found yet', ...(v != null ? ['Figure: press only, not verified'] : [])], flags: [], quantified: false, quote: null, earnings: null, deal: null,
+    unknowns: ['Official filing: none found yet', ...(v != null ? ['Figure: press only, not verified'] : [])], flags: [], quantified: false, quote: null, earnings: null, deal: null, catalysts: pcats,
   };
 }
 

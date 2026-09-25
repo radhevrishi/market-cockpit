@@ -10,7 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { detectPersistentCatalysts, rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { specialFocusQueue, nearMissList, focusButtonWords } from '@/lib/catalyst/cross-view';
+import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut } from '@/lib/catalyst/cross-view';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2, var(--mc-bg-1))', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -43,13 +43,16 @@ export function detectForRow(r: FocusRow): PersistentCatalyst[] {
 /** Compact strip above a holding's card — only when there is something meaningful. */
 export function PersistentStrip({ pcs, onOpenFocus, ticker }: { pcs: PersistentCatalyst[]; onOpenFocus?: () => void;
   /** zzz793: when given (US page), the strip names its company so it can never
-   *  read as the card above or below it. Absent → India output unchanged. */
+   *  read as the card above or below it. zzz802: India passes it too, and the
+   *  strip is BOUND to it — a catalyst detected for any other ticker is never
+   *  shown in this slot (AVALON's slot once read BDL's order book). */
   ticker?: string }) {
-  const best = pcs.find((p) => p.specialFocus) || pcs.find((p) => p.confidence === 'HIGH' || p.confidence === 'MEDIUM');
+  const own = ticker ? pcs.filter((p) => !p.ticker || String(p.ticker).toUpperCase() === ticker.toUpperCase()) : pcs;
+  const best = own.find((p) => p.specialFocus) || own.find((p) => p.confidence === 'HIGH' || p.confidence === 'MEDIUM');
   if (!best) return null;
   return (
     <div data-testid="persistent-strip" style={{ border: `1px solid ${C.amber}`, borderBottom: 'none', borderRadius: '8px 8px 0 0', padding: '6px 12px', background: C.bg, fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
-      {ticker ? <b style={{ color: C.text }}>{ticker} · </b> : null}<b style={{ color: C.amber }}>🔥 {best.specialFocus ? 'Persistent catalyst detected · Special Focus' : 'Persistent catalyst candidate'}</b>{' '}
+      {ticker ? <b data-testid="persistent-strip-ticker" style={{ color: C.text }}>{ticker} · </b> : null}<b style={{ color: C.amber }}>🔥 {best.specialFocus ? 'Persistent catalyst detected · Special Focus' : 'Persistent catalyst candidate'}</b>{' '}
       <b style={{ color: C.text }}>{best.label}</b>
       <span style={{ color: C.faint }}> · {persistenceWords(best).evidence} · {persistenceWords(best).persistence}</span>
       <div>{best.stage ? <span style={{ color: C.faint }}>Stage: {best.stage} · </span> : null}{best.mechanism}</div>
@@ -125,7 +128,10 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
   const [showTracked, setShowTracked] = useState(false);
   const tracked = queue.tracked as Stored[];
   const priorable = near.filter((x) => (x.row.market || 'IN') !== 'US' && Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
-  const shown = entries.filter((e) => !e.dismissed);
+  // zzz802: the list is what MEETS the gate; a decayed record the owner did not
+  // choose to keep goes to its own "dropped out" section, with the reason.
+  const { inFocus: shown, droppedOut } = splitDroppedOut(entries);
+  const [showDropped, setShowDropped] = useState(false);
   const visible = showAll ? shown : shown.slice(0, 8);
 
   return (
@@ -229,8 +235,27 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
         {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : focusButtonWords(shown.length, near.length).near}</button>}
         {tracked.length > 0 && <button onClick={() => setShowTracked((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.cyan}`, background: 'transparent', color: C.cyan }}>{showTracked ? 'Hide tracked potential' : `◌ ${tracked.length} tracked potential catalyst${tracked.length === 1 ? '' : 's'} (enabling steps)`}</button>}
         {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8 Special Focus' : focusButtonWords(shown.length, near.length).all}</button>}
+        {droppedOut.length > 0 && <button data-testid="sf-dropped-button" onClick={() => setShowDropped((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.amber}`, background: 'transparent', color: C.amber }}>{showDropped ? 'Hide dropped out' : `${droppedOut.length} dropped out of Special Focus (reason shown)`}</button>}
         {hiddenByUser.length > 0 && <button onClick={() => setShowHidden((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.faint }}>{showHidden ? 'Hide' : `${hiddenByUser.length} dismissed / archived`}</button>}
       </div>
+      {showDropped && droppedOut.length > 0 && (
+        <div data-testid="sf-dropped" style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+          <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>
+            Dropped out of Special Focus — each once met the gate and no longer does. Kept here with the reason so nothing is removed silently; Watch keeps one in the list.
+          </div>
+          {droppedOut.map((e) => (
+            <div key={e.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
+              <button onClick={() => onJump(e.pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 900, color: C.text }}>{e.pc.ticker}</button>
+              <span style={{ color: C.faint }}> · {e.pc.label}{e.st?.sfId ? ` · was #${e.st.sfId}` : ''}</span>
+              <div style={{ color: C.amber }}>{e.note || 'No longer meets the Special Focus gate.'}</div>
+              <span style={{ display: 'inline-flex', gap: 8 }}>
+                <button onClick={() => act(e.id, 'watch')} style={{ all: 'unset', cursor: 'pointer', color: C.cyan, fontWeight: 800, fontSize: 12 }}>Watch</button>
+                <button onClick={() => act(e.id, 'dismissed')} style={{ all: 'unset', cursor: 'pointer', color: C.faint, fontWeight: 800, fontSize: 12 }}>Dismiss</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {showNear && near.length > 0 && (
         <div style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
           <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>

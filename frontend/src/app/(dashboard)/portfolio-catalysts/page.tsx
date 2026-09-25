@@ -38,7 +38,7 @@ import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/s
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
-import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
+import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -303,7 +303,7 @@ export default function PortfolioCatalystsPage() {
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
           if (set) return `${set} (set by you)`;
-          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional${(r.pattern as any).weak ? ', weak fit' : ''})` : `${r.pattern.pattern} (auto)`;
+          if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional${(r.pattern as any).weak ? ', weak fit' : ''})` : `${r.pattern.pattern} (auto${(r.pattern as any).promoted ? ', type confirmed from filings' : ''})`;
           return 'Not set';
         }}
         onJump={(t: string) => { setFilter(null); setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />
@@ -328,16 +328,16 @@ export default function PortfolioCatalystsPage() {
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>🏁 {researchPriorityTitle(ranked.length)}</span>
-              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Score = output (≤25 — the result, not the evidence) + evidenced mechanism, one per group with a hierarchy (order book > capacity added / capex earning (revenue or margin contribution disclosed) / volume > named contract > commissioned capex (not yet proven earning) > customer remark; a hard figure outranks a management remark; approval granted > qualification in progress) + breadth of independent mechanisms + strengthening (10). The hierarchy ranks EVIDENCE STRENGTH (how firmly the documents prove the mechanism), not economic value — a small order ranks above a big remark; how much it matters to the P&L is on each card. Which theses deserve research next — not a buy list, no price used.'}</span>
+              <span style={{ fontSize: 12.5, color: C.faint }}>{'Only 🟢 strengthening / 🔵 on-track theses are eligible (weakening and confirmation-required have their own queues above). Ordered by how firmly the filings evidence the catalyst — order book > capacity added / capex earning / volume > named contract > commissioned capex > customer remark; a hard figure outranks a management remark — then by the filed results. Evidence strength, not economic value; each row says why in plain words. Which theses deserve research next — not a buy list, no price used.'}</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ color: C.faint, textAlign: 'left', fontSize: 11.5, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                     <th style={{ padding: '4px 6px' }}>#</th><th style={{ padding: '4px 6px' }}>Name</th><th style={{ padding: '4px 6px' }}>Status</th>
-                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Score</th><th style={{ padding: '4px 6px', textAlign: 'right' }}>Rev</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Rev</th>
                     <th style={{ padding: '4px 6px', textAlign: 'right' }}>Earn</th><th style={{ padding: '4px 6px', textAlign: 'right' }}>Margin</th>
-                    <th style={{ padding: '4px 6px' }}>Evidenced catalysts (from the documents)</th>
+                    <th style={{ padding: '4px 6px' }}>Why (from the filings)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -353,12 +353,13 @@ export default function PortfolioCatalystsPage() {
                           {r.origin === 'bench' && <span style={{ fontSize: 11, color: C.faint, fontWeight: 700 }}> · bench</span>}
                         </td>
                         <td style={{ padding: '5px 6px', whiteSpace: 'nowrap', color: st ? C.green : C.cyan, fontWeight: 800, fontSize: 12 }}>{st ? '🟢 Strengthening' : '🔵 On track'}</td>
-                        <td style={{ padding: '5px 6px', textAlign: 'right', fontWeight: 900, color: cr.score >= 60 ? C.green : cr.score >= 40 ? C.text : C.dim }} title={`output ${cr.output.points} + drivers ${cr.driverPoints} + status ${cr.statusPoints}`}>{cr.score}</td>
                         <td style={{ padding: '5px 6px', textAlign: 'right' }}>{fmt(cr.output.revenue, '%')}</td>
                         <td style={{ padding: '5px 6px', textAlign: 'right' }}>{fmt(cr.output.earnings, '%')}</td>
                         <td style={{ padding: '5px 6px', textAlign: 'right' }}>{cr.output.marginPp != null && cr.output.marginPp > 0 ? fmt(cr.output.marginPp, 'pp') : '—'}</td>
                         <td style={{ padding: '5px 6px' }}>
-                          {cr.drivers.slice(0, 3).map((d) => (
+                          {/* zzz802: a plain "Why" line — never a visible score. */}
+                          <div style={{ color: C.dim, lineHeight: 1.35, marginBottom: cr.drivers.length > 2 ? 2 : 0 }}>{researchWhyLine(cr)}</div>
+                          {cr.drivers.slice(2, 3).map((d) => (
                             <div key={d.group} style={{ lineHeight: 1.35 }} title={d.text}>
                               <span style={{ fontSize: 11, fontWeight: 800, color: GC[d.group] || C.dim, marginRight: 5 }}>{d.group.toUpperCase()}{d.quantified ? ' · hard figure' : ' · management remark'}</span>
                               <span style={{ color: C.dim }}>{d.text.length > 110 ? `${d.text.slice(0, 109)}…` : d.text}</span>
@@ -581,7 +582,7 @@ export default function PortfolioCatalystsPage() {
             </>}
             {nearest.length > 0 && (
               <div style={{ marginTop: untyped.length ? 6 : 0 }}>
-                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto, PROVISIONAL)</b> — no exact test fired, so the type was worked out from the company&apos;s own figures{nearest.some((r) => (r.pattern as any)?.weak) ? <> ({nearest.filter((r) => (r.pattern as any)?.weak).length} of them a <b>weak fit</b>, where the figures did not point clearly at one type and the business description decided)</> : null}. Their status is provisional: at most CONFIRMATION REQUIRED — it cannot read strengthening or on-track until you confirm the type (or set another) with the <b>thesis</b> picker.
+                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto, PROVISIONAL)</b> — no exact test fired, so the type was worked out from the company&apos;s own figures{nearest.some((r) => (r.pattern as any)?.weak) ? <> ({nearest.filter((r) => (r.pattern as any)?.weak).length} of them a <b>weak fit</b>, where the figures did not point clearly at one type and the business description decided)</> : null}. Their status is provisional: at most CONFIRMATION REQUIRED — it cannot read strengthening or on-track until you confirm the type (or set another) with the <b>thesis</b> picker, or until the company&apos;s filings confirm it: a nearest fit is promoted to a confirmed auto type when at least two of that type&apos;s checks are confirmed from filed figures (one of them its core mechanism — for A, utilisation or a filed alternate such as volume growth or capacity added), covering at least 40% of its checks, with nothing in the mechanism contradicted. A weak fit is never promoted.
                 <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern}${(r.pattern as any)?.weak ? ', weak fit' : ''})`).join(' · ')}</div>
               </div>
             )}
@@ -590,7 +591,7 @@ export default function PortfolioCatalystsPage() {
       })()}
       {list.map((r) => (
         <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
-        {!evidenceLoading && <PersistentStrip pcs={persistBySymbol.get(r.symbol) || []} onOpenFocus={() => document.getElementById('special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
+        {!evidenceLoading && <PersistentStrip ticker={r.symbol} pcs={persistBySymbol.get(r.symbol) || []} onOpenFocus={() => document.getElementById('special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
         <ThesisCard
           thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
           onThesisType={(t) => setThesisType(r.symbol, t)}

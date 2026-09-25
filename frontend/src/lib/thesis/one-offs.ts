@@ -17,6 +17,8 @@
 // extraction path without touching anything else.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { isBareRupeeAmount } from './figure-guards';
+
 export type OneOffType =
   | 'earn-out' | 'exceptional item' | 'impairment' | 'forex' | 'tax'
   | 'VRS' | 'insurance claim' | 'asset sale' | 'other';
@@ -89,11 +91,15 @@ function toCrore(hit: AmountHit): number | null {
 }
 
 function pickAmount(value: string | null, quote: string): { raw: string | null; cr: number | null } {
-  const fromValue = value && value.trim() ? amountsIn(value) : [];
-  const hits = fromValue.length ? fromValue : amountsIn(quote);
+  // zzz802: an INR amount with no magnitude word ("Rs. 1,113.51") looks like a
+  // per-share or price value — it is not an amount of the one-off, raw or scaled.
+  const usable = (h: AmountHit) => !(h.scale == null && h.currency != null && /^(?:₹|rs\.?|inr)$/i.test(h.currency));
+  const fromValue = value && value.trim() ? amountsIn(value).filter(usable) : [];
+  const hits = fromValue.length ? fromValue : amountsIn(quote).filter(usable);
   if (!hits.length) {
-    // A value that is itself a number with no unit is still what was stated.
-    const bare = value && /\d/.test(value) ? value.trim() : null;
+    // A value that is itself a number with no unit is still what was stated —
+    // unless it is a bare rupee figure (above), which is not kept at all.
+    const bare = value && /\d/.test(value) && !isBareRupeeAmount(value) ? value.trim() : null;
     return { raw: bare, cr: null };
   }
   // A range written as "286-2,859 Mn" splits into two hits; so does "USD 689

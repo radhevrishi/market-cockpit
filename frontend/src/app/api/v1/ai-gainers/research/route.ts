@@ -46,7 +46,7 @@ import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFind
 import { upsertDetections, loadCatalystRecords, rememberGainerCatalysts, catalystRecordsFor } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
 import { fetchUsCard } from '@/lib/ai-gainers/us-card-fetch';
-import { buildUsCard, US_CARD_VERSION, type UsCard } from '@/lib/ai-gainers/us-card';
+import { buildUsCard, withPressCatalysts, US_CARD_VERSION, type UsCard } from '@/lib/ai-gainers/us-card';
 import { boardHash, droppedFromBoard } from '@/lib/ai-gainers/us-board-sync';
 
 // ── zzz780: DAILY GAINER → EVENT → EVIDENCE → PERSISTENCE TEST ───────────
@@ -624,6 +624,9 @@ async function research(req: NextRequest, body: any) {
       const news = market === 'US' && usLeft() < 15_000 ? null : await newsFor(market, u.ticker, fullName || u.company, date, now);
       // zzz798: no SEC event document read → a PRESS-ONLY card, said plainly.
       if (market === 'US' && !usCard) usCard = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap, filing: null, docs: [], press: [...pressItemsOf(news), ...((usListing?.press?.items || []) as any[]).map((p) => ({ title: String(p.title || ''), url: String(p.url || ''), date: p.date ?? null, source: p.source ?? null }))], latestSec: usListing?.recentFilings?.[0] ? { form: usListing.recentFilings[0].form, date: usListing.recentFilings[0].date, items: usListing.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!usListing && !usListing.failure, windowDays: WINDOW_DAYS });
+      // zzz801: a card read from a filing also lists the catalysts the press
+      // headlines name (press only — never merged into the filing's figures).
+      else if (market === 'US' && usCard && usCard.source.tier === 'SEC') usCard = withPressCatalysts(usCard, pressItemsOf(news));
       if (market === 'IN') docs = await indiaDocuments(u.ticker, announcements, { now, sessionCloseIso, marketCap, returns, bseCode, companyName: fullName || u.company, msLeft: budget - (Date.now() - t0) });
 
       // Model-read the best catalyst candidate when the budget allows: a
@@ -801,6 +804,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
         const er2 = await withDeadline(fetchEdgarResearch(u.ticker, WINDOW_DAYS, now2, { timeoutMs: 6_000, readOwnership: false }), 8_000, null);
         let card: UsCard | null = null;
         if (er2 && !er2.failure) card = await withDeadline(fetchUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, listing: er2, now: new Date(inputs.fetchedAt), deadlineMs: Math.min(12_000, budget - (Date.now() - t0) - 6_000), windowDays: WINDOW_DAYS }), Math.min(13_000, budget - (Date.now() - t0) - 5_000), null);
+        if (card && card.source.tier === 'SEC') card = withPressCatalysts(card, pressItemsOf(inputs.news));   // zzz801
         if (!card) card = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, filing: null, docs: [], press: pressItemsOf(inputs.news), latestSec: er2?.recentFilings?.[0] ? { form: er2.recentFilings[0].form, date: er2.recentFilings[0].date, items: er2.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!er2 && !er2.failure, windowDays: WINDOW_DAYS });
         // an EDGAR outage is not "no card" — try again on the next open
         inputs = { ...inputs, usCard: card, usCardV: er2 && !er2.failure ? US_CARD_VERSION : inputs.usCardV };

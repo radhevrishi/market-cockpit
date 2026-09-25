@@ -67,6 +67,14 @@ import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { periodEnd } from './fact-normalize';
 import { scaledNumber } from './evidence-ledger';
 import { checkPasses, SILENT_STATE_WORD, SILENT_PHRASE, explicitNoneStated } from './silent-check';
+import { isJunkOneOffAmount } from './figure-guards';
+import { parseOneOff } from './one-offs';
+/** zzz802: "no explicit raw material one-off gains disclosed" says there is
+ *  NONE — it is never a one-off item, benefit or clause. */
+export const statesNoOneOff = (t: unknown): boolean => explicitNoneStated(String(t ?? ''))
+  || /^\s*(?:no|nil|none)\b[^.;]{0,80}\b(?:disclosed|reported|stated|identified|recorded)\b/i.test(String(t ?? '').trim());
+/** zzz802: the words a one-off carries when its amount had no unit. */
+export const UNSCALED_AMOUNT_WORDS = 'amount stated without a crore / lakh unit, not sized';
 import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason,
   type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile,
   THESIS_STATUS_VARS, HISTORICAL_PERSISTENT } from './taxonomy';
@@ -501,6 +509,9 @@ export interface ThesisAssessment {
   /** Core mechanism variables that are unknown (not disclosed / not searched)
    *  with no substitute driver evidenced — the gap that keeps green away. */
   coreMechanismGaps: string[];
+  /** zzz802 (India, A only): utilisation not disclosed, and the plain-English
+   *  line naming the filed alternate that satisfied the core check. */
+  utilisationAlternate?: string | null;
   /** How much of the thesis could be checked at all. */
   coverage: {
     checked: number; disclosed: number; corePossible: number; coreDisclosed: number;
@@ -694,7 +705,22 @@ export interface AssessInput {
    *  exist in this market's disclosures and are left off the ledger entirely
    *  (a US filer reports no ROCE). Absent → every variable is checked. */
   omitVariables?: VarKey[] | null;
+  /** zzz802 (India only — the US adapter never passes it): Indian companies
+   *  rarely publish capacity utilisation, so for A · OPERATING INFLECTION the
+   *  core absorption check may be satisfied by an ALTERNATE stated in the
+   *  filings — volume growth, capacity added / commissioned / capex earning,
+   *  or operating leverage the company itself names. Utilisation stays
+   *  UNKNOWN on the card (never negative, never counted as confirmed); only
+   *  the core-coverage test reads the alternate. */
+  indiaDisclosure?: boolean;
 }
+
+/** zzz802 — what may stand in for an undisclosed utilisation figure on an
+ *  A thesis (India): the same absorption mechanism, stated in a filing. */
+export const UTILISATION_ALTERNATES: readonly VarKey[] = ['volume', 'capacity_addition', 'capacity', 'commissioning', 'capex_earning', 'operating_leverage'] as VarKey[];
+/** A margin driver counts as the operating-leverage alternate only when the
+ *  company names fixed-cost absorption / operating leverage itself. */
+export const OPERATING_LEVERAGE_WORDS = /operating leverage|fixed[- ]cost absorption|absorption of fixed|better absorption|scale benefits?|economies of scale/i;
 
 /** Whole quarters between two period labels ("Q4 FY24" → "Q1 FY27" = 9), or
  *  null when either cannot be read. (zzz769) */
@@ -789,7 +815,9 @@ export function isReserveTonnage(v: { key: string; after?: string | null; label?
 export const ONE_OFF_CLAUSE = /tariff (?:duty )?refund|duty (?:benefit|drawback|refund)|\bSEIS\b|\bMEIS\b|\bRoDTEP\b|provisions? (?:reversal|reversed|written back|write[- ]?back)|reversal of provisions?|write[- ]?backs?|one[- ]off|one[- ]time|exceptional (?:item|gain|income)|\bMTM\b|mark[- ]to[- ]market|forex gain|insurance claim|inventory gain|ad[- ]hoc|other income includes|arbitration award|interest on (?:income[- ]tax )?refund/i;
 /** "₹31.6 Cr", "INR22 crores", "Rs.31.6 crores" → 31.6 (crore). */
 export function croreOf(t: string | null | undefined): number | null {
-  const m = /(?:₹|INR|Rs\.?)\s?([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|mn\b|million)?/i.exec(String(t ?? '')) || /([\d,]+(?:\.\d+)?)\s*(crores?|cr\b)/i.exec(String(t ?? ''));
+  // zzz802: a rupee amount with no magnitude word is never scaled to crore —
+  // "Rs. 1,113.51" (JAMNAAUTO) read as ₹1,113.51 Cr. Unknown, not invented.
+  const m = /(?:₹|INR|Rs\.?)\s?([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|mn\b|million)/i.exec(String(t ?? '')) || /([\d,]+(?:\.\d+)?)\s*(crores?|cr\b)/i.exec(String(t ?? ''));
   if (!m) return null;
   const n = Number(m[1].replace(/,/g, ''));
   if (!Number.isFinite(n)) return null;
@@ -905,7 +933,21 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const earnBases = earningsExceedRevenue(rawFound.revenue_growth, rawFound.earnings_growth);
   const immaterialKeys = new Set<VarKey>();
   const oneOffClauses: string[] = [];
-  const variables0: StructuralVar[] = (input.variables || []).map((v) => {
+  // zzz802: a one-off whose only content is an unscaled rupee amount ("Rs.
+  // 1,113.51" — no crore / lakh word, no description) is not evidence: it
+  // reads like a per-share or price figure. Dropped, so the one-off check is
+  // UNKNOWN (never cleared by it, never sized from it).
+  // With a descriptive quote, the item is kept in words and the figure is not
+  // printed: "exceptional item — amount stated without a crore / lakh unit".
+  const oneOffWords = (v: StructuralVar): string => String((v as any).quote || v.comparison?.evidence || '').replace(/\s+/g, ' ').trim();
+  const variables0: StructuralVar[] = (input.variables || [])
+    .filter((v) => !(v.key === 'one_offs' && isJunkOneOffAmount(v.after) && !/[A-Za-z]{4,}/.test(oneOffWords(v).replace(/\b(?:Rs|INR|crores?|lakhs?)\b/gi, ''))))
+    .map((v) => (v.key === 'one_offs' && isJunkOneOffAmount(v.after)
+      ? (() => { const d = parseOneOff(oneOffWords(v), null);
+        return { ...v, after: `${d.effect ? `${d.one_off_type} ${d.effect}` : d.one_off_type} — ${UNSCALED_AMOUNT_WORDS}`, verdict: 'stated' as VarVerdict,
+          evidence: `${d.one_off_type} disclosed in the filing (“${oneOffWords(v).slice(0, 160)}”) — the amount is printed without a crore / lakh unit (${v.after}), so it is not used as a figure: it could be a per-share, lakh or rupee value. Shown, not sized.` }; })()
+      : v))
+    .map((v) => {
     if (v.key === 'earnings_growth' && earnBases && !v.unjudged) {
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: EARNINGS_EXCEED_REVENUE };
     }
@@ -916,10 +958,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // QUALIFICATION line); a driver that is nothing but one-offs is unjudged.
     if (v.key === 'margin_driver' && v.after && !v.unjudged) {
       const clauses = String(v.after).split(/;\s+/);
-      const off = clauses.filter((c) => ONE_OFF_CLAUSE.test(c));
+      const off = clauses.filter((c) => ONE_OFF_CLAUSE.test(c) && !statesNoOneOff(c));
       if (off.length) {
         oneOffClauses.push(...off);
-        const keep = clauses.filter((c) => !ONE_OFF_CLAUSE.test(c));
+        const keep = clauses.filter((c) => !ONE_OFF_CLAUSE.test(c) || statesNoOneOff(c));
         return keep.length
           ? { ...v, after: keep.join('; '), evidence: `${v.evidence} One-off clause set aside (shown under QUALIFICATION, not a structural driver): ${off.join('; ')}.` }
           : { ...v, verdict: 'stated' as VarVerdict, unjudged: 'the stated margin driver is a one-off benefit, not a structural mechanism' };
@@ -1007,7 +1049,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       for (const t of [v.after, (v as any).quote]) {
         for (const c of String(t ?? '').split(/;\s+|(?<=\.)\s+(?=[A-Z])/)) {
           const cl = c.replace(/\s+/g, ' ').trim();
-          if (cl && ONE_OFF_CLAUSE.test(cl) && !explicitNoneStated(cl) && !clauses.some((x) => x.text === cl)) clauses.push({ text: cl, from: VAR_LABEL[v.key] || v.label });
+          if (cl && ONE_OFF_CLAUSE.test(cl) && !statesNoOneOff(cl) && !clauses.some((x) => x.text === cl)) clauses.push({ text: cl, from: VAR_LABEL[v.key] || v.label });
         }
       }
     }
@@ -1042,18 +1084,21 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       const prior = /previous year|prior year|last year|preceding year|prior period/i.test(desc);
       const share = prior ? null : share0 ?? (cr != null && patCr && patCr > 0 ? cr / patCr : null);
       const big = !prior && (exceeds || (share != null && share > 1));
-      const size = prior ? ' — a prior-period figure as described in the filing; not sized against this quarter\'s profit — verify which period it belongs to'
+      const size = desc.includes(UNSCALED_AMOUNT_WORDS) ? '' : prior ? ' — a prior-period figure as described in the filing; not sized against this quarter\'s profit — verify which period it belongs to'
         : big ? ' — DATA VALIDATION REQUIRED: the one-off is larger than the reported profit, so the two are on different bases (or one figure is misread); verify in the filing'
         : share != null ? ` ≈ ${Math.round(share * 100)}% of the quarter's reported profit${patCr ? ` (₹${patCr} Cr)` : ''}${share >= 0.1 ? ' — material' : ''}`
           : ' — not sized: no same-period profit figure on file to compare against';
       out.push(`QUALIFICATION / WATCH — one-off ${gain ? 'benefit' : 'item'} in reported earnings: ${desc}${size}. Shown, not structural; it does not repeat on its own.`);
     };
-    if (oo && oo.after && (oo.verdict !== 'flat' || /₹|INR|Rs|cr/i.test(String(oo.after)))) {
+    // zzz802: "no explicit raw material one-off gains disclosed" is a statement
+    // that there is NONE — never printed as a one-off benefit.
+    const saysNone = statesNoOneOff;
+    if (oo && oo.after && !saysNone(oo.after) && (oo.verdict !== 'flat' || /₹|INR|Rs|cr/i.test(String(oo.after)))) {
       const item = (/“([^”]+)”/.exec(String(oo.evidence || '')) || [])[1];
       const cr = croreOf(oo.after);
       if (cr != null) seen.push(cr);
       const sh = /(\d+(?:\.\d+)?)% of reported profit/.exec(String(oo.evidence || ''));
-      line(`${oo.after}${item ? ` (“${item.slice(0, 90)}”)` : ''}`, cr, !/^\s*[−-]/.test(String(oo.evidence || '')) && !/expense|cost|charge|\bloss|impair|write[- ]?(?:off|down)/i.test(String(oo.after)), sh ? Number(sh[1]) / 100 : null,
+      line(`${oo.after}${item ? ` (“${item.slice(0, 90)}”)` : ''}`, cr, !/^\s*[−-]/.test(String(oo.evidence || '')) && !/expense|cost|charge|\bloss|impair|write[- ]?(?:off|down)|without a crore/i.test(String(oo.after)), sh ? Number(sh[1]) / 100 : null,
         /exceeds the reported profit/i.test(String(oo.unjudged || oo.evidence || '')));
     }
     for (const c of oneOffClauses) {
@@ -1503,10 +1548,34 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // variable blocks green unless a driver of the SAME mechanism is evidenced
   // (volume or capacity for absorption; intake or book-to-bill for an order
   // book). A disclosed target or level is not silence (MANINDS).
+  // ── UTILISATION ALTERNATES (India, A only).                         (zzz802)
+  // Indian companies rarely publish a utilisation percentage, so on the live
+  // book no A · OPERATING INFLECTION name could ever pass the core-coverage
+  // test: its only core mechanism variable is utilisation, and it is almost
+  // always NOT DISCLOSED or a bare level. The absorption mechanism can be
+  // shown in the filings in other words — volume growth, capacity added /
+  // commissioned / capex earning, or operating leverage the company names —
+  // and when one of those is evidenced (a filed fact that improved, same rules
+  // as a driver) the core check is satisfied BY THAT ALTERNATE. Utilisation
+  // itself stays unknown (not negative, never counted as confirmed in the
+  // printed x/y); a utilisation figure that moved the wrong way is never
+  // overridden.
+  const utilisationAlternate: StructuralVar | null = (() => {
+    if (!input.indiaDisclosure || thesis.pattern !== 'A') return null;
+    const u = checked.find((c) => c.key === 'utilisation');
+    if (!u || u.verdict === 'deteriorating' || u.verdict === 'improving' || u.verdict === 'flat') return null;
+    const alt = (v: StructuralVar) => v.source === 'filing' && v.kind !== 'claim' && !v.unjudged && v.verdict === 'improving'
+      && !isForwardRow(v) && (!v.statement || v.statement === 'ACTUAL');
+    const byKey = [...drivers, ...structuralConfirmedVars as unknown as StructuralVar[], ...variables]
+      .find((v) => (UTILISATION_ALTERNATES as VarKey[]).includes(v.key) && alt(v) && (v.key === 'operating_leverage' || driverTextOk(v)));
+    if (byKey) return byKey;
+    return drivers.find((d) => d.key === 'margin_driver' && OPERATING_LEVERAGE_WORDS.test(`${d.after || ''}`)) || null;
+  })();
   const coreMechanismGaps = core.filter((c) => {
     const subs = MECH_SUBSTITUTES[c.key];
     if (!subs || isFinancialOutput(c.key, c.source)) return false;
     if (c.state === 'FOUND' || c.state === 'UNCLEAR') return false;
+    if (c.key === 'utilisation' && utilisationAlternate) return false;
     return !drivers.some((d) => subs.includes(d.key)) && !structuralConfirmedVars.some((x) => subs.includes(x.key));
   });
   // ── STRICT GREEN.                                                  (zzz771)
@@ -1529,7 +1598,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const coreForCoverage = cashCritical ? coreMechanism : coreMechanism.filter((c) => c.key !== 'cash_conversion');
   const coreMechanismConfirmed = coreMechanism.filter(structurallyEvidenced);
   const distinctDrivers = new Set<VarKey>(drivers.map((d) => d.key));
-  const coreCoverageOk = coreForCoverage.filter(structurallyEvidenced).length * 2 >= coreForCoverage.length;
+  // zzz802: an undisclosed utilisation satisfied by a filed alternate counts
+  // toward coverage (India, A only — see utilisationAlternate).
+  const coreCoverageOk = (coreForCoverage.filter(structurallyEvidenced).length
+    + (utilisationAlternate && coreForCoverage.some((c) => c.key === 'utilisation') ? 1 : 0)) * 2 >= coreForCoverage.length;
   // ── ONE RATIO: THE ONE THE CARD PRINTS.                          (zzz771)
   // The card reads "Structural evidence reviewed: x/y" over the strategy's
   // structural variables plus any evidenced driver. The gate, the verdict and
@@ -1601,6 +1673,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     return pick ? `${label}: ${pick.length > 90 ? `${pick.slice(0, 89)}…` : pick}` : `${label} (stated in the filing)`;
   };
 
+  /** zzz802: the plain-English line for an alternate standing in for utilisation. */
+  const utilisationAlternateLine = (v: StructuralVar): string => {
+    const u = checked.find((c) => c.key === 'utilisation');
+    const lead = u && u.verdict === 'stated' && u.after ? `Utilisation is a level only (${String(u.after).slice(0, 40)}) — no direction on file`
+      : 'Utilisation not disclosed (unknown, not negative)';
+    return `${lead}; the core absorption check is satisfied by an alternate stated in the filings: ${driverText(v)}.`;
+  };
   const weakeningDown = checked.filter((c) => c.weight >= 3 && c.verdict === 'deteriorating' && mayMoveStatus(c));
   // ── THE STATUS LADDER, most severe first. ──────────────────────────────
   let status: ThesisStatus;
@@ -1724,6 +1803,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     because = `${STRENGTHENING_BECAUSE}Structural evidence reviewed: ${unionConfirmed.size}/${unionKeys.size} variables confirmed. Financial output: ${outputSummary}. `
       + `Structural driver${drivers.length > 1 ? 's' : ''} evidenced in the filings: ${drivers.slice(0, 4).map(driverText).join('; ')}.`
       + (thesis.pattern === 'F' ? ` Forensics: one-offs ${oneOffText}; cash conversion ${found.cash_conversion?.after || 'not deteriorating'}.` : '')
+      + (utilisationAlternate ? ` ${utilisationAlternateLine(utilisationAlternate)}` : '')
       + (stillToConfirm.length ? ` Still to confirm next quarter: ${stillToConfirm.join(', ')}.` : '');
   } else if (input.evidenceReviewed && coreGD.length < coreG.length
       && coreG.every((c) => c.verdict !== 'unknown' || c.absence === 'not_disclosed')) {
@@ -2700,6 +2780,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         .map((c) => c.label),
     },
     action,
+    utilisationAlternate: utilisationAlternate ? utilisationAlternateLine(utilisationAlternate) : null,
   };
 }
 

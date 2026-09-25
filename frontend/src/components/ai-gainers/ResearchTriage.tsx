@@ -15,7 +15,7 @@
 
 import React, { useCallback, useState } from 'react';
 import type { ResearchItem, ResearchView } from '@/lib/ai-gainers/research-view';
-import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, materialWord } from './Badges';
+import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, materialWord } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
 import { C, CLASS_META, MATERIAL_COLOR, istClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
@@ -33,11 +33,13 @@ export interface ResearchTriageProps {
   sessionNote?: string | null;
   /** Rendered last, collapsed: the raw evidence tables. */
   technical?: React.ReactNode;
+  /** zzz800: "⬇ Download PDF", shown next to RESCAN. */
+  pdfAction?: React.ReactNode;
 }
 
 const box: React.CSSProperties = { background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '11px 13px', minWidth: 0 };
 
-function Header({ view, onRescan, rescanning, toolbar, sessionNote }: Pick<ResearchTriageProps, 'view' | 'onRescan' | 'rescanning' | 'toolbar' | 'sessionNote'>) {
+function Header({ view, onRescan, rescanning, toolbar, sessionNote, pdfAction }: Pick<ResearchTriageProps, 'view' | 'onRescan' | 'rescanning' | 'toolbar' | 'sessionNote' | 'pdfAction'>) {
   const s = view.session || { date: null, scanAt: null, status: 'unknown', cached: false };
   const scan = istClock(s.scanAt);
   const live = /live/i.test(String(s.status || ''));
@@ -62,8 +64,8 @@ function Header({ view, onRescan, rescanning, toolbar, sessionNote }: Pick<Resea
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <span style={k}>DATA</span>
           {s.cached
-            ? <><span style={{ fontSize: 13, color: C.dim }}>Cached {scan || ''}</span>{onRescan && <Btn onClick={onRescan} title="Re-reads the gainers screen now and any new exchange announcements (AI reads, only on this click).">{rescanning ? 'SCANNING…' : '↻ RESCAN'}</Btn>}</>
-            : <><span style={{ fontSize: 13, color: C.green, fontWeight: 700 }}>✓ Live scan completed</span>{onRescan && <Btn onClick={onRescan} title="Re-reads the gainers screen now and any new exchange announcements (AI reads, only on this click).">{rescanning ? 'SCANNING…' : '↻ RESCAN'}</Btn>}</>}
+            ? <><span style={{ fontSize: 13, color: C.dim }}>Cached {scan || ''}</span>{onRescan && <Btn onClick={onRescan} title="Re-reads the gainers screen now and any new exchange announcements (AI reads, only on this click).">{rescanning ? 'SCANNING…' : '↻ RESCAN'}</Btn>}{pdfAction}</>
+            : <><span style={{ fontSize: 13, color: C.green, fontWeight: 700 }}>✓ Live scan completed</span>{onRescan && <Btn onClick={onRescan} title="Re-reads the gainers screen now and any new exchange announcements (AI reads, only on this click).">{rescanning ? 'SCANNING…' : '↻ RESCAN'}</Btn>}{pdfAction}</>}
         </span>
         {sessionNote && <span style={{ fontSize: 12, color: C.faint, flexBasis: '100%' }}>{sessionNote}</span>}
         {!live && s.date && /last|previous|closed/i.test(String(s.status)) && (
@@ -102,7 +104,26 @@ function Summary({ view }: { view: ResearchView }) {
           </div>
         ))}
       </div>
+      <UsCatalystCategories view={view} />
     </section>
+  );
+}
+
+/** zzz801 (US only): the catalysts found across the board, by category —
+ *  names with an SEC-read catalyst vs press only. Absent on India views. */
+function UsCatalystCategories({ view }: { view: ResearchView }) {
+  const u = view.summary?.usCatalysts;
+  if (!u) return null;
+  return (
+    <div data-testid="us-catalyst-categories" style={{ ...box, padding: '7px 11px', marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: '4px 12px', alignItems: 'baseline', fontSize: 12.5, color: C.dim }}>
+      <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint }}>CATALYSTS FOUND BY CATEGORY</span>
+      {u.byCategory.map((c) => (
+        <span key={c.category} title={`${c.tickers.join(', ')}${c.press ? ` — ${c.press} name${c.press === 1 ? '' : 's'} from the press only (not verified in a filing)` : ''}`}>
+          <b style={{ color: C.text }}>{c.category}</b> {c.names}{c.press ? <span style={{ color: C.amber }}> ({c.press} press only)</span> : null}
+        </span>
+      ))}
+      <span style={{ color: C.faint, flexBasis: '100%' }}>{u.found} name{u.found === 1 ? '' : 's'} with a catalyst found in filings or news · {u.none} with none found (not negative — nothing in the filings or news names one).</span>
+    </div>
   );
 }
 
@@ -162,6 +183,7 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       {extra}
       {onOpen && <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button>}
       {it.eventClass === 'NO_CATALYST' && it.scanNote && <div style={{ flexBasis: '100%' }}><ScanNote it={it} /></div>}
+      {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
       {it.news?.narrative && <div style={{ flexBasis: '100%', fontSize: 12, color: C.dim }}>Press (unverified): <b style={{ color: C.text }}>{it.news.narrative.label}</b> story over {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) — “{it.news.narrative.lead}”</div>}
     </div>
   );
@@ -302,6 +324,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                     )}
                     {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'Size not stated'}>NEEDS READING</Pill>}
                   </span>
+                  {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
                   <div style={{ flexBasis: '100%' }}><AlsoIn it={it} here="Watch / investigate" /></div>
                   <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                 </div>

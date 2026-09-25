@@ -39,6 +39,7 @@ import type { CompanyLedger } from './evidence-ledger';
 import { periodOrdinal } from './evidence-ledger';
 import { normalizeEvent, hasQuantity, periodEnd } from './fact-normalize';
 import { capacityMismatch, isCapacityFigure } from './fact-model';
+import { capexFigureOk } from './figure-guards';
 
 export type CapexState =
   | 'none'
@@ -247,6 +248,10 @@ export function stageOf(e: { variable: string; value_type: string; after: string
   }
   // A capex FIGURE is judged on its own words, not on whatever else a long
   // sentence says about construction or schemes (INNOVACAP ₹480+ cr). (zzz770)
+  // zzz802: a capex FIGURE must be money with a unit (or a percentage naming
+  // its subject) — "2% to 3%", "Rs3,00,000/- … fees for cost audit" are not.
+  if (e.variable === 'capex' && /\d/.test(String(e.after ?? '')) && !capexFigureOk(String(e.after ?? ''), e.evidence_text)
+    && !/commission|commercial|construct|operational/i.test(own)) return null;
   if (e.variable === 'capex' && /\d/.test(String(e.after ?? '')) && !/commission|commercial|construct|operational/i.test(own)) {
     return ANNOUNCE_WORDS.test(t) && !SPENT_VERB.test(own) ? 'ANNOUNCED' : 'SPENDING';
   }
@@ -255,9 +260,9 @@ export function stageOf(e: { variable: string; value_type: string; after: string
   if (/under[_ ]construction|construction|installation|civil work|erection|trial/i.test(t)) return 'UNDER_CONSTRUCTION';
   // A capex FIGURE stated as an actual (not planned, not proposed) is money
   // spent; the forward case returned ANNOUNCED above.
-  if (e.variable === 'capex' && /\d/.test(String(e.after ?? ''))) return ANNOUNCE_WORDS.test(t) && !SPENT_VERB.test(own) ? 'ANNOUNCED' : 'SPENDING';
+  if (e.variable === 'capex' && /\d/.test(String(e.after ?? '')) && capexFigureOk(String(e.after ?? ''), e.evidence_text)) return ANNOUNCE_WORDS.test(t) && !SPENT_VERB.test(own) ? 'ANNOUNCED' : 'SPENDING';
   // "82.88 crore deployed in April 2026" is money out of the door. (zzz770)
-  if (e.variable === 'capex_status' && SPENT_VERB.test(own) && /\d/.test(String(e.after ?? ''))) return 'SPENDING';
+  if (e.variable === 'capex_status' && SPENT_VERB.test(own) && /\d/.test(String(e.after ?? '')) && capexFigureOk(String(e.after ?? ''), e.evidence_text)) return 'SPENDING';
   if (/announc|approved|board approv/i.test(t)) return 'ANNOUNCED';
   return null;
 }
@@ -506,9 +511,13 @@ export function capexEarning(
 
   const lines: string[] = [];
   if (state === 'UNKNOWN') {
-    lines.push(CAPEX_EARNING_UNKNOWN_LINE + (pj?.announced || get('capex')?.after ? ` (capex on file: ${pj?.announced || nz(get('capex')?.after)})` : ''));
+    { const onFile = pj?.announced || nz(get('capex')?.after);
+      lines.push(CAPEX_EARNING_UNKNOWN_LINE + (onFile && capexFigureOk(onFile) ? ` (capex on file: ${onFile})` : '')); }
   } else {
-    const announcedRaw = pj?.announced || (capexRow && !capexRowSpent ? nz(capexRow.after) : null);
+    const announcedRaw0 = pj?.announced || (capexRow && !capexRowSpent ? nz(capexRow.after) : null);
+    // zzz802: "announced 2% to 3%" / "announced 25%" — a subjectless percentage
+    // is not an announced capex figure; unknown stays unknown.
+    const announcedRaw = announcedRaw0 && capexFigureOk(announcedRaw0, (capexRow as any)?.quote || (capexRow as any)?.evidence || null) ? announcedRaw0 : null;
     // The same ~70-char rule for the announced amount beside "Spent: not
     // disclosed": the amount phrase, or nothing when the sentence has none. (zzz772)
     const announcedTxt = announcedRaw && announcedRaw.length > 70 ? (money(announcedRaw) ? spentPhrase(announcedRaw) : null) : announcedRaw;
@@ -788,7 +797,9 @@ const STOP = new Set(['facility', 'facilities', 'plant', 'plants', 'capacity', '
   'additions', 'addition', 'stated', 'being', 'built', 'company', 'strategic', 'site', 'sites', 'centre', 'center']);
 const tokensOf = (name: string): string[] => Array.from(new Set(
   name.toLowerCase().replace(/[^a-z\s-]/g, ' ').split(/[\s-]+/).filter((w) => w.length >= 4 && !STOP.has(w))));
-const MONEY = /(?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*\+?\s*(?:crores?|cr\b|lakhs?|mn|million|bn|billion)?|[\d,]+(?:\.\d+)?\s*\+?\s*(?:crores?|cr\b)/i;
+// zzz802: a currency amount needs its magnitude word — "Rs. 1,113.51" with no
+// crore / lakh / mn / bn is a per-share or price-like figure, never capex money.
+const MONEY = /(?:₹|INR|Rs\.?)\s?[\d,]+(?:\.\d+)?\s*\+?\s*(?:crores?|cr\b|lakhs?|mn\b|million|bn\b|billion)|[\d,]+(?:\.\d+)?\s*\+?\s*(?:crores?|cr\b)/i;
 const short = (s: string | null | undefined, n = 70): string | null => {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
   if (!t || /^not (?:stated|disclosed)$/i.test(t)) return null;
@@ -935,7 +946,7 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
             const m = money(e.after);
             if (m && announced && money(announced) !== m && /revis|increas|enhanc|raised/i.test(txt)) revised = m;
             else if (m && !announced) announced = m;
-            if (e.variable === 'capex' || m) set('ANNOUNCED', e.forward && !ANNOUNCE_WORDS.test(txt) ? 'target' : 'actual', m || val, e);
+            if (e.variable === 'capex' || m) set('ANNOUNCED', e.forward && !ANNOUNCE_WORDS.test(txt) ? 'target' : 'actual', m || (capexFigureOk(val, e.evidence_text) ? val : null), e);
             else if (/complet|commission/i.test(own)) set('COMMISSIONED', 'target', whenOf(own) || val, e);
           } else if (st === 'COMMERCIAL_PRODUCTION') set('COMMERCIAL_PRODUCTION', 'actual', val, e);
           else if (st === 'COMMISSIONED') set('COMMISSIONED', 'actual', val, e);
@@ -980,7 +991,10 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
     // The summary's own project row: amount, completion, revenue-from.
     if (row) {
       const amt = said(row.amount) ? String(row.amount) : null;
-      if (amt && !steps.has('ANNOUNCED')) { set('ANNOUNCED', 'actual', money(amt) || short(amt, 60), null); announced = announced || money(amt) || short(amt, 60); }
+      // zzz802: a capex amount is money with a unit (or a percentage that names
+      // its subject) — "2% to 3%" / "25%" is never an announced capex figure.
+      const amtOk = amt ? (money(amt) || (capexFigureOk(amt) ? short(amt, 60) : null)) : null;
+      if (amtOk && !steps.has('ANNOUNCED')) { set('ANNOUNCED', 'actual', amtOk, null); announced = announced || amtOk; }
       if (said(row.capacity_added) && !steps.has('CAPACITY_CREATED')) set('CAPACITY_CREATED', row.status === 'commissioned' ? 'actual' : 'target', short(row.capacity_added, 70), null);
       const comp = said(row.completion_period) ? String(row.completion_period) : null;
       // ── THE ROW'S OWN STATUS, CHECKED AGAINST ITS OWN DATE.        (zzz784)

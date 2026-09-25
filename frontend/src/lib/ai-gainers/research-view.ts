@@ -299,6 +299,13 @@ export interface ResearchView {
     lowMateriality?: number; marketMoveOnly?: number; listings?: number; unresearched?: number; watch?: number;
     /** zzz771: older filings behind names on the board — context, not this move's catalyst. */
     context?: number;
+    /** zzz801 (US only): names with at least one catalyst found by the event
+     *  taxonomy (filing or press), names with none, and the names per
+     *  category (SEC-verified vs press only). Absent on India views. */
+    usCatalysts?: {
+      found: number; none: number;
+      byCategory: Array<{ category: string; names: number; sec: number; press: number; tickers: string[] }>;
+    };
   };
   top3: ResearchItem[];
   /** Full research queue, 10–15, ranked by priority. */
@@ -2085,7 +2092,29 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
 // carries "secondary · verification required").
 // ═══════════════════════════════════════════════════════════════════════════
 
-const US_EVENT_TYPES = new Set<string>(['Earnings', 'Order win', 'Contract', 'Acquisition', 'Merger', 'Divestment', 'Regulatory approval', 'Fundraising', 'Buyback', 'Guidance', 'Rating action', 'Strategic investment', 'Litigation / regulatory', 'Capacity expansion', 'No identified catalyst']);
+const US_EVENT_TYPES = new Set<string>(['Earnings', 'Order win', 'Contract', 'Acquisition', 'Merger', 'Divestment', 'Regulatory approval', 'Fundraising', 'Buyback', 'Guidance', 'Rating action', 'Strategic investment', 'Litigation / regulatory', 'Capacity expansion', 'No identified catalyst',
+  // zzz801: the event taxonomy's wider types
+  'New product', 'Customer win', 'Pricing', 'JV', 'Partnership', 'Production ramp', 'Strategic expansion', 'Debt / refinancing', 'Management change', 'Governance', 'Capital allocation', 'Promoter buying']);
+
+/** zzz801 (US only): catalysts found per category, over the names on the board. */
+function usCatalystSummary(items: ResearchItem[]): NonNullable<ResearchView['summary']['usCatalysts']> {
+  const cats = ['Earnings', 'Product & segment', 'Capital & capacity', 'Corporate action', 'Deals & customers', 'Regulatory & clinical', 'Capital structure', 'Market & ownership'];
+  const by = new Map<string, { names: Set<string>; sec: Set<string>; press: Set<string> }>(cats.map((c) => [c, { names: new Set(), sec: new Set(), press: new Set() }]));
+  let found = 0, none = 0;
+  for (const it of items) {
+    const cs = it.usCard?.catalysts;
+    if (!it.usCard) continue;
+    if (!cs || !cs.length) { none++; continue; }
+    found++;
+    for (const c of cs) {
+      const b = by.get(c.category);
+      if (!b) continue;
+      b.names.add(it.ticker);
+      (c.source === 'SEC' ? b.sec : b.press).add(it.ticker);
+    }
+  }
+  return { found, none, byCategory: cats.map((c) => { const b = by.get(c)!; return { category: c, names: b.names.size, sec: b.sec.size, press: Array.from(b.press).filter((t) => !b.sec.has(t)).length, tickers: Array.from(b.names).slice(0, 12) }; }).filter((x) => x.names > 0) };
+}
 const US_TRANSMIT: Partial<Record<UsCard['kind'], Transmission>> = { earnings: 'DIRECT', order: 'NEAR_TERM', acquisition: 'NEAR_TERM', merger: 'NEAR_TERM', divestiture: 'NEAR_TERM', fda: 'LONG_TERM', clinical: 'LONG_TERM', buyback: 'WEAK', offering: 'WEAK', guidance: 'NEAR_TERM', index: 'NONE', analyst: 'NONE' };
 
 function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | null; window: '1D' | '1W' }; returns: { w1: number | null; m1: number | null; m3: number | null }; now: string | null }): UsCard {
@@ -2462,6 +2491,7 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
       portfolioMatches: portfolio.length, dataUnavailable: count('DATA_UNAVAILABLE'),
       lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
       context: context.length,
+      ...(market === 'US' ? { usCatalysts: usCatalystSummary(items) } : {}),
     },
     top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context, needsReading,
   };

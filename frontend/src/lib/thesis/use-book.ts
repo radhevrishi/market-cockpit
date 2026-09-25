@@ -43,7 +43,7 @@ import {
   type CompanyLedger, type FreshnessState, type ChangeLine, type CompanyEvidenceState,
 } from './evidence-ledger';
 import { evidenceReadLine, changesNote } from './evidence-counts';
-import { provisionalType, isProvisionalFallback, noTypeReason } from './provisional-type';
+import { provisionalType, isProvisionalFallback, noTypeReason, promotionFromFilings, promotedType } from './provisional-type';
 
 export interface BookRow {
   symbol: string;
@@ -239,13 +239,12 @@ function assess(row0: BookRow): BookRow {
   // zzz784: the capex chain first, so the status narrative reads the SAME
   // normalized build / economic state the capex row prints.
   const capex = buildCapexChain(row.summary, vars, row.ledger || null);
-  return {
-    ...row,
-    comparisons,
-    assessment: withThesisSet(row, assessThesis({
+  const run = (pattern: BookRow['pattern']) => assessThesis({
       capexState: capex ? { build: capex.build || null, economic: capex.earning?.economic ?? null, earningState: capex.earning?.state ?? null } : null,
-      pattern: row.pattern?.pattern ?? null,
-      patternFit: (row.pattern as any)?.fit ?? null,
+      pattern: pattern?.pattern ?? null,
+      patternFit: (pattern as any)?.fit ?? null,
+      // zzz802: India-only disclosure rules (utilisation alternates for A).
+      indiaDisclosure: row.market !== 'US',
       variables: vars,
       comparisons,
       historyDepth: hist.depth,
@@ -269,7 +268,27 @@ function assess(row0: BookRow): BookRow {
       // zzz790: a newer document known and not yet read.
       newerEvidenceUnread: row.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || (row.freshness as any)?.evidence_state === 'NEW_EVIDENCE_AVAILABLE',
       expectedPeriod: latestExpectedPeriod().period,
-    })),
+    });
+  // ── A NEAREST FIT THE FILINGS CONFIRM IS PROMOTED.                  (zzz802)
+  // Judged on the assessment under the nearest-fit type itself (its own
+  // mechanism checks, from filed facts). India only; the owner's type (manual)
+  // and an exact classification are never touched. See promotionFromFilings.
+  let pattern = row.pattern;
+  let a0 = run(pattern);
+  if (!ov && row.market !== 'US' && pattern?.fit === 'nearest') {
+    const pr = promotionFromFilings(pattern, {
+      structuralStates: (a0 as any).structuralStates || null,
+      checked: (a0.checked || []) as any,
+      freshnessState: (a0 as any).evidenceFreshness?.state ?? null,
+      evidenceReviewed: !!row.summary,
+    });
+    if (pr.promoted) { pattern = promotedType(pattern, pr); a0 = run(pattern); }
+  }
+  const rowP: BookRow = pattern === row.pattern ? row : { ...row, pattern };
+  return {
+    ...rowP,
+    comparisons,
+    assessment: withThesisSet(rowP, a0),
     capex,
     promiseNote: check ? check.detail : null,
     // WHAT CHANGED comes from the same rows as the board. (zzz765)

@@ -30,6 +30,7 @@
 //   · NO PRICE, NO RECOMMENDATION — Special Focus allocates research time.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { isBareRupeeAmount, capexFigureOk } from '@/lib/thesis/figure-guards';
 import { scaledNumber, periodOrdinal } from '@/lib/thesis/evidence-ledger';
 import { VAR_LABEL } from '@/lib/thesis/taxonomy';
 import { forwardSentence, volumeContext } from '@/lib/thesis/fact-normalize';
@@ -312,6 +313,12 @@ export function itemsFromLedger(ledger: any): PersistItem[] {
       if (metric === 'capacity' && MONEY.test(after) && !CAPACITY_UNIT.test(after)) continue;
       const kind = KIND_OF[metric];
       if (!kind) continue;
+      // zzz802: a rupee amount with no crore / lakh / mn / bn word ("INR 25,804",
+      // "Rs. 1,113.51") is not a figure of anything — it reads like a per-share
+      // or price value. A subjectless percentage is not a capex figure. Unknown
+      // stays unknown; neither becomes evidence.
+      if (isBareRupeeAmount(after)) continue;
+      if (metric === 'capex' && /\d/.test(after) && !capexFigureOk(after, f?.source_quote)) continue;
       const stmt = String(f?.fact_or_management_statement || 'FACT');
       const hasFig = /\d/.test(after);
       // Plausibility per metric — a figure in the wrong unit is not evidence.

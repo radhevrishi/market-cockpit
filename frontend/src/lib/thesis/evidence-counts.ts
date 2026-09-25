@@ -98,7 +98,7 @@ export interface UniverseRow {
   origin: 'book' | 'bench' | 'both' | string;
   market?: string | null;
   assessment?: { status?: string | null } | null;
-  pattern?: { fit?: string | null; pattern?: string | null; weak?: boolean } | null;
+  pattern?: { fit?: string | null; pattern?: string | null; weak?: boolean; promoted?: boolean } | null;
 }
 export interface UniverseCounts {
   total: number;
@@ -114,6 +114,8 @@ export interface UniverseCounts {
   provisional: number;
   /** zzz794: provisional types the figures did not decide (industry words did). */
   provisionalWeak: number;
+  /** zzz802: nearest fits the filings confirmed (now confident auto types). */
+  promoted: number;
   exportable: number;
   exportableUs: number;
   excluded: Record<string, number>;
@@ -124,7 +126,7 @@ export interface UniverseCounts {
 export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[], constructive: string[]): UniverseCounts {
   const total = allRows.length, shown = shownRows.length;
   const hiddenLargeCap = total - shown;
-  let book = 0, bench = 0, evaluated = 0, provisional = 0, provisionalWeak = 0, exportable = 0, exportableUs = 0;
+  let book = 0, bench = 0, evaluated = 0, provisional = 0, provisionalWeak = 0, promoted = 0, exportable = 0, exportableUs = 0;
   const byStatus: Record<string, number> = {};
   const excluded: Record<string, number> = {};
   for (const r of shownRows) {
@@ -134,6 +136,7 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
     evaluated++;
     byStatus[s] = (byStatus[s] || 0) + 1;
     if (r.pattern?.fit === 'nearest' && s !== 'THESIS_NOT_SET') { provisional++; if (r.pattern.weak) provisionalWeak++; }
+    if (r.pattern?.promoted) promoted++;
     if (constructive.includes(s)) { if (r.market === 'US') exportableUs++; else exportable++; }
     else excluded[s] = (excluded[s] || 0) + 1;
   }
@@ -142,10 +145,10 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
   const excludedN = Object.values(excluded).reduce((a, b) => a + b, 0);
   const line = `${total} total${hiddenLargeCap ? ` − ${hiddenLargeCap} large caps hidden` : ''} = ${shown} shown = ${book} book + ${bench} bench`
     + ` · ${evaluated} evaluated${notAssessed ? ` + ${notAssessed} not yet assessed` : ''}`
-    + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit${provisionalWeak ? `, ${provisionalWeak} of them a weak fit` : ''})`
+    + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit${provisionalWeak ? `, ${provisionalWeak} of them a weak fit` : ''})${promoted ? ` · ${promoted} type${promoted === 1 ? '' : 's'} confirmed from filings` : ''}`
     + ` · ${exportable} eligible for research export (NSE)${exportableUs ? ` + ${exportableUs} US eligible` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`;
   return { total, hiddenLargeCap, shown, book, bench, evaluated, notAssessed, byStatus, statusSum, thesisNotSet: byStatus.THESIS_NOT_SET || 0,
-    provisional, provisionalWeak, exportable, exportableUs, excluded, excludedN, line };
+    provisional, provisionalWeak, promoted, exportable, exportableUs, excluded, excludedN, line };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -162,6 +165,26 @@ export function researchPriorityEligible(status: string | null | undefined): boo
 export function researchPriorityTitle(n: number): string {
   // zzz790: says what it is for — CONFIRMATION REQUIRED is never counted here.
   return `Research priority — ${n} eligible ${n === 1 ? 'thesis' : 'theses'} ranked by evidenced catalyst — research allocation only, not a buy list, no price used`;
+}
+
+/** zzz802 — the India Research-priority row says WHY in plain words, the way
+ *  the US page does; the ranking number itself is never shown (no visible
+ *  0–100 scores). Drivers first (what the filings evidence), then the filed
+ *  results. */
+export function researchWhyLine(rank: { output?: { revenue?: number | null; earnings?: number | null; marginPp?: number | null } | null;
+  drivers?: Array<{ group: string; text: string; quantified?: boolean }> | null } | null | undefined): string {
+  if (!rank) return 'Why: no evidenced catalyst on file.';
+  const bits: string[] = [];
+  for (const d of (rank.drivers || []).slice(0, 2)) {
+    const t = String(d.text).replace(/\s+/g, ' ').trim();
+    bits.push(`${d.group.toLowerCase()}${d.quantified === false ? ' (management remark)' : ''} — ${t.length > 110 ? `${t.slice(0, 109)}…` : t}`);
+  }
+  const o = rank.output || {};
+  const pct = (v: number) => `${v >= 0 ? '+' : ''}${v}%`;
+  const out = [o.revenue != null ? `revenue ${pct(o.revenue)}` : null, o.earnings != null ? `earnings ${pct(o.earnings)}` : null,
+    o.marginPp != null && o.marginPp > 0 ? `margin +${o.marginPp} points` : null].filter(Boolean).join(', ');
+  if (out) bits.push(`filed results: ${out}`);
+  return `Why: ${bits.join('; ') || 'filed results only — no mechanism evidenced yet'}.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

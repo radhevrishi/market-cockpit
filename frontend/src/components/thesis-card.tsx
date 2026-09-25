@@ -633,7 +633,13 @@ export function ThesisCard(p: ThesisCardProps) {
           <span data-testid="pattern-badge" data-fit={p.pattern.fit || 'exact'} title={p.pattern.because} style={{
             fontSize: 12, fontWeight: 800, padding: '1px 7px', borderRadius: 3,
             border: `1px ${p.pattern.fit === 'nearest' ? 'dashed' : 'solid'} ${pm.color}`, background: p.pattern.fit === 'nearest' ? 'transparent' : `${pm.color}18`, color: ink(pm.color),
-          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto, provisional)' : ''}{(p.pattern as any).weak ? ' · weak fit' : ''}</span>
+          }}>{pm.icon} {p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}` : p.pattern.pattern} · {pm.name}{p.pattern.fit === 'nearest' ? ' · nearest fit (auto, provisional)' : ''}{(p.pattern as any).weak ? ' · weak fit' : ''}{(p.pattern as any).promoted ? ' · auto, type confirmed from filings' : ''}</span>
+        )}
+        {/* zzz802: a nearest fit the filings confirmed says so, in plain words. */}
+        {pm && p.pattern && (p.pattern as any).promoted && !p.thesisType && (
+          <span data-testid="type-confirmed" style={{ flexBasis: '100%', order: 99, fontSize: 12, color: C.dim, lineHeight: 1.4 }}>
+            {String((p.pattern as any).promotedWhy || 'Type confirmed from filings.')} The picker still overrides it.
+          </span>
         )}
         {p.radarScore != null && (
           <span style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA' }}>🚀 T-{Math.round(p.radarScore)}</span>
@@ -645,7 +651,7 @@ export function ThesisCard(p: ThesisCardProps) {
             value={p.thesisType || ''}
             onChange={(e) => p.onThesisType!((e.target.value || null) as any)}
             style={{ fontSize: 12, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'transparent', color: p.pattern ? C.dim : '#F59E0B', border: `1px solid ${p.pattern ? C.border : '#F59E0B'}`, cursor: 'pointer' }}>
-            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}${(p.pattern as any).weak ? ', weak fit' : ''}` : p.pattern.pattern})` : 'thesis: not set — pick'}</option>
+            <option value="">{p.pattern && !p.thesisType ? `thesis: auto (${p.pattern.fit === 'nearest' ? `nearest ${p.pattern.pattern}${(p.pattern as any).weak ? ', weak fit' : ''}` : `${p.pattern.pattern}${(p.pattern as any).promoted ? ', confirmed from filings' : ''}`})` : 'thesis: not set — pick'}</option>
             <option value="A">A · Operating inflection</option>
             <option value="B">B · Demand explosion</option>
             <option value="F">F · Profit jump</option>

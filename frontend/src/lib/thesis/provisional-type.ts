@@ -223,6 +223,114 @@ export function provisionalType(graded: any | null | undefined, summary: any | n
   return out('A', `the figures fit no type clearly${businessWords ? '' : ' and no industry is on file'} — the thesis to test is an operating turn`, true);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PROMOTION: A NEAREST FIT THE FILINGS CONFIRM.                        (zzz802)
+//
+// 53 of 119 live names carried a nearest-fit type and were therefore capped
+// at CONFIRMATION REQUIRED, however much the company's own filings showed —
+// HAPPYFORGE sat there with 3 of 5 of its type's checks confirmed from filed
+// figures. The type was picked from the results row; the filings are an
+// INDEPENDENT source. When they confirm the type's own mechanism, the type is
+// no longer a guess.
+//
+// Rule (plain English): a nearest-fit type becomes a confirmed auto type when
+//   • it is not a weak fit (a type the business words chose never promotes);
+//   • a filing was read, and the evidence is current (not stale);
+//   • at least PROMOTE_MIN_CONFIRMED distinct checks of THAT type's mechanism
+//     are confirmed from filed facts (a results filing, concall or
+//     presentation — not a grader ratio, not a management target, not press);
+//     a cash-conversion ratio never counts (it is earnings quality, not a
+//     mechanism);
+//   • at least one of them is the type's CORE mechanism (A: utilisation or
+//     its filed alternates — volume, capacity added / commissioned, capex
+//     earning, stated operating leverage; B: order book / intake /
+//     book-to-bill; F: a named operating margin driver or mix; G: working
+//     capital discipline);
+//   • the confirmed checks are at least 40% of the type's mechanism checks
+//     printed on the card (the same x/y the card shows — 2 of 5 passes, 1 of
+//     4 does not); and
+//   • nothing in that mechanism moved the wrong way.
+// Otherwise it stays provisional, exactly as before. Pure; no price is read.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const PROMOTE_MIN_CONFIRMED = 2;
+/** Confirmed / applicable must reach this share (2 of 5 = 40%). */
+export const PROMOTE_MIN_SHARE = 0.4;
+/** The core mechanism checks of each type — one must be among the confirmed. */
+export const TYPE_CORE_CHECKS: Record<AbfgPattern, readonly string[]> = {
+  A: ['utilisation', 'volume', 'capacity', 'capacity_addition', 'commissioning', 'capex_earning', 'operating_leverage'],
+  B: ['order_book', 'order_intake', 'book_to_bill'],
+  F: ['margin_driver', 'product_mix', 'mix'],
+  G: ['working_capital'],
+};
+
+export interface PromotionEvidence {
+  /** The type's printed mechanism checks, one state each (assessment.structuralStates). */
+  structuralStates?: Array<{ key: string; label: string; state: string; role?: string; figure?: string | null }> | null;
+  /** The assessment's checked rows — read for each confirmed row's SOURCE. */
+  checked?: Array<{ key: string; source?: string | null; kind?: string | null }> | null;
+  /** assessment.evidenceFreshness.state — STALE evidence never promotes. */
+  freshnessState?: string | null;
+  evidenceReviewed: boolean;
+}
+
+export interface Promotion {
+  promoted: boolean;
+  /** The filed checks that confirmed the mechanism, e.g. "volume +18% YoY". */
+  confirmed: string[];
+  confirmedCount: number;
+  applicable: number;
+  /** Plain words: why it was promoted, or why it stays provisional. */
+  why: string;
+}
+
+/** Decide whether a nearest-fit type is confirmed by the filings. */
+export function promotionFromFilings(p: AbfgResult | null | undefined, ev: PromotionEvidence): Promotion {
+  const no = (why: string, confirmed: string[] = [], applicable = 0): Promotion => ({ promoted: false, confirmed, confirmedCount: confirmed.length, applicable, why });
+  if (!p || p.fit !== 'nearest') return no('not a nearest-fit type');
+  if ((p as any).weak) return no('a weak fit — the business description chose the type, so filings cannot confirm it');
+  if (!ev.evidenceReviewed) return no('no filing has been read');
+  if (ev.freshnessState === 'STALE') return no('the evidence on file is stale');
+  const states = (ev.structuralStates || []).filter((s) => s.state !== 'not_applicable');
+  if (!states.length) return no('the type has no mechanism checks on file');
+  const src = new Map<string, { source?: string | null; kind?: string | null }>();
+  for (const c of ev.checked || []) if (!src.has(c.key)) src.set(c.key, c);
+  const filed0 = states.filter((s) => {
+    if (s.state !== 'confirmed' || s.key === 'cash_conversion') return false;
+    // A driver is only ever a filing fact (the engine's own rule); a structural
+    // row must itself come from a filing, never a grader ratio or a claim.
+    if (s.role === 'driver') return true;
+    const c = src.get(s.key);
+    return !!c && c.source === 'filing' && c.kind !== 'claim';
+  });
+  // One figure, one check: "capacity added ~69,000 MTPA" and "installed
+  // capacity ~69,000 MTPA" are the same fact printed twice.
+  const figId = (f: string | null | undefined) => { const d = String(f ?? '').replace(/[^\d.]/g, ' ').trim().split(/\s+/).filter((x) => /\d/.test(x)).join('|'); return d || null; };
+  const seenFig = new Set<string>();
+  const filed = filed0.filter((s) => { const id = figId(s.figure); if (!id) return true; if (seenFig.has(id)) return false; seenFig.add(id); return true; });
+  const confirmed = filed.map((s) => `${s.label.toLowerCase()}${s.figure ? ` ${String(s.figure).slice(0, 60)}` : ''}`);
+  const contradicted = states.filter((s) => s.state === 'contradicted');
+  if (contradicted.length) return no(`the filings contradict part of the mechanism (${contradicted.map((s) => s.label.toLowerCase()).join(', ')})`, confirmed, states.length);
+  if (filed.length < PROMOTE_MIN_CONFIRMED) return no(`only ${filed.length} of ${states.length} of the type's checks confirmed from filings (needs ${PROMOTE_MIN_CONFIRMED})`, confirmed, states.length);
+  if (filed.length < PROMOTE_MIN_SHARE * states.length - 1e-9) return no(`only ${filed.length} of ${states.length} of the type's checks confirmed from filings (needs at least ${Math.round(PROMOTE_MIN_SHARE * 100)}%)`, confirmed, states.length);
+  const core = TYPE_CORE_CHECKS[p.pattern] || [];
+  if (!filed.some((s) => core.includes(s.key))) return no(`none of the confirmed checks is the ${p.pattern} type's core mechanism (${core.slice(0, 4).join(' / ').replace(/_/g, ' ')})`, confirmed, states.length);
+  return {
+    promoted: true, confirmed, confirmedCount: filed.length, applicable: states.length,
+    why: `Type confirmed from filings: ${filed.length} of ${states.length} of the ${p.pattern} · ${ABFG_META[p.pattern].name.toLowerCase()} checks confirmed from the company's filed figures — ${confirmed.join('; ')}.`,
+  };
+}
+
+/** The promoted type: a confident auto type whose `because` says what the
+ *  filings confirmed. Stays a fallback so it is re-derived on every pass — if
+ *  the filings stop confirming it, it falls back to provisional. */
+export function promotedType(p: AbfgResult, pr: Promotion): AbfgResult {
+  return {
+    ...p, fit: 'exact', fallback: true, weak: false, promoted: true, promotedWhy: pr.why,
+    because: `${pr.why} Originally a nearest fit from the results figures (${String(p.because || '').replace(/^Nearest fit \(auto(?:, provisional)?\) — /, '').replace(/\s*Worked out from the company's own figures[\s\S]*$/, '').replace(/\s*Nearest fit[\s\S]*$/, '').slice(0, 220).trim()}); the owner's choice in the picker still wins.`,
+  } as AbfgResult;
+}
+
 /** Why a name has no type at all (THESIS NOT SET), in plain words. */
 export function noTypeReason(graded: any | null | undefined, summary: any | null | undefined): string {
   if (!graded && !summary) return 'no quarterly figures on file for this company yet — no results row, no screener figures and no filing read';
