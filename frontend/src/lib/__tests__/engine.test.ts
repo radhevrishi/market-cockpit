@@ -5363,9 +5363,10 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     assert.deepEqual(dispOf771('3IINFOLTD', '3i Infotech Ltd'), { displayTicker: '3IINFOLTD', displayCode: null }, 'a digit-leading symbol is a symbol');
   });
 
-  test('RULES_VERSION is current (zzz789) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
+  test('RULES_VERSION is current (zzz803) so stored findings re-score on the zero-spend path; the fixture is built under it', () => {
     // zzz789 (intentional change): rules version bumped for favourable legal outcomes.
-    assert.match(RULES771, /zzz789$/);
+    // zzz803 (intentional change): bumped again for the India catalyst card.
+    assert.match(RULES771, /zzz803$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 

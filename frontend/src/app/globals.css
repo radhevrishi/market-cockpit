@@ -1532,3 +1532,4 @@ html[data-theme="light"] {
   main [data-testid^="tally-row-"] > span:first-child { display: block !important; }
   main [data-testid^="tally-"][style*="padding-left: 78px"] { padding-left: 10px !important; }
 }
+

@@ -273,12 +273,8 @@
     page-break-inside: avoid;
     break-inside: avoid;
   }
-  /* Print URLs after links so paper readers can find sources */
-  a[href^="http"]::after {
-    content: " (" attr(href) ")";
-    font-size: 9pt;
-    color: #444;
-  }
+  /* zzz801: no raw URL after links — the owner saw
+     "TGVSL (https://www.screener.in/company/TGVSL/)" on every card. */
   a { color: #000 !important; text-decoration: underline; }
   h1 { font-size: 18pt; margin: 0 0 12pt 0; }
   h2 { font-size: 14pt; margin: 16pt 0 8pt 0; }
@@ -337,3 +333,56 @@
 /* ─────────────────────────────────────────────────────────────────────────
  *  End design-system.css
  * ───────────────────────────────────────────────────────────────────────── */
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   zzz801 — PRINT / "SAVE AS PDF" ON A WHITE PAGE, EVERY PAGE, ANY THEME.
+   The owner printed AI Daily Gainers and got dark cards with black ticker
+   links on them (unreadable), the sidebar rail, and a raw URL after every
+   link. Cause: the page colours come from --mc-* variables set to the dark
+   palette; print only whitened <body>, so every card kept its dark fill.
+   Fix: under print, swap the variables themselves to a light, ink-friendly
+   palette (same hue, darker shade so colour still carries meaning), hide
+   the app chrome, and turn off shadows. Selector weight beats both :root
+   and html[data-theme="…"] so it applies whatever theme is on screen.
+   ═══════════════════════════════════════════════════════════════════════ */
+@media print {
+  html:root, html:root[data-theme] {
+    color-scheme: light;
+    --mc-bg-0: #ffffff; --mc-bg-1: #ffffff; --mc-bg-2: #f7f8fa; --mc-bg-3: #f1f5f9; --mc-bg-4: #cbd5e1;
+    --mc-border-0: #cbd5e1; --mc-border-1: #cbd5e1; --mc-border-2: #94a3b8; --mc-border-3: #e2e8f0;
+    --mc-text-0: #0b1220; --mc-text-1: #0f172a; --mc-text-2: #1e293b; --mc-text-3: #334155; --mc-text-4: #475569;
+    --mc-bullish: #047857; --mc-bullish-2: #15803d; --mc-bearish: #b91c1c; --mc-bearish-2: #b91c1c;
+    --mc-warn: #b45309; --mc-err: #b91c1c; --mc-info: #1d4ed8;
+    --mc-accent: #0369a1; --mc-accent-light: #0369a1; --mc-accent-dark: #075985;
+    --mc-cyan: #0e7490; --mc-saffron: #c2410c;
+    --mc-state-live: #0e7490; --mc-state-warm: #0f766e; --mc-state-stale: #b45309; --mc-state-persistent: #6d28d9; --mc-state-archived: #475569;
+    --mc-verdict-up: #047857; --mc-verdict-flat: #475569; --mc-verdict-down: #be123c;
+    --mc-verdict-absent: #64748b; --mc-verdict-alarm: #e11d48; --mc-verdict-warn: #b45309;
+    --tc-text: #0b1220; --tc-dim: #1e293b; --tc-faint: #334155; --tc-accent: #0e7490;
+    --background: #ffffff; --foreground: #0b1220; --card: #ffffff; --border: #cbd5e1;
+    background: #ffffff !important;
+  }
+  html, body { background: #ffffff !important; color: #0b1220 !important; }
+  /* App chrome off paper (class rules elsewhere force display:flex !important). */
+  .desktop-sidebar, .mobile-bottom-nav, .desktop-user-menu, .desktop-market-hours,
+  [data-mc-no-print], .mc-no-print { display: none !important; }
+  * { box-shadow: none !important; text-shadow: none !important; }
+  /* Fixed near-black fills written as hex in inline styles → white. */
+  [style*="#0a0a0f"], [style*="#0A0A0F"], [style*="#0d1117"], [style*="#0D1117"],
+  [style*="#0a0f1a"], [style*="#0A0F1A"], [style*="#060a14"], [style*="#060A14"],
+  [style*="#13131a"], [style*="#13131A"], [style*="#060e1a"], [style*="#060E1A"],
+  [style*="#0a1628"], [style*="#0A1628"], [style*="#0A0E1A"], [style*="#0F1828"], [style*="#111B35"],
+  [style*="rgb(10, 14, 26)"], [style*="rgb(15, 24, 40)"], [style*="rgb(6, 14, 26)"], [style*="rgb(13, 17, 23)"] {
+    background-color: #ffffff !important;
+    color: #0b1220 !important;
+  }
+  /* Pale text hard-coded for a dark ground → readable on white. */
+  [style*="rgb(245, 158, 11)"], [style*="#F59E0B"], [style*="#f59e0b"], [style*="#FBBF24"], [style*="#fbbf24"] { color: #b45309 !important; }
+  [style*="rgb(167, 139, 250)"], [style*="#A78BFA"], [style*="#a78bfa"] { color: #6d28d9 !important; }
+  [style*="rgb(34, 211, 238)"], [style*="#22D3EE"], [style*="#22d3ee"] { color: #0e7490 !important; }
+  [style*="#E2E8F0"], [style*="#e2e8f0"], [style*="rgb(226, 232, 240)"], [style*="#F1F5F9"], [style*="#f1f5f9"] { color: #0f172a !important; }
+  a, a:visited { color: #0b1220 !important; }
+  /* Cards: keep a thin outline, don't split across pages. */
+  [data-mc-card], .card { border-color: #cbd5e1 !important; break-inside: avoid; }
+}

@@ -294,3 +294,88 @@ export function UsCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
     </div>
   );
 }
+
+// ── zzz803 (India only): CATALYSTS FOUND ──────────────────────────────────
+// The India taxonomy's list: label · category · source (exchange filing vs
+// "reported, not confirmed by the company") · date, the evidence sentence,
+// and a figure only when the sentence states it. The latest quarterly result
+// is shown as the BACKDROP (dated); a price / volume clarification as the
+// event it is; routine filings are named, never counted as catalysts. The
+// arrow is a direction HINT, never a trade instruction. An empty card says
+// plainly "No catalyst found in filings or news".
+
+export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; compact?: boolean; max?: number }) {
+  const card = it.market === 'IN' ? it.inCard : null;
+  if (!card || !Array.isArray(card.catalysts)) return null;
+  const cs = card.catalysts.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query');
+  const bd = card.backdrop;
+  const cl = card.clarification;
+  const k: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
+  // A sentence the card already shows (headline / WHAT CHANGED / quote) is not printed again — one event, one rendering.
+  const shownAlready = `${it.headline || ''} ${it.whatChanged || ''} ${it.quote || ''}`;
+  const repeated = (sentence: string) => sentence.length >= 20 && shownAlready.includes(sentence.slice(0, 50).replace(/…$/, ''));
+  const srcPill = (c: { source: string; confirmedByFiling: boolean; sourceLabel: string }) => (
+    <Pill color={c.source === 'FILING' ? C.cyan : c.confirmedByFiling ? C.cyan : C.amber} title={c.sourceLabel}>
+      {c.source === 'FILING' ? 'EXCHANGE FILING' : c.confirmedByFiling ? 'PRESS · ALSO FILED' : 'REPORTED, NOT CONFIRMED BY THE COMPANY'}
+    </Pill>
+  );
+  if (!cs.length && !bd && !cl) {
+    return (
+      <div data-testid="in-catalysts-none" style={{ fontSize: 12, color: C.faint }}>
+        No catalyst found in filings or news.{card.routine.length > 0 && <> Routine only: {Array.from(new Set(card.routine.map((r) => r.label.toLowerCase()))).slice(0, 3).join(', ')}.</>}
+      </div>
+    );
+  }
+  if (compact) {
+    return (
+      <div data-testid="in-catalysts-compact" style={{ fontSize: 12, color: C.dim }}>
+        <span style={{ ...k, marginRight: 6 }}>FOUND</span>
+        {cs.slice(0, 3).map((c, i) => (
+          <span key={`${c.source}-${c.id}`} title={repeated(c.sentence) ? undefined : `“${c.sentence}”`}>{i ? ' · ' : ''}<b style={{ color: C.text }}>{c.label}</b> ({c.source === 'FILING' ? 'filed' : c.confirmedByFiling ? 'press, also filed' : 'reported, not confirmed'}{c.figures[0] ? `, ${c.figures[0]}` : ''})</span>
+        ))}
+        {cs.length > 3 && <span style={{ color: C.faint }}> · +{cs.length - 3} more</span>}
+        {bd && <span title={bd.lead && !repeated(bd.lead.sentence) ? `“${bd.lead.sentence}”` : undefined}>{cs.length ? ' · ' : ''}<b style={{ color: C.text }}>Backdrop:</b> {bd.label}</span>}
+        {cl && !cs.length && <span>{bd ? ' · ' : ''}<b style={{ color: C.text }}>Exchange clarification</b> — company says no undisclosed information</span>}
+      </div>
+    );
+  }
+  return (
+    <div data-testid="in-catalysts" style={{ background: C.bg2, borderRadius: 6, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={k}>CATALYSTS FOUND ({cs.length})</div>
+      {cs.slice(0, max).map((c) => {
+        const d = DIR_MARK[c.direction] || DIR_MARK.neutral;
+        return (
+          <div key={`${c.source}-${c.id}`} style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 7px', alignItems: 'baseline' }}>
+              <span title={`Direction hint: ${d.word} — not a trade instruction.`} style={{ color: d.color, fontWeight: 900 }}>{d.mark}</span>
+              <b style={{ color: C.text }}>{c.label}{c.planned ? (c.source === 'PRESS' ? ' (reported plan)' : ' (proposed)') : ''}</b>
+              <span style={{ color: C.faint }}>{c.category}</span>
+              {srcPill(c)}
+              {c.date && <span style={{ color: C.faint, fontSize: 11 }}>{c.date}</span>}
+              {c.figures.length > 0 && <span style={{ color: C.text, fontWeight: 700 }}>stated: {c.figures.join(', ')}</span>}
+              {c.note && <span style={{ color: C.amber, fontSize: 11.5 }}>{c.note}</span>}
+            </div>
+            {!repeated(c.sentence) && (
+              <div style={{ fontStyle: 'italic', overflowWrap: 'anywhere' }}>
+                {c.url ? <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ color: C.dim, textDecoration: 'none' }}>“{c.sentence}”</a> : <>“{c.sentence}”</>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {cs.length > max && <div style={{ fontSize: 11.5, color: C.faint }}>+{cs.length - max} more in OPEN EVENT</div>}
+      {bd && (
+        <div data-testid="in-backdrop" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim }}>
+          <span style={{ ...k, marginRight: 6 }}>BACKDROP</span><b style={{ color: C.text }}>{bd.label}</b>
+          {bd.lead && <> — {bd.lead.source === 'PRESS' ? 'press: ' : ''}{!repeated(bd.lead.sentence) && <i>“{bd.lead.sentence}”</i>}{bd.lead.figures.length > 0 && <b style={{ color: C.text }}> stated: {bd.lead.figures.join(', ')}</b>}{bd.lead.note && <span style={{ color: C.amber }}> ({bd.lead.note})</span>}</>}
+        </div>
+      )}
+      {cl && (
+        <div style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim }}>
+          <span style={{ ...k, marginRight: 6 }}>EXCHANGE CLARIFICATION</span>{cl.date ? `${cl.date} — ` : ''}company says no undisclosed information. <i>“{cl.sentence}”</i>
+        </div>
+      )}
+      {card.routine.length > 0 && <div style={{ fontSize: 11.5, color: C.faint }}>Routine (not catalysts): {Array.from(new Set(card.routine.map((r) => r.label.toLowerCase()))).slice(0, 4).join(', ')}</div>}
+    </div>
+  );
+}

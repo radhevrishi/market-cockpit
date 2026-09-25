@@ -4,7 +4,7 @@
 
 import React, { useEffect } from 'react';
 import type { ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, materialWord } from './Badges';
+import { Btn, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
 import { EarningsStrip, ScoreDetails, WhatChanged } from './ResearchCard';
 import { C, GAP_META, MATERIAL_COLOR, PERSIST_META, SOURCE_META, STAGE_META, TRANSMIT_META, money, pct, txt } from './tokens';
 
@@ -86,6 +86,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
         {it.earnings ? <P>{txt(it.whatChanged, 'See earnings detail below')}</P> : <WhatChanged it={it} noLabel />}
         {/* zzz801 (US): every catalyst the taxonomy found, SEC vs press only. */}
         <UsCatalystList it={it} max={14} />
+        <InCatalystList it={it} max={12} />
 
         {it.impact && (<><H>IMPACT</H><P dim>{it.impact}</P></>)}
 

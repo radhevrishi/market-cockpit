@@ -18,6 +18,7 @@
 // positive one — every event found is returned.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { indiaEventLines } from './in-event-taxonomy';
 import { createHash } from 'crypto';
 import {
   emptyEconomics, emptyTime, favourableLegalOutcome,
@@ -27,7 +28,8 @@ import { quoteIsInDocument, docSeqOf, isGenericSubject } from './announcement-re
 import type { CatalystType } from './events';
 
 /** Bump when extraction changes what a document yields (cached reads re-extract). */
-export const INDIA_EXTRACT_VERSION = 'x1';
+// zzz803: x2 — a document read also keeps its event sentences (eventLines) for the India card.
+export const INDIA_EXTRACT_VERSION = 'x2';
 
 export type Polarity = 'positive' | 'negative' | 'neutral';
 
@@ -734,6 +736,9 @@ export interface DocRead {
   relation: 'current' | 'history';
   /** Other filing URLs that turned out to be the same document (same text hash). */
   sameAs?: string[];
+  /** zzz803: verbatim sentences of the document that name an event (in-event-taxonomy), ≤ 8 —
+   *  the company's own words for the India card (a clarification reply, a results press release). */
+  eventLines?: string[];
 }
 
 export const INDIA_READ_BUDGET = 3;
@@ -782,7 +787,7 @@ export async function readIndiaDocuments(
         continue;   // a failed read is never cached: the next sweep tries again
       }
       const x = extractIndiaFacts({ text, issuer, date: a.dateIso, url: a.url, title: a.subject }, opts.ctx || {});
-      r = { url: a.url, date: a.dateIso, title: a.subject, seq, hash: textHash(text), access: 'DOCUMENT_READ', facts: x.facts, routineReason: x.routineReason, classified: x.classified, valuesSeen: x.valuesSeen, relation: opts.relation || 'current' };
+      r = { url: a.url, date: a.dateIso, title: a.subject, seq, hash: textHash(text), access: 'DOCUMENT_READ', facts: x.facts, routineReason: x.routineReason, classified: x.classified, valuesSeen: x.valuesSeen, relation: opts.relation || 'current', eventLines: indiaEventLines(text) };
       docMem.set(key, r);
       if (opts.kv) { try { await opts.kv.set(key, r, 30 * 24 * 3600); } catch { /* optional */ } }
     }

@@ -113,7 +113,10 @@ export function entityMatch(title: string, ticker: string, company: string | nul
   // 2. full name: the first two significant words together
   if (words.length >= 2) {
     const [a, b] = words;
-    const rx = new RegExp(`\\b${escRx(a)}\\s+(?:&\\s+)?${escRx(b)}\\b`, 'i');
+    // zzz803: an auto-generated headline clips the name ("Taneja Aerospac Consolidated June 2026 Net Sales …"):
+    // the second word may be cut short, never below six letters of it.
+    const bRx = b.length >= 8 ? `${escRx(b.slice(0, 6))}[a-z]{0,${b.length - 6}}` : escRx(b);
+    const rx = new RegExp(`\\b${escRx(a)}\\s+(?:&\\s+)?${bRx}\\b`, 'i');
     if (rx.test(t)) return { ok: true, why: 'company name' };
   }
   // 3. a distinctive all-caps ticker (4+ letters, not a word of the name) as a token

@@ -29,6 +29,8 @@ import { persistenceTestOf, type PersistenceTestView } from './persistence-test'
 // zzz798: the US card is a type-only reference (inline import type below) —
 // this module keeps its client-safe import list.
 type UsCard = import('./us-card').UsCard;
+type InCard = import('./in-event-taxonomy').InCard;
+type InCatalyst = import('./in-event-taxonomy').InCatalyst;
 
 /** The six states every gainer ends in (spec §4), plus data states. */
 export type EventClass =
@@ -266,6 +268,11 @@ export interface ResearchItem {
    *  source label, the extra stated lines (outlook, earn-out, funding …), the
    *  materiality arithmetic. Absent on India items. */
   usCard?: UsCard | null;
+  /** zzz803 (India only): the India catalyst card — events from the exchange
+   *  filings and press headlines (filed vs "reported, not confirmed by the
+   *  company"), the latest quarterly result as the backdrop, the price /
+   *  volume clarification, the routine list. Absent on US items. */
+  inCard?: InCard | null;
 }
 
 /** One catalyst record as a card shows it. */
@@ -2072,8 +2079,10 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   item.durations = durationsOf(item, { key, famFacts, famHay, contractYears, guardNote: guard.note, valueVerified: isVerifiedValue(value), value });
   // zzz798 (US only): the SEC-document card replaces the subject-line reading.
   const usc = market === 'US' && f?.usCard ? applyUsCard(item, f.usCard, { mv, returns, now: input.now ?? null }) : null;
+  // zzz803 (India only): the India card names the event a no-catalyst row missed.
+  const inc = market === 'IN' && f?.inCard ? applyInCard(item, f.inCard, { status, hasEarnings: !!e, clarification, favourable: favourableOutcome, mv, returns, now: input.now ?? null }) : null;
   const staleEarnings = !usc && type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
-  const p = priorityOf(item, { routine: usc ? false : routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification, quantified: usc ? usc.quantified || quantified : quantified });
+  const p = priorityOf(item, { routine: usc || inc?.presented ? false : routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification: clarification && !inc?.presented, quantified: usc ? usc.quantified || quantified : quantified });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
   const penaltyWords = Object.keys(p.details).filter((k) => k.startsWith('penalty_')).map((k) => ({ dilution: 'dilution flag', denial: 'company denial', lowMateriality: 'too small to explain the move', pricing: 'move already ahead of the change', unverified: 'unverified source', listing: 'listing artifact', routine: 'routine filings only', technical: 'technical move only', staleResult: 'older result' } as Record<string, string>)[k.slice(8)] || k.slice(8));
   item.whyRank = [...p.dims.words, ...penaltyWords.map((w) => `penalty: ${w}`)].join(' + ');
@@ -2173,6 +2182,160 @@ function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | n
   item.action = item.catalystFor === 'CONTEXT' ? 'Monitor' : actionOf(cls, item.portfolio.relevance, item.eventType);
   item.usCard = c;
   return c;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz803 — THE INDIA CARD ON THE ITEM (India only; the US never reaches this).
+// A row the filing classifier left as "no catalyst" / "routine only" is given
+// the event the India taxonomy found — the filing or the press headline that
+// names it, labelled filed vs "reported, not confirmed by the company"; with
+// no fresher event, the latest quarterly result (≤ 60 days, dated) is the
+// fundamental backdrop; a price / volume clarification is shown as the event
+// ("company says no undisclosed information"). Nothing found is said plainly:
+// "No catalyst found in filings or news". No figure is added that the source
+// sentence does not state; no materiality % is computed here.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const IN_TYPE_OF: Record<string, EventType> = {
+  turnaround_profit: 'Earnings', revenue_growth: 'Earnings', profit_growth: 'Earnings', record_results: 'Earnings', revenue_decline: 'Earnings', profit_decline: 'Earnings',
+  net_loss: 'Earnings', margin_expansion: 'Earnings', margin_compression: 'Earnings', results_filed: 'Earnings', restatement: 'Governance', guidance: 'Guidance', order_book: 'Guidance',
+  open_offer: 'Acquisition', promoter_selling: 'Governance', promoter_stake_sale: 'Strategic investment', promoter_buying: 'Promoter buying', pledge: 'Governance', block_deal: 'Governance',
+  strategic_investor: 'Strategic investment', stake_disclosure: 'Governance', order_win: 'Order win', order_cancellation: 'Order cancellation', partnership: 'Partnership', new_product: 'New product',
+  price_hike: 'Pricing', vendor_approval: 'Customer win', capacity_commissioned: 'Production ramp', capacity_expansion: 'Capacity expansion', acquisition: 'Acquisition', merger: 'Merger',
+  demerger: 'Divestment', divestment: 'Divestment', joint_venture: 'JV', buyback: 'Buyback', delisting: 'Capital allocation', bonus_split: 'Capital allocation', special_dividend: 'Capital allocation',
+  equity_raise: 'Fundraising', debt_raise: 'Debt / refinancing', rating_upgrade: 'Rating action', rating_downgrade: 'Rating action', auditor_resignation: 'Governance', kmp_resignation: 'Management change',
+  independent_director_exit: 'Governance', kmp_appointment: 'Management change', regulatory_approval: 'Regulatory approval', regulatory_setback: 'Litigation / regulatory', tax_demand: 'Litigation / regulatory',
+  legal_win: 'Litigation / regulatory', insolvency_default: 'Litigation / regulatory', operations_disruption: 'Accident / disruption', price_clarification: 'No identified catalyst',
+  media_clarification: 'Governance', exchange_query: 'No identified catalyst',
+};
+/** Low-materiality kinds: real, but they do not by themselves explain a move. */
+const IN_LOW_KINDS = new Set(['stake_disclosure', 'kmp_appointment', 'debt_raise', 'bonus_split', 'special_dividend', 'block_deal', 'media_clarification', 'restatement', 'pledge', 'vendor_approval']);
+const IN_TRANSMIT: Record<string, Transmission> = { 'Order win': 'NEAR_TERM', 'Production ramp': 'NEAR_TERM', 'Capacity expansion': 'LONG_TERM', Earnings: 'DIRECT', Acquisition: 'NEAR_TERM', 'Regulatory approval': 'LONG_TERM' };
+
+const inFigs = (c: InCatalyst | null | undefined) => (c && c.figures.length ? ` · stated: ${c.figures.join(', ')}` : '');
+const inQuote = (c: InCatalyst) => `“${c.sentence.length > 220 ? `${c.sentence.slice(0, 217)}…` : c.sentence}”`;
+
+function applyInCard(item: ResearchItem, card: InCard, ctx: { status: string | null; hasEarnings: boolean; clarification: boolean; favourable: boolean; mv: { pct: number | null; window: '1D' | '1W' }; returns: { w1: number | null; m1: number | null; m3: number | null }; now: string | null }): { presented: boolean } {
+  item.inCard = card;
+  const keep = item.eventClass === 'DATA_UNAVAILABLE' || item.eventClass === 'LISTING' || ctx.hasEarnings || ctx.favourable;
+  // Only a row the classifier left without an event is re-read; a filed catalyst / negative keeps its own reading (the card lists the rest).
+  const lead = card.lead;
+  const bd = card.backdrop;
+  // A filed officer change (capped: it moves no revenue) does not hide a stated result or a stronger event (Allied Digital: Q1 +19% leads, the resignation is noted).
+  const weakFiled = ctx.status === 'catalyst' && item.eventType === 'Management change' && ((!!bd && bd.tone !== 'filed') || (!!lead && lead.category !== 'Results' && !IN_LOW_KINDS.has(lead.id) && lead.id !== 'kmp_resignation' && lead.id !== 'kmp_appointment'));
+  const open = !keep && (weakFiled || ctx.status === 'none' || ctx.status === 'routine_only' || ctx.status === 'unresearched' || (ctx.status === 'denied' && ctx.clarification) || ((item.eventClass === 'NO_CATALYST' || item.eventClass === 'MARKET_MOVE_ONLY') && ctx.status !== 'denied' && ctx.status !== 'catalyst' && ctx.status !== 'negative'));
+  if (!open) return { presented: false };
+  const presentedFlags = () => { item.flags = { ...item.flags, denial: false }; };
+  const setDated = (date: string | null, url: string | null) => {
+    if (url) item.sourceUrl = url;
+    if (date) { item.filedDate = date; const a = ageFrom(date, ctx.now); if (a != null) item.ageDays = a; }
+  };
+  const finish = (cls: EventClass) => {
+    item.eventClass = cls;
+    const dated = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || cls === 'NEGATIVE';
+    item.catalystFor = dated ? catalystForOf('IN', item.ageDays ?? null) : undefined;
+    if (item.catalystFor === 'CONTEXT' && !/^Older context/.test(item.headline)) item.headline = `Older context (${item.ageDays}d): ${item.headline}`;
+    item.action = item.catalystFor === 'CONTEXT' ? 'Monitor' : actionOf(cls, item.portfolio.relevance, item.eventType);
+    item.transmission = IN_TRANSMIT[item.eventType] ?? (cls === 'NO_CATALYST' ? 'NONE' : 'WEAK');
+    item.expectationGap = gapOf(cls, ctx.mv, ctx.returns, null);
+    item.materiality = { label: 'UNKNOWN', ratios: [], explanation: 'Not measured — the figures are shown as stated in the source sentence; no ratio is computed from them.', verification: null, confidence: 0 };
+    item.flags = { ...item.flags, dilution: item.flags.dilution || item.eventType === 'Fundraising' };
+  };
+
+  // A fresh but low-weight item (a SAST / PIT disclosure, a pledge note, an
+  // appointment …) does not displace an informative result backdrop — it is
+  // listed beside it (Shanti Gold: Q1 growth leads, the stake disclosure is noted).
+  const bdInformative = !!bd && bd.tone !== 'filed';
+  const lowLead = !!lead && (IN_LOW_KINDS.has(lead.id) || lead.direction === 'neutral');
+  const alsoFresh = card.catalysts.filter((c) => c.category !== 'Results' && c.id !== 'price_clarification' && c.id !== 'exchange_query' && (c.ageDays == null || c.ageDays <= 21)).slice(0, 3);
+  const alsoLine = (skip: InCatalyst | null) => { const xs = alsoFresh.filter((c) => c !== skip); return xs.length ? `; also in the window: ${xs.map((c) => `${c.label.toLowerCase()} (${c.source === 'FILING' ? 'filed' : c.confirmedByFiling ? 'press, also filed' : 'reported, not confirmed'}${c.date ? `, ${c.date}` : ''})`).join('; ')}` : ''; };
+
+  // 1. a fresh, non-results event (filing in the window, or press dated in it)
+  if (lead && lead.category !== 'Results' && !(lowLead && bdInformative)) {
+    const type = IN_TYPE_OF[lead.id] || 'No identified catalyst';
+    const press = lead.source === 'PRESS';
+    item.eventType = type;
+    item.eventLabel = `${lead.label}${lead.planned ? (press ? ' — reported plan' : ' (proposed / not executed)') : ''}${press && !lead.confirmedByFiling ? ' · reported, not confirmed by the company' : press ? ' · press (also filed)' : ' · exchange filing'}`;
+    item.headline = clean(press ? lead.title : `${lead.title}${lead.sentence && !lead.title.includes(lead.sentence.slice(0, 40)) ? ` — ${lead.sentence}` : ''}`).slice(0, 400);
+    item.whatChanged = `${press ? 'Reported' : 'As filed'}: ${inQuote(lead)}${inFigs(lead)}${lead.note ? ` (${lead.note})` : ''}${alsoLine(lead)}`;
+    item.before = null; item.after = null;
+    item.stage = lead.planned ? (press ? 'RUMOUR' : 'PROPOSED') : lead.id === 'capacity_commissioned' ? 'OPERATIONAL' : 'EXECUTED';
+    item.sourceConfidence = press ? (lead.confirmedByFiling ? 'VERIFIED_FILING' : 'SECONDARY_SUMMARY') : lead.sourceLabel.includes('document read') ? 'VERIFIED_DOCUMENT' : 'VERIFIED_FILING';
+    item.verification = press ? (lead.confirmedByFiling ? 'Press; an exchange filing states the same event' : 'Reported, not confirmed by the company — secondary · verification required') : `Exchange filing — ${lead.sourceLabel.replace(/^exchange filing /, '').replace(/[()]/g, '')}`;
+    item.quote = press ? null : lead.sentence;
+    setDated(lead.date, lead.url);
+    item.scanNote = null;
+    item.evidenceGap = press && !lead.confirmedByFiling ? { code: 'EVIDENCE_INCOMPLETE', ...GAP_LABEL.EVIDENCE_INCOMPLETE } : null;
+    const neg = lead.direction === 'negative' && !lead.planned;
+    const cls: EventClass = neg && !press ? 'NEGATIVE' : press || lead.planned || lead.direction === 'mixed' ? 'POTENTIAL_UNVERIFIED' : IN_LOW_KINDS.has(lead.id) || type === 'Management change' ? 'CONFIRMED_LOW_MATERIALITY' : 'POTENTIAL_UNVERIFIED';
+    if (type === 'Management change' && neg && !press) item.eventLabel = `Management departure — ${lead.label.toLowerCase()} · exchange filing`;
+    item.whyResearch = press && !lead.confirmedByFiling
+      ? `${lead.label} is reported in the press, not confirmed by the company in an exchange filing — verify with the company / exchange before treating it as the catalyst${lead.id === 'promoter_stake_sale' ? ' (watch for a buyer, the price and whether an open offer is triggered)' : ''}.`
+      : neg ? `${lead.label} filed with the exchange — negative evidence for this move; read the filing for the reason given.`
+        : `${lead.label} is on file with the exchange; its size against the company is not established here — read the filing.`;
+    if (bd) item.unknowns = [...(item.unknowns || []).slice(0, 4), `Backdrop: ${bd.label}`];
+    finish(cls);
+    // A change of control (a promoter / parent exit, an open offer, a delisting offer) reaches shareholders through
+    // the offer / the new owner, near-term — not through the P&L; it is ranked as a near-term mechanism, never as material.
+    if (lead.id === 'promoter_stake_sale' || lead.id === 'open_offer' || lead.id === 'delisting') item.transmission = 'NEAR_TERM';
+    presentedFlags();
+    if (type === 'Management change' && cls === 'NEGATIVE') item.action = item.catalystFor === 'CONTEXT' ? 'Monitor' : 'Negative evidence';
+    return { presented: true };
+  }
+
+  // 2. a price / volume clarification is the event (no fundamental catalyst) — the result, if any, is the backdrop beside it
+  const cl = card.clarification;
+  if (cl || (ctx.status === 'denied' && ctx.clarification)) {
+    item.eventType = 'No identified catalyst';
+    item.eventLabel = 'Exchange clarification on price / volume movement — no fundamental catalyst';
+    const marketDriven = cl ? /market[- ]driven|market conditions|market forces/i.test(cl.sentence) : false;
+    item.headline = clean(`Exchange clarification${cl?.date ? ` (${cl.date})` : item.filedDate ? ` (${item.filedDate})` : ''}: company says no undisclosed information${marketDriven ? '; says the movement is market-driven' : ''}`);
+    item.whatChanged = `${cl ? `As filed: ${inQuote(cl)}` : 'Company told the exchange it has no undisclosed information.'}${bd ? `; backdrop: ${bd.label}${bd.lead ? ` — ${inQuote(bd.lead)}${inFigs(bd.lead)}` : ''}` : ''}${alsoLine(null)}`;
+    if (cl) setDated(cl.date, cl.url);
+    item.sourceConfidence = 'VERIFIED_FILING';
+    item.scanNote = `Company confirmed no undisclosed information to the exchange${cl?.date ? ` on ${cl.date}` : ''}; ${card.pressChecked} press headline${card.pressChecked === 1 ? '' : 's'} checked — no fundamental catalyst found.`;
+    item.eventClass = 'NO_CATALYST'; item.catalystFor = undefined; item.action = 'No catalyst';
+    return { presented: false };
+  }
+
+  // 3. the latest quarterly result (≤ 60 days) — the fundamental backdrop
+  if (bd) {
+    const r = bd.lead;
+    const pressOnly = !bd.filing || (r?.source === 'PRESS');
+    item.eventType = 'Earnings';
+    item.eventLabel = bd.tone === 'turnaround_small' ? 'Turnaround, small' : bd.tone === 'turnaround' ? 'Turnaround to profit' : bd.tone === 'weak' ? 'Weak result' : bd.tone === 'growth' ? 'Quarterly result — growth' : 'Quarterly result filed';
+    item.eventLabel += ctx.clarification || card.clarification ? ' · backdrop (plus exchange clarification)' : ' · fundamental backdrop';
+    const whenFiled = bd.filing ? `filed ${bd.filing.date || 'undated'}${bd.filing.ageDays != null ? ` (${bd.filing.ageDays}d ago)` : ''}` : 'results filing not in the fetched list';
+    item.headline = clean(`${bd.label}${r ? ` — ${r.sentence}` : ''}`).slice(0, 400);
+    item.whatChanged = r
+      ? `${r.source === 'PRESS' ? 'Reported in the press (the result itself is ' + whenFiled + ')' : `As filed (${whenFiled})`}: ${inQuote(r)}${inFigs(r)}${r.note ? ` (${r.note})` : ''}${bd.also.length ? `; also: ${bd.also.map((x) => `${x.label.toLowerCase()}${x.note ? ` (${x.note})` : ''}`).join('; ')}` : ''}`
+      : `Quarterly result ${whenFiled} — revenue / profit figures are not stated in the filing text read; open the result.`;
+    item.whatChanged += alsoLine(null);
+    item.before = null; item.after = null;
+    item.stage = 'MONETIZING';
+    item.sourceConfidence = bd.filing ? 'VERIFIED_FILING' : 'SECONDARY_SUMMARY';
+    item.verification = bd.filing ? `Exchange filing (result ${whenFiled})${r?.source === 'PRESS' ? '; figures from a press report of it' : ''}` : 'Reported in the press; the results filing was not in the fetched list — verification required';
+    item.quote = r && r.source === 'FILING' ? r.sentence : null;
+    setDated(bd.filing?.date ?? r?.date ?? null, bd.filing?.url ?? r?.url ?? null);
+    item.evidenceGap = null;
+    item.scanNote = card.clarification ? `Exchange clarification on file (${card.clarification.date || 'undated'}): company says no undisclosed information.` : card.routine.length ? `Routine filings in the window: ${Array.from(new Set(card.routine.map((x) => x.label.toLowerCase()))).slice(0, 3).join(', ')} — no fresher event.` : null;
+    const freshNote = alsoFresh.length ? ` Also in the window: ${alsoFresh.map((c) => `${c.label.toLowerCase()} (${c.source === 'FILING' ? 'filed' : 'reported, not confirmed'}${c.date ? ` ${c.date}` : ''})`).join('; ')} — read ${alsoFresh.length === 1 ? 'it' : 'them'}.` : '';
+    item.whyResearch = `${alsoFresh.length ? 'No fresher fundamental event' : 'No fresher event in the filings or news'} — the latest quarterly result (${whenFiled}) is the fundamental backdrop${bd.tone === 'turnaround_small' ? '; the turnaround is small' : bd.tone === 'weak' ? '; the result reads weak' : ''}. It is older context, not proof it caused this move.${freshNote}`;
+    const cls: EventClass = bd.tone === 'weak' ? 'NEGATIVE' : pressOnly && !bd.filing ? 'POTENTIAL_UNVERIFIED' : 'CONFIRMED_LOW_MATERIALITY';
+    finish(cls);
+    return { presented: true };
+  }
+
+  // 4. nothing: said plainly
+  item.whatChanged = 'No catalyst found in filings or news';
+  const routineWords = Array.from(new Set(card.routine.map((x) => x.label.toLowerCase()))).slice(0, 3);
+  if (item.eventClass === 'NO_CATALYST' && !/unclassified|favourable|debt financing/i.test(item.eventLabel || '')) {
+    const q = card.catalysts.find((c) => c.id === 'exchange_query');
+    item.headline = `No catalyst found in filings or news${q ? ` — the exchange asked about the price / volume movement${q.date ? ` (${q.date})` : ''}; the company's reply was not read` : routineWords.length ? ` — routine filings only (${routineWords.join(', ')}), no fresh catalyst` : ''}`;
+    if (routineWords.length) item.eventLabel = 'Routine filings only — no fresh catalyst';
+  }
+  item.scanNote = `${card.filingsChecked ? `${card.filingsChecked} exchange filing${card.filingsChecked === 1 ? '' : 's'} in the window${routineWords.length ? ` (routine: ${routineWords.join(', ')})` : ''}` : 'No exchange filing in the window'} and ${card.pressChecked} press headline${card.pressChecked === 1 ? '' : 's'} checked — no catalyst found in filings or news.`;
+  return { presented: false };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

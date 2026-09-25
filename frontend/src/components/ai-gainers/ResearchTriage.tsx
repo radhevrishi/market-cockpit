@@ -15,7 +15,7 @@
 
 import React, { useCallback, useState } from 'react';
 import type { ResearchItem, ResearchView } from '@/lib/ai-gainers/research-view';
-import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, materialWord } from './Badges';
+import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
 import { C, CLASS_META, MATERIAL_COLOR, istClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
@@ -184,6 +184,7 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       {onOpen && <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button>}
       {it.eventClass === 'NO_CATALYST' && it.scanNote && <div style={{ flexBasis: '100%' }}><ScanNote it={it} /></div>}
       {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
+      {it.market === 'IN' && it.inCard && <div style={{ flexBasis: '100%' }}><InCatalystList it={it} compact /></div>}
       {it.news?.narrative && <div style={{ flexBasis: '100%', fontSize: 12, color: C.dim }}>Press (unverified): <b style={{ color: C.text }}>{it.news.narrative.label}</b> story over {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) — “{it.news.narrative.lead}”</div>}
     </div>
   );
@@ -325,6 +326,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                     {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'Size not stated'}>NEEDS READING</Pill>}
                   </span>
                   {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
+      {it.market === 'IN' && it.inCard && <div style={{ flexBasis: '100%' }}><InCatalystList it={it} compact /></div>}
                   <div style={{ flexBasis: '100%' }}><AlsoIn it={it} here="Watch / investigate" /></div>
                   <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                 </div>

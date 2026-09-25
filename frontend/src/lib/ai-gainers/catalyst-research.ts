@@ -48,8 +48,15 @@ import type { StructuredFacts, SourceRef } from './structured-facts';
 import { favourableLegalOutcome } from './structured-facts';
 import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead, type IndiaFacts } from './india-extract';
 import { isGenericSubject, docSeqOf } from './announcement-reader';
+import { buildIndiaCard, classifyIndiaEvents, IN_BACKDROP_DAYS, type InCard } from './in-event-taxonomy';
 
-export const RULES_VERSION = '2026-09-24.zzz789';
+export const RULES_VERSION = '2026-09-25.zzz803';
+// zzz803 (IN): every India finding carries an India card (in-event-taxonomy):
+// events named from filing subject / summary / read-document sentences and
+// press headlines (promoter stake sale, open offer, restatement, SAST / PIT
+// promoter trades, results growth / turnaround, KMP resignation, price /
+// volume clarification, LOA / work order, commissioning …), filed vs press
+// labelled, and the latest quarterly result within 60 days as the backdrop.
 // zzz787: no materiality % from an unverified (summary / subject) figure;
 // promoter buying and new subsidiaries are their own event types (not
 // acquisitions); SAST promoter purchases are no longer paperwork.
@@ -82,6 +89,9 @@ export interface AnnouncementLite {
   url: string;
   dateIso: string | null;     // publication datetime, ISO
   ageDays: number | null;
+  /** zzz803 (IN): verbatim event sentences of the filed document, when it was
+   *  read (the latest results press release beyond the window — the backdrop). */
+  docLines?: string[] | null;
 }
 
 export interface ClassifiedAnnouncement extends AnnouncementLite {
@@ -222,6 +232,10 @@ export interface Finding {
   /** zzz798 (US only): US_CARD_VERSION the card was built under (set even
    *  when no card could be built, so a re-score does not retry forever). */
   usCardV?: number;
+  /** zzz803 (IN only): the India catalyst card — filings in the window, press
+   *  headlines and the latest quarterly result (≤ 60 days) as the backdrop,
+   *  each event with its sentence and only the figures that sentence states. */
+  inCard?: InCard | null;
 }
 
 // ── denial vs clarification (zzz771) ──────────────────────────────────────
@@ -1092,7 +1106,33 @@ function decorateFinding(f: Finding, inp: SweepInput): Finding {
     if (hist.length) notes.push(`Continues earlier filings: ${hist.slice(0, 3).map((x) => `${fmtDate(x.source.date)} — ${shorten(x.headline || x.event.kind, 110)}`).join('; ')}.`);
     if (inp.secondaryUnavailable) notes.push(`Secondary source unavailable (${inp.secondaryUnavailable}); the exchange filings were read directly.`);
   }
-  return { ...f, notes: Array.from(new Set(notes)), news, structuredFacts: facts.slice(0, 10), sourceRefs: refs.slice(0, 12), evidenceGap: gap, evidenceBreadth: breadth };
+  const inCard = inp.market === 'IN' && f.status !== 'source_failed' ? indiaCardOf(inp) : undefined;
+  return { ...f, notes: Array.from(new Set(notes)), news, structuredFacts: facts.slice(0, 10), sourceRefs: refs.slice(0, 12), evidenceGap: gap, evidenceBreadth: breadth, ...(inCard ? { inCard } : {}) };
+}
+
+/** zzz803 (IN): the India card from what the sweep fetched — every filing
+ *  (the window, plus results filings up to IN_BACKDROP_DAYS old), the
+ *  verbatim sentences of any document read, and the press headlines. */
+export function indiaCardOf(inp: Pick<SweepInput, 'announcements' | 'docs' | 'news' | 'now' | 'windowDays' | 'sessionCloseIso'>): InCard {
+  const docText = new Map<string, string>();
+  for (const d of inp.docs || []) {
+    if (d.access !== 'DOCUMENT_READ' || d.relation === 'history') continue;
+    const t = [...(d.eventLines || []), ...d.facts.flatMap((x) => x.quotes || [])].map((q) => String(q).replace(/[.;\s]+$/, '')).filter(Boolean).join('. ');
+    if (!t) continue;
+    for (const u of [d.url, ...(d.sameAs || [])]) docText.set(u, t);
+  }
+  return buildIndiaCard({
+    filings: (inp.announcements || []).map((a) => ({ subject: a.subject, summary: a.summary, url: a.url, dateIso: a.dateIso, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, inp.now), docText: [...(a.docLines || []), docText.get(a.url) || ''].map((x) => String(x).replace(/[.;\s]+$/, '')).filter(Boolean).join('. ') || null })),
+    press: (inp.news?.items || []).map((n) => ({ title: n.title, url: n.url, date: n.date, source: n.source })),
+    now: inp.now, windowDays: inp.windowDays, backdropDays: IN_BACKDROP_DAYS, sessionCloseIso: inp.sessionCloseIso ?? null,
+  });
+}
+
+/** zzz803 (IN): a filing older than the window is kept in the stored inputs
+ *  only when it is a quarterly result within IN_BACKDROP_DAYS — the backdrop. */
+export function isBackdropFiling(a: Pick<AnnouncementLite, 'subject' | 'summary'> & { docLines?: string[] | null }): boolean {
+  const hits = classifyIndiaEvents(`${a.subject}${a.summary ? `. ${a.summary}` : ''}${a.docLines?.length ? `. ${a.docLines.join('. ')}` : ''}`, { max: 20 });
+  return hits.some((h) => h.category === 'Results' && !h.routine) && !classifyIndiaEvents(a.subject, { headline: true }).some((h) => h.routine);
 }
 
 /** zzz773: screener.in's five newest filings plus BSE's complete list for the
@@ -1179,13 +1219,13 @@ export interface StoredSweepInputs {
 /** Keeps only what a finding can use (the window, a bounded summary): the
  *  day's state is one KV value and must stay well under its size limit. */
 export function compactInputs(inp: Omit<StoredSweepInputs, 'announcements'> & { announcements: AnnouncementLite[] }, windowDays: number, now: Date): StoredSweepInputs {
-  const announcements = inp.announcements
-    .map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, now) }))
-    .filter((a) => a.ageDays == null || a.ageDays <= windowDays)
-    .slice(0, 25)
-    .map((a) => ({ subject: String(a.subject || '').slice(0, 300), summary: a.summary ? String(a.summary).slice(0, 400) : null, url: a.url, dateIso: a.dateIso, ageDays: a.ageDays }));
+  const aged = inp.announcements.map((a) => ({ ...a, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, now) }));
+  // zzz803: up to three results filings older than the window (≤ IN_BACKDROP_DAYS) — the India backdrop.
+  const backdrop = aged.filter((a) => a.ageDays != null && a.ageDays > windowDays && a.ageDays <= IN_BACKDROP_DAYS && isBackdropFiling(a)).slice(0, 3);
+  const announcements = [...aged.filter((a) => a.ageDays == null || a.ageDays <= windowDays).slice(0, 25), ...backdrop]
+    .map((a) => ({ subject: String(a.subject || '').slice(0, 300), summary: a.summary ? String(a.summary).slice(0, 400) : null, url: a.url, dateIso: a.dateIso, ageDays: a.ageDays, ...(a.docLines?.length ? { docLines: a.docLines.slice(0, 6).map((x) => String(x).slice(0, 300)) } : {}) }));
   // zzz785: documents keep their facts (trimmed) — a re-score re-reads nothing.
-  const docs = inp.docs ? inp.docs.slice(0, 6).map((d) => ({ ...d, title: String(d.title || '').slice(0, 160), valuesSeen: d.valuesSeen.slice(0, 12), facts: d.facts.slice(0, 2).map((f) => ({ ...compactFact(f), quotes: f.quotes.slice(0, 1).map((q) => q.slice(0, 260)), unknowns: f.unknowns.slice(0, 3) })) })) : inp.docs;
+  const docs = inp.docs ? inp.docs.slice(0, 6).map((d) => ({ ...d, title: String(d.title || '').slice(0, 160), valuesSeen: d.valuesSeen.slice(0, 12), ...(d.eventLines ? { eventLines: d.eventLines.slice(0, 6).map((x) => String(x).slice(0, 300)) } : {}), facts: d.facts.slice(0, 2).map((f) => ({ ...compactFact(f), quotes: f.quotes.slice(0, 1).map((q) => q.slice(0, 260)), unknowns: f.unknowns.slice(0, 3) })) })) : inp.docs;
   return { ...inp, announcements, ...(docs !== undefined ? { docs } : {}) };
 }
 

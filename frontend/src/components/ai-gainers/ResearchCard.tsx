@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import type { EarningsMini, ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, CatalystChips, CatalystForBadge, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList } from './Badges';
+import { Btn, CatalystChips, CatalystForBadge, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList } from './Badges';
 import { C, CLASS_META, pctND, tint, txt } from './tokens';
 
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
@@ -324,6 +324,8 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       <WhatChanged it={it} />
       {/* zzz801 (US): the catalysts found in the filing and the press — India renders nothing here. */}
       <UsCatalystList it={it} />
+      {/* zzz803 (India): filed vs press events, the result backdrop, the clarification. */}
+      <InCatalystList it={it} />
       <FactLine it={it} />
 
       <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text }}>

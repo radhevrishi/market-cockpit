@@ -226,6 +226,9 @@ export function sourceWord(it: ResearchItem): string {
   if (us && us.source?.tier === 'SEC') return `Verified document${us.source.form ? ` (SEC ${us.source.form})` : ''}`;
   if (us && us.source?.tier === 'PRESS') return 'Press only';
   if (it.market === 'US' && it.sourceConfidence === 'VERIFIED_FILING') return 'SEC filing';
+  // zzz803 (India): a press-only lead says so in the words the page uses.
+  const inLead = it.market === 'IN' && it.inCard?.lead && it.headline && it.inCard.lead.title && it.headline.includes(it.inCard.lead.title.slice(0, 40)) ? it.inCard.lead : null;
+  if (inLead && inLead.source === 'PRESS' && !inLead.confirmedByFiling) return 'Press only - reported, not confirmed by the company';
   return SOURCE_WORD[it.sourceConfidence] || 'Unverified';
 }
 
@@ -618,6 +621,21 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       if (has(it.whatChanged)) b.push({ k: 'segs', segs: [{ text: String(it.whatChanged) }], size: 8.4, indent: 4 });
     } else {
       b.push({ k: 'segs', segs: [lbl('WHAT CHANGED'), has(it.whatChanged) ? { text: String(it.whatChanged), bold: true, color: INK } : { text: 'No change stated in a filing', color: MUTED }], size: 8.8 });
+    }
+    // zzz803 (India): the India card — filed vs press events, the result backdrop, the clarification; a figure only when stated.
+    const inc = it.market === 'IN' ? it.inCard : null;
+    if (inc && Array.isArray(inc.catalysts)) {
+      const cs = inc.catalysts.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query');
+      if (!cs.length && !inc.backdrop && !inc.clarification) b.push({ k: 'segs', segs: [lbl('CATALYSTS FOUND'), { text: `No catalyst found in filings or news${inc.routine.length ? ` (routine only: ${Array.from(new Set(inc.routine.map((r) => r.label.toLowerCase()))).slice(0, 3).join(', ')})` : ''}`, color: MUTED }], size: 8.2 });
+      if (cs.length) {
+        b.push({ k: 'segs', segs: [lbl(`CATALYSTS FOUND (${cs.length})`)], size: 8.2, gapAfter: 0.3 });
+        cs.slice(0, 5).forEach((c) => {
+          b.push({ k: 'segs', segs: [{ text: `- ${c.label}${c.planned ? (c.source === 'PRESS' ? ' (reported plan)' : ' (proposed)') : ''}`, bold: true, color: INK }, { text: `  ${c.category} · ${c.source === 'FILING' ? 'exchange filing' : c.confirmedByFiling ? 'press, also in an exchange filing' : 'reported, not confirmed by the company'}${c.date ? ` · ${c.date}` : ''}${c.figures.length ? ` · stated: ${c.figures.join(', ')}` : ''}${c.note ? ` · ${c.note}` : ''}`, color: MUTED }], size: 8, indent: 4, gapAfter: 0.2 });
+          b.push({ k: 'segs', segs: [{ text: `"${c.sentence}"` }], size: 7.6, indent: 8 });
+        });
+      }
+      if (inc.backdrop) b.push({ k: 'segs', size: 8.2, segs: [lbl('BACKDROP'), { text: inc.backdrop.label, bold: true, color: INK }, { text: inc.backdrop.lead ? ` - ${inc.backdrop.lead.source === 'PRESS' ? 'press: ' : ''}"${inc.backdrop.lead.sentence}"${inc.backdrop.lead.figures.length ? ` (stated: ${inc.backdrop.lead.figures.join(', ')})` : ''}${inc.backdrop.lead.note ? ` - ${inc.backdrop.lead.note}` : ''}` : '' }] });
+      if (inc.clarification) b.push({ k: 'segs', size: 8.2, segs: [lbl('EXCHANGE CLARIFICATION'), { text: `${inc.clarification.date ? `${inc.clarification.date} - ` : ''}company says no undisclosed information. "${inc.clarification.sentence}"` }] });
     }
     if (has(it.impact)) b.push({ k: 'segs', segs: [lbl('IMPACT'), { text: String(it.impact) }], size: 8.6 });
 

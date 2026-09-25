@@ -30,7 +30,7 @@ import { kvGet, kvSet } from '@/lib/kv';
 import { fetchCompanyResearch, yahooReturns, fetchNseAnnouncementsLite } from '@/lib/ai-gainers/screener-company';
 import { chooseDocuments, readIndiaDocuments, relatedFilings, INDIA_HISTORY_BUDGET, type DocRead, type IndiaFacts } from '@/lib/ai-gainers/india-extract';
 import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, usFindingEvidence, type EdgarResearch, type UsDocReadResult } from '@/lib/ai-gainers/edgar-research';
-import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, ageDaysOf, filedAfterClose, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
+import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, ageDaysOf, isBackdropFiling, filedAfterClose, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
@@ -42,6 +42,7 @@ import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
 import { yahooChart } from '@/lib/us-prices';
 import { fetchBseAnnouncementsLite } from '@/lib/thesis/evidence-discovery';
 import { buildNewsContext, newsQueryFor, type NewsContext } from '@/lib/ai-gainers/news-context';
+import { IN_BACKDROP_DAYS } from '@/lib/ai-gainers/in-event-taxonomy';
 import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFinding, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { upsertDetections, loadCatalystRecords, rememberGainerCatalysts, catalystRecordsFor } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
@@ -141,6 +142,24 @@ async function indiaDocuments(ticker: string, announcements: AnnouncementLite[],
     }
   }
   return docs;
+}
+
+/** zzz803 (IN): the latest quarterly result beyond the 21-day window (≤ IN_BACKDROP_DAYS)
+ *  is the fundamental backdrop. Its press release (else the outcome letter) is read once —
+ *  deterministic, cached with the other documents — and its event sentences are kept on the
+ *  announcement, so the card can say "PAT ₹0.24 Cr as against ₹(-) 8.41 Cr" in the company's words. */
+async function indiaBackdropDocument(ticker: string, announcements: AnnouncementLite[], opts: { now: Date; msLeft: number }): Promise<void> {
+  if (opts.msLeft < 12_000) return;
+  const older = announcements
+    .map((a) => ({ a, age: a.ageDays ?? ageDaysOf(a.dateIso, opts.now) }))
+    .filter((x) => x.age != null && x.age > WINDOW_DAYS && x.age <= IN_BACKDROP_DAYS && !!x.a.url && !/corp-announcements\/?$/.test(x.a.url) && !x.a.docLines)
+    .sort((x, y) => String(y.a.dateIso || '').localeCompare(String(x.a.dateIso || '')));
+  const isRelease = (a: AnnouncementLite) => /press release|earnings release|investor (?:release|update)/i.test(`${a.subject} ${a.summary || ''}`) && /result|q[1-4]|quarter|earnings/i.test(`${a.subject} ${a.summary || ''}`);
+  const pick = older.find((x) => isRelease(x.a)) || older.find((x) => isBackdropFiling(x.a));
+  if (!pick) return;
+  const got = await withDeadline(readIndiaDocuments(ticker, [{ url: pick.a.url, subject: pick.a.subject, dateIso: pick.a.dateIso }], pdfText, { relation: 'history', kv: kvAdapter, deadlineMs: 8_000 }), 10_000, [] as DocRead[]);
+  const d = got.find((x) => x.access === 'DOCUMENT_READ');
+  if (d?.eventLines?.length) pick.a.docLines = d.eventLines.slice(0, 6);
 }
 
 export const dynamic = 'force-dynamic';
@@ -563,13 +582,16 @@ async function research(req: NextRequest, body: any) {
         const cr = await fetchCompanyResearch(u.ticker, now);
         // zzz773: BSE's full filing list for the window, beside screener's
         // five newest — and the filing source when screener.in is down.
-        const bse = await withDeadline(fetchBseAnnouncementsLite(u.ticker, cr.bseCode, WINDOW_DAYS + 1), 20_000, { items: [], code: null, error: 'BSE timed out' });
+        // zzz803: BSE list reaches back IN_BACKDROP_DAYS so the latest quarterly
+        // result (filed 40+ days ago, still the latest fundamental news) is the
+        // backdrop instead of "no catalyst". The finding's window stays 21 days.
+        const bse = await withDeadline(fetchBseAnnouncementsLite(u.ticker, cr.bseCode, IN_BACKDROP_DAYS + 1), 20_000, { items: [], code: null, error: 'BSE timed out' });
         announcements = mergeAnnouncements(cr.announcements, bse.items.map((b) => ({ subject: b.subject, summary: b.summary, url: b.url, dateIso: b.dateIso, ageDays: null })) as AnnouncementLite[]);
         if (bse.items.length || (bse.code && !bse.error)) cr.sources.push('BSE corporate announcements');
         else if (bse.error) cr.errors.push(bse.error);
         // zzz785: screener.in and BSE both silent → NSE's own list for the symbol.
         if (!announcements.length && (cr.secondaryUnavailable || bse.error)) {
-          const nse = await withDeadline(fetchNseAnnouncementsLite(u.ticker, WINDOW_DAYS + 1, now), 13_000, { items: [], error: 'NSE timed out' });
+          const nse = await withDeadline(fetchNseAnnouncementsLite(u.ticker, IN_BACKDROP_DAYS + 1, now), 13_000, { items: [], error: 'NSE timed out' });
           if (nse.items.length) { announcements = mergeAnnouncements(announcements, nse.items); cr.sources.push('NSE corporate announcements'); }
           else if (nse.error) cr.errors.push(nse.error);
         }
@@ -628,6 +650,7 @@ async function research(req: NextRequest, body: any) {
       // headlines name (press only — never merged into the filing's figures).
       else if (market === 'US' && usCard && usCard.source.tier === 'SEC') usCard = withPressCatalysts(usCard, pressItemsOf(news));
       if (market === 'IN') docs = await indiaDocuments(u.ticker, announcements, { now, sessionCloseIso, marketCap, returns, bseCode, companyName: fullName || u.company, msLeft: budget - (Date.now() - t0) });
+      if (market === 'IN') await indiaBackdropDocument(u.ticker, announcements, { now, msLeft: budget - (Date.now() - t0) });
 
       // Model-read the best catalyst candidate when the budget allows: a
       // verbatim quote is what turns "the summary says ₹279 Cr" into a fact.
@@ -670,7 +693,7 @@ async function research(req: NextRequest, body: any) {
       }), rulesVersion: RULES_VERSION };
       if (usNote) st.findings[u.ticker] = { ...st.findings[u.ticker], notes: [...st.findings[u.ticker].notes, usNote] };
       if (market === 'US') st.findings[u.ticker] = { ...st.findings[u.ticker], usCard, usCardV: US_CARD_VERSION };
-      st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements);
+      st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements.filter((a) => { const d = a.ageDays ?? ageDaysOf(a.dateIso, now); return d == null || d <= WINDOW_DAYS; }));
       st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}), ...(market === 'US' ? { usCard, usCardV: US_CARD_VERSION } : {}) }, WINDOW_DAYS, now);
       if (market === 'US' && st.attempts) delete st.attempts[u.ticker];
       done++;
