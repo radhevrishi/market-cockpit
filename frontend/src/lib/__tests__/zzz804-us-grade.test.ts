@@ -176,7 +176,9 @@ describe('zzz804 — forensics and cash rules', () => {
     const known = grade(distributor({ cfo: 500 * M, capex: 58.9 * M }));
     const unknown = grade(distributor({ cfo: null, capex: null }));
     assert.ok(atLeast(unknown.tier, known.tier), `unknown ${unknown.tier} vs cash-positive ${known.tier}`);
-    assert.ok(!unknown.caveat_tags.some((t) => /cash/.test(t)), 'no cash caveat is invented');
+    // zzz806: the top-tier gate may say the cash flow is "not yet reported"
+    // (true, and it withholds BLOCKBUSTER) — it never claims the cash is bad.
+    assert.ok(!unknown.caveat_tags.some((t) => /without operating cash|not backed by cash|ocf divergence|does not fully back/.test(t)), 'no negative cash caveat is invented');
     assert.ok(atLeast(unknown.tier, 'STRONG'));
   });
   test('the release explaining a working-capital build softens the cash cap to STRONG but keeps a caveat', () => {

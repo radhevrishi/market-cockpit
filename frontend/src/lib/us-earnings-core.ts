@@ -67,6 +67,7 @@
 //     in the same document. See `splitFactorSince`.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { classifyAbfg } from './earnings/pattern-abfg';
 import {
   CAVEAT_PENALTY,
   CAVEAT_PENALTY_DEFAULT,
@@ -3294,6 +3295,13 @@ export interface UsGradeInput {
    *  working-capital build (stated in the filer's own words). Softens the cash
    *  cap from MIXED to STRONG; never removes the caveat. */
   cash_explained_by_working_capital?: boolean;
+  /** zzz806 — the best year-on-year growth the release STATES for a forward-
+   *  visibility metric (backlog, RPO, cRPO, bookings, ARR). Null when none is
+   *  stated with a prior figure — a backlog with no comparison is not a trend. */
+  visibility_growth_pct?: number | null;
+  visibility_label?: string | null;
+  /** Banks, insurers, REITs: CFO/NI is a funding artefact, not cash backing. */
+  is_financial?: boolean;
   /** Daily closes behind the print, used to size the market reaction against
    *  the stock's OWN volatility rather than a fixed percentage. */
   close_30d?: number[] | null;
@@ -3437,6 +3445,91 @@ export function usQuarterLabel(periodEnd?: string | null, filingDate?: string | 
  */
 /** The chip a card shows where an EPS growth rate would have been. */
 export const PER_SHARE_BLOCKED_TAG = 'per-share comparison unavailable';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE BLOCKBUSTER CONFIRMATION GATE.                                 (zzz806)
+//
+// R F Industries graded BLOCKBUSTER on EPS $0.04 → $0.12 ("+200%"), revenue
+// +21%, a 7.3% operating margin and $1.4m of quarterly profit, with no street
+// estimate, no raised guide and a backlog stated without any prior figure —
+// while its own type tag said PROFIT JUMP · FORENSICS. Every BLOCKBUSTER path
+// in `decideTier` is a PERCENTAGE test, and a percentage off a $0.04 base
+// clears any of them. Nothing asked whether the quarter was confirmed by
+// anything other than that one magnified number.
+//
+// So a row the magnitude paths call BLOCKBUSTER must now ALSO show, from the
+// filing (price never counts):
+//   1. growth that is not small-base arithmetic — where the base is small the
+//      quarter is judged on revenue growth and margin change in POINTS;
+//   2. a healthy margin level, or an expansion large both in points and
+//      relative to where it started;
+//   3. cash backing — CFO/NI >= 0.8 and positive free cash flow, KNOWN;
+//   4. at least one independent confirmation — a street beat, a raised guide,
+//      or stated growth in backlog / RPO / bookings / ARR;
+//   5. no unresolved forensics flag;
+//   6. and a micro-scale company (quarterly revenue < $50m or net income
+//      < $5m) needs TWO independent confirmations, because its numbers swing.
+// One or two missing → STRONG; three or more, or an unresolved forensics flag
+// together with anything else → MIXED. Every miss is named on the card.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface BlockbusterGateInput {
+  salesY: number | null;
+  opm: number | null; opmPrev: number | null;
+  epsPrev: number | null;
+  revC: number | null; revP: number | null;          // USD
+  niC: number | null; niP: number | null;            // USD
+  oiC: number | null; oiP: number | null;            // USD
+  cfoToNi: number | null;
+  fcf: number | null;
+  cashKnown: boolean;
+  isFinancial?: boolean;
+  confirmations: string[];                           // independent, fundamental
+  forensicsFlagged: boolean;
+}
+export const BB_MARGIN_HEALTHY_PCT = 12;
+export const BB_MICRO_REVENUE_USD = 50e6;
+export const BB_MICRO_NI_USD = 5e6;
+export function blockbusterGate(i: BlockbusterGateInput): { tier: 'BLOCKBUSTER' | 'STRONG' | 'MIXED'; misses: string[] } {
+  const misses: string[] = [];
+  // 1 — growth that is not small-base arithmetic.
+  // A small base is a small PRIOR PROFIT — a per-share figure under a dime or
+  // under $2m of net income. It is deliberately NOT "a low margin": a 1.5%-net
+  // distributor on $15bn of revenue has a large base, and its thin margin is
+  // judged by the margin test below, not twice.
+  const smallBase = (i.epsPrev != null && Math.abs(i.epsPrev) < 0.10)
+    || (i.niP != null && i.niP < 2e6);
+  const opmExp = i.opm != null && i.opmPrev != null ? i.opm - i.opmPrev : null;
+  if (smallBase) {
+    const revOk = i.salesY != null && i.salesY >= 25;
+    const marginPtsOk = opmExp != null && opmExp >= 3;
+    if (!revOk || !marginPtsOk) {
+      misses.push(`small base — the per-share jump is magnified; on revenue (${i.salesY != null ? `${i.salesY >= 0 ? '+' : ''}${Math.round(i.salesY)}%` : 'n/a'}) and margin (${opmExp != null ? `${opmExp >= 0 ? '+' : ''}${opmExp.toFixed(1)}pp` : 'n/a'}) it is ${!revOk ? 'moderate growth' : 'a small margin step'}`);
+    }
+  }
+  // 2 — margin level, or an expansion large absolutely AND relatively.
+  if (i.opm != null) {
+    const bigStep = opmExp != null && opmExp >= 5 && i.opmPrev != null && i.opmPrev > 0 && opmExp / i.opmPrev >= 0.5;
+    if (i.opm < BB_MARGIN_HEALTHY_PCT && !bigStep) misses.push(`thin margin (${i.opm.toFixed(1)}% operating)`);
+  }
+  // 3 — cash backing, known.
+  if (!i.isFinancial) {
+    if (!i.cashKnown) misses.push('cash flow not yet reported');
+    else if (!(i.cfoToNi != null && i.cfoToNi >= 0.8) || !(i.fcf != null && i.fcf > 0)) misses.push('cash does not fully back the profit');
+  }
+  // 4 + 6 — independent confirmation, two for a micro-scale company.
+  const micro = (i.revC != null && i.revC < BB_MICRO_REVENUE_USD) || (i.niC != null && i.niC < BB_MICRO_NI_USD);
+  const need = micro ? 2 : 1;
+  if (i.confirmations.length < need) {
+    misses.push(i.confirmations.length === 0
+      ? `no independent confirmation on file (a street beat of 3%+, a raised guide, or stated backlog/RPO/ARR growth)${micro ? ' — and a micro-scale company needs two' : ''}`
+      : `micro scale (revenue ${i.revC != null ? `$${(i.revC / 1e6).toFixed(0)}m` : 'n/a'} a quarter) needs a second independent confirmation`);
+  }
+  // 5 — forensics.
+  if (i.forensicsFlagged) misses.push('profit jump not explained by operations and cash (forensics unresolved)');
+  const tier = misses.length === 0 ? 'BLOCKBUSTER'
+    : (misses.length >= 3 || (i.forensicsFlagged && misses.length >= 2)) ? 'MIXED' : 'STRONG';
+  return { tier, misses };
+}
 
 /** zzz804 — methodology tags that are read off the CHART (stage, RS, distance
  *  from the high). They stay on the card as context; they never count towards
@@ -4185,6 +4278,42 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // cash flow, the trend or two quality flags say MIXED, MIXED it is, and the
   // floor never lifts a row above what those allow. This only undoes a
   // demotion the price alone caused.
+  // ── zzz806 — THE BLOCKBUSTER CONFIRMATION GATE (see `blockbusterGate`) ──
+  if (tier === 'BLOCKBUSTER') {
+    const confirmations: string[] = [];
+    // 3%, the same bar the beat-and-raise path in `decideTier` uses: a large
+    // company that beats by 4% has beaten; the 5% "consensus beat" tag is a
+    // display threshold, not the definition of a confirmation.
+    if (epsBeatPct != null && epsBeatPct >= 3) confirmations.push('street EPS beat');
+    else if (input.consensus_beat_pct == null && (input.consensus_beat_abs ?? null) != null && (input.consensus_beat_abs as number) >= 0.03) confirmations.push('street EPS beat');
+    if (revBeatPct != null && revBeatPct >= 3) confirmations.push('street revenue beat');
+    if (input.positive_guidance) confirmations.push('guidance raised');
+    const vis = input.visibility_growth_pct ?? null;
+    if (vis != null && vis >= 10) confirmations.push(`${input.visibility_label || 'backlog'} +${Math.round(vis)}%`);
+    const ab = classifyAbfg({
+      salesY, epsY: epsY ?? patY, cfoToPat: cfoPat,
+      opmPct: opm, opmPrevPct: opmPrev,
+      opIncomeY: (f.operating_income != null && f.operating_income_prev != null && f.operating_income_prev > 0)
+        ? ((f.operating_income - f.operating_income_prev) / f.operating_income_prev) * 100 : null,
+      fcf: fcfC,
+    });
+    const g = blockbusterGate({
+      salesY, opm, opmPrev, epsPrev: f.eps_prev,
+      revC, revP, niC, niP, oiC: f.operating_income, oiP: f.operating_income_prev,
+      cfoToNi: cfoPat, fcf: fcfC, cashKnown: f.cfo != null,
+      isFinancial: !!input.is_financial,
+      confirmations,
+      forensicsFlagged: ab?.forensics === 'flagged',
+    });
+    if (g.tier !== 'BLOCKBUSTER') {
+      tier = g.tier;
+      const why = `capped at ${g.tier}: ${g.misses.join('; ')}`;
+      if (!caveat_tags.includes(why)) caveat_tags.push(why);
+    } else if (confirmations.length && !methodology_tags.includes('independently confirmed')) {
+      methodology_tags.push('independently confirmed');
+    }
+  }
+
   // US thin-float gate — dollar volume, not ₹Cr. Missing ADDV is NOT punished.
   const addv = p?.addv_musd ?? null;
   const thinFloat = addv != null && addv < 2;      // < $2M traded/day
@@ -4521,14 +4650,17 @@ function composeFromStem(stem: string, caveats: string[], methods: string[]): st
   const cav1 = cav0.filter((t) => !(CAVEAT_SUBSUMED_BY[t] || []).some((x) => cav0.includes(x)));
   // zzz804 — an informational tag explains, it does not accuse, so it is not
   // written as a "caveat" of the verdict; it follows as a note.
-  const notes = cav1.filter((t) => INFORMATIONAL_CAVEATS.has(t));
+  const notes = cav1.filter((t) => INFORMATIONAL_CAVEATS.has(t))
+    // zzz806 — the gate's reason already says "small base"; not twice.
+    .filter((t) => !(t === SMALL_BASE_TAG && cav1.some((c) => /^capped at .*small base/.test(c))));
   const cav = cav1.filter((t) => !INFORMATIONAL_CAVEATS.has(t));
   const noteTail = notes.length ? ` Note: ${notes.join('; ')}.` : '';
   const meth = Array.from(new Set((methods || []).filter(Boolean))).filter((t) => !PRICE_METHOD_TAGS.has(t));
   if (!cav.length) {
     return `${stem}${meth.length >= 2 ? ` and ${meth.join('/')} all passing.` : '.'}${noteTail}`;
   }
-  const severity = (t: string) => CAVEAT_PENALTY[t] ?? CAVEAT_PENALTY_DEFAULT;
+  // zzz806 — the gate's own reason leads the sentence: it IS the verdict's why.
+  const severity = (t: string) => /^capped at /.test(t) ? 1000 : (CAVEAT_PENALTY[t] ?? CAVEAT_PENALTY_DEFAULT);
   const ordered = cav
     .map((t, i) => ({ t, i }))
     .sort((a, b) => severity(b.t) - severity(a.t) || a.i - b.i)
@@ -5025,7 +5157,12 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
       // zzz804 — the demotion is stated where the verdict is stated, so a
       // MIXED card always says why it is MIXED.
       const why = 'growth, quality and confirmation together fall short of the top-tier bar';
-      if (Array.isArray(r.caveat_tags) && !r.caveat_tags.includes(why)) r.caveat_tags.push(why);
+      if (Array.isArray(r.caveat_tags)) {
+        // zzz806 — a gate reason that said "capped at STRONG" must follow the
+        // tier it now sits under, or the card contradicts itself.
+        r.caveat_tags = r.caveat_tags.map((t: string) => t.replace(/^capped at STRONG:/, 'capped at MIXED:'));
+        if (!r.caveat_tags.includes(why)) r.caveat_tags.push(why);
+      }
       demoted++;
       continue;
     }

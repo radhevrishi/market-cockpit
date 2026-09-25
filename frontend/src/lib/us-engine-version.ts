@@ -55,4 +55,8 @@
 // −$917m operating cash quarter caps at MIXED instead of grading STRONG), the
 // street's revenue beat counts, and the sentence is rebuilt from the final
 // tier. Every cached grade can change.
-export const US_ENGINE_VERSION = '2026.09.25-a';
+// 2026.09.25-b (zzz806) — BLOCKBUSTER needs confirmation beyond one magnified
+// percentage: growth that is not small-base arithmetic, a healthy margin, known
+// cash backing, an independent confirmation (two for micro-caps) and no open
+// forensics flag. Misses cap at STRONG, or MIXED when three or more combine.
+export const US_ENGINE_VERSION = '2026.09.25-b';

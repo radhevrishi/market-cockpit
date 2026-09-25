@@ -817,6 +817,21 @@ function pendingBody(date: string, days: number, key: string) {
   };
 }
 
+/** zzz806 — the best stated YoY growth among forward-visibility metrics
+ *  (backlog, RPO, cRPO, bookings, ARR, net new ARR). A metric with no stated
+ *  change is not a trend and returns nothing. */
+function visibilityGrowth(metrics: any[] | null | undefined): { pct: number; label: string } | null {
+  const ids = new Set(['backlog', 'rpo', 'crpo', 'arr', 'net_new_arr', 'bookings']);
+  let best: { pct: number; label: string } | null = null;
+  for (const m of metrics || []) {
+    if (!m || !ids.has(String(m.id))) continue;
+    const y = typeof m.yoy_pct === 'number' && Number.isFinite(m.yoy_pct) ? m.yoy_pct : null;
+    if (y == null) continue;
+    if (!best || y > best.pct) best = { pct: y, label: String(m.label || m.id) };
+  }
+  return best;
+}
+
 export async function GET(req: Request) {
   const t0 = Date.now();
   const { searchParams } = new URL(req.url);
@@ -1473,6 +1488,9 @@ export async function GET(req: Request) {
           return (est != null && est > 0 && act != null) ? ((act - est) / est) * 100 : null;
         })(),
         cash_explained_by_working_capital: !!(prRead as any).wc,
+        visibility_growth_pct: visibilityGrowth(g.metrics)?.pct ?? null,
+        visibility_label: visibilityGrowth(g.metrics)?.label ?? null,
+        is_financial: isFinancialSic(p.f.sic),
         // A full-year raise that passes a beat through, alongside a next-quarter
         // guide below the street, is not a raise for grading purposes.
         positive_guidance: g.label === 'RAISED' && !(guideVsStreet != null && guideVsStreet <= -3),
@@ -2040,6 +2058,9 @@ export async function GET(req: Request) {
           revenue_beat_pct: (revEstP != null && revEstP > 0 && pr?.revenue != null)
             ? ((pr.revenue - revEstP) / revEstP) * 100 : null,
           cash_explained_by_working_capital: releaseAttributesCashToWorkingCapital(doc?.html ?? null),
+          visibility_growth_pct: visibilityGrowth(gPre?.metrics)?.pct ?? null,
+          visibility_label: visibilityGrowth(gPre?.metrics)?.label ?? null,
+          is_financial: isFinancialSic(f.sic),
           close_30d: t.close_30d,
           // Same ladder as the full path: the filer's own label, then the year
           // implied by the year-ago quarter's XBRL, then the bare ordinal —
