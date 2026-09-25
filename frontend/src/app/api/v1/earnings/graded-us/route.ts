@@ -65,7 +65,8 @@ import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml, releaseAttributesCashToWorkingCapital } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
-import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
+import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS } from '@/lib/us-engine-version';
+import { regradeDayPayload } from '@/lib/us-regrade';
 import { GradeQueue, decideCacheOnly, classifyFilerFetch } from '@/lib/us-rescan';
 import { readEstimateSnapshot } from '@/lib/us-estimate-snapshot';
 import { oneOffsFromReleaseHtml, absoluteOneOffsFromReleaseHtml, epsExOneOffs, type OneOff, type AbsoluteOneOff } from '@/lib/us-one-offs';
@@ -864,10 +865,14 @@ export async function GET(req: Request) {
   // asked for it has already walked away. The retry then costs one read.
   const kvKey = `us-graded:${US_ENGINE_VERSION}:${cacheKey}`;
   const cacheOnlyParam = searchParams.get('cache_only') === '1';
+  // zzz807 — the page's own window asks with prio=1 and outranks background
+  // sweeps in the grading queue; within a priority, newest day first.
+  const prio = Math.max(0, Math.min(9, parseInt(searchParams.get('prio') || '0', 10) || 0));
   // zzz805 — A DAY ALREADY QUEUED OR RUNNING IS A PROGRESS QUESTION. Checked
   // before any cache: during a forced re-grade the previous payload is still in
   // the caches, and serving it would end the re-scan with the old answer.
   if (cacheOnlyParam && !explicit && _queue.known(cacheKey)) {
+    if (prio > 0) _queue.enqueue(cacheKey, false, prio);    // raise it, never re-add it
     return NextResponse.json(pendingBody(date, days, cacheKey), { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } });
   }
   // zzz805 — `force` on a cache_only probe means "re-grade this day ONCE": the
@@ -878,7 +883,7 @@ export async function GET(req: Request) {
   if (cacheOnlyParam && !explicit && force) {
     _cache.delete(cacheKey);
     _bgOrigin = new URL(req.url).origin;
-    _queue.enqueue(cacheKey, true);
+    _queue.enqueue(cacheKey, true, prio);
     return NextResponse.json(pendingBody(date, days, cacheKey), { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } });
   }
   if (!force) {
@@ -901,6 +906,23 @@ export async function GET(req: Request) {
           _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: shared });
           return NextResponse.json(shared, {
             headers: { 'x-mc-cache': 'shared', 'Cache-Control': 'private, max-age=60' },
+          });
+        }
+        // ── zzz807 — A RULES CHANGE IS NOT A DATA CHANGE ────────────────
+        // No payload under this engine version: look for the same day under
+        // an EARLIER version and regrade it in-process from the figures its
+        // rows already carry. Milliseconds, no SEC — the day comes back on
+        // this request, already under the new rules, and is stored under the
+        // new version so the next reader gets it straight.
+        for (const v of US_ENGINE_PREVIOUS_VERSIONS) {
+          const prev = unzipPayload(await sharedRead(`us-graded:${v}:${cacheKey}`));
+          if (!prev?.by_tier) continue;
+          const re = regradeDayPayload(prev);
+          if (!re) continue;
+          _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: re });
+          void kvSet(kvKey, zipPayload(re), 30 * 24 * 3600).catch(() => {});
+          return NextResponse.json(re, {
+            headers: { 'x-mc-cache': 'regraded', 'Cache-Control': 'private, max-age=60' },
           });
         }
       } catch {
@@ -963,7 +985,7 @@ export async function GET(req: Request) {
       );
     }
     _bgOrigin = new URL(req.url).origin;
-    _queue.enqueue(cacheKey, false);
+    _queue.enqueue(cacheKey, false, prio);
     return NextResponse.json(pendingBody(date, days, cacheKey), { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } });
   }
 

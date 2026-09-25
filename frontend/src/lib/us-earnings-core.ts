@@ -3252,6 +3252,8 @@ export interface UsGradedRow {
   filing_url?: string;
   source: string;
   tags_used?: Partial<Record<UsFactKind, string | null>>;
+  /** zzz807 — the grade's own input, for in-process regrading. */
+  grade_input?: any;
 }
 
 export interface UsGradeInput {
@@ -4506,6 +4508,10 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     quadrant_parts: { quality: quadrant.quality_parts, inflection: quadrant.inflection_parts },
     filing_url: input.filing_url, source: 'SEC EDGAR XBRL',
     tags_used: f.tags,
+    // zzz807 — the exact input this grade read, minus the price block (which
+    // the row already carries). A later RULES change regrades the row from
+    // this in-process — see lib/us-regrade.ts — instead of re-reading SEC.
+    grade_input: (() => { const { price: _p, close_30d: _c, ...rest } = input; void _p; void _c; return { v: 1, ...rest }; })(),
   };
 }
 

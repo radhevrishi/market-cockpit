@@ -60,3 +60,11 @@
 // cash backing, an independent confirmation (two for micro-caps) and no open
 // forensics flag. Misses cap at STRONG, or MIXED when three or more combine.
 export const US_ENGINE_VERSION = '2026.09.25-b';
+
+/** zzz807 — earlier engine versions whose cached days can be REGRADED in-process
+ *  (their rows carry every figure the grade reads). Newest first. A rules-only
+ *  bump appends the version it replaces here, so no cached day is ever sent
+ *  back to SEC just because a rule changed. */
+export const US_ENGINE_PREVIOUS_VERSIONS: readonly string[] = [
+  '2026.09.25-a', '2026.09.17-c', '2026.09.17-b', '2026.09.17-a', '2026.09.16-a',
+];

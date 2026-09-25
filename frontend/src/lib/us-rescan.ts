@@ -91,7 +91,8 @@ export type GradeRunner = (key: string, force: boolean) => Promise<{ ok: boolean
  * never sit "grading" for ever and a failure is reported instead of polled.
  */
 export class GradeQueue {
-  private queue: Array<{ key: string; force: boolean }> = [];
+  private queue: Array<{ key: string; force: boolean; prio: number; seq: number }> = [];
+  private seq = 0;
   private running = new Set<string>();
   private claimed = new Set<string>();       // a live (foreground) request is grading it
   private last = new Map<string, LastRun>();
@@ -143,13 +144,34 @@ export class GradeQueue {
       for (const [k] of oldest) this.last.delete(k);
     }
   }
-  /** Queue a key. Returns its place. A key already known is never queued twice. */
-  enqueue(key: string, force = false): number {
+  /**
+   * Queue a key. Returns its place. A key already known is never queued twice
+   * — but a higher priority raises it (the page's own window outranks a
+   * background sweep).
+   *
+   * ORDER (zzz807): priority first, then NEWEST DAY FIRST. Keys begin with the
+   * ISO session date, so a descending key sort is newest-first. The queue used
+   * to be first-come-first-served, and a bench sweep that asks for its window
+   * oldest-first put 2026-08-04 at the front while the day the owner was
+   * looking at sat fifty places back.
+   */
+  enqueue(key: string, force = false, prio = 0): number {
+    const q = this.queue.find((x) => x.key === key);
+    if (q) {
+      if (prio > q.prio || (force && !q.force)) { q.prio = Math.max(q.prio, prio); q.force = q.force || force; this.sortQueue(); }
+      return this.place(key);
+    }
     if (this.known(key)) return this.place(key);
-    this.queue.push({ key, force });
+    this.queue.push({ key, force, prio, seq: this.seq++ });
+    this.sortQueue();
     this.pump();
     return this.place(key);
   }
+  private sortQueue(): void {
+    this.queue.sort((a, b) => (b.prio - a.prio) || (a.key < b.key ? 1 : a.key > b.key ? -1 : 0) || (a.seq - b.seq));
+  }
+  /** Keys waiting, in the order they will run (running ones not included). */
+  pendingKeys(): string[] { return this.queue.map((q) => q.key); }
   private pump(): void {
     while (this.running.size < this.max && this.queue.length) {
       const { key, force } = this.queue.shift()!;
@@ -249,4 +271,24 @@ export function pollDelayMs(d: { failed?: boolean; retryInMs?: number | null; re
   if (d.readFailed) return 2_500;
   const place = d.place && d.place > 0 ? d.place : 1;
   return place <= 1 ? 8_000 : Math.min(150_000, 20_000 * place);
+}
+
+/** zzz807 — what the Hard re-scan button says it did. Never silent. */
+export function rescanNoteText(gradingDays: string[], sessions: string[]): string {
+  const running = gradingDays.length;
+  if (running > 0) {
+    const newestFirst = gradingDays.slice().sort().reverse();
+    return `Already re-scanning — ${running} day${running > 1 ? 's' : ''} left, newest first (${newestFirst.slice(0, 3).join(', ')}${running > 3 ? ' …' : ''}). Nothing was queued twice; each day lands here as it finishes.`;
+  }
+  const rest = Math.max(0, sessions.length - 1);
+  return `Re-scanning ${sessions[0]} from SEC EDGAR now; the other ${rest} day${rest === 1 ? '' : 's'} are re-graded from their stored filings instantly.`;
+}
+
+/** zzz807 — the window status line, in words a reader can act on. */
+export function windowStatusLine(i: { companies: number; days: number; upToDate: number; refreshing: number; failed: number; notAsked: number }): string {
+  const parts = [`${i.upToDate} up to date`];
+  if (i.refreshing) parts.push(`${i.refreshing} refreshing (newest first)`);
+  if (i.failed) parts.push(`${i.failed} could not be fetched`);
+  if (i.notAsked) parts.push(`${i.notAsked} not yet asked`);
+  return `${i.companies} companies shown · ${i.days} day${i.days === 1 ? '' : 's'}: ${parts.join(', ')}`;
 }

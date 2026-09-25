@@ -43,6 +43,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { US_ENGINE_VERSION } from './us-engine-version';
+import { regradeDayPayload } from './us-regrade';
 import { snapshotFresh } from './us-earnings-dates';
 
 const DB_NAME = 'mc-us-days';
@@ -187,7 +188,18 @@ export async function getCachedDay(day: string, isToday: boolean): Promise<any |
   // paints it at once and re-fetches it in the background; when the new grade
   // lands it replaces the old one in place. Nothing is ever wrong for long, and
   // nothing is ever empty. `staleEngine` is the flag that says which.
-  if (p.engine_version !== US_ENGINE_VERSION) return { ...p, _stale_engine: true };
+  // zzz807 — …and since zzz807, REGRADED ON READ. A rules-only engine change
+  // needs no new filing: the rows carry every figure the grade reads, so the
+  // day is regraded here, in-process, in milliseconds, stored back under the
+  // new version, and returned already correct. Only a day that cannot be
+  // regraded is served stale and sent to the server's queue.
+  if (p.engine_version !== US_ENGINE_VERSION) {
+    try {
+      const re = regradeDayPayload(p);
+      if (re) { void putCachedDay(day, re); return re; }
+    } catch { /* fall through to the stale path */ }
+    return { ...p, _stale_engine: true };
+  }
   // A scan that found filers but graded NONE of them is a failed scan, not a
   // result. Never serve it from cache — refetch.
   if ((p.raw_items_total ?? 0) > 0 && (p.candidates_total ?? 0) === 0) return null;

@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCachedDay, putCachedDay, scrubLegacyDayCaches } from '@/lib/us-day-cache';
-import { planDayRequest, pollDelayMs, dayStatusLine } from '@/lib/us-rescan';
+import { planDayRequest, pollDelayMs, dayStatusLine, rescanNoteText, windowStatusLine } from '@/lib/us-rescan';
 import Link from 'next/link';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
@@ -293,7 +293,10 @@ export default function UsEarningsOpportunitiesPage() {
         const cached = await getCachedDay(d, d >= today);
         const plan = planDayRequest({
           cached: cached ? { stale: !!cached._stale_engine } : null,
-          rescanRequested: forceKey > 0,
+          // zzz807 — a re-scan re-reads SEC only for the newest session and a
+          // day with nothing stored; a stored day is already regraded to the
+          // current rules by `getCachedDay`, in-process.
+          rescanRequested: forceKey > 0 && (d === sessions[0] || !cached),
           forceAlreadySent: forcedRef.current.has(`${forceKey}|${d}`),
           awaitingServer: awaitingRef.current.has(d),
         });
@@ -301,7 +304,7 @@ export default function UsEarningsOpportunitiesPage() {
         if (plan.force) forcedRef.current.add(`${forceKey}|${d}`);
         awaitingRef.current.add(d);
         const r = await fetch(
-          `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1${plan.force ? '&force=1' : ''}`,
+          `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1&prio=1${plan.force ? '&force=1' : ''}`,
           { cache: 'no-store', signal: AbortSignal.timeout(30_000) },
         );
         let j: any = null;
@@ -451,7 +454,17 @@ export default function UsEarningsOpportunitiesPage() {
   // window) before starting: each day in THIS window is re-graded once, its
   // previous grade stays on screen until the new one replaces it, and days
   // outside the window are untouched.
-  const refetch = async () => { setForceKey((k) => k + 1); };
+  // zzz807 — a Hard re-scan always SAYS what it did. If the server is already
+  // grading days for this window it says so (nothing is queued twice — the
+  // server's queue refuses a duplicate); otherwise it re-reads the newest
+  // session and any day with no stored filings from SEC, and every other day
+  // is re-graded from its stored filings instantly.
+  const [rescanNote, setRescanNote] = useState<string | null>(null);
+  const refetch = async () => {
+    setRescanNote(rescanNoteText(gradingDays, sessions));
+    setTimeout(() => setRescanNote(null), 30_000);
+    setForceKey((k) => k + 1);
+  };
   // RETRY MEANS THE FAILED DAYS, NOT THE WINDOW. Re-running only the queries
   // that errored keeps the 40 that loaded on screen and in the store; bumping
   // `forceKey` would give every day a new key and a `force=1` sweep.
@@ -915,13 +928,16 @@ export default function UsEarningsOpportunitiesPage() {
           {isFetching ? `Scanning ${loadedCount}/${sessions.length}…` : 'Refresh'}
         </button>
         <button onClick={() => {
-          if (confirm(`Throw away every cached session and re-scan all ${sessions.length} from SEC EDGAR?\n\nThe ${loadedCount} already loaded will be discarded and the sweep restarts at 0. Use Refresh instead if you only want the days that have not landed yet.`)) {
+          if (confirm(`Re-scan this window?\n\nThe newest session (${sessions[0]}) and any day with no stored filings are re-read from SEC EDGAR; every other day is re-graded from its stored filings in a moment. Grades stay on screen until the new ones land.`)) {
             void refetch();
           }
         }} style={btn()}
           title="Clear the local cache and re-read every session from EDGAR, starting from zero. Works while a scan is running — that is usually when you want it.">
           ⟳ Hard re-scan
         </button>
+        {rescanNote && (
+          <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-cyan)', maxWidth: 520 }}>{rescanNote}</span>
+        )}
       </div>
 
       {/* ── tier + quality + cap chips (counts are pre-filter, like India) ── */}
@@ -1119,8 +1135,14 @@ export default function UsEarningsOpportunitiesPage() {
         }}>
           <RefreshCw className="w-3 h-3" style={{ color: 'var(--mc-cyan)', animation: 'spin 1s linear infinite' }} />
           <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
-            <b style={{ color: 'var(--mc-text-0)' }}>{loadedCount - gradingDays.length - rereadDays.length} of {sessions.length} sessions</b> on screen
-            with <b style={{ color: 'var(--mc-text-0)' }}>{allRows.length}</b> companies graded.
+            {/* zzz807 — "0 of 60 sessions on screen with 1117 companies graded"
+                read as nothing loaded while 1117 names were on screen. */}
+            <b style={{ color: 'var(--mc-text-0)' }}>{windowStatusLine({
+              companies: allRows.length, days: sessions.length,
+              refreshing: gradingDays.length + rereadDays.length, failed: sourceFailedDays.length,
+              notAsked: Math.max(0, sessions.length - loadedCount),
+              upToDate: Math.max(0, loadedCount - gradingDays.length - rereadDays.length - sourceFailedDays.length),
+            })}</b>.
             {rereadDays.length > 0 && <> {rereadDays.length} more {rereadDays.length > 1 ? 'are' : 'is'} already computed and being re-read from cache — a couple of seconds, not a re-scan.</>}
             {gradingDays.length > 0 && (
               // ONE session is graded at a time, and saying so is the whole
